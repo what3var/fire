@@ -294,7 +294,7 @@ namespace UI {
 
         int RowHeight(root) {
             if (this.rowHeight >= 0) { return this.rowHeight }
-            return root.ch + 6
+            return this.TextHeight(root) + 6
         }
 
         // Selects the row (-1: none), scrolls it into view and reports the change.
@@ -340,8 +340,8 @@ namespace UI {
             if (this.view != undefined) { this.view.Update() }
             var rows = this.Rows()
             var widest = 0
-            for (var i = 0; i < rows.count; i = i + 1) { widest = UI.M.Max(widest, this.ItemText(rows[i]).Length) }
-            this.cw = widest * root.cw + 24
+            for (var i = 0; i < rows.count; i = i + 1) { widest = UI.M.Max(widest, this.TextWidth(root, this.ItemText(rows[i]))) }
+            this.cw = widest + 24
             this.ch = rows.count * this.RowHeight(root) + this.headerHeight + 2
         }
 
@@ -389,7 +389,7 @@ namespace UI {
                 if (row != undefined && row.visible) { row.Draw(root, x + row.rx, y + row.ry) }
                 return
             }
-            root.renderer.DrawText(x + 4, y + (h - root.ch) / 2, this.ItemText(item), text)
+            this.DrawString(root, x + 4, y + (h - this.TextHeight(root)) / 2, this.ItemText(item), text)
         }
 
         DrawHeader(root, int x, int y, int w) { }
@@ -577,7 +577,7 @@ namespace UI {
                 var cwid = this.ColumnWidth(i, w)
                 root.PushClip(cx, y, cwid, h)
                 var tcolor = theme.text
-                r.DrawText(cx + 4, y + (h - root.ch) / 2, column.header, tcolor)
+                this.DrawString(root, cx + 4, y + (h - this.TextHeight(root)) / 2, column.header, tcolor)
                 if (column.member != "" && column.member == this.sortedBy) {
                     // an arrow for the sort direction
                     var ax2 = cx + cwid - 12
@@ -602,7 +602,7 @@ namespace UI {
                 var column = this.columns[i]
                 var cwid = this.ColumnWidth(i, w)
                 root.PushClip(cx, y, cwid, h)
-                root.renderer.DrawText(cx + 4, y + (h - root.ch) / 2, UI.M.Text(UI.M.Member(item, column.member)), text)
+                this.DrawString(root, cx + 4, y + (h - this.TextHeight(root)) / 2, UI.M.Text(UI.M.Member(item, column.member)), text)
                 root.PopClip()
                 cx = cx + cwid
             }

@@ -15,6 +15,14 @@ fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStor
 foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
     Console.WriteLine(problem);
 
+// Fonts for the tests: a synthetic TrueType font of about 1 KB (square, round and compound glyphs, a kern table; family "Fire Test"), written as "FireSans.ttf" into a folder that FIRE_FONT_DIRS names.
+// The system lookup of fonts finds it by file name ("firesans"), full name and family name - in the VM and in the native programs (they inherit the variable).
+byte[] fireTestFont = Convert.FromBase64String("AAEAAAALAIAAAwAwT1MvMkUCRH0AAAE4AAAAYGNtYXACMAFTAAABvAAAAGxnbHlmPzzozgAAAjwAAAEGaGVhZC+Ah2AAAAC8AAAANmhoZWEGEAH+AAAA9AAAACRobXR4EyQCWAAAAZgAAAAka2Vybv/h//wAAANEAAAAJGxvY2EBEQFeAAACKAAAABRtYXhwABAAGgAAARgAAAAgbmFtZaJXW7UAAANoAAAAZnBvc3QEn3EYAAAD0AAAADgAAQAAAAEAAEv3EAlfDzz1AAMD6AAAAADm8CF+AAAAAObwIX4AAAAAAooDhAAAAAMAAgAAAAAAAAABAAADIP84AGQCvAAAAAACigABAAAAAAAAAAAAAAAAAAAACQABAAAACQAQAAIABwACAAIAAAAAAAAAAAAAAAAAAgABAAMCIAGQAAUABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAD8/Pz8AAAAgAMEDIP84AAADIADIAAAAAAAAAAAAAAAAAAAAIAAAAlgAZAEsAAACvAAyAlgAAAK8AGQCvABkASwAZAK8ADIBLABkAAAAAgAAAAMAAAAUAAMAAQAAABQABABYAAAAEgAQAAMAAgAgAC4AQQBIAE8AVgBpAMH//wAAACAALgBBAEgATwBWAGkAwf///+H/2P/B/73/tf+t/5//RgABAAAAAAAAAAAAAAAAAAAAAAAAAAAADQANABoALQBJAGAAawB3AIMAAQBkAAAB9AK8AAMAADMRIRFkAZACvP1EAAABADIAAAKKArwAAgAAMwEBMgEsASwCvP1EAAEAAAAAAlgCvAAFAAARAQEjAwMBLAEseLS0Arz9RAK8/j4BwgAAAgBkAAACWAK8AAcADwAAExAzMhEQIyITFDMyNTQjImT6+vr6eIKCgoIBXgFe/qL+ogFelpaWAAABAGQAAAJYArwACwAAMxEzESERMxEjESERZGQBLGRk/tQCvP7UASz9RAEs/tQAAQBkAAAAyAB4AAMAADM1MxVkZHh4//8AMgAAAooDhAAmAAIAAAAHAAYA+gMMAAEAZAAAAMgCvAADAAAzETMRZGQCvP1EAAAAAAABAAAAIAABAAMADAABAAYAAgAD/7AAAwAC/8QABQAEAB4AAAAEADYAAQAAAAAAAQAJAAAAAQAAAAAAAgAHAAkAAwABBAkAAQASABAAAwABBAkAAgAOACJGaXJlIFRlc3RSZWd1bGFyAEYAaQByAGUAIABUAGUAcwB0AFIAZQBnAHUAbABhAHIAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkAAAADACQAOQAyACsBAgDJAEwDZG90");
+string fontTestDir = Path.Combine(Path.GetTempPath(), "fire-font-test-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(fontTestDir);
+File.WriteAllBytes(Path.Combine(fontTestDir, "FireSans.ttf"), fireTestFont);
+Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
+
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 
@@ -8915,6 +8923,19 @@ string uiDrawScript = """
     mfile.Add(new UI.MenuItem("Quit"))
     mbar.Add(mfile)
     ui.Add(mbar)
+    // fonts: a TrueType font found on the system (the folder FIRE_FONT_DIRS), a built-in bitmap font, the font and size passed on to the elements inside, a text field that scrolls
+    var fnp = new UI.Panel(330, 236, 300, 62)
+    fnp.font = "firesans"
+    fnp.fontSize = 16
+    fnp.Add(new UI.Label("AVAVHO iAi.", 4, 4))
+    var fl2 = new UI.Label("Small", 130, 4)
+    fl2.font = "8x8"
+    fnp.Add(fl2)
+    var fbt = new UI.Button("HOAV", 4, 28, -1, -1)
+    fbt.fontSize = 12
+    fnp.Add(fbt)
+    fnp.Add(new UI.TextBox("AVA HO iii AVAV", 80, 30, 90, 24))
+    ui.Add(fnp)
     print(ui.Tick())
     mbar.Open(ui, 0)
     ui.Tick()
@@ -9499,6 +9520,62 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         print("ohne btn1: btn2 " + bb.rx + "," + bb.ry)
         """, new[] { "label 2,2 196x14", "btn1 2,21 100x20", "btn2 2,46 abs 12,56", "ohne btn1: btn2 2,21" });
+
+    CheckUi("Schrift: font und fontSize des Elements, vom umgebenden Element geerbt, sonst die der Theme; Textfeld mit Proportionalschrift (Caret, Scrollen)", uiHead + """
+        var plain = new UI.Label("AVA")
+        var big = new UI.Label("AVA")
+        big.font = "firesans"
+        big.fontSize = 20
+        var sp = new UI.StackPanel(0, 40, 300, 150)
+        sp.font = "firesans"
+        sp.fontSize = 10
+        var inh = new UI.Label("AVA")
+        var own = new UI.Label("AVA")
+        own.fontSize = 20
+        var bit = new UI.Label("AVA")
+        bit.font = "8x8"
+        var btn = new UI.Button("AVA", 0, 0, -1, -1)
+        sp.Add(inh)
+        sp.Add(own)
+        sp.Add(bit)
+        sp.Add(btn)
+        ui.Add(plain)
+        ui.Add(big)
+        ui.Add(sp)
+        ui.Draw()
+        print("plain " + plain.cw + "x" + plain.ch)
+        print("big " + big.cw + "x" + big.ch)
+        print("inh " + inh.cw + "x" + inh.ch)
+        print("own " + own.cw + "x" + own.ch)
+        print("bit " + bit.cw + "x" + bit.ch)
+        print("btn " + btn.cw + "x" + btn.ch)
+        ui.theme.font = "8x8"
+        ui.Draw()
+        print("plain after theme " + plain.cw + "x" + plain.ch)
+        ui.theme.font = ""
+        ui.Draw()
+        var tb = new UI.TextBox("AVA", 0, 100, 100, 24)
+        tb.font = "firesans"
+        tb.fontSize = 20
+        ui.Add(tb)
+        ui.Draw()
+        tb.MouseDown(ui, 1, tb.ax + 4 + 20, tb.ay + 5)
+        print("caret " + tb.caret)
+        tb.MouseDown(ui, 1, tb.ax + 4 + 17, tb.ay + 5)
+        print("caret " + tb.caret)
+        tb.MouseDown(ui, 1, tb.ax + 4 + 300, tb.ay + 5)
+        print("caret " + tb.caret)
+        tb.SetText("AVAVAVAVAVAV")
+        ui.Draw()
+        print("scroll " + tb.scroll + " caret " + tb.caret)
+        tb.caret = 0
+        ui.Draw()
+        print("scroll " + tb.scroll)
+        tb.font = ""
+        tb.fontSize = 0
+        ui.Draw()
+        print("plain box scroll " + tb.scroll)
+        """, new[] { "plain 24x14", "big 37x22", "inh 19x11", "own 37x22", "bit 24x8", "btn 43x23", "plain after theme 24x8", "caret 2", "caret 1", "caret 3", "scroll 5 caret 12", "scroll 0", "plain box scroll 0" });
 
     CheckUi("Layout: Ausrichtung, Rand, Mindest- und Hoechstgroesse", uiHead + """
         var sp2 = new UI.StackPanel(0, 0, 200, 100)
@@ -18134,6 +18211,194 @@ else
             CheckNat("Ressourcen: eine fehlende Datei ist ein Uebersetzungsfehler mit Zeile", message.Contains("not found") && message.Contains("line 2"), message);
         }
         natCases = natCases.Append(("Ressourcen: new Resource(\"pfad\") ist eingebettet", resScript)).ToArray();
+    }
+
+    // TrueType fonts: the port of libschrift to C# gives the glyphs of the original (the lines are from the C library: lookup, metrics, FNV hash of the image with its width rounded up to 4), the layout of a text,
+    // a damaged font never throws, and the names of the fonts are found.
+    {
+        string golden = """
+            size 20 asc 16.000000 desc -4.000000 gap 2.000000
+            32 l0 g1 m0 adv 6.000000 lsb 0.000000 y 0 w 0 h 0 r0 h 14650fb0739d0383
+            46 l0 g6 m0 adv 6.000000 lsb 2.000000 y -3 w 3 h 4 r0 h 5254915b221693cf
+            65 l0 g2 m0 adv 14.000000 lsb 1.000000 y -14 w 13 h 15 r0 h d830f81164f0394d
+            72 l0 g5 m0 adv 14.000000 lsb 2.000000 y -14 w 11 h 15 r0 h a52b3c966d9ac59f
+            79 l0 g4 m0 adv 14.000000 lsb 2.000000 y -14 w 11 h 15 r0 h 94be64e8ec418694
+            86 l0 g3 m0 adv 12.000000 lsb 0.000000 y -14 w 13 h 15 r0 h 35e985b0b733ee2b
+            105 l0 g8 m0 adv 6.000000 lsb 2.000000 y -14 w 3 h 15 r0 h c6f5eb60c504cec7
+            193 l0 g7 m0 adv 14.000000 lsb 1.000000 y -18 w 13 h 19 r0 h cc271a285e1c4df9
+            size 9 asc 7.200000 desc -1.800000 gap 0.900000
+            32 l0 g1 m0 adv 2.700000 lsb 0.000000 y 0 w 0 h 0 r0 h 14650fb0739d0383
+            46 l0 g6 m0 adv 2.700000 lsb 0.900000 y -2 w 3 h 3 r0 h 303d6b20b297115f
+            65 l0 g2 m0 adv 6.300000 lsb 0.450000 y -7 w 7 h 8 r0 h d7183018305960be
+            72 l0 g5 m0 adv 6.300000 lsb 0.900000 y -7 w 7 h 8 r0 h 40025b5891bbcf39
+            79 l0 g4 m0 adv 6.300000 lsb 0.900000 y -7 w 7 h 8 r0 h 5085adcfa6033381
+            86 l0 g3 m0 adv 5.400000 lsb 0.000000 y -7 w 7 h 8 r0 h bdb5bf609821d4cf
+            105 l0 g8 m0 adv 2.700000 lsb 0.900000 y -7 w 3 h 8 r0 h 6734b531dbd05b4c
+            193 l0 g7 m0 adv 6.300000 lsb 0.450000 y -9 w 7 h 10 r0 h e267eb26148f3b51
+            """;
+        var ttf = fire.Terminal.TrueType.TrueTypeFont.Load(fireTestFont);
+        CheckNat("TrueType: der Zeichensatz des Tests wird gelesen", ttf != null && ttf.UnitsPerEm == 1000 && ttf.GetName(1) == "Fire Test", "");
+        string Dump(fire.Terminal.TrueType.TrueTypeFont f, double size)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var sb = new System.Text.StringBuilder();
+            f.TryGetLineMetrics(size, out var lm);
+            sb.Append($"size {size.ToString("0.######", inv)} asc {lm.Ascender.ToString("F6", inv)} desc {lm.Descender.ToString("F6", inv)} gap {lm.LineGap.ToString("F6", inv)}\n");
+            foreach (uint cp in new uint[] { 32, 46, 65, 72, 79, 86, 105, 193 })
+            {
+                bool lr = f.TryLookup(cp, out uint g);
+                bool mr = f.TryGetGlyphMetrics(size, g, out var gm);
+                ulong h = 1469598103934665603UL;
+                int rr = 0;
+                if (mr && gm.MinWidth > 0 && gm.MinHeight > 0)
+                {
+                    int w = (gm.MinWidth + 3) & ~3, hh = gm.MinHeight;
+                    var px = new byte[w * hh];
+                    rr = f.TryRender(size, g, px, w, hh) ? 0 : -1;
+                    foreach (var b in px) { h ^= b; h *= 1099511628211UL; }
+                }
+                sb.Append($"{cp} l{(lr ? 0 : -1)} g{g} m{(mr ? 0 : -1)} adv {gm.AdvanceWidth.ToString("F6", inv)} lsb {gm.LeftSideBearing.ToString("F6", inv)} y {gm.YOffset} w {gm.MinWidth} h {gm.MinHeight} r{rr} h {h:x16}\n");
+            }
+            return sb.ToString();
+        }
+        string dumped = Dump(ttf!, 20) + Dump(ttf!, 9);
+        CheckNat("TrueType: Metriken und Glyphenbilder wie das Original (libschrift 0.10.2, Groesse 20 und 9, einfache und zusammengesetzte Glyphen, Kurven)",
+            dumped.TrimEnd('\n') == golden.Replace("\r", "").Trim('\n'), dumped);
+
+        var testFont = new fire.Terminal.TextFont("Fire Test", ttf!);
+        CheckNat("TrueType: Textbreite mit Kerning (A-V -80, V-A -60, H-O +30 von 1000 Einheiten) und Zeilenhoehe (Ascent 16 + Descent 4 + Gap 2 bei Groesse 20)",
+            testFont.Measure("AV", 20) == 24 && testFont.Measure("VA", 20) == 25 && testFont.Measure("HO", 20) == 29 && testFont.Measure("AA", 20) == 28 && testFont.Measure("AVA", 20) == 37
+            && testFont.Ascent(20) == 16 && testFont.LineHeight(20) == 22 && testFont.LineHeight(10) == 11 && testFont.Measure("", 20) == 0 && testFont.Measure("\n\t", 20) == 0,
+            $"{testFont.Measure("AV", 20)} {testFont.Measure("VA", 20)} {testFont.Measure("HO", 20)} {testFont.Measure("AA", 20)} {testFont.Measure("AVA", 20)} {testFont.Ascent(20)} {testFont.LineHeight(20)}");
+        CheckNat("TrueType: ein Zeichen jenseits der BMP (Surrogatpaar) zaehlt als eines, ein einzelnes Surrogat auch",
+            testFont.Measure("A\U0001F600A", 20) == testFont.Measure("A�A", 20) && testFont.Measure("A\uD800A", 20) == testFont.Measure("A�A", 20), "");
+
+        // damaged fonts: cut off anywhere, bytes changed at random - no exception, only "no glyph"
+        {
+            string failure = "";
+            var random = new Random(12345);
+            for (int round = 0; round < 400 && failure == ""; round++)
+            {
+                byte[] data = (byte[])fireTestFont.Clone();
+                if (round < 150) data = data.AsSpan(0, round * 7 % data.Length).ToArray();
+                else for (int k = 0, n = 1 + random.Next(6); k < n; k++) data[random.Next(data.Length)] = (byte)random.Next(256);
+                try
+                {
+                    var damaged = fire.Terminal.TrueType.TrueTypeFont.Load(data);
+                    if (damaged == null) continue;
+                    var tf = new fire.Terminal.TextFont("x", damaged);
+                    tf.Measure("AVAHO i.Á", 17); tf.LineHeight(17); tf.Ascent(17); damaged.GetName(1); damaged.GetName(4);
+                    var sf = new fire.Terminal.Framebuffer(40, 30);
+                    new fire.Terminal.Renderer(sf, new fire.Terminal.IntegratedGlyphFont()).DrawText(1, 1, "AVAHO i.Á", new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.White)), null, tf, 17);
+                }
+                catch (Exception ex) { failure = $"Runde {round}: {ex.GetType().Name}: {ex.Message}"; }
+            }
+            CheckNat("TrueType: abgeschnittene und veraenderte Dateien ergeben keine Ausnahme (400 Faelle)", failure == "", failure);
+        }
+
+    // Fonts in the graphics library (Fonts, Font, Renderer.DrawText with a font, TextWidth/TextHeight/TextAscent): the VM and the native program must draw the same pixels
+    {
+        string fontResDir = Path.Combine(Path.GetTempPath(), "fire-font-res-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fontResDir);
+        File.WriteAllBytes(Path.Combine(fontResDir, "tester.ttf"), fireTestFont);
+        File.WriteAllText(Path.Combine(fontResDir, "notafont.txt"), "this is text, not a font");
+        string frd = fontResDir.Replace('\\', '/');
+        string fontScript = $$"""
+            #import "graphics"
+            class H { static int Of(b) { var bytes = b.ReadBytes(); var h = 17; for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 } return h } }
+            var f = Fonts.Add(new Resource("{{frd}}/tester.ttf"), "tester")
+            print(f.Name() + " " + f.IsBitmap())
+            print(Fonts.Get("TESTER").Name() + " " + Fonts.Get("fire test").Name() + " " + Fonts.Get("FireSans").Name())
+            print(Fonts.Get("8x8").Name() + " " + Fonts.Get("8x14").IsBitmap() + " " + Fonts.Get("14x8").Name() + " " + Fonts.Get("").Name() + " " + Fonts.Get("no such font").Name())
+            print(Fonts.Has("tester") + " " + Fonts.Has("firesans") + " " + Fonts.Has("8x8") + " " + Fonts.Has("zzz"))
+            var fb = new Framebuffer(130, 70)
+            var r = new Renderer(fb)
+            var white = new SolidBrush(0xFFFFFFFF)
+            var ghost = new SolidBrush(0x80FFFFFF)
+            var blue = new SolidBrush(0xFFFF0000)
+            print(r.TextWidth("AVAVHO iAi.Á", f, 20) + " " + r.TextHeight(f, 20) + " " + r.TextAscent(f, 20) + " " + r.TextWidth("AVA", f, 10) + " " + r.TextHeight(f, 10))
+            print(r.TextWidth("AVA", undefined, 20) + " " + r.TextHeight() + " " + r.TextWidth("AVA", Fonts.Get("8x8")) + " " + r.TextHeight(Fonts.Get("8x8")) + " " + r.TextAscent(Fonts.Get("8x8")))
+            print(r.TextWidth("AVA", f, 0) + " " + r.TextWidth("AVA", f, -5) + " " + r.TextWidth("AVA", f, 14) + " " + r.TextHeight(f, 100000) + " " + r.TextHeight(f, 512))
+            // 1: white on black
+            r.DrawText(2, 2, "AVAVHO iAi.Á", white, undefined, f, 20)
+            print(H.Of(fb))
+            // 2: translucent over a background, with a background brush for the line
+            r.ClearTo(0xFF804020)
+            r.DrawText(3, 4, "HOAV iA", ghost, blue, f, 18)
+            r.DrawText(3, 30, "HOAV iA", white, ghost, f, 11)
+            print(H.Of(fb))
+            // 3: without blending
+            r.AlphaBlending = false
+            r.DrawText(1, 40, "AVA", ghost, undefined, f, 24)
+            r.AlphaBlending = true
+            print(H.Of(fb))
+            // 4: clipped, partly outside, odd sizes
+            r.ClearTo(0xFF101010)
+            r.SetClip(10, 10, 60, 30)
+            r.DrawText(0, 0, "AVAVHO iAi.", white, undefined, f, 30)
+            r.ResetClip()
+            r.DrawText(-6, 50, "HOAV", white, undefined, f, 16)
+            r.DrawText(120, 60, "HOAV", white, undefined, f, 16)
+            r.DrawText(5, 5, "HO", white, undefined, f, 1)
+            r.DrawText(40, 5, "HO", white, undefined, f, 400)
+            print(H.Of(fb))
+            // 5: bitmap fonts of the library next to the font of the renderer
+            r.ClearTo(0xFF000000)
+            r.DrawText(2, 2, "console", white)
+            r.DrawText(2, 18, "eight by eight", white, blue, Fonts.Get("8x8"))
+            r.DrawText(2, 30, "8x14 é中", ghost, blue, Fonts.Get("8x14"), 99)
+            r.DrawText(2, 48, "console font", white, undefined, Fonts.Console(), 30)
+            print(H.Of(fb))
+            // 6: a palette framebuffer: from alpha 128 up a pixel is drawn
+            var pfb = new Framebuffer(130, 40, ColorMode.Palette)
+            var pr = new Renderer(pfb)
+            pr.DrawText(2, 2, "AVAVHO iAi.", new SolidBrush(7), undefined, f, 20)
+            pr.DrawText(2, 22, "HOAV", new SolidBrush(0xFFFF0000), new SolidBrush(2), f, 14)
+            print(H.Of(pfb))
+            // 7: the same font from bytes, a font that is not one, a released font
+            var g = Fonts.FromBytes(new Resource("{{frd}}/tester.ttf").Bytes())
+            r.ClearTo(0xFF000000)
+            r.DrawText(2, 2, "AVAVHO iAi.Á", white, undefined, g, 20)
+            print(g.Name() + " " + g.IsBitmap() + " " + (g.id != f.id))
+            g.Release()
+            try {
+                Fonts.Add(new Resource("{{frd}}/notafont.txt"))
+                print("no error")
+            } catch (GraphicsException e) {
+                print("error " + e.message)
+            }
+            try { Fonts.FromBytes(new byte[3]) } catch (GraphicsException e) { print("error " + e.message) }
+            """;
+        string fontOut = vmOutput(fontScript);
+        string[] fontLines = fontOut.TrimEnd('\n').Split('\n');
+        CheckNat("Schriften: Fonts.Add/Get/Has (Alias, Familie, Systemfont, eingebaute, unbekannt = Konsolenschrift), Masse, Palette, Fehler",
+            fontLines.Length == 16 && fontLines[0] == "Fire Test False" && fontLines[1] == "Fire Test Fire Test Fire Test" && fontLines[2] == "8x8 True 8x14 console console"
+            && fontLines[3] == "True True True False" && fontLines[4] == "128 22 16 19 11" && fontLines[5] == "24 14 24 8 8" && fontLines[6] == "26 26 26 563 563"
+            && string.Join(",", fontLines.Skip(7).Take(6)) == "289788651,962691604,823710043,77448282,232389351,870473533"
+            && fontLines[13] == "Fire Test False True" && fontLines[14] == "error The file '" + frd + "/notafont.txt' is not a TrueType font." && fontLines[15] == "error The data is not a TrueType font.",
+            "  erhalten:\n" + fontOut);
+        CheckNat("Schriften: dieselben Pixel bei jedem Aufruf (die Glyphen werden zwischengespeichert)", vmOutput(fontScript) == fontOut, "");
+        natCases = natCases.Append(("Schriften: TrueType-Text, eingebaute Schriften, Systemschrift, Palette, Clip - nativ == VM", fontScript)).ToArray();
+    }
+
+        CheckNat("TrueType: eine Datei, die keine Schrift ist, wird abgelehnt", fire.Terminal.TrueType.TrueTypeFont.Load(new byte[] { 1, 2, 3 }) == null && fire.Terminal.TrueType.TrueTypeFont.Load(Array.Empty<byte>()) == null, "");
+
+        // the fonts of a program: built-in, added, system
+        {
+            var fonts = new fire.Terminal.FontManager();
+            int added = fonts.Add(fireTestFont, "fonts/Tester.ttf");
+            int bad = fonts.Add(new byte[] { 0, 1, 2 }, "bad");
+            CheckNat("Schriften: Namen werden gefunden (eingebaute 8x14/14x8/8x8, hinzugefuegte nach Alias, Dateiname ohne Ordner und Endung, Familie, voller Name; ohne Gross- und Kleinschreibung, Leerzeichen und Satzzeichen)",
+                fonts.Open("") == 0 && fonts.Open("Console") == 0 && fonts.Open("8x14") == fire.Terminal.FontManager.Builtin8x14 && fonts.Open("14x8") == fire.Terminal.FontManager.Builtin8x14 && fonts.Open("8x8") == fire.Terminal.FontManager.Builtin8x8
+                && added > 2 && bad == -1 && fonts.Open("tester") == added && fonts.Open("TESTER") == added && fonts.Open("Fire Test") == added && fonts.Open("fire-test") == added,
+                $"{fonts.Open("")} {fonts.Open("8x14")} {added} {bad} {fonts.Open("tester")} {fonts.Open("Fire Test")}");
+            int sys = fonts.Open("FireSans");
+            CheckNat("Schriften: eine Schrift des Systems (hier der Ordner aus FIRE_FONT_DIRS) wird nach dem Dateinamen gefunden und behalten; eine unbekannte nicht",
+                sys > 2 && sys != added && fonts.Open("fire sans") == sys && fonts.Open("no such font at all") == -1 && fonts.Open("no such font at all") == -1, $"{sys}");
+            var other = new fire.Terminal.FontManager();
+            CheckNat("Schriften: ueber den vollen Namen (nicht den Dateinamen) wird auch ein Systemfont gefunden; Destroy raeumt auf, eingebaute bleiben",
+                other.Open("Fire Test") > 2 && !other.Destroy(1) && other.Destroy(other.Open("Fire Test")) && other.Open("Fire Test") > 2, "");
+        }
     }
 
 

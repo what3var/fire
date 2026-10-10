@@ -37,6 +37,11 @@ namespace UI {
         Brush background
         Brush foreground
         Pen pen
+        // The font of the text of this element (and of the elements inside it, unless they choose their own): a name for Fonts.Get - a font added with Fonts.Add, a built-in one
+        // ("8x14", "8x8") or one installed on the system. "" = that of the surrounding element, in the end `theme.font` (default "": the console font of the renderer).
+        // fontSize is the height of the letters in pixels (0 = that of the surrounding element, in the end `theme.fontSize`); the bitmap fonts ignore it.
+        string font = ""
+        int fontSize = 0
         // Name (for the parts of a template, see FindPart)
         string name = ""
         // Own resources (undefined until you assign a ResourceDictionary) and style (undefined: the implicit style, see StyleKey)
@@ -85,6 +90,43 @@ namespace UI {
             this.width = width
             this.height = height
             this.margin = new Thickness(0)
+        }
+
+        // ---- Text and fonts ----
+
+        // The element around this one for inheriting the font: its parent, for a floating element (a menu) the one that opened it.
+        Outer() {
+            if (this.parent != undefined) { return this.parent }
+            return this.owner
+        }
+
+        // The name of the font of this element: its own `font`, else that of the nearest element around it that has one, else `theme.font`.
+        string FontName(root) {
+            var e = this
+            while (e != undefined) {
+                if (e.font != "") { return e.font }
+                e = e.Outer()
+            }
+            return root.theme.font
+        }
+
+        // The size of the letters in pixels, in the same way.
+        int FontPixels(root) {
+            var e = this
+            while (e != undefined) {
+                if (e.fontSize > 0) { return e.fontSize }
+                e = e.Outer()
+            }
+            return root.theme.fontSize
+        }
+
+        // The width of `text` in the font of this element, and the height of a line of text.
+        int TextWidth(root, string text) { return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.FontPixels(root)) }
+        int TextHeight(root) { return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.FontPixels(root)) }
+
+        // Draws `text` in the font of this element with its upper left corner at (x, y) (brush `brush` for the letters).
+        DrawString(root, int x, int y, string text, Brush brush) {
+            root.renderer.DrawText(x, y, text, brush, undefined, root.FontFor(this.FontName(root)), this.FontPixels(root))
         }
 
         // The key under which implicit styles for this kind of element are stored (ResourceDictionary.AddStyle); derived classes inherit it.

@@ -57,7 +57,7 @@ namespace UI {
 
         string StyleKey() { return "MenuPopup" }
 
-        int RowHeight(root) { return root.ch + 8 }
+        int RowHeight(root) { return this.TextHeight(root) + 8 }
 
         int HeightOf(root, item) {
             if (item.separator) { return 7 }
@@ -71,8 +71,8 @@ namespace UI {
                 var item = this.entries[i]
                 h = h + this.HeightOf(root, item)
                 if (item.separator) { continue }
-                var line = 28 + root.cw * item.header.Length + 12
-                if (item.shortcut != "") { line = line + 24 + root.cw * item.shortcut.Length }
+                var line = 28 + this.TextWidth(root, item.header) + 12
+                if (item.shortcut != "") { line = line + 24 + this.TextWidth(root, item.shortcut) }
                 if (item.HasSubmenu()) { line = line + 12 }
                 w = UI.M.Max(w, line)
             }
@@ -131,8 +131,8 @@ namespace UI {
                     r.DrawLine(cx, cy, cx + 3, cy + 4, tick)
                     r.DrawLine(cx + 3, cy + 4, cx + 10, cy - 4, tick)
                 }
-                var ty = y + (h - root.ch) / 2
-                r.DrawText(ax + 28, ty, item.header, text)
+                var ty = y + (h - this.TextHeight(root)) / 2
+                this.DrawString(root, ax + 28, ty, item.header, text)
                 var right = ax + this.actualWidth - 12
                 if (item.HasSubmenu()) {
                     // an arrow to the right
@@ -140,7 +140,7 @@ namespace UI {
                     r.FillTriangle(right - 4, my - 4, right - 4, my + 4, right + 1, my, text)
                     right = right - 12
                 }
-                if (item.shortcut != "") { r.DrawText(right - root.cw * item.shortcut.Length, ty, item.shortcut, text) }
+                if (item.shortcut != "") { this.DrawString(root, right - this.TextWidth(root, item.shortcut), ty, item.shortcut, text) }
                 y = y + h
             }
         }
@@ -271,13 +271,13 @@ namespace UI {
             return item
         }
 
-        int HeaderWidth(root, item) { return root.cw * item.header.Length + 16 }
+        int HeaderWidth(root, item) { return this.TextWidth(root, item.header) + 16 }
 
         MeasureCore(root, int aw, int ah) {
             var w = 0
             for (var i = 0; i < this.menus.count; i = i + 1) { w = w + this.HeaderWidth(root, this.menus[i]) }
             this.cw = w
-            this.ch = root.ch + 8
+            this.ch = this.TextHeight(root) + 8
         }
 
         // The index of the title at the screen position px, or -1.
@@ -325,7 +325,7 @@ namespace UI {
                     root.renderer.FillRect(x, ay, w, this.actualHeight, theme.faceHover)
                 }
                 if (!item.enabled) { text = theme.textDisabled }
-                root.renderer.DrawText(x + 8, ay + (this.actualHeight - root.ch) / 2, item.header, text)
+                this.DrawString(root, x + 8, ay + (this.actualHeight - this.TextHeight(root)) / 2, item.header, text)
                 x = x + w
             }
         }

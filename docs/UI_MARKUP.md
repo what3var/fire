@@ -70,7 +70,7 @@ that a window can be composed of views.
 ## Elements and properties
 
 Every element has the properties it shares with all others - `x y width height visible enabled`, `margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `halign` (`Stretch Left Center Right`),
-`valign` (`Stretch Top Center Bottom`), `minWidth minHeight maxWidth maxHeight`, `background` `foreground` (colours), `pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `style`, `template` (keys of
+`valign` (`Stretch Top Center Bottom`), `minWidth minHeight maxWidth maxHeight`, `background` `foreground` (colours), `pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `font` (a font name for `Fonts.Get`, docs/FONTS.md; empty = that of the surrounding element) and `fontSize` (pixels), `style`, `template` (keys of
 resources, see below) - plus `name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
 The attribute names are those of the fire fields (the first letter may be upper case: `Text` = `text`).
 

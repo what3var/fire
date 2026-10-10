@@ -2207,6 +2207,13 @@ The package `fire-tracker` (docs/TRACKER.md is the reference): `Tracker.Song` (a
 `Seek`, `Mute`, `Separation`, `Interpolate`, `Gain`, `Loop`), `Tracker.Player` (a song on an `Audio.Output`: `Pump()` feeds the output without waiting, `Play()` plays to the end) and `Tracker.Note`. The replayer and the mixer are C++ (the VM calls them through the package ABI, a native build compiles them in; both render the
 same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException` (with a `code`), `Tracker.BadFormatException` (8) and `Tracker.UnsupportedException` (6).
 
+### 8.28a Fonts for text at pixel positions (`#import "graphics"`)
+
+`Renderer.DrawText(x, y, text, foreground, background = undefined, font = undefined, size = 0)` draws in the console font of the renderer (the built-in 8x14 or 8x8 bitmap font) or, given a `Font`, in one of the two built-in
+bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels. `Fonts.Get(name)` finds a font by name - the built-in ones, then the ones added with `Fonts.Add(new Resource("x.ttf"), alias = "")` (by alias,
+file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
+The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
+
 ### 8.29 Projects and solutions
 
 A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its

@@ -9,8 +9,8 @@ namespace UI {
         }
 
         MeasureCore(root, int aw, int ah) {
-            this.cw = root.cw * this.text.Length
-            this.ch = root.ch
+            this.cw = this.TextWidth(root, this.text)
+            this.ch = this.TextHeight(root)
         }
 
         string StyleKey() { return "Label" }
@@ -22,7 +22,7 @@ namespace UI {
             if (c == undefined) { c = this.foreground }
             if (c == undefined) { c = root.theme.text }
             if (!this.enabled) { c = root.theme.textDisabled }
-            root.renderer.DrawText(ax, ay, this.text, c)
+            this.DrawString(root, ax, ay, this.text, c)
         }
     }
 
@@ -41,8 +41,8 @@ namespace UI {
 
         // Without a fixed size (width/height = -1) as big as the text plus margin
         MeasureCore(root, int aw, int ah) {
-            this.cw = root.cw * this.text.Length + 24
-            this.ch = root.ch + 12
+            this.cw = this.TextWidth(root, this.text) + 24
+            this.ch = this.TextHeight(root) + 12
         }
 
         // Has the button been clicked since the last query? (resets the flag)
@@ -76,9 +76,9 @@ namespace UI {
             var color = theme.text
             if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
-            var tx = ax + (this.actualWidth - root.cw * this.text.Length) / 2
-            var ty = ay + (this.actualHeight - root.ch) / 2
-            root.renderer.DrawText(tx, ty, this.text, color)
+            var tx = ax + (this.actualWidth - this.TextWidth(root, this.text)) / 2
+            var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
+            this.DrawString(root, tx, ty, this.text, color)
         }
 
         MouseDown(root, int button, int px, int py) {
@@ -127,8 +127,8 @@ namespace UI {
 
         // the box, 6 pixels of spacing, the text
         MeasureCore(root, int aw, int ah) {
-            this.cw = 14 + 6 + root.cw * this.text.Length
-            this.ch = UI.M.Max(root.ch, 14)
+            this.cw = 14 + 6 + this.TextWidth(root, this.text)
+            this.ch = UI.M.Max(this.TextHeight(root), 14)
         }
 
         Draw(root, int ax, int ay) {
@@ -155,7 +155,7 @@ namespace UI {
             var color = theme.text
             if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
-            root.renderer.DrawText(ax + box + 6, ay + (this.actualHeight - root.ch) / 2, this.text, color)
+            this.DrawString(root, ax + box + 6, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.text, color)
         }
 
         MouseDown(root, int button, int px, int py) {
@@ -218,8 +218,23 @@ namespace UI {
             if (callback != undefined) { callback() }
         }
 
-        // How many characters fit into the field?
-        int Fit(root) { return (this.actualWidth - 8) / root.cw }
+        // The width of the text between two character positions (`start` and `count` characters) in the font of the field.
+        int Span(root, int start, int count) {
+            if (count <= 0) { return 0 }
+            return this.TextWidth(root, this.text.Substring(start, count))
+        }
+
+        // Is the field in the font of the renderer (monospaced, so that columns can be counted instead of measured)?
+        bool Plain(root) { return this.FontName(root) == "" }
+
+        // How many characters, from `scroll` on, fit into the field?
+        int Fit(root) {
+            var room = this.actualWidth - 8
+            if (this.Plain(root)) { return room / root.cw }
+            var count = 0
+            while (this.scroll + count < this.text.Length && this.Span(root, this.scroll, count + 1) <= room) { count = count + 1 }
+            return count
+        }
 
         Draw(root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
@@ -234,31 +249,52 @@ namespace UI {
             root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
 
             // the caret stays visible: the visible section moves along
-            var fit = this.Fit(root)
+            var room = this.actualWidth - 8
             if (this.caret < this.scroll) { this.scroll = this.caret }
-            if (this.caret > this.scroll + fit) { this.scroll = this.caret - fit }
+            if (this.Plain(root)) {
+                var fit = room / root.cw
+                if (this.caret > this.scroll + fit) { this.scroll = this.caret - fit }
+            } else {
+                while (this.scroll < this.caret && this.Span(root, this.scroll, this.caret - this.scroll) > room) { this.scroll = this.scroll + 1 }
+            }
             if (this.scroll < 0) { this.scroll = 0 }
 
             var count = this.text.Length - this.scroll
-            if (count > fit) { count = fit }
+            var fits = this.Fit(root)
+            if (count > fits) { count = fits }
             if (count < 0) { count = 0 }
             var color = theme.text
             if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
-            var ty = ay + (this.actualHeight - root.ch) / 2
+            var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
             if (count > 0) {
-                root.renderer.DrawText(ax + 4, ty, this.text.Substring(this.scroll, count), color)
+                this.DrawString(root, ax + 4, ty, this.text.Substring(this.scroll, count), color)
             }
             if (this.focused) {
-                var cx = ax + 4 + (this.caret - this.scroll) * root.cw
+                var cx = ax + 4 + this.Span(root, this.scroll, this.caret - this.scroll)
                 root.renderer.DrawLine(cx, ay + 3, cx, ay + this.actualHeight - 4, theme.caret)
             }
         }
 
         MouseDown(root, int button, int px, int py) {
             if (button != 1) { return }
-            // round to the next character boundary (integer: add half a cell width, then divide)
-            var column = (px - (this.ax + 4) + root.cw / 2) / root.cw
+            // round to the next character boundary (monospaced: add half a cell width, then divide; otherwise measure the text up to each boundary)
+            var column = 0
+            if (this.Plain(root)) {
+                column = (px - (this.ax + 4) + root.cw / 2) / root.cw
+            } else {
+                var rest = this.text.Length - this.scroll
+                var before = 0
+                while (column < rest) {
+                    var edge = this.Span(root, this.scroll, column + 1)
+                    if (this.ax + 4 + edge > px) {
+                        if (px - (this.ax + 4 + before) >= this.ax + 4 + edge - px) { column = column + 1 }
+                        break
+                    }
+                    before = edge
+                    column = column + 1
+                }
+            }
             if (px < this.ax + 4) { column = 0 }
             this.caret = this.scroll + column
             if (this.caret < 0) { this.caret = 0 }

@@ -209,7 +209,7 @@ Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigene
   `DrawPolygon` (sie sind Pfade). Breite 1..512; `PenShape.Round` (Kreisspitze: Pixel mit `(2i-(w-1))^2 + (2j-(w-1))^2 <= w^2-1`) oder `PenShape.Square`. Die Spitze wird **vorgerendert** (die Zeilen des Stempels) und dann nur noch kopiert bzw. gemischt;
   ein halbdurchsichtiger Stift mischt die VEREINIGUNG aller Stempel genau einmal (Überlappungen werden nicht doppelt gemischt).
 - Eigenschaften: `SolidBrush.Color`, `Pen.Color/Width/Shape` (änderbar; ein Stift rendert dann neu).
-- Text: `DrawText(x, y, text, vordergrundPinsel, hintergrundPinsel = undefined)`; ohne Hintergrundpinsel bleibt die Zelle unberührt. `SetPixel`/`GetPixel`/`GetPixelIndex` und `Clear`/`Clear(farbe)` bleiben farbbasiert.
+- Text: `DrawText(x, y, text, vordergrundPinsel, hintergrundPinsel = undefined)`; ohne Hintergrundpinsel bleibt die Zelle unberührt. Mit `font` und `size` als weiteren Argumenten (`DrawText(x, y, text, pinsel, hintergrund, Fonts.Get("Name"), 18)`) wird eine andere Schrift benutzt - eine der beiden eingebauten Bitmap-Schriften (`"8x14"`, `"8x8"`) oder eine TrueType-Schrift (eingebettet oder auf dem System); siehe docs/FONTS.md. `SetPixel`/`GetPixel`/`GetPixelIndex` und `Clear`/`Clear(farbe)` bleiben farbbasiert.
 
 **Alpha-Blending** ist schaltbar (`renderer.AlphaBlending`, Vorgabe an; C#: `Renderer.AlphaBlending`):
 

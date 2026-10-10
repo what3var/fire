@@ -1308,7 +1308,7 @@ inline void pieceOf(Value v, Piece& out, OwnList* list) {
         case K_Float: out.n = widenAscii(tmp, (uint32_t)formatReal(v.f, tmp), out.buf); break;
         case K_Undefined: setPiece(out, "undefined"); if (v.unit && !unitIsUnitless(v.unit)) { out.buf[out.n++] = u':'; } break;
         case K_Class: {
-            Value text;
+            Value text{};   // (zeroed: the compiler cannot see that userToString sets it)
             if (userToString(v, list, &text)) {
                 if (FIRE_UNLIKELY(g_unwind.active || text.kind != K_String)) { out.p = out.buf; out.n = 0; return; }   // ToString() threw
                 out.p = strOf(text)->data; out.n = strOf(text)->length;

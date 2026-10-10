@@ -33,6 +33,7 @@ namespace fire.Terminal.Bridge
         public const string BrushPrefix = "__GRPHBsh";
         public const string PenPrefix = "__GRPHPen";
         public const string SlicerPrefix = "__GRPHSlc";
+        public const string FontPrefix = "__GRPHFnt";
 
         /// <summary>Invalid/failed creation - IdManager always assigns
         /// real IDs from 1 upwards (see there), so -1 can safely be told apart
@@ -54,6 +55,7 @@ namespace fire.Terminal.Bridge
             natives.RegisterGroup(BrushPrefix, BuildBrushFunctions(renderers));
             natives.RegisterGroup(PenPrefix, BuildPenFunctions(renderers));
             natives.RegisterGroup(SlicerPrefix, BuildSlicerFunctions(framebuffers));
+            natives.RegisterGroup(FontPrefix, BuildFontFunctions(renderers.Fonts));
         }
 
         public static void RegisterStubs(
@@ -64,6 +66,7 @@ namespace fire.Terminal.Bridge
             natives.RegisterGroup(BrushPrefix, StubsOf(BrushFunctionNames));
             natives.RegisterGroup(PenPrefix, StubsOf(PenFunctionNames));
             natives.RegisterGroup(SlicerPrefix, new Dictionary<string, NativeFunction> { ["Slice"] = args => Value.MakeUndefined() /*STUB*/ });
+            natives.RegisterGroup(FontPrefix, StubsOf(FontFunctionNames));
         }
 
         private static Dictionary<string, NativeFunction> BuildFramebufferFunctionStubs()
@@ -239,8 +242,10 @@ namespace fire.Terminal.Bridge
             "GetAlphaBlending", "SetAlphaBlending", "DrawText",
             "FillRect", "Fill", "FillCircle", "FillEllipse", "FillTriangle", "FillPolygon", "FloodFill", "FloodFillBorder",
             "DrawPoint", "DrawLine", "DrawPath", "DrawRect", "DrawCircle", "DrawEllipse", "DrawTriangle", "DrawPolygon",
-            "Blit", "SetClip", "ResetClip",
+            "Blit", "SetClip", "ResetClip", "DrawTextFont",
         };
+
+        private static readonly string[] FontFunctionNames = { "Load", "Add", "Open", "Destroy", "Name", "IsBitmap", "Ascent", "Height", "Measure" };
 
         private static readonly string[] BrushFunctionNames = { "CreateSolid", "Destroy", "GetColor", "SetColor" };
 
@@ -311,7 +316,26 @@ namespace fire.Terminal.Bridge
                 ["DrawPolygon"] = args => Nothing(() => mgr.DrawPolygon(I(args[0]), ReadPoints(args[1]), I(args[2]), args[3].AsBool())),
                 ["SetClip"] = args => Nothing(() => mgr.SetClip(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]))),
                 ["ResetClip"] = args => Nothing(() => mgr.ResetClip(I(args[0]))),
+                // text in a font: font ID 0 = the font of the renderer, size in pixels
+                ["DrawTextFont"] = args => Nothing(() => mgr.DrawTextFont(I(args[0]), I(args[1]), I(args[2]), args[3].AsString(), I(args[4]), I(args[5]), I(args[6]), I(args[7]))),
                 ["Blit"] = args => Nothing(() => mgr.Blit(I(args[0]), I(args[1]), I(args[2]), I(args[3]), I(args[4]), I(args[5]), I(args[6]), I(args[7]), I(args[8]), I(args[9]), I(args[10]), I(args[11]))),
+            });
+        }
+
+        /// <summary>The fonts (see <see cref="FontManager"/>): IDs of fonts, 0 = the font of the renderer, -1 = none.</summary>
+        private static Dictionary<string, NativeFunction> BuildFontFunctions(FontManager fonts)
+        {
+            return Ordered(FontFunctionNames, new Dictionary<string, NativeFunction>
+            {
+                ["Load"] = args => Value.MakeInt(fonts.Load(args[0].AsBuffer().Bytes)),
+                ["Add"] = args => Value.MakeInt(fonts.Add(args[0].AsBuffer().Bytes, args[1].AsString())),
+                ["Open"] = args => Value.MakeInt(fonts.Open(args[0].AsString())),
+                ["Destroy"] = args => Value.MakeBool(fonts.Destroy(I(args[0]))),
+                ["Name"] = args => Value.MakeString(fonts.Get(I(args[0])).Name),
+                ["IsBitmap"] = args => Value.MakeBool(fonts.Get(I(args[0])).IsBitmap),
+                ["Ascent"] = args => Value.MakeInt(fonts.Get(I(args[0])).Ascent(I(args[1]))),
+                ["Height"] = args => Value.MakeInt(fonts.Get(I(args[0])).LineHeight(I(args[1]))),
+                ["Measure"] = args => Value.MakeInt(fonts.Get(I(args[0])).Measure(args[2].AsString(), I(args[1]))),
             });
         }
 
@@ -675,6 +699,80 @@ namespace fire.Terminal.Bridge
                 }
             }
 
+            // A font for text at pixel positions (Renderer.DrawText): the console font of the renderer (ID 0), one of the two built-in bitmap fonts ("8x14", "8x8") or a TrueType font
+            // (.ttf). Get fonts with Fonts.Get / Fonts.Add - a Font is only a name for the font that the program holds; releasing it is not needed.
+            class Font {
+                int id
+
+                construct(int id) {
+                    this.id = id
+                }
+
+                // The name of the font (for TrueType its full name, "console" for the font of the renderer)
+                string Name() {
+                    if (this.id == 0) { return "console" }
+                    return __GRPHFntName(this.id)
+                }
+
+                // Is it a bitmap font (fixed size, the size of the text is ignored)?
+                bool IsBitmap() {
+                    if (this.id == 0) { return true }
+                    return __GRPHFntIsBitmap(this.id)
+                }
+
+                // Frees a font that was made with Fonts.FromBytes or Fonts.Add (the built-in fonts stay); later use of it is an error.
+                Release() {
+                    if (this.id > 0) {
+                        __GRPHFntDestroy(this.id)
+                    }
+                }
+            }
+
+            // Finding fonts. A TrueType font comes from an embedded file (`Fonts.Add(new Resource("fonts/Roboto.ttf"))`), from bytes, or from the system.
+            // Fonts.Get(name) looks the name up, in this order: "" or "console" is the font of the renderer; "8x14" and "8x8" the built-in bitmap fonts;
+            // a font that was added with Fonts.Add (by its alias, the file name without folder and extension, its family name or its full name); a font installed on the system
+            // (the font folders of the system and the folders in the environment variable FIRE_FONT_DIRS, separated by ';'; by file name, full name or family name);
+            // otherwise the console font. Names are compared without case, spaces and punctuation ("DejaVu Sans" = "dejavusans" = "DejaVuSans").
+            class Fonts {
+                // Reads a TrueType font from an embedded file and makes it findable by name (see above); `alias` is an additional name. Error: GraphicsException if the data is no TrueType font
+                // (outlines in the "glyf" format; OpenType fonts with PostScript outlines are not supported).
+                static Font Add(resource, string alias = "") {
+                    var name = alias
+                    if (name == "") { name = resource.Name() }
+                    var id = __GRPHFntAdd(resource.Bytes(), name)
+                    if (id < 0) {
+                        throw new GraphicsException("The file '" + resource.Name() + "' is not a TrueType font.")
+                    }
+                    return new Font(id)
+                }
+
+                // Reads a TrueType font from the bytes of a file; it has no name to look it up by.
+                static Font FromBytes(data) {
+                    var id = __GRPHFntLoad(data)
+                    if (id < 0) {
+                        throw new GraphicsException("The data is not a TrueType font.")
+                    }
+                    return new Font(id)
+                }
+
+                // The font with this name; the console font if there is none (so that text never fails because of a missing font).
+                static Font Get(string name) {
+                    var id = __GRPHFntOpen(name)
+                    if (id < 0) { id = 0 }
+                    return new Font(id)
+                }
+
+                // Is there a font with this name (other than the console font that Get falls back to)?
+                static bool Has(string name) {
+                    return __GRPHFntOpen(name) >= 0
+                }
+
+                // The font of the renderer.
+                static Font Console() {
+                    return new Font(0)
+                }
+            }
+
             // The renderer draws into a framebuffer: terminal text (Print, Locate, SetColor) and graphics in PIXEL coordinates. Fills take a Brush, drawing takes a Pen.
             // Everything is clipped at the edge of the framebuffer.
             class Renderer {
@@ -722,11 +820,48 @@ namespace fire.Terminal.Bridge
                 int CellWidth() { return __GRPHRndCellWidth(this.id) }
                 int CellHeight() { return __GRPHRndCellHeight(this.id) }
 
-                // Text at pixel coordinates: the character pixels with `foreground`, with `background` the whole cell beneath (without: only the character pixels)
-                DrawText(int x, int y, string text, Brush foreground, Brush background = undefined) {
+                // Text at pixel coordinates: the character pixels with `foreground`, with `background` the whole cell (the line of text with a TrueType font) beneath (without: only the character pixels).
+                // `font` (a Font, see Fonts.Get; without or the console font: the font of the renderer) and `size` (the height of the letters in pixels, 0 = 14; the two bitmap fonts ignore it) choose the font.
+                DrawText(int x, int y, string text, Brush foreground, Brush background = undefined, font = undefined, int size = 0) {
                     var back = 0
                     if (background != undefined) { back = background.id }
-                    __GRPHRndDrawText(this.id, x, y, text, foreground.id, back)
+                    var fontId = 0
+                    if (font != undefined) { fontId = font.id }
+                    if (fontId == 0) {
+                        __GRPHRndDrawText(this.id, x, y, text, foreground.id, back)
+                    } else {
+                        __GRPHRndDrawTextFont(this.id, x, y, text, foreground.id, back, fontId, size)
+                    }
+                }
+
+                // Width of `text` in pixels in the font (what DrawText would take); the console font is monospaced.
+                int TextWidth(string text, font = undefined, int size = 0) {
+                    var fontId = 0
+                    if (font != undefined) { fontId = font.id }
+                    if (fontId == 0) {
+                        return text.Length * __GRPHRndCellWidth(this.id)
+                    }
+                    return __GRPHFntMeasure(fontId, size, text)
+                }
+
+                // Height of a line of text in pixels in the font.
+                int TextHeight(font = undefined, int size = 0) {
+                    var fontId = 0
+                    if (font != undefined) { fontId = font.id }
+                    if (fontId == 0) {
+                        return __GRPHRndCellHeight(this.id)
+                    }
+                    return __GRPHFntHeight(fontId, size)
+                }
+
+                // Pixels from the top of a line of text to its baseline in the font (the console font: the height of a cell).
+                int TextAscent(font = undefined, int size = 0) {
+                    var fontId = 0
+                    if (font != undefined) { fontId = font.id }
+                    if (fontId == 0) {
+                        return __GRPHRndCellHeight(this.id)
+                    }
+                    return __GRPHFntAscent(fontId, size)
                 }
 
                 // ---- Fills (brush) ----
