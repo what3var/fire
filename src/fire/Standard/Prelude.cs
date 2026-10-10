@@ -218,6 +218,8 @@ namespace fire.Standard
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
+                    if (value is of class)
+                        try value.TakeTo(this)
                     this.items[this.count] = value
                     this.count = this.count + 1
                 }
@@ -227,6 +229,8 @@ namespace fire.Standard
                 }
 
                 operator[](int index, class value) {
+                    if (value is of class)
+                        try value.TakeTo(this)
                     this.items[index] = value
                 }
 
@@ -251,6 +255,8 @@ namespace fire.Standard
                         this.items[i] = this.items[i - 1]
                         i = i - 1
                     }
+                    if (value is of class)
+                        try value.TakeTo(this)
                     this.items[index] = value
                     this.count = this.count + 1
                 }

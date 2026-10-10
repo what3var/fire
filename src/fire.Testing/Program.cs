@@ -7303,7 +7303,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         }
 
         // 4) End-to-end: pack a standalone file, start it OUTSIDE the compiler folder.
-        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         if (File.Exists(Path.Combine(baseDir, stubName)))
         {
             string RunPacked(string source, string name, out long size, out PackagePlan? plan)
@@ -7405,7 +7405,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         CliCheck(CommandLineRunner.Run(new[] { "run", bad }, new StringWriter(), errBad) == CommandLineRunner.ExitScriptError && errBad.ToString().Length > 0, "run: Kompilierfehler -> Exitcode 1 mit Meldung");
         CliCheck(CommandLineRunner.Run(new[] { "run", Path.Combine(cliDir, "nix.script") }, new StringWriter(), new StringWriter()) == CommandLineRunner.ExitUsage, "run: fehlende Datei -> Exitcode 2");
 
-        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         if (File.Exists(Path.Combine(AppContext.BaseDirectory, stubName)))
         {
             var outFile = Path.Combine(cliDir, "gebaut.exe");
