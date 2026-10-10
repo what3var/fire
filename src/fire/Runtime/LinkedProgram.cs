@@ -28,6 +28,11 @@ namespace fire.Runtime
         [MemoryPackIgnore]
         public List<string>? PackageLibraryFiles { get; init; }
 
+        /// <summary>The program asks for the GUI subsystem (`#noconsole`, the subsystem of the project): no console window on Windows. Only known while linking (not serialized): the packer and the
+        /// native build apply it to the executable they make.</summary>
+        [MemoryPackIgnore]
+        public bool GuiSubsystem { get; init; }
+
         /// <summary>Execution mode the program runs with (`#debug`/`#performance` in the script or `-m` on the
         /// command line); the packed runtime takes it over from here.</summary>
         public VmExecutionMode ExecutionMode { get; init; }

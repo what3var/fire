@@ -21,8 +21,14 @@ namespace fire.Compiler
         /// <see cref="NativeNotSupportedException"/> propagate.</summary>
         public static string Generate(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
+            return GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan).Cpp;
+        }
+
+        /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
+        public static (string Cpp, bool Gui) GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
+        {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(sources, null, null, mode, floatWidth, target);
-            return CppGenerator.Generate(linked, target);
+            return (CppGenerator.Generate(linked, target), linked.GuiSubsystem);
         }
 
         /// <summary>Writes <paramref name="cpp"/> as <paramref name="fileName"/> into <paramref name="directory"/> with everything it includes: the runtime and the platform package of
@@ -46,7 +52,7 @@ namespace fire.Compiler
         public static NativeBuildResult Build(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
-            string cpp = Generate(sources, target, mode, floatWidth, basePath, defines, plan);
+            var (cpp, gui) = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan);
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             var log = new StringBuilder();
 
@@ -85,7 +91,7 @@ namespace fire.Compiler
                 // a window needs the development files of SDL2: look for them, offer to download them (Windows)
                 if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
                     return new NativeBuildResult(false, exe, missingLibrary);
-                var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe);
+                var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe, gui: gui);
                 log.AppendLine($"{exeName} {arguments}");
                 var (ok, text) = Run(exeName, arguments, workDir);
                 log.Append(text);
@@ -111,7 +117,7 @@ namespace fire.Compiler
         }
 
         /// <summary>The compiler command line for the generated file.</summary>
-        public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null)
+        public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null, bool gui = false)
         {
             string kind = toolchain.EffectiveKind;
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
@@ -152,7 +158,9 @@ namespace fire.Compiler
                 foreach (string d in includes) args.Append($"/I\"{d}\" ");
                 args.Append($"/Fe:\"{exe}\" /Fo:\"{Path.Combine(includeDir, "fire_program.obj")}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
-                if (libDirs.Count > 0) args.Append(" /link").Append(string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")));
+                bool windowsGui = gui && !sharedLibrary && target.Name == "windows";
+                if (libDirs.Count > 0 || windowsGui) args.Append(" /link").Append(string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")));
+                if (windowsGui) args.Append(" /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup");   // no console window; the program still starts at main
             }
             else
             {
@@ -161,6 +169,7 @@ namespace fire.Compiler
                 if (sharedLibrary) args.Append(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
                 foreach (string a in target.Native.CompileArgs) args.Append(a).Append(' ');
+                if (gui && !sharedLibrary && target.Name == "windows") args.Append("-mwindows ");   // no console window; MinGW's startup code still calls main
                 args.Append($"\"{cppFile}\" -I\"{includeDir}\" ");
                 foreach (string d in includes) args.Append($"-I\"{d}\" ");
                 args.Append($"-o \"{exe}\"");

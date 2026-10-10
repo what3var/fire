@@ -7422,6 +7422,107 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 }
 
 // ---------------------------------------------------------------------------
+// Packer: runtime.exe alone (self-contained single-file publish) next to runtime.dll + apphost; subsystem
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Packer: Single-File-Runtime, Bundle verschieben, Subsystem ===");
+    int sfFailures = 0;
+    void SfCheck(bool ok, string what)
+    {
+        if (!ok) sfFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    // a minimal PE file: DOS header, "PE", one section; the bundle signature (with the 8-byte gap in front of it) sits in the section
+    byte[] SyntheticPe()
+    {
+        var pe = new byte[0x400];
+        pe[0] = (byte)'M'; pe[1] = (byte)'Z';
+        BitConverter.GetBytes(0x40).CopyTo(pe, 0x3C);
+        pe[0x40] = (byte)'P'; pe[0x41] = (byte)'E';
+        BitConverter.GetBytes((ushort)1).CopyTo(pe, 0x40 + 6);        // sections
+        BitConverter.GetBytes((ushort)0xF0).CopyTo(pe, 0x40 + 20);    // size of the optional header
+        BitConverter.GetBytes((ushort)0x20B).CopyTo(pe, 0x40 + 24);   // PE32+
+        BitConverter.GetBytes((ushort)3).CopyTo(pe, 0x40 + 24 + 68);  // console subsystem
+        int table = 0x40 + 24 + 0xF0;
+        BitConverter.GetBytes(0x200u).CopyTo(pe, table + 16);         // SizeOfRawData
+        BitConverter.GetBytes(0x200u).CopyTo(pe, table + 20);         // PointerToRawData
+        BundleWriter.BundleSignature.ToArray().CopyTo(pe, 0x300);
+        return pe;
+    }
+
+    var bundleFiles = new List<BundleWriter.BundleFile>
+    {
+        new("runtime.dll", BundleWriter.FileType.Assembly, Enumerable.Range(0, 300).Select(i => (byte)(i * 7)).ToArray()),
+        new("runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, System.Text.Encoding.UTF8.GetBytes("{\"x\":1}")),
+    };
+    var sfDir = Path.Combine(Path.GetTempPath(), "fire-sf-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(sfDir);
+    try
+    {
+        var bundled = Path.Combine(sfDir, "bundled.exe");
+        BundleWriter.Write(SyntheticPe(), bundleFiles, bundled);
+        var before = File.ReadAllBytes(bundled);
+        SfCheck(BundleWriter.IsBundle(before) && BundleWriter.PeEnd(before) == 0x400, "ein fertiges Bundle wird erkannt, das Ende des PE-Teils stimmt");
+
+        // an edit that grows the PE part (like a resource update) must not break the bundle behind it
+        BundleWriter.EditBundled(bundled, path => File.WriteAllBytes(path, File.ReadAllBytes(path).Concat(new byte[0x123]).ToArray()));
+        var after = File.ReadAllBytes(bundled);
+        var entries = BundleWriter.ReadEntries(after);
+        bool intact = entries.Count == 2 && entries.All(e => e.Offset + e.Size <= after.Length)
+            && after.AsSpan((int)entries[0].Offset, (int)entries[0].Size).SequenceEqual(bundleFiles[0].Data)
+            && after.AsSpan((int)entries[1].Offset, (int)entries[1].Size).SequenceEqual(bundleFiles[1].Data);
+        SfCheck(intact && after.Length == before.Length + 0x123, "ein Bundle ueberlebt eine Aenderung des PE-Teils: die Offsets sind verschoben, die Dateien unveraendert");
+
+        var gui = SyntheticPe();
+        var guiPath = Path.Combine(sfDir, "gui.exe");
+        File.WriteAllBytes(guiPath, gui);
+        fire.Utilities.PeResourceEditor.SetSubsystem(guiPath, fire.Utilities.SubsystemType.GUI);
+        SfCheck(BitConverter.ToUInt16(File.ReadAllBytes(guiPath), 0x40 + 24 + 68) == 2, "das Subsystem GUI steht im PE-Kopf");
+        File.WriteAllBytes(guiPath, new byte[] { 1, 2, 3 });
+        fire.Utilities.PeResourceEditor.SetSubsystem(guiPath, fire.Utilities.SubsystemType.GUI);
+        SfCheck(File.ReadAllBytes(guiPath).SequenceEqual(new byte[] { 1, 2, 3 }), "eine Datei ohne PE-Kopf bleibt beim Setzen des Subsystems unberuehrt");
+
+        // the packer with only runtime.exe next to the compiler: the payload goes behind the finished bundle
+        var baseDir2 = Path.Combine(sfDir, "compiler");
+        Directory.CreateDirectory(baseDir2);
+        foreach (var dll in new[] { "fire.dll" }.Concat(Directory.GetFiles(AppContext.BaseDirectory, "MemoryPack*.dll").Select(Path.GetFileName)!))
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, dll!))) File.Copy(Path.Combine(AppContext.BaseDirectory, dll!), Path.Combine(baseDir2, dll!));
+        string stub = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
+        File.Copy(bundled, Path.Combine(baseDir2, stub));
+        var linkedSf = new Linker().CompileAndLink(new[] { "print(\"sf\")" }, null, null);
+        var packedSf = Path.Combine(sfDir, "packed.exe");
+        Packer.PackProgram(linkedSf, packedSf, null, baseDir2);
+        var packedBytes = File.ReadAllBytes(packedSf);
+        var stubBytes = File.ReadAllBytes(Path.Combine(baseDir2, stub));
+        SfCheck(packedBytes.Length > stubBytes.Length && packedBytes.AsSpan(0, stubBytes.Length).SequenceEqual(stubBytes), "nur runtime.exe: die fertige Datei ist die Runtime mit der Nutzlast dahinter");
+        SfCheck(Packer.UnpackProgram(packedSf) != null, "nur runtime.exe: das Programm laesst sich aus der Datei wieder lesen");
+
+        // neither a bundle nor runtime.dll next to it: a clear message
+        File.WriteAllBytes(Path.Combine(baseDir2, stub), SyntheticPe());
+        try { Packer.PackProgram(linkedSf, Path.Combine(sfDir, "bad.exe"), null, baseDir2); SfCheck(false, "weder Bundle noch runtime.dll: Fehlermeldung"); }
+        catch (InvalidOperationException ex) { SfCheck(ex.Message.Contains("Single-File"), "weder Bundle noch runtime.dll: Fehlermeldung"); }
+
+        // the native build: -mwindows / /SUBSYSTEM:WINDOWS only for a GUI program on Windows
+        TargetProfile.TryGet("windows", out var winTarget);
+        var gccCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
+        var gccConsole = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: false).Arguments;
+        var msvcCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["msvc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
+        SfCheck(gccCmd.Contains("-mwindows") && !gccConsole.Contains("-mwindows"), "nativer Build (gcc): #noconsole setzt -mwindows, sonst nicht");
+        SfCheck(msvcCmd.Contains("/SUBSYSTEM:WINDOWS") && msvcCmd.Contains("/ENTRY:mainCRTStartup"), "nativer Build (msvc): #noconsole setzt /SUBSYSTEM:WINDOWS");
+        var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
+        SfCheck(noconsole.GuiSubsystem && !linkedSf.GuiSubsystem, "der Linker meldet das Subsystem (#noconsole) an das gelinkte Programm");
+    }
+    finally
+    {
+        try { Directory.Delete(sfDir, true); } catch (IOException) { }
+    }
+
+    Console.WriteLine(sfFailures == 0 ? "Alle Single-File-Pruefungen bestanden." : $"FEHLER: {sfFailures} Single-File-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
 // Command line of the compiler (run / build)
 // ---------------------------------------------------------------------------
 {
