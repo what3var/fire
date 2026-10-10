@@ -9,6 +9,8 @@ bridge         fire_bridge_audio.hpp  handles, volume, waves, errors, the simula
 platform       plat::audio            open / write / queued / stop / close                       (Linux: PulseAudio or ALSA, Windows: winmm, macOS: SDL2, ESP32: PWM, else: stub)
 ```
 
+Music from tracker modules (`.mod`) is played by the package `fire-tracker` (docs/TRACKER.md) on top of this one.
+
 ## Quick start
 
 ```

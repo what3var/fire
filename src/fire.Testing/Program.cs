@@ -17314,6 +17314,149 @@ else
             """),
     }).ToArray();
 
+    // Tracker (bridges/fire_bridge_tracker.hpp): a module built in memory, rendered, played to the simulated audio device - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Tracker: Modul im Speicher - Laden, Rendern, Seek, Mute, Stereo, Player auf dem simulierten Geraet, Fehler", """
+            #import "tracker"
+
+            // a module built in memory: one 4 channel pattern, a looped square wave as the only instrument
+            var m = new byte[2172]
+            m[0] = 102
+            m[1] = 105
+            m[2] = 114
+            m[3] = 101
+            m[20] = 115                  // sample name "s"
+            m[43] = 32                   // 32 words = 64 bytes
+            m[45] = 64                   // volume
+            m[49] = 32                   // loop length: 32 words
+            m[950] = 1                   // one position
+            m[951] = 127
+            m[1080] = 77
+            m[1081] = 46
+            m[1082] = 75
+            m[1083] = 46                 // M.K.
+            for (var i = 0; i < 64; i++) {
+                if (i < 32) { m[2108 + i] = 100 } else { m[2108 + i] = 156 }
+            }
+            // row 0 channel 0: C-2 (period 428 = 0x1AC), sample 1
+            m[1084] = 1
+            m[1085] = 172
+            m[1086] = 16
+            // row 4 channel 1: E-2 (339 = 0x153), sample 1, volume 0x20 (C20)
+            m[1084 + 16 * 4 + 4] = 1
+            m[1084 + 16 * 4 + 5] = 83
+            m[1084 + 16 * 4 + 6] = 28
+            m[1084 + 16 * 4 + 7] = 32
+            // row 8: D00 (pattern break) on channel 3 ends the pattern: 8 rows of 6 ticks at 125 bpm
+            m[1084 + 8 * 16 + 12 + 2] = 13
+            var song = Tracker.Song.Load(m)
+            print("song " + song.Title + " " + song.Channels + " " + song.Orders + " " + song.Patterns + " " + song.Rate + " " + song.Milliseconds)
+            print("state " + song.Order + " " + song.Row + " " + song.Speed + " " + song.Tempo + " " + song.Finished + " " + song.Loop + " " + song.Separation + " " + song.Interpolate + " " + song.Gain)
+            print("sample " + song.SampleName(0) + " " + song.SampleLength(0) + " " + song.SampleVolume(0) + " " + song.SampleFinetune(0) + " " + song.SampleLoops(0) + " " + song.SampleLoops(1))
+            print("cells " + song.CellText(0, 0, 0) + " | " + song.CellText(0, 4, 1) + " | " + song.CellText(0, 8, 3) + " | " + song.CellText(0, 1, 0))
+            print("note names " + Tracker.Note.Name(428) + " " + Tracker.Note.Name(113) + " " + Tracker.Note.Name(0) + " " + Tracker.Note.Name(339))
+
+            var rate = song.Rate
+            var pcm = new byte[rate * 8]          // 2 seconds of stereo
+            var n = song.Render(pcm, 0, rate * 2, 2)
+            print("rendered " + n + " " + song.Finished + " " + song.Order + " " + song.Row)
+            // left channel: channel 0 plays the 129 Hz square wave, the right one hears 1/3 of it (separation 50) plus channel 1 from row 4
+            var peakL = 0
+            var peakR = 0
+            var crossings = 0
+            var last = 0
+            for (var f = 0; f < 13230; f++) {
+                var l = pcm[f * 4] + pcm[f * 4 + 1] * 256
+                if (l >= 32768) { l = l - 65536 }
+                var r = pcm[f * 4 + 2] + pcm[f * 4 + 3] * 256
+                if (r >= 32768) { r = r - 65536 }
+                if (l > peakL) { peakL = l }
+                if (r > peakR) { peakR = r }
+                var sign = 1
+                if (l < 0) { sign = -1 }
+                if (f > 100 && sign != last) { crossings++ }
+                last = sign
+            }
+            print("first 0.3 s: peak L " + peakL + " peak R " + peakR + " zero crossings " + crossings)
+            var sum = 0
+            for (var f = 0; f < n; f++) { sum = sum + pcm[f * 4] + pcm[f * 4 + 1] + pcm[f * 4 + 2] + pcm[f * 4 + 3] }
+            print("checksum " + sum)
+            print("after end " + song.Render(pcm, 0, 100, 2))
+
+            song.Restart()
+            print("restart " + song.Order + " " + song.Row + " " + song.Finished)
+            print("seek " + song.Seek(0, 5) + " " + song.Order + " " + song.Row)
+            print("channels " + song.ChannelPlaying(0) + " " + song.ChannelPlaying(1) + " " + song.ChannelVolume(0) + " " + song.ChannelVolume(1) + " " + song.ChannelSample(0))
+            song.Restart()
+            song.Mute(0)
+            print("mute " + song.IsMuted(0) + " " + song.IsMuted(1))
+            var quiet = new byte[rate * 4]
+            song.Render(quiet, 0, 4410, 2)
+            var max = 0
+            for (var f = 0; f < 4410 * 4; f++) { if (quiet[f] > max) { max = quiet[f] } }
+            print("muted silent " + (max == 0))
+            song.Mute(0, false)
+
+            song.Separation = 100
+            song.Restart()
+            var hard = new byte[rate * 4]
+            song.Render(hard, 0, 4410, 2)
+            var hardPeakR = 0
+            for (var f = 2000; f < 4410; f++) {
+                var r = hard[f * 4 + 2] + hard[f * 4 + 3] * 256
+                if (r >= 32768) { r = r - 65536 }
+                if (r > hardPeakR) { hardPeakR = r }
+            }
+            print("separation 100: right " + hardPeakR)
+            song.Separation = 0
+            song.Restart()
+            song.Render(hard, 0, 4410, 2)
+            var monoL = hard[8000] + hard[8001] * 256
+            var monoR = hard[8002] + hard[8003] * 256
+            print("separation 0: equal " + (monoL == monoR))
+            song.Separation = 50
+            song.Gain = 50
+            song.Restart()
+            song.Render(hard, 0, 4410, 2)
+            var halfPeak = 0
+            for (var f = 2000; f < 4410; f++) {
+                var l = hard[f * 4] + hard[f * 4 + 1] * 256
+                if (l >= 32768) { l = l - 65536 }
+                if (l > halfPeak) { halfPeak = l }
+            }
+            print("gain 50: " + halfPeak)
+            song.Gain = 100
+            song.Interpolate = false
+            print("interpolate " + song.Interpolate)
+            song.Interpolate = true
+
+            var whole = song.ToSound()
+            print("sound " + whole.Rate + " " + whole.Channels + " " + whole.Milliseconds)
+            var out = new Audio.Output("sim", rate, 2)
+            var player = new Tracker.Player(song, out)
+            song.Restart()
+            player.Play()
+            print("player " + Audio.Sim.Played() + " " + (Audio.Sim.Played() == whole.Length) + " " + player.Ended)
+            out.Close()
+
+            try { Tracker.Song.Load(pcm) } catch (Tracker.BadFormatException e) { print("bad " + e.code) }
+            var shortFile = new byte[100]
+            try { Tracker.Song.Load(shortFile) } catch (Tracker.TrackerException e) { print("short " + e.code) }
+            var cut = new byte[1100]
+            for (var i = 0; i < 1084; i++) { cut[i] = m[i] }
+            cut[950] = 1
+            try { Tracker.Song.Load(cut) } catch (Tracker.BadFormatException e) { print("truncated " + e.code) }
+            m[1083] = 56
+            m[1082] = 84
+            m[1081] = 76
+            m[1080] = 70                 // FLT8
+            try { Tracker.Song.Load(m) } catch (Tracker.UnsupportedException e) { print("flt8 " + e.code) }
+            song.Close()
+            try { song.Order } catch (Tracker.TrackerException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
     // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

@@ -2201,7 +2201,13 @@ The package `fire-audio` (docs/AUDIO.md is the reference): `Audio.Output` (a sou
 machine) and `Audio.Sim` (the simulated device `"sim"` that every platform has and that records what is played). PulseAudio or ALSA (whichever is there, loaded at run time) on Linux, winmm on Windows, SDL2 on macOS, PWM on a GPIO pin that the program chooses (`new Audio.Output(25)`) on an ESP32. It needs `time`:
 `Write` and `Drain` sleep between the questions, so a program stays abortable. Errors are `Audio.AudioException` (with a `code`) and subclasses.
 
-### 8.28 Projects and solutions
+### 8.28 Tracker modules (`#import "tracker"`)
+
+The package `fire-tracker` (docs/TRACKER.md is the reference): `Tracker.Song` (a ProTracker `.mod` module with 4 to 32 channels: its score, its instruments and the state of the replayer; `Render` mixes 16 bit samples into a buffer, `ToSound` renders the whole song,
+`Seek`, `Mute`, `Separation`, `Interpolate`, `Gain`, `Loop`), `Tracker.Player` (a song on an `Audio.Output`: `Pump()` feeds the output without waiting, `Play()` plays to the end) and `Tracker.Note`. The replayer and the mixer are C++ (the VM calls them through the package ABI, a native build compiles them in; both render the
+same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException` (with a `code`), `Tracker.BadFormatException` (8) and `Tracker.UnsupportedException` (6).
+
+### 8.29 Projects and solutions
 
 A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;

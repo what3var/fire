@@ -38,6 +38,7 @@ namespace fire.Compiler
             "gpio" => new[] { "time" },
             "wifi" => new[] { "time" },
             "audio" => new[] { "time" },
+            "tracker" => new[] { "audio", "time" },
             "http" => new[] { "net", "tls", "io", "time" },
             "tls" => new[] { "net", "io", "time" },
             "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
@@ -57,6 +58,7 @@ namespace fire.Compiler
             "spi" => fire.Standard.SpiPrelude.Source,
             "wifi" => fire.Standard.WifiPrelude.Source,
             "audio" => fire.Standard.AudioPrelude.Source,
+            "tracker" => fire.Standard.TrackerPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -186,6 +188,17 @@ namespace fire.Compiler
                 })
                     yield return f;
             }
+            if (bridge == "tracker")
+            {
+                foreach (var f in new[]
+                {
+                    F("__TrackerLastError", 0, "tracker::LastError"), F("__TrackerLastErrorMessage", 0, "tracker::LastErrorMessage", list: true), F("__TrackerOpenCount", 0, "tracker::OpenCount"),
+                    F("__TrackerLoad", 4, "tracker::Load"), F("__TrackerClose", 1, "tracker::Close"), F("__TrackerRender", 5, "tracker::Render"), F("__TrackerGet", 2, "tracker::Get"),
+                    F("__TrackerSet", 3, "tracker::Set"), F("__TrackerText", 3, "tracker::Text", list: true), F("__TrackerSampleInfo", 3, "tracker::SampleInfo"), F("__TrackerRestart", 1, "tracker::Restart"),
+                    F("__TrackerSeek", 3, "tracker::Seek"), F("__TrackerPatternCell", 5, "tracker::PatternCell"),
+                })
+                    yield return f;
+            }
             if (bridge == "tls")
             {
                 foreach (var f in new[]
@@ -293,6 +306,7 @@ namespace fire.Compiler
                     if (bridge == "i2c") native.Reset = "i2c::reset";
                     if (bridge == "spi") native.Reset = "spi::reset";
                     if (bridge == "wifi") native.Reset = "wifi::reset";
+                    if (bridge == "tracker") native.Reset = "tracker::reset";
                     if (bridge == "audio")
                     {
                         native.Reset = "audio::reset";

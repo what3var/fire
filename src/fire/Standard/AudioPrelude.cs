@@ -93,7 +93,7 @@ namespace fire.Standard
                 class Sound {
                     int rate
                     int channels
-                    data
+                    var data
                     int offset
                     int length
 
