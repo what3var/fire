@@ -3,7 +3,7 @@
 fire can import more than the libraries that come with the compiler (`graphics`, `io`, `time`, ...): a **package** brings one or more imports of its own, for example the
 interface to a sensor, a protocol or an operating system API. `#import "name"` finds the imports of the installed packages like the built-in ones.
 
-`ember` is the package manager (project `fire.Package.Manager`, product and program name `ember`). The editor has a small window for it
+`ember` is the package manager (the library `fire.Package.Manager`, used by fire.Native and fire.Project, and the command line program `ember` in `src/fire.Ember`). The editor has a small window for it
 (*File > Package Manager (ember)...*).
 
 ## Using packages
@@ -124,7 +124,7 @@ file - with absolute paths - in `Dir\json\name-version.json`. Open that file lat
 ## Where it is in the code
 
 * `src/fire.Package.Manager`: the manifest (`PackageManifest`), the package file (`Fpk`), the installed packages (`PackageStore`), the sources (`FolderSource`, `IndexSource`),
-  install/remove (`PackageManagerService`) and the command line (`Program`). The compiler and the editor use this assembly.
+  install/remove (`PackageManagerService`). A library: fire.Native and fire.Project reference it (the compiler and the editor get it from them). The command line is `src/fire.Ember` (`Program`), an executable that only uses the library.
 * The compiler keeps the imports of packages in its set of imports under the key `pkg:name` (`PackageStore.KeyPrefix`): `ImportedPreludes` resolves `#import`, inserts the prelude
   and registers the names of the natives; `LinkedProgram.PackageNatives` carries those names so that a run in the virtual machine (also of a packed program) keeps the
   indexes of the native calls right.

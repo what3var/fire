@@ -22,6 +22,10 @@ namespace UI {
         Pen borderFocus
         // the caret of the text field
         Pen caret
+        // The font of all text that does not choose another (Element.font): a name for Fonts.Get - a font added with Fonts.Add, a built-in one ("8x14", "8x8") or one installed
+        // on the system; "" is the console font of the renderer. fontSize is the height of the letters in pixels (TrueType fonts; the bitmap fonts ignore it).
+        string font = ""
+        int fontSize = 14
 
         construct() {
             this.back = new SolidBrush(UI.Color.Rgb(240, 240, 240))

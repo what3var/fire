@@ -10,6 +10,7 @@
 #include <cstring>
 #include FIRE_PLATFORM_FS_HEADER
 #include "graphics/fire_gfx.hpp"
+#include "graphics/fire_gfx_text.hpp"
 #include "graphics/fire_gfx_images.hpp"
 #include "graphics/fire_gfx_slicer.hpp"
 
@@ -22,6 +23,7 @@ struct Tables {
     std::vector<Renderer*> renderers{1, nullptr};
     std::vector<Brush*> brushes{1, nullptr};
     std::vector<Pen*> pens{1, nullptr};
+    FontTable fonts;
     ~Tables() {
         for (Renderer* c : renderers) delete c;
         for (Brush* b : brushes) delete b;
@@ -75,6 +77,45 @@ inline Value strOf8(const std::string& text, OwnList* list) {
     char16_t* out = strChars(s);
     for (size_t i = 0; i < text.size(); i++) out[i] = (unsigned char)text[i];
     return StrV(s);
+}
+
+/// A script string (UTF-16) as UTF-8.
+inline std::string utf8Of(Value text) {
+    const Str* s = strOf(text);
+    std::string out;
+    for (uint32_t i = 0; i < s->length; i++) {
+        uint32_t c = s->data[i];
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s->length && s->data[i + 1] >= 0xDC00 && s->data[i + 1] <= 0xDFFF) {
+            c = 0x10000 + ((c - 0xD800) << 10) + (s->data[i + 1] - 0xDC00);
+            i++;
+        } else if (c >= 0xD800 && c <= 0xDFFF) c = 0xFFFD;
+        if (c < 0x80) out.push_back((char)c);
+        else if (c < 0x800) { out.push_back((char)(0xC0 | (c >> 6))); out.push_back((char)(0x80 | (c & 0x3F))); }
+        else if (c < 0x10000) { out.push_back((char)(0xE0 | (c >> 12))); out.push_back((char)(0x80 | ((c >> 6) & 0x3F))); out.push_back((char)(0x80 | (c & 0x3F))); }
+        else { out.push_back((char)(0xF0 | (c >> 18))); out.push_back((char)(0x80 | ((c >> 12) & 0x3F))); out.push_back((char)(0x80 | ((c >> 6) & 0x3F))); out.push_back((char)(0x80 | (c & 0x3F))); }
+    }
+    return out;
+}
+
+/// A UTF-8 text as a script string (UTF-16).
+inline Value strFromUtf8(const std::string& text, OwnList* list) {
+    std::vector<char16_t> units;
+    for (size_t i = 0; i < text.size();) {
+        unsigned char b = (unsigned char)text[i];
+        uint32_t c = b;
+        size_t extra = 0;
+        if (b >= 0xF0 && b < 0xF8) { c = b & 0x07; extra = 3; }
+        else if (b >= 0xE0) { c = b & 0x0F; extra = 2; }
+        else if (b >= 0xC0) { c = b & 0x1F; extra = 1; }
+        i++;
+        for (size_t k = 0; k < extra && i < text.size(); k++, i++) c = (c << 6) | ((unsigned char)text[i] & 0x3F);
+        if (c >= 0x10000) { c -= 0x10000; units.push_back((char16_t)(0xD800 + (c >> 10))); units.push_back((char16_t)(0xDC00 + (c & 0x3FF))); }
+        else units.push_back((char16_t)c);
+    }
+    Str* r = allocStr((uint32_t)units.size(), list);
+    char16_t* out = strChars(r);
+    for (size_t i = 0; i < units.size(); i++) out[i] = units[i];
+    return StrV(r);
 }
 
 inline Value newBuffer(const uint8_t* data, size_t n, OwnList* list) {
@@ -349,6 +390,16 @@ inline Value RndDrawText(Value id, Value x, Value y, Value text, Value fg, Value
     return Undef();
 }
 
+inline Value RndDrawTextFont(Value id, Value x, Value y, Value text, Value fg, Value bg, Value font, Value size) {
+    Renderer* r = rendererOf(id);
+    const Str* s = strOf(text);
+    int64_t f = (int32_t)font.i;
+    TextFont* tf = f == 0 ? nullptr : tables().fonts.get(f);
+    if (f != 0 && !tf) fatal(("No resource with ID " + std::to_string(f) + " (unknown or already destroyed).").c_str());
+    drawTextIn(*r, tf, I(size), I(x), I(y), s->data, s->length, *brushOf(fg), I(bg) == 0 ? nullptr : brushOf(bg));
+    return Undef();
+}
+
 /// The points of a polygon from a script array `[x0, y0, x1, y1, ...]`: floats are cut off, an odd last element does not count.
 inline std::vector<int> readPoints(Value array) {
     std::vector<int> points;
@@ -416,6 +467,31 @@ inline Value RndBlit(Value id, Value src, Value sx, Value sy, Value sw, Value sh
 
 /// The colour as a script gives it: a palette index 0-255 or the direct value.
 inline Value colorNumber(const Paint& p) { return Int(p.isIndex() ? (int64_t)p.index : (int64_t)(int32_t)p.rgba); }
+
+// fonts (ID 0 = the font of the renderer, 1 and 2 = the built-in bitmap fonts, -1 = none)
+inline TextFont* fontOf(Value id) {
+    int64_t i = (int32_t)id.i;
+    TextFont* f = tables().fonts.get(i);
+    if (!f) fatal(("No resource with ID " + std::to_string(i) + " (unknown or already destroyed).").c_str());
+    return f;
+}
+inline Value FntLoad(Value data) {
+    if (!leafAlive(data)) return destroyedError(data);
+    Buf* b = bufOf(data);
+    return Int(tables().fonts.load(b->bytes(), b->length));
+}
+inline Value FntAdd(Value data, Value alias) {
+    if (!leafAlive(data)) return destroyedError(data);
+    Buf* b = bufOf(data);
+    return Int(tables().fonts.add(b->bytes(), b->length, utf8Of(alias)));
+}
+inline Value FntOpen(Value name) { return Int(tables().fonts.open(utf8Of(name))); }
+inline Value FntDestroy(Value id) { return Bool(tables().fonts.destroy((int32_t)id.i)); }
+inline Value FntName(Value id, OwnList* list) { return strFromUtf8(fontOf(id)->name, list); }
+inline Value FntIsBitmap(Value id) { return Bool(fontOf(id)->bitmap); }
+inline Value FntAscent(Value id, Value size) { return Int(fontOf(id)->ascent(I(size))); }
+inline Value FntHeight(Value id, Value size) { return Int(fontOf(id)->lineHeight(I(size))); }
+inline Value FntMeasure(Value id, Value size, Value text) { const Str* s = strOf(text); return Int(fontOf(id)->measure(s->data, s->length, I(size))); }
 
 // brushes
 inline Value BshCreateSolid(Value color) {

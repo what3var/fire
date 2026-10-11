@@ -20,6 +20,12 @@
     <None Include="Templates\**\*.fireproj" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The sample projects (Help > Samples): copied to Samples\ next to the program. -->
+  <ItemGroup>
+    <None Update="Samples\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Samples\**\*.fireproj" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />

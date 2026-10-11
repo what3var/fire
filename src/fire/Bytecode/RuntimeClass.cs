@@ -356,7 +356,8 @@ namespace fire.Bytecode
         /// FindMethodWithAccess) - costs nothing extra, since the walk
         /// already knows the declaring level as soon as it has
         /// found it.</summary>
-        private readonly Dictionary<(string Name, int ArgCount), (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access)> _methodCache = new();
+        // (concurrent: the fire threads of a program share the classes and fill the cache at the same time)
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Name, int ArgCount), (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access)> _methodCache = new();
 
         public FunctionProto? FindMethod(string name, int argCount) => FindMethodWithAccess(name, argCount).Proto;
 

@@ -1,0 +1,6 @@
+{
+  "title": "HTTP: server and client",
+  "description": "A small web server with routes and a client that calls it (loopback). Change the port or the URL to talk to the real web.",
+  "open": [ "main.script" ],
+  "order": 110
+}

@@ -255,6 +255,19 @@ namespace fire.Editor
         /// <summary>F8: the same as F5 (continue to the next breakpoint).</summary>
         private void Continue_Click(object? sender, RoutedEventArgs e) => Run_Click(sender, e);
 
+        /// <summary>After an unhandled error stopped the program at its `throw`: ignore it and go on right after the `throw` (like `resume()` in a `catch`).</summary>
+        private void IgnoreError_Click(object? sender, RoutedEventArgs e)
+        {
+            if (_isBusy) return;
+            if (!_session.CanIgnoreError || !_session.IgnoreError())
+            {
+                UpdateStatus("There is no stopped error to ignore.");
+                return;
+            }
+            BeginStep();
+            _session.Continue(BreakpointLocations());
+        }
+
         private void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
             if (_session.Vm == null) CompileAndPrepare(null);
@@ -285,10 +298,25 @@ namespace fire.Editor
             FlushPendingOutput(); // visible at once, not only at the next timer tick
             if (!more)
             {
-                ShowDebugLocation(null);
-                UpdateStatus(_session.RuntimeError != null
-                    ? $"Runtime error: {_session.RuntimeError}"
-                    : "Program finished.");
+                if (_session.RuntimeError is { } error)
+                {
+                    // Stop at the failing line and show the stack trace (the VM has unwound by then, so the frames are not inspectable).
+                    var trace = _session.ErrorTrace;
+                    ShowDebugLocation(trace is { Count: > 0 } ? trace[0] : null);
+                    var text = new System.Text.StringBuilder($"Runtime error: {error}\n");
+                    if (trace != null)
+                        foreach (var loc in trace)
+                            text.Append($"   at {DocumentOfSourceName(loc.SourceIndex)}line {loc.Line}\n");
+                    if (_session.CanIgnoreError) text.Append("   (Run > Ignore Error and Continue, Shift+F8, goes on after the throw)\n");
+                    _output.Append(text.ToString());
+                    string where = trace is { Count: > 0 } ? $" ({DocumentOfSourceName(trace[0].SourceIndex)}line {trace[0].Line})" : "";
+                    UpdateStatus($"Runtime error{where}: {error}" + (_session.CanIgnoreError ? "  -  Shift+F8 ignores it and continues" : ""));
+                }
+                else
+                {
+                    ShowDebugLocation(null);
+                    UpdateStatus("Program finished.");
+                }
             }
             else
             {

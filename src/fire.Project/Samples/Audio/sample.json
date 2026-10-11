@@ -1,0 +1,6 @@
+{
+  "title": "Audio: tones and a melody",
+  "description": "Play tones and a short melody on the sound device (or the simulated one if the machine has none).",
+  "open": [ "main.script" ],
+  "order": 70
+}

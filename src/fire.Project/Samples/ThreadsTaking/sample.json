@@ -1,0 +1,6 @@
+{
+  "title": "Threads: taking and sync",
+  "description": "fire taking gives a thread its own copy; sync writes it back - and when each thing is synchronised.",
+  "open": [ "main.script" ],
+  "order": 41
+}

@@ -1,0 +1,26 @@
+#import "audio"
+// Sound output: a device, tones with a wave form, a melody. Without a sound card the simulated device "sim" is used.
+// the default device; a machine without sound output gets the simulated device "sim" (it records what is played)
+var out = undefined
+try {
+    out = new Audio.Output("default")
+} catch (Audio.AudioException e) {
+    print("no sound output (" + e.message + ") - using the simulated device")
+    out = new Audio.Output("sim")
+}
+var devices = Audio.Board.Devices()
+for (var i = 0; i < devices.count; i++) { print("device: " + devices[i]) }
+
+// notes: frequency in Hz and length in milliseconds
+var notes = [262, 294, 330, 349, 392, 392, 440, 440, 440, 440, 392]
+var times = [200, 200, 200, 200, 400, 400, 200, 200, 200, 200, 600]
+for (var i = 0; i < notes.length; i++) {
+    out.Tone(notes[i], times[i], Audio.Wave.Square, 20)     // queued: returns at once
+}
+out.Drain()                                                  // wait until everything has been played
+
+// a rising sweep of short beeps with a sine wave
+for (var f = 300; f <= 900; f = f + 150) {
+    out.Beep(f, 80)
+}
+print("done")

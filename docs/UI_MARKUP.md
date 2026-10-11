@@ -70,7 +70,7 @@ that a window can be composed of views.
 ## Elements and properties
 
 Every element has the properties it shares with all others - `x y width height visible enabled`, `margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `halign` (`Stretch Left Center Right`),
-`valign` (`Stretch Top Center Bottom`), `minWidth minHeight maxWidth maxHeight`, `background` `foreground` (colours), `pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `style`, `template` (keys of
+`valign` (`Stretch Top Center Bottom`), `minWidth minHeight maxWidth maxHeight`, `background` `foreground` (colours), `pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `font` (a font name for `Fonts.Get`, docs/FONTS.md; empty = that of the surrounding element) and `fontSize` (pixels), `style`, `template` (keys of
 resources, see below) - plus `name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
 The attribute names are those of the fire fields (the first letter may be upper case: `Text` = `text`).
 
@@ -185,6 +185,8 @@ inside a template (react to the control itself). Everything is explained in docs
 or, with `ElementName`, to a property of another named element. It is built on `probe` (SPEC 8.14): nothing polls, the property changes when the source field is written.
 
 - **Path**: `Name`, or a path through objects: `Player.Stats.Hp`. Every object on the way is watched, so if `Player` is replaced the binding connects to the new one. A `null`/`undefined` on the way leaves the property as it is.
+- **Fields and properties**: the last step of a path may be a field or a property with `get`/`set`. A write to either (also through the setter of a property) updates the target, and a `TwoWay` binding writes through the setter. A property that only computes its value from other
+  members (`get` without `set`) is read when the binding connects and when its own probe fires - it does not notice when its sources change; give it a setter (or update a field that you bind to) to tell the binding.
 - **Mode**: `OneWay` (default; the source changes the property), `TwoWay` (the property writes back to the source as well - a `TextBox` as the user types, a `CheckBox` when it is toggled; a write
   that does not change the value stops there, so a converter that normalizes a value cannot make the two chase each other), `OneTime` (read once when the context is set).
 - **Converter**: the key of a converter that sits between the two sides. A converter is a class with `Convert(value)` (source to property) and, for `TwoWay`, `ConvertBack(value)`;

@@ -1,0 +1,14 @@
+// Hello, World: printing, variables, a loop and a static method.
+print("Hello, World!")
+
+var name = "fire"
+var count = 3
+for (var i = 1; i <= count; i++) {
+    print("Hello from " + name + ", round " + i)
+}
+
+class Maths {
+    static int Square(int n) { return n * n }
+}
+
+print("7 squared is " + Maths.Square(7))

@@ -1,0 +1,28 @@
+#import "tracker"
+#import "time"
+// A tracker module carries its own instruments, so it sounds the same everywhere (unlike MIDI).
+// tune.mod is embedded in the program with Resource.
+var data = new Resource("tune.mod").Bytes()
+var song = Tracker.Song.Load(data)
+print(song.Title + ": " + song.Channels + " channels, " + song.Orders + " orders, " + (song.Milliseconds / 1000) + " s")
+
+// the default sound device; a machine without one gets the simulated device "sim"
+var player = undefined
+try {
+    player = Tracker.Player.Open(song, "default")
+} catch (Audio.AudioException e) {
+    print("no sound output (" + e.message + ") - using the simulated device")
+    player = Tracker.Player.Open(song, "sim")
+}
+
+var lastOrder = -1
+var playing = true
+while (playing) {
+    if (song.Order != lastOrder) {
+        lastOrder = song.Order
+        print("order " + song.Order + "  speed " + song.Speed + "  tempo " + song.Tempo)
+    }
+    playing = player.Pump()      // mixes what the device takes now; false when the song is over
+    Sleep(5ms)
+}
+print("finished")

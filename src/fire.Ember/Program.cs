@@ -1,4 +1,6 @@
-namespace fire.Package.Manager
+using fire.Package.Manager;
+
+namespace fire.Ember
 {
     /// <summary>ember: the command line of the package manager (docs/PACKAGES.md).</summary>
     internal static class Program

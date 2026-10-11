@@ -1,0 +1,23 @@
+#import "windows"
+// Drawing into a framebuffer: brushes fill, pens draw, text comes in the console font or a named font.
+var fb = new Framebuffer(480, 270)
+var win = new Window(fb, "Graphics")
+var r = new Renderer(fb)
+
+r.ClearTo(0xFF2B1E10)
+r.FillRect(20, 20, 200, 120, new SolidBrush(0xFF2080E0))
+r.FillCircle(330, 90, 60, new SolidBrush(0xFF40C060))
+r.FillTriangle(60, 250, 140, 160, 220, 250, new SolidBrush(0xFFE0B020))
+r.DrawLine(240, 160, 460, 250, new Pen(0xFFFFFFFF, 3))
+r.DrawEllipse(380, 200, 70, 40, new Pen(0xFFFF8080))
+
+// a translucent brush blends with what is below
+r.FillRect(150, 80, 250, 90, new SolidBrush(0x80FFFFFF))
+
+var ink = new SolidBrush(0xFFFFFFFF)
+r.DrawText(24, 24, "console font (8x14)", ink)
+r.DrawText(24, 44, "the small bitmap font", ink, undefined, Fonts.Get("8x8"))
+// a font installed on the system, or the console font if there is none; size in pixels
+r.DrawText(24, 100, "Hello, fire!", new SolidBrush(0xFF000000), undefined, Fonts.Get("DejaVu Sans"), 28)
+
+while (win.Tick()) { }

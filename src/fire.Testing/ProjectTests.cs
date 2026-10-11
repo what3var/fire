@@ -46,6 +46,34 @@ static class ProjectTests
 
     private static void RunIn(string root)
     {
+        // ---- the samples of Help > Samples ----
+        {
+            var samples = SampleCatalog.Load();
+            Check("Beispiele: die mitgelieferten Beispielprojekte werden gefunden (Titel, Beschreibung, Projektdatei)",
+                samples.Count >= 14 && samples.All(x => x.Title.Length > 0 && x.Description.Length > 0 && x.ProjectFile.EndsWith(".fireproj") && x.Open.Count > 0 && x.Open.All(f => File.Exists(Path.Combine(x.Folder, f)))), string.Join(", ", samples.Select(x => x.Name)));
+            string target = Path.Combine(root, "samples", "copy");
+            var hello = samples.First(x => x.Name == "HelloWorld");
+            string projectFile = SampleCatalog.CopyTo(hello, target);
+            Check("Beispiele: eine Kopie enthaelt das Projekt, aber nicht sample.json", File.Exists(projectFile) && File.Exists(Path.Combine(target, "main.script")) && !File.Exists(Path.Combine(target, "sample.json")), projectFile);
+            string again = "";
+            try { SampleCatalog.CopyTo(hello, target); } catch (ProjectException ex) { again = ex.Message; }
+            Check("Beispiele: in einen Ordner mit Inhalt wird nicht kopiert", again.Contains("not empty"), again);
+            var sampleWs = new Workspace();
+            sampleWs.Load(projectFile);
+            Check("Beispiele: die Kopie laesst sich als Projekt oeffnen", sampleWs.Projects.Count == 1, "");
+            // the console samples run in the VM
+            foreach (var sample in samples.Where(x => x.Name is "HelloWorld" or "Classes" or "Ownership" or "Threads" or "ThreadsTaking" or "Actors" or "Audio" or "Network" or "Http"))
+            {
+                var lines = new List<string>();
+                try
+                {
+                    RuntimeSession.Build(new[] { File.ReadAllText(Path.Combine(sample.Folder, sample.Open[0])) }, null, args => { lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); }).Run();
+                }
+                catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
+                Check($"Beispiele: {sample.Title} laeuft und gibt etwas aus", lines.Count >= 2 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
+            }
+        }
+
         // ---- settings: the order of precedence ------------------------------------------------------------------------------------------
         var high = new ProjectSettings { Mode = "debug", Name = "P", Defines = new() { "A", "B" } };
         var low = new ProjectSettings { Mode = "release", FloatWidth = 32, Name = "S", Author = "me", Defines = new() { "B", "C" } };
@@ -240,7 +268,7 @@ static class ProjectTests
         FireTemplate Tpl(TemplateScope scope, string title) => catalog.Find(scope, title) ?? throw new InvalidOperationException("no template " + title);
         Check("Vorlagen: Namen werden geprueft", ProjectTemplates.CheckName("Ok Name") == null && ProjectTemplates.CheckName("") != null && ProjectTemplates.CheckName("a/b") != null && ProjectTemplates.CheckName(".x") != null);
         Check("Vorlagen: der vorgeschlagene Ordner ist $HOME/spark/{Name}", ProjectTemplates.DefaultSolutionFolder("Demo") == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark", "Demo"));
-        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 5 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 4 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
+        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 4 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 3 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
 
         var empty = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Empty"), Path.Combine(t, "E"), "E");
         Check("Vorlagen: leer = eine Mappe ohne Projekt", empty.Solution != null && empty.Projects.Count == 0 && File.Exists(Path.Combine(t, "E", "E.firesln")) && !Directory.Exists(Path.Combine(t, "E", "E")));
@@ -250,7 +278,10 @@ static class ProjectTests
             File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.script")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
-        var desktop = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Desktop"), Path.Combine(t, "D"), "D");
+        // Desktop comes with the package fire-windows (PackageTemplates/windows, packed by bridge-packages); the folder has the same layout as a Templates folder
+        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(AppContext.BaseDirectory, "PackageTemplates", "windows"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        Check("Vorlagen: Desktop gehoert zum Paket fire-windows, nicht zu den eingebauten", catalog.Find(TemplateScope.Project, "Desktop") == null && windowsTemplates.Find(TemplateScope.Project, "Desktop") != null);
+        var desktop = Workspace.CreateSolution(windowsTemplates.Find(TemplateScope.Project, "Desktop") ?? throw new InvalidOperationException("no template Desktop"), Path.Combine(t, "D"), "D");
         var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);
         Check("Vorlagen: Desktop ist ein Programm ohne Konsole und uebersetzt", desktop.Projects[0].Project.Settings.Subsystem == "gui" && desktopPlan.IsValid && Ok(() => ProjectBuilder.Check(desktopPlan)), string.Join("\n", desktopPlan.Errors) + Catch(() => ProjectBuilder.Check(desktopPlan)));
 

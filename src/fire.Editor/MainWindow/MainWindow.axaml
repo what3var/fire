@@ -163,6 +163,7 @@
 					<MenuItem Header="Step O_ut" Click="StepOut_Click" InputGesture="Shift+F11"/>
 					<MenuItem Header="C_ontinue (like F5)" Click="Continue_Click" InputGesture="F8"/>
 					<MenuItem Header="Run to _End (ignore breakpoints)" Click="RunToEnd_Click"/>
+					<MenuItem Header="_Ignore Error and Continue" Click="IgnoreError_Click" InputGesture="Shift+F8"/>
 					<MenuItem Header="S_top" Click="Stop_Click" InputGesture="Shift+F5"/>
 					<Separator/>
 					<MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
@@ -201,9 +202,12 @@
 					<MenuItem Header="_Reset Layout" Click="ResetLayout_Click"/>
 				</MenuItem>
 				<MenuItem Header="?">
-					<MenuItem Header="_Welcome..." Click="Welcome_Click"/>
-					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click"/>
+					<MenuItem Header="_Welcome..." Click="Welcome_Click" InputGesture="Ctrl+F1"/>
+					<Separator/>
+					<MenuItem Header="_First Steps" Click="HelpFirstSteps_Click" InputGesture="F1"/>
 					<MenuItem Header="_Embedding fire in your Application" Click="HelpEmbedding_Click"/>
+					<Separator/>
+					<MenuItem Header="_Samples..." Click="HelpSamples_Click"/>
 				</MenuItem>
 			</Menu>
 				<!-- the tool strips (ToolStrips/): each can be dragged by its grip to another place in the tray, into another tray at a window edge or out of the window (floating) -->
@@ -254,7 +258,7 @@
 							<ComboBoxItem Content="Release" Tag="Release"/>
 							<ComboBoxItem Content="Performance" Tag="Performance"/>
 						</ComboBox>
-						<CommandBarButton Label="Build" Click="Build_Click" ToolTip.Tip="Build standalone (self-contained file)..."><CommandBarButton.Icon><PathIcon Data="{StaticResource IconBuild}"/></CommandBarButton.Icon></CommandBarButton>
+						<CommandBarButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..."><CommandBarButton.Icon><PathIcon Data="{StaticResource IconBuild}"/></CommandBarButton.Icon></CommandBarButton>
 						<CommandBarButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)"><CommandBarButton.Icon><PathIcon Data="{StaticResource IconSettings}"/></CommandBarButton.Icon></CommandBarButton>
 					</local:ToolStrip>
 				</local:ToolStripTray>

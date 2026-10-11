@@ -354,6 +354,12 @@ Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fir
 und `std/fire_display_none.hpp` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Die VM nutzt SDL3, die Tasten- und
 Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
 (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
+
+**SDL2 finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL2 übersetzt (`SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
+die Umgebungsvariable `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers
+(MSYS2: `ucrt64\include\SDL2`), das System (`/usr/include/SDL2`, Homebrew) und `pkg-config sdl2`. Fehlt SDL2 unter Windows (das portable w64devkit bringt es nicht mit), fragt der Build wie bei der Toolchain
+(Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL2.dll` neben dem gebauten Programm.
+Unter Linux und macOS gibt es keinen Download: die Meldung nennt das Paket (`sudo apt install libsdl2-dev`, `brew install sdl2`). Das Programm definiert `SDL_MAIN_HANDLED`, braucht also weder `SDL2main` noch `-lmingw32`.
 Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
 (`gfx::Framebuffer::resize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
 Finger und Joysticks meldet die Anzeige als `EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `setTouchMouse(bool)`/`touchMouse()` schalten SDLs Mausereignisse aus Fingern (Window.TouchMouse). Die SDL2-Anzeige öffnet jeden angesteckten Joystick (`SDL_JOYDEVICEADDED`). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.

@@ -240,7 +240,7 @@ namespace UI {
         }
 
         bool MouseWheel(root, int dx, int dy) {
-            var step = root.ch * 3
+            var step = this.TextHeight(root) * 3
             if (dx != 0 && this.showH) {
                 this.hbar.By(-dx * step)
                 return true

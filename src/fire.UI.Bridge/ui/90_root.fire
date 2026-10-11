@@ -13,6 +13,9 @@ namespace UI {
         // Cell size of the font in pixels (width and height of a character)
         int cw
         int ch
+        // The fonts that elements have asked for by name (see FontFor)
+        List fontNames
+        List fontObjects
         bool closed = false
         int mouseX = 0
         int mouseY = 0
@@ -80,6 +83,8 @@ namespace UI {
             this.clips = new List()
             this.popups = new List()
             this.attached = new List()
+            this.fontNames = new List()
+            this.fontObjects = new List()
             this.cw = this.renderer.CellWidth()
             this.ch = this.renderer.CellHeight()
             this.width = framebuffer.Width()
@@ -99,6 +104,19 @@ namespace UI {
             // Every change of a field of an element (and of the theme) is reported by a probe (see SPEC 8.14): the elements call Touched as soon as they are arranged for the first time (Watch)
             this.watcher = func (o, n, a, b) on this => { this.Touched(o) }
             Reflect.ProbeAll(this.theme, "changed", this.watcher)
+        }
+
+        // The font with this name (Fonts.Get; the console font if there is none), looked up once and then kept.
+        FontFor(string name) {
+            if (name == "") { return undefined }
+            for (var i = 0; i < this.fontNames.count; i = i + 1) {
+                if (this.fontNames[i] == name) { return this.fontObjects[i] }
+            }
+            var found = Fonts.Get(name)
+            found.TakeTo(this)
+            this.fontNames.Add(name)
+            this.fontObjects.Add(found)
+            return found
         }
 
         // An element or the theme has changed.

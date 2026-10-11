@@ -17,6 +17,9 @@ namespace fire.Terminal
         private readonly FramebufferManager _framebuffers;
         private readonly IGlyphFont _defaultFont;
 
+        /// <summary>The fonts for text at pixel positions (the built-in bitmap fonts, added and system TrueType fonts), see <see cref="FontManager"/>.</summary>
+        public FontManager Fonts { get; } = new();
+
         public RendererManager(FramebufferManager framebuffers, IGlyphFont defaultFont)
         {
             _framebuffers = framebuffers ?? throw new ArgumentNullException(nameof(framebuffers));
@@ -68,6 +71,10 @@ namespace fire.Terminal
         /// <summary>Text at a PIXEL position; `background` is the ID of a brush or 0 (no background).</summary>
         public void DrawText(int id, int x, int y, string text, int foregroundBrush, int backgroundBrush) =>
             _renderers.Get(id).DrawText(x, y, text, _brushes.Get(foregroundBrush), backgroundBrush == 0 ? null : _brushes.Get(backgroundBrush));
+
+        /// <summary>Text in a font (ID from <see cref="Fonts"/>; 0 = the font of the renderer) with a size in pixels (ignored by the bitmap fonts).</summary>
+        public void DrawTextFont(int id, int x, int y, string text, int foregroundBrush, int backgroundBrush, int fontId, int size) =>
+            _renderers.Get(id).DrawText(x, y, text, _brushes.Get(foregroundBrush), backgroundBrush == 0 ? null : _brushes.Get(backgroundBrush), fontId == 0 ? null : Fonts.Get(fontId), size);
 
         // ---- Fills (brush ID) ----
 

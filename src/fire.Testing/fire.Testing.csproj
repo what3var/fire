@@ -23,7 +23,6 @@
     <ProjectReference Include="..\fire.Runtime\fire.Runtime.csproj" />
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
-    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
   </ItemGroup>
 
 </Project>

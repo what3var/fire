@@ -128,7 +128,7 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
 - **Assignment moves ownership up to the function scope.** `x = value` where `x` is a variable of an *outer* block scope moves a value that belongs to an inner block (loop body, `if`, bare block) into the scope of the
   enclosing **function** (top-level code: the global scope) - never out of the function. `keep = b` inside a loop therefore keeps `b` alive after the loop and until the function ends; without the assignment it
   would die with the loop body. (Objects and arrays assigned in a loop accumulate until the function ends: use `delete` or `TakeLocal`/`TakeTo` for something that should not.)
-- **A call result passed on as an argument belongs to the called function, not to the caller:** in `f(g())` the value that `g` returns belongs to the call of `f`: it dies when the call is over - after everything `f` created
+- **A call result or a fresh `new` passed on as an argument belongs to the called function, not to the caller:** `f(new X())` - the caller holds no reference to it, so `f` may keep it with `try x.TakeTo(this)` (e.g. `list.Add(new Person())`). A constructor that stores such a parameter in a field must keep it the same way (`this.address = a; try a.TakeTo(this)`), or the argument dies with the call. In `f(g())` the value that `g` returns belongs to the call of `f`: it dies when the call is over - after everything `f` created
   itself - unless `f` keeps it (`TakeTo`, `try x.TakeTo(this)` (2.2), returns it). Only values that are fresh at the caller move; `f(g())` where `g` returns something that belongs to an object does not change that owner.
 - The same rule applies to lambda values: direct field assignment → owner is the object; otherwise → current scope. The `on` binding (this context, see 4.2) is independent of this and does not change the owner.
 
@@ -855,13 +855,15 @@ method infrastructure therefore works automatically.
 
 ### 7.1 Base class
 
-There is a built-in base class `Exception` (at least with a `message` property) from which all exception classes inherit:
+There is a built-in base class `Exception` (a class of the prelude, with a `message`) from which all exception classes inherit. The errors of the runtime (`IndexOutOfBoundsException`, `DestroyedException`,
+`AccessDeniedException`, `UnitMismatchException`, `ReflectionException`) derive from it as well. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
+simply has an empty message:
 
 ```
 class Exception {
     string message
 
-    construct(string message) {
+    construct(string message = "") {
         this.message = message
     }
 }
@@ -870,6 +872,8 @@ class InvalidUnitException : Exception {
     construct(string message) : base(message) { }
 }
 ```
+
+A program that declares a class `Exception` itself (as programs had to before the prelude brought one) replaces the one of the prelude; its derived classes get that one as their base.
 
 `throw` expects a value that derives (directly or indirectly) from `Exception` (checked like `is of`); otherwise a run-time error already at the `throw` itself.
 
@@ -2191,7 +2195,26 @@ queued answers, a log of what was sent); `/dev/spidevB.C` of Linux or the SPI ma
 The package `fire-wifi` (docs/NETWORK.md is the reference): `WiFi.Station` (scan, join, state, address), `WiFi.AccessPoint`, `WiFi.Board` (the radios of the machine) and `WiFi.Sim` (the simulated radio `"sim"` that every platform has); the WiFi driver of ESP-IDF underneath, "not
 supported" where the operating system owns the network. It needs `time`; scanning and joining poll the natives and sleep between the questions. Errors are `WiFi.WiFiException` (with a `code`) and subclasses (`AuthException`, `NotFoundException`, `TimeoutException`, ...).
 
-### 8.27 Projects and solutions
+### 8.27 Audio (`#import "audio"`)
+
+The package `fire-audio` (docs/AUDIO.md is the reference): `Audio.Output` (a sound device that plays 16 bit samples: `Write`/`Offer`, `Tone`, `Beep`, `Play(sound)`, `Drain`, `Stop`, volume), `Audio.Sound` (PCM in memory, read from a WAV file or generated), `Audio.Board` (the devices of the
+machine) and `Audio.Sim` (the simulated device `"sim"` that every platform has and that records what is played). PulseAudio or ALSA (whichever is there, loaded at run time) on Linux, winmm on Windows, SDL2 on macOS, PWM on a GPIO pin that the program chooses (`new Audio.Output(25)`) on an ESP32. It needs `time`:
+`Write` and `Drain` sleep between the questions, so a program stays abortable. Errors are `Audio.AudioException` (with a `code`) and subclasses.
+
+### 8.28 Tracker modules (`#import "tracker"`)
+
+The package `fire-tracker` (docs/TRACKER.md is the reference): `Tracker.Song` (a ProTracker `.mod` module with 4 to 32 channels: its score, its instruments and the state of the replayer; `Render` mixes 16 bit samples into a buffer, `ToSound` renders the whole song,
+`Seek`, `Mute`, `Separation`, `Interpolate`, `Gain`, `Loop`), `Tracker.Player` (a song on an `Audio.Output`: `Pump()` feeds the output without waiting, `Play()` plays to the end) and `Tracker.Note`. The replayer and the mixer are C++ (the VM calls them through the package ABI, a native build compiles them in; both render the
+same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException` (with a `code`), `Tracker.BadFormatException` (8) and `Tracker.UnsupportedException` (6).
+
+### 8.28a Fonts for text at pixel positions (`#import "graphics"`)
+
+`Renderer.DrawText(x, y, text, foreground, background = undefined, font = undefined, size = 0)` draws in the console font of the renderer (the built-in 8x14 or 8x8 bitmap font) or, given a `Font`, in one of the two built-in
+bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels. `Fonts.Get(name)` finds a font by name - the built-in ones, then the ones added with `Fonts.Add(new Resource("x.ttf"), alias = "")` (by alias,
+file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
+The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
+
+### 8.29 Projects and solutions
 
 A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;

@@ -35,4 +35,4 @@ the file system at run time, so the program does not depend on the place it is s
 | `Text()` | the content as text (UTF-8) |
 | `id` | the number of the resource |
 
-Libraries take resources where they take files: `Framebuffer.FromResource(resource)` (PNG, BMP, GIF).
+Libraries take resources where they take files: `Framebuffer.FromResource(resource)` (PNG, BMP, GIF). `Fonts.Add(resource)` reads a TrueType font (docs/FONTS.md).

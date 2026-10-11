@@ -56,15 +56,15 @@ namespace UI {
             return was
         }
 
-        int OptionHeight(root) { return UI.M.Max(root.ch, 14) }
+        int OptionHeight(root) { return UI.M.Max(this.TextHeight(root), 14) }
 
         int HeaderHeight(root) {
             if (this.header == "") { return 0 }
-            return root.ch + this.spacing
+            return this.TextHeight(root) + this.spacing
         }
 
         // The width of an option: circle, spacing, text.
-        int OptionWidth(root, int index) { return 14 + 6 + root.cw * this.ItemText(this.items[index]).Length }
+        int OptionWidth(root, int index) { return 14 + 6 + this.TextWidth(root, this.ItemText(this.items[index])) }
 
         MeasureCore(root, int aw, int ah) {
             var w = 0
@@ -82,7 +82,7 @@ namespace UI {
                     if (i > 0) { h = h + this.spacing }
                 }
             }
-            w = UI.M.Max(w, root.cw * this.header.Length)
+            w = UI.M.Max(w, this.TextWidth(root, this.header))
             this.cw = w
             this.ch = h + this.HeaderHeight(root)
         }
@@ -117,7 +117,7 @@ namespace UI {
             var text = theme.text
             if (this.foreground != undefined) { text = this.foreground }
             if (!this.enabled) { text = theme.textDisabled }
-            if (this.header != "") { r.DrawText(ax, ay, this.header, text) }
+            if (this.header != "") { this.DrawString(root, ax, ay, this.header, text) }
             for (var i = 0; i < this.items.count; i = i + 1) {
                 var box = this.OptionRect(root, i)
                 var cy = box.y + box.h / 2
@@ -134,7 +134,7 @@ namespace UI {
                     if (!this.enabled) { mark = theme.textDisabled }
                     r.FillCircle(box.x + 7, cy, 3, mark)
                 }
-                r.DrawText(box.x + 20, box.y + (box.h - root.ch) / 2, this.ItemText(this.items[i]), text)
+                this.DrawString(root, box.x + 20, box.y + (box.h - this.TextHeight(root)) / 2, this.ItemText(this.items[i]), text)
                 delete box
             }
         }

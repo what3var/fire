@@ -1,0 +1,28 @@
+<!-- The interface. The compiler turns it into a base class; main.script (the code-behind) inherits from it. docs/UI_MARKUP.md -->
+<Window class="Main" title="People" width="520" height="320">
+  <Resources>
+    <Converter key="Upper" type="UpperConverter"/>
+    <!-- how one person looks in the list -->
+    <DataTemplate key="Person">
+      <Label text="{Binding name}"/>
+    </DataTemplate>
+    <!-- the people, sorted by name -->
+    <CollectionView key="ByName" source="{Binding people}" sortBy="name"/>
+  </Resources>
+
+  <Panel x="10" y="10" width="500" height="300">
+    <Label x="10" y="10" text="People" fontSize="18"/>
+    <ListBox name="peopleList" x="10" y="40" width="200" height="200" view="ByName" itemTemplate="Person"/>
+
+    <Label x="230" y="44" text="Name:"/>
+    <!-- ElementName: the property of another element - here the selected person of the list. TwoWay: typing changes the data, a change of the data shows here -->
+    <TextBox x="290" y="40" width="200" text="{Binding selectedItem.name, ElementName=peopleList, Mode=TwoWay}"/>
+    <CheckBox x="230" y="76" text="Member" isChecked="{Binding selectedItem.member, ElementName=peopleList, Mode=TwoWay}"/>
+
+    <Label x="230" y="116" text="Shown as:"/>
+    <!-- a converter changes the value on its way to the screen -->
+    <Label x="310" y="116" text="{Binding selectedItem.name, ElementName=peopleList, Converter=Upper}" font="8x8"/>
+    <Button x="230" y="150" width="120" height="26" text="Add person" onClick="AddPerson"/>
+    <Label x="10" y="260" text="{Binding summary}"/>
+  </Panel>
+</Window>

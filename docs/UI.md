@@ -69,7 +69,7 @@ Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibl
 - **Besitz:** `Add` ruft `child.TakeTo(this)` - ein Element gehört seinem Container und lebt, solange der Root lebt, auch wenn es in einer Hilfsfunktion angelegt wurde.
 - **Bedienung:** Mausklick fokussiert, `Tab`/`Umschalt+Tab` wechselt den Fokus (nur sichtbare, aktive, fokussierbare Elemente), Leertaste/Enter löst Schaltfläche/Kontrollkästchen aus. `TextBox`:
   Zeichen (Texteingabe-Ereignisse), Pfeile, Pos1/Ende, Rücktaste/Entf, Klick setzt die Einfügemarke, der sichtbare Ausschnitt wandert mit, `maxLength`, Enter meldet `entered`.
-- **Zeichnen:** flach, mit der eingebauten 8x14-Schrift (`root.cw`/`root.ch` sind Breite und Höhe eines Zeichens); Gezeichnet wird mit Pinseln und Stiften (`new SolidBrush(UI.Color.Rgb(r, g, b))`, `new Pen(farbe, breite)`; `undefined` = Vorgabe des Themes), also auch mit halbdurchsichtigen Farben, solange `root.renderer.AlphaBlending` an ist. `UI.Color.Rgb(r, g, b)` baut die rohen Farbwerte, `UI.Keys` nennt die Tastencodes.
+- **Zeichnen:** flach, mit der eingebauten 8x14-Schrift (`root.cw`/`root.ch` sind Breite und Höhe eines Zeichens) oder - mit `font`/`fontSize` an einem Element, siehe *Schriften* unten - mit einer TrueType-Schrift; Gezeichnet wird mit Pinseln und Stiften (`new SolidBrush(UI.Color.Rgb(r, g, b))`, `new Pen(farbe, breite)`; `undefined` = Vorgabe des Themes), also auch mit halbdurchsichtigen Farben, solange `root.renderer.AlphaBlending` an ist. `UI.Color.Rgb(r, g, b)` baut die rohen Farbwerte, `UI.Keys` nennt die Tastencodes.
 
 ## Layout
 
@@ -189,3 +189,23 @@ Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) e
 - Die Elemente zeichnen sich in den Framebuffer des Roots; mehrere Roots auf demselben Framebuffer übermalen einander.
 - Das Verhalten der Fenster-Ereignisse mit echtem SDL (Mausposition bei skaliertem Fenster, Texteingabe, echte Finger und Joysticks) ist nur aus dem Code begründet, nicht unter SDL getestet; die Bibliothek selbst ist headless
   getestet (Suite-Block "UI-Bibliothek": echter `WindowManager` mit Renderer-Attrappe).
+
+## Schriften
+
+Jedes `UI.Element` hat `font` (ein Name für `Fonts.Get`, `""` = vom umgebenden Element erben) und `fontSize` (Pixel, `0` = erben). Eine Schrift an einem `Panel` gilt für alles darin, ein Menü nimmt die Schrift des Elements, von dem es geöffnet wurde,
+und `root.theme.font` / `root.theme.fontSize` (Vorgabe `""` und `14`) sind der letzte Rückgriff. Ohne alles bleibt es bei der Konsolenschrift des Renderers - Größen und Bild sind dann wie vorher. Namen: `"8x14"`, `"8x8"`, eine mit
+`Fonts.Add(new Resource("fonts/X.ttf"))` eingebettete Schrift (nach Dateiname, Familie, vollem Namen oder Alias) oder eine auf dem System installierte; unbekannte Namen ergeben die Konsolenschrift (docs/FONTS.md).
+
+```
+Fonts.Add(new Resource("fonts/Roboto-Regular.ttf"))
+ui.theme.font = "Roboto-Regular"
+ui.theme.fontSize = 16
+var title = new UI.Label("Settings", 8, 8)
+title.fontSize = 24                       // dieselbe Schrift, größer
+var hint = new UI.Label("Esc closes", 8, 40)
+hint.font = "8x8"                         // eine Bitmap-Schrift
+```
+
+`Label`, `Button`, `CheckBox`, `TextBox`, `ListBox`/`ListView`, `TreeView`, `RadioButtons` und Menüs messen und zeichnen ihren Text mit der Schrift des Elements (`element.TextWidth(root, text)`, `element.TextHeight(root)` und
+`element.DrawString(root, x, y, text, brush)` sind die Hilfen dafür, auch für eigene Elemente; `root.cw`/`root.ch` bleiben die Zellgröße der Konsolenschrift). Ein `TextBox` mit Proportionalschrift misst den Text bis zur Einfügemarke
+und unter der Maus.

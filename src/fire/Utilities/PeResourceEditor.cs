@@ -79,6 +79,22 @@ namespace fire.Utilities
         /// one) - creates a new one with ID 1 only if the file previously
         /// had no icon at all.
         /// </summary>
+        public static void SetSubsystem(string exePath, SubsystemType subsystem)
+        {
+            // The Subsystem field of the PE optional header decides whether Windows opens a console window for the program (3) or not (2); the version info
+            // only describes it. The field is at offset 68 of the optional header in PE32 and PE32+ alike. A file that is no PE file (the apphost of Linux) is left alone.
+            using var fs = new FileStream(exePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+            var head = new byte[0x40];
+            if (fs.Read(head, 0, head.Length) != head.Length || head[0] != 'M' || head[1] != 'Z') return;
+            int pe = BitConverter.ToInt32(head, 0x3C);
+            if (pe <= 0 || fs.Length < pe + 24 + 70) return;
+            var sig = new byte[4];
+            fs.Position = pe;
+            if (fs.Read(sig, 0, 4) != 4 || sig[0] != 'P' || sig[1] != 'E') return;
+            fs.Position = pe + 24 + 68;
+            fs.Write(BitConverter.GetBytes((ushort)subsystem), 0, 2);
+        }
+
         public static void SetIcon(string exePath, string icoPath)
         {
             var images = ReadIconImages(icoPath);

@@ -29,8 +29,17 @@ namespace fire.Standard
         public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource;
 
         private const string CoreSource = """
-            class IndexOutOfBoundsException : Exception {
+            /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);
+            /// `catch (Exception e)` catches every thrown value. A program that declares a class `Exception` itself replaces this one.
+            class Exception {
                 string message
+
+                construct(string message = "") {
+                    this.message = message
+                }
+            }
+
+            class IndexOutOfBoundsException : Exception {
                 int index
                 int length
 
@@ -45,7 +54,6 @@ namespace fire.Standard
             enum Takes { This = 0, Children = 1, Locals = 2, All = 3 }
 
             class DestroyedException : Exception {
-                string message
 
                 construct(string message) {
                     this.message = message
@@ -53,7 +61,6 @@ namespace fire.Standard
             }
 
             class AccessDeniedException : Exception {
-                string message
 
                 construct(string message) {
                     this.message = message
@@ -61,7 +68,6 @@ namespace fire.Standard
             }
 
             class UnitMismatchException : Exception {
-                string message
                 string expectedUnit
                 string actualUnit
 
@@ -212,6 +218,8 @@ namespace fire.Standard
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
+                    if (value is of class)
+                        try value.TakeTo(this)
                     this.items[this.count] = value
                     this.count = this.count + 1
                 }
@@ -221,6 +229,8 @@ namespace fire.Standard
                 }
 
                 operator[](int index, class value) {
+                    if (value is of class)
+                        try value.TakeTo(this)
                     this.items[index] = value
                 }
 
@@ -245,6 +255,8 @@ namespace fire.Standard
                         this.items[i] = this.items[i - 1]
                         i = i - 1
                     }
+                    if (value is of class)
+                        try value.TakeTo(this)
                     this.items[index] = value
                     this.count = this.count + 1
                 }

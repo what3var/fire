@@ -203,6 +203,25 @@ namespace fire.Terminal
         /// <summary>Width of `text` in pixels (the font is monospaced: number of characters times cell width).</summary>
         public int MeasureText(string text) => text.Length * CellWidth;
 
+        /// <summary>Like <see cref="DrawText(int, int, string, Brush, Brush?)"/>, but in the font `font` (null = the font of the renderer): a bitmap font draws its cells, a TrueType font draws anti-aliased
+        /// glyphs of `size` pixels (see <see cref="TextFont"/>); with `background` the line box (width of the text, height of the line) is filled first.</summary>
+        public void DrawText(int x, int y, string text, Brush foreground, Brush? background, TextFont? font, int size)
+        {
+            if (font == null) { DrawText(x, y, text, foreground, background); return; }
+            var surface = Surface;
+            var fg = foreground.PixelAt(surface, 0, 0);
+            bool hasBg = background != null;
+            var bg = hasBg ? background!.PixelAt(surface, 0, 0) : default;
+            if (font.IsBitmap) font.DrawBitmap(surface, x, y, text, fg, hasBg, bg);
+            else font.DrawTrueType(surface, x, y, text, size, fg, hasBg, bg);
+        }
+
+        /// <summary>Width of `text` in pixels in the font `font` (null = the font of the renderer).</summary>
+        public int MeasureText(string text, TextFont? font, int size) => font == null ? MeasureText(text) : font.Measure(text, size);
+
+        /// <summary>Height of a line of text in pixels in the font `font` (null = the font of the renderer).</summary>
+        public int TextHeight(TextFont? font, int size) => font == null ? CellHeight : font.LineHeight(size);
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)] // hot and loop-heavy: compile fully optimised straight away, not only after tiering up
         private void DrawGlyphResolved(in Surface surface, int x, int y, char c, in Pixel foreground, bool hasBackground, in Pixel background)
         {

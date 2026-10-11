@@ -1,0 +1,8 @@
+{
+  "title": "Threads",
+  "description": "fire blocks run in parallel; explains what is shared with the main program and when.",
+  "open": [
+    "main.script"
+  ],
+  "order": 40
+}

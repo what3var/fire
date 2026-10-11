@@ -1,0 +1,6 @@
+{
+  "title": "Tracker: pattern view",
+  "description": "A small tracker display: the pattern scrolls with the music, with level bars for the channels and a mute key per channel.",
+  "open": [ "main.script" ],
+  "order": 90
+}

@@ -433,7 +433,7 @@ namespace fire.Compiler
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, SourceFiles = SourceFilesOf(processedSources.Count, libraryFiles.Select(l => l.Path).ToList(), sources.Count) };
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count, libraryFiles.Select(l => l.Path).ToList(), sources.Count) };
 
             if (!string.IsNullOrEmpty(outname))
             {
@@ -444,6 +444,7 @@ namespace fire.Compiler
                 {
                     Packer.PackProgram(linkedProgram, tempfile, apphost =>
                     {
+                        Utilities.PeResourceEditor.SetSubsystem(apphost, assemblyInfo.Subsystem);   // the PE header decides about the console window (plain bytes, any OS)
                         if (!OperatingSystem.IsWindows()) return; // PeResourceEditor nutzt Win32-APIs
 
                         PeResourceEditor.SetVersionInfo(apphost, verInfo);

@@ -1,0 +1,6 @@
+{
+  "title": "User Interface",
+  "description": "Labels, buttons, a text field, a list and a check box with the ui library.",
+  "open": [ "main.script" ],
+  "order": 60
+}

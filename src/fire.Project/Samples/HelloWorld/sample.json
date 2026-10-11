@@ -1,0 +1,6 @@
+{
+  "title": "Hello, World",
+  "description": "The smallest program: printing, variables, loops and a function.",
+  "open": [ "main.script" ],
+  "order": 10
+}

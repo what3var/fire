@@ -20,8 +20,15 @@
     <ProjectReference Include="..\fire.UI.Bridge\fire.UI.Bridge.csproj" />
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
     <ProjectReference Include="..\fire.Native\fire.Native.csproj" />
-    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
+    <ProjectReference Include="..\fire.Ember\fire.Ember.csproj" />   <!-- the program ember comes along into the compiler folder (it uses the package manager library, which fire.Native and fire.Project bring) -->
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
+  </ItemGroup>
+
+  <!-- The templates that a standard bridge brings with its package (PackageTemplates\<bridge>\{Code,Project}\..., docs/TEMPLATES.md): copied next to the compiler, packed by bridge-packages. -->
+  <ItemGroup>
+    <None Update="PackageTemplates\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <!-- (the SDK leaves *.*proj files out of its default items) -->
+    <None Include="PackageTemplates\**\*.fireproj" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Import Project="..\BridgePackages.targets" />

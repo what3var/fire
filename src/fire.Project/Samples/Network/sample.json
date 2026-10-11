@@ -1,0 +1,6 @@
+{
+  "title": "Network: TCP and UDP",
+  "description": "A TCP echo server in a fire thread, a client talking to it, and a UDP datagram - all on this machine.",
+  "open": [ "main.script" ],
+  "order": 100
+}

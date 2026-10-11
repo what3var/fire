@@ -93,6 +93,12 @@ namespace fire.Compiler
                 NativeRuntimeFiles.WriteTo(work, target.Native.Platform);
                 string cpp = Path.Combine(work, "wrapper.cpp");
                 File.WriteAllText(cpp, GenerateWrapper(import));
+                if (ToolchainProvider.RequireLibraries(toolchain, cpp) is { } missingLibrary)
+                {
+                    string message = $"Building the native part of the package '{import.Package.Name}' needs a library that is missing:\n{missingLibrary}";
+                    RememberFailure(import, message);
+                    throw new PackageException(message);
+                }
                 string outFile = Path.Combine(work, FileNameFor(import));
                 var (exe, args) = NativeBuilder.CompilerCommand(toolchain, target, cpp, work, outFile, sharedLibrary: true, extraIncludeDirs: new[] { Path.Combine(work, "abi") });
                 var (ok, text) = NativeBuilder.Run(exe, args, work);
@@ -180,6 +186,7 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{target.Native.Platform}/fire_i2c.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{target.Native.Platform}/fire_spi.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{target.Native.Platform}/fire_wifi.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{target.Native.Platform}/fire_audio.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {

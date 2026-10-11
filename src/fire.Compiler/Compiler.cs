@@ -522,10 +522,9 @@ namespace fire.Compiler
             // later than the derived class (forward reference). The
             // resolver has already checked that at most one name in BaseRefs
             // is a real class - so here simply search for the first such name.
-            // 'Exception' (built-in base class, SPEC 7.1) deliberately has
-            // no RuntimeClass of its own - classes with ': Exception' get
-            // simply Base = null here (their own fields/methods/
-            // constructors work nevertheless; on throwing/catching
+            // 'Exception' (base class, SPEC 7.1) is a class of the prelude. Without one (a program
+            // compiled without the prelude) classes with ': Exception' get simply Base = null here
+            // (their own fields/methods/constructors work nevertheless; on throwing/catching
             // the type name "Exception" always matches anyway, see VM.ExceptionMatchesType).
             // Interface names in BaseRefs are ignored here - interfaces
             // need no runtime representation of their own (purely dynamic
@@ -539,7 +538,7 @@ namespace fire.Compiler
                     string n = baseRef.TypeArgCount == 0 ? baseRef.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(baseRef, baseRef.TypeArgCount, Known);
                     if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
-                    if (n == "Exception") break; // no RuntimeClass available -> Base stays null
+                    if (n == "Exception" && !classes.ContainsKey(n)) break; // no RuntimeClass available (a program without the prelude) -> Base stays null
                     rc.Base = classes[n];
                     break;
                 }
@@ -2117,8 +2116,9 @@ namespace fire.Compiler
                 else
                 {
                     CompileExpr(args[i]);
-                    // `f(g())`: the returned value goes into the parameter, so it belongs to the called function (SPEC 2.1), not to the caller
-                    if (scopeCreating && i < 16 && args[i] is CallExpr) mask |= 4UL << (4 * i);
+                    // `f(g())`, `f(new X())`: the returned / freshly made value goes into the parameter (the caller holds no reference to it), so it belongs
+                    // to the called function (SPEC 2.1), not to the caller
+                    if (scopeCreating && i < 16 && args[i] is CallExpr or NewExpr or NewArrayExpr) mask |= 4UL << (4 * i);
                 }
             }
             return mask;

@@ -198,7 +198,7 @@ new Linker().CompileAndLink(sources, debugWriter: null, outname: "hello.exe", ex
 
 The executable contains the program and - only for the libraries that the script `#import`s - the necessary bridge DLLs. Directives in the script such as `#name`, `#version`, `#icon` and `#noconsole` set its version information, icon and subsystem.
 
-To pack, the **folder of the host** must contain `fire.Runtime.exe`, `fire.Runtime.dll` and `fire.Runtime.runtimeconfig.json` in addition to the DLLs listed above. With a project reference to `fire.Compiler` they are copied along with everything else.
+To pack, the **folder of the host** must contain `runtime.exe`, `runtime.dll` and `runtime.runtimeconfig.json` in addition to the DLLs listed above. With a project reference to `fire.Compiler` they are copied along with everything else.
 
 ## Call your own C# code from a script
 

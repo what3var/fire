@@ -10,7 +10,7 @@ namespace fire.Runtime
     /// <summary>
     /// Creates the executable file of a fire program - a single, self-contained file:
     ///
-    ///   1. Start piece: the apphost (fire.Runtime.exe) together with fire.Runtime.dll and runtimeconfig.json as a .NET bundle
+    ///   1. Start piece: the apphost (runtime.exe) together with fire.Runtime.dll and runtimeconfig.json as a .NET bundle
     ///      (see BundleWriter). That is all the .NET host needs to start, and deliberately tiny.
     ///   2. Payload behind it (see PayloadFile, individually Brotli-packed): the program itself, the core (fire.dll,
     ///      MemoryPack) and - only if the program needs them via `#import` - the respective bridge DLLs together with
@@ -23,8 +23,8 @@ namespace fire.Runtime
     /// </summary>
     public class Packer
     {
-        /// <summary>File name of the apphost next to the compiler (Windows: fire.Runtime.exe, otherwise without extension).</summary>
-        private static string StubFileName => OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        /// <summary>File name of the apphost next to the compiler (Windows: runtime.exe, otherwise without extension).</summary>
+        private static string StubFileName => OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
 
         /// <summary>Packs `program` into a self-contained file `outName`.
         /// `customizeApphost`: called before bundling with the path of a copy of the apphost, in order to e.g. set icon and
@@ -36,11 +36,18 @@ namespace fire.Runtime
             baseDir ??= AppContext.BaseDirectory;
 
             var stubPath = Path.Combine(baseDir, StubFileName);
-            var runtimeDll = Path.Combine(baseDir, "fire.Runtime.dll");
-            var runtimeConfig = Path.Combine(baseDir, "fire.Runtime.runtimeconfig.json");
-            foreach (var required in new[] { stubPath, runtimeDll, runtimeConfig })
-                if (!File.Exists(required))
-                    throw new FileNotFoundException($"Zum Packen fehlt '{Path.GetFileName(required)}' im Ordner des Compilers ({baseDir}).", required);
+            var runtimeDll = Path.Combine(baseDir, "runtime.dll");
+            var runtimeConfig = Path.Combine(baseDir, "runtime.runtimeconfig.json");
+
+            // Two shapes of the runtime next to the compiler: apphost + runtime.dll + runtimeconfig (framework-dependent build: the packer makes the bundle), or only
+            // runtime.exe (a self-contained single-file publish: it IS a bundle already, the payload just goes behind it).
+            bool singleFile = File.Exists(stubPath) && !File.Exists(runtimeDll);
+            var required = singleFile ? new[] { stubPath } : new[] { stubPath, runtimeDll, runtimeConfig };
+            foreach (var file in required)
+                if (!File.Exists(file))
+                    throw new FileNotFoundException($"Zum Packen fehlt '{Path.GetFileName(file)}' im Ordner des Compilers ({baseDir}).", file);
+            if (singleFile && !BundleWriter.IsBundle(File.ReadAllBytes(stubPath)))
+                throw new InvalidOperationException($"'{Path.GetFileName(stubPath)}' im Ordner des Compilers ({baseDir}) ist weder ein Apphost mit '{Path.GetFileName(runtimeDll)}' daneben noch eine Single-File-Veroeffentlichung.");
 
             var plan = PackagePlan.Create(program.NativeImports, baseDir, program.PackageLibraryFiles);
             if (plan.Unresolved.Count > 0)
@@ -51,15 +58,24 @@ namespace fire.Runtime
             try
             {
                 File.Copy(stubPath, tempStub, true);
-                customizeApphost?.Invoke(tempStub);
-                var apphost = File.ReadAllBytes(tempStub);
-
-                var bundle = new List<BundleWriter.BundleFile>
+                if (singleFile)
                 {
-                    new("fire.Runtime.dll", BundleWriter.FileType.Assembly, File.ReadAllBytes(runtimeDll)),
-                    new("fire.Runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, File.ReadAllBytes(runtimeConfig)),
-                };
-                BundleWriter.Write(apphost, bundle, outName);
+                    // already a finished bundle: edit its PE part without losing the bundle behind it
+                    if (customizeApphost != null) BundleWriter.EditBundled(tempStub, customizeApphost);
+                    File.Move(tempStub, outName, true);
+                }
+                else
+                {
+                    customizeApphost?.Invoke(tempStub);
+                    var apphost = File.ReadAllBytes(tempStub);
+
+                    var bundle = new List<BundleWriter.BundleFile>
+                    {
+                        new("runtime.dll", BundleWriter.FileType.Assembly, File.ReadAllBytes(runtimeDll)),
+                        new("runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, File.ReadAllBytes(runtimeConfig)),
+                    };
+                    BundleWriter.Write(apphost, bundle, outName);
+                }
             }
             finally
             {

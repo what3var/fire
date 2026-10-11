@@ -105,6 +105,8 @@ namespace fire.UI.Markup
             Enum("valign", "UI.VAlign", "Stretch", "Top", "Center", "Bottom"),
             new("minWidth", PropertyKind.Int), new("minHeight", PropertyKind.Int), new("maxWidth", PropertyKind.Int), new("maxHeight", PropertyKind.Int),
             new("background", PropertyKind.Color), new("foreground", PropertyKind.Color), new("pen", PropertyKind.Pen),
+            // the font of the text: a name for Fonts.Get ("" = that of the surrounding element) and the height of the letters in pixels (0 = that of the surrounding element)
+            new("font", PropertyKind.Text), new("fontSize", PropertyKind.Int),
             new("style", PropertyKind.StyleRef), new("template", PropertyKind.TemplateRef),
             // attached properties of the containers
             new("Grid.Row", PropertyKind.Int, "gridRow"), new("Grid.Column", PropertyKind.Int, "gridColumn"),

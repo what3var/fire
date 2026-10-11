@@ -15,6 +15,14 @@ fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStor
 foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
     Console.WriteLine(problem);
 
+// Fonts for the tests: a synthetic TrueType font of about 1 KB (square, round and compound glyphs, a kern table; family "Fire Test"), written as "FireSans.ttf" into a folder that FIRE_FONT_DIRS names.
+// The system lookup of fonts finds it by file name ("firesans"), full name and family name - in the VM and in the native programs (they inherit the variable).
+byte[] fireTestFont = Convert.FromBase64String("AAEAAAALAIAAAwAwT1MvMkUCRH0AAAE4AAAAYGNtYXACMAFTAAABvAAAAGxnbHlmPzzozgAAAjwAAAEGaGVhZC+Ah2AAAAC8AAAANmhoZWEGEAH+AAAA9AAAACRobXR4EyQCWAAAAZgAAAAka2Vybv/h//wAAANEAAAAJGxvY2EBEQFeAAACKAAAABRtYXhwABAAGgAAARgAAAAgbmFtZaJXW7UAAANoAAAAZnBvc3QEn3EYAAAD0AAAADgAAQAAAAEAAEv3EAlfDzz1AAMD6AAAAADm8CF+AAAAAObwIX4AAAAAAooDhAAAAAMAAgAAAAAAAAABAAADIP84AGQCvAAAAAACigABAAAAAAAAAAAAAAAAAAAACQABAAAACQAQAAIABwACAAIAAAAAAAAAAAAAAAAAAgABAAMCIAGQAAUABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAwAAAAAAAAAAAAAAAD8/Pz8AAAAgAMEDIP84AAADIADIAAAAAAAAAAAAAAAAAAAAIAAAAlgAZAEsAAACvAAyAlgAAAK8AGQCvABkASwAZAK8ADIBLABkAAAAAgAAAAMAAAAUAAMAAQAAABQABABYAAAAEgAQAAMAAgAgAC4AQQBIAE8AVgBpAMH//wAAACAALgBBAEgATwBWAGkAwf///+H/2P/B/73/tf+t/5//RgABAAAAAAAAAAAAAAAAAAAAAAAAAAAADQANABoALQBJAGAAawB3AIMAAQBkAAAB9AK8AAMAADMRIRFkAZACvP1EAAABADIAAAKKArwAAgAAMwEBMgEsASwCvP1EAAEAAAAAAlgCvAAFAAARAQEjAwMBLAEseLS0Arz9RAK8/j4BwgAAAgBkAAACWAK8AAcADwAAExAzMhEQIyITFDMyNTQjImT6+vr6eIKCgoIBXgFe/qL+ogFelpaWAAABAGQAAAJYArwACwAAMxEzESERMxEjESERZGQBLGRk/tQCvP7UASz9RAEs/tQAAQBkAAAAyAB4AAMAADM1MxVkZHh4//8AMgAAAooDhAAmAAIAAAAHAAYA+gMMAAEAZAAAAMgCvAADAAAzETMRZGQCvP1EAAAAAAABAAAAIAABAAMADAABAAYAAgAD/7AAAwAC/8QABQAEAB4AAAAEADYAAQAAAAAAAQAJAAAAAQAAAAAAAgAHAAkAAwABBAkAAQASABAAAwABBAkAAgAOACJGaXJlIFRlc3RSZWd1bGFyAEYAaQByAGUAIABUAGUAcwB0AFIAZQBnAHUAbABhAHIAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAkAAAADACQAOQAyACsBAgDJAEwDZG90");
+string fontTestDir = Path.Combine(Path.GetTempPath(), "fire-font-test-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(fontTestDir);
+File.WriteAllBytes(Path.Combine(fontTestDir, "FireSans.ttf"), fireTestFont);
+Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
+
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 
@@ -807,6 +815,78 @@ try
 catch (Exception ex) when (ex is ParseException or ResolverException or NotSupportedException)
 {
     Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Bytecode-Test: Stacktrace einer unbehandelten Exception ===");
+
+string traceSample = """
+class Oops {
+    string message
+    construct(string message) { this.message = message }
+}
+class Worker {
+    Fail() {
+        throw new Oops("deep")
+    }
+    Run() {
+        this.Fail()
+    }
+}
+var w = new Worker()
+w.Run()
+""";
+
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse(traceSample);
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes) { CaptureErrorTrace = true };
+    vm.Run();
+    var trace = vm.UnhandledTrace;
+    if (vm.UnhandledException == null || trace == null)
+        Console.WriteLine("FEHLER: unbehandelte Exception ohne Stacktrace");
+    else if (trace.Count < 3 || trace[0].Line != 7 || trace[1].Line != 10 || trace[2].Line != 14)
+        Console.WriteLine("FEHLER: Stacktrace falsch: " + string.Join(", ", trace.Select(t => t.Line)));
+    else
+        Console.WriteLine("Stacktrace ok: " + string.Join(" <- ", trace.Select(t => t.Line)));
+}
+
+Console.WriteLine();
+Console.WriteLine("=== Bytecode-Test: Debugger pausiert an einer unbehandelten Exception und ignoriert sie (resume) ===");
+
+{
+    var natives = NativeRegistry.CreateDefault();
+    var program = Parser.Parse("""
+class Oops {
+    string message
+    construct(string message) { this.message = message }
+}
+print("before")
+throw new Oops("ignored")
+print("after")
+""");
+    var resolveResult = Resolver.Resolve(program, natives.Names);
+    var compiled = Compiler.Compile(program, resolveResult, natives);
+    var vm = new VM(compiled.TopLevel, new Scope(null, isGlobal: true), natives, compiled.Classes) { CaptureErrorTrace = true, PauseOnUnhandled = true };
+    var prevOut = Console.Out;
+    var capture = new StringWriter();
+    Console.SetOut(capture);
+    bool paused, ended, resumed;
+    try
+    {
+        bool more = vm.RunUntilEnd(() => false);
+        paused = !more && vm.IsPausedOnUnhandled && vm.UnhandledException != null && !vm.IsHalted;
+        resumed = vm.TryResumeUnhandled();
+        ended = !vm.RunUntilEnd(() => false) && vm.IsHalted && vm.UnhandledException == null;
+    }
+    finally { Console.SetOut(prevOut); }
+    string text = capture.ToString().Replace("\r", "");
+    if (!paused || !resumed || !ended || text != "before\nafter\n")
+        Console.WriteLine($"FEHLER: paused={paused} resumed={resumed} ended={ended} output='{text}'");
+    else
+        Console.WriteLine("Pause + Ignorieren ok");
 }
 
 Console.WriteLine();
@@ -7295,7 +7375,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         }
 
         // 4) End-to-end: pack a standalone file, start it OUTSIDE the compiler folder.
-        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         if (File.Exists(Path.Combine(baseDir, stubName)))
         {
             string RunPacked(string source, string name, out long size, out PackagePlan? plan)
@@ -7339,6 +7419,113 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     }
 
     Console.WriteLine(packFailures == 0 ? "Alle Packer-Pruefungen bestanden." : $"FEHLER: {packFailures} Packer-Pruefung(en) fehlgeschlagen.");
+}
+
+// ---------------------------------------------------------------------------
+// Packer: runtime.exe alone (self-contained single-file publish) next to runtime.dll + apphost; subsystem
+// ---------------------------------------------------------------------------
+{
+    Console.WriteLine();
+    Console.WriteLine("=== Packer: Single-File-Runtime, Bundle verschieben, Subsystem ===");
+    int sfFailures = 0;
+    void SfCheck(bool ok, string what)
+    {
+        if (!ok) sfFailures++;
+        Console.WriteLine(ok ? $"OK: {what}" : $"FEHLER: {what}");
+    }
+
+    // a minimal PE file: DOS header, "PE", one section; the bundle signature (with the 8-byte gap in front of it) sits in the section
+    byte[] SyntheticPe()
+    {
+        var pe = new byte[0x400];
+        pe[0] = (byte)'M'; pe[1] = (byte)'Z';
+        BitConverter.GetBytes(0x40).CopyTo(pe, 0x3C);
+        pe[0x40] = (byte)'P'; pe[0x41] = (byte)'E';
+        BitConverter.GetBytes((ushort)1).CopyTo(pe, 0x40 + 6);        // sections
+        BitConverter.GetBytes((ushort)0xF0).CopyTo(pe, 0x40 + 20);    // size of the optional header
+        BitConverter.GetBytes((ushort)0x20B).CopyTo(pe, 0x40 + 24);   // PE32+
+        BitConverter.GetBytes((ushort)3).CopyTo(pe, 0x40 + 24 + 68);  // console subsystem
+        int table = 0x40 + 24 + 0xF0;
+        BitConverter.GetBytes(0x200u).CopyTo(pe, table + 16);         // SizeOfRawData
+        BitConverter.GetBytes(0x200u).CopyTo(pe, table + 20);         // PointerToRawData
+        BundleWriter.BundleSignature.ToArray().CopyTo(pe, 0x300);
+        return pe;
+    }
+
+    var bundleFiles = new List<BundleWriter.BundleFile>
+    {
+        new("runtime.dll", BundleWriter.FileType.Assembly, Enumerable.Range(0, 300).Select(i => (byte)(i * 7)).ToArray()),
+        new("runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, System.Text.Encoding.UTF8.GetBytes("{\"x\":1}")),
+    };
+    var sfDir = Path.Combine(Path.GetTempPath(), "fire-sf-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(sfDir);
+    try
+    {
+        var bundled = Path.Combine(sfDir, "bundled.exe");
+        BundleWriter.Write(SyntheticPe(), bundleFiles, bundled);
+        var before = File.ReadAllBytes(bundled);
+        SfCheck(BundleWriter.IsBundle(before) && BundleWriter.PeEnd(before) == 0x400, "ein fertiges Bundle wird erkannt, das Ende des PE-Teils stimmt");
+
+        // an edit that grows the PE part (like a resource update) must not break the bundle behind it
+        BundleWriter.EditBundled(bundled, path => File.WriteAllBytes(path, File.ReadAllBytes(path).Concat(new byte[0x123]).ToArray()));
+        var after = File.ReadAllBytes(bundled);
+        var entries = BundleWriter.ReadEntries(after);
+        bool intact = entries.Count == 2 && entries.All(e => e.Offset + e.Size <= after.Length)
+            && after.AsSpan((int)entries[0].Offset, (int)entries[0].Size).SequenceEqual(bundleFiles[0].Data)
+            && after.AsSpan((int)entries[1].Offset, (int)entries[1].Size).SequenceEqual(bundleFiles[1].Data);
+        SfCheck(intact && after.Length == before.Length + 0x123, "ein Bundle ueberlebt eine Aenderung des PE-Teils: die Offsets sind verschoben, die Dateien unveraendert");
+
+        var gui = SyntheticPe();
+        var guiPath = Path.Combine(sfDir, "gui.exe");
+        File.WriteAllBytes(guiPath, gui);
+        fire.Utilities.PeResourceEditor.SetSubsystem(guiPath, fire.Utilities.SubsystemType.GUI);
+        SfCheck(BitConverter.ToUInt16(File.ReadAllBytes(guiPath), 0x40 + 24 + 68) == 2, "das Subsystem GUI steht im PE-Kopf");
+        File.WriteAllBytes(guiPath, new byte[] { 1, 2, 3 });
+        fire.Utilities.PeResourceEditor.SetSubsystem(guiPath, fire.Utilities.SubsystemType.GUI);
+        SfCheck(File.ReadAllBytes(guiPath).SequenceEqual(new byte[] { 1, 2, 3 }), "eine Datei ohne PE-Kopf bleibt beim Setzen des Subsystems unberuehrt");
+
+        // the packer with only runtime.exe next to the compiler: the payload goes behind the finished bundle
+        var baseDir2 = Path.Combine(sfDir, "compiler");
+        Directory.CreateDirectory(baseDir2);
+        foreach (var dll in new[] { "fire.dll" }.Concat(Directory.GetFiles(AppContext.BaseDirectory, "MemoryPack*.dll").Select(Path.GetFileName)!))
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, dll!))) File.Copy(Path.Combine(AppContext.BaseDirectory, dll!), Path.Combine(baseDir2, dll!));
+        string stub = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
+        File.Copy(bundled, Path.Combine(baseDir2, stub));
+        var linkedSf = new Linker().CompileAndLink(new[] { "print(\"sf\")" }, null, null);
+        var packedSf = Path.Combine(sfDir, "packed.exe");
+        Packer.PackProgram(linkedSf, packedSf, null, baseDir2);
+        var packedBytes = File.ReadAllBytes(packedSf);
+        var stubBytes = File.ReadAllBytes(Path.Combine(baseDir2, stub));
+        SfCheck(packedBytes.Length > stubBytes.Length && packedBytes.AsSpan(0, stubBytes.Length).SequenceEqual(stubBytes), "nur runtime.exe: die fertige Datei ist die Runtime mit der Nutzlast dahinter");
+        SfCheck(Packer.UnpackProgram(packedSf) != null, "nur runtime.exe: das Programm laesst sich aus der Datei wieder lesen");
+
+        // neither a bundle nor runtime.dll next to it: a clear message
+        File.WriteAllBytes(Path.Combine(baseDir2, stub), SyntheticPe());
+        try { Packer.PackProgram(linkedSf, Path.Combine(sfDir, "bad.exe"), null, baseDir2); SfCheck(false, "weder Bundle noch runtime.dll: Fehlermeldung"); }
+        catch (InvalidOperationException ex) { SfCheck(ex.Message.Contains("Single-File"), "weder Bundle noch runtime.dll: Fehlermeldung"); }
+
+        // the native build: -mwindows / /SUBSYSTEM:WINDOWS only for a GUI program on Windows
+        TargetProfile.TryGet("windows", out var winTarget);
+        var gccCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
+        var gccConsole = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: false).Arguments;
+        var msvcCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["msvc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
+        SfCheck(gccCmd.Contains("-mwindows") && !gccConsole.Contains("-mwindows"), "nativer Build (gcc): #noconsole setzt -mwindows, sonst nicht");
+        SfCheck(msvcCmd.Contains("/SUBSYSTEM:WINDOWS") && msvcCmd.Contains("/ENTRY:mainCRTStartup"), "nativer Build (msvc): #noconsole setzt /SUBSYSTEM:WINDOWS");
+        // the native build carries version info and icon to the executable
+        var nativeInfo = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#name \"Demo\"\n#author \"ACME\"\n#version \"1.2.3.4\"\n#icon \"x.ico\"\nprint(\"x\")" }, TargetProfile.Host);
+        SfCheck(nativeInfo.VersionInfo != null && nativeInfo.VersionInfo.ProductVersion.ToString() == "1.2.3.4" && nativeInfo.IconPath == "x.ico", "nativer Build: Versionsinfo und Icon der Direktiven kommen beim Build an");
+        var applyLog = new System.Text.StringBuilder();
+        fire.Compiler.NativeBuilder.ApplyPeMetadata(Path.Combine(sfDir, "none.exe"), nativeInfo, winTarget!, applyLog);
+        SfCheck(applyLog.Length == 0, "nativer Build: eine fehlende Datei oder ein anderes System laesst die Metadaten in Ruhe");
+        var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
+        SfCheck(noconsole.GuiSubsystem && !linkedSf.GuiSubsystem, "der Linker meldet das Subsystem (#noconsole) an das gelinkte Programm");
+    }
+    finally
+    {
+        try { Directory.Delete(sfDir, true); } catch (IOException) { }
+    }
+
+    Console.WriteLine(sfFailures == 0 ? "Alle Single-File-Pruefungen bestanden." : $"FEHLER: {sfFailures} Single-File-Pruefung(en) fehlgeschlagen.");
 }
 
 // ---------------------------------------------------------------------------
@@ -7397,7 +7584,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         CliCheck(CommandLineRunner.Run(new[] { "run", bad }, new StringWriter(), errBad) == CommandLineRunner.ExitScriptError && errBad.ToString().Length > 0, "run: Kompilierfehler -> Exitcode 1 mit Meldung");
         CliCheck(CommandLineRunner.Run(new[] { "run", Path.Combine(cliDir, "nix.script") }, new StringWriter(), new StringWriter()) == CommandLineRunner.ExitUsage, "run: fehlende Datei -> Exitcode 2");
 
-        var stubName = OperatingSystem.IsWindows() ? "fire.Runtime.exe" : "fire.Runtime";
+        var stubName = OperatingSystem.IsWindows() ? "runtime.exe" : "runtime";
         if (File.Exists(Path.Combine(AppContext.BaseDirectory, stubName)))
         {
             var outFile = Path.Combine(cliDir, "gebaut.exe");
@@ -8915,6 +9102,19 @@ string uiDrawScript = """
     mfile.Add(new UI.MenuItem("Quit"))
     mbar.Add(mfile)
     ui.Add(mbar)
+    // fonts: a TrueType font found on the system (the folder FIRE_FONT_DIRS), a built-in bitmap font, the font and size passed on to the elements inside, a text field that scrolls
+    var fnp = new UI.Panel(330, 236, 300, 62)
+    fnp.font = "firesans"
+    fnp.fontSize = 16
+    fnp.Add(new UI.Label("AVAVHO iAi.", 4, 4))
+    var fl2 = new UI.Label("Small", 130, 4)
+    fl2.font = "8x8"
+    fnp.Add(fl2)
+    var fbt = new UI.Button("HOAV", 4, 28, -1, -1)
+    fbt.fontSize = 12
+    fnp.Add(fbt)
+    fnp.Add(new UI.TextBox("AVA HO iii AVAV", 80, 30, 90, 24))
+    ui.Add(fnp)
     print(ui.Tick())
     mbar.Open(ui, 0)
     ui.Tick()
@@ -9499,6 +9699,62 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         print("ohne btn1: btn2 " + bb.rx + "," + bb.ry)
         """, new[] { "label 2,2 196x14", "btn1 2,21 100x20", "btn2 2,46 abs 12,56", "ohne btn1: btn2 2,21" });
+
+    CheckUi("Schrift: font und fontSize des Elements, vom umgebenden Element geerbt, sonst die der Theme; Textfeld mit Proportionalschrift (Caret, Scrollen)", uiHead + """
+        var plain = new UI.Label("AVA")
+        var big = new UI.Label("AVA")
+        big.font = "firesans"
+        big.fontSize = 20
+        var sp = new UI.StackPanel(0, 40, 300, 150)
+        sp.font = "firesans"
+        sp.fontSize = 10
+        var inh = new UI.Label("AVA")
+        var own = new UI.Label("AVA")
+        own.fontSize = 20
+        var bit = new UI.Label("AVA")
+        bit.font = "8x8"
+        var btn = new UI.Button("AVA", 0, 0, -1, -1)
+        sp.Add(inh)
+        sp.Add(own)
+        sp.Add(bit)
+        sp.Add(btn)
+        ui.Add(plain)
+        ui.Add(big)
+        ui.Add(sp)
+        ui.Draw()
+        print("plain " + plain.cw + "x" + plain.ch)
+        print("big " + big.cw + "x" + big.ch)
+        print("inh " + inh.cw + "x" + inh.ch)
+        print("own " + own.cw + "x" + own.ch)
+        print("bit " + bit.cw + "x" + bit.ch)
+        print("btn " + btn.cw + "x" + btn.ch)
+        ui.theme.font = "8x8"
+        ui.Draw()
+        print("plain after theme " + plain.cw + "x" + plain.ch)
+        ui.theme.font = ""
+        ui.Draw()
+        var tb = new UI.TextBox("AVA", 0, 100, 100, 24)
+        tb.font = "firesans"
+        tb.fontSize = 20
+        ui.Add(tb)
+        ui.Draw()
+        tb.MouseDown(ui, 1, tb.ax + 4 + 20, tb.ay + 5)
+        print("caret " + tb.caret)
+        tb.MouseDown(ui, 1, tb.ax + 4 + 17, tb.ay + 5)
+        print("caret " + tb.caret)
+        tb.MouseDown(ui, 1, tb.ax + 4 + 300, tb.ay + 5)
+        print("caret " + tb.caret)
+        tb.SetText("AVAVAVAVAVAV")
+        ui.Draw()
+        print("scroll " + tb.scroll + " caret " + tb.caret)
+        tb.caret = 0
+        ui.Draw()
+        print("scroll " + tb.scroll)
+        tb.font = ""
+        tb.fontSize = 0
+        ui.Draw()
+        print("plain box scroll " + tb.scroll)
+        """, new[] { "plain 24x14", "big 37x22", "inh 19x11", "own 37x22", "bit 24x8", "btn 43x23", "plain after theme 24x8", "caret 2", "caret 1", "caret 3", "scroll 5 caret 12", "scroll 0", "plain box scroll 0" });
 
     CheckUi("Layout: Ausrichtung, Rand, Mindest- und Hoechstgroesse", uiHead + """
         var sp2 = new UI.StackPanel(0, 0, 200, 100)
@@ -10358,6 +10614,36 @@ string[] uiDrawExpected = Array.Empty<string>();
                     "other other", "other2", "p4", "T1||True", "p4",
                 });
 
+            File.WriteAllText(P("Prop.fxml"), """
+                <View class="Prop1" width="300" height="100">
+                  <Panel width="300" height="100">
+                    <Label name="vol" x="5" y="5" text="{Binding Volume, Converter=Text}"/>
+                    <TextBox name="ed" x="5" y="30" width="120" text="{Binding Label, Mode=TwoWay}"/>
+                    <Label name="sum" x="5" y="60" text="{Binding Summary}"/>
+                  </Panel>
+                </View>
+                """);
+            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property liest nur", $$"""
+                #include "{{P("Prop.fxml")}}"
+                class Model {
+                    int _v = 1
+                    string _l = "a"
+                    Volume { get { return this._v } set { this._v = value } }
+                    Label { get { return this._l } set { this._l = value + "!" } }
+                    Summary { get { return this._l + this._v } }
+                }
+                var d = new Prop1Base()
+                var m = new Model()
+                d.SetDataContext(m)
+                print(d.vol.text + " " + d.ed.text + " " + d.sum.text)
+                m.Volume = 7
+                print(d.vol.text)
+                d.ed.text = "x"
+                print(m.Label + " " + d.ed.text)
+                m.Label = "y"
+                print(d.ed.text + " " + d.sum.text)
+                """, new[] { "1 a a1", "7", "x! x", "y! a1" });
+
             File.WriteAllText(P("Rich.fxml"), """
                 <Window class="Rich" title="Rich" width="480" height="320">
                   <Resources>
@@ -10708,7 +10994,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     }
 
     const string cbHead = """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var fb = new Framebuffer(64, 64)
         var win = new Window(fb, "t")
 
@@ -11000,7 +11286,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "ende", "~G 9" });
 
     CheckGl("Eine Exception im Block beendet die Sektion (der Hauptthread haengt nicht)", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var total = 0
         var done = 0
         fire {
@@ -11044,7 +11330,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "total 11" });
 
     CheckGl("Unbehandelte Exception im Hauptprogramm: ein auf eine Sektion wartender Thread haengt nicht", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class G { int v; construct() { this.v = 1 } }
         var g = new G()
         fire { g.v = 2 }
@@ -11081,7 +11367,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "18" });
 
     CheckGl("break aus try meldet den Handler ab: eine spaetere Exception faengt der aeussere catch", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         try {
             while (true) { try { break } catch (e) { print("innen") } }
             throw new Exception("aussen")
@@ -11089,7 +11375,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "gefangen aussen" });
 
     CheckGl("break aus catch (mit finally und eigenen Locals im catch)", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var log = ""
         var i = 0
         while (i < 5) {
@@ -11102,7 +11388,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         """, new[] { "1f2fdreif 3" });
 
     CheckGl("continue aus catch", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         var n = 0
         for (var i = 0; i < 4; i = i + 1) {
             try { throw new Exception("x") }
@@ -11749,7 +12035,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(plain(1))
         """, new[] { "x: 1 y: 2 b: 3 n: w c: 2", "hello a w", "2", "2" });
 
-    const string timeHead = "#import \"time\"\nclass Exception { string message; construct(string message) { this.message = message } }\n";
+    const string timeHead = "#import \"time\"\nclass Exception { string message; construct(string message = \"\") { this.message = message } }\n";
 
     CheckLq("TimeSpan: Fabriken, Komponenten, Summen, Vergleiche, Text", timeHead + """
         var a = TimeSpan.FromSeconds(90)
@@ -11987,7 +12273,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         """, new[] { "3 2 4 6 " });
 
     // ---- Operand stack and exceptions: what the throw site leaves on the stack must not shift the caller
-    const string excHead = "class Exception { string message; construct(string message) { this.message = message } }\n";
+    const string excHead = "class Exception { string message; construct(string message = \"\") { this.message = message } }\n";
 
     CheckLq("Exception aus einem foreach, im selben try gefangen: keine Operanden-Leichen (catch mit return, Aufrufer mitten im Ausdruck)", excHead + """
         class T {
@@ -12305,7 +12591,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         }, debugRelease);
 
     CheckRf("Fehler sind fangbare ReflectionExceptions; Exceptions aus Getter/Methode laufen zum aeusseren catch", """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class P {
             int n
             int Age { get { throw new Exception("kein Alter") } }
@@ -12334,7 +12620,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckRf("Selektor: lambda member<T> enthaelt die Reflection des gewaehlten Mitglieds (Get/Set/Describe, verschachtelt, durchgereicht)", """
         class Address { string city; construct(string c) { this.city = c } }
-        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a } }
+        class Person { string name; Address address; construct(string n, Address a) { this.name = n; this.address = a; try a.TakeTo(this) } }
         class W {
             static Show(lambda member<Person> sel, Person p) {
                 print(sel.Name + "=" + sel.Get(p) + " " + sel.Describe(p).TypeName + " " + sel.Path.length)
@@ -12363,7 +12649,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     // packed: metadata and try/catch must survive the serialisation (catch clauses used to be lost)
     CheckRf("Gepacktes Programm: Typ-Metadaten, Zugriffsregeln und try/catch ueberleben die Serialisierung", """
         #import "reflection"
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class A { float r; private int s; construct() { this.r = 1.5; this.s = 3 } }
         var t = Type.Of(new A())
         foreach (m in t.All) { print(m.Access + " " + m.TypeName + " " + m.Name) }
@@ -12373,7 +12659,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     // ---- probe / silence
     const string probeHead = """
-        class Exception { string message; construct(string message) { this.message = message } }
+        class Exception { string message; construct(string message = "") { this.message = message } }
         class C {
             int v
             string name
@@ -12785,7 +13071,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         } }
         T.Run(items, arr)
         print("end")
-        """, new[] { "True", "False", "False", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~mine", "~tmp" });
+        """, new[] { "True", "False", "True", "~la", "~lb", "~a1", "~a2", "end", "~fresh", "~tmp", "~mine" });
 
     CheckScChecked("TakeTo(list, Takes), TakeLocal", """
         class Item { string n
@@ -12979,7 +13265,40 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(T.FindWhile())
         """, new[] { "~f0", "~f1", "~outer", "1", "~e1", "~e2", "2", "~w0", "~w1", "1" });
 
-    CheckSc("return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert", scHead + "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+    CheckSc("Exception: die Basisklasse des Prelude (message, eigene Ableitungen mit und ohne base(...), Standardmeldung leer)", """
+        class NotFound : Exception {
+            construct(string what) : base(what + " not found") { }
+        }
+        class Quiet : Exception { }
+        try { throw new NotFound("key") } catch (NotFound e) { print(e.message) }
+        try { throw new Exception("plain") } catch (Exception e) { print(e.message) }
+        try { throw new Quiet() } catch (Quiet e) { print("[" + e.message + "]") }
+        var q = new Quiet()
+        print(q is of Exception)
+        """, new[] { "key not found", "plain", "[]", "True" });
+
+    CheckSc("Exception: eine eigene Klasse Exception des Programms ersetzt die des Prelude (die Ableitungen bekommen ihre Basis)", """
+        class Exception {
+            string message
+            construct(string message) { this.message = message + "!" }
+        }
+        class MyErr : Exception {
+            construct(string m) : base(m) { }
+        }
+        try { throw new MyErr("x") } catch (MyErr e) { print(e.message) }
+        """, new[] { "x!" });
+
+    CheckScChecked("Exception: die Fehler der Laufzeit sind Exceptions (IndexOutOfBounds, Zugriff auf Zerstoertes)", """
+        class Box { int v }
+        var a = [1]
+        try { print(a[5]) } catch (Exception e) { print(e.message) }
+        try { print(a[5]) } catch (IndexOutOfBoundsException e) { print(e.index + "/" + e.length) }
+        var b = new Box()
+        delete b
+        try { print(b.v) } catch (DestroyedException e) { print("destroyed: " + e.message) }
+        """, new[] { "Array index 5 out of range (length 1).", "5/1", "destroyed: Access to a destroyed object." });
+
+    CheckSc("return im try/catch/finally in verschachtelten Bloecken: jedes Objekt genau einmal zerstoert", scHead + "class Exception { string message; construct(string message = \"\") { this.message = message } }\n" + """
         class T {
             static F() {
                 var a = new D("a")
@@ -13051,7 +13370,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(T.Locals())
         """, new[] { "610", "True False", "55", "3 21", "5050", "undefined,undefined,3", "undefined,undefined,3" });
 
-    CheckSc("Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter", "class Exception { string message; construct(string message) { this.message = message } }\n" + """
+    CheckSc("Exceptions durch viele Aufrufe/Bloecke: danach arbeiten die wiederverwendeten Scopes unveraendert weiter", "class Exception { string message; construct(string message = \"\") { this.message = message } }\n" + """
         class T {
             static Deep(int n) { var a = n * 2; if (n == 0) { throw new Exception("bottom") } var r = T.Deep(n - 1); return r + a }
             static Run() {
@@ -16054,7 +16373,7 @@ else
             print("ende")
             """),
         ("Threads: Globals: Ausnahme im Block beendet die Sektion", """
-            class Exception { string message; construct(string message) { this.message = message } }
+            class Exception { string message; construct(string message = "") { this.message = message } }
             var total = 0
             var done = 0
             fire {
@@ -16289,6 +16608,80 @@ else
     }).ToArray();
 
     // Graphics (bridges/fire_bridge_graphics.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)", """
+            class Person {
+                string name
+                construct(string name) { this.name = name }
+            }
+            class Keeper {
+                class items
+                int count
+                construct() { this.items = new class[4]; this.count = 0 }
+                Add(class value) {
+                    try value.TakeTo(this)
+                    this.items[this.count] = value
+                    this.count = this.count + 1
+                }
+            }
+            class Holder {
+                Keeper k
+                List people
+                construct() {
+                    this.k = new Keeper()
+                    this.people = new List()
+                    this.k.Add(new Person("A"))
+                    this.people.Add(new Person("B"))
+                    this.people.Add(new Person("C"))
+                }
+            }
+            var h = new Holder()
+            print(h.k.items[0].name)
+            print(h.people.count)
+            print(h.people[0].name + h.people[1].name)
+        """),
+        ("Besitz: ein Konstruktor uebernimmt ein `new`-Argument per take, TakeTo oder try TakeTo", """
+            class Part {
+                string n
+                construct(string n) { this.n = n }
+                destruct() { print("~" + this.n) }
+            }
+            class ViaTake { Part p
+                construct(Part p) { this.p = take p } }
+            class ViaTakeTo { Part p
+                construct(Part p) { p.TakeTo(this); this.p = p } }
+            class ViaTry { Part p
+                construct(Part p) { this.p = p; try p.TakeTo(this) } }
+            class Lost { Part p
+                construct(Part p) { this.p = p } }
+            var a = new ViaTake(new Part("take"))
+            var b = new ViaTakeTo(new Part("takeTo"))
+            var c = new ViaTry(new Part("try"))
+            print(a.p.n + " " + b.p.n + " " + c.p.n)
+            var d = new Lost(new Part("lost"))
+            print("end")
+        """),
+        ("Threads: Sleep in einer Methode eines globalen Objekts gibt die Sektion frei (Hauptprogramm wird nicht ausgehungert)", """
+            #import "time"
+            class W {
+                int n = 0
+                Wait(int ms) {
+                    var start = DateTime.UtcNow()
+                    while ((DateTime.UtcNow() - start).TotalMilliseconds < ms) { Sleep(2) }
+                    this.n = this.n + 1
+                }
+            }
+            var w = new W()
+            fire {
+                for (var i = 0; i < 20; i++) { w.Wait(40) }
+            }
+            Sleep(150ms)
+            print("main woke")
+            print("n>0: " + (w.n > 0))
+        """),
+    }).ToArray();
+
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Grafik: Framebuffer, Zeichnen, Palette, Blit, Fehler, Slicer (Konsole)", """
@@ -17281,6 +17674,281 @@ else
             """),
     }).ToArray();
 
+    // Tracker (bridges/fire_bridge_tracker.hpp): a module built in memory, rendered, played to the simulated audio device - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Tracker: Modul im Speicher - Laden, Rendern, Seek, Mute, Stereo, Player auf dem simulierten Geraet, Fehler", """
+            #import "tracker"
+
+            // a module built in memory: one 4 channel pattern, a looped square wave as the only instrument
+            var m = new byte[2172]
+            m[0] = 102
+            m[1] = 105
+            m[2] = 114
+            m[3] = 101
+            m[20] = 115                  // sample name "s"
+            m[43] = 32                   // 32 words = 64 bytes
+            m[45] = 64                   // volume
+            m[49] = 32                   // loop length: 32 words
+            m[950] = 1                   // one position
+            m[951] = 127
+            m[1080] = 77
+            m[1081] = 46
+            m[1082] = 75
+            m[1083] = 46                 // M.K.
+            for (var i = 0; i < 64; i++) {
+                if (i < 32) { m[2108 + i] = 100 } else { m[2108 + i] = 156 }
+            }
+            // row 0 channel 0: C-2 (period 428 = 0x1AC), sample 1
+            m[1084] = 1
+            m[1085] = 172
+            m[1086] = 16
+            // row 4 channel 1: E-2 (339 = 0x153), sample 1, volume 0x20 (C20)
+            m[1084 + 16 * 4 + 4] = 1
+            m[1084 + 16 * 4 + 5] = 83
+            m[1084 + 16 * 4 + 6] = 28
+            m[1084 + 16 * 4 + 7] = 32
+            // row 8: D00 (pattern break) on channel 3 ends the pattern: 8 rows of 6 ticks at 125 bpm
+            m[1084 + 8 * 16 + 12 + 2] = 13
+            var song = Tracker.Song.Load(m)
+            print("song " + song.Title + " " + song.Channels + " " + song.Orders + " " + song.Patterns + " " + song.Rate + " " + song.Milliseconds)
+            print("state " + song.Order + " " + song.Row + " " + song.Speed + " " + song.Tempo + " " + song.Finished + " " + song.Loop + " " + song.Separation + " " + song.Interpolate + " " + song.Gain)
+            print("sample " + song.SampleName(0) + " " + song.SampleLength(0) + " " + song.SampleVolume(0) + " " + song.SampleFinetune(0) + " " + song.SampleLoops(0) + " " + song.SampleLoops(1))
+            print("cells " + song.CellText(0, 0, 0) + " | " + song.CellText(0, 4, 1) + " | " + song.CellText(0, 8, 3) + " | " + song.CellText(0, 1, 0))
+            print("note names " + Tracker.Note.Name(428) + " " + Tracker.Note.Name(113) + " " + Tracker.Note.Name(0) + " " + Tracker.Note.Name(339))
+
+            var rate = song.Rate
+            var pcm = new byte[rate * 8]          // 2 seconds of stereo
+            var n = song.Render(pcm, 0, rate * 2, 2)
+            print("rendered " + n + " " + song.Finished + " " + song.Order + " " + song.Row)
+            // left channel: channel 0 plays the 129 Hz square wave, the right one hears 1/3 of it (separation 50) plus channel 1 from row 4
+            var peakL = 0
+            var peakR = 0
+            var crossings = 0
+            var last = 0
+            for (var f = 0; f < 13230; f++) {
+                var l = pcm[f * 4] + pcm[f * 4 + 1] * 256
+                if (l >= 32768) { l = l - 65536 }
+                var r = pcm[f * 4 + 2] + pcm[f * 4 + 3] * 256
+                if (r >= 32768) { r = r - 65536 }
+                if (l > peakL) { peakL = l }
+                if (r > peakR) { peakR = r }
+                var sign = 1
+                if (l < 0) { sign = -1 }
+                if (f > 100 && sign != last) { crossings++ }
+                last = sign
+            }
+            print("first 0.3 s: peak L " + peakL + " peak R " + peakR + " zero crossings " + crossings)
+            var sum = 0
+            for (var f = 0; f < n; f++) { sum = sum + pcm[f * 4] + pcm[f * 4 + 1] + pcm[f * 4 + 2] + pcm[f * 4 + 3] }
+            print("checksum " + sum)
+            print("after end " + song.Render(pcm, 0, 100, 2))
+
+            song.Restart()
+            print("restart " + song.Order + " " + song.Row + " " + song.Finished)
+            print("seek " + song.Seek(0, 5) + " " + song.Order + " " + song.Row)
+            print("channels " + song.ChannelPlaying(0) + " " + song.ChannelPlaying(1) + " " + song.ChannelVolume(0) + " " + song.ChannelVolume(1) + " " + song.ChannelSample(0))
+            song.Restart()
+            song.Mute(0)
+            print("mute " + song.IsMuted(0) + " " + song.IsMuted(1))
+            var quiet = new byte[rate * 4]
+            song.Render(quiet, 0, 4410, 2)
+            var max = 0
+            for (var f = 0; f < 4410 * 4; f++) { if (quiet[f] > max) { max = quiet[f] } }
+            print("muted silent " + (max == 0))
+            song.Mute(0, false)
+
+            song.Separation = 100
+            song.Restart()
+            var hard = new byte[rate * 4]
+            song.Render(hard, 0, 4410, 2)
+            var hardPeakR = 0
+            for (var f = 2000; f < 4410; f++) {
+                var r = hard[f * 4 + 2] + hard[f * 4 + 3] * 256
+                if (r >= 32768) { r = r - 65536 }
+                if (r > hardPeakR) { hardPeakR = r }
+            }
+            print("separation 100: right " + hardPeakR)
+            song.Separation = 0
+            song.Restart()
+            song.Render(hard, 0, 4410, 2)
+            var monoL = hard[8000] + hard[8001] * 256
+            var monoR = hard[8002] + hard[8003] * 256
+            print("separation 0: equal " + (monoL == monoR))
+            song.Separation = 50
+            song.Gain = 50
+            song.Restart()
+            song.Render(hard, 0, 4410, 2)
+            var halfPeak = 0
+            for (var f = 2000; f < 4410; f++) {
+                var l = hard[f * 4] + hard[f * 4 + 1] * 256
+                if (l >= 32768) { l = l - 65536 }
+                if (l > halfPeak) { halfPeak = l }
+            }
+            print("gain 50: " + halfPeak)
+            song.Gain = 100
+            song.Interpolate = false
+            print("interpolate " + song.Interpolate)
+            song.Interpolate = true
+
+            var whole = song.ToSound()
+            print("sound " + whole.Rate + " " + whole.Channels + " " + whole.Milliseconds)
+            var out = new Audio.Output("sim", rate, 2)
+            var player = new Tracker.Player(song, out)
+            song.Restart()
+            player.Play()
+            print("player " + Audio.Sim.Played() + " " + (Audio.Sim.Played() == whole.Length) + " " + player.Ended)
+            out.Close()
+
+            try { Tracker.Song.Load(pcm) } catch (Tracker.BadFormatException e) { print("bad " + e.code) }
+            var shortFile = new byte[100]
+            try { Tracker.Song.Load(shortFile) } catch (Tracker.TrackerException e) { print("short " + e.code) }
+            var cut = new byte[1100]
+            for (var i = 0; i < 1084; i++) { cut[i] = m[i] }
+            cut[950] = 1
+            try { Tracker.Song.Load(cut) } catch (Tracker.BadFormatException e) { print("truncated " + e.code) }
+            m[1083] = 56
+            m[1082] = 84
+            m[1081] = 76
+            m[1080] = 70                 // FLT8
+            try { Tracker.Song.Load(m) } catch (Tracker.UnsupportedException e) { print("flt8 " + e.code) }
+            song.Close()
+            try { song.Order } catch (Tracker.TrackerException e) { print("closed " + e.code) }
+            """),
+    }).ToArray();
+
+    // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Audio: simuliertes Geraet - Schreiben, Wellen, Lautstaerke, WAV, Halten/Stop, Fehler", """
+            #import "audio"
+
+            print("devices " + Audio.Board.Devices()[0] + " " + (Audio.Board.Devices().count >= 1))
+            var out = new Audio.Output("sim", 8000, 1)
+            print("output " + out.Name + " " + out.Rate + " " + out.Channels + " " + out.Volume + " " + out.IsClosed)
+            print("sim " + Audio.Sim.Rate() + " " + Audio.Sim.Channels())
+            var pcm = new byte[8]
+            for (var i = 0; i < 8; i++) { pcm[i] = i + 1 }
+            out.Write(pcm)
+            print("played " + Audio.Sim.Played() + " queued " + out.Queued + " " + out.Playing)
+            var got = Audio.Sim.Data()
+            print("data " + got.length + " " + got[0] + " " + got[7])
+            out.Write(pcm, 2, 4)
+            got = Audio.Sim.Data()
+            print("part " + got.length + " " + got[8] + " " + got[11])
+
+            Audio.Sim.Reset()
+            out.Tone(2000, 5, Audio.Wave.Sine)
+            got = Audio.Sim.Data()
+            print("sine " + got.length + " " + got[0] + got[1] + " " + got[2] + "," + got[3] + " " + got[4] + got[5] + " " + got[6] + "," + got[7])
+            Audio.Sim.Reset()
+            out.Tone(1000, 10, Audio.Wave.Square, 50)
+            got = Audio.Sim.Data()
+            print("square " + got.length + " " + got[0] + "," + got[1] + " " + got[6] + "," + got[7] + " " + got[8] + "," + got[9] + " " + got[22] + "," + got[23])
+            Audio.Sim.Reset()
+            out.Tone(500, 4, Audio.Wave.Saw)
+            out.Tone(500, 4, Audio.Wave.Triangle, 10)
+            out.Tone(500, 4, Audio.Wave.Noise, 20)
+            print("kinds " + Audio.Sim.Played())
+            Audio.Sim.Reset()
+            out.Volume = 50
+            var loud = new byte[2]
+            loud[0] = 0xFF
+            loud[1] = 0x7F
+            out.Write(loud)
+            got = Audio.Sim.Data()
+            print("volume " + out.Volume + " " + got[0] + "," + got[1])
+            out.Volume = 100
+
+            var stereo = new Audio.Output("sim", 22050, 2)
+            print("stereo " + Audio.Sim.Rate() + " " + Audio.Sim.Channels())
+            Audio.Sim.Reset()
+            stereo.Tone(440, 2, Audio.Wave.Square)
+            print("stereo bytes " + Audio.Sim.Played() + " " + (22050 * 2 / 1000 * 4))
+            stereo.Close()
+
+            var w = new byte[47]
+            w[0] = 82
+            w[1] = 73
+            w[2] = 70
+            w[3] = 70
+            w[4] = 39
+            w[8] = 87
+            w[9] = 65
+            w[10] = 86
+            w[11] = 69
+            w[12] = 102
+            w[13] = 109
+            w[14] = 116
+            w[15] = 32
+            w[16] = 16
+            w[20] = 1
+            w[22] = 1
+            w[24] = 0x40
+            w[25] = 0x1F
+            w[28] = 0x40
+            w[29] = 0x1F
+            w[32] = 1
+            w[34] = 8
+            w[36] = 100
+            w[37] = 97
+            w[38] = 116
+            w[39] = 97
+            w[40] = 3
+            w[44] = 0
+            w[45] = 128
+            w[46] = 255
+            var snd = Audio.Sound.FromWav(w)
+            print("wav " + snd.Rate + " " + snd.Channels + " " + snd.Frames + " " + snd.Length + " " + snd.Milliseconds)
+            Audio.Sim.Reset()
+            var player = snd.Open("sim")
+            player.Play(snd)
+            got = Audio.Sim.Data()
+            print("wav data " + got.length + " " + got[0] + "," + got[1] + " " + got[2] + "," + got[3] + " " + got[4] + "," + got[5])
+            try { out.Play(snd) } catch (Audio.AudioException e) { print("rate " + e.code) }
+            var gen = Audio.Sound.Tone(440, 100)
+            print("tone sound " + gen.Rate + " " + gen.Frames + " " + gen.Length)
+            try { Audio.Sound.FromWav(pcm) } catch (Audio.AudioException e) { print("notwav " + e.code) }
+            w[34] = 24
+            try { Audio.Sound.FromWav(w) } catch (Audio.UnsupportedException e) { print("bits " + e.code) }
+
+            Audio.Sim.Reset()
+            Audio.Sim.Hold(true)
+            var big = new byte[10000]
+            var took = out.Offer(big)
+            print("held " + took + " " + out.Queued + " " + Audio.Sim.Waiting() + " " + out.Playing + " " + out.Drain(20))
+            out.Stop()
+            print("stopped " + out.Queued + " " + out.Drain(20))
+            took = out.Offer(big, 0, 100)
+            Audio.Sim.Hold(false)
+            print("released " + took + " " + Audio.Sim.Played() + " " + out.Queued)
+
+            try { new Audio.Output("sim", 5, 1) } catch (Audio.AudioException e) { print("rate error " + e.code) }
+            try { new Audio.Output("sim", 8000, 3) } catch (Audio.AudioException e) { print("channels error " + e.code) }
+            try { new Audio.Output("nodevice") } catch (Audio.NotFoundException e) { print("nodevice " + e.code) }
+            try { out.Write(pcm, 0, 3) } catch (Audio.AudioException e) { print("frame " + e.code) }
+            try { out.Write(pcm, 6, 4) } catch (Audio.AudioException e) { print("range " + e.code) }
+            try { out.Volume = 101 } catch (Audio.AudioException e) { print("volume error " + e.code) }
+            try { out.Tone(5000, 10) } catch (Audio.AudioException e) { print("freq " + e.code) }
+            try { new Audio.Output(25) } catch (Audio.NotFoundException e) { print("pwm pin " + e.code) }
+            var hasAlsa = false
+            var names = Audio.Board.Devices()
+            for (var i = 0; i < names.count; i++) { if (names[i] == "alsa") { hasAlsa = true } }
+            if (hasAlsa) {
+                // the PCM "null" of ALSA throws the sound away: the real code path of the Linux backend without a sound card
+                try {
+                    var nul = new Audio.Output("alsa:null", 44100, 2)
+                    nul.Tone(440, 100)
+                    print("alsa null " + nul.Drain(3000) + " " + nul.Queued)
+                    nul.Close()
+                } catch (Audio.AudioException e) { print("alsa null error " + e.code) }
+            }
+            out.Close()
+            try { var q = out.Queued } catch (Audio.AudioException e) { print("closed " + e.code) }
+            print("avail " + Audio.Board.Available() + " " + Audio.Sim.Played())
+            """),
+    }).ToArray();
+
     // I2C (bridges/fire_bridge_i2c.hpp): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -17828,6 +18496,194 @@ else
         natCases = natCases.Append(("Ressourcen: new Resource(\"pfad\") ist eingebettet", resScript)).ToArray();
     }
 
+    // TrueType fonts: the port of libschrift to C# gives the glyphs of the original (the lines are from the C library: lookup, metrics, FNV hash of the image with its width rounded up to 4), the layout of a text,
+    // a damaged font never throws, and the names of the fonts are found.
+    {
+        string golden = """
+            size 20 asc 16.000000 desc -4.000000 gap 2.000000
+            32 l0 g1 m0 adv 6.000000 lsb 0.000000 y 0 w 0 h 0 r0 h 14650fb0739d0383
+            46 l0 g6 m0 adv 6.000000 lsb 2.000000 y -3 w 3 h 4 r0 h 5254915b221693cf
+            65 l0 g2 m0 adv 14.000000 lsb 1.000000 y -14 w 13 h 15 r0 h d830f81164f0394d
+            72 l0 g5 m0 adv 14.000000 lsb 2.000000 y -14 w 11 h 15 r0 h a52b3c966d9ac59f
+            79 l0 g4 m0 adv 14.000000 lsb 2.000000 y -14 w 11 h 15 r0 h 94be64e8ec418694
+            86 l0 g3 m0 adv 12.000000 lsb 0.000000 y -14 w 13 h 15 r0 h 35e985b0b733ee2b
+            105 l0 g8 m0 adv 6.000000 lsb 2.000000 y -14 w 3 h 15 r0 h c6f5eb60c504cec7
+            193 l0 g7 m0 adv 14.000000 lsb 1.000000 y -18 w 13 h 19 r0 h cc271a285e1c4df9
+            size 9 asc 7.200000 desc -1.800000 gap 0.900000
+            32 l0 g1 m0 adv 2.700000 lsb 0.000000 y 0 w 0 h 0 r0 h 14650fb0739d0383
+            46 l0 g6 m0 adv 2.700000 lsb 0.900000 y -2 w 3 h 3 r0 h 303d6b20b297115f
+            65 l0 g2 m0 adv 6.300000 lsb 0.450000 y -7 w 7 h 8 r0 h d7183018305960be
+            72 l0 g5 m0 adv 6.300000 lsb 0.900000 y -7 w 7 h 8 r0 h 40025b5891bbcf39
+            79 l0 g4 m0 adv 6.300000 lsb 0.900000 y -7 w 7 h 8 r0 h 5085adcfa6033381
+            86 l0 g3 m0 adv 5.400000 lsb 0.000000 y -7 w 7 h 8 r0 h bdb5bf609821d4cf
+            105 l0 g8 m0 adv 2.700000 lsb 0.900000 y -7 w 3 h 8 r0 h 6734b531dbd05b4c
+            193 l0 g7 m0 adv 6.300000 lsb 0.450000 y -9 w 7 h 10 r0 h e267eb26148f3b51
+            """;
+        var ttf = fire.Terminal.TrueType.TrueTypeFont.Load(fireTestFont);
+        CheckNat("TrueType: der Zeichensatz des Tests wird gelesen", ttf != null && ttf.UnitsPerEm == 1000 && ttf.GetName(1) == "Fire Test", "");
+        string Dump(fire.Terminal.TrueType.TrueTypeFont f, double size)
+        {
+            var inv = System.Globalization.CultureInfo.InvariantCulture;
+            var sb = new System.Text.StringBuilder();
+            f.TryGetLineMetrics(size, out var lm);
+            sb.Append($"size {size.ToString("0.######", inv)} asc {lm.Ascender.ToString("F6", inv)} desc {lm.Descender.ToString("F6", inv)} gap {lm.LineGap.ToString("F6", inv)}\n");
+            foreach (uint cp in new uint[] { 32, 46, 65, 72, 79, 86, 105, 193 })
+            {
+                bool lr = f.TryLookup(cp, out uint g);
+                bool mr = f.TryGetGlyphMetrics(size, g, out var gm);
+                ulong h = 1469598103934665603UL;
+                int rr = 0;
+                if (mr && gm.MinWidth > 0 && gm.MinHeight > 0)
+                {
+                    int w = (gm.MinWidth + 3) & ~3, hh = gm.MinHeight;
+                    var px = new byte[w * hh];
+                    rr = f.TryRender(size, g, px, w, hh) ? 0 : -1;
+                    foreach (var b in px) { h ^= b; h *= 1099511628211UL; }
+                }
+                sb.Append($"{cp} l{(lr ? 0 : -1)} g{g} m{(mr ? 0 : -1)} adv {gm.AdvanceWidth.ToString("F6", inv)} lsb {gm.LeftSideBearing.ToString("F6", inv)} y {gm.YOffset} w {gm.MinWidth} h {gm.MinHeight} r{rr} h {h:x16}\n");
+            }
+            return sb.ToString();
+        }
+        string dumped = Dump(ttf!, 20) + Dump(ttf!, 9);
+        CheckNat("TrueType: Metriken und Glyphenbilder wie das Original (libschrift 0.10.2, Groesse 20 und 9, einfache und zusammengesetzte Glyphen, Kurven)",
+            dumped.TrimEnd('\n') == golden.Replace("\r", "").Trim('\n'), dumped);
+
+        var testFont = new fire.Terminal.TextFont("Fire Test", ttf!);
+        CheckNat("TrueType: Textbreite mit Kerning (A-V -80, V-A -60, H-O +30 von 1000 Einheiten) und Zeilenhoehe (Ascent 16 + Descent 4 + Gap 2 bei Groesse 20)",
+            testFont.Measure("AV", 20) == 24 && testFont.Measure("VA", 20) == 25 && testFont.Measure("HO", 20) == 29 && testFont.Measure("AA", 20) == 28 && testFont.Measure("AVA", 20) == 37
+            && testFont.Ascent(20) == 16 && testFont.LineHeight(20) == 22 && testFont.LineHeight(10) == 11 && testFont.Measure("", 20) == 0 && testFont.Measure("\n\t", 20) == 0,
+            $"{testFont.Measure("AV", 20)} {testFont.Measure("VA", 20)} {testFont.Measure("HO", 20)} {testFont.Measure("AA", 20)} {testFont.Measure("AVA", 20)} {testFont.Ascent(20)} {testFont.LineHeight(20)}");
+        CheckNat("TrueType: ein Zeichen jenseits der BMP (Surrogatpaar) zaehlt als eines, ein einzelnes Surrogat auch",
+            testFont.Measure("A\U0001F600A", 20) == testFont.Measure("A�A", 20) && testFont.Measure("A\uD800A", 20) == testFont.Measure("A�A", 20), "");
+
+        // damaged fonts: cut off anywhere, bytes changed at random - no exception, only "no glyph"
+        {
+            string failure = "";
+            var random = new Random(12345);
+            for (int round = 0; round < 400 && failure == ""; round++)
+            {
+                byte[] data = (byte[])fireTestFont.Clone();
+                if (round < 150) data = data.AsSpan(0, round * 7 % data.Length).ToArray();
+                else for (int k = 0, n = 1 + random.Next(6); k < n; k++) data[random.Next(data.Length)] = (byte)random.Next(256);
+                try
+                {
+                    var damaged = fire.Terminal.TrueType.TrueTypeFont.Load(data);
+                    if (damaged == null) continue;
+                    var tf = new fire.Terminal.TextFont("x", damaged);
+                    tf.Measure("AVAHO i.Á", 17); tf.LineHeight(17); tf.Ascent(17); damaged.GetName(1); damaged.GetName(4);
+                    var sf = new fire.Terminal.Framebuffer(40, 30);
+                    new fire.Terminal.Renderer(sf, new fire.Terminal.IntegratedGlyphFont()).DrawText(1, 1, "AVAHO i.Á", new fire.Terminal.SolidBrush(fire.Terminal.Paint.FromRgba(fire.Terminal.PixelColor.White)), null, tf, 17);
+                }
+                catch (Exception ex) { failure = $"Runde {round}: {ex.GetType().Name}: {ex.Message}"; }
+            }
+            CheckNat("TrueType: abgeschnittene und veraenderte Dateien ergeben keine Ausnahme (400 Faelle)", failure == "", failure);
+        }
+
+    // Fonts in the graphics library (Fonts, Font, Renderer.DrawText with a font, TextWidth/TextHeight/TextAscent): the VM and the native program must draw the same pixels
+    {
+        string fontResDir = Path.Combine(Path.GetTempPath(), "fire-font-res-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(fontResDir);
+        File.WriteAllBytes(Path.Combine(fontResDir, "tester.ttf"), fireTestFont);
+        File.WriteAllText(Path.Combine(fontResDir, "notafont.txt"), "this is text, not a font");
+        string frd = fontResDir.Replace('\\', '/');
+        string fontScript = $$"""
+            #import "graphics"
+            class H { static int Of(b) { var bytes = b.ReadBytes(); var h = 17; for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 } return h } }
+            var f = Fonts.Add(new Resource("{{frd}}/tester.ttf"), "tester")
+            print(f.Name() + " " + f.IsBitmap())
+            print(Fonts.Get("TESTER").Name() + " " + Fonts.Get("fire test").Name() + " " + Fonts.Get("FireSans").Name())
+            print(Fonts.Get("8x8").Name() + " " + Fonts.Get("8x14").IsBitmap() + " " + Fonts.Get("14x8").Name() + " " + Fonts.Get("").Name() + " " + Fonts.Get("no such font").Name())
+            print(Fonts.Has("tester") + " " + Fonts.Has("firesans") + " " + Fonts.Has("8x8") + " " + Fonts.Has("zzz"))
+            var fb = new Framebuffer(130, 70)
+            var r = new Renderer(fb)
+            var white = new SolidBrush(0xFFFFFFFF)
+            var ghost = new SolidBrush(0x80FFFFFF)
+            var blue = new SolidBrush(0xFFFF0000)
+            print(r.TextWidth("AVAVHO iAi.Á", f, 20) + " " + r.TextHeight(f, 20) + " " + r.TextAscent(f, 20) + " " + r.TextWidth("AVA", f, 10) + " " + r.TextHeight(f, 10))
+            print(r.TextWidth("AVA", undefined, 20) + " " + r.TextHeight() + " " + r.TextWidth("AVA", Fonts.Get("8x8")) + " " + r.TextHeight(Fonts.Get("8x8")) + " " + r.TextAscent(Fonts.Get("8x8")))
+            print(r.TextWidth("AVA", f, 0) + " " + r.TextWidth("AVA", f, -5) + " " + r.TextWidth("AVA", f, 14) + " " + r.TextHeight(f, 100000) + " " + r.TextHeight(f, 512))
+            // 1: white on black
+            r.DrawText(2, 2, "AVAVHO iAi.Á", white, undefined, f, 20)
+            print(H.Of(fb))
+            // 2: translucent over a background, with a background brush for the line
+            r.ClearTo(0xFF804020)
+            r.DrawText(3, 4, "HOAV iA", ghost, blue, f, 18)
+            r.DrawText(3, 30, "HOAV iA", white, ghost, f, 11)
+            print(H.Of(fb))
+            // 3: without blending
+            r.AlphaBlending = false
+            r.DrawText(1, 40, "AVA", ghost, undefined, f, 24)
+            r.AlphaBlending = true
+            print(H.Of(fb))
+            // 4: clipped, partly outside, odd sizes
+            r.ClearTo(0xFF101010)
+            r.SetClip(10, 10, 60, 30)
+            r.DrawText(0, 0, "AVAVHO iAi.", white, undefined, f, 30)
+            r.ResetClip()
+            r.DrawText(-6, 50, "HOAV", white, undefined, f, 16)
+            r.DrawText(120, 60, "HOAV", white, undefined, f, 16)
+            r.DrawText(5, 5, "HO", white, undefined, f, 1)
+            r.DrawText(40, 5, "HO", white, undefined, f, 400)
+            print(H.Of(fb))
+            // 5: bitmap fonts of the library next to the font of the renderer
+            r.ClearTo(0xFF000000)
+            r.DrawText(2, 2, "console", white)
+            r.DrawText(2, 18, "eight by eight", white, blue, Fonts.Get("8x8"))
+            r.DrawText(2, 30, "8x14 é中", ghost, blue, Fonts.Get("8x14"), 99)
+            r.DrawText(2, 48, "console font", white, undefined, Fonts.Console(), 30)
+            print(H.Of(fb))
+            // 6: a palette framebuffer: from alpha 128 up a pixel is drawn
+            var pfb = new Framebuffer(130, 40, ColorMode.Palette)
+            var pr = new Renderer(pfb)
+            pr.DrawText(2, 2, "AVAVHO iAi.", new SolidBrush(7), undefined, f, 20)
+            pr.DrawText(2, 22, "HOAV", new SolidBrush(0xFFFF0000), new SolidBrush(2), f, 14)
+            print(H.Of(pfb))
+            // 7: the same font from bytes, a font that is not one, a released font
+            var g = Fonts.FromBytes(new Resource("{{frd}}/tester.ttf").Bytes())
+            r.ClearTo(0xFF000000)
+            r.DrawText(2, 2, "AVAVHO iAi.Á", white, undefined, g, 20)
+            print(g.Name() + " " + g.IsBitmap() + " " + (g.id != f.id))
+            g.Release()
+            try {
+                Fonts.Add(new Resource("{{frd}}/notafont.txt"))
+                print("no error")
+            } catch (GraphicsException e) {
+                print("error " + e.message)
+            }
+            try { Fonts.FromBytes(new byte[3]) } catch (GraphicsException e) { print("error " + e.message) }
+            """;
+        string fontOut = vmOutput(fontScript);
+        string[] fontLines = fontOut.TrimEnd('\n').Split('\n');
+        CheckNat("Schriften: Fonts.Add/Get/Has (Alias, Familie, Systemfont, eingebaute, unbekannt = Konsolenschrift), Masse, Palette, Fehler",
+            fontLines.Length == 16 && fontLines[0] == "Fire Test False" && fontLines[1] == "Fire Test Fire Test Fire Test" && fontLines[2] == "8x8 True 8x14 console console"
+            && fontLines[3] == "True True True False" && fontLines[4] == "128 22 16 19 11" && fontLines[5] == "24 14 24 8 8" && fontLines[6] == "26 26 26 563 563"
+            && string.Join(",", fontLines.Skip(7).Take(6)) == "289788651,962691604,823710043,77448282,232389351,870473533"
+            && fontLines[13] == "Fire Test False True" && fontLines[14] == "error The file '" + frd + "/notafont.txt' is not a TrueType font." && fontLines[15] == "error The data is not a TrueType font.",
+            "  erhalten:\n" + fontOut);
+        CheckNat("Schriften: dieselben Pixel bei jedem Aufruf (die Glyphen werden zwischengespeichert)", vmOutput(fontScript) == fontOut, "");
+        natCases = natCases.Append(("Schriften: TrueType-Text, eingebaute Schriften, Systemschrift, Palette, Clip - nativ == VM", fontScript)).ToArray();
+    }
+
+        CheckNat("TrueType: eine Datei, die keine Schrift ist, wird abgelehnt", fire.Terminal.TrueType.TrueTypeFont.Load(new byte[] { 1, 2, 3 }) == null && fire.Terminal.TrueType.TrueTypeFont.Load(Array.Empty<byte>()) == null, "");
+
+        // the fonts of a program: built-in, added, system
+        {
+            var fonts = new fire.Terminal.FontManager();
+            int added = fonts.Add(fireTestFont, "fonts/Tester.ttf");
+            int bad = fonts.Add(new byte[] { 0, 1, 2 }, "bad");
+            CheckNat("Schriften: Namen werden gefunden (eingebaute 8x14/14x8/8x8, hinzugefuegte nach Alias, Dateiname ohne Ordner und Endung, Familie, voller Name; ohne Gross- und Kleinschreibung, Leerzeichen und Satzzeichen)",
+                fonts.Open("") == 0 && fonts.Open("Console") == 0 && fonts.Open("8x14") == fire.Terminal.FontManager.Builtin8x14 && fonts.Open("14x8") == fire.Terminal.FontManager.Builtin8x14 && fonts.Open("8x8") == fire.Terminal.FontManager.Builtin8x8
+                && added > 2 && bad == -1 && fonts.Open("tester") == added && fonts.Open("TESTER") == added && fonts.Open("Fire Test") == added && fonts.Open("fire-test") == added,
+                $"{fonts.Open("")} {fonts.Open("8x14")} {added} {bad} {fonts.Open("tester")} {fonts.Open("Fire Test")}");
+            int sys = fonts.Open("FireSans");
+            CheckNat("Schriften: eine Schrift des Systems (hier der Ordner aus FIRE_FONT_DIRS) wird nach dem Dateinamen gefunden und behalten; eine unbekannte nicht",
+                sys > 2 && sys != added && fonts.Open("fire sans") == sys && fonts.Open("no such font at all") == -1 && fonts.Open("no such font at all") == -1, $"{sys}");
+            var other = new fire.Terminal.FontManager();
+            CheckNat("Schriften: ueber den vollen Namen (nicht den Dateinamen) wird auch ein Systemfont gefunden; Destroy raeumt auf, eingebaute bleiben",
+                other.Open("Fire Test") > 2 && !other.Destroy(1) && other.Destroy(other.Open("Fire Test")) && other.Open("Fire Test") > 2, "");
+        }
+    }
+
 
     string? cxx = FindCxx();
     if (cxx == null)
@@ -17852,6 +18708,8 @@ else
         // The VM runs sequentially: the precision of float is process-wide while a program runs.
         var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
 
+        // at most a few C++ compilations at a time: every case has its own compiler process (AddressSanitizer: hundreds of MB each), all at once would not fit in memory
+        var buildGate = new SemaphoreSlim(4);
         var compiled = natCases.Select((c, index) => Task.Run(() =>
         {
             string expected = vmResults[index];
@@ -17874,7 +18732,11 @@ else
 
             // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
             string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
-            string build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
+            string build;
+            int buildExit;
+            buildGate.Wait();
+            try { build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out buildExit); }
+            finally { buildGate.Release(); }
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
@@ -18547,6 +19409,10 @@ else
                         && fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-linq-"))).Dependencies.Contains("fire-reflection"));
                     CheckNat("Bruecken-Pakete: beim Start werden fehlende installiert (mit Abhaengigkeiten), danach nichts mehr",
                         first.Count > 0 && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0 && bridgeStore.Find("fire-time") != null && bridgeStore.Find("fire-reflection") != null);
+                    var windowsPackage = bridgeStore.Find("fire-windows");
+                    CheckNat("Bruecken-Pakete: fire-windows bringt die Vorlage Desktop mit; sie steht nach dem Installieren im Katalog",
+                        windowsPackage != null && File.Exists(Path.Combine(windowsPackage.Directory, "templates", "Project", "Desktop", "template.json"))
+                        && fire.Projects.TemplateCatalog.Load(builtinRoot: Path.Combine(pkgDir, "none"), userRoot: Path.Combine(pkgDir, "none"), store: bridgeStore).Find(fire.Projects.TemplateScope.Project, "Desktop") is { } desktopTemplate && desktopTemplate.Source.Contains("fire-windows"));
                     string builtIn = vmOutput("#import \"time\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
                     CheckNat("Bruecken-Pakete: #import \"time\" nimmt weiter die eingebaute Bridge (kein doppelter Import)", builtIn == "90\n", builtIn);
                 }
@@ -18589,6 +19455,98 @@ else
                 {
                     var test = fire.Compiler.NativeBuilder.TestToolchain(detected.Toolchain);
                     CheckNat("Toolchain: der Test uebersetzt und startet ein kleines Programm", test.Ok, test.Log);
+                }
+            }
+
+            // SDL2 for a window: unpacking the MinGW package, finding it (SDL2_DIR), the compiler arguments, SDL2.dll next to the program
+            {
+                string sdlDir = Path.Combine(Path.GetTempPath(), "fire-sdl-test-" + Guid.NewGuid().ToString("N"));
+                string? savedSdl = Environment.GetEnvironmentVariable("SDL2_DIR");
+                try
+                {
+                    Directory.CreateDirectory(sdlDir);
+                    string archive = Path.Combine(sdlDir, "sdl.tar.gz");
+                    using (var gz = new System.IO.Compression.GZipStream(File.Create(archive), System.IO.Compression.CompressionLevel.Fastest))
+                    using (var tar = new System.Formats.Tar.TarWriter(gz))
+                    {
+                        void Add(string name, string text) => tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/include/SDL2/SDL.h", "// header");
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/bin/SDL2.dll", "dll");
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/libSDL2.dll.a", "implib");
+                        Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/cmake/SDL2/x.cmake", "skipped");
+                        Add("SDL2-9.9.9/i686-w64-mingw32/include/SDL2/SDL.h", "32 bit");
+                        Add("SDL2-9.9.9/test/testsprite.c", "skipped");
+                    }
+                    string unpacked = Path.Combine(sdlDir, "SDL2");
+                    fire.Native.SdlSetup.Unpack(archive, unpacked);
+                    CheckNat("SDL2: das MinGW-Paket wird ausgepackt (include, SDL2.dll, Import-Bibliothek des 64-Bit-Teils; nichts sonst)",
+                        File.Exists(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(unpacked, "bin", "SDL2.dll")) && File.Exists(Path.Combine(unpacked, "lib", "libSDL2.dll.a"))
+                        && !Directory.Exists(Path.Combine(unpacked, "lib", "cmake")) && !Directory.Exists(Path.Combine(unpacked, "test")) && File.ReadAllText(Path.Combine(unpacked, "include", "SDL2", "SDL.h")) == "// header");
+
+                    // a download that was cut off: noticed before anything is unpacked (the tar reader alone would fail in the middle of a header: "Unable to read beyond the end of the stream")
+                    string cutArchive = Path.Combine(sdlDir, "cut.tar.gz");
+                    byte[] whole = File.ReadAllBytes(archive);
+                    File.WriteAllBytes(cutArchive, whole.Take(whole.Length - 40).ToArray());
+                    string cutTarget = Path.Combine(sdlDir, "SDL2cut");
+                    string? cutError = null;
+                    try { fire.Native.SdlSetup.Unpack(cutArchive, cutTarget); } catch (InvalidDataException ex) { cutError = ex.Message; }
+                    string headOnly = Path.Combine(sdlDir, "head.tar.gz");
+                    File.WriteAllBytes(headOnly, whole.Take(10).ToArray());
+                    string? shortError = null;
+                    try { fire.Native.SdlSetup.VerifyGzip(headOnly); } catch (InvalidDataException ex) { shortError = ex.Message; }
+                    CheckNat("SDL2: ein abgeschnittener Download wird erkannt, bevor etwas ausgepackt wird (klare Meldung, nichts angelegt)",
+                        cutError != null && cutError.Contains("incomplete") && !Directory.Exists(cutTarget) && !Directory.Exists(cutTarget + ".new") && shortError != null, cutError ?? "no error");
+                    fire.Native.SdlSetup.VerifyGzip(archive);
+
+                    // the packages from SDL 2.30.11 on end without the empty blocks that close a tar file, and the last file is not padded: the tar reader of .NET reports the end of the stream in the middle of a header
+                    string noEnd = Path.Combine(sdlDir, "noend.tar.gz");
+                    using (var tarBytes = new MemoryStream())
+                    {
+                        using (var writer = new System.Formats.Tar.TarWriter(tarBytes, leaveOpen: true))
+                        {
+                            void Add(string name, string text) => writer.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
+                            Add("SDL2-9.9.9/x86_64-w64-mingw32/include/SDL2/SDL.h", "// header");
+                            Add("SDL2-9.9.9/x86_64-w64-mingw32/bin/SDL2.dll", "dll");
+                            Add("SDL2-9.9.9/x86_64-w64-mingw32/lib/libSDL2.dll.a", "implib");
+                            Add("SDL2-9.9.9/.git-hash", "0123456789012345678901234567890123456789");
+                        }
+                        // (what the writer ends with: the rest of the block of the last file, and two empty blocks)
+                        long keep = tarBytes.Length - 1024 - (512 - 40);
+                        using var gz = new System.IO.Compression.GZipStream(File.Create(noEnd), System.IO.Compression.CompressionLevel.Fastest);
+                        gz.Write(tarBytes.GetBuffer(), 0, (int)keep);
+                    }
+                    string noEndTarget = Path.Combine(sdlDir, "SDL2noend");
+                    string? noEndError = null;
+                    try { fire.Native.SdlSetup.Unpack(noEnd, noEndTarget); } catch (Exception ex) { noEndError = ex.GetType().Name + ": " + ex.Message; }
+                    CheckNat("SDL2: ein Paket ohne die abschliessenden Bloecke (SDL 2.30.11 und neuer) wird ausgepackt",
+                        noEndError == null && File.Exists(Path.Combine(noEndTarget, "include", "SDL2", "SDL.h")) && File.Exists(Path.Combine(noEndTarget, "bin", "SDL2.dll")) && File.Exists(Path.Combine(noEndTarget, "lib", "libSDL2.dll.a")), noEndError ?? "");
+
+                    Environment.SetEnvironmentVariable("SDL2_DIR", unpacked);
+                    var location = fire.Native.SdlSetup.Locate();
+                    CheckNat("SDL2: SDL2_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL2.dll)",
+                        location != null && location.IncludeDirs.Contains(Path.Combine(unpacked, "include")) && location.IncludeDirs.Contains(Path.Combine(unpacked, "include", "SDL2"))
+                        && location.LibDirs.Contains(Path.Combine(unpacked, "lib")) && location.RuntimeDll == Path.Combine(unpacked, "bin", "SDL2.dll"));
+
+                    string cpp = Path.Combine(sdlDir, "p.cpp");
+                    File.WriteAllText(cpp, "// fire-link: SDL2\nint main() { return 0; }\n");
+                    CheckNat("SDL2: das Programm bittet mit `// fire-link: SDL2` darum", fire.Native.SdlSetup.IsRequiredBy(cpp) && !fire.Native.SdlSetup.IsRequiredBy(Path.Combine(sdlDir, "none.cpp")));
+                    var (exeName, arguments) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                    CheckNat("SDL2: der Compiler bekommt -I, -L und -lSDL2",
+                        arguments.Contains($"-I\"{Path.Combine(unpacked, "include")}\"") && arguments.Contains($"-L\"{Path.Combine(unpacked, "lib")}\"") && arguments.Contains("-lSDL2"), arguments);
+
+                    string program = Path.Combine(sdlDir, "out", "p.exe");
+                    Directory.CreateDirectory(Path.GetDirectoryName(program)!);
+                    bool copied = fire.Native.SdlSetup.CopyRuntimeNextTo(program, location);
+                    CheckNat("SDL2: SDL2.dll wird neben ein Windows-Programm gelegt (nicht neben ein anderes)",
+                        copied && File.Exists(Path.Combine(sdlDir, "out", "SDL2.dll")) && !fire.Native.SdlSetup.CopyRuntimeNextTo(Path.Combine(sdlDir, "out", "p"), location));
+
+                    string missing = fire.Native.SdlSetup.HelpText;
+                    CheckNat("SDL2: die Hilfe sagt, was zu tun ist (Linux, macOS, Windows, SDL2_DIR)", missing.Contains("libsdl2-dev") && missing.Contains("brew install sdl2") && missing.Contains("SDL2_DIR"));
+                }
+                finally
+                {
+                    Environment.SetEnvironmentVariable("SDL2_DIR", savedSdl);
+                    try { Directory.Delete(sdlDir, true); } catch (IOException) { }
                 }
             }
         }

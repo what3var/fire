@@ -21,8 +21,38 @@ namespace fire.Compiler
         /// <see cref="NativeNotSupportedException"/> propagate.</summary>
         public static string Generate(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
+            return GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan).Cpp;
+        }
+
+        /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
+        public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
+        {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(sources, null, null, mode, floatWidth, target);
-            return CppGenerator.Generate(linked, target);
+            return new NativeProgram(CppGenerator.Generate(linked, target), linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
+        }
+
+        /// <summary>The generated C++ and what the executable needs besides: the subsystem, the version info and the icon.</summary>
+        public sealed record NativeProgram(string Cpp, bool Gui, fire.Utilities.PeVersionInfo? VersionInfo, string? IconPath);
+
+        /// <summary>Writes version info and icon into a Windows executable the toolchain has made (the Win32 resource API; any other platform leaves the file alone).
+        /// A missing icon file is reported in the log instead of failing the build.</summary>
+        public static void ApplyPeMetadata(string exe, NativeProgram program, TargetProfile target, StringBuilder log)
+        {
+            if (target.Name != "windows" || !OperatingSystem.IsWindows() || !File.Exists(exe)) return;
+            try
+            {
+                if (program.VersionInfo != null) fire.Utilities.PeResourceEditor.SetVersionInfo(exe, program.VersionInfo);
+                if (!string.IsNullOrEmpty(program.IconPath))
+                {
+                    if (File.Exists(program.IconPath)) fire.Utilities.PeResourceEditor.SetIcon(exe, program.IconPath);
+                    else log.AppendLine($"Icon '{program.IconPath}' not found: the program keeps the default icon.");
+                }
+                log.AppendLine("Version info and icon written into the program.");
+            }
+            catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+            {
+                log.AppendLine("Could not write version info/icon into the program: " + ex.Message);
+            }
         }
 
         /// <summary>Writes <paramref name="cpp"/> as <paramref name="fileName"/> into <paramref name="directory"/> with everything it includes: the runtime and the platform package of
@@ -46,7 +76,9 @@ namespace fire.Compiler
         public static NativeBuildResult Build(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
-            string cpp = Generate(sources, target, mode, floatWidth, basePath, defines, plan);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan);
+            string cpp = program.Cpp;
+            bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
             var log = new StringBuilder();
 
@@ -82,11 +114,18 @@ namespace fire.Compiler
                         return new NativeBuildResult(false, exe, $"The compiler '{toolchain.EffectiveCompiler}' was not found. Install it, name another one in the toolchain of {NativeConfig.FileName}, or build with the toolchain 'files' and compile the sources yourself.");
                     toolchain = provided;
                 }
-                var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe);
+                // a window needs the development files of SDL2: look for them, offer to download them (Windows)
+                if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
+                    return new NativeBuildResult(false, exe, missingLibrary);
+                var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe, gui: gui);
                 log.AppendLine($"{exeName} {arguments}");
                 var (ok, text) = Run(exeName, arguments, workDir);
                 log.Append(text);
-                return new NativeBuildResult(ok && File.Exists(exe), exe, log.ToString());
+                bool built = ok && File.Exists(exe);
+                if (built) ApplyPeMetadata(exe, program, target, log);
+                // a Windows program with a window needs SDL2.dll next to it
+                if (built && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
+                return new NativeBuildResult(built, exe, log.ToString());
             }
             finally
             {
@@ -105,7 +144,7 @@ namespace fire.Compiler
         }
 
         /// <summary>The compiler command line for the generated file.</summary>
-        public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null)
+        public static (string Executable, string Arguments) CompilerCommand(ToolchainDef toolchain, TargetProfile target, string cppFile, string includeDir, string exe, bool sharedLibrary = false, IEnumerable<string>? extraIncludeDirs = null, bool gui = false)
         {
             string kind = toolchain.EffectiveKind;
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
@@ -119,6 +158,13 @@ namespace fire.Compiler
                         if (!libs.Contains(flag)) libs.Add(flag);
                     }
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
+            var libDirs = new List<string>();
+            // SDL2: where its headers and import library are (Toolchain\SDL2, SDL2_DIR, the prefix of the compiler, the system), see SdlSetup
+            if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
+            {
+                includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
+                libDirs.AddRange(sdl.LibDirs);
+            }
             if (kind == "custom")
             {
                 string template = toolchain.Command ?? throw new NativeConfigException("a custom toolchain needs a command");
@@ -139,6 +185,9 @@ namespace fire.Compiler
                 foreach (string d in includes) args.Append($"/I\"{d}\" ");
                 args.Append($"/Fe:\"{exe}\" /Fo:\"{Path.Combine(includeDir, "fire_program.obj")}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
+                bool windowsGui = gui && !sharedLibrary && target.Name == "windows";
+                if (libDirs.Count > 0 || windowsGui) args.Append(" /link").Append(string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")));
+                if (windowsGui) args.Append(" /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup");   // no console window; the program still starts at main
             }
             else
             {
@@ -147,9 +196,11 @@ namespace fire.Compiler
                 if (sharedLibrary) args.Append(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
                 foreach (string a in target.Native.CompileArgs) args.Append(a).Append(' ');
+                if (gui && !sharedLibrary && target.Name == "windows") args.Append("-mwindows ");   // no console window; MinGW's startup code still calls main
                 args.Append($"\"{cppFile}\" -I\"{includeDir}\" ");
                 foreach (string d in includes) args.Append($"-I\"{d}\" ");
                 args.Append($"-o \"{exe}\"");
+                foreach (string d in libDirs) args.Append($" -L\"{d}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
             }
             string exeName = ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler;

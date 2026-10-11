@@ -150,6 +150,7 @@ namespace fire.Native
                         int percent = total > 0 ? (int)(done * 100 / total) : -1;
                         if (percent != lastPercent && (percent % 5 == 0 || percent < 0)) { lastPercent = percent; log?.Invoke(total > 0 ? $"Downloading... {percent}% ({done / 1048576} MB)" : $"Downloading... {done / 1048576} MB"); }
                     }
+                    if (total > 0 && done != total) throw new IOException($"The download is incomplete ({done} of {total} bytes). Check the connection (or a proxy / virus scanner) and try again.");
                 }
                 log?.Invoke($"Unpacking to {Root} ...");
                 if (Directory.Exists(W64devkitDirectory)) Directory.Delete(W64devkitDirectory, recursive: true);
@@ -180,14 +181,32 @@ namespace fire.Native
     /// <summary>What the user is asked when a C++ toolchain is needed and there is none.</summary>
     public enum ToolchainChoice { Install, Change, Cancel }
 
-    public sealed record ToolchainRequest(string Reason, bool CanInstall, string InstallDirectory)
+    /// <param name="Reason">Why it is needed.</param>
+    /// <param name="CanInstall">Can fire provide it itself (download)?</param>
+    /// <param name="InstallDirectory">Where a download is kept.</param>
+    /// <param name="Component">What is missing: the C++ toolchain, or a library of the build (SDL2).</param>
+    /// <param name="AllowChange">Is there a settings page to change it (the toolchain has one)?</param>
+    public sealed record ToolchainRequest(string Reason, bool CanInstall, string InstallDirectory, string Component = "C++ toolchain", bool AllowChange = true)
     {
-        /// <summary>The text for the user: why a toolchain is needed, and what can be done.</summary>
-        public string Message =>
-            Reason + "\n\nA C++ toolchain (compiler) is needed for that, and none was found on this machine.\n\n" +
-            (CanInstall
-                ? $"fire can download the portable w64devkit ({ToolchainSetup.DownloadSizeHint}, a GCC for Windows) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
-                : "Install a C++ compiler with the package manager of your system (Linux: g++ or clang++, macOS: `xcode-select --install`), or name the compiler yourself.");
+        public bool IsToolchain => Component == "C++ toolchain";
+
+        /// <summary>The text for the user: why it is needed, and what can be done.</summary>
+        public string Message => IsToolchain
+            ? Reason + "\n\nA C++ toolchain (compiler) is needed for that, and none was found on this machine.\n\n" +
+              (CanInstall
+                  ? $"fire can download the portable w64devkit ({ToolchainSetup.DownloadSizeHint}, a GCC for Windows) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
+                  : "Install a C++ compiler with the package manager of your system (Linux: g++ or clang++, macOS: `xcode-select --install`), or name the compiler yourself.")
+            : Reason + $"\n\n{Component} was not found on this machine.\n\n" +
+              (CanInstall
+                  ? $"fire can download {Component} ({SdlSetup.DownloadSizeHint}) and keep it in '{InstallDirectory}'. Nothing is installed on the system; it is only used by fire."
+                  : SdlSetup.HelpText);
+
+        /// <summary>The line below the button "install automatically".</summary>
+        public string InstallHint => IsToolchain
+            ? (CanInstall ? $"w64devkit is downloaded ({ToolchainSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
+                          : "Only available on Windows. Install a C++ compiler with the package manager of your system.")
+            : (CanInstall ? $"{Component} is downloaded ({SdlSetup.DownloadSizeHint}) and kept locally in {InstallDirectory}. Nothing is installed on the system."
+                          : "Only available on Windows. Install the development package of your system (see above).");
     }
 
     /// <summary>
@@ -233,6 +252,30 @@ namespace fire.Native
                 }
             }
             return null;
+        }
+
+        /// <summary>The libraries that the generated program asks for (<c>// fire-link:</c>) and the machine may lack: today SDL2 for a window. Looks for the development files; if they
+        /// are missing the user is asked (download on Windows). Returns null when everything is there, else the reason why the build cannot go on.</summary>
+        public static string? RequireLibraries(ToolchainDef toolchain, string cppFile)
+        {
+            if (toolchain.EffectiveKind is "custom" or "files" || !SdlSetup.IsRequiredBy(cppFile)) return null;
+            const string reason = "The program shows a window on the desktop (#import \"windows\"), which is built against SDL2.";
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                if (SdlSetup.Locate(toolchain) != null) return null;
+                if (Ask == null || !SdlSetup.CanInstall) break;
+                var choice = Ask(new ToolchainRequest(reason, SdlSetup.CanInstall, SdlSetup.Root, "SDL2", AllowChange: false));
+                if (choice != ToolchainChoice.Install) break;
+                try
+                {
+                    Action<Action<string>> work = log => SdlSetup.InstallMingw(log);
+                    if (RunInstall != null) { if (!RunInstall(work)) break; }
+                    else work(m => Log?.Invoke(m));
+                }
+                catch (InvalidOperationException ex) { Log?.Invoke(ex.Message); break; }
+            }
+            if (SdlSetup.Locate(toolchain) != null) return null;
+            return reason + "\n" + SdlSetup.HelpText;
         }
     }
 }

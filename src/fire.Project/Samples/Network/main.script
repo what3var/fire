@@ -1,0 +1,44 @@
+#import "net"
+#import "io"
+#import "time"
+// Sockets: a TCP server in its own thread, a client, and UDP. Everything runs on the loopback address, so it works anywhere.
+var listener = new Net.TcpListener("127.0.0.1", 0)         // port 0: the system picks a free one
+var port = listener.Port
+print("listening on port " + port)
+
+var served = 0
+fire {
+    // the server: answers every line with its upper case text, until the client closes the connection
+    var client = listener.Accept(5s)
+    var buffer = new byte[256]
+    var open = true
+    while (open) {
+        var n = client.Read(buffer, 0, 256)
+        if (n <= 0) { open = false }
+        else {
+            var line = IO.Utf8.GetString(buffer, 0, n)
+            client.WriteString("echo: " + line.ToUpper())
+        }
+    }
+    client.Close()
+    served = 1
+}
+
+var c = new Net.TcpClient("127.0.0.1", port, 5s)
+var reply = new byte[256]
+var words = ["hello", "fire", "network"]
+for (var w = 0; w < words.length; w++) {
+    c.WriteString(words[w])
+    var n = c.Read(reply, 0, 256)
+    print(IO.Utf8.GetString(reply, 0, n))
+}
+c.Close()
+while (served == 0) { Sleep(5ms) }
+
+// UDP: one socket sends a datagram to another
+var receiver = new Net.UdpSocket("127.0.0.1", 0)
+var sender = new Net.UdpSocket()
+sender.SendString("ping", "127.0.0.1", receiver.Port)
+var packet = new byte[64]
+var size = receiver.ReceiveFrom(packet, 0, 64, 2s)
+print("udp received: " + IO.Utf8.GetString(packet, 0, size))

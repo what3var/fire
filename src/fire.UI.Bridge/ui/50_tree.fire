@@ -103,7 +103,7 @@ namespace UI {
 
         int RowHeight(root) {
             if (this.rowHeight >= 0) { return this.rowHeight }
-            return root.ch + 6
+            return this.TextHeight(root) + 6
         }
 
         Collect_(list, node) {
@@ -124,7 +124,7 @@ namespace UI {
             var widest = 0
             for (var i = 0; i < this.visibleNodes.count; i = i + 1) {
                 var n = this.visibleNodes[i]
-                widest = UI.M.Max(widest, n.Depth() * this.indent + 20 + root.cw * n.text.Length)
+                widest = UI.M.Max(widest, n.Depth() * this.indent + 20 + this.TextWidth(root, n.text))
             }
             this.cw = widest + 4
             this.ch = this.visibleNodes.count * this.RowHeight(root) + 2
@@ -171,7 +171,7 @@ namespace UI {
                 }
                 var x = ax + 3 + node.Depth() * this.indent
                 if (node.HasChildren()) { this.DrawBox(root, x, y + (rh - 9) / 2, node.expanded, text) }
-                r.DrawText(x + 14, y + (rh - root.ch) / 2, node.text, text)
+                this.DrawString(root, x + 14, y + (rh - this.TextHeight(root)) / 2, node.text, text)
             }
             root.PopClip()
             if (this.scroller.Needed()) { this.scroller.Draw(root, ax + this.actualWidth - 1 - this.scroller.size, top, this.viewH) }

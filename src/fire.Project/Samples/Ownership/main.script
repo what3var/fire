@@ -1,0 +1,29 @@
+// Every object has exactly one owner: a scope or another object. When the owner ends, the object is gone.
+class Box {
+    int value
+    construct(int value) { this.value = value }
+}
+
+class Shelf {
+    List boxes
+    construct() { this.boxes = new List() }
+    Put(box) {
+        box.TakeTo(this)          // the shelf owns the box from now on
+        this.boxes.Add(box)
+    }
+}
+
+class Factory {
+    static Make(int v) {
+        var b = new Box(v)
+        return b                  // return hands the box to the caller
+    }
+}
+
+var shelf = new Shelf()
+for (var i = 1; i <= 3; i++) {
+    shelf.Put(Factory.Make(i * 10))
+}
+for (var i = 0; i < shelf.boxes.count; i++) {
+    print("box " + i + " = " + shelf.boxes[i].value)
+}

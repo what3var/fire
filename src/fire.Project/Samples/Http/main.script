@@ -1,0 +1,29 @@
+#import "http"
+#import "time"
+// A tiny web server and a client that calls it, both in this program. The server answers in the main thread, the client runs in a fire thread.
+// To fetch a real page use new Http.Client().Get("http://example.org/").
+var server = new Http.Server("127.0.0.1", 0)           // port 0: a free port
+var site = "http://127.0.0.1:" + server.Port
+
+server.Route("GET", "/hello", func (req) => Http.Response.FromText("hello " + req.Query("name", "world")))
+server.Route("POST", "/echo", func (req) => req.Text())
+server.Route("GET", "/data", func (req) => Http.Response.FromJson("{\"answer\": 42}"))
+
+fire {
+    var client = new Http.Client()
+    var r1 = client.Get(site + "/hello?name=fire")
+    print(r1.status + " " + r1.Text())
+    var r2 = client.Post(site + "/echo", "ping")
+    print(r2.status + " " + r2.Text())
+    var r3 = client.Get(site + "/data")
+    print(r3.status + " " + r3.Header("Content-Type") + " " + r3.Text())
+    var r4 = client.Get(site + "/missing")
+    print(r4.status + " " + r4.reason)
+}
+
+// four requests, then the server stops
+var handled = 0
+while (handled < 4) {
+    if (server.ServeOne(5s)) { handled = handled + 1 }
+}
+Sleep(50ms)

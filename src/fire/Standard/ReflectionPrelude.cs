@@ -18,7 +18,6 @@ namespace fire.Standard
 
         public const string Source = """
             class ReflectionException : Exception {
-                string message
                 construct(string message) { this.message = message }
             }
 
