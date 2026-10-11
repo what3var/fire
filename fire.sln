@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Native", "src\fire.Nat
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Package.Manager", "src\fire.Package.Manager\fire.Package.Manager.csproj", "{A6906FAA-BC7E-4922-AABF-EDBF30658C40}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Ember", "src\fire.Ember\fire.Ember.csproj", "{20A083DA-4F4C-48ED-A605-B8ED0F249106}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.UI.Markup", "src\fire.UI.Markup\fire.UI.Markup.csproj", "{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Project", "src\fire.Project\fire.Project.csproj", "{C3B15001-98B7-437D-A4CE-6A0953280C89}"
@@ -102,9 +104,13 @@ Global
 		{E997A508-15D7-4EAC-B33D-175C14B18575}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E997A508-15D7-4EAC-B33D-175C14B18575}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Release|Any CPU.Build.0 = Release|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Release|Any CPU.Build.0 = Release|Any CPU
 		{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7}.Release|Any CPU.ActiveCfg = Release|Any CPU

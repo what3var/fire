@@ -20,7 +20,7 @@
     <ProjectReference Include="..\fire.UI.Bridge\fire.UI.Bridge.csproj" />
     <ProjectReference Include="..\fire.UI.Markup\fire.UI.Markup.csproj" />
     <ProjectReference Include="..\fire.Native\fire.Native.csproj" />
-    <ProjectReference Include="..\fire.Package.Manager\fire.Package.Manager.csproj" />
+    <ProjectReference Include="..\fire.Ember\fire.Ember.csproj" />   <!-- the program ember comes along into the compiler folder (it uses the package manager library, which fire.Native and fire.Project bring) -->
     <ProjectReference Include="..\fire.Project\fire.Project.csproj" />
   </ItemGroup>
 
