@@ -41,6 +41,11 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Project", "src\fire.Pr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "fire.Git", "src\fire.Git\fire.Git.csproj", "{D4C26112-A9C8-4E8E-B5DF-7B1A64391D9A}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Projektmappenelemente", "Projektmappenelemente", "{2C1E853B-B768-4D37-8078-A19BDE0DE8C4}"
+	ProjectSection(SolutionItems) = preProject
+		Directory.Build.props = Directory.Build.props
+	EndProjectSection
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -104,12 +109,12 @@ Global
 		{E997A508-15D7-4EAC-B33D-175C14B18575}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{E997A508-15D7-4EAC-B33D-175C14B18575}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A6906FAA-BC7E-4922-AABF-EDBF30658C40}.Release|Any CPU.Build.0 = Release|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{20A083DA-4F4C-48ED-A605-B8ED0F249106}.Release|Any CPU.Build.0 = Release|Any CPU
 		{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{DA35DC00-FEAF-4930-B9BF-F15931A6B0A7}.Debug|Any CPU.Build.0 = Debug|Any CPU

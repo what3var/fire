@@ -8,6 +8,8 @@
     <RootNamespace>fire.Runtime</RootNamespace>
     <AssemblyName>runtime</AssemblyName>
     <LangVersion>latest</LangVersion>
+	<PublishSingleFile>true</PublishSingleFile>
+	<SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
