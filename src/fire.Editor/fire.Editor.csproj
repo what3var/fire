@@ -13,7 +13,7 @@
     <AssemblyName>spark</AssemblyName>
     <LangVersion>latest</LangVersion>
     <AssemblyTitle>fire spark</AssemblyTitle>
-    <ApplicationIcon>Assets\Logo.ico</ApplicationIcon>
+    <!--<ApplicationIcon>Assets\Logo.ico</ApplicationIcon>-->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
 
@@ -46,8 +46,13 @@
     <!-- The help pages behind the "?" menu (Help folder): copied to Help\ next to the executable and opened from there (see MainWindow.OpenHelp). -->
     <None Include="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\icons\*.png" />
+    <None Remove="fileicons.res" />
     <AvaloniaResource Include="Assets\Logo-64.png" />
   </ItemGroup>
+
+  <PropertyGroup>
+	  <Win32Resource>fileicons.res</Win32Resource>
+  </PropertyGroup>
 
   <Import Project="..\BridgePackages.targets" />
 
