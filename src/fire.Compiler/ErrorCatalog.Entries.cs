@@ -200,6 +200,7 @@ namespace fire.Compiler
         ("E3156", ErrorArea.Parser, "Expected '=>' in the lambda"),
         ("E3157", ErrorArea.Parser, "Expected the text of the warning (a string) after 'warn <id>:'"),
         ("E3158", ErrorArea.Parser, "The id of a warning ('warn <id>: \"text\"') is a whole number from 0 to 99999"),
+        ("E3159", ErrorArea.Parser, "The target of '{*}' must not contain a call, '++', '--' or an assignment (write the assignment out)"),
         ("E4001", ErrorArea.Resolver, "'{*}' is already declared as extern"),
         ("E4002", ErrorArea.Resolver, "'{*}' is already declared as an enum"),
         ("E4003", ErrorArea.Resolver, "'{*}' is already declared as a class"),

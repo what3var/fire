@@ -78,9 +78,9 @@ inline Value MeshNew(Value positions, Value uvs, Value indices) {
     return Int(add(tables().meshes, mesh));
 }
 
-/// A template mesh: 0 box, 1 sphere, 2 cylinder, 3 cone, 4 plane; `detail` is the number of segments around.
+/// A template mesh: 0 box, 1 sphere, 2 cylinder, 3 cone, 4 plane, 5 quad; `detail` is the number of segments around.
 inline Value MeshTemplate(Value kind, Value detail) {
-    if (kind.i < 0 || kind.i > 4) return Int(0);
+    if (kind.i < 0 || kind.i > 5) return Int(0);
     return Int(add(tables().meshes, makeTemplate((int)kind.i, (int)detail.i)));
 }
 
@@ -143,6 +143,7 @@ inline Value TexNew(Value width, Value height, Value buffer) {
     auto tex = new Texture();
     tex->w = (int)width.i; tex->h = (int)height.i;
     tex->rgba.assign(bufOf(buffer)->bytes(), bufOf(buffer)->bytes() + n);
+    tex->prepare();
     return Int(add(tables().textures, tex));
 }
 
@@ -159,7 +160,34 @@ inline Value TexChecker(Value size, Value cells, Value colorA, Value colorB) {
             uint8_t* p = &tex->rgba[((size_t)y * (size_t)n + (size_t)x) * 4];
             p[0] = c & 255; p[1] = (c >> 8) & 255; p[2] = (c >> 16) & 255; p[3] = (c >> 24) & 255;
         }
+    tex->prepare();
     return Int(add(tables().textures, tex));
+}
+
+/// Gives a texture a bump map made from its own brightness.
+inline Value TexBumpAuto(Value h) {
+    Texture* t = find(tables().textures, h);
+    if (!t) return Bool(false);
+    t->makeBumpFromColors();
+    return Bool(true);
+}
+
+/// Gives a texture a bump map from a picture: `channels` bytes per pixel (1: heights; 3 or 4: colours, whose brightness is the height); the picture is scaled to the texture.
+inline Value TexBump(Value h, Value width, Value height, Value channels, Value buffer) {
+    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Texture* t = find(tables().textures, h);
+    if (!t || width.i <= 0 || height.i <= 0 || width.i > 16384 || height.i > 16384 || (channels.i != 1 && channels.i != 3 && channels.i != 4)) return Bool(false);
+    if ((size_t)bufOf(buffer)->length < (size_t)width.i * (size_t)height.i * (size_t)channels.i) return Bool(false);
+    t->setBump(bufOf(buffer)->bytes(), (int)width.i, (int)height.i, (int)channels.i);
+    return Bool(true);
+}
+
+/// Takes the bump map away again.
+inline Value TexBumpClear(Value h) {
+    Texture* t = find(tables().textures, h);
+    if (!t) return Bool(false);
+    t->bump.clear();
+    return Bool(true);
 }
 
 inline Value TexFree(Value h) {
@@ -194,22 +222,28 @@ inline Value FrameClear(Value h, Value buffer, Value width, Value height, Value 
     return Bool(true);
 }
 
-// The layout of the array of an object: see Object.Parameters in the prelude.
-constexpr int kObjectParams = 28;
+// The layout of the arrays: see Object.Parameters, Light.Parameters and Scene.Settings in the prelude.
+constexpr int kObjectParams = 36;
 constexpr int kCameraParams = 9;
-constexpr int kLightParams = 12;
+constexpr int kLightParams = 14;
+constexpr int kSettingParams = 3;
 
-/// Draws a mesh: `object` has kObjectParams floats, `camera` kCameraParams, `lights` kLightParams per light. false on bad handles or arrays.
-inline Value Draw(Value frame, Value buffer, Value mesh, Value texture, Value object, Value camera, Value lights) {
-    if (!leafAlive(buffer)) return destroyedError(buffer);
+inline CameraParams cameraOf(Arr* c) {
+    CameraParams cp;
+    cp.pos = {F(c->items()[0]), F(c->items()[1]), F(c->items()[2])};
+    cp.rx = F(c->items()[3]); cp.ry = F(c->items()[4]); cp.rz = F(c->items()[5]);
+    cp.fovY = F(c->items()[6]); cp.nearPlane = F(c->items()[7]); cp.farPlane = F(c->items()[8]);
+    return cp;
+}
+
+/// Queues a mesh for the frame (nothing is drawn until `Flush`): `object` has kObjectParams floats, `camera` kCameraParams. false on bad handles or arrays.
+inline Value Draw(Value frame, Value mesh, Value texture, Value object, Value camera) {
     Frame* f = find(tables().frames, frame);
     Mesh* m = find(tables().meshes, mesh);
-    if (!f || !m || object.kind != K_Array || camera.kind != K_Array || lights.kind != K_Array) return Bool(false);
+    if (!f || !m || object.kind != K_Array || camera.kind != K_Array) return Bool(false);
     Arr* o = arrOf(object);
     Arr* c = arrOf(camera);
-    Arr* l = arrOf(lights);
-    if (o->length < (uint32_t)kObjectParams || c->length < (uint32_t)kCameraParams || l->length % kLightParams != 0) return Bool(false);
-    if ((size_t)bufOf(buffer)->length < (size_t)f->w * (size_t)f->h * 4) return Bool(false);
+    if (o->length < (uint32_t)kObjectParams || c->length < (uint32_t)kCameraParams) return Bool(false);
     Texture* tex = texture.i > 0 ? find(tables().textures, texture) : nullptr;
     auto O = [&](int i) { return F(o->items()[i]); };
     ObjectParams op;
@@ -226,10 +260,25 @@ inline Value Draw(Value frame, Value buffer, Value mesh, Value texture, Value ob
         s.tm[0] = cs * ru; s.tm[1] = -sn * rv; s.tm[2] = ou;
         s.tm[3] = sn * ru; s.tm[4] = cs * rv; s.tm[5] = ov;
     }
-    CameraParams cp;
-    cp.pos = {F(c->items()[0]), F(c->items()[1]), F(c->items()[2])};
-    cp.rx = F(c->items()[3]); cp.ry = F(c->items()[4]); cp.rz = F(c->items()[5]);
-    cp.fovY = F(c->items()[6]); cp.nearPlane = F(c->items()[7]); cp.farPlane = F(c->items()[8]);
+    s.opacity = O(28); s.cutoff = O(29);
+    s.lit = O(30) != 0; s.castShadows = O(31) != 0; s.receiveShadows = O(32) != 0;
+    s.layers = (int)O(33);
+    s.bump = O(34);
+    s.billboard = (int)O(35);
+    queueMesh(*f, cameraOf(arrOf(camera)), *m, op, s, tex);
+    return Bool(true);
+}
+
+/// Rasterises what was queued into the pixels of the camera. `lights` has kLightParams per light, `settings` kSettingParams (shadows on/off, shadow map size, threads).
+inline Value Flush(Value frame, Value buffer, Value camera, Value lights, Value settings) {
+    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Frame* f = find(tables().frames, frame);
+    if (!f || camera.kind != K_Array || lights.kind != K_Array || settings.kind != K_Array) return Bool(false);
+    Arr* c = arrOf(camera);
+    Arr* l = arrOf(lights);
+    Arr* st = arrOf(settings);
+    if (c->length < (uint32_t)kCameraParams || l->length % kLightParams != 0 || st->length < (uint32_t)kSettingParams) return Bool(false);
+    if ((size_t)bufOf(buffer)->length < (size_t)f->w * (size_t)f->h * 4) return Bool(false);
     std::vector<Light> ls;
     for (uint32_t i = 0; i < l->length; i += kLightParams) {
         auto L = [&](int k) { return F(l->items()[i + k]); };
@@ -240,9 +289,15 @@ inline Value Draw(Value frame, Value buffer, Value mesh, Value texture, Value ob
         light.pos = {L(5), L(6), L(7)};
         light.dir = normalize(Vec3{L(8), L(9), L(10)});
         light.range = L(11);
+        light.castShadows = L(12) != 0;
+        light.mask = (int)L(13);
         ls.push_back(light);
     }
-    drawMesh(bufOf(buffer)->bytes(), *f, cp, *m, op, s, tex, ls);
+    FlushSettings fs;
+    fs.shadows = F(st->items()[0]) != 0;
+    fs.shadowResolution = (int)F(st->items()[1]);
+    fs.threads = (int)F(st->items()[2]);
+    flush(bufOf(buffer)->bytes(), *f, cameraOf(c), ls, fs);
     return Bool(true);
 }
 

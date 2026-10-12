@@ -96,6 +96,12 @@ namespace fire.Compiler
         /// <summary>The file of the source that this parser reads (ProcessedSource.Name), for the position of a warning (`warn`).</summary>
         private string? _fileName;
 
+        /// <summary>The warnings (`warn`) read inside the members of a class that is being parsed - the member is known when it is done (see ParseClassMember). null outside of a member.</summary>
+        private List<(int Id, string Text, int Line)>? _memberWarnings;
+
+        /// <summary>The class of an extension (`class extends X`) while its members are read.</summary>
+        private string? _extensionClassName;
+
         /// <summary>Stack of the synthetic target-variable names of active
         /// `with` blocks (innermost last) - see ParseWithStmt. A
         /// bare '.' at the start of an expression (see ParsePrimary) always refers
@@ -411,7 +417,11 @@ namespace fire.Compiler
             ExpectStatementTerminator();
             long number = id.LiteralValue is long l ? l : 0;
             if (number < 0 || number > 99999) throw Error("The id of a warning ('warn <id>: \"text\"') is a whole number from 0 to 99999", id);
-            DiagnosticCollector.Warn((int)number, text.LiteralValue as string ?? text.Lexeme, keyword.Line, _fileName);
+            string warning = text.LiteralValue as string ?? text.Lexeme;
+            string? className = _currentClassName ?? _extensionClassName;
+            if (_memberWarnings != null) _memberWarnings.Add(((int)number, warning, keyword.Line));   // in a member: it belongs to the member (reported where that is used)
+            else if (className != null) DiagnosticCollector.Current?.Declare(new DeclaredWarning(GenericClassNames.PlainName(className), WarnTarget.Class, null, 0, 0, false, (int)number, warning, keyword.Line, _fileName));   // in a class body: it belongs to the class
+            else DiagnosticCollector.Warn((int)number, warning, keyword.Line, _fileName);   // anywhere else: reported where it stands
             return true;
         }
 
@@ -671,7 +681,7 @@ namespace fire.Compiler
         /// reachable if NextLooksLikeTypeThenName() has already confirmed
         /// that a type really follows here (and not e.g. an expression
         /// statement).</summary>
-        private Stmt ParseBareTypedDecl(bool isReadonly = false)
+        private Stmt ParseBareTypedDecl(bool isReadonly = false, bool consumeTerminator = true)
         {
             int line = Peek().Line;
             var type = ParseTypeRef();
@@ -689,7 +699,7 @@ namespace fire.Compiler
             if (Match(TokenType.Assign))
                 initializer = ParseExpression();
 
-            ExpectStatementTerminator();
+            if (consumeTerminator) ExpectStatementTerminator();
             return new VarDeclStmt(_sourceIndex, line, name, type, arrayRanks, initializer, isReadonly);
         }
 
@@ -927,7 +937,9 @@ namespace fire.Compiler
 
             Stmt? init = null;
             if (!Check(TokenType.Semicolon))
-                init = Check(TokenType.Var) ? ParseVarDeclCore(isReadonly: false) : new ExprStmt(_sourceIndex, Peek().Line, ParseExpression());
+                init = Check(TokenType.Var) ? ParseVarDeclCore(isReadonly: false)
+                     : NextLooksLikeTypeThenName() ? ParseBareTypedDecl(isReadonly: false, consumeTerminator: false)
+                     : new ExprStmt(_sourceIndex, Peek().Line, ParseExpression());
             Expect(TokenType.Semicolon, "Expected ';' after the for initializer");
 
             Expr? cond = null;
@@ -947,6 +959,7 @@ namespace fire.Compiler
             int line = Peek().Line;
             Expect(TokenType.Foreach, "Expected 'foreach'");
             Expect(TokenType.LParen, "Expected '(' after 'foreach'");
+            Match(TokenType.Var);   // `foreach (var x in list)` = `foreach (x in list)`
             string varName = Expect(TokenType.Identifier, "Expected a variable name").Lexeme;
             Expect(TokenType.In, "Expected 'in' in foreach");
             var iterable = ParseExpression();
@@ -1692,11 +1705,17 @@ namespace fire.Compiler
             Expect(TokenType.LBrace, "Expected '{' after 'class extends " + targetName + "'");
 
             var members = new List<Stmt>();
-            while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+            string? savedExtension = _extensionClassName;
+            _extensionClassName = targetName;
+            try
             {
-                if (TryParseWarn()) continue;
-                members.AddRange(ParseClassMember());
+                while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                {
+                    if (TryParseWarn()) continue;
+                    members.AddRange(ParseClassMember());
+                }
             }
+            finally { _extensionClassName = savedExtension; }
             Expect(TokenType.RBrace, "Expected '}' at the end of the extension");
 
             if (isBaseType || BaseTypeExtensions.IsExtendable(targetName))
@@ -1981,7 +2000,39 @@ namespace fire.Compiler
             return AccessModifier.Public;
         }
 
+        /// <summary>Reads a member of a class. `warn` statements inside it (in a method, a constructor, a property) are declared for the member: the compiler reports them where the member is
+        /// used, not where they stand.</summary>
         private List<Stmt> ParseClassMember()
+        {
+            var outer = _memberWarnings;
+            var mine = new List<(int Id, string Text, int Line)>();
+            _memberWarnings = mine;
+            List<Stmt> result;
+            try { result = ParseClassMemberCore(); }
+            finally { _memberWarnings = outer; }
+            if (mine.Count == 0) return result;
+            string? className = _currentClassName ?? _extensionClassName;
+            foreach (var warning in mine)
+            {
+                if (className == null) { DiagnosticCollector.Warn(warning.Id, warning.Text, warning.Line, _fileName); continue; }   // (not in a class after all)
+                string plain = GenericClassNames.PlainName(className);
+                foreach (var member in result)
+                {
+                    DeclaredWarning? declared = member switch
+                    {
+                        MethodDecl m => new DeclaredWarning(plain, WarnTarget.Method, m.Name, m.Params.Count(p => p.DefaultValue == null), m.Params.Count, m.IsStatic, warning.Id, warning.Text, warning.Line, _fileName),
+                        ConstructorDecl c => new DeclaredWarning(plain, WarnTarget.Constructor, null, c.Params.Count(p => p.DefaultValue == null), c.Params.Count, false, warning.Id, warning.Text, warning.Line, _fileName),
+                        PropertyDecl p => new DeclaredWarning(plain, WarnTarget.Member, p.Name, 0, 0, p.IsStatic, warning.Id, warning.Text, warning.Line, _fileName),
+                        FieldDecl f => new DeclaredWarning(plain, WarnTarget.Member, f.Name, 0, 0, f.IsStatic, warning.Id, warning.Text, warning.Line, _fileName),
+                        _ => new DeclaredWarning(plain, WarnTarget.Class, null, 0, 0, false, warning.Id, warning.Text, warning.Line, _fileName),   // (a destructor, an operator: the class)
+                    };
+                    DiagnosticCollector.Current?.Declare(declared);
+                }
+            }
+            return result;
+        }
+
+        private List<Stmt> ParseClassMemberCore()
         {
             int line = Peek().Line;
             var access = ParseOptionalAccessModifier();
@@ -2288,8 +2339,46 @@ namespace fire.Compiler
                     return new AssignExpr(line, left, value);
                 throw Error("Invalid assignment target", Previous());
             }
+            if (LineContinues() && CompoundOperator(Peek().Type) is { } op)
+            {
+                var opTok = Advance();
+                var value = ParseAssignment();
+                if (left is not (IdentifierExpr or MemberExpr or IndexExpr or UnaryExpr { Op: UnaryOp.Dereference }))
+                    throw Error("Invalid assignment target", opTok);
+                // `a op= b` is `a = a op b`: the target is evaluated twice, so it must not have effects of its own
+                if (!IsPlainTarget(left))
+                    throw Error($"The target of '{opTok.Lexeme}' must not contain a call, '++', '--' or an assignment (write the assignment out)", opTok);
+                return new AssignExpr(opTok.Line, left, new BinaryExpr(opTok.Line, op, left, value));
+            }
             return left;
         }
+
+        private static BinaryOp? CompoundOperator(TokenType t) => t switch
+        {
+            TokenType.PlusAssign => BinaryOp.Add,
+            TokenType.MinusAssign => BinaryOp.Sub,
+            TokenType.StarAssign => BinaryOp.Mul,
+            TokenType.SlashAssign => BinaryOp.Div,
+            TokenType.PercentAssign => BinaryOp.Mod,
+            TokenType.CaretAssign => BinaryOp.Power,
+            TokenType.AmpAssign => BinaryOp.BitAnd,
+            TokenType.PipeAssign => BinaryOp.BitOr,
+            TokenType.HashAssign => BinaryOp.BitXor,
+            TokenType.ShlAssign => BinaryOp.ShiftLeft,
+            TokenType.ShrAssign => BinaryOp.ShiftRight,
+            _ => null,
+        };
+
+        /// <summary>A target that can be evaluated twice without a difference: names, members and elements of such, with operands made of literals and operators.</summary>
+        private static bool IsPlainTarget(Expr e) => e switch
+        {
+            IdentifierExpr or ThisExpr or BaseExpr or LiteralExpr => true,
+            MemberExpr m => IsPlainTarget(m.Target),
+            IndexExpr i => IsPlainTarget(i.Target) && IsPlainTarget(i.Index),
+            BinaryExpr b => IsPlainTarget(b.Left) && IsPlainTarget(b.Right),
+            UnaryExpr u => IsPlainTarget(u.Operand),
+            _ => false,
+        };
 
         private Expr ParseOr()
         {

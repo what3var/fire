@@ -34,7 +34,7 @@ The tool bars are *tool strips*: drag one by its grip (the bar on its left) to a
 
 The **Build** tool strip has the execution mode and the **target** of a native build (the combo box offers the targets the build settings know: `windows`, `linux`, `macos`, `esp32`, `freertos`, `wasm` for the browser, and your own from `fire.native.json`; *Default* is the target of the project or of the build settings).
 
-`warn 123: "text"` in your code is a warning for yourself: it is shown in the error list (and as an amber squiggle) when you build, but is not compiled and does not stop the build.
+`warn 123: "text"` in your code is a warning for yourself: it is shown in the error list (and as an amber squiggle) when you build, but is not compiled and does not stop the build. Inside a class, a method or a property it marks that part as obsolete (or as a trap): the warning appears only where the class or the member is used.
 
 Handy shortcuts in the code editor:
 

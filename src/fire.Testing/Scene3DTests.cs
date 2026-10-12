@@ -96,6 +96,74 @@ static class Scene3DTests
         var obj = new Object("v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3 4\n")
         print("obj " + obj.Triangles + " " + obj.Width + " " + obj.Depth)
 
+        // transparency, billboards, shadows, layers, bump maps
+        var glass = new Object(Template.Box, 0m, 0.5m, 1.5m, 1m, 1m, 0.2m)
+        glass.Color = S3D.Rgb(80, 160, 255)
+        glass.Opacity = 0.5
+        scene.Add(glass, "glass")
+        cam.LookAt(0m, 0.5m, 0m)
+        cam.Render()
+        var withGlass = H.Sum(frame)
+        glass.Visible = false
+        cam.Render()
+        print("transparent " + (withGlass != H.Sum(frame)))
+        glass.Visible = true
+        var sprite = new Object(Template.Quad, -1.5m, 0.5m, 0.5m, 1m, 1m, 0m)
+        sprite.Texture = Texture.Checker(8, 2, S3D.Rgb(255, 0, 0), S3D.Rgb(255, 255, 255))
+        sprite.Billboard = BillboardMode.Facing
+        sprite.CastShadows = false
+        scene.Add(sprite, "sprite")
+        cam.Render()
+        var billboard1 = H.Sum(frame)
+        cam.X = 2m
+        cam.LookAt(0m, 0.5m, 0m)
+        cam.Render()
+        print("billboard " + billboard1 + " " + H.Sum(frame))
+        scene.Shadows = true
+        cam.Render()
+        var shadowed = H.Sum(frame)
+        scene.Shadows = false
+        cam.Render()
+        print("shadows " + (shadowed != H.Sum(frame)) + " " + scene.Shadows)
+        scene.Shadows = true
+        scene.Threads = 1
+        cam.Render()
+        var oneThread = H.Sum(frame)
+        scene.Threads = 3
+        cam.Render()
+        print("threads " + (oneThread == H.Sum(frame)) + " " + (oneThread == shadowed))
+        scene.Threads = 0
+        floor.Layers = 0
+        cam.Render()
+        var layered = H.Sum(frame)
+        print("layers " + (layered != shadowed))
+        floor.Layers = 16777215
+        var sun = scene.Lights[0]
+        sun.Enabled = false
+        cam.Render()
+        var dark = H.Sum(frame)
+        sun.Enabled = true
+        print("light " + (dark != shadowed))
+        floor.Lit = false
+        cam.Render()
+        print("unlit " + (H.Sum(frame) != shadowed))
+        floor.Lit = true
+        var bumpy = new Object(Template.Plane, 0m, 0.01m, 0m, 2m, 0m, 2m)
+        bumpy.Texture = Texture.Checker(16, 4, S3D.Rgb(200, 200, 200), S3D.Rgb(60, 60, 60))
+        scene.Add(bumpy, "bumpy")
+        cam.Render()
+        var plain = H.Sum(frame)
+        bumpy.Texture.AddBumpmap()
+        bumpy.Texture.BumpStrength = 2.0
+        cam.Render()
+        print("bump " + (H.Sum(frame) != plain) + " " + bumpy.Texture.hasBump)
+        var heights = new byte[16 * 16]
+        for (var i = 0; i < 256; i++) { heights[i] = (i * 7) % 256 }
+        bumpy.Texture.AddBumpmap(16, 16, heights)
+        cam.Render()
+        print("bumpdata " + H.Sum(frame))
+        try { bumpy.Texture.AddBumpmap(3, 3, heights) } catch (Scene3DException e) { print("error " + e.message) }
+
         // lengths and angles need units
         try { box.X = 3 } catch (Scene3DException e) { print("error " + e.message) }
         try { box.RotationX = 1.5 } catch (Scene3DException e) { print("error " + e.message) }

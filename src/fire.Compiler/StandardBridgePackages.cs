@@ -211,8 +211,9 @@ namespace fire.Compiler
                     F("__S3DLookAt", 6, "s3d::LookAt", list: true), F("__S3DMeshRetain", 1, "s3d::MeshRetain"), F("__S3DMeshFree", 1, "s3d::MeshFree"),
                     F("__S3DMeshBounds", 1, "s3d::MeshBounds", list: true), F("__S3DMeshTriangleCount", 1, "s3d::MeshTriangleCount"),
                     F("__S3DTexNew", 3, "s3d::TexNew"), F("__S3DTexChecker", 4, "s3d::TexChecker"), F("__S3DTexFree", 1, "s3d::TexFree"),
+                    F("__S3DTexBumpAuto", 1, "s3d::TexBumpAuto"), F("__S3DTexBump", 5, "s3d::TexBump"), F("__S3DTexBumpClear", 1, "s3d::TexBumpClear"),
                     F("__S3DFrameNew", 2, "s3d::FrameNew"), F("__S3DFrameFree", 1, "s3d::FrameFree"), F("__S3DFrameClear", 5, "s3d::FrameClear"),
-                    F("__S3DDraw", 7, "s3d::Draw"),
+                    F("__S3DDraw", 5, "s3d::Draw"), F("__S3DFlush", 5, "s3d::Flush"),
                 })
                     yield return f;
             }

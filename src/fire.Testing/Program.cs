@@ -27,6 +27,7 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -13892,6 +13893,7 @@ static int CountOccurrences(string haystack, string needle)
 
 ProjectTests.Run();
 DiagnosticTests.Run();
+SyntaxTests.Run();
 ImageTests.Run();
 GitTests.Run();
 

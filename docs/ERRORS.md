@@ -4,7 +4,8 @@ Every error of the compiler has a **code**: `E` and four digits, `E3012`. The fi
 shows the code in the **Error List** and in the **Build Log**, the command line prints it (`error E4022: Unknown identifier 'x' (line 3)`). A code stays with its message: when the wording of a message is
 improved the code is the same, so a search for `E4022`, a note in a bug report or a link keeps working. A message that is not in the list has the general code of its part (`E1000`, `E2000`, ... `E7000`).
 
-A **warning** is something that the developer writes into the code, `warn 123: "text"` (SPEC 1.7): it is reported with the code `W123` and the text; it is no code, so nothing of it is compiled.
+A **warning** is something that the developer writes into the code, `warn 123: "text"` (SPEC 8.1.8): it is reported with the code `W123` and the text; it is no code, so nothing of it is compiled.
+A `warn` in a class or in a member is reported where the class or the member is **used** (`new`, a call, a property access) - never when it is not:
 
 ```
 class Cache {
@@ -13,6 +14,9 @@ class Cache {
         this.Clear()
     }
 }
+
+var c = new Cache()
+c.Flush()                // warning W204 here: Flush is obsolete, use Clear() ... (Cache.Flush)
 ```
 
 Native builds add their own: `E7001` (the generator cannot translate something for the target), `E7002` (the C++ compiler reported errors - its messages are in the Build Log), `E7003` (the
@@ -230,6 +234,7 @@ configuration of the native build, a toolchain that is missing).
 | `E3156` | Expected '=>' in the lambda |
 | `E3157` | Expected the text of the warning (a string) after 'warn <id>:' |
 | `E3158` | The id of a warning ('warn <id>: "text"') is a whole number from 0 to 99999 |
+| `E3159` | The target of '{*}' must not contain a call, '++', '--' or an assignment (write the assignment out) |
 
 ### E4xxx - Resolver: names, types, declarations
 

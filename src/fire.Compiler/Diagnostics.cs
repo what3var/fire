@@ -37,8 +37,16 @@ namespace fire.Compiler
         [ThreadStatic] private static DiagnosticCollector? _current;
 
         private readonly List<Diagnostic> _items = new();
+        private readonly HashSet<Diagnostic> _seen = new();
+        private readonly List<DeclaredWarning> _declared = new();
 
         public IReadOnlyList<Diagnostic> Items => _items;
+
+        /// <summary>The warnings that stand in classes and members (`warn` in the body of a class, a method, a constructor, a property): they are not reported where they are written but
+        /// where the class or the member is used (the resolver does that, see Resolver.ReportUse).</summary>
+        public IReadOnlyList<DeclaredWarning> Declared => _declared;
+
+        public void Declare(DeclaredWarning warning) => _declared.Add(warning);
 
         public static DiagnosticCollector? Current => _current;
 
@@ -47,6 +55,7 @@ namespace fire.Compiler
 
         public void Add(Diagnostic diagnostic)
         {
+            if (!_seen.Add(diagnostic)) return;   // (the same message for the same place once, also when a stage of the compiler runs twice)
             _items.Add(diagnostic);
             OnReport?.Invoke(diagnostic);
         }
@@ -72,6 +81,22 @@ namespace fire.Compiler
             public void Dispose() => _current = _previous;
         }
     }
+
+    /// <summary>What a declared warning (`warn` inside a class) belongs to.</summary>
+    public enum WarnTarget
+    {
+        /// <summary>The class itself (a `warn` in the class body, outside of its members): reported at `new` and at static access.</summary>
+        Class,
+        /// <summary>A constructor: reported at `new` with that number of arguments.</summary>
+        Constructor,
+        /// <summary>A method: reported at calls of that name with that number of arguments.</summary>
+        Method,
+        /// <summary>A property or a field: reported at every access of that name.</summary>
+        Member,
+    }
+
+    /// <summary>A warning that the developer wrote inside a class (`warn 204: "Flush is obsolete"` in `Cache.Flush`): reported where the class or the member is USED, once per place.</summary>
+    public sealed record DeclaredWarning(string Class, WarnTarget Target, string? Name, int MinArity, int MaxArity, bool IsStatic, int Id, string Text, int Line, string? File);
 
     /// <summary>The part of the compiler that a message comes from; it decides the thousands of the code (1 lexer, 2 preprocessor, 3 parser, 4 resolver, 5 bytecode compiler, 6 linker, 7 native build).</summary>
     public enum ErrorArea

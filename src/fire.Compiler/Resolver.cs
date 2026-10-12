@@ -553,6 +553,101 @@ namespace fire.Compiler
                 throw new ResolverException($"'{GenericClassNames.PlainName(className)}.{me.Name}' is an instance member - it needs an object, not the class name", me.Line);
         }
 
+        // -----------------------------------------------------------
+        // Warnings of the developer inside classes (`warn` in a class, a method, a constructor, a property): reported where the class or the member is used
+        // -----------------------------------------------------------
+        private Dictionary<string, List<DeclaredWarning>>? _declaredByClass;
+        private bool _declaredLoaded;
+        private readonly Dictionary<Expr, int> _calleeArity = new(ReferenceEqualityComparer.Instance);
+
+        private bool HasDeclaredWarnings
+        {
+            get
+            {
+                if (!_declaredLoaded)
+                {
+                    _declaredLoaded = true;
+                    var list = DiagnosticCollector.Current?.Declared;
+                    if (list is { Count: > 0 }) _declaredByClass = list.GroupBy(w => w.Class).ToDictionary(g => g.Key, g => g.ToList());
+                }
+                return _declaredByClass != null;
+            }
+        }
+
+        /// <summary>A use of a class or member that has a declared warning: the warning goes to the place of the use (once per place). Inside the declaring class itself nothing is reported -
+        /// the class uses its own obsolete parts without being told.</summary>
+        private void ReportUse(DeclaredWarning warning, int line)
+        {
+            if (_currentClass != null && GenericClassNames.PlainName(_currentClass.Name) == warning.Class) return;
+            string where = warning.Name != null ? warning.Class + "." + warning.Name : warning.Class;
+            DiagnosticCollector.Current?.Add(new Diagnostic(line, $"{warning.Text} ({where})", DiagnosticSeverity.Warning, DiagnosticCollector.WarningCode(warning.Id), null));
+        }
+
+        /// <summary>`new Class(args)`: the warnings of the class and of its constructors that take that many arguments.</summary>
+        private void WarnForNew(string className, int argumentCount, int line)
+        {
+            if (!HasDeclaredWarnings || !_declaredByClass!.TryGetValue(GenericClassNames.PlainName(className), out var list)) return;
+            foreach (var w in list)
+                if (w.Target == WarnTarget.Class || (w.Target == WarnTarget.Constructor && argumentCount >= w.MinArity && argumentCount <= w.MaxArity)) ReportUse(w, line);
+        }
+
+        /// <summary>`Class.Member` (static access): the warnings of the class itself.</summary>
+        private void WarnForClassUse(string className, int line)
+        {
+            if (!HasDeclaredWarnings || !_declaredByClass!.TryGetValue(GenericClassNames.PlainName(className), out var list)) return;
+            foreach (var w in list) if (w.Target == WarnTarget.Class) ReportUse(w, line);
+        }
+
+        /// <summary>A method call (`arguments` = the number of arguments) or a property/field access (`arguments` null) of that name: the warnings of such a member in `classes` (null: every class
+        /// that has one - the compiler does not know the class of the object).</summary>
+        private void WarnForMember(IEnumerable<string>? classes, string name, int? arguments, int line)
+        {
+            if (!HasDeclaredWarnings) return;
+            foreach (var (className, list) in _declaredByClass!)
+            {
+                if (classes != null && !classes.Contains(className)) continue;
+                foreach (var w in list)
+                {
+                    if (w.Name != name) continue;
+                    bool applies = arguments is { } n ? w.Target == WarnTarget.Method && n >= w.MinArity && n <= w.MaxArity : w.Target == WarnTarget.Member;
+                    if (applies) ReportUse(w, line);
+                }
+            }
+        }
+
+        /// <summary>The class and its base classes (plain names), for the places that know the class of an object.</summary>
+        private List<string> ClassChainNames(string className)
+        {
+            var names = new List<string>();
+            _classes.TryGetValue(className, out var start);
+            for (var cd = start; cd != null; cd = GetBaseClassDecl(cd)) names.Add(GenericClassNames.PlainName(cd.Name));
+            if (names.Count == 0) names.Add(GenericClassNames.PlainName(className));
+            return names;
+        }
+
+        /// <summary>The class that an expression certainly holds, as far as the compiler can tell without types: `this`, a variable declared with a class or with `new`, `new Class()`.</summary>
+        private string? InferClass(Expr target)
+        {
+            switch (target)
+            {
+                case ThisExpr: return _currentClass?.Name;
+                case NewExpr ne: return IsKnownClassName(ne.ClassRef.BaseName) ? ne.ClassRef.BaseName : null;
+                case IdentifierExpr id:
+                    for (var scope = _current; scope != null; scope = scope.Parent)
+                        if (scope.Slots.ContainsKey(id.Name)) return scope.KnownClasses.TryGetValue(id.Name, out var known) ? known : null;
+                    return null;
+                default: return null;
+            }
+        }
+
+        private string? KnownClassOf(TypeRef? type, Expr? initializer, bool isArray)
+        {
+            if (isArray) return null;
+            if (type != null && type.BaseName != TypeRef.InferredMarker && IsKnownClassName(type.BaseName)) return type.BaseName;
+            if (type is null or { BaseName: TypeRef.InferredMarker } && initializer is NewExpr ne && IsKnownClassName(ne.ClassRef.BaseName)) return ne.ClassRef.BaseName;
+            return null;
+        }
+
         private bool IsKnownClassName(string name) => name == "Exception" || _classes.ContainsKey(name);
 
         /// <summary>Tries to read `me.Target` as a closed, exactly
@@ -738,6 +833,9 @@ namespace fire.Compiler
             /// <summary>Names that lie in THIS (lambda) scope as a capture (copy of an outer variable) - assignment is an error,
             /// a declaration of its own with the same name hides it (see Define).</summary>
             public readonly HashSet<string> CaptureNames = new();
+
+            /// <summary>The class that a variable of this scope is known to hold (`Cache c = ...`, `var c = new Cache()`): only used to tell where a declared warning applies.</summary>
+            public readonly Dictionary<string, string> KnownClasses = new();
 
             public ResolverScope(ResolverScope? parent, bool isGlobal = false)
             {
@@ -973,6 +1071,7 @@ namespace fire.Compiler
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
                     Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
+                    if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 
                 case IfStmt ifs:
@@ -1358,6 +1457,7 @@ namespace fire.Compiler
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
                 Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit, isRef: p.ByRef));
+                if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
             }
 
             if (baseArgs != null)
@@ -1491,6 +1591,7 @@ namespace fire.Compiler
                     break;
 
                 case CallExpr call:
+                    _calleeArity[call.Callee] = call.Args.Count;   // (a member that is called: the member warnings of a method, not of a property)
                     ResolveExpr(call.Callee);
                     foreach (var a in call.Args) ResolveExprAllowTake(a);
                     break;
@@ -1531,6 +1632,8 @@ namespace fire.Compiler
                     if (staticClassName != null)
                     {
                         CheckStaticMemberExists(staticClassName, me);
+                        WarnForClassUse(staticClassName, me.Line);
+                        WarnForMember(ClassChainNames(staticClassName), me.Name, _calleeArity.TryGetValue(me, out int staticArgs) ? staticArgs : null, me.Line);
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
@@ -1551,6 +1654,11 @@ namespace fire.Compiler
                             _refs[me] = new ResolvedRef.StaticMember(thisMember.Value.ClassName);
                             break;
                         }
+                    }
+                    if (HasDeclaredWarnings)
+                    {
+                        string? receiver = InferClass(me.Target);
+                        WarnForMember(receiver != null ? ClassChainNames(receiver) : null, me.Name, _calleeArity.TryGetValue(me, out int memberArgs) ? memberArgs : null, me.Line);
                     }
                     ResolveExpr(me.Target); // .Name bleibt unresolved - dynamischer Feld-/Methodenzugriff
                     break;
@@ -1589,6 +1697,7 @@ namespace fire.Compiler
                             ne.ClassRef, ne.TypeArgs?.Count ?? 0, IsKnownClassName);
                         if (!IsKnownClassName(resolvedNewClassName))
                             throw new ResolverException($"Unknown class '{ne.ClassRef.BaseName}'", ne.Line);
+                        WarnForNew(resolvedNewClassName, ne.Args.Count, ne.Line);
                         if (_classes.TryGetValue(resolvedNewClassName, out var newTargetCd))
                             CheckTypeArgs(newTargetCd, ne);
                         else if (ne.TypeArgs != null && ne.TypeArgs.Count > 0)

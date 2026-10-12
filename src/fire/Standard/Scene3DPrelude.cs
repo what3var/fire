@@ -23,7 +23,8 @@ namespace fire.Standard
     public static class Scene3DPrelude
     {
         public const string Source = """
-            enum Template { Box = 0, Sphere = 1, Cylinder = 2, Cone = 3, Plane = 4 }
+            enum Template { Box = 0, Sphere = 1, Cylinder = 2, Cone = 3, Plane = 4, Quad = 5 }
+            enum BillboardMode { Off = 0, Facing = 1, Vertical = 2 }
             enum LightKind { Ambient = 0, Directional = 1, Point = 2 }
 
             class Scene3DException : Exception {
@@ -87,7 +88,7 @@ namespace fire.Standard
                     return new Model(h)
                 }
 
-                // A box, sphere, cylinder, cone or plane of the size 1m (a plane is 1m x 1m); `detail` is the number of segments around a round shape.
+                // A box, sphere, cylinder, cone, plane or quad of the size 1m (a plane is 1m x 1m lying down, a quad 1m x 1m standing, facing +Z); `detail` is the number of segments around a round shape.
                 static FromTemplate(int template, int detail = 24) {
                     var h = __S3DMeshTemplate(template, detail)
                     if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
@@ -124,10 +125,15 @@ namespace fire.Standard
                 int handle
                 int width
                 int height
+                bool hasBump
+                // How strongly the bump map tilts the light (1 = a full step of the heights over one texel is a slope of 45 degrees).
+                float BumpStrength
 
                 // From a framebuffer in the colour mode Rgba (the pixels are copied).
                 construct(Framebuffer source) {
                     this.handle = 0
+                    this.hasBump = false
+                    this.BumpStrength = 1.0
                     this.width = source.Width()
                     this.height = source.Height()
                     this.handle = __S3DTexNew(this.width, this.height, source.ReadBytes())
@@ -135,6 +141,8 @@ namespace fire.Standard
                 }
 
                 construct(int width, int height, bytes) {
+                    this.hasBump = false
+                    this.BumpStrength = 1.0
                     this.handle = __S3DTexNew(width, height, bytes)
                     this.width = width
                     this.height = height
@@ -143,6 +151,8 @@ namespace fire.Standard
 
                 // (the handle of a picture of the renderer: use Checker)
                 construct(int handle, int width, int height, bool made) {
+                    this.hasBump = false
+                    this.BumpStrength = 1.0
                     this.handle = handle
                     this.width = width
                     this.height = height
@@ -162,6 +172,33 @@ namespace fire.Standard
 
                 int Width { get { return this.width } }
                 int Height { get { return this.height } }
+
+                // A bump map made from the brightness of the texture itself: bright is high, dark is low (a little smoothed).
+                AddBumpmap() {
+                    if (!__S3DTexBumpAuto(this.handle)) { throw new Scene3DException("The texture cannot get a bump map.") }
+                    this.hasBump = true
+                }
+
+                // A bump map from a picture (a framebuffer in the colour mode Rgba): its brightness is the height. A picture of another size is scaled to the texture.
+                AddBumpmap(Framebuffer source) {
+                    if (!__S3DTexBump(this.handle, source.Width(), source.Height(), 4, source.ReadBytes())) { throw new Scene3DException("The picture cannot be a bump map (it has to be in the colour mode Rgba).") }
+                    this.hasBump = true
+                }
+
+                // A bump map from bytes: width * height heights (0..255), or width * height * 4 bytes (R, G, B, A) whose brightness is the height.
+                AddBumpmap(int width, int height, bytes) {
+                    var channels = 1
+                    if (bytes.length == width * height * 4) { channels = 4 }
+                    else if (bytes.length != width * height) { throw new Scene3DException("A bump map needs width * height bytes (heights) or width * height * 4 bytes (R, G, B, A).") }
+                    if (!__S3DTexBump(this.handle, width, height, channels, bytes)) { throw new Scene3DException("The bytes cannot be a bump map.") }
+                    this.hasBump = true
+                }
+
+                // Takes the bump map away again.
+                RemoveBumpmap() {
+                    __S3DTexBumpClear(this.handle)
+                    this.hasBump = false
+                }
             }
 
             // A light: ambient (everywhere), directional (parallel rays, like the sun) or point (from a place, weaker with the distance).
@@ -176,8 +213,17 @@ namespace fire.Standard
                 float dy
                 float dz
                 float range
+                // false: the light is off (it lights nothing and casts no shadow).
+                bool Enabled
+                // Whether what the light hits throws shadows (the scene's Shadows has to be on, too).
+                bool CastShadows
+                // The layers of objects that it lights: a number whose bits (1, 2, 4, ... up to 8388608) are layers; an object is lit when it shares a layer with the light (default: all).
+                int Layers
 
                 construct(int kind = 2, int color = 4294967295, float intensity = 1.0) {
+                    this.Enabled = true
+                    this.CastShadows = true
+                    this.Layers = 16777215
                     this.Kind = kind
                     this.Color = color
                     this.Intensity = intensity
@@ -219,9 +265,11 @@ namespace fire.Standard
                 // The distance at which a point light has half of its strength.
                 Range { get { return this.range * 1m } set { this.range = S3D.Length(value) } }
 
-                // The numbers the renderer takes: kind, r, g, b, intensity, position (3), direction (3), range.
+                // The numbers the renderer takes: kind, r, g, b, intensity, position (3), direction (3), range, casts shadows, layers.
                 Parameters() {
-                    return [this.Kind * 1.0, S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), this.Intensity, this.x, this.y, this.z, this.dx, this.dy, this.dz, this.range]
+                    var shadows = 0.0
+                    if (this.CastShadows && this.Kind != 0) { shadows = 1.0 }
+                    return [this.Kind * 1.0, S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), this.Intensity, this.x, this.y, this.z, this.dx, this.dy, this.dz, this.range, shadows, this.Layers * 1.0]
                 }
             }
 
@@ -254,6 +302,19 @@ namespace fire.Standard
                 int Color
                 bool Visible
                 bool twoSided
+                // 1 = solid, below that the object is see-through (a texture with transparent pixels is see-through, too). Transparent objects are drawn after the solid ones, from far to near.
+                float Opacity
+                // Above 0: pixels of the texture that are more transparent than this are left out completely and the rest is solid (leaves, fences: no sorting problems).
+                float AlphaCutoff
+                // false: no lighting, the colour as it is.
+                bool Lit
+                // Whether the object throws shadows / shows the shadows of others (a transparent object throws none).
+                bool CastShadows
+                bool ReceiveShadows
+                // The layers of the object (see Light.Layers): only lights that share a layer with it light it (default: all).
+                int Layers
+                // BillboardMode.Facing: the object always faces the camera (Template.Quad: sprites, labels); Vertical: it turns around the vertical axis only (trees).
+                int Billboard
                 Texture texture
                 Material material
                 string Key
@@ -282,19 +343,19 @@ namespace fire.Standard
                     __S3DMeshRetain(model.handle)
                 }
 
-                // From a template (Template.Box, Sphere, Cylinder, Cone, Plane): at (x, y, z), the outer dimensions width, height and depth (a plane has no height).
+                // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
                 construct(int template, x, y, z, width, height, depth, int detail = 24) {
                     this.Init()
                     var h = __S3DMeshTemplate(template, detail)
                     if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
                     this.UseMesh(h)
-                    if (template == 4) { this.twoSided = true }
+                    if (template == 4 || template == 5) { this.twoSided = true }
                     this.X = x
                     this.Y = y
                     this.Z = z
                     this.Width = width
                     if (template != 4) { this.Height = height }
-                    this.Depth = depth
+                    if (template != 5) { this.Depth = depth }
                 }
 
                 destruct() {
@@ -322,6 +383,13 @@ namespace fire.Standard
                     this.Color = 4291611852
                     this.Visible = true
                     this.twoSided = false
+                    this.Opacity = 1.0
+                    this.AlphaCutoff = 0.0
+                    this.Lit = true
+                    this.CastShadows = true
+                    this.ReceiveShadows = true
+                    this.Layers = 16777215
+                    this.Billboard = 0
                     this.Key = ""
                     this.dirty = false
                 }
@@ -496,7 +564,8 @@ namespace fire.Standard
                     this.UseMesh(h)
                 }
 
-                // The numbers the renderer takes for this object: position, rotation, scale, pivot, colour, specular, shininess, smooth, two sided, emissive (3), texture, repeats (2), rotation, offset (2).
+                // The numbers the renderer takes for this object: position, rotation, scale, pivot, colour, specular, shininess, smooth, two sided, emissive (3), texture, repeats (2), rotation, offset (2),
+                // opacity, alpha cutoff, lit, casts shadows, receives shadows, layers, bump strength, billboard.
                 Parameters() {
                     var pivotX = this.minX + this.ax * (this.maxX - this.minX)
                     var pivotY = this.minY + this.ay * (this.maxY - this.minY)
@@ -533,18 +602,31 @@ namespace fire.Standard
                         if (tileW > 0.000001) { offU = this.tx / tileW }
                         if (tileH > 0.000001) { offV = this.ty / tileH }
                     }
+                    var opacity = this.Opacity
+                    if (opacity < 0.0) { opacity = 0.0 }
+                    if (opacity > 1.0) { opacity = 1.0 }
+                    var lit = 0.0
+                    if (this.Lit) { lit = 1.0 }
+                    var cast = 0.0
+                    if (this.CastShadows) { cast = 1.0 }
+                    var receive = 0.0
+                    if (this.ReceiveShadows) { receive = 1.0 }
+                    var bump = 0.0
+                    if (this.texture != undefined && this.texture.hasBump) { bump = this.texture.BumpStrength }
                     return [this.px, this.py, this.pz, this.rx, this.ry, this.rz, this.sx, this.sy, this.sz, pivotX, pivotY, pivotZ,
                         S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), spec, shin, smooth, two,
-                        S3D.Red(emissive), S3D.Green(emissive), S3D.Blue(emissive), useTexture, repU, repV, this.trot, offU, offV]
+                        S3D.Red(emissive), S3D.Green(emissive), S3D.Blue(emissive), useTexture, repU, repV, this.trot, offU, offV,
+                        opacity, this.AlphaCutoff, lit, cast, receive, this.Layers * 1.0, bump, this.Billboard * 1.0]
                 }
 
-                Draw(int frame, pixels, camera, lights) {
+                // Queues the object for the frame (the camera draws everything in one go afterwards).
+                Draw(int frame, camera) {
                     if (!this.Visible) { return }
                     this.Build()
                     if (this.mesh == 0) { return }
                     var tex = 0
                     if (this.texture != undefined) { tex = this.texture.handle }
-                    if (!__S3DDraw(frame, pixels, this.mesh, tex, this.Parameters(), camera, lights)) {
+                    if (!__S3DDraw(frame, this.mesh, tex, this.Parameters(), camera)) {
                         throw new Scene3DException("The object cannot be drawn (a handle is no longer valid).")
                     }
                 }
@@ -644,7 +726,8 @@ namespace fire.Standard
                     if (!__S3DFrameClear(this.frame, this.pixels, w, h, this.Background)) { throw new Scene3DException("The frame cannot be cleared.") }
                     var camera = [this.x, this.y, this.z, this.rx, this.ry, this.rz, this.fov, this.nearPlane, this.farPlane]
                     var lights = this.scene.LightParameters()
-                    foreach (o in this.scene.Objects) { o.Draw(this.frame, this.pixels, camera, lights) }
+                    foreach (o in this.scene.Objects) { o.Draw(this.frame, camera) }
+                    if (!__S3DFlush(this.frame, this.pixels, camera, lights, this.scene.Settings())) { throw new Scene3DException("The scene cannot be drawn (a handle is no longer valid).") }
                     this.framebuffer.WriteBytes(this.pixels)
                 }
             }
@@ -659,8 +742,17 @@ namespace fire.Standard
                 List keyItems
                 int AmbientColor
                 float AmbientIntensity
+                // false: no shadows at all (faster).
+                bool Shadows
+                // The size of a shadow map in pixels (64 .. 4096): bigger is sharper and slower.
+                int ShadowResolution
+                // How many threads draw (0 = as many as the machine has, up to 8; 1 = one). The picture is the same for every number.
+                int Threads
 
                 construct() {
+                    this.Shadows = true
+                    this.ShadowResolution = 1024
+                    this.Threads = 0
                     this.Objects = new List()
                     this.Cameras = new List()
                     this.Lights = new List()
@@ -731,17 +823,28 @@ namespace fire.Standard
                     }
                 }
 
-                // The numbers the renderer takes for the lights (the ambient light of the scene first).
+                // The numbers the renderer takes for the lights (the ambient light of the scene first; lights that are off are left out).
                 LightParameters() {
-                    var n = this.Lights.count + 1
-                    var all = new float[n * 12]
-                    var first = [0.0, S3D.Red(this.AmbientColor), S3D.Green(this.AmbientColor), S3D.Blue(this.AmbientColor), this.AmbientIntensity, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]
-                    for (var k = 0; k < 12; k++) { all[k] = first[k] }
+                    var active = 0
+                    for (var i = 0; i < this.Lights.count; i++) { if (this.Lights[i].Enabled) { active++ } }
+                    var all = new float[(active + 1) * 14]
+                    var first = [0.0, S3D.Red(this.AmbientColor), S3D.Green(this.AmbientColor), S3D.Blue(this.AmbientColor), this.AmbientIntensity, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 16777215.0]
+                    for (var k = 0; k < 14; k++) { all[k] = first[k] }
+                    var n = 1
                     for (var i = 0; i < this.Lights.count; i++) {
+                        if (!this.Lights[i].Enabled) { continue }
                         var p = this.Lights[i].Parameters()
-                        for (var k = 0; k < 12; k++) { all[(i + 1) * 12 + k] = p[k] }
+                        for (var k = 0; k < 14; k++) { all[n * 14 + k] = p[k] }
+                        n++
                     }
                     return all
+                }
+
+                // The settings of the renderer: shadows on (1) or off (0), the size of a shadow map, the number of threads.
+                Settings() {
+                    var shadows = 0.0
+                    if (this.Shadows) { shadows = 1.0 }
+                    return [shadows, this.ShadowResolution * 1.0, this.Threads * 1.0]
                 }
             }
             """;

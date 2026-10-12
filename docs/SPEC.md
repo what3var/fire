@@ -97,6 +97,15 @@ break that. Since type argument lists run through their own, completely separate
 methods (never through the normal expression precedence chain), there is
 no conflict anyway.
 
+**Compound assignment**: `a += b`, `-=`, `*=`, `/=`, `%=`, `^=` (power), `&=`, `|=`, `#=` (xor), `<<=` and `>>=` mean `a = a op b` (the right side is
+the whole expression to the right: `a *= b + c` is `a = a * (b + c)`; the operators are right-associative like `=`; `+=` also appends to a string; units work as
+in `a = a + b`). The target is evaluated twice, so it must not have effects of its own: a name, a member (`c.n += 1`) or an element whose operands are names,
+members, literals and operators (`arr[i + 1] *= 5`) is fine, a call, `++`/`--` or an assignment in the target is the error `E3159` (write the assignment out).
+`<<=` and `>>=` are the only shift tokens the lexer knows (`<<` and `>>` stay two single characters, see above, since `>>=` can never close a type argument list).
+
+**Loops**: the initialiser of a `for` is a declaration with `var` or with a type (`for (int i = 0; i < n; i++)`, `for (float x = 0.5; ...)`) or an expression; `foreach (x in list)` can also be written
+`foreach (var x in list)`.
+
 **Number literals in binary/hexadecimal notation**: `0b`/`0x` prefix
 (upper or lower case of both letters allowed), e.g. `0b01101100`,
 `0xFFCC8080` - always `int`, never `float` (no fraction/exponent for a
@@ -1255,6 +1264,19 @@ class Cache {
 or a member of a class may. The compiler **reports** it (the editor lists it in the Error List and in the Build Log, an amber squiggle marks the line; the command line prints
 `warning W204: ... (line 3)` to stderr) and **does not compile** it: nothing of a `warn` reaches the program, it costs nothing at run time, and the build does not fail because of it. `id` is
 a whole number from 0 to 99999 that names the warning - its code is `W<id>`, e.g. `W204`. `warn` is a keyword only where a number and a colon follow it, so it remains usable as a name.
+
+**Where it is reported** depends on where it is written:
+
+* in the code of the program (outside of classes): where it stands;
+* in a **class body**, outside of its members: the class is obsolete - reported at every `new` of the class and at every static access (`Cache.Make()`);
+* in a **constructor**: reported at `new` with that many arguments;
+* in a **method**: reported at every call of the method (that name, that many arguments);
+* in a **property** (or next to a field it belongs to): reported at every access.
+
+A warning of a class or member that is never used is never reported, and each place of use gets it once (`Flush is obsolete, use Clear() (Cache.Flush)`: the text and where it was declared). The
+class's own code is not told about its own obsolete parts. As the language has no static types, the compiler knows the class of an object only when it is clear from the code - `this`, `new Cache()`,
+a variable declared with a class (`Cache c`) or with `new` (`var c = new Cache()`), a parameter with a class. A call on an object of unknown class (an untyped parameter, the result of a call) reports
+the declared warnings of every class that has a member of that name and that number of arguments - with the class in the message, so that it can be told.
 
 Every **error** of the compiler has a code, too: `E` and four digits (`E4022: Unknown identifier 'x'`); docs/ERRORS.md lists them. After a build, its errors and warnings are in the Error List
 until the next build replaces them; the Error List has a filter for the warnings.

@@ -42,11 +42,11 @@ static class DiagnosticTests
             var (diagnostics, output) = Compile("""
                 warn 7: "the top level"
                 class Box {
-                    warn 8: "a class"
+                    warn 8: "Box is obsolete"
                     int size
                     construct() { this.size = 3 }
                     Grow() {
-                        warn 9: "a method (soon obsolete: use Resize)"
+                        warn 9: "Grow is obsolete: use Resize"
                         this.size = this.size + 1
                         return this.size
                     }
@@ -59,11 +59,43 @@ static class DiagnosticTests
                 if (b.size > 2) warn 11: "as the body of an if"
                 print("size " + b.size)
                 """);
-            Check("warn ID: \"Text\" ist eine Warnung: Code W<ID>, Zeile, Text; das Programm laeuft unveraendert",
+            Check("warn ID: \"Text\": ausserhalb von Klassen eine Warnung an ihrer Stelle, in Klassen und Methoden an der Stelle, an der sie benutzt werden (Code W<ID>); das Programm laeuft unveraendert",
                 output == "size 6" && diagnostics.Count == 5 && diagnostics.All(d => d.IsWarning)
-                && string.Join(",", diagnostics.Select(d => d.Code + "@" + d.Line)) == "W7@1,W8@3,W9@7,W10@14,W11@17"
-                && diagnostics[2].Message == "a method (soon obsolete: use Resize)", string.Join("\n", diagnostics.Select(d => d.ToLogLine())) + "\n" + output);
+                && string.Join(",", diagnostics.Select(d => d.Code + "@" + d.Line)) == "W7@1,W10@14,W11@17,W8@12,W9@15"
+                && diagnostics.First(d => d.Code == "W9").Message == "Grow is obsolete: use Resize (Box.Grow)" && diagnostics.First(d => d.Code == "W8").Message == "Box is obsolete (Box)", string.Join("\n", diagnostics.Select(d => d.ToLogLine())) + "\n" + output);
             Check("eine Warnung nennt sich so im Log: Zeile, Art, Code, Text", diagnostics[0].ToLogLine() == "warning W7: the top level (line 1)" && (diagnostics[0] with { File = "main.fire" }).ToLogLine() == "main.fire(1): warning W7: the top level", diagnostics[0].ToLogLine());
+
+            // declared warnings: only where the class or the member is used
+            const string library = """
+                class Cache {
+                    warn 300: "Cache is going away"
+                    int value
+                    construct() { this.value = 0 }
+                    construct(int start) {
+                        warn 301: "the constructor with a start value is obsolete"
+                        this.value = start
+                    }
+                    Flush() { warn 302: "Flush is obsolete, use Clear()"; return this.value }
+                    Clear() { return this.Flush() }
+                    int Size { get { warn 303: "Size is obsolete"; return this.value } }
+                    static Make() { warn 304: "Make is obsolete"; return 1 }
+                    static Plain() { return 2 }
+                    Other(int a) { warn 305: "Other with one argument"; return a }
+                }
+                class Unrelated {
+                    Flush() { return 5 }
+                    Other(int a, int b) { return a + b }
+                }
+                """;
+            var (unused, _) = Compile(library + "\nvar x = 1");
+            Check("eine Warnung in einer Klasse oder Methode, die nicht benutzt wird, wird nicht gemeldet", unused.Count == 0, string.Join("\n", unused.Select(d => d.ToLogLine())));
+            var (used, _) = Compile(library + "\nvar c = new Cache()\nvar d = new Cache(5)\nc.Flush()\nprint(c.Size)\nCache.Make()\nCache.Plain()\nc.Other(1)");
+            Check("benutzt: new (Klasse, Konstruktor mit passender Argumentzahl), Methode, Property, statischer Zugriff (Klasse, Methode) - jede Warnung an ihrer Stelle, nicht benutzte (Plain hat keine eigene) nicht",
+                string.Join(",", used.Select(x => x.Code + "@" + x.Line)) == "W300@20,W300@21,W301@21,W302@22,W303@23,W300@24,W304@24,W300@25,W305@26", string.Join("\n", used.Select(x => x.ToLogLine())));
+            var (inside, _) = Compile(library + "\nvar u = new Unrelated()\nu.Flush()\nu.Other(1, 2)");
+            Check("die Klasse eines Objekts, das mit new angelegt wurde, ist bekannt: Unrelated.Flush meldet nicht die Warnung von Cache.Flush", inside.Count == 0, string.Join("\n", inside.Select(x => x.ToLogLine())));
+            var (unknownReceiver, _) = Compile(library + "\nclass Runner { static Go(obj) { return obj.Flush() } }\nRunner.Go(new Unrelated())");
+            Check("ein Objekt, dessen Klasse der Compiler nicht kennt: ein Aufruf gleichen Namens und gleicher Argumentzahl meldet die Warnung (mit dem Klassennamen)", unknownReceiver.Count == 1 && unknownReceiver[0].Code == "W302" && unknownReceiver[0].Message.EndsWith("(Cache.Flush)"), string.Join("\n", unknownReceiver.Select(x => x.ToLogLine())));
 
             var (names, namesOut) = Compile("var warn = 5\nprint(warn + 1)\nwarn = warn * 2\nprint(warn)");
             Check("warn bleibt ein Name, solange keine Zahl und kein ':' folgen", names.Count == 0 && namesOut == "6\n10", string.Join("\n", names.Select(d => d.ToLogLine())) + namesOut);

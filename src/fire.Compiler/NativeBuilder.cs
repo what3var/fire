@@ -231,7 +231,7 @@ namespace fire.Compiler
         {
             try
             {
-                var psi = new ProcessStartInfo(exe, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+                var psi = new ProcessStartInfo(exe, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = workDir };   // (CreateNoWindow: the console window of the compiler stays away)
                 // a portable toolchain (w64devkit) finds its other programs through the PATH: its folder comes first
                 if (Path.IsPathRooted(exe) && Path.GetDirectoryName(exe) is { Length: > 0 } toolDir)
                     psi.Environment["PATH"] = toolDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
