@@ -271,8 +271,16 @@ inline int formatFloating(T v, char* out) {
     if (v == 0) { if (std::signbit(v)) { out[0] = '-'; out[1] = '0'; return 2; } out[0] = '0'; return 1; }
 
     char sci[40];
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     auto r = std::to_chars(sci, sci + sizeof sci, v, std::chars_format::scientific);
     *r.ptr = 0;
+#else
+    // a standard library without floating point `to_chars` (libc++ before 20, so Emscripten and older Apple toolchains): the fewest digits that read back as the same number
+    for (int precision = 0; precision < 17; precision++) {
+        std::snprintf(sci, sizeof sci, "%.*e", precision, (double)v);
+        if ((T)std::strtod(sci, nullptr) == v) break;
+    }
+#endif
     // sci = [-]d[.ddd]e[+-]XX
     char digits[24] = {0}; int nd = 0; bool negative = false; const char* c = sci;
     if (*c == '-') { negative = true; c++; }

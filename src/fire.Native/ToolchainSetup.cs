@@ -258,7 +258,7 @@ namespace fire.Native
         /// are missing the user is asked (download on Windows). Returns null when everything is there, else the reason why the build cannot go on.</summary>
         public static string? RequireLibraries(ToolchainDef toolchain, string cppFile)
         {
-            if (toolchain.EffectiveKind is "custom" or "files" || !SdlSetup.IsRequiredBy(cppFile)) return null;
+            if (toolchain.EffectiveKind is "custom" or "files" or "emscripten" || !SdlSetup.IsRequiredBy(cppFile)) return null;
             const string reason = "The program shows a window on the desktop (#import \"windows\"), which is built against SDL2.";
             for (int attempt = 0; attempt < 3; attempt++)
             {

@@ -1,6 +1,0 @@
-{
-  "title": "Ownership",
-  "description": "Every object has one owner: scopes, TakeTo and return.",
-  "open": [ "main.script" ],
-  "order": 30
-}

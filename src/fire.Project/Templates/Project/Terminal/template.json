@@ -2,6 +2,6 @@
   "title": "Terminal",
   "description": "A program for the console: it prints Hello, World.",
   "icon": "console",
-  "open": [ "main.script" ],
+  "open": [ "main.fire" ],
   "order": 10
 }

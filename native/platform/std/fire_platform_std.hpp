@@ -34,7 +34,9 @@ inline int64_t unixMicros() {
     return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
+#ifndef FIRE_PLAT_SLEEP_CUSTOM   // (a platform with its own sleep, e.g. the browser, defines it after this header)
 inline void sleepMs(int64_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+#endif
 
 /// Ends the program. With threads the other threads must not run static destructors under their feet: no cleanup.
 [[noreturn]] inline void exitProcess(int code) {

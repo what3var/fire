@@ -23,7 +23,7 @@ The elements are the ones of the library `ui` (docs/UI.md): the layout container
 ```
 
 ```
-// Greeter.script - the code-behind
+// Greeter.fire - the code-behind
 #include "Greeter.fxml"                   // the script generated from the markup is included right here
 
 class UpperConverter : UI.Converter {
@@ -44,7 +44,7 @@ window.SetDataContext(new Person())
 window.Run()
 ```
 
-`#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.script]` writes the generated
+`#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.fire]` writes the generated
 script (to look at it, or to ship it), and the editor shows it too (*Generated script* in the markup editor). Mistakes in the markup are reported with the line of the markup file.
 
 ## The generated class

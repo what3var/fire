@@ -343,7 +343,7 @@ namespace fire.Editor
                 string name = values.Expand(template.Files[0]);
                 string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, template.Files[0].Replace('/', Path.DirectorySeparatorChar))));
                 string ext = Path.GetExtension(name).ToLowerInvariant();
-                var kind = ext switch { ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
                 CreateDocument(kind, text, null, untitledName: name);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, title); }
@@ -376,7 +376,7 @@ namespace fire.Editor
             }
             else
             {
-                (string prompt, string initial, string extension) = kind == "markdown" ? ("Name of the new Markdown document:", "notes.md", ".md") : ("Name of the new file:", "newfile.script", ".script");
+                (string prompt, string initial, string extension) = kind == "markdown" ? ("Name of the new Markdown document:", "notes.md", ".md") : ("Name of the new file:", "newfile.fire", ".fire");
                 string? input = await Dialogs.Input(this, prompt, title, initial);
                 if (string.IsNullOrWhiteSpace(input)) return;
                 name = input.Trim();

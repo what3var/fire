@@ -124,7 +124,7 @@ namespace fire.Compiler
                 bool built = ok && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
                 // a Windows program with a window needs SDL2.dll next to it
-                if (built && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
+                if (built && toolchain.EffectiveKind != "emscripten" && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
                 return new NativeBuildResult(built, exe, log.ToString());
             }
             finally
@@ -160,7 +160,8 @@ namespace fire.Compiler
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             var libDirs = new List<string>();
             // SDL2: where its headers and import library are (Toolchain\SDL2, SDL2_DIR, the prefix of the compiler, the system), see SdlSetup
-            if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
+            if (kind == "emscripten") libs = libs.Select(l => l == "-lSDL2" ? "-sUSE_SDL=2" : l).ToList();   // Emscripten brings SDL2 itself
+            else if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
             {
                 includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
                 libDirs.AddRange(sdl.LibDirs);
@@ -270,6 +271,6 @@ namespace fire.Compiler
         }
 
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>
-        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.IsEmbedded ? "out" : "out";
+        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.Name == "wasm" ? "out.html" : target.IsEmbedded ? "out" : "out";
     }
 }

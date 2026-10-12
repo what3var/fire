@@ -991,7 +991,7 @@ library framework that builds on `extern`/`#extern`.
 ### 8.1.2 `#include "fileName"`
 
 ```
-#include "shapes.script"
+#include "shapes.fire"
 
 var c = new Circle(2.0)
 ```
@@ -2214,9 +2214,13 @@ bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels
 file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
 The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
 
+### 8.28b 3D scenes (`#import "scene3d"`)
+
+The package `fire-scene3d` (docs/SCENE3D.md is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C++, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels.
+
 ### 8.29 Projects and solutions
 
-A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
+A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.fire` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;
 `#import "Name"` in the source turns it on, exactly as for a package, and the library's files are processed before the files of the project. The files of a project are part of the program without an `#include` (UI markup files, `.fxml`, as the script generated from them); an `#include` of such a file adds nothing. A project may have C++ natives in its folder `native/`: each `inline Value name(Value ...)` there is the native function `__name`, built like the natives of a package. A library is packed with `fire build Core.fireproj` into an ordinary `.fpk`.
 Build settings are taken from the project first, then from the solution, then from the tags in the source (`#debug`, `#name "..."`, `#floatwidth 32`, `#noconsole`, ...), then the defaults; `#if` symbols of all levels are added up; options on the command line go before the project.
