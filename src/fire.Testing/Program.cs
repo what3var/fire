@@ -25,6 +25,7 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -17816,6 +17817,9 @@ else
             try { song.Order } catch (Tracker.TrackerException e) { print("closed " + e.code) }
             """),
     }).ToArray();
+
+    // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
+    natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
 
     // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]

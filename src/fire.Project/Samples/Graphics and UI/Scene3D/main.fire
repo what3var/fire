@@ -1,0 +1,45 @@
+#import "windows"
+#import "scene3d"
+// A scene holds objects, lights and cameras (lengths have units: 1m, 20cm, 3mm; angles: 45deg).
+// The camera draws what it sees into a framebuffer, the window shows the framebuffer.
+var fb = new Framebuffer(480, 320)
+var win = new Window(fb, "Scene3D")
+var scene = new Scene()
+
+var floor = new Object(Template.Plane, 0m, 0m, 0m, 8m, 0m, 8m)
+floor.Texture = Texture.Checker(64, 8, S3D.Rgb(235, 235, 235), S3D.Rgb(90, 100, 120))
+floor.TextureWidth = 1m
+floor.TextureHeight = 1m
+scene.Add(floor, "floor")
+
+// x, y, z of the position, then width, height and depth; the anchor says which point of the object sits at the position
+var box = new Object(Template.Box, -1.2m, 0m, 0m, 1m, 1m, 1m)
+box.AnchorY = 0.0
+box.Texture = Texture.Checker(32, 4, S3D.Rgb(255, 200, 0), S3D.Rgb(200, 60, 0))
+box.TextureWidth = 50cm
+box.TextureHeight = 50cm
+scene.Add(box, "box")
+
+var ball = new Object(Template.Sphere, 0.4m, 0.5m, 0.3m, 1m, 1m, 1m)
+ball.Color = S3D.Rgb(200, 40, 40)
+ball.Material = Material.Metal()
+scene.Add(ball, "ball")
+
+var cone = new Object(Template.Cone, 1.8m, 0m, -0.5m, 0.8m, 1.4m, 0.8m)
+cone.AnchorY = 0.0
+cone.Color = S3D.Rgb(40, 160, 70)
+scene.Add(cone)
+
+scene.Add(Light.Directional(-0.5, -1.0, -0.4, S3D.Rgb(255, 250, 240), 0.9))
+scene.Add(Light.Point(-2m, 3m, 2m, S3D.Rgb(255, 220, 180), 0.5))
+
+var cam = new Camera(fb)
+cam.SetPosition(2.5m, 2.2m, 4.5m)
+cam.LookAt(0m, 0.4m, 0m)
+scene.Add(cam)
+
+while (win.Tick()) {
+    box.Rotate(0deg, 1deg, 0deg)
+    cone.Rotate(0deg, -2deg, 0deg)
+    cam.Render()
+}

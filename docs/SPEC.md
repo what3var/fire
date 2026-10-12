@@ -2214,6 +2214,10 @@ bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels
 file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
 The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
 
+### 8.28b 3D scenes (`#import "scene3d"`)
+
+The package `fire-scene3d` (docs/SCENE3D.md is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C++, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels.
+
 ### 8.29 Projects and solutions
 
 A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.fire` of its

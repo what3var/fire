@@ -1,0 +1,6 @@
+{
+  "title": "Scene3D",
+  "description": "A 3D scene drawn by the software renderer: a textured box, a sphere, a cone, lights and a camera.",
+  "open": [ "main.fire" ],
+  "order": 60
+}
