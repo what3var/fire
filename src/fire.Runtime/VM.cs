@@ -1534,11 +1534,16 @@ namespace fire.Runtime
                 // replaces both. An object on the left (operator overloading) falls through to Execute.
                 case OpCode.Add:
                     if (Value.TryAddInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Add(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class && _stack[_sp - 1].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Add); return; }
                     break;
+                case OpCode.StepAdd:
+                case OpCode.StepSub:
+                    _stack[_sp - 1] = Value.StepOf(in _stack[_sp - 2], _stack[_sp - 1]);
+                    Step(op == OpCode.StepAdd ? OpCode.Add : OpCode.Sub);
+                    return;
                 case OpCode.Sub:
                     if (Value.TrySubtractInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Subtract(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Subtract); return; }
                     break;
                 case OpCode.Mul:
                     if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
@@ -1549,7 +1554,7 @@ namespace fire.Runtime
                     break;
                 case OpCode.Mod:
                     if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Modulo(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Modulo); return; }
                     break;
                 case OpCode.Eq:
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
@@ -1559,19 +1564,19 @@ namespace fire.Runtime
                     break;
                 case OpCode.Lt:
                     if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) < 0)); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) < 0)); return; }
                     break;
                 case OpCode.LtEq:
                     if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 1)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) <= 0)); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) <= 0)); return; }
                     break;
                 case OpCode.Gt:
                     if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 2)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) > 0)); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) > 0)); return; }
                     break;
                 case OpCode.GtEq:
                     if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 3)) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.Compare(_stack[_sp - 2], _stack[_sp - 1]) >= 0)); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(static (a, b) => Value.MakeBool(Value.Compare(a, b) >= 0)); return; }
                     break;
 
                 case OpCode.CallMethod:
@@ -1792,23 +1797,23 @@ namespace fire.Runtime
 
                 case OpCode.ArithLocalConstPop:
                 {
-                    int depth = ReadU16(); int slot = ReadU16(); int constIdx = ReadU16(); bool subtract = ReadByte() != 0;
+                    int depth = ReadU16(); int slot = ReadU16(); int constIdx = ReadU16(); int mode = ReadByte(); bool subtract = (mode & 1) != 0;
                     ref Value variable = ref _currentScope.GetAncestor(depth).SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
                         return;
-                    ArithSlow(depth, slot, constIdx, subtract);
+                    ArithSlow(depth, slot, constIdx, subtract, (mode & 2) != 0);
                     return;
                 }
 
                 case OpCode.ArithGlobalConstPop:
                 {
-                    int slot = ReadU16(); int constIdx = ReadU16(); bool subtract = ReadByte() != 0;
+                    int slot = ReadU16(); int constIdx = ReadU16(); int mode = ReadByte(); bool subtract = (mode & 1) != 0; bool step = (mode & 2) != 0;
                     // Fire threads and a main program with running threads read/write globals via the broker: ordinary way
-                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract); return; }
+                    if (slot < _sharedCount || _ownerBroker != null) { ArithGlobalSlow(slot, constIdx, subtract, step); return; }
                     ref Value variable = ref _globalScope.SlotRef(slot);
                     if (subtract ? Value.TrySubtractInPlace(ref variable, in _constants[constIdx]) : Value.TryAddInPlace(ref variable, in _constants[constIdx]))
                         return;
-                    ArithGlobalSlow(slot, constIdx, subtract);
+                    ArithGlobalSlow(slot, constIdx, subtract, step);
                     return;
                 }
             }
@@ -1821,22 +1826,26 @@ namespace fire.Runtime
         private void ExecuteCompareSlow(OpCode op) => Step(op);
 
         /// <summary>Slow path of `x = x + c`/`x++` on a local: ordinary loading, calculating (strings, units, errors) and storing.</summary>
-        private void ArithSlow(int depth, int slot, int constIdx, bool subtract)
+        private void ArithSlow(int depth, int slot, int constIdx, bool subtract, bool step = false)
         {
             Push(_currentScope.GetAncestor(depth).SlotRef(slot));
-            Push(_constants[constIdx]);
+            Push(step ? Value.StepOf(in _stack[_sp - 1], _constants[constIdx]) : _constants[constIdx]);
+            _arithFault = false;
             Step(subtract ? OpCode.Sub : OpCode.Add);
+            if (_arithFault) { _arithFault = false; if (_unhandledPaused) _sp--; return; }   // an exception: the variable stays as it is (an unhandled one stands here, its placeholder result goes)
             _currentScope.GetAncestor(depth).SlotRef(slot) = _stack[--_sp];
         }
 
         /// <summary>Like <see cref="ArithSlow"/> for a global variable (also via the broker of the fire threads).</summary>
-        private void ArithGlobalSlow(int slot, int constIdx, bool subtract)
+        private void ArithGlobalSlow(int slot, int constIdx, bool subtract, bool step = false)
         {
             if (_sp == _stack.Length) Array.Resize(ref _stack, _stack.Length * 2);
             if (slot < _sharedCount) _stack[_sp] = LoadSharedGlobal(slot); else _stack[_sp] = _globalScope.SlotRef(slot);
             _sp++;
-            Push(_constants[constIdx]);
+            Push(step ? Value.StepOf(in _stack[_sp - 1], _constants[constIdx]) : _constants[constIdx]);
+            _arithFault = false;
             Step(subtract ? OpCode.Sub : OpCode.Add);
+            if (_arithFault) { _arithFault = false; if (_unhandledPaused) _sp--; return; }
             var value = _stack[_sp - 1];
             if (slot < _sharedCount) StoreSharedGlobal(slot, value);
             else if (_ownerBroker != null) StoreOwnerGlobal(slot, value);
@@ -1882,7 +1891,8 @@ namespace fire.Runtime
                     ThrowIndexOutOfBounds(idx, arr.Length);
                     return;
                 }
-                var newVal = isIncrement ? Value.Add(oldVal, Value.MakeInt(1)) : Value.Subtract(oldVal, Value.MakeInt(1));
+                var one = Value.StepOf(in oldVal, Value.MakeInt(1));
+                var newVal = isIncrement ? Value.Add(oldVal, one) : Value.Subtract(oldVal, one);
                 if (arr.IsShared) TrySetSharedElement(arr, idx, newVal); else arr.TrySet(idx, newVal);
                 Push(isPrefix ? newVal : oldVal);
             }
@@ -3637,6 +3647,11 @@ namespace fire.Runtime
                     else _currentScope.DefineSlot(Pop());
                     break;
 
+                case OpCode.StepAdd:
+                case OpCode.StepSub:
+                    _stack[_sp - 1] = Value.StepOf(in _stack[_sp - 2], _stack[_sp - 1]);
+                    Execute(op == OpCode.StepAdd ? OpCode.Add : OpCode.Sub);
+                    break;
                 case OpCode.Add: BinaryNumericOrOperator(Value.Add, "operator+"); break;
                 case OpCode.Sub: BinaryNumericOrOperator(Value.Subtract, "operator-"); break;
                 case OpCode.Mul: BinaryNumericOrOperator(Value.Multiply, "operator*"); break;
@@ -3693,6 +3708,19 @@ namespace fire.Runtime
                 {
                     var unit = _currentChunk.Units[ReadU16()];
                     Push(Pop().CoerceUnit(unit));
+                    break;
+                }
+                case OpCode.RelabelUnitDynamic:
+                {
+                    var candidate = Pop();
+                    var anchor = Peek();
+                    Push(candidate.RelabelUnit(anchor.Unit ?? Unit.Unitless));
+                    break;
+                }
+                case OpCode.RelabelUnit:
+                {
+                    var unit = _currentChunk.Units[ReadU16()];
+                    Push(Pop().RelabelUnit(unit));
                     break;
                 }
                 case OpCode.CoerceUnitDynamic:
@@ -5775,7 +5803,32 @@ namespace fire.Runtime
                     return;
                 }
             }
-            Push(op(a, b));
+            try { Push(op(a, b)); }
+            catch (UnitMismatchException ex) { Push(Value.MakeUndefined()); ThrowUnitConflict(ex); }
+        }
+
+        /// <summary>Replaces the two topmost values by `f(left, right)`; units that cannot be put together are a script exception (`UnitMismatchException`): catchable, and an unhandled one stops at this instruction with the result `undefined` on the stack.</summary>
+        private void ReplaceTwoGuarded(Func<Value, Value, Value> f)
+        {
+            try { ReplaceTwoWith(f(_stack[_sp - 2], _stack[_sp - 1])); }
+            catch (UnitMismatchException ex)
+            {
+                _sp--;
+                _stack[_sp - 1] = Value.MakeUndefined();
+                ThrowUnitConflict(ex);
+            }
+        }
+
+        /// <summary>Set when ThrowUnitConflict raised an exception (read by the statement forms of `x++`/`x += c`, which must not store a result then).</summary>
+        private bool _arithFault;
+
+        private void ThrowUnitConflict(UnitMismatchException ex)
+        {
+            _arithFault = true;
+            var rc = ResolveClass("UnitMismatchException");
+            var args = new[] { Value.MakeString(ex.Message), Value.MakeString(ex.To.ToString()), Value.MakeString(ex.From.IsUnitless ? "(no unit)" : ex.From.ToString()) };
+            var instance = ConstructNested(rc, args);
+            ThrowException(Value.MakeClassRef(instance));
         }
 
         private RuntimeClass ResolveClass(string name) =>

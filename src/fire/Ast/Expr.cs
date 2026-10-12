@@ -155,7 +155,7 @@ namespace fire.Ast
     // Coercion (postfix): ':' -> unit, '!' -> type.
     // TargetUnitName/TargetTypeKeyword == null means "derive automatically from context".
     // ---------------------------------------------------------------
-    public sealed record UnitCoerceExpr(int Line, Expr Operand, string? TargetUnitName) : Expr(Line);
+    public sealed record UnitCoerceExpr(int Line, Expr Operand, string? TargetUnitName, bool Relabel = false) : Expr(Line);   // Relabel: `a::unit` (the number stays, only the unit changes)
     public sealed record TypeCoerceExpr(int Line, Expr Operand, TokenType? TargetTypeKeyword) : Expr(Line);
 
     // ---------------------------------------------------------------

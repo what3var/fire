@@ -284,6 +284,10 @@ namespace fire.Editor
         /// Step Line/Into/Out) at the next opportunity.</summary>
         public void PauseActiveThread() => ActiveThread?.RequestPause();
 
+        /// <summary>Runs a thread (not necessarily the active one) on to the next breakpoint or its end - after its error was ignored. FIRE-AND-FORGET like every step.</summary>
+        public void ContinueThread(DebugThreadContext ctx, ISet<(int SourceIndex, int Line)> breakpoints) =>
+            ctx.RequestStep(DebugThreadContext.MakeContinueStep(breakpoints, ctx.ConsumePauseRequest));
+
         private void RunGuarded(Func<DebugThreadContext, Func<VM, bool>> makeStep)
         {
             var ctx = ActiveThread;

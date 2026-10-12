@@ -242,6 +242,7 @@ namespace fire.Editor
                     _isBusy = false;
                     AfterStep(!ctx.IsFinished);
                 }
+                if (ctx.RuntimeError != null) _ = ReportRuntimeErrorAsync(ctx);   // the main program or any thread: the program stands still, the user decides
             });
 
             // Runs CONTINUOUSLY - output can arrive at any time, even in the middle of a long run, and should become visible soon, only bundled instead of one by one.

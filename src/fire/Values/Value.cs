@@ -184,6 +184,14 @@ namespace fire.Values
             if (currentUnit.Equals(targetUnit))
                 return this;
 
+            // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact
+            if (targetUnit.IsUnitless && !currentUnit.IsUnitless && Kind != ValueKind.Undefined)
+            {
+                double inBase = (Kind == ValueKind.Int ? _intValue : _floatValue) * currentUnit.Scale;
+                if (Kind == ValueKind.Int && Math.Abs(inBase) < 9.0e15 && inBase == Math.Floor(inBase)) return MakeInt((long)inBase, targetUnit);
+                return MakeFloat(inBase, targetUnit);
+            }
+
             double factor = currentUnit.ConversionFactorTo(targetUnit);
 
             return Kind switch
@@ -192,6 +200,18 @@ namespace fire.Values
                 ValueKind.Float => MakeFloat(_floatValue * factor, targetUnit),
                 ValueKind.Undefined => MakeUndefined(targetUnit),
                 _ => throw new InvalidOperationException("unreachable"),
+            };
+        }
+
+        /// <summary>`a::unit`: the same number with another unit, nothing is calculated (12mm::unitless is 12, 12mm::m is 12m).</summary>
+        public Value RelabelUnit(Unit targetUnit)
+        {
+            return Kind switch
+            {
+                ValueKind.Int => MakeInt(_intValue, targetUnit),
+                ValueKind.Float => MakeFloat(_floatValue, targetUnit),
+                ValueKind.Undefined => MakeUndefined(targetUnit),
+                _ => throw new InvalidOperationException($"Type {Kind} carries no unit and cannot be relabelled."),
             };
         }
 
@@ -586,6 +606,15 @@ namespace fire.Values
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
             return a.ToDouble().CompareTo(b.ToDouble());
+        }
+
+        /// <summary>The step of `x++`/`x--` (`one` is the constant 1): in the unit of `target`, so that `5cm` becomes `6cm` (a unitless 1 would be a unit mismatch).</summary>
+        public static Value StepOf(in Value target, Value one)
+        {
+            if (target.Kind is not (ValueKind.Int or ValueKind.Float)) return one;
+            var unit = target.Unit;
+            if (unit == null || unit.IsUnitless) return one;
+            return one.Kind == ValueKind.Float ? MakeFloat(one.AsFloat(), unit) : MakeInt(one.AsInt(), unit);
         }
 
         private static void RequireNumeric(Value v)

@@ -2687,6 +2687,14 @@ namespace fire.Compiler
                     Expect(TokenType.RBracket, "Expected ']' after the index");
                     expr = new IndexExpr(line, expr, index);
                 }
+                else if (Check(TokenType.Colon) && PeekAt(1).Type == TokenType.Colon && PeekAt(1).Line == Peek().Line && _suppressColonPostfixAtDepth != _bracketDepth)
+                {
+                    // `a::unit`: only the unit changes, the number stays (`a:unit` converts); `a::` takes the unit from the context like `a:`
+                    int line = Advance().Line;
+                    Advance();
+                    string? relabelUnit = LineContinues() && Check(TokenType.Identifier) ? Advance().Lexeme : null;
+                    expr = new UnitCoerceExpr(line, expr, relabelUnit, Relabel: true);
+                }
                 else if (Check(TokenType.Colon) && _suppressColonPostfixAtDepth != _bracketDepth)
                 {
                     int line = Advance().Line;

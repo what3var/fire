@@ -6344,7 +6344,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
-        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'unitless'." });
+        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
     // --- Stack and scope slots grow
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
@@ -13621,6 +13621,58 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print((2m + 500mm) / 3)
         """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
 
+    CheckSc("Einheiten: ++ und -- zaehlen in der Einheit der Variablen (5cm++ ist 6cm), auch bei Feldern und Elementen", """
+        class P { static py = 0cm }
+        var i = 5.0cm
+        i--
+        print(i)
+        ++i
+        i++
+        print(i)
+        var n = 2m
+        n++
+        print(n)
+        P.py++
+        P.py++
+        print(P.py)
+        var arr = [1cm, 2cm]
+        arr[1]++
+        --arr[0]
+        print(arr[0] + " " + arr[1])
+        var plain = 4
+        plain++
+        print(plain)
+        for (var h = 3.0cm; h > 0cm; h--) { print(h) }
+        """, new[] { "4cm", "6cm", "3m", "2cm", "0cm 3cm", "5", "3cm", "2cm", "1cm" });
+
+    CheckSc("Einheiten: a:unitless rechnet die Dimension heraus (12mm -> 0.012), a::unitless laesst die Zahl (12), a::m benennt nur um", """
+        var a = 12mm
+        var b = a:unitless
+        print(b)
+        print(b is in mm)
+        var c = a::unitless
+        print(c)
+        print(a::m)
+        var k = 2km
+        print(k:unitless)
+        print((3.5cm):unitless)
+        var t = 4
+        print(t:unitless)
+        """, new[] { "0.012", "False", "12", "12m", "2000", "0.035", "4" });
+
+    CheckSc("Einheiten: a:: ohne Einheit nimmt die Einheit des anderen Operanden (nur umbenennen), ohne Gegenstueck ist es einheitenlos", """
+        var a = 12mm
+        var b = 3m
+        print(a:: + b)
+        print(a: + b)
+        print(a:: + b::)
+        print((a::) is in mm)
+        print((a::) + 1)
+        var e = 0
+        try { e = 5cm + 1 } catch (UnitMismatchException x) { e = -1 }
+        print(e)
+        """, new[] { "15m", "3m", "15", "False", "13", "-1" });
+
     CheckSc("Einheiten: Floats bleiben Floats und behalten die Einheit des linken Operanden", """
         print(1.5mm + 1m)
         print(2.5m + 250mm)
@@ -13634,7 +13686,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
         print(5mm + 2kg)
-        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'kg'." });
+        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'kg'." });
 
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }

@@ -190,6 +190,13 @@ namespace fire.Bytecode
         TakeToObject,        //                     : Stack [obj, value]: the object `obj` takes over the value (`obj.field = take x`)
         TakeToArray,         //                     : Stack [array, index, value]: the array takes over the value (`a[i] = take x`)
         TakeCheck,           //                     : Peek: a destroyed object/array/buffer on top of the stack throws the DestroyedException (before the call with `f(take x)`)
+
+        // `x++`/`x--`: like Add/Sub with the constant 1 on top, but the 1 takes the unit of the value below it (`5cm++` is `6cm`)
+        StepAdd,
+        StepSub,
+
+        RelabelUnitDynamic,  //                      : candidate=pop, anchor=peek; push candidate with the unit of the anchor and the same number (`a::` without a unit)
+        RelabelUnit,         // u16 unitIdx          : pop v; push v with the unit Units[unitIdx] and the same number (`v::unit`)
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

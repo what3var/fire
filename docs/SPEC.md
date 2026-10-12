@@ -272,6 +272,8 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - `:` operator for **unit** annotation/coercion on a value: `undefined : km`.
   - `value:` (without an argument) → the unit is derived automatically from the context of the operation (see 3.4).
   - `value:unit` → the unit is explicitly forced/converted to `unit`.
+  - To `unitless` the **dimension is calculated out**: the number in the base unit, `12mm:unitless` is `0.012` (an int stays an int when the result is whole: `2km:unitless` is `2000`).
+- `::` operator (**relabel**): `value::unit` gives the same number the other unit and calculates nothing - `12mm::unitless` is `12`, `12mm::m` is `12m`. The unit after `::` is always written out.
 - `!` operator for **type** coercion: `value!`, `value!int`.
   - `value!` (without an argument) → the type is derived from the context.
   - `value!type` → the type is explicitly forced.
@@ -765,6 +767,10 @@ If a `switch` is inside a loop, a `break`
 directly in one of its `case` branches therefore ends **the switch branch, not the
 loop** (as in most C-style languages) – for the loop
 itself the `break` would have to be inside a loop construct of its own nested in the `case` branch.
+
+`x++`/`x--` count in the unit of the variable: `5cm` becomes `6cm` (they are `x = x + 1<unit>`, not `x + 1` with a unitless 1, which would be a unit mismatch).
+
+An operation with units that do not fit (`5cm + 1`, `1m < 2kg`) throws a `UnitMismatchException` that `try`/`catch` can catch; an unhandled one stops the program at that statement (in the editor a dialog offers to go on after it, with the result `undefined`).
 
 ### 5.10 `break`/`continue` in loops
 

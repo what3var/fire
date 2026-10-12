@@ -1908,11 +1908,15 @@ namespace fire.Native
                     string v;
                     Value constant;
                     bool subtract;
-                    if (local) { v = Var(st, ins.A[0], ins.A[1], locals); constant = chunk.Constants[ins.A[2]]; subtract = ins.A[3] != 0; }
-                    else { v = GlobalVar(ins.A[0], locals); constant = chunk.Constants[ins.A[1]]; subtract = ins.A[2] != 0; }
+                    int mode;
+                    if (local) { v = Var(st, ins.A[0], ins.A[1], locals); constant = chunk.Constants[ins.A[2]]; mode = ins.A[3]; }
+                    else { v = GlobalVar(ins.A[0], locals); constant = chunk.Constants[ins.A[1]]; mode = ins.A[2]; }
+                    subtract = (mode & 1) != 0;
+                    bool stepMode = (mode & 2) != 0;
                     string key = VarKey(f, v);
                     if (constant.Kind == ValueKind.String) MarkVarRef(key);
                     string k = Constant(constant);
+                    if (stepMode) k = $"stepOf({v}, {k})";
                     if (!subtract && VarRef(key))
                     {
                         E($"{{ {SectionFor(v)}Value o = {v}; {v} = addR(o, {k}, &{OwnerList()}); retain({v}); release(o); }}");
@@ -1923,9 +1927,11 @@ namespace fire.Native
                     return Next();
                 }
 
+                case OpCode.StepAdd:
                 case OpCode.Add:
                 {
                     Need(2);
+                    if (ins.Op == OpCode.StepAdd) E($"{S(d - 1)} = stepOf({S(d - 2)}, {S(d - 1)});");
                     if (UseOperator("operator+"))
                     {
                         E($"{S(d - 2)} = {OperatorWrapper("operator+")}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
@@ -1942,7 +1948,11 @@ namespace fire.Native
                     return Next();
                 }
                 case OpCode.Power: return Binary("power", "operator^");
-                case OpCode.Sub: return Binary("sub", "operator-");
+                case OpCode.StepSub:
+                case OpCode.Sub:
+                    if (ins.Op == OpCode.StepSub) { Need(2); E($"{S(d - 1)} = stepOf({S(d - 2)}, {S(d - 1)});"); }
+                    return Binary("sub", "operator-");
+
                 case OpCode.Mul: return Binary("mul", "operator*");
                 case OpCode.Div: return Binary("divide", "operator/");
                 case OpCode.Mod: return Binary("modulo", "operator%");
@@ -1961,6 +1971,10 @@ namespace fire.Native
                 }
                 case OpCode.CoerceUnit:
                     Need(1); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, {UnitId(chunk.Units[ins.A[0]])});"); return Next();
+                case OpCode.RelabelUnitDynamic:
+                    Need(2); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
+                case OpCode.RelabelUnit:
+                    Need(1); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, {UnitId(chunk.Units[ins.A[0]])});"); return Next();
                 case OpCode.CoerceUnitDynamic:
                     Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
                 case OpCode.CoerceType:
@@ -2623,7 +2637,7 @@ namespace fire.Native
                     bool increment = ins.A[0] != 0, prefix = ins.A[1] != 0;
                     string list = "&" + OwnerList();
                     string guard = _usesExceptions ? $"if (FIRE_UNLIKELY(g_unwind.active)) goto {(sb == null ? "X" : ExitLabel(f, st, locals))}; " : "";
-                    E($"{{ Value o = aget_g({S(d - 2)}, {S(d - 1)}, {list}); {guard}Value n = {(increment ? "add" : "sub")}(o, Int(1)); aset_g({S(d - 2)}, {S(d - 1)}, n, {list}); {S(d - 2)} = {(prefix ? "n" : "o")}; }}");
+                    E($"{{ Value o = aget_g({S(d - 2)}, {S(d - 1)}, {list}); {guard}Value n = {(increment ? "add" : "sub")}(o, stepOf(o, Int(1))); aset_g({S(d - 2)}, {S(d - 1)}, n, {list}); {S(d - 2)} = {(prefix ? "n" : "o")}; }}");
                     Check();
                     d--; SetR(d - 1, false); return Next();
                 }

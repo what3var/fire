@@ -801,15 +801,28 @@ inline Value power(Value a, Value b) {
 }
 /// The unit a value carries (only numbers and `undefined` can have one).
 inline uint32_t unitOf(Value v) { return (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0; }
+/// The step of `x++`/`x--`: the constant 1 in the unit of `target` (`5cm++` is `6cm`).
+inline Value stepOf(Value target, Value one) { uint32_t u = unitOf(target); if (u && !unitIsUnitless(u) && (one.kind == K_Int || one.kind == K_Float)) one.unit = u; return one; }
 
 /// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even.
 inline Value coerceUnit(Value v, uint32_t target) {
     if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
     if (unitEq(v.unit, target)) return v;
+    if (unitIsUnitless(target) && !unitIsUnitless(v.unit) && v.kind != K_Undefined) {   // `a:unitless`: the number in the base unit
+        double inBase = (v.kind == K_Int ? (double)v.i : (double)v.f) * g_ud[v.unit].scale;
+        if (v.kind == K_Int && std::fabs(inBase) < 9.0e15 && inBase == std::floor(inBase)) return Int((int64_t)inBase, target);
+        return Float((Real)inBase, target);
+    }
     double factor = unitFactor(v.unit, target);
     if (v.kind == K_Int) return Int((int64_t)std::nearbyint((double)v.i * factor), target);
     if (v.kind == K_Float) return Float((Real)((double)v.f * factor), target);
     return Undef(target);
+}
+/// `value::unit` - the same number with another unit (Value.RelabelUnit).
+inline Value relabelUnit(Value v, uint32_t target) {
+    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be relabelled.");
+    v.unit = target;
+    return v;
 }
 /// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType).
 inline Value coerceType(Value v, uint8_t target) {
