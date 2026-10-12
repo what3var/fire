@@ -7518,6 +7518,50 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var applyLog = new System.Text.StringBuilder();
         fire.Compiler.NativeBuilder.ApplyPeMetadata(Path.Combine(sfDir, "none.exe"), nativeInfo, winTarget!, applyLog);
         SfCheck(applyLog.Length == 0, "nativer Build: eine fehlende Datei oder ein anderes System laesst die Metadaten in Ruhe");
+        // the target wasm (WebAssembly in the browser, Emscripten)
+        {
+            bool known = TargetProfile.TryGet("wasm", out var wasm);
+            SfCheck(known && wasm!.Native.Platform == "wasm" && !wasm.Native.SupportsThreads && wasm.Native.Toolchain == "emscripten" && wasm.Symbols.Contains("browser") && wasm.Symbols.Contains("wasm"), "wasm: das Ziel gibt es (Plattform wasm, Toolchain emscripten, keine Threads, Symbole wasm und browser)");
+            var wasmCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm!, "p.cpp", sfDir, "p.html");
+            SfCheck(wasmCmd.Executable.EndsWith("em++") && wasmCmd.Arguments.Contains("-fexceptions") && wasmCmd.Arguments.Contains("-sASYNCIFY") && wasmCmd.Arguments.Contains("-sSINGLE_FILE=1") && wasmCmd.Arguments.Contains("p.html"),
+                "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
+            SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(wasm) == "out.html", "wasm: die Standardausgabe ist out.html");
+            string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
+            SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.hpp") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
+            string threadError = "";
+            try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm); }
+            catch (fire.Native.NativeNotSupportedException ex) { threadError = ex.Message; }
+            SfCheck(threadError.Contains("threads are not supported by the platform 'wasm'"), "wasm: ein fire-Thread wird beim Uebersetzen abgelehnt");
+            // with Emscripten and node on this machine: the program is built for the browser's WebAssembly and runs (here under node); it prints what the VM prints (exceptions, floats, Sleep)
+            string? FindOnPath(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+            if (FindOnPath("em++") != null && FindOnPath("node") != null)
+            {
+                const string wasmSource = "#import \"time\"\nclass Oops : Exception { construct(string m) : base(m) { } }\nvar sum = 0\nfor (var i = 0; i < 5; i++) { sum = sum + i; Sleep(1ms) }\nprint(\"sum \" + sum + \" \" + (sum / 4.0) + \" \" + (1.0 / 3.0))\ntry { throw new Oops(\"caught\") } catch (Oops e) { print(e.message) }\n";
+                string wasmDir = Path.Combine(sfDir, "wasm");
+                fire.Native.NativeRuntimeFiles.WriteTo(wasmDir, "wasm");
+                File.WriteAllText(Path.Combine(wasmDir, "p.cpp"), fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wasmSource }, null, null, VmExecutionMode.Release, null, wasm), wasm));
+                var (emExe, emArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm, Path.Combine(wasmDir, "p.cpp"), wasmDir, Path.Combine(wasmDir, "p.js"));
+                using (var em = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(emExe, emArgs) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!)
+                {
+                    var emErr = em.StandardError.ReadToEndAsync();
+                    em.StandardOutput.ReadToEnd();
+                    em.WaitForExit();
+                }
+                bool emBuilt = File.Exists(Path.Combine(wasmDir, "p.js"));
+                SfCheck(emBuilt, "wasm: em++ baut das Programm (p.js mit eingebetteter WebAssembly)");
+                if (emBuilt)
+                {
+                    using var node = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{Path.Combine(wasmDir, "p.js")}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                    var nodeErr = node.StandardError.ReadToEndAsync();
+                    string nodeOut = node.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                    node.WaitForExit();
+                    var vmLines = new List<string>();
+                    RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+                    Value.SingleFloats = false;
+                    SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
+                }
+            }
+        }
         var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
         SfCheck(noconsole.GuiSubsystem && !linkedSf.GuiSubsystem, "der Linker meldet das Subsystem (#noconsole) an das gelinkte Programm");
     }

@@ -36,9 +36,9 @@ namespace fire.Native
             ["gcc"] = new() { Kind = "gcc", Compiler = "g++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra" } },
             ["clang"] = new() { Kind = "clang", Compiler = "clang++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra" } },
             ["msvc"] = new() { Kind = "msvc", Compiler = "cl", Std = "c++17", Optimization = "/O2", Args = new() { "/nologo", "/EHsc" } },
-            // Emscripten (emsdk): C++ to WebAssembly. ASYNCIFY lets `Sleep` and the window loop hand the thread back to the browser; SINGLE_FILE puts the .wasm into the page, so that the
+            // Emscripten (emsdk): C++ to WebAssembly. -fexceptions: fire exceptions are C++ exceptions, which Emscripten leaves off by default. ASYNCIFY lets `Sleep` and the window loop hand the thread back to the browser; SINGLE_FILE puts the .wasm into the page, so that the
             // .html opens as it is (also from a folder, without a web server).
-            ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
+            ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
             ["files"] = new() { Kind = "files", Layout = "flat" },
             ["esp-idf"] = new() { Kind = "files", Layout = "idf-component" },
         };

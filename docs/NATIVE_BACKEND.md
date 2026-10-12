@@ -575,7 +575,7 @@ Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
 `fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire --engine native -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
 `out.html` (Standard), die sich so öffnen lässt - auch per Doppelklick aus einem Ordner, ohne Webserver: die WebAssembly-Binärdatei steckt in der Seite (`-sSINGLE_FILE=1`).
 
-**Werkzeug:** Emscripten (emsdk, `em++`). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-sASYNCIFY` (siehe unten),
+**Werkzeug:** Emscripten (emsdk, `em++`). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),
 `-sALLOW_MEMORY_GROWTH=1`, `-sSINGLE_FILE=1`, `-sMINIFY_HTML=0`; `// fire-link: SDL2` wird zu `-sUSE_SDL=2` (SDL2 bringt Emscripten selbst mit, es gibt nichts zu installieren).
 Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emscripten"` und `args` bzw. `--shell-file`.
 
