@@ -14,9 +14,9 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 {
   "name": "App",
   "type": "exe",                               // "exe" (default) or "library"
-  "files": ["helper.script", "src/**/*.script"],   // optional: paths and patterns, in this order; default: every fire file below this folder
+  "files": ["helper.fire", "src/**/*.fire"],   // optional: paths and patterns, in this order; default: every fire file below this folder
   "exclude": ["src/old/**"],
-  "entry": "main.script",                      // optional: runs last (default: the last file)
+  "entry": "main.fire",                      // optional: runs last (default: the last file)
   "references": [
     { "project": "../Core/Core.fireproj" },    // a library of the solution
     { "package": "fire-http", "version": "1.0" }   // an installed package (ember)
@@ -31,7 +31,7 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 ```
 
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
-keeps its place. Without `files` the project takes every fire file (`*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
+keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
 folders and the folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
 last**: what the other files declare is known by then.
 
@@ -70,12 +70,12 @@ The editor keeps asking *which project does the active document belong to?* (`Wo
 * a file that no project holds (opened next to the solution, like in Visual Studio) is compiled alone, as always;
 * a solution-wide command (Build solution, Run startup project) works regardless of the active document.
 
-The status bar and the title say what will be built (`App (project)` or `file.script (single file)`).
+The status bar and the title say what will be built (`App (project)` or `file.fire (single file)`).
 
 ## References: libraries without an entry point
 
 A project of `"type": "library"` has no entry point: classes, interfaces, enums, functions, namespaces and extensions only. A statement at the top level is an error with file and
-line (`util.script:12: a library has no entry point ...`). A library is what other projects **reference**:
+line (`util.fire:12: a library has no entry point ...`). A library is what other projects **reference**:
 
 ```json
 "references": [ { "project": "../Core/Core.fireproj" } ]
@@ -123,7 +123,7 @@ fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk 
 ```
 $HOME/spark/Demo/Demo.firesln
 $HOME/spark/Demo/Demo/Demo.fireproj
-$HOME/spark/Demo/Demo/main.script
+$HOME/spark/Demo/Demo/main.fire
 ```
 
 The templates that ship with fire (folders in `Templates/Project`; yours and those of packages are in the same list):
@@ -164,7 +164,7 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
 * **File menu**: New (Solution, Project, Script, Markdown, Raster Image; see [TEMPLATES.md](TEMPLATES.md)) / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
   again), **Project properties** (tabs *Project*, *Build settings*, *References*, *Solution*; the settings of the solution are the ones that every project without its own value gets).
 * The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
-  and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.script (single file)`). Unsaved buffers of the project's files go into the build.
+  and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.fire (single file)`). Unsaved buffers of the project's files go into the build.
 * **F5 on a library file** runs the *startup project* (a library has no entry point); **Build** on a library packs it (`Core-1.2.0.fpk`).
 * Breakpoints belong to a file of the project (not to "the" script), also in library files; the debugger shows the file it is in. Live diagnostics of a file are made in the context of its project
   (the libraries, the project's symbols for `#if`).

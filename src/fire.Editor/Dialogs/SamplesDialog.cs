@@ -14,12 +14,15 @@ using fire.Projects;
 namespace fire.Editor
 {
     /// <summary>
-    /// Help > Samples: the sample projects that ship with fire in a list (title and description). "Open" copies the chosen sample into a folder of the user's choice (proposed: `$HOME/spark/samples/&lt;name&gt;`)
+    /// Help > Samples: the sample projects that ship with fire in a list (title and description), with the categories (folders of the samples) to choose from on the left: "(all)" or one category. "Open" copies the chosen sample into a folder of the user's choice (proposed: `$HOME/spark/samples/&lt;name&gt;`)
     /// and the editor opens the copy - the shipped files stay as they are. The result is in <see cref="Sample"/> and <see cref="Location"/> (the folder of the copy).
     /// </summary>
     internal sealed class SamplesDialog : Window
     {
+        private const string All = "(all)";
+        private readonly ListBox _categories = new() { MinHeight = 220, Width = 170 };
         private readonly ListBox _list = new() { MinHeight = 220, HorizontalAlignment = HorizontalAlignment.Stretch };
+        private readonly IReadOnlyList<FireSample> _samples;
         private readonly TextBox _location = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
         private readonly TextBlock _error = new() { Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap, IsVisible = false };
 
@@ -29,10 +32,17 @@ namespace fire.Editor
         public SamplesDialog(IReadOnlyList<FireSample> samples)
         {
             Title = "Samples";
-            Width = 560; Height = 480; MinWidth = 420; MinHeight = 340;
+            Width = 720; Height = 500; MinWidth = 520; MinHeight = 340;
+            _samples = samples;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;
 
+            var categories = SampleCatalog.Categories(samples);
+            _categories.ItemsSource = new[] { All }.Concat(categories).ToList();
+            _categories.SelectedIndex = 0;
+            _categories.IsVisible = categories.Count > 0;
+            _categories.Margin = new Thickness(0, 0, 8, 0);
+            _categories.SelectionChanged += (_, _) => ShowCategory();
             _list.ItemsSource = samples;
             _list.ItemTemplate = new FuncDataTemplate<FireSample>((s, _) => s == null ? new TextBlock() : new StackPanel
             {
@@ -69,8 +79,20 @@ namespace fire.Editor
             var root = new DockPanel { Margin = new Thickness(12) };
             DockPanel.SetDock(bottom, Avalonia.Controls.Dock.Bottom);
             root.Children.Add(bottom);
+            DockPanel.SetDock(_categories, Avalonia.Controls.Dock.Left);
+            root.Children.Add(_categories);
             root.Children.Add(_list);
             Content = root;
+        }
+
+        /// <summary>The samples of the chosen category (all of them for "(all)"); the first one is selected.</summary>
+        private void ShowCategory()
+        {
+            string? category = _categories.SelectedItem as string;
+            var shown = category == null || category == All ? _samples : _samples.Where(s => s.Category == category).ToList();
+            _list.ItemsSource = shown;
+            _list.SelectedItem = shown.FirstOrDefault();
+            ProposeLocation();
         }
 
         private void ProposeLocation()

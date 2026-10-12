@@ -991,7 +991,7 @@ library framework that builds on `extern`/`#extern`.
 ### 8.1.2 `#include "fileName"`
 
 ```
-#include "shapes.script"
+#include "shapes.fire"
 
 var c = new Circle(2.0)
 ```
@@ -2216,7 +2216,7 @@ The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels i
 
 ### 8.29 Projects and solutions
 
-A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
+A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.fire` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;
 `#import "Name"` in the source turns it on, exactly as for a package, and the library's files are processed before the files of the project. The files of a project are part of the program without an `#include` (UI markup files, `.fxml`, as the script generated from them); an `#include` of such a file adds nothing. A project may have C++ natives in its folder `native/`: each `inline Value name(Value ...)` there is the native function `__name`, built like the natives of a package. A library is packed with `fire build Core.fireproj` into an ordinary `.fpk`.
 Build settings are taken from the project first, then from the solution, then from the tags in the source (`#debug`, `#name "..."`, `#floatwidth 32`, `#noconsole`, ...), then the defaults; `#if` symbols of all levels are added up; options on the command line go before the project.

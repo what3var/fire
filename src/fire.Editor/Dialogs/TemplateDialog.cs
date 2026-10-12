@@ -213,7 +213,7 @@ namespace fire.Editor
             UpdateText();
         }
 
-        /// <summary>The name without an extension that the template adds (a typed `.script` is not doubled).</summary>
+        /// <summary>The name without an extension that the template adds (a typed `.fire` is not doubled).</summary>
         private string NameOnly(FireTemplate? t)
         {
             string name = (_name.Text ?? "").Trim();

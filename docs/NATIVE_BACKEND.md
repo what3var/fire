@@ -431,7 +431,7 @@ Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Ar
 
 ### Bauen: `build` zeigt auf nativ
 
-`fire.Compiler build skript.script [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
+`fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
 eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
 bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
 **File > Native Build Settings...** (Engine, Ziel mit Plattform/Includes/Defines/Einsprung, Toolchain mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript), **Run > Build Native...**,
@@ -474,14 +474,14 @@ Präprozessor lesen dasselbe:
 | `HalPackage` | Plattformpaket der C++-Runtime | `esp32` |
 | `IsEmbedded` | kein Betriebssystem-Prozess (der Einsprung steht in `Native.Entry`: `app_main`) | ja |
 
-Eingebaut: `windows`, `linux`, `macos`, `esp32`; `TargetProfile.Host` ist das Ziel der VM im Editor.
+Eingebaut: `windows`, `linux`, `macos`, `esp32`, `freertos`, `wasm`; `TargetProfile.Host` ist das Ziel der VM im Editor.
 
 * **Rangfolge der Float-Genauigkeit:** `-f` > `#floatwidth` im Programm > Standard des Ziels > 64.
 * `Linker.CompileAndLink(..., target:)` lehnt `#import` einer Bibliothek ab, die es auf dem Ziel nicht gibt (Fehler beim Übersetzen, nicht
   erst auf dem Gerät).
 * Der Generator schreibt `FIRE_TARGET`, `FIRE_TARGET_<NAME>`, `FIRE_HAL_<PAKET>` und `FIRE_DEFAULT_STACK_BYTES` in die Datei; für
   eingebettete Ziele den Einstieg `extern "C" void app_main(void)`. Die Plattformschicht der Runtime wählt später über diese Defines.
-* Befehlszeile: `fire.Compiler native skript.script -t esp32 -o main.cpp`.
+* Befehlszeile: `fire.Compiler native skript.fire -t esp32 -o main.cpp`.
 
 Zusätzliche Ziele (eigene Boards) stehen in der Zielkonfiguration `fire.native.json` (siehe "Zielkonfiguration"); `TargetProfile.Native` (`NativeTarget`) trägt dort, was der Bau braucht
 (Plattformpaket, Includes, Defines, Einsprung, Compiler-Argumente). Eingebaut ist auch `freertos` (jedes Board mit FreeRTOS; der Einsprung `fire_start` wird vom Board aus einem Task aufgerufen).
@@ -569,6 +569,29 @@ fire-Programm  ->  Natives der Bridges (IO, Time, Devices, Graphics, später Har
   Implementierung, die C#-Bridges werden dünne Wrapper.
 
 Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
+
+## WebAssembly (`wasm`) - Programme im Browser
+
+`fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire --engine native -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
+`out.html` (Standard), die sich so öffnen lässt - auch per Doppelklick aus einem Ordner, ohne Webserver: die WebAssembly-Binärdatei steckt in der Seite (`-sSINGLE_FILE=1`).
+
+**Werkzeug:** Emscripten (emsdk, `em++`). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-sASYNCIFY` (siehe unten),
+`-sALLOW_MEMORY_GROWTH=1`, `-sSINGLE_FILE=1`, `-sMINIFY_HTML=0`; `// fire-link: SDL2` wird zu `-sUSE_SDL=2` (SDL2 bringt Emscripten selbst mit, es gibt nichts zu installieren).
+Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emscripten"` und `args` bzw. `--shell-file`.
+
+**Plattformpaket `native/platform/wasm/`:**
+
+| | im Browser |
+|---|---|
+| Takt/`Sleep` | `Sleep` gibt den Thread mit `emscripten_sleep` (ASYNCIFY) an den Browser zurück: die Seite zeichnet und liefert Ereignisse, solange das Programm wartet. Eine Schleife ohne `Sleep`/Fenster-Ereignisse hält die Seite an, wie überall im Browser |
+| Fenster (`windows`, `ui`) | SDL2 von Emscripten zeichnet in das Canvas der Seite; `Window.Tick`/`PollEvents` und das Zeichnen geben den Thread ebenfalls kurz zurück |
+| Ton | die SDL2-Audio von Emscripten (Web Audio) |
+| Dateien | das virtuelle Dateisystem von Emscripten (im Speicher; es lebt, solange die Seite offen ist) |
+| Ausgabe (`print`) | in das Textfeld der Seite und in die Konsole des Browsers |
+| Threads (`fire { }`, Actors) | nicht vorhanden: der Generator meldet es beim Übersetzen (`fire threads are not supported by the platform 'wasm'`) |
+| Netzwerk, TLS, Geräte, GPIO, I2C, SPI, WiFi | nicht vorhanden (die `none`-Varianten: die Bibliothek meldet zur Laufzeit "not supported") |
+
+`#if wasm` und `#if browser` unterscheiden den Code (SPEC 8.1.7). Die Genauigkeit von `float` ist 64 Bit wie am Desktop.
 
 ## ESP32 / FreeRTOS - weitere Besonderheiten
 

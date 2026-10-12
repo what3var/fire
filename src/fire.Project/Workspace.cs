@@ -209,7 +209,7 @@ namespace fire.Projects
             RaiseChanged();
         }
 
-        /// <summary>Makes a new project (saved; a program with one file `main.script` when `withMain`) and adds it to the solution if one is open.</summary>
+        /// <summary>Makes a new project (saved; a program with one file `main.fire` when `withMain`) and adds it to the solution if one is open.</summary>
         public LoadedProject CreateProject(string path, OutputType type, string? name = null, bool withMain = true)
         {
             string full = Path.GetFullPath(path);
@@ -218,7 +218,7 @@ namespace fire.Projects
             {
                 string dir = project.Directory!;
                 System.IO.Directory.CreateDirectory(dir);
-                string file = Path.Combine(dir, type == OutputType.Library ? project.ImportName.ToLowerInvariant() + ".script" : "main.script");
+                string file = Path.Combine(dir, type == OutputType.Library ? project.ImportName.ToLowerInvariant() + ".fire" : "main.fire");
                 if (!File.Exists(file))
                     File.WriteAllText(file, type == OutputType.Library
                         ? $"// The library {project.Name}: classes and functions, no statements at the top level.\nclass Greeter {{\n    static string Hello(string name) {{ return \"Hello, \" + name }}\n}}\n"

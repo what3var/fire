@@ -16,7 +16,7 @@ a folder of it                    Fire Class / FXML Window / FXML View    only t
                                   Markdown Document... / Raster Image... / Other File...
 ```
 
-The name is typed in a box, and the extension of the template is shown behind it and added automatically (`Greeter` + `.script`; a typed `.script` is not doubled). A project or a solution also
+The name is typed in a box, and the extension of the template is shown behind it and added automatically (`Greeter` + `.fire`; a typed `.fire` is not doubled). A project or a solution also
 asks for the folder.
 
 ## Where templates are
@@ -35,7 +35,7 @@ without regard to case. Every folder directly below `Code` or `Project` is one t
 
 ```
 Templates/Code/Fire Class/
-    $name$.script
+    $name$.fire
     template.json            (optional)
 ```
 
@@ -67,8 +67,8 @@ folder is refused.
   "description": "A script with an empty class that is named like the file.",
   "icon": "class",
   "defaultName": "MyClass",
-  "extension": ".script",
-  "open": [ "$name$.script" ],
+  "extension": ".fire",
+  "open": [ "$name$.fire" ],
   "order": 20,
   "hidden": false
 }
@@ -112,9 +112,9 @@ mathkit/
     package.json
     mathkit.fire
     templates/
-        Code/Vector Class/$name$.script
+        Code/Vector Class/$name$.fire
         Project/Math Demo/$name$.fireproj
-        Project/Math Demo/main.script
+        Project/Math Demo/main.fire
 ```
 
 * `ember forge` puts the folder into the package (`templates/...`; the `templates` field of `package.json` can name another folder instead).
@@ -127,7 +127,7 @@ mathkit/
 *File > Templates* in the editor:
 
 * **Open Template...** - the flat list of all templates (code and project, the program's, yours and those of packages); the files of the chosen one (and its `template.json`) open in the **plain text
-  editor**. It is tied to no project and does no checks, so `$name$` is no error; the colours follow the extension (fire for `.script`, markup for `.fxml`, C++ for headers and sources; a placeholder
+  editor**. It is tied to no project and does no checks, so `$name$` is no error; the colours follow the extension (fire for `.fire`, markup for `.fxml`, C++ for headers and sources; a placeholder
   counts as a name). A template of the program folder or of a package is not yours to change in place (the folder may be read-only, and an update would overwrite it), so the editor offers a copy first.
 * **Copy Template to My Templates...** - copies the folder of any template to `~/spark/templates/Code/{title}` or `.../Project/{title}`, with ` (copy)` added to the title so that both can be told
   apart in the list, and opens the copy. Change the title in the `template.json` when you are done.

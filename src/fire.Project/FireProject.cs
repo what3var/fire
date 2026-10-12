@@ -49,7 +49,7 @@ namespace fire.Projects
     /// <summary>
     /// A project (`name.fireproj`, JSON): the files that make up a program or a library, what it references and the build settings that apply to it (docs/PROJECTS.md).
     ///
-    /// The files are `files` - paths and patterns (`*`, `**`, `?`) relative to the project file, in this order; none given: every fire file (`*.script`, `*.fi`, `*.fic`) below the project folder
+    /// The files are `files` - paths and patterns (`*`, `**`, `?`) relative to the project file, in this order; none given: every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) below the project folder
     /// (`bin`, `obj` and the folders of other projects are left out), by name. `exclude` takes files out again. A program runs its files one after the other, so declarations in the files before
     /// are known when the entry file runs: `entry` (default: the last file) is always put last.
     /// </summary>
@@ -57,9 +57,9 @@ namespace fire.Projects
     {
         public const string Extension = ".fireproj";
         public const int CurrentFormat = 1;
-        public static readonly string[] DefaultFiles = { "**/*.{script,fi,fic,fxml}" };
+        public static readonly string[] DefaultFiles = { "**/*.{fire,script,fi,fic,fxml}" };
         /// <summary>The files that are compiled: scripts and the markup of user interfaces (`.fxml`, compiled to the script that is generated from it - no `#include` needed).</summary>
-        public static readonly string[] SourceExtensions = { ".script", ".fi", ".fic", ".fxml" };
+        public static readonly string[] SourceExtensions = { ".fire", ".script", ".fi", ".fic", ".fxml" };
 
         public static bool IsSourceFile(string path) => SourceExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
         public static bool IsMarkupFile(string path) => string.Equals(Path.GetExtension(path), ".fxml", StringComparison.OrdinalIgnoreCase);

@@ -18,7 +18,7 @@ Welcome to **spark**, the editor for the **fire** scripting language. This page 
 
 ## The editor at a glance
 
-Every file you open gets its own tab. Scripts (`.script`) open in the code editor, Markdown files (`.md`, like this one) in the Markdown editor, and device packet recordings (`.fplog`) in the packet viewer.
+Every file you open gets its own tab. Scripts (`.fire`) open in the code editor, Markdown files (`.md`, like this one) in the Markdown editor, and device packet recordings (`.fplog`) in the packet viewer.
 
 | Area | What it is for |
 | --- | --- |

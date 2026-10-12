@@ -1,6 +1,6 @@
 {
   "title": "Script",
-  "description": "An empty script file (.script).",
+  "description": "An empty script file (.fire).",
   "icon": "script",
   "defaultName": "newfile",
   "order": 10

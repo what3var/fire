@@ -79,7 +79,7 @@ namespace fire.Compiler
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
-            -t      Target of a native build: windows, linux, macos, esp32, freertos or one that fire.native.json defines (default: this machine). The target decides the
+            -t      Target of a native build: windows, linux, macos, esp32, freertos, wasm (a page for the browser, needs Emscripten) or one that fire.native.json defines (default: this machine). The target decides the
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.

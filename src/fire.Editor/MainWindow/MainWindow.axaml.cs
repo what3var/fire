@@ -130,7 +130,7 @@ namespace fire.Editor
         private static readonly HashSet<string> ImageExtensions = new() { ".png", ".bmp", ".gif", ".jpg", ".jpeg" };
         private static readonly HashSet<string> TextExtensions = new() { ".txt", ".json", ".xml", ".csv", ".ini", ".cfg", ".yaml", ".yml", ".html", ".htm", ".css", ".js", ".log", ".tsv", ".toml", ".cmake", ".mk", ".sh", ".bat", ".cs" };
 
-        private static readonly HashSet<string> ScriptExtensions = new() { ".script", ".fi", ".fic", ".fire", "" };
+        private static readonly HashSet<string> ScriptExtensions = new() { ".fire", ".script", ".fi", ".fic", "" };
 
         /// <summary>Does the file start with bytes that no text has (a zero byte in the first 8 KB)? A file that cannot be read is not binary (opening it reports the problem).</summary>
         private static bool LooksBinary(string path)
@@ -266,13 +266,11 @@ namespace fire.Editor
             LoadLayout();
             LoadToolStrips();
 
-            // Files passed on the command line, else an empty welcome script.
+            // Files passed on the command line; without any the editor starts empty (new files come from the welcome window or File > New).
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
                 if (File.Exists(arg)) OpenFile(arg);
             _ = _devices.RefreshAsync(fastScan: true); // list the devices (fast); the availability check is done by "Search"
             bool fromCommandLine = _documents.Count > 0;
-            if (_documents.Count == 0)
-                NewScript("// Welcome to the fire editor\nprint(\"Hello, world!\")\n");
             // the welcome window, once the splash is gone (not when files were given on the command line)
             if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
         }
