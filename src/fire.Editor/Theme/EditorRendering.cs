@@ -53,24 +53,30 @@ namespace fire.Editor
         };
     }
 
-    /// <summary>Squiggles the lines for which live diagnostics reports an error (whole line: Diagnostic knows no column): a red wavy line under the text of the line.</summary>
+    /// <summary>Squiggles the lines for which live diagnostics reports an error (whole line: Diagnostic knows no column): a red wavy line under the text of the line; a line with only a
+    /// warning (`warn 123: "..."`) gets an amber one.</summary>
     internal sealed class ErrorSquiggleRenderer : IBackgroundRenderer
     {
         private static readonly IPen Pen = new Pen(EditorTheme.ErrorMark, 1);
+        private static readonly IPen WarningPen = new Pen(new SolidColorBrush(Color.FromRgb(0xE5, 0xB5, 0x4F)), 1);
 
         /// <summary>1-based line numbers with at least one reported diagnostics error.</summary>
         public IReadOnlySet<int> ErrorLines { get; set; } = new HashSet<int>();
+
+        /// <summary>1-based line numbers with a warning (and no error).</summary>
+        public IReadOnlySet<int> WarningLines { get; set; } = new HashSet<int>();
 
         public KnownLayer Layer => KnownLayer.Selection;
 
         public void Draw(TextView textView, DrawingContext drawingContext)
         {
-            if (ErrorLines.Count == 0 || textView.Document == null || !textView.VisualLinesValid) return;
-            
+            if ((ErrorLines.Count == 0 && WarningLines.Count == 0) || textView.Document == null || !textView.VisualLinesValid) return;
+
             foreach (var visualLine in textView.VisualLines)
             {
                 var documentLine = visualLine.FirstDocumentLine;
-                if (!ErrorLines.Contains(documentLine.LineNumber)) continue;
+                bool isError = ErrorLines.Contains(documentLine.LineNumber);
+                if (!isError && !WarningLines.Contains(documentLine.LineNumber)) continue;
 
                 // from the first character that is not white space to the end of the line
                 string text = textView.Document.GetText(documentLine.Offset, documentLine.Length);
@@ -79,12 +85,12 @@ namespace fire.Editor
                 if (first >= text.Length) continue;
                 var segment = new TextSegment { StartOffset = documentLine.Offset + first, EndOffset = documentLine.EndOffset };
                 foreach (var rect in BackgroundGeometryBuilder.GetRectsForSegment(textView, segment))
-                    DrawWave(drawingContext, rect.Left, rect.Right, rect.Bottom - 1);
+                    DrawWave(drawingContext, rect.Left, rect.Right, rect.Bottom - 1, isError ? Pen : WarningPen);
             }
         }
 
         /// <summary>A zig-zag line (period 4 pixels, height 2) from x1 to x2 at the height y.</summary>
-        private static void DrawWave(DrawingContext context, double x1, double x2, double y)
+        private static void DrawWave(DrawingContext context, double x1, double x2, double y, IPen pen)
         {
             if (x2 <= x1) return;
             var geometry = new StreamGeometry();
@@ -99,7 +105,7 @@ namespace fire.Editor
                 }
                 g.EndFigure(false);
             }
-            context.DrawGeometry(null, Pen, geometry);
+            context.DrawGeometry(null, pen, geometry);
         }
     }
 

@@ -102,7 +102,7 @@ namespace fire.Standard
                         return ms
                     }
 
-                    static int Now() { return DateTime.UtcNow().Ticks }
+                    static int Now() { return DateTime.UtcNow.Ticks }
 
                     // The moment (ticks) a limit of `ms` ends, -1: never.
                     static int Deadline(int ms) {

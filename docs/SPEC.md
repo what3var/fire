@@ -1240,6 +1240,27 @@ never lexed, parsed or checked, so they may use libraries, classes or syntax tha
 The VM that runs a script in the editor uses the machine it runs on (`windows`, `linux` or `macos`, `vm`), so the same script does the same thing in the editor and
 as a native program for the same system. The live diagnostics of the editor do the same; an `#import` in a branch that is not taken does not import. The editor greys out the lines of the branches that are not taken (the symbols follow the configuration of the script: with `"engine": "native"` in the nearest `fire.native.json` its target, engine `native` and its defines, otherwise the machine and `vm`); they get no syntax colours.
 
+### 8.1.8 Warnings (`warn`) and error codes
+
+```
+class Cache {
+    Flush() {
+        warn 204: "Flush is obsolete, use Clear() - it goes away in the next version"
+        this.Clear()
+    }
+}
+```
+
+`warn <id>: "text"` is a **warning of the developer in the code**: it points to a problem or to something that is going to be obsolete. It is a statement, and it may stand wherever a statement
+or a member of a class may. The compiler **reports** it (the editor lists it in the Error List and in the Build Log, an amber squiggle marks the line; the command line prints
+`warning W204: ... (line 3)` to stderr) and **does not compile** it: nothing of a `warn` reaches the program, it costs nothing at run time, and the build does not fail because of it. `id` is
+a whole number from 0 to 99999 that names the warning - its code is `W<id>`, e.g. `W204`. `warn` is a keyword only where a number and a colon follow it, so it remains usable as a name.
+
+Every **error** of the compiler has a code, too: `E` and four digits (`E4022: Unknown identifier 'x'`); docs/ERRORS.md lists them. After a build, its errors and warnings are in the Error List
+until the next build replaces them; the Error List has a filter for the warnings.
+
+A reference `ClassName.Member` to a static member that the class (or a base class) does not have is an error when the program is compiled (`E4056`), not a failure at run time.
+
 ### 8.2 Bit widths for `int`/`float`
 
 ```
@@ -2032,7 +2053,7 @@ print(duration)                                   // 00:01:30
 print(duration.TotalMinutes + " " + duration.Seconds)   // 1.5 30
 var w = TimeSpan.Of(250ms)                        // from a value with a time unit, a number (ms) or a TimeSpan
 
-var now = DateTime.Now()                          // UtcNow(), Today(); new DateTime(2024, 3, 15) / (y, m, d, h, mi, s) / (..., ms)
+var now = DateTime.Now                            // UtcNow, Today (properties, like in .NET); new DateTime(2024, 3, 15) / (y, m, d, h, mi, s) / (..., ms)
 var tomorrow = now + TimeSpan.FromDays(1)
 print(tomorrow.ToString("dd.MM.yyyy HH:mm"))
 print(DateTime.Parse("2024-12-24 18:00") - now)   // a TimeSpan
@@ -2150,7 +2171,7 @@ that points to `ember`. The natives of a package are C++ (docs/PACKAGE_NATIVES.m
 ### 8.19 Random numbers (`#import "random"`)
 
 `PseudoRandom` is a pseudo random number generator written in fire (the package `fire-random`, no natives): xoshiro128** with four 32-bit words computed in the 64-bit `int`, so the same seed gives the
-same numbers in the virtual machine, in a native build and on every platform. It brings `time` along: `new PseudoRandom()` starts from the clock (`DateTime.UtcNow().Ticks`; two generators made within the same
+same numbers in the virtual machine, in a native build and on every platform. It brings `time` along: `new PseudoRandom()` starts from the clock (`DateTime.UtcNow.Ticks`; two generators made within the same
 100 ns tick get the same sequence - give them seeds then), `new PseudoRandom(seed)` from a number.
 
 - `Next()`: 0 .. 2147483646 (like .NET); `Next(max)`: 0 .. max - 1 (any `max` above 0, also above 2^32); `Next(min, max)`: min .. max - 1. The values are unbiased (no modulo skew). A `max` that is not above 0 (or `max <= min`) throws `RandomException`.

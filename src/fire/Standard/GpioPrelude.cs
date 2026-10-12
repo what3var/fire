@@ -84,7 +84,7 @@ namespace fire.Standard
                         return ms
                     }
 
-                    static int Now() { return DateTime.UtcNow().Ticks }
+                    static int Now() { return DateTime.UtcNow.Ticks }
                 }
 
                 // The chips of this machine.

@@ -23,12 +23,19 @@ namespace fire.Compiler
     {
         public int Line { get; }
 
+        /// <summary>The message without the line.</summary>
+        public string RawMessage { get; }
+
+        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        public string Code => ErrorCatalog.CodeOf(ErrorArea.Compiler, RawMessage);
+
         public IReadOnlyList<CompilerException> Errors { get; }
 
         public CompilerException(string message, int line)
             : base($"{message} ({line})")
         {
             Line = line;
+            RawMessage = message;
             Errors = new[] { this };
         }
 
@@ -37,6 +44,7 @@ namespace fire.Compiler
             : base(errors[0].Message)
         {
             Line = errors[0].Line;
+            RawMessage = errors[0].RawMessage;
             Errors = errors;
         }
     }

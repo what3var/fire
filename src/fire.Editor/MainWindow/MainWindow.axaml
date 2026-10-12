@@ -188,6 +188,7 @@
 				<!-- a check = the window is visible (updated when the menu opens, see ViewMenu_SubmenuOpened) -->
 				<MenuItem Header="_View" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
 					<MenuItem Header="_Output" Tag="output" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Build Log" Tag="buildlog" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Error List" Tag="errors" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Threads" Tag="threads" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Scope" Tag="scope" ToggleType="CheckBox" Click="ViewPanel_Click"/>
@@ -258,6 +259,9 @@
 							<ComboBoxItem Content="Release" Tag="Release"/>
 							<ComboBoxItem Content="Performance" Tag="Performance"/>
 						</ComboBox>
+						<TextBlock local:ToolStrip.HorizontalOnly="True" Text="Target:" VerticalAlignment="Center" Margin="8,0,6,0"/>
+						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="28" Padding="8,2"
+						          ToolTip.Tip="The target of a native build (Build native). Default: the target of the project or of the native build settings"/>
 						<CommandBarButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..."><CommandBarButton.Icon><PathIcon Data="{StaticResource IconBuild}"/></CommandBarButton.Icon></CommandBarButton>
 						<CommandBarButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)"><CommandBarButton.Icon><PathIcon Data="{StaticResource IconSettings}"/></CommandBarButton.Icon></CommandBarButton>
 					</local:ToolStrip>

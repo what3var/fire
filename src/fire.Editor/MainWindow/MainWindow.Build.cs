@@ -171,6 +171,7 @@ namespace fire.Editor
                 if (chosen.EffectiveKind is not ("files" or "custom") && fire.Native.ToolchainDetector.Find(chosen) is { } compilerPath)
                     fire.Native.ToolchainSetup.SaveMachineToolchain(new fire.Native.ToolchainDef { Extends = chosen.EffectiveKind, Kind = chosen.EffectiveKind, Compiler = compilerPath, Std = chosen.Std, Optimization = chosen.Optimization, Args = chosen.Args });
                 dialog.Result.Save(savePath);
+                RefreshTargetCombo();
                 foreach (var doc in _documents) doc.Script?.InvalidateConditionalSymbols();   // the `#if` branches that are greyed out depend on the engine, the target and the defines
                 UpdateStatus($"Saved {savePath}");
                 return true;
@@ -213,7 +214,74 @@ namespace fire.Editor
                 await dialog.ShowDialog(this);
                 return dialog.Succeeded;
             });
-            fire.Native.ToolchainProvider.Log = message => Dispatcher.UIThread.Post(() => UpdateStatus(message));
+            fire.Native.ToolchainProvider.Log = message => Dispatcher.UIThread.Post(() => { UpdateStatus(message); _buildLog.AppendLine(message); });
+        }
+
+        // -----------------------------------------------------------
+        // The target of a native build (the combo box of the build tool strip)
+        // -----------------------------------------------------------
+
+        /// <summary>The target chosen in the tool strip (null: the target of the project or of the native build settings).</summary>
+        private string? _nativeTargetChoice;
+        private bool _updatingTargetUi;
+
+        /// <summary>Fills the combo box with the targets that the configuration of the active file knows (the built-in ones and those of its fire.native.json) and selects the chosen one.
+        /// The first entry is the default and says which target that is.</summary>
+        private void RefreshTargetCombo()
+        {
+            _updatingTargetUi = true;
+            try
+            {
+                fire.Native.NativeConfig config;
+                try { config = LoadNativeConfig(out _); }
+                catch (fire.Native.NativeConfigException) { config = new fire.Native.NativeConfig(); }
+                string defaultName;
+                try { defaultName = config.ResolveTarget(ProjectTargetSetting()).Name; }
+                catch (fire.Native.NativeConfigException) { defaultName = "?"; }
+                var items = new List<ComboBoxItem> { new() { Content = $"Default ({defaultName})", Tag = "" } };
+                foreach (string name in config.TargetNames) items.Add(new ComboBoxItem { Content = name, Tag = name });
+                cmbTarget.ItemsSource = items;
+                int index = _nativeTargetChoice == null ? 0 : items.FindIndex(i => string.Equals((string?)i.Tag, _nativeTargetChoice, StringComparison.OrdinalIgnoreCase));
+                cmbTarget.SelectedIndex = Math.Max(0, index);
+            }
+            finally { _updatingTargetUi = false; }
+        }
+
+        /// <summary>The target that the settings of the project of the active file name (null: none).</summary>
+        private string? ProjectTargetSetting() =>
+            ContextProject() is { } project ? ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Target : null;
+
+        private void cmbTarget_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (_updatingTargetUi || cmbTarget.SelectedItem is not ComboBoxItem { Tag: string tag }) return;
+            _nativeTargetChoice = tag.Length == 0 ? null : tag;
+            _settings.NativeTarget = _nativeTargetChoice;
+            _settings.Save();
+            UpdateStatus(_nativeTargetChoice == null ? "Native target: the default." : $"Native target: {_nativeTargetChoice}.");
+        }
+
+        // -----------------------------------------------------------
+        // The build log and the list of errors and warnings of a build
+        // -----------------------------------------------------------
+
+        /// <summary>A new build: the log starts again (what the last build left in the error list stays until this one is done).</summary>
+        private void BeginBuildLog(string what)
+        {
+            _buildLog.Clear();
+            _buildLog.AppendLine($"------ Build started: {what} ------");
+        }
+
+        /// <summary>The end of a build: its errors and warnings go into the log, and into the error list, where they stay until the next build replaces them. `defaultFile` is the file
+        /// of an error that the compiler could not place (the script that was built).</summary>
+        private void FinishBuild(string what, bool ok, IReadOnlyList<Diagnostic> found, string? defaultFile, string? defaultPath)
+        {
+            var diagnostics = found.OrderBy(d => d.File ?? defaultFile ?? "", StringComparer.OrdinalIgnoreCase).ThenBy(d => d.Line).ToList();   // (by place; errors and warnings of a line keep their order)
+            foreach (var d in diagnostics) _buildLog.AppendLine((d.File == null ? d with { File = defaultFile } : d).ToLogLine());
+            int errors = diagnostics.Count(d => d.IsError), warnings = diagnostics.Count(d => d.IsWarning);
+            _buildLog.AppendLine($"========== {what}: {(ok ? "succeeded" : "failed")}, {errors} error{(errors == 1 ? "" : "s")}, {warnings} warning{(warnings == 1 ? "" : "s")} ==========");
+            _buildItems = diagnostics.Select(d => ToItem(d, defaultFile, defaultPath)).ToList();
+            _buildItemsSource = $"Last build, {DateTime.Now:HH:mm:ss}";
+            UpdateErrorPanel();
         }
 
         /// <summary>Translates the active script to C++ for the configured target and builds it with the configured toolchain (or writes the files of a project).</summary>
@@ -240,7 +308,7 @@ namespace fire.Editor
             try
             {
                 config = LoadNativeConfig(out _);
-                target = config.ResolveTarget(plan?.Settings.Target);   // the settings of the project go before the configuration file
+                target = config.ResolveTarget(_nativeTargetChoice ?? plan?.Settings.Target);   // the tool strip goes before the settings of the project, which go before the configuration file
                 toolchain = config.ResolveToolchain(target, plan?.Settings.Toolchain);
             }
             catch (fire.Native.NativeConfigException ex)
@@ -268,9 +336,17 @@ namespace fire.Editor
             IReadOnlyList<string> sources = plan != null ? plan.SourceTexts : new[] { script!.GetText() };
             string? baseDirectory = script?.BaseDirectory;
             var mode = _session.ExecutionMode;
-            UpdateStatus($"Building {(plan != null ? plan.Name + " " : "")}for {target.Name} ({toolchain.EffectiveKind})...");
+            string what = $"{(plan != null ? plan.Name : script!.FilePath != null ? Path.GetFileName(script.FilePath) : "script")} for {target.Name} ({toolchain.EffectiveKind})";
+            UpdateStatus($"Building {what}...");
+            BeginBuildLog(what);
+            RevealTool("buildlog");
+            string? defaultFile = plan != null ? null : ActiveDocument?.DisplayName;
+            string? defaultPath = plan != null ? null : FullPathOf(ActiveDocument);
             var result = await Task.Run(() =>
                 fire.Compiler.NativeBuilder.BuildSafe(sources, config, target, toolchain, output, mode, null, false, baseDirectory, null, plan));
+            // what the tools said (the C++ compiler with its stdout and stderr), then the errors and warnings of the fire compiler
+            if (!string.IsNullOrWhiteSpace(result.Log)) _buildLog.Append(result.Log.EndsWith('\n') ? result.Log : result.Log + Environment.NewLine);
+            FinishBuild("Build", result.Ok, result.Diagnostics ?? Array.Empty<Diagnostic>(), defaultFile, defaultPath);
             if (result.Ok)
             {
                 UpdateStatus($"Built {result.Output} (native, {target.Name}).");

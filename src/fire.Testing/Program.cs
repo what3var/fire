@@ -26,6 +26,7 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -11693,11 +11694,11 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "devices"
         #import "time"
         var d = Device.Default.EnsureConnected()
-        var t0 = DateTime.Now()
+        var t0 = DateTime.Now
         print(d.WaitForString("nie", 120ms))
         print(d.WaitForString("nie", 120))
         print(d.WaitForString("nie", TimeSpan.FromMilliseconds(120)))
-        var ms = (DateTime.Now() - t0).TotalMilliseconds
+        var ms = (DateTime.Now - t0).TotalMilliseconds
         print((ms >= 330) + " " + (ms < 5000))
         try { d.WaitForString("a", "x") } catch (e) { print((e is of DeviceArgumentException) + " " + e.message) }
         """, new[] { "False", "False", "False", "True True", "True Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)" }, defaultId: "loopback:echo");
@@ -11707,9 +11708,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "time"
         #timeout 200ms
         var d = Device.Default.EnsureConnected()
-        var t0 = DateTime.Now()
+        var t0 = DateTime.Now
         print(d.WaitForString("nie"))
-        var ms = (DateTime.Now() - t0).TotalMilliseconds
+        var ms = (DateTime.Now - t0).TotalMilliseconds
         print((ms >= 190) + " " + (ms < 5000))
         """, new[] { "False", "True True" }, defaultId: "loopback:echo");
 
@@ -11718,9 +11719,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "time"
         var d = Device.Default.EnsureConnected()
         d.Disconnect()
-        var t0 = DateTime.Now()
+        var t0 = DateTime.Now
         print(d.WaitForString("x", 20s))
-        print((DateTime.Now() - t0).TotalMilliseconds < 3000)
+        print((DateTime.Now - t0).TotalMilliseconds < 3000)
         """, new[] { "False", "True" }, defaultId: "loopback:echo");
 
     CheckDev("DoCommand: Text als Zeile, Command<IDevice> mit dem Geraet als Kontext, abgeleitete Befehle, DoCommands", """
@@ -11812,7 +11813,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "io"
         var fb = new Framebuffer(8, 4)
         print(fb.Width() + "x" + fb.Height())
-        print(DateTime.Now().Year > 2000)
+        print(DateTime.Now.Year > 2000)
         print(Type.Of(fb).Name)
         print(new DeviceManagerFacade().Count())
         print(IO.File.Exists("/gibt/es/nicht"))
@@ -12110,8 +12111,8 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(DateTime.FromUnixSeconds(86400).ToString() + " " + DateTime.FromUnixSeconds(86400).ToUnixSeconds())
         try { new DateTime(2024, 13, 1) } catch (x) { print("1 " + x.message) }
         try { DateTime.Parse("quatsch") } catch (x) { print("2 " + x.message) }
-        print(DateTime.Now().Year >= 2024)
-        print(DateTime.UtcNow().Kind + " " + DateTime.Now().Kind)
+        print(DateTime.Now.Year >= 2024)
+        print(DateTime.UtcNow.Kind + " " + DateTime.Now.Kind)
         """, new[]
         {
             "2024-03-15 14:30:05 2024 3 15 5 Friday 75",
@@ -12147,11 +12148,11 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         });
 
     CheckLq("Sleep: Zeitspanne, Zeitwert und Millisekunden; Dauer stimmt", timeHead + """
-        var t0 = DateTime.UtcNow()
+        var t0 = DateTime.UtcNow
         Sleep(TimeSpan.FromMilliseconds(120))
         Sleep(60ms)
         Sleep(30)
-        var ms = (DateTime.UtcNow() - t0).TotalMilliseconds
+        var ms = (DateTime.UtcNow - t0).TotalMilliseconds
         print((ms >= 190) + " " + (ms < 2000))
         try { Sleep("x") } catch (e) { print(e.message) }
         """, new[] { "True True", "Sleep expects a TimeSpan, a time value or milliseconds, got: String." });
@@ -13890,6 +13891,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+DiagnosticTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -16712,8 +16714,8 @@ else
             class W {
                 int n = 0
                 Wait(int ms) {
-                    var start = DateTime.UtcNow()
-                    while ((DateTime.UtcNow() - start).TotalMilliseconds < ms) { Sleep(2) }
+                    var start = DateTime.UtcNow
+                    while ((DateTime.UtcNow - start).TotalMilliseconds < ms) { Sleep(2) }
                     this.n = this.n + 1
                 }
             }
@@ -18395,9 +18397,9 @@ else
             Sleep(2)
             Sleep(0.002s)
             print("slept")
-            var t0 = DateTime.UtcNow()
+            var t0 = DateTime.UtcNow
             Sleep(60ms)
-            var el = DateTime.UtcNow() - t0
+            var el = DateTime.UtcNow - t0
             print(el >= TimeSpan.FromMilliseconds(55))
             print(el < TimeSpan.FromMilliseconds(500))
             """),
@@ -18496,10 +18498,10 @@ else
                 throw new Boom()
             }
             catch threads(Boom e) { print("caught in main: " + e.message) }
-            var start = DateTime.UtcNow()
+            var start = DateTime.UtcNow
             Sleep(400ms)
             print("main woke up")
-            print((DateTime.UtcNow() - start) >= TimeSpan.FromMilliseconds(100))
+            print((DateTime.UtcNow - start) >= TimeSpan.FromMilliseconds(100))
             """),
     }).ToArray();
 

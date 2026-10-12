@@ -209,6 +209,10 @@ namespace fire.Editor
             }
 
             _output.Clear();
+            string buildWhat = project != null ? project.Name : doc?.DisplayName ?? "script";
+            BeginBuildLog(buildWhat);
+            string? buildFile = project != null ? null : doc?.DisplayName;
+            string? buildPath = project != null ? null : FullPathOf(doc);
             while (_pendingOutput.TryDequeue(out _)) { } // discard what is left of a previous run that has not flowed off yet
             ShowDebugLocation(null);
             _debugIsProject = project != null;
@@ -216,7 +220,10 @@ namespace fire.Editor
             _isBusy = false;
             _session.UpdateBreakpoints(BreakpointLocations());
 
-            if (!_session.Compile(sources, filename, baseDirectory, plan))
+            bool compiled = _session.Compile(sources, filename, baseDirectory, plan);
+            // the errors and warnings of the compile: into the build log and the error list (until the next build)
+            FinishBuild("Compile", compiled, _session.LastDiagnostics, buildFile, buildPath);
+            if (!compiled)
             {
                 UpdateStatus($"Compile error: {_session.CompileError}");
                 _ = Dialogs.Message(this, _session.CompileError, "Compile error");

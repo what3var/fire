@@ -118,10 +118,17 @@ namespace fire.Editor
         /// DebugThreadContext.ForMain - starts waiting, nothing runs yet).
         /// On a parse/resolve error Vm stays null, CompileError
         /// contains the message.</summary>
+        /// <summary>The errors (when the compile failed) and warnings of the last <see cref="Compile"/>, with their codes; a file is set when the compiler knows it.</summary>
+        public IReadOnlyList<Diagnostic> LastDiagnostics { get; private set; } = Array.Empty<Diagnostic>();
+
         public bool Compile(string[] sources, string? outname = null, string? basePath = null, fire.Projects.BuildPlan? plan = null)
         {
             Reset();
+            LastDiagnostics = Array.Empty<Diagnostic>();
 
+            // the warnings of the code (`warn 123: "text"`) are collected while the parser reads it
+            var warnings = new DiagnosticCollector();
+            using var collecting = warnings.Begin();
             try
             {
                 var session = RuntimeSession.Build(sources, ExecutionMode, args =>
@@ -168,14 +175,16 @@ namespace fire.Editor
                 // THIS (then outdated) session.
                 FireRuntime.ThreadBodyInterceptor = InterceptNewFireThread;
 
+                LastDiagnostics = warnings.Items.ToList();
                 return true;
             }
-            catch (Exception ex) when (ex is ParseException or ResolverException
+            catch (Exception ex) when (ex is ParseException or LexException or ResolverException
                 or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
             {
                 // All collected errors (the resolver/compiler do not stop at the
                 // first, see CompileErrors), not only the first.
                 CompileError = CompileErrors.Describe(ex);
+                LastDiagnostics = CompileDiagnostics.Of(ex).Concat(warnings.Items).ToList();
                 return false;
             }
         }

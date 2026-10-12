@@ -17,6 +17,8 @@ namespace fire.Compiler
         public string RawMessage { get; }
         /// <summary>The file the error is in (set for a program of several files, see ProcessedSource.Name).</summary>
         public string? FileName { get; }
+        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        public string Code => ErrorCatalog.CodeOf(ErrorArea.Parser, RawMessage);
 
         public ParseException(string message, int line, int column, string? fileName = null)
             : base($"{(fileName != null ? fileName + ": " : "")}{message} ({line}:{column})")
@@ -90,6 +92,9 @@ namespace fire.Compiler
         /// in WHICH file a given line number lies - a
         /// bare line alone is then ambiguous.</summary>
         private int _sourceIndex;
+
+        /// <summary>The file of the source that this parser reads (ProcessedSource.Name), for the position of a warning (`warn`).</summary>
+        private string? _fileName;
 
         /// <summary>Stack of the synthetic target-variable names of active
         /// `with` blocks (innermost last) - see ParseWithStmt. A
@@ -176,6 +181,7 @@ namespace fire.Compiler
                     var parser = new Parser(tokens);
                     parser._usingNamespaces = src.Usings;
                     parser._sourceIndex = i;
+                    parser._fileName = src.Name;
                     stmts = parser.ParseProgram();
                 }
                 catch (ParseException ex) when (src.Name != null && ex.FileName == null)
@@ -372,6 +378,7 @@ namespace fire.Compiler
                 // normal statements - recognised only here at top-level,
                 // so that they do not collide with the "catch without try" feature inside
                 // blocks (see the documentation there).
+                if (TryParseWarn()) continue;
                 if (Check(TokenType.Catch) && NextLooksLikeGlobalHandler())
                     statements.Add(ParseGlobalHandlerDecl());
                 else
@@ -391,8 +398,26 @@ namespace fire.Compiler
         // -----------------------------------------------------------
         // Statements
         // -----------------------------------------------------------
+        /// <summary>`warn 123: "text"` - a warning of the developer in the code (SPEC 1.7): it is reported when the program is compiled (the editor lists it, the build log and the command line
+        /// print it) and is no code - nothing of it reaches the program. The id is a whole number that names the warning (`W123`); `warn` is only a keyword where a number and a colon follow, so
+        /// it stays usable as a name. True when a warning was read.</summary>
+        private bool TryParseWarn()
+        {
+            if (!(Check(TokenType.Identifier) && Peek().Lexeme == "warn" && PeekAt(1).Type == TokenType.IntLiteral && PeekAt(2).Type == TokenType.Colon)) return false;
+            var keyword = Advance();
+            var id = Advance();
+            Advance();
+            var text = Expect(TokenType.StringLiteral, "Expected the text of the warning (a string) after 'warn <id>:'");
+            ExpectStatementTerminator();
+            long number = id.LiteralValue is long l ? l : 0;
+            if (number < 0 || number > 99999) throw Error("The id of a warning ('warn <id>: \"text\"') is a whole number from 0 to 99999", id);
+            DiagnosticCollector.Warn((int)number, text.LiteralValue as string ?? text.Lexeme, keyword.Line, _fileName);
+            return true;
+        }
+
         private Stmt ParseStatement()
         {
+            if (TryParseWarn()) return new Stmt.BlockStmt(_sourceIndex, Previous().Line, Array.Empty<Stmt>());   // (as the body of an `if`, ...: nothing)
             // `probe a.b changed ...` / `silence a.b`: context-dependent keywords - only if an identifier/`this` follows directly (two names
             // in a row are otherwise never a valid expression), so `probe`/`silence` stay usable as variable names
             if (Check(TokenType.Identifier) && Peek().Lexeme == "silence" && IsProbeOperandNext()) return ParseSilence();
@@ -483,6 +508,7 @@ namespace fire.Compiler
                     statements.Add(ParseImplicitCatchTail());
                     break; // ParseImplicitCatchTail has already consumed the rest of the block.
                 }
+                if (TryParseWarn()) continue;
                 statements.Add(ParseStatement());
             }
 
@@ -512,6 +538,7 @@ namespace fire.Compiler
                     restStatements.Add(ParseImplicitCatchTail());
                     break;
                 }
+                if (TryParseWarn()) continue;
                 restStatements.Add(ParseStatement());
             }
 
@@ -1074,6 +1101,7 @@ namespace fire.Compiler
                     statements.Add(ParseImplicitCatchTail());
                     break; // ParseImplicitCatchTail has already consumed the rest of the block.
                 }
+                if (TryParseWarn()) continue;
                 statements.Add(ParseStatement());
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the with block");
@@ -1203,6 +1231,7 @@ namespace fire.Compiler
                     ExpectStatementTerminator();
                     break;
                 }
+                if (TryParseWarn()) continue;
                 body.Add(ParseStatement());
             }
             return body;
@@ -1500,7 +1529,10 @@ namespace fire.Compiler
             try
             {
                 while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+                {
+                    if (TryParseWarn()) continue;
                     members.AddRange(ParseClassMember());
+                }
             }
             finally
             {
@@ -1661,7 +1693,10 @@ namespace fire.Compiler
 
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+            {
+                if (TryParseWarn()) continue;
                 members.AddRange(ParseClassMember());
+            }
             Expect(TokenType.RBrace, "Expected '}' at the end of the extension");
 
             if (isBaseType || BaseTypeExtensions.IsExtendable(targetName))
@@ -1722,7 +1757,10 @@ namespace fire.Compiler
 
             var members = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
+            {
+                if (TryParseWarn()) continue;
                 members.Add(ParseStatement());
+            }
             Expect(TokenType.RBrace, "Expected '}' at the end of the namespace");
 
             _currentNamespace = savedNamespace;

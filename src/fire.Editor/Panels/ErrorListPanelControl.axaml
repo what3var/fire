@@ -3,12 +3,23 @@
              x:Class="fire.Editor.ErrorListPanelControl">
     <DockPanel>
         <Border DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
-            <ToggleButton x:Name="ErrorFilterButton" Classes="tool" IsChecked="True" Click="ErrorFilter_Click" ToolTip.Tip="Show or hide errors" HorizontalAlignment="Left">
-                <StackPanel Orientation="Horizontal" Spacing="5">
-                    <TextBlock Text="&#x2716;" FontSize="13" Foreground="#E5566F" VerticalAlignment="Center"/>
-                    <TextBlock x:Name="ErrorCountText" Text="0 errors" VerticalAlignment="Center"/>
+            <DockPanel LastChildFill="False">
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="4">
+                    <ToggleButton x:Name="ErrorFilterButton" Classes="tool" IsChecked="True" Click="Filter_Click" ToolTip.Tip="Show or hide errors">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Text="&#x2716;" FontSize="13" Foreground="#E5566F" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="ErrorCountText" Text="0 errors" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </ToggleButton>
+                    <ToggleButton x:Name="WarningFilterButton" Classes="tool" IsChecked="True" Click="Filter_Click" ToolTip.Tip="Show or hide warnings">
+                        <StackPanel Orientation="Horizontal" Spacing="5">
+                            <TextBlock Text="&#x26A0;" FontSize="13" Foreground="#E5B54F" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="WarningCountText" Text="0 warnings" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </ToggleButton>
                 </StackPanel>
-            </ToggleButton>
+                <TextBlock x:Name="SourceText" DockPanel.Dock="Right" Foreground="#A094A8" FontSize="12" VerticalAlignment="Center" Margin="12,0,4,0"/>
+            </DockPanel>
         </Border>
 
         <!-- several columns like in Visual Studio: resizable, sortable by a click on the header; a double click jumps to the line -->
@@ -19,13 +30,17 @@
                 <DataGridTemplateColumn Header="" Width="28" SortMemberPath="Severity" CanUserResize="False">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <TextBlock Text="&#x2716;" Foreground="#E5566F" HorizontalAlignment="Center" VerticalAlignment="Center" ToolTip.Tip="{Binding Severity}"/>
+                            <Panel ToolTip.Tip="{Binding Severity}">
+                                <TextBlock Text="&#x2716;" Foreground="#E5566F" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsError}"/>
+                                <TextBlock Text="&#x26A0;" Foreground="#E5B54F" HorizontalAlignment="Center" VerticalAlignment="Center" IsVisible="{Binding IsWarning}"/>
+                            </Panel>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Code" Binding="{Binding Code}" Width="76"/>
                 <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*"/>
                 <DataGridTextColumn Header="File" Binding="{Binding File}" Width="160"/>
-                <DataGridTextColumn Header="Line" Binding="{Binding Line}" Width="60"/>
+                <DataGridTextColumn Header="Line" Binding="{Binding Line}" Width="64"/>
             </DataGrid.Columns>
         </DataGrid>
     </DockPanel>

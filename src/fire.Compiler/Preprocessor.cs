@@ -546,6 +546,9 @@ namespace fire.Compiler
 
     public sealed class PreprocessorException : Exception
     {
+        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        public string Code => ErrorCatalog.CodeOf(ErrorArea.Preprocessor, Message);
+
         public PreprocessorException(string message) : base(message) { }
         public PreprocessorException(string message, Exception inner) : base(message, inner) { }
     }

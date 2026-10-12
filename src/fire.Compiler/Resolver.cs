@@ -20,12 +20,19 @@ namespace fire.Compiler
     {
         public int Line { get; }
 
+        /// <summary>The message without the line.</summary>
+        public string RawMessage { get; }
+
+        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        public string Code => ErrorCatalog.CodeOf(ErrorArea.Resolver, RawMessage);
+
         public IReadOnlyList<ResolverException> Errors { get; }
 
         public ResolverException(string message, int line)
             : base($"{message} ({line})")
         {
             Line = line;
+            RawMessage = message;
             Errors = new[] { this };
         }
 
@@ -34,6 +41,7 @@ namespace fire.Compiler
             : base(errors[0].Message)
         {
             Line = errors[0].Line;
+            RawMessage = errors[0].RawMessage;
             Errors = errors;
         }
     }
@@ -529,6 +537,20 @@ namespace fire.Compiler
             if (baseName != null && _classes.TryGetValue(baseName, out var baseCd))
                 return ClassHasMethod(baseCd, name, arity);
             return false;
+        }
+
+        /// <summary>`ClassName.Member`: the class (or one of its base classes) has to declare a static field, property or method of that name - a misspelled one, or one that needs an object
+        /// (`DateTime.Now()` for a property, `Box.Grow` for an instance method) is an error of the program here, not a failure when the line is reached. A nested class or an enum of that name
+        /// is no member and is not asked.</summary>
+        private void CheckStaticMemberExists(string className, MemberExpr me)
+        {
+            if (me.Target is SelfClassExpr || !_classes.TryGetValue(className, out var classDecl)) return;
+            if (_classes.ContainsKey(className + "." + me.Name) || _enums.ContainsKey(className + "." + me.Name)) return;
+            var found = FindMemberInClassChain(classDecl, me.Name);
+            if (found == null)
+                throw new ResolverException($"Class '{GenericClassNames.PlainName(className)}' has no static member '{me.Name}'", me.Line);
+            if (!found.Value.IsStatic)
+                throw new ResolverException($"'{GenericClassNames.PlainName(className)}.{me.Name}' is an instance member - it needs an object, not the class name", me.Line);
         }
 
         private bool IsKnownClassName(string name) => name == "Exception" || _classes.ContainsKey(name);
@@ -1508,6 +1530,7 @@ namespace fire.Compiler
                     string? staticClassName = TryResolveStaticMemberAccess(me);
                     if (staticClassName != null)
                     {
+                        CheckStaticMemberExists(staticClassName, me);
                         _refs[me] = new ResolvedRef.StaticMember(staticClassName);
                         break;
                     }
@@ -1709,6 +1732,7 @@ namespace fire.Compiler
                     string? staticAssignClassName = TryResolveStaticMemberAccess(me);
                     if (staticAssignClassName != null)
                     {
+                        CheckStaticMemberExists(staticAssignClassName, me);
                         _refs[me] = new ResolvedRef.StaticMember(staticAssignClassName);
                         break;
                     }

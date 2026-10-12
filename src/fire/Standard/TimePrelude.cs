@@ -99,12 +99,15 @@ namespace fire.Standard
                     d.kind = kind
                     return d
                 }
-                static UtcNow() { return DateTime.FromTicks(__time_now(), "utc") }
-                static Now() {
-                    var utc = __time_now()
-                    return DateTime.FromTicks(utc + __time_local_offset(utc), "local")
+                // The clock: `DateTime.Now` (local time), `DateTime.UtcNow`, `DateTime.Today` (local, at 00:00) - properties, like in .NET.
+                static UtcNow { get { return DateTime.FromTicks(__time_now(), "utc") } }
+                static Now {
+                    get {
+                        var utc = __time_now()
+                        return DateTime.FromTicks(utc + __time_local_offset(utc), "local")
+                    }
                 }
-                static Today() { return DateTime.Now().Date() }
+                static Today { get { return DateTime.Now.Date() } }
                 static DaysInMonth(int year, int month) { return __time_days_in_month(year, month) }
                 static IsLeapYear(int year) { return __time_days_in_month(year, 2) == 29 }
 
