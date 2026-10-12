@@ -67,24 +67,29 @@ Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Registry]
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssocKey}"; ValueData: ""; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssocName}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},2"
+; firescript .fire .script
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc1Key}"; ValueData: ""; Flags: uninsdeletevalue
+; Sollten durch Assoc1 schon stehen
+; Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssocName}"; Flags: uninsdeletekey
+; Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},2"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc1Key}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc1Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},2"
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},3"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+; firexml
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc2Key}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc2Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},4"
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},5"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+; firesln
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc3Key}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc3Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},3"
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},4"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+; fireproj
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc4Key}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc4Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},1"
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},2"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Icons]
