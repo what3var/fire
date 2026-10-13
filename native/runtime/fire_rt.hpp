@@ -3481,6 +3481,15 @@ inline void sectionRelease() {
     if (--r->refs == 0) delete r;
 }
 inline void sectionAbort() { if (g_curSection) { g_secDepth = 0; sectionRelease(); } }
+/// Waiting for something else (Sleep, a device, ...) inside a section: the thread gives its section back for the time of the wait - else
+/// the main program, which grants sections only while it waits itself, would be held as long as the thread waits - and takes it again afterwards.
+struct SectionYield {
+    int32_t held = 0;
+    SectionYield() { if (g_isThread && g_secDepth > 0) { held = g_secDepth; g_secDepth = 0; sectionRelease(); } }
+    ~SectionYield() { if (held > 0) { sectionAcquire(); g_secDepth = held; } }
+    SectionYield(const SectionYield&) = delete;
+    SectionYield& operator=(const SectionYield&) = delete;
+};
 /// One change of the shared domain from a thread: the section lasts as long as this object lives.
 struct SectionScope {
     bool entered = false;
@@ -3775,16 +3784,13 @@ inline int64_t syncGlobals() {
 /// what the threads leave for it (sections, jobs, their exceptions) while it sleeps; whatever that raises ends the sleep.
 inline void sleepTicks(int64_t ticks) {
     if (ticks <= 0) { gilYield(); return; }
-    // A thread sleeping inside a method of a shared object gives its section back for the sleep (else the main program, which only
-    // grants sections while it waits, would starve behind a polling thread) and takes it again afterwards.
-    int32_t heldDepth = 0;
-    if (g_isThread && g_secDepth > 0) { heldDepth = g_secDepth; g_secDepth = 0; sectionRelease(); }
+    // a thread sleeping inside a method of a shared object gives its section back for the sleep
+    SectionYield yield;
     int64_t deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
     blockUntil([] {
         if (!g_isThread) mainPoll();
         return g_unwind.active != 0;
     }, true, deadline);
-    if (heldDepth > 0) { sectionAcquire(); g_secDepth = heldDepth; }
 }
 
 /// The end of the main program: `terminate` runs its handler, then the main program waits for the fire threads (serving what they

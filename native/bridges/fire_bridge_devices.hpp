@@ -385,6 +385,7 @@ template <class P> inline bool waitUntil(P pred, int64_t ticks) {
     if (ms < 0) ms = 0;
     int64_t deadline = nowMs() + ms;
 #ifdef FIRE_THREADS
+    SectionYield yield;   // (a thread waiting inside a method of a shared object does not hold the main program meanwhile)
     return blockUntil(pred, true, deadline == 0 ? 1 : deadline);
 #else
     while (true) {

@@ -61,6 +61,14 @@ namespace fire.Runtime
 
         private bool WaitUntilTicks(Func<bool> condition, long ticks)
         {
+            // like Sleep: a thread waiting inside a method of a shared object gives its section back meanwhile (docs/THREADING_DESIGN.md section 7)
+            int heldSections = YieldGlobalsSection();
+            try { return WaitUntilTicksCore(condition, ticks); }
+            finally { RegainGlobalsSection(heldSections); }
+        }
+
+        private bool WaitUntilTicksCore(Func<bool> condition, long ticks)
+        {
             long deadline = Stopwatch.GetTimestamp() + (long)(ticks * (Stopwatch.Frequency / 10_000_000.0));
             while (true)
             {
