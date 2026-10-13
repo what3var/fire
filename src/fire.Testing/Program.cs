@@ -5991,13 +5991,13 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         try { print("".First()) } catch (IndexOutOfBoundsException e) { print("leer " + e.index) }
         """, "a", "leer 1");
 
-    // An extension of string only applies to string - an int does not know `Foo` (not a script error, but a VM error).
+    // An extension of string only applies to string - an int does not know `Foo` (a MissingMemberException).
     CheckExt("Erweiterung gilt nur fuer ihren Typ", """
         class extends string { int Foo() { return 1 } }
         print("s".Foo())
         int i = 5
         print(i.Foo())
-        """, "AUSNAHME: 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.");
+        """, "1", "UNBEHANDELT: Unhandled exception of type 'MissingMemberException': 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.");
 
     CheckExt("char-Methoden des Prelude", """
         char c = 'a'
@@ -16753,6 +16753,27 @@ else
             print(IO.Directory.GetFiles(dir).count)
             IO.Directory.Delete(dir, true)
             print(IO.Directory.Exists(dir))
+            """),
+        ("Aufruffehler: falsche Argumentzahl (Methode, Konstruktor, Lambda) als ArgumentException, unbekannte Methode/Feld als MissingMemberException", """
+            #lax
+            class P {
+                int x
+                construct(int x) { this.x = x }
+                int M(int a, int b = 2) { return a + b }
+            }
+            class Q { undefined Run(any p) { p.Nope(1) } }
+            any p = new P(1)
+            try { p.M() } catch (ArgumentException e) { print("arg: " + e.message) }
+            try { p.M(1, 2, 3) } catch (ArgumentException e) { print("arg3: " + e.message) }
+            try { p.Nope() } catch (MissingMemberException e) { print("missing: " + e.message) }
+            try { print(p.y) } catch (MissingMemberException e) { print("field: " + e.message) }
+            any f = (any a, any b) => a + b
+            try { f(1) } catch (ArgumentException e) { print("lambda: " + e.message) }
+            try { any q = new P() } catch (ArgumentException e) { print("ctor: " + e.message) }
+            any s = "abc"
+            try { print(s.Foo) } catch (MissingMemberException e) { print("str: " + e.message) }
+            try { new Q().Run(p) } catch (Exception e) { print("nested: " + e.message) }
+            print(p.M(5))
             """),
         ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m, Rueckgabe am Typ, Einheit aus der Initialisierung), Overflow, unitless-Pruefung zur Laufzeit", """
             int i0 = 5mm

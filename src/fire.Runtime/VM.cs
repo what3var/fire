@@ -14,6 +14,14 @@ namespace fire.Runtime
     /// where the call took place. ConstructedInstance is only set for NewObject/
     /// NewObjectOwned: there RETURN should not push the (discarded)
     /// return value of the constructor, but the newly created instance.</summary>
+    /// <summary>An error found inside an instruction that the script can catch (a call with the wrong number of arguments: `ArgumentException`, a member that
+    /// does not exist: `MissingMemberException`). Thrown where it is found, turned into the script exception by the execution loop (VM.RaiseScriptError).</summary>
+    public sealed class ScriptErrorException : InvalidOperationException
+    {
+        public string ClassName { get; }
+        public ScriptErrorException(string className, string message) : base(message) { ClassName = className; }
+    }
+
     internal readonly struct CallFrame
     {
         public readonly Chunk ReturnChunk;
@@ -840,7 +848,16 @@ namespace fire.Runtime
         private void RunLoop()
         {
             _ip = 0;
+            // (the try is outside the hot loop: an error inside an instruction leaves it, becomes a script exception and the loop goes on)
+            while (true)
+            {
+                try { RunLoopCore(); return; }
+                catch (ScriptErrorException error) { RaiseScriptError(error); }
+            }
+        }
 
+        private void RunLoopCore()
+        {
             while (true)
             {
                 var op = (OpCode)ReadByte();
@@ -1062,8 +1079,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(actor.ClassName);
             var proto = rc.FindMethod(message.MethodName, message.Args.Length)
-                ?? throw new InvalidOperationException(
-                    DescribeMethodNotFound(rc, message.MethodName, message.Args.Length));
+                ?? throw MethodNotFound(rc, message.MethodName, message.Args.Length);
             CheckArity(proto, message.Args.Length);
             var args = FillDefaultArgs(proto, message.Args, actor);
 
@@ -1406,6 +1422,15 @@ namespace fire.Runtime
         }
 
         private void RunNestedLoop(int targetFrameDepth)
+        {
+            while (true)
+            {
+                try { RunNestedLoopCore(targetFrameDepth); return; }
+                catch (ScriptErrorException error) { RaiseScriptError(error); if (_stopExecutionRequested) return; }
+            }
+        }
+
+        private void RunNestedLoopCore(int targetFrameDepth)
         {
             while (_frames.Count >= targetFrameDepth)
             {
@@ -2325,7 +2350,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
             {
@@ -2356,7 +2381,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
             {
@@ -2384,7 +2409,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             args = FillDefaultArgs(ctorProto, args, _currentThis);
 
             // The same instance continues to be constructed - 'this' stays
@@ -2444,7 +2469,7 @@ namespace fire.Runtime
                     Push(Value.MakeInt(target.AsString().Length));
                     return true;
                 }
-                throw new InvalidOperationException($"Strings have no field '{fieldName}' (only 'Length').");
+                throw new ScriptErrorException("MissingMemberException", $"Strings have no field '{fieldName}' (only 'Length').");
             }
 
             if (target.Kind == ValueKind.Array)
@@ -2455,7 +2480,7 @@ namespace fire.Runtime
                     Push(Value.MakeInt(target.AsArray().Length));
                     return true;
                 }
-                throw new InvalidOperationException($"Arrays have no field '{fieldName}' (only 'Length').");
+                throw new ScriptErrorException("MissingMemberException", $"Arrays have no field '{fieldName}' (only 'Length').");
             }
 
             if (target.Kind == ValueKind.Buffer)
@@ -2510,7 +2535,7 @@ namespace fire.Runtime
                 return result != null;
             }
 
-            throw new InvalidOperationException(
+            throw new ScriptErrorException("MissingMemberException",
                 $"Field '{fieldName}' does not exist on an instance of '{obj.ClassName}' " +
                 $"(and there is no 'get_{fieldName}' property either).");
         }
@@ -2824,7 +2849,7 @@ namespace fire.Runtime
                     Push(builtinResult);
                     return;
                 }
-                throw new InvalidOperationException(
+                throw new ScriptErrorException("MissingMemberException",
                     $"'{methodName}' ({args.Length} argument(s)) is not a known built-in method " +
                     $"on a value of type {target.Kind}.");
             }
@@ -2864,7 +2889,7 @@ namespace fire.Runtime
                     Push(ownershipValue);
                     return;
                 }
-                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                throw MethodNotFound(rc, methodName, args.Length);
             }
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
             {
@@ -3048,7 +3073,7 @@ namespace fire.Runtime
             var rc = ResolveClass(baseClassName);
             var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
-                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
             {
                 ThrowAccessDenied(
@@ -3237,7 +3262,7 @@ namespace fire.Runtime
             var callRc = ResolveClass(callClassName);
             var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
             if (callProto == null)
-                throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
+                throw MethodNotFound(callRc, callMethodName, callArgs.Length);
             if (!callProto.IsStatic)
                 throw new InvalidOperationException(
                     $"'{callMethodName}' on '{callClassName}' is not a static method - " +
@@ -5352,7 +5377,7 @@ namespace fire.Runtime
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             args = FillDefaultArgs(ctorProto, args, instance);
@@ -5844,7 +5869,7 @@ namespace fire.Runtime
         {
             if (argCount == proto.ParamCount) return;
             if (argCount < proto.ParamCount && RuntimeClass.AllTrailingHaveDefaults(proto, argCount)) return;
-            throw new InvalidOperationException(
+            throw new ScriptErrorException("ArgumentException",
                 $"Wrong number of arguments: expected {proto.ParamCount}" +
                 (argCount < proto.ParamCount ? " (the missing parameters have no default value)" : "") +
                 $", got {argCount}.");
@@ -5917,6 +5942,23 @@ namespace fire.Runtime
         /// "method exists, but no overload with this argument count"
         /// (and in the second case also lists the argument counts
         /// actually present, across the whole base-class chain).</summary>
+        /// <summary>A call that finds no method: an `ArgumentException` when the method exists with other numbers of arguments, otherwise a `MissingMemberException`.</summary>
+        private static ScriptErrorException MethodNotFound(RuntimeClass rc, string methodName, int argCount)
+        {
+            bool exists = false;
+            for (var c = rc; c != null && !exists; c = c.Base) exists = c.Methods.ContainsKey(methodName);
+            return new ScriptErrorException(exists ? "ArgumentException" : "MissingMemberException", DescribeMethodNotFound(rc, methodName, argCount));
+        }
+
+        /// <summary>Turns an error found inside an instruction (see ScriptErrorException) into a script exception that `try`/`catch` can catch; without the
+        /// prelude class it stays an internal error.</summary>
+        private void RaiseScriptError(ScriptErrorException error)
+        {
+            if (!_classes.ContainsKey(error.ClassName)) throw new InvalidOperationException(error.Message, error);
+            var instance = ConstructNested(ResolveClass(error.ClassName), new[] { Value.MakeString(error.Message) });
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
         private static string DescribeMethodNotFound(RuntimeClass rc, string methodName, int argCount)
         {
             var arities = new List<int>();

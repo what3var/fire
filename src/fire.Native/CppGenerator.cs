@@ -687,6 +687,7 @@ namespace fire.Native
                 // a lambda with another number of parameters than its declaration: an ArgumentException (checkLambda)
                 if (!_errorClasses.Contains("ArgumentException")) _errorClasses.Add("ArgumentException");
                 if (!_errorClasses.Contains("OverflowException")) _errorClasses.Add("OverflowException");   // (adaptUnit)
+                if (!_errorClasses.Contains("MissingMemberException")) _errorClasses.Add("MissingMemberException");   // (missingMethod, missingField)
                 foreach (var name in _errorClasses)
                     if (_program.Program.Classes.ContainsKey(name))
                     {
@@ -833,6 +834,27 @@ namespace fire.Native
 
         /// <summary>A method call: picks the implementation by the class of the receiver - or, for a string, number, array and so on,
         /// by the extension of its base type.</summary>
+        private static bool HasMethodNamed(RuntimeClass rc, string name)
+        {
+            for (var c = rc; c != null; c = c.Base)
+                if (c.Methods.ContainsKey(name)) return true;
+            return false;
+        }
+
+        /// <summary>The text of the VM for a call that finds no method (VM.DescribeMethodNotFound).</summary>
+        private static string DescribeMethodNotFound(RuntimeClass rc, string methodName, int argCount)
+        {
+            var arities = new List<int>();
+            for (var c = rc; c != null; c = c.Base)
+                if (c.Methods.TryGetValue(methodName, out var overloads)) arities.AddRange(overloads.Select(p => p.ParamCount));
+            if (arities.Count == 0) return $"Method '{methodName}' not found on '{rc.Name}'.";
+            return $"Method '{methodName}' on '{rc.Name}' has no overload with {argCount} argument(s) (available: {string.Join(", ", arities.Distinct().OrderBy(x => x))} argument(s)).";
+        }
+
+        /// <summary>The text of the VM for a `new` that finds no constructor (VM.DescribeConstructorNotFound).</summary>
+        private static string DescribeConstructorNotFound(RuntimeClass rc, int argCount) =>
+            $"Class '{rc.Name}' has no constructor with {argCount} argument(s) (available: {string.Join(", ", rc.Constructors.Keys.OrderBy(x => x))} argument(s)).";
+
         private string Dispatcher(string name, int argc)
         {
             var byFunc = new Dictionary<Func, List<int>>();
@@ -922,7 +944,17 @@ namespace fire.Native
             {
                 if (byFunc.Count == 0 && extensions.Count == 0 && builtins.Count == 0 && !enumeratorOfArray && argc > 0)
                     sb.AppendLine("    " + string.Concat(Enumerable.Range(0, argc).Select(i => $"(void)a{i}; ")).TrimEnd());   // no class has the method: nothing uses the arguments
-                sb.AppendLine($"    fatal(\"Method '{name}' not found on this value.\");");
+                // a class that has the method with other numbers of arguments: an ArgumentException, otherwise a MissingMemberException (like the VM)
+                var otherArity = _classList.Where(c => HasMethodNamed(c.Rc, name)).ToList();
+                if (otherArity.Count > 0)
+                {
+                    sb.AppendLine("    if (self.kind == K_Class) switch (asObj(self)->cls) {");
+                    foreach (var c in otherArity)
+                        sb.AppendLine($"        case {c.Id}: return fireError(\"ArgumentException\", {CString(DescribeMethodNotFound(c.Rc, name, argc))});");
+                    sb.AppendLine("        default: break;");
+                    sb.AppendLine("    }");
+                }
+                sb.AppendLine($"    return missingMethod(self, {CString(name)}, {argc});");
             }
             sb.AppendLine("}");
             if (WrapDispatchers) sb.Append(ActorWrapper(name, argc));
@@ -982,7 +1014,7 @@ namespace fire.Native
             if (indexByClass.Count == 0)
             {
                 // no object of the program has such a field: only a built-in member (or dead code) can get here
-                sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    fatal(\"Field '{name}' not found on this value.\");\n}}");
+                sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    return missingField(v, {CString(name)});\n}}");
                 sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)v; (void)x; fatal(\"Field '{name}' cannot be assigned.\"); }}");
                 sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
                 return sb.ToString();
@@ -999,7 +1031,7 @@ namespace fire.Native
                     foreach (var kv in group) cases.Append($"        case {kv.Key}:\n");
                     cases.Append($"            idx = {group.Key}; break;\n");
                 }
-                indexCode = "    uint32_t idx = 0;\n    switch (o->cls) {\n" + cases + $"        default: fatal(\"Field '{name}' not found on this object.\");\n    }}";
+                indexCode = "    uint32_t idx = 0;\n    switch (o->cls) {\n" + cases + $"        default: missingField(v, {CString(name)}); FIELD_MISSING_RETURN\n    }}";
             }
             // a field declared with a unit (`int len : mm`) checks every assignment
             var unitChecks = new StringBuilder();
@@ -1007,9 +1039,12 @@ namespace fire.Native
                 if (indexByClass.ContainsKey(cls.Id) && cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit)
                     unitChecks.Append($"        case {cls.Id}: x = {AdaptUnitCall("x", requiredUnit)}; break;\n");
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
-            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
-                 + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
-                 + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{indexCode}\n    return PtrV(&o->fields()[idx]);\n}}\n";
+            // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
+            string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
+            string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
+            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return o->fields()[idx];\n}}\n"
+                 + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ missingField(v, {CString(name)}); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{voidIndex}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
+                 + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&o->fields()[idx]);\n}}\n";
         }
 
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
@@ -2337,7 +2372,16 @@ namespace fire.Native
                     bool owned = ins.Op == OpCode.NewObjectOwned;
                     Need(argc + (owned ? 1 : 0));
                     var cls = RegisterClass(Str(ins.A[0]));
-                    var ctor = cls.Rc.FindConstructor(argc) ?? throw new NativeNotSupportedException($"class {cls.Rc.Name} has no constructor with {argc} argument(s)");
+                    var ctor = cls.Rc.FindConstructor(argc);
+                    if (ctor == null)
+                    {
+                        // no constructor takes that many arguments: an ArgumentException at run time (like the VM)
+                        int errorSlot = d - argc - (owned ? 1 : 0);
+                        E($"{S(errorSlot)} = fireError(\"ArgumentException\", {CString(DescribeConstructorNotFound(cls.Rc, argc))});");
+                        Check();
+                        SetR(errorSlot, false);
+                        d = errorSlot + 1; return Next();
+                    }
                     AccessCheck(cls.Rc, ctor.Access ?? AccessModifier.Public, $"Constructor of '{cls.Rc.Name}' is {DescribeAccess(ctor.Access ?? AccessModifier.Public)} and cannot be called from here.");
                     var target = GetFunc(ctor, FuncKind.Ctor);
                     int slot = d - argc - (owned ? 1 : 0);

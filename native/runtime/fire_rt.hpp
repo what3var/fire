@@ -1214,10 +1214,17 @@ inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const 
 inline Value lamOn(Value lam) { return lamOf(lam)->on; }
 inline Value lamCapture(Value lam, uint32_t index) { return lamOf(lam)->caps()[index]; }
 
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
 /// `callee(args...)`
 FIRE_COLD inline Value callLamDefaults(Value callee, int argc, const Value* args, OwnList* list) {
     Lam* l = lamOf(callee);
-    if (!l->dflt || (uint32_t)argc > l->nparams || (uint32_t)argc < l->nreq || l->nparams > 16) fatal("A lambda was called with the wrong number of arguments.");
+    if (!l->dflt || (uint32_t)argc > l->nparams || (uint32_t)argc < l->nreq || l->nparams > 16) {
+        char text[160];
+        std::snprintf(text, sizeof text, "Wrong number of arguments: expected %u%s, got %d.", l->nparams, (uint32_t)argc < l->nparams ? " (the missing parameters have no default value)" : "", argc);
+        return fireError("ArgumentException", text);
+    }
     Value full[16];
     for (int i = 0; i < argc; i++) full[i] = args[i];
     for (uint32_t i = (uint32_t)argc; i < l->nparams; i++) full[i] = adoptV(l->dflt(callee, i), list);
@@ -2035,6 +2042,33 @@ inline Value fireError(const char* cls, const char* utf8) {
     fatal(utf8);
 }
 #endif
+
+/// The kind of a value as the VM names it (in the texts of the errors of calls and fields).
+inline const char* valueKindText(Value v) {
+    switch (v.kind) {
+        case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_Pointer: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        default: return "Undefined";
+    }
+}
+
+/// A method that the value does not have (a class that has it with other numbers of arguments is reported by the dispatcher itself): a MissingMemberException.
+FIRE_COLD inline Value missingMethod(Value self, const char* name, int argc) {
+    char text[400];
+    if (self.kind == K_Class) std::snprintf(text, sizeof text, "Method '%s' not found on '%s'.", name, className(asObj(self)->cls));
+    else std::snprintf(text, sizeof text, "'%s' (%d argument(s)) is not a known built-in method on a value of type %s.", name, argc, valueKindText(self));
+    return fireError("MissingMemberException", text);
+}
+
+/// A field that the value does not have: a MissingMemberException (the texts of the VM).
+FIRE_COLD inline Value missingField(Value v, const char* name) {
+    char text[400];
+    if (v.kind == K_Class) std::snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'get_%s' property either).", name, className(asObj(v)->cls), name);
+    else if (v.kind == K_String) std::snprintf(text, sizeof text, "Strings have no field '%s' (only 'Length').", name);
+    else if (v.kind == K_Array) std::snprintf(text, sizeof text, "Arrays have no field '%s' (only 'Length').", name);
+    else std::snprintf(text, sizeof text, "Field '%s' not found on a value of type %s.", name, valueKindText(v));
+    return fireError("MissingMemberException", text);
+}
 
 #ifdef FIRE_REFLECTION
 /// A reflection call that cannot be done: a ReflectionException, or the end of the program when there are no exceptions.

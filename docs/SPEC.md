@@ -926,7 +926,7 @@ method infrastructure therefore works automatically.
 ### 7.1 Base class
 
 There is a built-in base class `Exception` (a class of the prelude, with a `message`) from which all exception classes inherit. The errors of the runtime (`IndexOutOfBoundsException`, `DestroyedException`,
-`AccessDeniedException`, `UnitMismatchException`, `OverflowException`, `ReflectionException`) derive from it as well. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
+`AccessDeniedException`, `UnitMismatchException`, `OverflowException`, `ArgumentException`, `MissingMemberException`, `ReflectionException`) derive from it as well. A call with a number of arguments that no method, constructor or lambda takes is an `ArgumentException`; a method or field that the value does not have (`obj.Nope()`, `p.Mesage`) is a `MissingMemberException` - both can be caught (and the type checker reports them already where it knows the class: `TC002`, `TC008`). Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
 simply has an empty message:
 
 ```
