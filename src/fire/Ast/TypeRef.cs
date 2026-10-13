@@ -39,12 +39,16 @@ namespace fire.Ast
     /// EMPTY brackets distinguish this from the bit width (`int[8]`, always with a
     /// number). `ArrayRank` counts these bracket pairs (0 = no array).
     ///
+    /// TypeArgs: the type arguments of a generic class or interface (`List&lt;int&gt; values`, `Map&lt;string, List&lt;int&gt;&gt;`); null without
+    /// `&lt;...&gt;` - a generic class written without them is its raw form (every type argument `any`). They are a matter of the type checker only:
+    /// at runtime `List&lt;int&gt;` is a `List` (no specialisation, SPEC "Generic classes"). TypeArgCount is their number.
+    ///
     /// LambdaSignature: set if this TypeRef is a lambda type
     /// (`BaseName == "lambda"`) - `[ReturnType] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// see LambdaSignature docs and SPEC "Lambda types with signature".
     /// </summary>
     [MemoryPackable]
-    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0)
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null)
     {
         /// <summary>Sentinel for `BaseName` when a declaration uses `var`
         /// together with an EXPLICIT unit, but WITHOUT an explicit type
@@ -114,6 +118,7 @@ namespace fire.Ast
                 return ret + "lambda" + ps;
             }
             string s = BitWidth != null ? $"{BaseName}[{BitWidth}]" : BaseName;
+            if (TypeArgs is { Count: > 0 }) s += "<" + string.Join(", ", TypeArgs) + ">";
             return s + new string('*', PointerDepth);
         }
     }

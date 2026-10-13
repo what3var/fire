@@ -141,13 +141,15 @@ namespace fire.Standard
                 }
             }
 
-            interface IEnumerator {
+            // `IEnumerable<T>` / `IEnumerator<T>`: `foreach` over a class that implements `IEnumerable<int>` takes `int`s; written without
+            // a type argument (`class Bag : IEnumerable`) the elements are `any`
+            interface IEnumerator<T> {
                 bool MoveNext()
-                any GetCurrent()
+                T GetCurrent()
             }
 
-            interface IEnumerable {
-                IEnumerator GetEnumerator()
+            interface IEnumerable<T> {
+                IEnumerator<T> GetEnumerator()
             }
 
             class ListEnumerator : IEnumerator {
@@ -172,7 +174,7 @@ namespace fire.Standard
             }
 
             // The enumerator of a List: reads through the list, so it stays valid when the list grows (its backing array is replaced).
-            class ListIter : IEnumerator {
+            class ListIter<T> : IEnumerator<T> {
                 any list
                 int count
                 int index
@@ -188,12 +190,13 @@ namespace fire.Standard
                     return this.index < this.count
                 }
 
-                any GetCurrent() {
+                T GetCurrent() {
                     return this.list.items[this.index]
                 }
             }
 
-            class List : IEnumerable {
+            // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
+            class List<T> : IEnumerable<T> {
                 any items
                 int count
 
@@ -219,7 +222,7 @@ namespace fire.Standard
                     }
                 }
 
-                undefined Add(any value) {
+                undefined Add(T value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -229,11 +232,11 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
-                operator[](int index) {
+                T operator[](int index) {
                     return this.items[index]
                 }
 
-                operator[](int index, any value) {
+                undefined operator[](int index, T value) {
                     if (value is of class)
                         try value.TakeTo(this)
                     this.items[index] = value
@@ -251,7 +254,7 @@ namespace fire.Standard
                 }
 
                 // puts `value` in at `index`; the elements from there on move down
-                undefined Insert(int index, any value) {
+                undefined Insert(int index, T value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -267,7 +270,7 @@ namespace fire.Standard
                 }
 
                 // the index of `value` (the same object), -1 if it is not in the list
-                int IndexOf(any value) {
+                int IndexOf(T value) {
                     var i = 0
                     while (i < this.count) {
                         if (this.items[i] == value) {
@@ -279,7 +282,7 @@ namespace fire.Standard
                 }
 
                 // removes `value` (the first one); false if it is not in the list
-                bool Remove(any value) {
+                bool Remove(T value) {
                     var at = this.IndexOf(value)
                     if (at < 0) {
                         return false
@@ -312,8 +315,8 @@ namespace fire.Standard
                     delete old
                 }
 
-                ListIter GetEnumerator() {
-                    return new ListIter(this, this.count)
+                ListIter<T> GetEnumerator() {
+                    return new ListIter<T>(this, this.count)
                 }
             }
             """;

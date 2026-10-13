@@ -23,11 +23,13 @@ namespace fire.Compiler
     internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
-    internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null)
+    internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
+        IReadOnlyList<StaticType>? Args = null)
     {
         public bool Equals(StaticType? other) =>
             other is not null && Kind == other.Kind && Class == other.Class && Equals(Element, other.Element) && ParamCount == other.ParamCount && Equals(Return, other.Return)
-            && (Params == null ? other.Params == null : other.Params != null && Params.SequenceEqual(other.Params));
+            && (Params == null ? other.Params == null : other.Params != null && Params.SequenceEqual(other.Params))
+            && (Args == null ? other.Args == null : other.Args != null && Args.SequenceEqual(other.Args));
         public override int GetHashCode() => HashCode.Combine(Kind, Class, Element, ParamCount, Return);
 
         public static readonly StaticType Dynamic = new(StaticKind.Dynamic);
@@ -42,11 +44,13 @@ namespace fire.Compiler
         /// <summary>The type `class`: any object instance (not a base value, not an array, not a lambda).</summary>
         public static readonly StaticType Object = new(StaticKind.Object);
         public static StaticType ArrayOf(StaticType element) => new(StaticKind.Array, Element: element);
+        /// <summary>An instance of a class or interface; `args` are its type arguments (null: the raw form, every type argument `any`).</summary>
+        public static StaticType ClassOf(string name, IReadOnlyList<StaticType>? args = null) => new(StaticKind.Class, name, Args: args);
         public static StaticType LambdaOf(int paramCount, StaticType? returns, IReadOnlyList<StaticType>? parameters = null) => new(StaticKind.Lambda, ParamCount: paramCount, Return: returns, Params: parameters);
         public bool IsDynamic => Kind == StaticKind.Dynamic;
         public override string ToString() => Kind switch
         {
-            StaticKind.Class => Class!,
+            StaticKind.Class => GenericClassNames.PlainName(Class!) + (Args is { Count: > 0 } ? "<" + string.Join(", ", Args) + ">" : ""),
             StaticKind.Object => "class",
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
@@ -71,6 +75,7 @@ namespace fire.Compiler
         public const string NoReturnTypeCode = "TC005";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
+        private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<int, bool> _strictBySource = new();
         private readonly TypeCheckMode _defaultMode;
         private readonly int _firstUserSource;
@@ -99,6 +104,7 @@ namespace fire.Compiler
             var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource);
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
+            checker.CollectInterfaces(program);
             checker._scopes.Add(new Dictionary<string, StaticType>());
             foreach (var stmt in program)
             {
@@ -116,6 +122,15 @@ namespace fire.Compiler
             foreach (var d in found.Where(d => d.IsWarning)) DiagnosticCollector.Current?.Add(d);
             var errors = found.Where(d => d.IsError).ToList();
             if (errors.Count > 0) throw new TypeCheckException(errors);
+        }
+
+        private void CollectInterfaces(IReadOnlyList<Stmt> statements)
+        {
+            foreach (var stmt in statements)
+            {
+                if (stmt is InterfaceDecl i) _interfaces[i.Name] = i;
+                else if (stmt is NamespaceDecl n) CollectInterfaces(n.Members);
+            }
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -136,6 +151,9 @@ namespace fire.Compiler
         {
             if (value.IsDynamic || target.IsDynamic || value.Kind == StaticKind.Undefined) return true;
             if (target.Kind == StaticKind.String) return true;                       // everything converts to string (ToString)
+            // an array is an `IEnumerable` (of its elements)
+            if (value.Kind == StaticKind.Array && target is { Kind: StaticKind.Class, Class: "IEnumerable" })
+                return target.Args is not [var wanted] || Assignable(value.Element!, wanted);
             if (value.Kind == StaticKind.Array || target.Kind == StaticKind.Array)
                 return value.Kind == target.Kind && Assignable(value.Element!, target.Element!);
             if (value.Kind == StaticKind.Lambda && target.Kind == StaticKind.Lambda)
@@ -150,7 +168,13 @@ namespace fire.Compiler
             if (target.Kind == StaticKind.Object) return value.Kind is StaticKind.Class or StaticKind.Object;   // `class` holds objects only
             if (value.Kind == StaticKind.Object) return target.Kind is StaticKind.Class;                          // (an object may be the class the code expects)
             if (value.Kind == StaticKind.Class && target.Kind == StaticKind.Class)
-                return DerivesFrom(value.Class!, target.Class!) || DerivesFrom(target.Class!, value.Class!);   // (a downcast is let through: the code may know better)
+            {
+                if (!DerivesFrom(value.Class!, target.Class!) && !DerivesFrom(target.Class!, value.Class!)) return false;   // (a downcast is let through: the code may know better)
+                // `List<int>` is not a `List<string>`: the type arguments of the same class must agree (a raw form or an `any` agrees with everything)
+                if (target.Args == null) return true;
+                var view = value.Class == target.Class ? value : AsBase(value, target.Class!);
+                return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second);
+            }
             return value.Kind == target.Kind;
         }
 
@@ -175,27 +199,97 @@ namespace fire.Compiler
         // Types of declarations
         // -------------------------------------------------------------------------------------------------------------
         /// <summary>The static type a type annotation stands for; null for `var` (no annotation). `arrayRanks` are the brackets after the name (`int values[]`).</summary>
-        private StaticType? Declared(TypeRef? type, int arrayRanks = 0)
+        private StaticType? Declared(TypeRef? type, int arrayRanks = 0, IReadOnlyDictionary<string, StaticType>? map = null)
         {
             if (type == null || type.IsInferred) return null;
             if (type.PointerDepth > 0) return StaticType.Dynamic;
-            var result = type.BaseName == "lambda" ? DeclaredLambda(type.LambdaSignature) : FromName(type.BaseName);
+            var result = type.BaseName == "lambda" ? DeclaredLambda(type.LambdaSignature, map) : FromName(type.BaseName, map);
+            // `List<int>`: the generic class (named `List`1` next to a non-generic `List`) with its type arguments
+            if (type.TypeArgs is { Count: > 0 } typeArgs && result.Kind == StaticKind.Class)
+                result = StaticType.ClassOf(GenericName(PlainName(type.BaseName), typeArgs.Count), typeArgs.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
         }
 
         /// <summary>`[Return] lambda<P1, ..., Pn>`: the number of parameters and the return type (a selector `lambda member<T>` takes one parameter).</summary>
-        private StaticType DeclaredLambda(LambdaSignature? signature)
+        private StaticType DeclaredLambda(LambdaSignature? signature, IReadOnlyDictionary<string, StaticType>? map = null)
         {
             if (signature == null) return StaticType.LambdaOf(0, null);
             if (signature.IsSelector) return StaticType.LambdaOf(-1, null);
-            return StaticType.LambdaOf(signature.ParamTypeNames.Count, signature.ReturnTypeName != null ? FromName(signature.ReturnTypeName) : null,
-                signature.ParamTypeNames.Select(FromName).ToList());
+            return StaticType.LambdaOf(signature.ParamTypeNames.Count, signature.ReturnTypeName != null ? FromName(signature.ReturnTypeName, map) : null,
+                signature.ParamTypeNames.Select(n => FromName(n, map)).ToList());
+        }
+
+        /// <summary>The name of the generic class `name` with `count` type parameters (`Box`1` when a non-generic `Box` exists, otherwise `Box`).</summary>
+        private string GenericName(string name, int count)
+        {
+            string mangled = GenericClassNames.Mangle(name, count);
+            return _classes.ContainsKey(mangled) || _interfaces.ContainsKey(mangled) ? mangled : name;
+        }
+
+        /// <summary>What the type parameters of a generic class stand for in one of its instances (`T` of `List<int>`: `int`; of the raw `List`: `any`).</summary>
+        private static Dictionary<string, StaticType>? MapFor(IReadOnlyList<TypeParam>? typeParams, IReadOnlyList<StaticType>? args)
+        {
+            if (typeParams is not { Count: > 0 }) return null;
+            var map = new Dictionary<string, StaticType>();
+            for (int i = 0; i < typeParams.Count; i++) map[typeParams[i].Name] = args != null && i < args.Count ? args[i] : StaticType.Dynamic;
+            return map;
+        }
+
+        /// <summary>The class and its base classes, each with what its type parameters stand for in <paramref name="receiver"/>.</summary>
+        private IEnumerable<(ClassDecl Decl, Dictionary<string, StaticType>? Map)> Chain(StaticType receiver)
+        {
+            string? name = receiver.Class;
+            var args = receiver.Args;
+            for (int guard = 0; guard < 64 && name != null && _classes.TryGetValue(name, out var decl); guard++)
+            {
+                var map = MapFor(decl.TypeParams, args);
+                yield return (decl, map);
+                var baseRef = decl.BaseRefs?.FirstOrDefault(b => _classes.ContainsKey(NameOf(b)));
+                if (baseRef == null) yield break;
+                name = NameOf(baseRef);
+                args = baseRef.TypeArgs?.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList();
+            }
+        }
+
+        /// <summary>The class or interface a base reference names (`Command<IDevice>`: the generic `Command`).</summary>
+        private string NameOf(TypeRef baseRef) =>
+            baseRef.TypeArgs is { Count: > 0 } a ? GenericName(PlainName(baseRef.BaseName), a.Count) : PlainName(baseRef.BaseName);
+
+        /// <summary>`value` seen as its base class or interface `baseName` (with the type arguments it has there); null when it is none.</summary>
+        private StaticType? AsBase(StaticType value, string baseName)
+        {
+            foreach (var (decl, map) in Chain(value))
+            {
+                if (decl.Name == baseName) return StaticType.ClassOf(decl.Name, map == null ? null : decl.TypeParams!.Select(p => map[p.Name]).ToList());
+                foreach (var b in decl.BaseRefs ?? Array.Empty<TypeRef>())
+                    if (NameOf(b) == baseName) return StaticType.ClassOf(baseName, b.TypeArgs?.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
+            }
+            return null;
+        }
+
+        /// <summary>The type of the elements `foreach` takes from a value: of an array its element type, of an `IEnumerable<T>` `T`, otherwise what
+        /// the `GetCurrent()` of the enumerator of its `GetEnumerator()` returns (not known: `any`).</summary>
+        private StaticType ElementOf(StaticType iterable)
+        {
+            if (iterable.Kind == StaticKind.Array) return iterable.Element!;
+            if (iterable.Kind != StaticKind.Class) return StaticType.Dynamic;
+            if (AsBase(iterable, "IEnumerable") is { Args: [var element] }) return element;
+            if (iterable.Class == "IEnumerable" && iterable.Args is [var own]) return own;
+            if (FindMethod(iterable, "GetEnumerator", 0, out var map) is { ReturnType: { } enumeratorType }
+                && Declared(enumeratorType, 0, map) is { Kind: StaticKind.Class } enumerator)
+            {
+                if (enumerator.Class == "IEnumerator" && enumerator.Args is [var current]) return current;
+                if (AsBase(enumerator, "IEnumerator") is { Args: [var viaInterface] }) return viaInterface;
+                if (FindMethod(enumerator, "GetCurrent", 0, out var currentMap) is { ReturnType: { } currentType }) return Declared(currentType, 0, currentMap) ?? StaticType.Dynamic;
+            }
+            return StaticType.Dynamic;
         }
 
         /// <summary>The static type of a type name (a keyword, `any`, `class`, a class; everything else - an enum, an interface, a type parameter - is not known).</summary>
-        private StaticType FromName(string name)
+        private StaticType FromName(string name, IReadOnlyDictionary<string, StaticType>? map = null)
         {
+            if (map != null && map.TryGetValue(name, out var substituted)) return substituted;
             switch (name)
             {
                 case "int": case "byte": return StaticType.Int;
@@ -209,10 +303,16 @@ namespace fire.Compiler
                 case "any": return StaticType.Dynamic;
             }
             string plain = PlainName(name);
-            return _classes.ContainsKey(plain) ? new StaticType(StaticKind.Class, plain) : StaticType.Dynamic;
+            return _classes.ContainsKey(plain) || _interfaces.ContainsKey(plain) ? StaticType.ClassOf(plain) : StaticType.Dynamic;
         }
 
-        private StaticType DeclaredOrDynamic(TypeRef? type, int arrayRanks = 0) => Declared(type, arrayRanks) ?? StaticType.Dynamic;
+        private StaticType DeclaredOrDynamic(TypeRef? type, int arrayRanks = 0, IReadOnlyDictionary<string, StaticType>? map = null) => Declared(type, arrayRanks, map) ?? StaticType.Dynamic;
+
+        /// <summary>The type of `this` in the class being checked (its type parameters are `any` there).</summary>
+        private StaticType ThisClass() =>
+            // `class extends array/string/int` becomes the class `$array`/`$string`/`$int`: `this` there is a value of that base type
+            _class!.Name.StartsWith('$') ? (_class.Name == "$array" ? StaticType.ArrayOf(StaticType.Dynamic) : FromName(_class.Name.Substring(1)))
+            : StaticType.ClassOf(_class.Name);
 
         private void Push() => _scopes.Add(new Dictionary<string, StaticType>());
         private void Pop() => _scopes.RemoveAt(_scopes.Count - 1);
@@ -222,53 +322,60 @@ namespace fire.Compiler
         {
             for (int i = _scopes.Count - 1; i >= 0; i--)
                 if (_scopes[i].TryGetValue(name, out var type)) return type;
-            return _class != null && FindMember(_class.Name, name) is { } member ? member : StaticType.Dynamic;
+            return _class != null && FindMember(ThisClass(), name) is { } member ? member : StaticType.Dynamic;
         }
 
-        /// <summary>The type of a field or property `name` of the class (or of the classes it derives from); null when there is none.</summary>
-        private StaticType? FindMember(string className, string name)
+        /// <summary>The type of a field or property `name` of an instance (looked up in its class and the classes it derives from, with their type
+        /// parameters replaced by the instance's type arguments); null when there is none.</summary>
+        private StaticType? FindMember(StaticType receiver, string name)
         {
-            for (int guard = 0; guard < 64 && _classes.TryGetValue(className, out var decl); guard++)
-            {
+            foreach (var (decl, map) in Chain(receiver))
                 foreach (var member in decl.Members)
                 {
-                    if (member is FieldDecl f && f.Name == name) return DeclaredOrDynamic(f.Type, f.ArrayRanks.Count);
-                    if (member is PropertyDecl p && p.Name == name) return DeclaredOrDynamic(p.Type);
+                    if (member is FieldDecl f && f.Name == name) return DeclaredOrDynamic(f.Type, f.ArrayRanks.Count, map);
+                    if (member is PropertyDecl p && p.Name == name) return DeclaredOrDynamic(p.Type, 0, map);
                 }
-                var next = decl.BaseRefs?.Select(b => PlainName(b.BaseName)).FirstOrDefault(n => _classes.ContainsKey(n));
-                if (next == null) return null;
-                className = next;
+            return null;
+        }
+
+        private StaticType? FindMember(string className, string name) => FindMember(StaticType.ClassOf(className), name);
+
+        /// <summary>The one method `name` of an instance that takes `argc` arguments (the nearest class that has a method of that name decides; of an
+        /// interface its signature); null when there is none or several fit (an overload). <paramref name="map"/>: what the type parameters stand for.</summary>
+        private MethodDecl? FindMethod(StaticType receiver, string name, int argc, out Dictionary<string, StaticType>? map)
+        {
+            map = null;
+            if (receiver.Class != null && _interfaces.TryGetValue(receiver.Class, out var iface))
+            {
+                var sigs = iface.Methods.Where(m => m.Name == name && Fits(m.Params, argc)).ToList();
+                if (sigs.Count != 1) return null;
+                map = MapFor(iface.TypeParams, receiver.Args);
+                return new MethodDecl(0, sigs[0].Line, sigs[0].ReturnType, sigs[0].Name, sigs[0].Params, new Stmt.BlockStmt(0, sigs[0].Line, Array.Empty<Stmt>()));
+            }
+            foreach (var (decl, classMap) in Chain(receiver))
+            {
+                var named = decl.Members.OfType<MethodDecl>().Where(m => m.Name == name).ToList();
+                if (named.Count == 0) continue;
+                var fitting = named.Where(m => Fits(m.Params, argc)).ToList();
+                if (fitting.Count != 1) return null;
+                map = classMap;
+                return fitting[0];
             }
             return null;
         }
 
-        /// <summary>The one method `name` that takes `argc` arguments (the nearest class that has a method of that name decides); null when there is none or several fit (an overload).</summary>
-        private MethodDecl? FindMethod(string className, string name, int argc)
-        {
-            for (int guard = 0; guard < 64 && _classes.TryGetValue(className, out var decl); guard++)
-            {
-                var named = decl.Members.OfType<MethodDecl>().Where(m => m.Name == name).ToList();
-                if (named.Count > 0)
-                {
-                    var fitting = named.Where(m => Fits(m.Params, argc)).ToList();
-                    return fitting.Count == 1 ? fitting[0] : null;
-                }
-                var next = decl.BaseRefs?.Select(b => PlainName(b.BaseName)).FirstOrDefault(n => _classes.ContainsKey(n));
-                if (next == null) return null;
-                className = next;
-            }
-            return null;
-        }
+        private MethodDecl? FindMethod(string className, string name, int argc) => FindMethod(StaticType.ClassOf(className), name, argc, out _);
 
         private static bool Fits(IReadOnlyList<LambdaParam> parameters, int argc) =>
             argc <= parameters.Count && argc >= parameters.Count(p => p.DefaultValue == null);
 
-        private void CheckArguments(IReadOnlyList<LambdaParam> parameters, IReadOnlyList<StaticType> args, IReadOnlyList<Expr> argExprs, string callee)
+        private void CheckArguments(IReadOnlyList<LambdaParam> parameters, IReadOnlyList<StaticType> args, IReadOnlyList<Expr> argExprs, string callee,
+            IReadOnlyDictionary<string, StaticType>? map = null)
         {
             for (int i = 0; i < args.Count && i < parameters.Count; i++)
             {
                 if (parameters[i].ByRef) continue;
-                var declared = Declared(parameters[i].Type, parameters[i].ArrayRanks.Count);
+                var declared = Declared(parameters[i].Type, parameters[i].ArrayRanks.Count, map);
                 if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameters[i].Name}' of '{callee}'", ArgumentCode);
             }
         }
@@ -305,7 +412,7 @@ namespace fire.Compiler
                     {
                         var iterable = Infer(fe.Iterable);
                         Push();
-                        Declare(fe.VarName, iterable.Kind == StaticKind.Array ? iterable.Element! : StaticType.Dynamic);
+                        Declare(fe.VarName, ElementOf(iterable));
                     }
                     CheckScoped(fe.Body);
                     Pop();
@@ -372,7 +479,7 @@ namespace fire.Compiler
                     {
                         // `class extends string { ... }`: `this` is a value of the extended type
                         var previousThis = _thisType;
-                        _thisType = ext.TargetRef.BaseName == "array" ? StaticType.ArrayOf(StaticType.Dynamic) : DeclaredOrDynamic(ext.TargetRef);
+                        _thisType = ext.TargetRef.BaseName is "array" or "$array" ? StaticType.ArrayOf(StaticType.Dynamic) : DeclaredOrDynamic(ext.TargetRef);
                         CheckMembers(ext.Members, ext.TargetRef.BaseName);
                         _thisType = previousThis;
                         break;
@@ -520,7 +627,7 @@ namespace fire.Compiler
                         _ => StaticType.Dynamic,
                     };
                 case IdentifierExpr id: return Lookup(id.Name);
-                case ThisExpr: return _thisType ?? (_class != null ? new StaticType(StaticKind.Class, _class.Name) : StaticType.Dynamic);
+                case ThisExpr: return _thisType ?? (_class != null ? ThisClass() : StaticType.Dynamic);
                 case InterpolatedStringExpr s:
                     foreach (var part in s.Parts) if (part is InterpolationExprPart ep) Infer(ep.Expression);
                     return StaticType.String;
@@ -633,7 +740,7 @@ namespace fire.Compiler
             var target = Infer(ix.Target);
             Infer(ix.Index);
             if (target.Kind == StaticKind.Array) return target.Element!;
-            if (target.Kind == StaticKind.Class && FindMethod(target.Class!, "SetIndex", 2) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count);
+            if (target.Kind == StaticKind.Class && FindMethod(target, "SetIndex", 2, out var map) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count, map);
             return StaticType.Dynamic;
         }
 
@@ -642,11 +749,12 @@ namespace fire.Compiler
         {
             var target = Infer(ix.Target);
             Infer(ix.Index);
+            Dictionary<string, StaticType>? map = null;
             return target.Kind switch
             {
                 StaticKind.Array => target.Element!,
                 StaticKind.String => StaticType.Char,
-                StaticKind.Class when FindMethod(target.Class!, "GetIndex", 1) is { ReturnType: { } returns } => DeclaredOrDynamic(returns),
+                StaticKind.Class when FindMethod(target, "GetIndex", 1, out map) is { ReturnType: { } returns } => DeclaredOrDynamic(returns, 0, map),
                 _ => StaticType.Dynamic,
             };
         }
@@ -655,10 +763,10 @@ namespace fire.Compiler
         private StaticType InferMember(MemberExpr m)
         {
             var target = Infer(m.Target);
-            if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = new StaticType(StaticKind.Class, staticClass);
+            if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
             return target.Kind switch
             {
-                StaticKind.Class when FindMember(target.Class!, m.Name) is { } member => member,
+                StaticKind.Class when FindMember(target, m.Name) is { } member => member,
                 StaticKind.Array when m.Name == "length" => StaticType.Int,
                 StaticKind.String when m.Name == "Length" => StaticType.Int,
                 _ => StaticType.Dynamic,
@@ -724,34 +832,35 @@ namespace fire.Compiler
         {
             // the callee first: the declared types of its parameters are what the arguments go to (a lambda argument takes its types from there)
             MethodDecl? method = null;
+            Dictionary<string, StaticType>? map = null;
             StaticType? lambda = null;
             string name = "the lambda";
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
-                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = new StaticType(StaticKind.Class, staticClass);
+                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
                 if (target.Kind == StaticKind.Class)
                 {
-                    method = FindMethod(target.Class!, m.Name, c.Args.Count);
-                    if (method == null && FindMember(target.Class!, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
+                    method = FindMethod(target, m.Name, c.Args.Count, out map);
+                    if (method == null && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
                 }
             }
             else if (c.Callee is IdentifierExpr id)
             {
-                if (_class != null && !IsLocal(id.Name)) method = FindMethod(_class.Name, id.Name, c.Args.Count);
+                if (_class != null && !IsLocal(id.Name)) method = FindMethod(ThisClass(), id.Name, c.Args.Count, out map);
                 if (method == null && Lookup(id.Name) is { Kind: StaticKind.Lambda } variable) { lambda = variable; name = id.Name; }
             }
             else if (Infer(c.Callee) is { Kind: StaticKind.Lambda } callee) lambda = callee;
 
             var expected = new List<StaticType?>();
             for (int i = 0; i < c.Args.Count; i++)
-                expected.Add(method != null && i < method.Params.Count && !method.Params[i].ByRef ? Declared(method.Params[i].Type, method.Params[i].ArrayRanks.Count)
+                expected.Add(method != null && i < method.Params.Count && !method.Params[i].ByRef ? Declared(method.Params[i].Type, method.Params[i].ArrayRanks.Count, map)
                     : lambda?.Params != null && i < lambda.Params.Count ? lambda.Params[i] : null);
             var args = c.Args.Select((a, i) => Infer(a, expected[i])).ToList();
             if (lambda != null) return CallLambda(lambda, args, c, name);
             if (method == null) return StaticType.Dynamic;
-            CheckArguments(method.Params, args, c.Args, method.Name);
-            return DeclaredOrDynamic(method.ReturnType);
+            CheckArguments(method.Params, args, c.Args, method.Name, map);
+            return DeclaredOrDynamic(method.ReturnType, 0, map);
         }
 
         /// <summary>`Class.Method(...)`: a (possibly namespace-qualified) class name that is not shadowed by a variable or member.</summary>
@@ -759,7 +868,7 @@ namespace fire.Compiler
         {
             Expr root = target;
             while (root is MemberExpr inner) root = inner.Target;
-            if (root is not IdentifierExpr first || IsLocal(first.Name) || _class != null && FindMember(_class.Name, first.Name) != null) return null;
+            if (root is not IdentifierExpr first || IsLocal(first.Name) || _class != null && FindMember(ThisClass(), first.Name) != null) return null;
             string name = target is MemberExpr member ? member.Name : ((IdentifierExpr)target).Name;
             return _classes.ContainsKey(name) ? name : null;
         }
@@ -781,15 +890,16 @@ namespace fire.Compiler
 
         private StaticType InferNew(NewExpr n)
         {
-            // `new Box<int>()`: the generic class (named `Box`1` next to a non-generic `Box`)
-            string plain = n.TypeArgs is { Count: > 0 } typeArgs && _classes.ContainsKey(GenericClassNames.Mangle(PlainName(n.ClassRef.BaseName), typeArgs.Count))
-                ? GenericClassNames.Mangle(PlainName(n.ClassRef.BaseName), typeArgs.Count) : PlainName(n.ClassRef.BaseName);
+            // `new List<int>()`: the generic class (named `Box`1` next to a non-generic `Box`) with its type arguments; `new List()` is its raw form
+            var typeArgs = n.ClassRef.TypeArgs is { Count: > 0 } refs ? refs.Select(a => DeclaredOrDynamic(a)).ToList() : null;
+            string plain = typeArgs != null ? GenericName(PlainName(n.ClassRef.BaseName), typeArgs.Count) : PlainName(n.ClassRef.BaseName);
             if (!_classes.TryGetValue(plain, out var decl)) { foreach (var a in n.Args) Infer(a); return StaticType.Dynamic; }
+            var map = MapFor(decl.TypeParams, typeArgs);
             var ctors = decl.Members.OfType<ConstructorDecl>().Where(c => Fits(c.Params, n.Args.Count)).ToList();
             var ctor = ctors.Count == 1 ? ctors[0] : null;
-            var args = n.Args.Select((a, i) => Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count) : null)).ToList();
-            if (ctor != null) CheckArguments(ctor.Params, args, n.Args, "new " + plain);
-            return new StaticType(StaticKind.Class, plain);
+            var args = n.Args.Select((a, i) => Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count, map) : null)).ToList();
+            if (ctor != null) CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
+            return StaticType.ClassOf(plain, typeArgs);
         }
     }
 }

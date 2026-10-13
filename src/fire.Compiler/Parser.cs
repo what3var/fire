@@ -791,10 +791,75 @@ namespace fire.Compiler
                 Expect(TokenType.RBracket, "Expected ']' after the bit width");
             }
 
+            // `List<int>`, `Map<string, List<int>>`: the type arguments of a generic class/interface (only after a class name)
+            List<TypeRef>? typeArgs = null;
+            if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
+                typeArgs = ParseTypeArgRefs();
+
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
 
-            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray),
+                TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs);
+        }
+
+        /// <summary>`&lt;T1, ..., Tn&gt;` with full type references (nested ones included).</summary>
+        private List<TypeRef> ParseTypeArgRefs()
+        {
+            Expect(TokenType.Lt, "Expected '<'");
+            var args = new List<TypeRef>();
+            do args.Add(ParseTypeRef(allowArray: true));
+            while (Match(TokenType.Comma));
+            Expect(TokenType.Gt, "Expected '>' after the type arguments");
+            return args;
+        }
+
+        /// <summary>The name a type argument has for the `where` check of `new Name&lt;Arg&gt;` (its outer name: `Box` of `Box&lt;int&gt;`, `byte` stays `byte`).</summary>
+        private static string TypeArgName(TypeRef arg) => arg.BaseName == "int" && arg.BitWidth == 8 ? "byte" : arg.BaseName;
+
+        /// <summary>Whether a type argument list `&lt;...&gt;` starts at the token <paramref name="offset"/> ahead: type names (keywords, dotted
+        /// identifiers, `lambda`), commas, nested lists and empty brackets up to the matching `&gt;`. Returns the offset just behind it, -1 when it is none
+        /// (`a &lt; b` of an expression).</summary>
+        private int TypeArgListEnd(int offset)
+        {
+            if (PeekAt(offset).Type != TokenType.Lt) return -1;
+            int depth = 0;
+            bool expectName = true;
+            for (int i = offset; i < offset + 256; i++)
+            {
+                var token = PeekAt(i);
+                switch (token.Type)
+                {
+                    case TokenType.Lt:
+                        if (i > offset && expectName) return -1;           // (a nested list follows a name)
+                        depth++;
+                        expectName = true;
+                        break;
+                    case TokenType.Gt:
+                        if (expectName) return -1;
+                        if (--depth == 0) return i + 1;
+                        break;
+                    case TokenType.Comma:
+                        if (expectName) return -1;
+                        expectName = true;
+                        break;
+                    case TokenType.Dot:
+                        if (expectName || PeekAt(i + 1).Type != TokenType.Identifier) return -1;
+                        expectName = true;
+                        break;
+                    case TokenType.LBracket:
+                        if (expectName || PeekAt(i + 1).Type != TokenType.RBracket) return -1;
+                        i++;
+                        break;
+                    case TokenType.Identifier when !expectName && token.Lexeme == "lambda":   // `int lambda<...>`: a return type before `lambda`
+                        break;
+                    default:
+                        if (!(token.Type == TokenType.Identifier || TypeKeywords.Contains(token.Type)) || !expectName) return -1;
+                        expectName = false;
+                        break;
+                }
+            }
+            return -1;
         }
 
         /// <summary>Does `[` `]` (empty brackets) come next? That is an array type
@@ -835,6 +900,7 @@ namespace fire.Compiler
                     do
                     {
                         paramTypes.Add(ParseTypeAnnotationName());
+                        SkipOptionalNestedTypeArgs();   // (`lambda<List<int>>`: the parameter is a List)
                     } while (Match(TokenType.Comma));
                 }
                 Expect(TokenType.Gt, "Expected '>' after the lambda parameter types");
@@ -897,6 +963,13 @@ namespace fire.Compiler
             int offset = 1;
             while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
                 offset += 2;
+            // `List<int> values`: the type arguments of a generic class
+            if (PeekAt(offset).Type == TokenType.Lt)
+            {
+                int end = TypeArgListEnd(offset);
+                if (end < 0) return false;
+                offset = end;
+            }
             // `Dog[] Name`: empty brackets behind the type name (array return type) - like two identifiers
             // in a row, `Name[] Name` occurs in no valid expression.
             while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
@@ -914,6 +987,11 @@ namespace fire.Compiler
                 offset = 1;
                 while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
                     offset += 2;
+                if (PeekAt(offset).Type == TokenType.Lt)
+                {
+                    offset = TypeArgListEnd(offset);
+                    if (offset < 0) return false;
+                }
             }
             else return false;
             while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
@@ -1539,8 +1617,8 @@ namespace fire.Compiler
                     string baseName = ParseDottedName("base class/interface names");
                     // `class Home : Command<IDevice>`: the type arguments are (as everywhere) not evaluated, only their COUNT chooses the generic
                     // class or the generic interface of this name (see GenericClassNames.ResolveNewTarget).
-                    int typeArgCount = ParseOptionalTypeParamNames().Count;
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: typeArgCount));
+                    var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
                 } while (Match(TokenType.Comma));
             }
 
@@ -2951,9 +3029,10 @@ namespace fire.Compiler
                     // argument list '(...)' MUST follow anyway (never a comparison),
                     // ParseOptionalTypeParamNames() fits here 1:1 (the same
                     // '<name, name>' grammar as with the declaration).
-                    var typeArgs = ParseOptionalTypeParamNames();
+                    var typeArgRefs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
+                    var typeArgs = typeArgRefs?.Select(TypeArgName).ToList() ?? new List<string>();
                     var args = ParseArgList();
-                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()), args, typeArgs);
+                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces(), TypeArgCount: typeArgs.Count, TypeArgs: typeArgRefs), args, typeArgs);
                 }
 
                 case TokenType.Throw:

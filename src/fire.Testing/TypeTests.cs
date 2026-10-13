@@ -138,6 +138,38 @@ static class TypeTests
             }
             print(new Box(3).Twice(v => v * 2))
             """) == "TC001 TC002 TC001 TC003 TC004 TC001|6");
+        Check("Generics: List<T> und eigene generische Klassen, Typargumente in Deklarationen, Substitution, foreach ueber IEnumerable<T>", Run("""
+            List<int> xs = new List<int>()
+            xs.Add(1)
+            xs.Add("zwei")
+            bool wrong = xs[0]
+            foreach (x in xs) { bool b = x }
+            List<string> names = new List<string>()
+            names = xs
+            List raw = new List()
+            raw.Add("a")
+            xs = raw
+            class Box<T> { T item
+                construct(T item) { this.item = item }
+                T Get() { return this.item }
+            }
+            var bi = new Box<int>(4)
+            bool bb = bi.Get()
+            var bad = new Box<int>("x")
+            List<List<int>> nested = new List<List<int>>()
+            nested.Add(xs)
+            bool deep = nested[0][0]
+            class Bag : IEnumerable<float> {
+                List<float> items
+                construct() { this.items = new List<float>() }
+                IEnumerator<float> GetEnumerator() { return this.items.GetEnumerator() }
+            }
+            foreach (f in new Bag()) { bool fb = f }
+            IEnumerable<int> e = xs
+            print(xs.count)
+            """) == "TC002 TC001 TC001 TC001 TC001 TC002 TC001 TC001|1");
+        Check("Generics: falsche Anzahl Typargumente (E4061), Typargumente an einer nicht generischen Klasse (E4045)",
+            Run("List<int, int> a = new List()") == "|ERROR E4061" && Run("class A { }\nA<int> a = new A()") == "|ERROR E4045");
         Check("eine Einheit : any verlangt keine bestimmte Einheit", Run("any_unit_ok()\nint x : any = 3m\nx = 5s\nprint(x)".Replace("any_unit_ok()\n", "")) == "|5s");
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode

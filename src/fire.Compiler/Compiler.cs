@@ -349,7 +349,9 @@ namespace fire.Compiler
         /// compiler needs no "current class"/"active
         /// usings" state of its own for that any more.</summary>
         private string ResolveTypeRef(TypeRef tr) =>
-            _knownClassNames != null ? tr.ResolveBaseName(_knownClassNames.Contains) : tr.BaseName;
+            _knownClassNames == null ? tr.BaseName
+            : tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, _knownClassNames.Contains)
+            : tr.ResolveBaseName(_knownClassNames.Contains);
 
         /// <summary>The class name that `new Name&lt;...&gt;(...)` instantiates - the
         /// number of type arguments chooses between a non-generic and

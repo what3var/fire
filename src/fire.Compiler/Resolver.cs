@@ -131,7 +131,8 @@ namespace fire.Compiler
         /// parser EXACTLY at the place where `tr` was parsed - the
         /// resolver needs no "current class"/"active
         /// usings" state of its own for that any more.</summary>
-        private string ResolveTypeRef(TypeRef tr) => tr.ResolveBaseName(IsKnownClassName);
+        private string ResolveTypeRef(TypeRef tr) =>
+            tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, IsKnownClassName) : tr.ResolveBaseName(IsKnownClassName);
 
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<string, ExternDecl> _externs = new();
@@ -721,6 +722,8 @@ namespace fire.Compiler
             }
 
             var typeArgs = ne.TypeArgs ?? Array.Empty<string>();
+            // `new List()` of a generic class: its raw form (every type argument `any`, SPEC "Generic classes")
+            if (typeArgs.Count == 0) return;
             if (typeArgs.Count != typeParams.Count)
                 throw new ResolverException(
                     $"Class '{className}' is generic with {typeParams.Count} type parameter(s) - " +
@@ -787,6 +790,22 @@ namespace fire.Compiler
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
             if (!IsKnownClassName(ResolveTypeRef(tr)) && !_interfaces.ContainsKey(ResolveBaseRef(tr)))
                 throw new ResolverException($"Unknown type '{tr.BaseName}'", line);
+            if (tr.TypeArgs is { Count: > 0 } typeArgs) ValidateTypeArgs(tr, typeArgs, line);
+        }
+
+        /// <summary>`List&lt;int&gt;` in a declaration: the class (or interface) must be generic with that many type parameters, and every argument a type.
+        /// (The `where` conditions are checked where an object is made, at `new`.)</summary>
+        private void ValidateTypeArgs(TypeRef tr, IReadOnlyList<TypeRef> typeArgs, int line)
+        {
+            string name = ResolveTypeRef(tr);
+            int parameters = _classes.TryGetValue(name, out var cd) ? cd.TypeParams?.Count ?? 0
+                : _interfaces.TryGetValue(ResolveBaseRef(tr), out var id) ? id.TypeParams?.Count ?? 0 : 0;
+            string plain = GenericClassNames.PlainName(name);
+            if (parameters == 0)
+                throw new ResolverException($"'{plain}' is not generic, so it does not accept type arguments in angle brackets", line);
+            if (parameters != typeArgs.Count)
+                throw new ResolverException($"'{plain}' is generic with {parameters} type parameter(s), not {typeArgs.Count}", line);
+            foreach (var arg in typeArgs) ValidateTypeRef(arg, line);
         }
 
         /// <summary>Validates a complete TypeRef: base name like

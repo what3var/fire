@@ -300,6 +300,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4057` | '….…' is an instance member - it needs an object, not the class name |
 | `E4059` | Field '…' of class '…' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed) |
 | `E4060` | Property '…' of class '…' needs a type (use the type it holds, or 'any' if every type is allowed) |
+| `E4061` | '…' is generic with … type parameter(s), not … |
 | `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
 
 ### E5xxx - Bytecode compiler

@@ -90,10 +90,10 @@ namespace fire.Standard
             }
 
             class LinqWhereEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 lambda<any> pred
                 any current
-                construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
+                construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
                 bool MoveNext() {
                     var p = this.pred
                     while (this.inner.MoveNext()) {
@@ -106,10 +106,10 @@ namespace fire.Standard
             }
 
             class LinqSelectEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 lambda<any> fn
                 any current
-                construct(IEnumerable inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+                construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
                 bool MoveNext() {
                     if (!this.inner.MoveNext()) { return false }
                     var f = this.fn
@@ -120,11 +120,11 @@ namespace fire.Standard
             }
 
             class LinqSelectManyEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 lambda<any> fn
                 any sub
                 any current
-                construct(IEnumerable inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+                construct(IEnumerator inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
                 bool MoveNext() {
                     var f = this.fn
                     while (true) {
@@ -142,9 +142,9 @@ namespace fire.Standard
             }
 
             class LinqTakeEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 int left
-                construct(IEnumerable inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
+                construct(IEnumerator inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
                 bool MoveNext() {
                     if (this.left <= 0) { return false }
                     this.left = this.left - 1
@@ -154,9 +154,9 @@ namespace fire.Standard
             }
 
             class LinqSkipEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 int skip
-                construct(IEnumerable inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
+                construct(IEnumerator inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
                 bool MoveNext() {
                     while (this.skip > 0) {
                         this.skip = this.skip - 1
@@ -168,11 +168,11 @@ namespace fire.Standard
             }
 
             class LinqTakeWhileEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 lambda<any> pred
                 any current
                 bool done
-                construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
+                construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
                 bool MoveNext() {
                     if (this.done) { return false }
                     var p = this.pred
@@ -187,10 +187,10 @@ namespace fire.Standard
             }
 
             class LinqSkipWhileEnumerator : IEnumerator {
-                IEnumerable inner
+                IEnumerator inner
                 lambda<any> pred
                 bool started
-                construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
+                construct(IEnumerator inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
                 bool MoveNext() {
                     if (this.started) { return this.inner.MoveNext() }
                     this.started = true
@@ -204,10 +204,10 @@ namespace fire.Standard
             }
 
             class LinqConcatEnumerator : IEnumerator {
-                IEnumerable first
-                IEnumerable second
+                IEnumerator first
+                IEnumerator second
                 bool inSecond
-                construct(IEnumerable first, IEnumerable second) { this.first = first; this.second = second; this.inSecond = false; first.TakeTo(this); second.TakeTo(this) }
+                construct(IEnumerator first, IEnumerator second) { this.first = first; this.second = second; this.inSecond = false; first.TakeTo(this); second.TakeTo(this) }
                 bool MoveNext() {
                     if (!this.inSecond) {
                         if (this.first.MoveNext()) { return true }
@@ -222,11 +222,11 @@ namespace fire.Standard
             }
 
             class LinqZipEnumerator : IEnumerator {
-                IEnumerable a
-                IEnumerable b
+                IEnumerator a
+                IEnumerator b
                 lambda<any, any> fn
                 any current
-                construct(IEnumerable a, IEnumerable b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
+                construct(IEnumerator a, IEnumerator b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
                 bool MoveNext() {
                     if (!this.a.MoveNext()) { return false }
                     if (!this.b.MoveNext()) { return false }

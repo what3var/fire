@@ -729,6 +729,14 @@ and stack output. Only "generic NEXT TO non-generic" is allowed;
 two generic classes of the same name remain a duplicate definition (even
 with a different number of type parameters).
 
+**Type arguments in declarations and the raw form.** A generic class (or interface) can be named with its type arguments wherever a type stands: `List<int> xs`,
+`Box<Dog> b`, `List<List<int>> rows`, `IEnumerable<float> GetValues()`, `class Bag : IEnumerable<float>`. The type checker (docs/TYPES.md) then replaces the type parameters
+by them: `xs.Add("x")` is a conflict, `xs[0]` is an `int`, `foreach (x in xs)` gives `int`s - also over every class that implements `IEnumerable<T>` (otherwise over what
+the `GetCurrent()` of its enumerator returns). `List<int>` and `List<string>` do not go into each other. Without type arguments a generic class is its **raw form**:
+`new List()` and `List xs` take values of every type (every type argument is `any`), and a raw form fits every instance of the class. The number of type arguments must be
+the number of type parameters (`E4061`), a class that is not generic takes none (`E4045`). `List<T>`, `IEnumerable<T>` and `IEnumerator<T>` of the standard library are
+generic in this way.
+
 **Important limitation**: Since this language is dynamically typed,
 **no real type substitution** takes place (unlike C#, where the
 compiler generates specialized code per instantiation) – the check

@@ -39,7 +39,11 @@ Step 3a: arrays (element types from declarations, `new`, literals; elements, `le
 lambdas (parameter and result types from the target or from the lambda's own declaration, arity of calls and assignments), `fire` blocks (with their `taking`/`with`
 variables), `class extends`, interface signatures (`TC004`/`TC005`) and calls of lambdas in fields and variables are checked.
 
-Known gaps: generics (type arguments in annotations, `List<T>`, `foreach` over an `IEnumerable<T>`), units, properties set through `this`-less access.
+Step 3b: generics - type arguments in declarations (`List<int>`, nested, on base classes and interfaces), substitution of the type parameters in fields, properties,
+methods, constructors and indexers, `foreach` over an `IEnumerable<T>` (or via `GetEnumerator()`/`GetCurrent()`), the raw form (`new List()`: every type argument `any`);
+interfaces are types; `List<T>`, `IEnumerable<T>`, `IEnumerator<T>` in the prelude (at runtime nothing changes: no specialisation).
+
+Known gaps: units, properties set through `this`-less access, generic methods (`Name<T>(...)` is not inferred), Linq queries are raw (`Query` of `any`).
 
 ## Decisions
 
