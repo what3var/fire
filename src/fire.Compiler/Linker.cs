@@ -27,6 +27,15 @@ namespace fire.Compiler
         /// directory of the active file.</summary>
         public string? BasePath { get; set; }
 
+        /// <summary>How a type conflict is reported (docs/TYPES.md): a warning (lax, the default) or an error (strict); a `#lax` / `#strict` in a file decides for that file.</summary>
+        public TypeCheckMode? TypeChecking { get; set; }
+
+        /// <summary>The mode the command line asked for (`--types lax|strict`); used by every linker that has no mode of its own set.</summary>
+        public static TypeCheckMode? ProcessDefaultTypeChecking { get; set; }
+
+        private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
+            ?? (string.Equals(Plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax);
+
         /// <summary>The engine the program is built for, a symbol of `#if` (`vm` or `native`).</summary>
         public string Engine { get; set; } = ConditionalSymbols.DefaultEngine;
 
@@ -230,7 +239,7 @@ namespace fire.Compiler
             foreach (var stmt in program)
             {
                 if (stmt.Source < firstUserSource || stmt.Source >= firstUserSource + userCount) continue;
-                if (stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TimeoutDirective) continue;
+                if (stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective) continue;
                 var file = Plan.Sources[stmt.Source - firstUserSource];
                 errors.Add($"{Path.GetFileName(file.Path)}:{stmt.Line}: a library has no entry point - this statement would run at the top level (put it in a function or a class).");
                 if (errors.Count >= 20) break;
@@ -418,6 +427,7 @@ namespace fire.Compiler
             var program = Parser.ParseMultiple(processedSources);
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             var resolveResult = Resolver.Resolve(program, natives.Names);
+            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
 

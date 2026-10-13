@@ -1047,6 +1047,13 @@ namespace fire.Compiler
                 return new NoShadowDirective(_sourceIndex, line);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme is "lax" or "strict")
+            {
+                bool strict = Advance().Lexeme == "strict";
+                ExpectStatementTerminator();
+                return new TypeCheckDirective(_sourceIndex, line, strict);
+            }
+
             if (Check(TokenType.Identifier) && Peek().Lexeme == "nosync")
             {
                 Advance();
@@ -1066,7 +1073,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()

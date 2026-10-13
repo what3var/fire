@@ -286,6 +286,11 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - Since both positions are syntactically unambiguous (prefix in front of a unary operand, suffix after an already parsed expression), a single lexer token (`Bang`) is enough; the disambiguation is done in the parser by grammar position.
 - **`~expression`** (prefix only) → bitwise inversion.
 
+**Type checking.** A conflict between two *known* types - assigning a string to an `int`, an argument that does not fit a typed parameter - is reported by the type checker (docs/TYPES.md): a warning in
+`lax` mode (the default), an error in `strict` mode (`--types strict`, the project setting `typeChecking`, `#strict` / `#lax` at the top of a file). `int` goes to `float` implicitly, everything goes to
+`string`, `undefined` goes to everything, an object goes to the class it derives from. The type of a variable never changes. `var x = expr` has the type of its initializer (a value, a variable, a
+return value, `undefined!Type`); `var x` without an initializer is an error (declare it with a type: `int x`). Untyped values are `dynamic` and never reported.
+
 The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `Foo f`); `var x` derives it from the value. A `:` after the variable name (`var x : mm`), on the other hand, only fixes the **unit** (see "unit declarations") – `var x : int` as a type declaration no longer exists.
 
 ### 3.2 Target unit in operations ("anchor rule")

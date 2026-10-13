@@ -28,6 +28,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { Proje
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -7514,6 +7515,20 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var msvcCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["msvc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
         SfCheck(gccCmd.Contains("-mwindows") && !gccConsole.Contains("-mwindows"), "nativer Build (gcc): #noconsole setzt -mwindows, sonst nicht");
         SfCheck(msvcCmd.Contains("/SUBSYSTEM:WINDOWS") && msvcCmd.Contains("/ENTRY:mainCRTStartup"), "nativer Build (msvc): #noconsole setzt /SUBSYSTEM:WINDOWS");
+        // size: executables are stripped by default; "size" is -Os with section garbage collection; strip:false keeps the symbols (debugging); libraries stay as they are
+        {
+            var gccBase = fire.Native.ToolchainDef.BuiltIn["gcc"];
+            string plain = fire.Compiler.NativeBuilder.CompilerCommand(gccBase, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string small = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Extends = "gcc", Kind = "gcc", Optimization = "size" }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string debug = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Kind = "gcc", Strip = false }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string lib = fire.Compiler.NativeBuilder.CompilerCommand(gccBase, winTarget!, "p.cpp", sfDir, "p.dll", sharedLibrary: true).Arguments;
+            string msvcSmall = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Kind = "msvc", Optimization = "size" }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            SfCheck(plain.Split(' ').Contains("-s") && plain.Contains("-O2") && !plain.Contains("gc-sections"), "nativer Build (gcc): ein Programm wird gestrippt (-s), -O2 bleibt");
+            SfCheck(small.Contains("-Os") && small.Contains("-ffunction-sections") && small.Contains("--gc-sections") && !small.Contains("-O2"), "nativer Build (gcc): Optimization size = -Os mit gc-sections");
+            SfCheck(!debug.Split(' ').Contains("-s"), "nativer Build (gcc): strip=false laesst die Symbole stehen");
+            SfCheck(!lib.Split(' ').Contains("-s") && !lib.Contains("gc-sections"), "nativer Build (gcc): eine Bibliothek wird nicht gestrippt");
+            SfCheck(msvcSmall.Contains("/O1") && msvcSmall.Contains("/OPT:REF"), "nativer Build (msvc): Optimization size = /O1 und /OPT:REF");
+        }
         // the native build carries version info and icon to the executable
         var nativeInfo = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#name \"Demo\"\n#author \"ACME\"\n#version \"1.2.3.4\"\n#icon \"x.ico\"\nprint(\"x\")" }, TargetProfile.Host);
         SfCheck(nativeInfo.VersionInfo != null && nativeInfo.VersionInfo.ProductVersion.ToString() == "1.2.3.4" && nativeInfo.IconPath == "x.ico", "nativer Build: Versionsinfo und Icon der Direktiven kommen beim Build an");
@@ -13183,7 +13198,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         {
           var inner = new Item("inner")
           var out = new Item("out")
-          var x
+          var x = undefined
           x = take out
           box.items[0] = take inner
         }
@@ -13404,7 +13419,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             static Odd(int n) { if (n == 0) { return false } return T.Even(n - 1) }
             static MakeAdder(int n) { var k = n * 2; return x => x + k }
             static Sum(int n) { var local = [n]; if (n == 0) { return 0 } return local[0] + T.Sum(n - 1) }
-            static Locals() { var a; var b; var c = 3; return "" + a + "," + b + "," + c }
+            static Locals() { var a = undefined; var b = undefined; var c = 3; return "" + a + "," + b + "," + c }
         }
         print(T.Fib(15))
         print(T.Even(10) + " " + T.Odd(10))
@@ -13531,7 +13546,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     CheckSc("Zuweisung an eine aeussere Variable schiebt den Besitz bis in die Funktions-Scope (nicht aus der Funktion hinaus)", scHead + """
         class T {
             static Run() {
-                var keep
+                var keep = undefined
                 for (var i = 0; i < 3; i = i + 1) {
                     var a = new D("a" + i)
                     var b = new D("b" + i)
@@ -13946,6 +13961,7 @@ static int CountOccurrences(string haystack, string needle)
 ProjectTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
+TypeTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -17218,7 +17234,7 @@ else
             {
               var inner = new Item("inner")
               var out = new Item("out")
-              var x
+              var x = undefined
               x = take out
               box.items[0] = take inner
             }
@@ -17247,7 +17263,7 @@ else
                 print("filled")
               }
             }
-            var h
+            var h = undefined
             {
               var it = new Item("i1")
               h = new Holder(take it)

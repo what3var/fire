@@ -100,6 +100,9 @@ namespace fire.Editor
 
                 var program = Parser.ParseMultiple(processed);
                 var resolveResult = Resolver.Resolve(program, natives.Names);
+                // type conflicts (docs/TYPES.md): the code of the document is the last source; warnings in lax mode, errors in strict mode (the project's setting, `#lax` / `#strict` in the file)
+                var typeMode = string.Equals(plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax;
+                diagnostics.AddRange(TypeChecker.Check(program, resolveResult, typeMode, processed.Count - 1));
                 Compiler.Compiler.Compile(program, resolveResult, natives);
             }
             catch (Exception ex)

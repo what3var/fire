@@ -163,6 +163,7 @@ namespace fire.Editor
             txtCompiler.Text = t.Compiler ?? "";
             txtStd.Text = t.Std ?? "";
             txtOptimization.Text = t.Optimization ?? "";
+            chkStrip.IsChecked = t.Strip != false;
             cmbLayout.SelectedIndex = t.Layout == "idf-component" ? 1 : 0;
             txtBuildCommand.Text = t.BuildCommand ?? "";
             txtCommand.Text = t.Command ?? "";
@@ -178,6 +179,7 @@ namespace fire.Editor
         {
             Kind = (cmbKind.SelectedItem as ComboBoxItem)?.Content as string ?? "gcc",
             Compiler = OrNull(txtCompiler.Text), Std = OrNull(txtStd.Text), Optimization = OrNull(txtOptimization.Text),
+            Strip = chkStrip.IsChecked == false ? false : null,
             Layout = cmbLayout.SelectedIndex == 1 ? "idf-component" : "flat",
             BuildCommand = OrNull(txtBuildCommand.Text), Command = OrNull(txtCommand.Text),
             Args = Lines(txtToolArgs.Text), Libs = Lines(txtToolLibs.Text), IncludeDirs = Lines(txtToolIncludes.Text),

@@ -36,14 +36,17 @@ namespace fire.Projects
         public string? Toolchain { get; set; }
         /// <summary>Where the result of a build is written (a path relative to the file that holds the setting; for a library the folder of the package).</summary>
         public string? Output { get; set; }
+        /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
+        public string? TypeChecking { get; set; }
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null && TypeChecking == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
         public static readonly IReadOnlyList<string> Engines = new[] { "vm", "native" };
+        public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
 
         /// <summary>`high` over `low`: every field that `high` sets, else the one of `low` (the defines of both are added up). Either may be null.</summary>
         public static ProjectSettings Merge(ProjectSettings? high, ProjectSettings? low)
@@ -65,6 +68,7 @@ namespace fire.Projects
             r.Target = high?.Target ?? low?.Target;
             r.Toolchain = high?.Toolchain ?? low?.Toolchain;
             r.Output = high?.Output ?? low?.Output;
+            r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
             var defines = new List<string>();
             foreach (var d in (high?.Defines ?? new List<string>()).Concat(low?.Defines ?? new List<string>())) if (!defines.Contains(d)) defines.Add(d);
             if (defines.Count > 0) r.Defines = defines;
@@ -89,6 +93,7 @@ namespace fire.Projects
             if (Subsystem != null && !Subsystems.Contains(Subsystem)) problems.Add($"settings.subsystem '{Subsystem}' is not one of: {string.Join(", ", Subsystems)}.");
             if (Mode != null && !Modes.Contains(Mode)) problems.Add($"settings.mode '{Mode}' is not one of: {string.Join(", ", Modes)}.");
             if (FloatWidth != null && FloatWidth != 32 && FloatWidth != 64) problems.Add("settings.floatWidth must be 32 or 64.");
+            if (TypeChecking != null && !TypeCheckings.Contains(TypeChecking)) problems.Add("settings.typeChecking must be lax or strict.");
             if (Engine != null && !Engines.Contains(Engine)) problems.Add($"settings.engine '{Engine}' is not one of: {string.Join(", ", Engines)}.");
             foreach (var d in Defines ?? new List<string>()) if (string.IsNullOrWhiteSpace(d) || d.Any(char.IsWhiteSpace)) problems.Add($"settings.defines: '{d}' is not a symbol name.");
             return problems;
