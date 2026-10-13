@@ -231,20 +231,20 @@
 								</MenuFlyout>
 							</SplitButton.Flyout>
 						</SplitButton>
-						<CommandBarButton Click="Open_Click" ToolTip.Tip="Open... (Ctrl+O)"><CommandBarButton.Icon><PathIcon Data="{StaticResource IconOpen}"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)"><CommandBarButton.Icon><PathIcon Data="{StaticResource IconSave}"/></CommandBarButton.Icon></CommandBarButton>
+						<local:ToolStripButton Click="Open_Click" ToolTip.Tip="Open... (Ctrl+O)" IconData="{StaticResource IconOpen}"/>
+						<local:ToolStripButton x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)" IconData="{StaticResource IconSave}"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="run" Title="Run" Band="0" BandIndex="1">
-						<CommandBarButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-Play.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-Restart.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-PlayOutline.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-Stop.png"/></CommandBarButton.Icon></CommandBarButton>
+						<local:ToolStripButton Label="Start" Click="Run_Click" ToolTip.Tip="Start / continue to the next breakpoint (F5) - compiles if necessary and restarts after the program has ended" IconSource="/Assets/icons/Material-Play.png"/>
+						<local:ToolStripButton Click="Restart_Click" ToolTip.Tip="Recompile and start (Ctrl+F5)" IconSource="/Assets/icons/Material-Restart.png"/>
+						<local:ToolStripButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
+						<local:ToolStripButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="2">
-						<CommandBarButton Click="Step_Click" ToolTip.Tip="Step over (F10)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-DebugStepOver.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-DebugStepInto.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-DebugStepOut.png"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)"><CommandBarButton.Icon><Image Source="/Assets/icons/Material-PauseCircle.png"/></CommandBarButton.Icon></CommandBarButton>
+						<local:ToolStripButton Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
+						<local:ToolStripButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
+						<local:ToolStripButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
+						<local:ToolStripButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)" IconSource="/Assets/icons/Material-PauseCircle.png"/>
 					</local:ToolStrip>
 					<local:ToolStrip Id="device" Title="Default device" Band="0" BandIndex="3">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" Text="Default device:" VerticalAlignment="Center" Margin="2,0,6,0"/>
@@ -262,8 +262,8 @@
 						<TextBlock local:ToolStrip.HorizontalOnly="True" Text="Target:" VerticalAlignment="Center" Margin="8,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="28" Padding="8,2"
 						          ToolTip.Tip="The target of a native build (Build native). Default: the target of the project or of the native build settings"/>
-						<CommandBarButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..."><CommandBarButton.Icon><PathIcon Data="{StaticResource IconBuild}"/></CommandBarButton.Icon></CommandBarButton>
-						<CommandBarButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)"><CommandBarButton.Icon><PathIcon Data="{StaticResource IconSettings}"/></CommandBarButton.Icon></CommandBarButton>
+						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..." IconData="{StaticResource IconBuild}"/>
+						<local:ToolStripButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)" IconData="{StaticResource IconSettings}"/>
 					</local:ToolStrip>
 				</local:ToolStripTray>
 			</StackPanel>

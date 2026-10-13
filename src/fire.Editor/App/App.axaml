@@ -42,8 +42,14 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-        <Style Selector="local|ToolStrip CommandBarButton:disabled">
+        <Style Selector="local|ToolStrip CommandBarButton:disabled, local|ToolStripButton:disabled">
             <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+        <!-- the compact tool button (ToolStrips/ToolStripButton.cs): small padding, a 16 x 16 icon, a small label -->
+        <Style Selector="local|ToolStripButton">
+            <Setter Property="Padding" Value="4,2"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="CornerRadius" Value="3"/>
         </Style>
         <Style Selector="local|ToolStrip Image">
             <Setter Property="Width" Value="18"/>

@@ -37,7 +37,7 @@ namespace fire.Editor
         public static readonly StyledProperty<int> BandIndexProperty = AvaloniaProperty.Register<ToolStrip, int>(nameof(BandIndex));
 
         private readonly CommandBar _bar = new() { DefaultLabelPosition = CommandBarDefaultLabelPosition.Right, IsDynamicOverflowEnabled = false, Background = Brushes.Transparent };
-        private readonly StackPanel _barContent = new() { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+        private readonly StackPanel _barContent = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         private readonly StackPanel _stack = new() { Orientation = Orientation.Vertical, Spacing = 2 };
         private readonly Border _grip;
         private readonly DockPanel _root = new();
@@ -68,7 +68,7 @@ namespace fire.Editor
             Rebuild();
         }
 
-        /// <summary>The items: commands (<c>CommandBarButton</c>, <c>CommandBarToggleButton</c>, <c>CommandBarSeparator</c>) and other controls.</summary>
+        /// <summary>The items: commands (<c>CommandBarButton</c>, <c>CommandBarToggleButton</c>, <c>CommandBarSeparator</c>) and other controls, among them the compact <see cref="ToolStripButton"/>.</summary>
         [Content]
         public AvaloniaList<Control> Items { get; }
 
