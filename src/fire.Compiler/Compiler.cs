@@ -587,9 +587,53 @@ namespace fire.Compiler
             return classes;
         }
 
+        /// <summary>What every method and property getter of the class reads of `this` (RuntimeClass.ThisReads): `this.x`, a member without `this.`
+        /// (ImplicitThisMember), `this.M()` - also inside its lambdas.</summary>
+        private Dictionary<string, string[]> ComputeThisReads(ClassDecl decl)
+        {
+            var result = new Dictionary<string, string[]>();
+            void Add(string key, Stmt.BlockStmt body)
+            {
+                var reads = new HashSet<string>(result.TryGetValue(key, out var known) ? known : Array.Empty<string>());
+                CollectThisReads(body, reads);
+                result[key] = reads.ToArray();
+            }
+            foreach (var member in decl.Members)
+            {
+                if (member is MethodDecl { IsStatic: false } md) Add(md.Name, md.Body);
+                else if (member is PropertyDecl { IsStatic: false, Getter: { } getter } pd) Add("get_" + pd.Name, getter);
+            }
+            return result;
+        }
+
+        private static readonly Dictionary<Type, System.Reflection.PropertyInfo[]> s_astChildren = new();
+
+        private void CollectThisReads(object? node, HashSet<string> reads)
+        {
+            switch (node)
+            {
+                case null: return;
+                case MemberExpr { Target: ThisExpr } member: reads.Add(member.Name); break;
+                case IdentifierExpr id when _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember: reads.Add(id.Name); break;
+                case string: return;
+                case System.Collections.IEnumerable items:
+                    foreach (var item in items) CollectThisReads(item, reads);
+                    return;
+            }
+            var type = node.GetType();
+            if (type.Namespace != "fire.Ast") return;
+            System.Reflection.PropertyInfo[] children;
+            lock (s_astChildren)
+                if (!s_astChildren.TryGetValue(type, out children!))
+                    s_astChildren[type] = children = type.GetProperties().Where(p => p.GetIndexParameters().Length == 0 && !p.PropertyType.IsValueType && p.PropertyType != typeof(string)
+                        && p.Name != "EqualityContract").ToArray();
+            foreach (var child in children) CollectThisReads(child.GetValue(node), reads);
+        }
+
         private void CompileClassBody(RuntimeClass rc)
         {
             var ctorDecls = new List<ConstructorDecl>();
+            rc.ThisReads = ComputeThisReads(rc.Decl);
 
             foreach (var member in rc.Decl.Members)
             {

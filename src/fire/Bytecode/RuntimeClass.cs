@@ -244,6 +244,43 @@ namespace fire.Bytecode
 
         public FunctionProto? Destructor { get; set; }
 
+        /// <summary>For each method and property getter of this class (key: the method name, `get_Name` for a getter) the members of `this` it reads
+        /// (`this.x`, `x` without `this.`, `this.M()`); filled by the compiler. The base of probes on computed properties (SPEC 8.14).</summary>
+        public Dictionary<string, string[]>? ThisReads { get; set; }
+
+        /// <summary>A computed property (a getter, no setter, no field of that name): the fields and settable properties of `this` its value
+        /// depends on - what its getter reads, followed through the getters and methods of the class it calls. null when `name` is no computed property.</summary>
+        public List<string>? ComputedSources(string name)
+        {
+            if (FieldIndex.ContainsKey(name) || FindMethod("set_" + name, 1) != null || FindMethod("get_" + name, 0) == null) return null;
+            var sources = new List<string>();
+            var seen = new HashSet<string>();
+            var pending = new Queue<string>();
+            pending.Enqueue("get_" + name);
+            seen.Add("get_" + name);
+            while (pending.Count > 0)
+            {
+                string key = pending.Dequeue();
+                string[]? reads = null;
+                for (var c = this; c != null && reads == null; c = c.Base) c.ThisReads?.TryGetValue(key, out reads);
+                if (reads == null) continue;
+                foreach (var read in reads)
+                {
+                    bool isField = FieldIndex.ContainsKey(read), hasSetter = FindMethod("set_" + read, 1) != null;
+                    if ((isField || hasSetter) && !sources.Contains(read)) sources.Add(read);
+                    if (!isField && FindMethod("get_" + read, 0) != null && seen.Add("get_" + read)) pending.Enqueue("get_" + read);
+                    else if (!isField && Methods.Keys.Concat(BaseMethodNames()).Contains(read) && seen.Add(read)) pending.Enqueue(read);
+                }
+            }
+            return sources;
+        }
+
+        private IEnumerable<string> BaseMethodNames()
+        {
+            for (var c = Base; c != null; c = c.Base)
+                foreach (var name in c.Methods.Keys) yield return name;
+        }
+
         /// <summary>Does this class or one of its base classes have a destructor? Without one there is nothing to execute when destroying an object
         /// (see ObjectInstance.Destroy) - the chain is short, a query costs only a few pointer accesses.</summary>
         public bool HasDestructorInChain()

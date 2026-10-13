@@ -10686,7 +10686,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                   </Panel>
                 </View>
                 """);
-            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property liest nur", $$"""
+            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property folgt ihren Quellen", $$"""
                 #include "{{P("Prop.fxml")}}"
                 class Model {
                     int _v = 1
@@ -10703,9 +10703,10 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print(d.vol.text)
                 d.ed.text = "x"
                 print(m.Label + " " + d.ed.text)
+                print(d.sum.text)
                 m.Label = "y"
                 print(d.ed.text + " " + d.sum.text)
-                """, new[] { "1 a a1", "7", "x! x", "y! a1" });
+                """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
 
             File.WriteAllText(P("Rich.fxml"), """
                 <Window class="Rich" title="Rich" width="480" height="320">
@@ -16774,6 +16775,29 @@ else
             try { print(s.Foo) } catch (MissingMemberException e) { print("str: " + e.message) }
             try { new Q().Run(p) } catch (Exception e) { print("nested: " + e.message) }
             print(p.M(5))
+            """),
+        ("Probes auf berechnete Properties: der Getter wird bei einer Aenderung seiner Quellen neu ausgewertet (auch ueber andere Getter und Methoden), changing ist ein Fehler", """
+            class Person {
+                string first = "Ada"
+                string last = "Lovelace"
+                int age = 36
+                string Name { get { return first + " " + this.last } }
+                string Summary { get { return this.Name + " (" + this.Describe() + ")" } }
+                string Describe() { return "" + age }
+                int Age { get { return this.age } set { this.age = value } }
+            }
+            var p = new Person()
+            probe p.Summary changed { print("summary: " + old + " -> " + value) }
+            probe p.Name changed (o, n) => print("name: " + o + " -> " + n)
+            p.first = "Augusta"
+            p.last = "Lovelace"
+            p.Age = 37
+            p.age = 37
+            try { probe p.Name changing (o, n) => true } catch (ArgumentException e) { print("err: " + e.message) }
+            try { probe p.Nope changed (v) => 1 } catch (MissingMemberException e) { print("missing: " + e.message) }
+            silence p.Summary
+            p.first = "Ada"
+            print(p.Name)
             """),
         ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m, Rueckgabe am Typ, Einheit aus der Initialisierung), Overflow, unitless-Pruefung zur Laufzeit", """
             int i0 = 5mm

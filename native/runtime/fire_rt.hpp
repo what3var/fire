@@ -2085,7 +2085,11 @@ inline Value rfFail(const char* utf8) {
 
 #ifdef FIRE_REFLECTION
 // ---- probes (SPEC 8.14): handlers for writes to the members of an object. An object with probes has flag 2; its setters look at them. -------
-struct ProbeEntry { int64_t id; char* member; bool changing; Value handler; };
+using ProbeRawSet = void (*)(Value obj, Value value, OwnList* list, uint32_t caller);
+using ProbeRawGet = Value (*)(Value obj, OwnList* list);
+/// A probe; on a computed property (a getter without a setter) `deps` (null-terminated) are the members its getter reads, `getter` evaluates it
+/// again and `last` is its value when it was last evaluated.
+struct ProbeEntry { int64_t id; char* member; bool changing; Value handler; const char* const* deps; ProbeRawGet getter; Value last; };
 struct ProbeNode {
     Obj* obj;
     ProbeEntry* entries; uint32_t n, cap;
@@ -2108,6 +2112,7 @@ inline ProbeNode* probeNodeOf(Obj* o, bool create) {
 }
 inline void probeRemoveAt(ProbeNode* node, uint32_t i) {
     release(node->entries[i].handler);
+    release(node->entries[i].last);
     std::free(node->entries[i].member);
     for (uint32_t k = i + 1; k < node->n; k++) node->entries[k - 1] = node->entries[k];
     node->n--;
@@ -2123,7 +2128,7 @@ inline void probeFree(Obj* o) {
             return;
         }
 }
-inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value handler) {
+inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value handler, const char* const* deps = nullptr, ProbeRawGet getter = nullptr, Value last = {K_Undefined, 0, 0, 0, {0}}) {
     ProbeNode* node = probeNodeOf(o, true);
     if (node->n == node->cap) {
         node->cap = node->cap ? node->cap * 2 : 4;
@@ -2137,6 +2142,10 @@ inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value ha
     e.changing = changing;
     e.handler = handler;
     retain(handler);
+    e.deps = deps;
+    e.getter = getter;
+    e.last = last;
+    retain(last);
     return e.id;
 }
 /// `silence obj.member` (member null: all probes of the object).
@@ -2151,9 +2160,6 @@ inline void probeSilenceHandle(int64_t id) {
     for (ProbeNode* p = g_probeNodes; p; p = p->next)
         for (uint32_t i = 0; i < p->n; i++) if (p->entries[i].id == id) { probeRemoveAt(p, i); return; }
 }
-
-using ProbeRawSet = void (*)(Value obj, Value value, OwnList* list, uint32_t caller);
-using ProbeRawGet = Value (*)(Value obj, OwnList* list);
 
 /// The handler gets (new), (old, new), (object, old, new) or (object, name, old, new) by its number of parameters.
 inline Value probeRun(const ProbeEntry& e, Value obj, const char* name, Value oldValue, Value newValue, OwnList* list) {
@@ -2200,6 +2206,26 @@ inline void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw,
                 if (e.changing || (e.member && std::strcmp(e.member, name) != 0)) continue;
                 probeRun(e, obj, name, oldValue, value, &local);
             }
+        // the probes on computed properties that read this member: their getter again, `changed` when the value is another
+        for (uint32_t i = 0; i < node->n && !g_unwind.active; i++) {
+            ProbeEntry e = node->entries[i];
+            bool depends = false;
+            if (e.deps) for (const char* const* d = e.deps; *d; d++) if (std::strcmp(*d, name) == 0) { depends = true; break; }
+            if (!depends) continue;
+            bool running = false;
+            for (uint32_t k = 0; k < node->nrunning; k++) if (std::strcmp(node->running[k], e.member) == 0) running = true;
+            if (running || node->nrunning >= 8) continue;
+            node->running[node->nrunning++] = e.member;
+            Value now = e.getter(obj, &local);
+            if (!g_unwind.active && !eq(e.last, now)) {
+                Value old = e.last;
+                retain(now);
+                node->entries[i].last = now;   // (before the handler: it may add probes and move the entries)
+                probeRun(e, obj, e.member, old, now, &local);
+                release(old);
+            }
+            for (uint32_t k = 0; k < node->nrunning; k++) if (node->running[k] == e.member) { node->running[k] = node->running[--node->nrunning]; break; }
+        }
     }
     for (uint32_t i = 0; i < node->nrunning; i++) if (node->running[i] == name) { node->running[i] = node->running[--node->nrunning]; break; }
     leave(&local);

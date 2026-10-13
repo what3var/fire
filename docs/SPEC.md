@@ -2116,7 +2116,11 @@ silence cfg.*            // all probes of the object (likewise: silence cfg)
 - **When:** `changing` runs **before** the write; if a handler returns `false`, nothing is written (the assignment expression still evaluates to the assigned value), the remaining ones no longer run. `changed` runs **after** the
   write and only if the value has really changed (comparison like `==`, objects by reference). Several probes run in the order of their registration.
 - **What is observed:** write accesses to the member (`=`, `++`, `+=`, via reflection) - for properties before/after the call of the setter (old value = result of the getter, if there is one); if the setter itself writes fields, their
-  probes fire as well. **Not** observed: changes *inside* an object (`obj.list.Add(...)`, array elements), a computed property whose source changes (probe the field for that), and write accesses from `sync` write-backs.
+  probes fire as well. **Not** observed: changes *inside* an object (`obj.list.Add(...)`, array elements) and write accesses from `sync` write-backs.
+- **Computed properties** (a `get` without `set`): a `changed` probe on one follows its **sources** - the fields and settable properties of the object that its getter reads (`this.x`,
+  `x` without `this.`, also through the other getters and methods of the object it calls). When one of them is written, the getter runs again, and the handlers fire if its value is another
+  than before (`old` is the value of the last evaluation). What the getter reads through other objects (`this.player.name`) is not followed. A `changing` probe on a computed property is an
+  error (`ArgumentException`: there is no write to stop); a probe on a member that does not exist is a `MissingMemberException`.
 - **Flow:** synchronously on the thread of the writer (for objects of the globals inside the section). If a handler writes the same member of the same object, nothing fires again for it. An exception in the handler runs to
   the writer: with `changing` the value stays unchanged, with `changed` it has already been written. Probes live with the object (its end removes them).
 - **Cost:** only objects with a probe take the slow write path; all others keep the fast paths unchanged.

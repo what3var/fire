@@ -94,9 +94,31 @@ namespace fire.Runtime
                 if (!Value.ValuesEqual(oldValue, value))
                     foreach (var entry in probes.Match(name, changing: false))
                         if (RunProbeHandler(entry, obj, name, oldValue, value) == null) return false;
-                return true;
+                return FireComputed(obj, name, probes);
             }
             finally { probes.EndRunning(name); }
+        }
+
+        /// <summary>After a write to `source`: the probes on computed properties that depend on it evaluate their getter again and fire `changed`
+        /// when its value is another than the last one. false if an exception was redirected to a handler.</summary>
+        private bool FireComputed(ObjectInstance obj, string source, ProbeTable probes)
+        {
+            foreach (var entry in probes.DependentsOf(source))
+            {
+                string property = entry.Member!;
+                if (!probes.TryBeginRunning("get " + property)) continue;
+                try
+                {
+                    var now = CallMethodNested(obj, "get_" + property, Array.Empty<Value>());
+                    if (now == null) return false;
+                    var old = entry.LastValue;
+                    if (Value.ValuesEqual(old, now.Value)) continue;
+                    entry.LastValue = now.Value;
+                    if (RunProbeHandler(entry, obj, property, old, now.Value) == null) return false;
+                }
+                finally { probes.EndRunning("get " + property); }
+            }
+            return true;
         }
 
         /// <summary>Registers a probe. `member == null`: all members. false with a message if the target is not an object, the member is unknown or
@@ -112,8 +134,19 @@ namespace fire.Runtime
             if (lambda.Proto.ParamCount > 4) { error = $"The handler of a probe may have at most 4 parameters (object, name, old, new), it has {lambda.Proto.ParamCount}."; return false; }
             if (member != null && !ReflectHas(obj, member)) { error = $"'{obj.ClassName}' has no member '{member}' - no probe can be registered there."; return false; }
 
+            // a computed property (a getter without a setter): the probe watches what the getter reads and compares the value
+            List<string>? sources = member != null ? ResolveClass(obj.ClassName).ComputedSources(member) : null;
+            var last = Value.MakeUndefined();
+            if (sources != null)
+            {
+                if (changing) { error = $"'{member}' of '{obj.ClassName}' is a computed property (a getter without a setter): it can only be probed with 'changed'."; return false; }
+                var current = CallMethodNested(obj, "get_" + member, Array.Empty<Value>());
+                if (current == null) { error = $"The getter of '{member}' threw an exception."; return false; }
+                last = current.Value;
+            }
+
             id = ProbeRegistry.NextId();
-            obj.GetOrCreateProbes().Add(new ProbeEntry { Id = id, Member = member, IsChanging = changing, Handler = lambda });
+            obj.GetOrCreateProbes().Add(new ProbeEntry { Id = id, Member = member, IsChanging = changing, Handler = lambda, Sources = sources, LastValue = last });
             ProbeRegistry.Register(id, obj);
             return true;
         }
@@ -144,6 +177,9 @@ namespace fire.Runtime
             return false;
         }
 
+        /// <summary>A probe that cannot be registered or removed: a member that does not exist is a MissingMemberException, everything else an ArgumentException.</summary>
+        private static string ProbeErrorClass(string error) => error.Contains("has no member") ? "MissingMemberException" : "ArgumentException";
+
         private void OpProbe()
         {
             int nameIdx = ReadU16();
@@ -152,7 +188,7 @@ namespace fire.Runtime
             var target = Pop();
             string? member = (flags & 2) != 0 ? null : _constants[nameIdx].AsString();
             if (!TryProbeAdd(target, member, (flags & 1) != 0, handler, out long id, out string error))
-                throw new InvalidOperationException(error);
+                throw new ScriptErrorException(ProbeErrorClass(error), error);
             Push(Value.MakeInt(id));
         }
 
@@ -162,13 +198,13 @@ namespace fire.Runtime
             int wildcard = ReadByte();
             var target = Pop();
             if (!TrySilenceMember(target, wildcard != 0 ? null : _constants[nameIdx].AsString(), out string error))
-                throw new InvalidOperationException(error);
+                throw new ScriptErrorException(ProbeErrorClass(error), error);
         }
 
         private void OpSilenceValue()
         {
             if (!TrySilenceValue(Pop(), out string error))
-                throw new InvalidOperationException(error);
+                throw new ScriptErrorException(ProbeErrorClass(error), error);
         }
     }
 }

@@ -945,7 +945,7 @@ namespace fire.Native
                 if (byFunc.Count == 0 && extensions.Count == 0 && builtins.Count == 0 && !enumeratorOfArray && argc > 0)
                     sb.AppendLine("    " + string.Concat(Enumerable.Range(0, argc).Select(i => $"(void)a{i}; ")).TrimEnd());   // no class has the method: nothing uses the arguments
                 // a class that has the method with other numbers of arguments: an ArgumentException, otherwise a MissingMemberException (like the VM)
-                var otherArity = _classList.Where(c => HasMethodNamed(c.Rc, name)).ToList();
+                var otherArity = _classList.Where(c => HasMethodNamed(c.Rc, name) && c.Rc.FindMethodWithAccess(name, argc).Proto == null).ToList();
                 if (otherArity.Count > 0)
                 {
                     sb.AppendLine("    if (self.kind == K_Class) switch (asObj(self)->cls) {");
@@ -2720,19 +2720,22 @@ namespace fire.Native
                 {
                     Need(2); UseProbes();
                     string member = (ins.A[1] & 2) != 0 ? "nullptr" : CString(Str(ins.A[0]));
-                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id < 0) fatal(err); {S(d - 2)} = Int(id); }}");
+                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id < 0) {{ fireError(std::strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
+                    Check();
                     d--; SetR(d - 1, false); return Next();
                 }
                 case OpCode.SilenceMember:
                 {
                     Need(1); UseProbes();
                     string member = ins.A[1] != 0 ? "nullptr" : CString(Str(ins.A[0]));
-                    E($"{{ char err[500]; if (!rf_silenceCore({S(d - 1)}, {member}, err, sizeof err)) fatal(err); }}");
+                    E($"{{ char err[500]; if (!rf_silenceCore({S(d - 1)}, {member}, err, sizeof err)) fireError(\"ArgumentException\", err); }}");
+                    Check();
                     d--; return Next();
                 }
                 case OpCode.SilenceValue:
                     Need(1); UseProbes();
-                    E($"{{ char err[500]; if (!rf_silenceValue({S(d - 1)}, err, sizeof err)) fatal(err); }}");
+                    E($"{{ char err[500]; if (!rf_silenceValue({S(d - 1)}, err, sizeof err)) fireError(\"ArgumentException\", err); }}");
+                    Check();
                     d--; return Next();
                 case OpCode.CopyValue:
                     Need(1);
