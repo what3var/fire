@@ -16,7 +16,10 @@ namespace fire.Native
         /// <summary>The compiler: a name on the PATH or a full path (default by kind: <c>g++</c>, <c>clang++</c>, <c>cl</c>).</summary>
         public string? Compiler { get; set; }
         public string? Std { get; set; }
+        /// <summary>The optimisation flag (<c>-O2</c>), or <c>size</c>: a small program (gcc/clang: <c>-Os</c>, every function and datum in its own section, the linker drops what nothing uses; msvc: <c>/O1</c> and <c>/OPT:REF</c>).</summary>
         public string? Optimization { get; set; }
+        /// <summary>Remove symbols and debug information from a program (gcc/clang: <c>-s</c>); null: yes (a program built for a debugger sets <c>false</c>).</summary>
+        public bool? Strip { get; set; }
         /// <summary>Further compiler arguments.</summary>
         public List<string>? Args { get; set; }
         /// <summary>Libraries and linker arguments (after the source).</summary>
@@ -49,7 +52,7 @@ namespace fire.Native
             if (b == null) return this;
             return new ToolchainDef
             {
-                Extends = Extends, Kind = Kind ?? b.Kind, Compiler = Compiler ?? b.Compiler, Std = Std ?? b.Std, Optimization = Optimization ?? b.Optimization,
+                Extends = Extends, Kind = Kind ?? b.Kind, Compiler = Compiler ?? b.Compiler, Std = Std ?? b.Std, Optimization = Optimization ?? b.Optimization, Strip = Strip ?? b.Strip,
                 Args = Args ?? b.Args, Libs = Libs ?? b.Libs, IncludeDirs = IncludeDirs ?? b.IncludeDirs, Command = Command ?? b.Command,
                 Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand,
             };

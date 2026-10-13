@@ -7514,6 +7514,20 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var msvcCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["msvc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
         SfCheck(gccCmd.Contains("-mwindows") && !gccConsole.Contains("-mwindows"), "nativer Build (gcc): #noconsole setzt -mwindows, sonst nicht");
         SfCheck(msvcCmd.Contains("/SUBSYSTEM:WINDOWS") && msvcCmd.Contains("/ENTRY:mainCRTStartup"), "nativer Build (msvc): #noconsole setzt /SUBSYSTEM:WINDOWS");
+        // size: executables are stripped by default; "size" is -Os with section garbage collection; strip:false keeps the symbols (debugging); libraries stay as they are
+        {
+            var gccBase = fire.Native.ToolchainDef.BuiltIn["gcc"];
+            string plain = fire.Compiler.NativeBuilder.CompilerCommand(gccBase, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string small = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Extends = "gcc", Kind = "gcc", Optimization = "size" }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string debug = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Kind = "gcc", Strip = false }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string lib = fire.Compiler.NativeBuilder.CompilerCommand(gccBase, winTarget!, "p.cpp", sfDir, "p.dll", sharedLibrary: true).Arguments;
+            string msvcSmall = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Kind = "msvc", Optimization = "size" }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            SfCheck(plain.Split(' ').Contains("-s") && plain.Contains("-O2") && !plain.Contains("gc-sections"), "nativer Build (gcc): ein Programm wird gestrippt (-s), -O2 bleibt");
+            SfCheck(small.Contains("-Os") && small.Contains("-ffunction-sections") && small.Contains("--gc-sections") && !small.Contains("-O2"), "nativer Build (gcc): Optimization size = -Os mit gc-sections");
+            SfCheck(!debug.Split(' ').Contains("-s"), "nativer Build (gcc): strip=false laesst die Symbole stehen");
+            SfCheck(!lib.Split(' ').Contains("-s") && !lib.Contains("gc-sections"), "nativer Build (gcc): eine Bibliothek wird nicht gestrippt");
+            SfCheck(msvcSmall.Contains("/O1") && msvcSmall.Contains("/OPT:REF"), "nativer Build (msvc): Optimization size = /O1 und /OPT:REF");
+        }
         // the native build carries version info and icon to the executable
         var nativeInfo = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#name \"Demo\"\n#author \"ACME\"\n#version \"1.2.3.4\"\n#icon \"x.ico\"\nprint(\"x\")" }, TargetProfile.Host);
         SfCheck(nativeInfo.VersionInfo != null && nativeInfo.VersionInfo.ProductVersion.ToString() == "1.2.3.4" && nativeInfo.IconPath == "x.ico", "nativer Build: Versionsinfo und Icon der Direktiven kommen beim Build an");
