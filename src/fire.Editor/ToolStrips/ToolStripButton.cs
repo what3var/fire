@@ -25,6 +25,8 @@ namespace fire.Editor
     /// </summary>
     public class ToolStripButton : Button
     {
+        public static readonly StyledProperty<int?> IconSizeProperty = AvaloniaProperty.Register<ToolStripButton, int?>(nameof(IconSize));
+
         /// <summary>The icon: any control (an <c>Image</c>, a <c>PathIcon</c>); it is shown 16 x 16.</summary>
         public static readonly StyledProperty<Control?> IconProperty = AvaloniaProperty.Register<ToolStripButton, Control?>(nameof(Icon));
 
@@ -67,14 +69,15 @@ namespace fire.Editor
             IconDataProperty.Changed.AddClassHandler<ToolStripButton>((b, _) => b.UpdateIcon());
             LabelProperty.Changed.AddClassHandler<ToolStripButton>((b, _) => b.UpdateLabel());
             MenuProperty.Changed.AddClassHandler<ToolStripButton>((b, e) => b.MenuChanged(e.OldValue as MenuFlyout, e.NewValue as MenuFlyout));
+            IconSizeProperty.Changed.AddClassHandler<ToolStripButton>((b, _) => b.UpdateIcon());
         }
 
         public ToolStripButton()
         {
             Classes.Add("toolstrip");
             Padding = new Thickness(4, 2);
-            MinHeight = 24;
-            MinWidth = 24;
+            MinHeight = IconSize != null ? IconSize.Value + 8 : 24;
+            MinWidth = IconSize != null ? IconSize.Value + 8 : 24;
             VerticalAlignment = VerticalAlignment.Center;
             HorizontalContentAlignment = HorizontalAlignment.Center;
             VerticalContentAlignment = VerticalAlignment.Center;
@@ -88,6 +91,8 @@ namespace fire.Editor
             };
         }
 
+
+        public int? IconSize { get => GetValue(IconSizeProperty); set => SetValue(IconSizeProperty, value); }
         public Control? Icon { get => GetValue(IconProperty); set => SetValue(IconProperty, value); }
         public IImage? IconSource { get => GetValue(IconSourceProperty); set => SetValue(IconSourceProperty, value); }
         public Geometry? IconData { get => GetValue(IconDataProperty); set => SetValue(IconDataProperty, value); }
@@ -99,7 +104,11 @@ namespace fire.Editor
             Control? icon = Icon;
             if (icon == null && IconSource != null) icon = new Image { Source = IconSource };
             if (icon == null && IconData != null) icon = new Avalonia.Controls.PathIcon { Data = IconData };
-            if (icon != null) { icon.Width = 16; icon.Height = 16; }
+            if (icon != null) { icon.Width = IconSize ?? 16; icon.Height = IconSize ?? 16; }
+
+            MinHeight = IconSize != null ? IconSize.Value + 8 : 24;
+            MinWidth = IconSize != null ? IconSize.Value + 8 : 24;
+
             _icon.Content = icon;
             _icon.IsVisible = icon != null;
         }

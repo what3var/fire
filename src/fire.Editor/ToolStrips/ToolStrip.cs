@@ -56,7 +56,7 @@ namespace fire.Editor
             {
                 Background = Brushes.Transparent,   // the whole area is hit-testable, the bar in it is only drawn
                 Cursor = new Cursor(StandardCursorType.SizeAll),
-                Child = new Border { CornerRadius = new CornerRadius(2), Opacity = 0.55 }
+                Child = new Border { CornerRadius = new CornerRadius(2), Opacity = 0.55}
             };
             ((Border)_grip.Child).Bind(BackgroundProperty, this.GetResourceObservable("DockSeparatorBrush"));
             _root.Children.Add(_grip);
@@ -132,10 +132,16 @@ namespace fire.Editor
             _panel.HorizontalAlignment = vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left;
             _panel.VerticalAlignment = vertical ? VerticalAlignment.Top : VerticalAlignment.Center;
 
+            _panel.Margin = vertical ? new Thickness(2, 2, 2, 0) : new Thickness(2, 2, 0, 2);
+
+            //_panel.Background = Brushes.Green;
+            _root.MinHeight = vertical ? 0 : 28;
+            _root.MinWidth = vertical ? 28 : 0;
+            //_root.Background = Brushes.Blue;
             DockPanel.SetDock(_grip, vertical ? Avalonia.Controls.Dock.Top : Avalonia.Controls.Dock.Left);
             _grip.Width = vertical ? double.NaN : 12;
             _grip.Height = vertical ? 12 : double.NaN;
-            _grip.Child!.Margin = vertical ? new Thickness(4, 3) : new Thickness(3, 4);
+            _grip.Child!.Margin = vertical ? new Thickness(1, 3) : new Thickness(3, 1);
 
             foreach (var item in Items) item.IsVisible = !vertical || !GetHorizontalOnly(item);
             _panel.SetItems(Items);

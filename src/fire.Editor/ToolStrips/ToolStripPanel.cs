@@ -31,7 +31,16 @@ namespace fire.Editor
         private static readonly Point Away = new(-10000, -10000);
 
         private readonly List<Control> _items = new();
-        private readonly ToolStripButton _more = new() { IconData = Geometry.Parse("M4,6 L12,6 L8,10 Z"), IsVisible = true };
+        private readonly ToolStripButton _more = new()
+        {
+            IconData = Geometry.Parse("M4,6 L12,6 L8,10 Z"),
+            IsVisible = true,
+            IconSize = 8,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 0, 1)
+        };
+
         private readonly WrapPanel _popup = new() { Orientation = Orientation.Horizontal, MaxWidth = 360 };
         private readonly Flyout _flyout;
         private readonly HashSet<Control> _hidden = new();     // the items that do not fit at the moment
@@ -81,7 +90,7 @@ namespace fire.Editor
         private void UpdateMoreButton()
         {
             bool vertical = Orientation == Orientation.Vertical;
-            _more.IconData = Geometry.Parse(vertical ? "M6,4 L10,8 L6,12 Z" : "M4,6 L12,6 L8,10 Z");
+            _more.IconData = Geometry.Parse(vertical ? "M3,2 L5,4 L3,6 Z" : "M2,3 L6,3 L4,5 Z");
             _flyout.Placement = vertical ? PlacementMode.RightEdgeAlignedTop : PlacementMode.BottomEdgeAlignedRight;
             _popup.MaxWidth = vertical ? 360 : 360;
         }
