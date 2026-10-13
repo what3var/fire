@@ -16,9 +16,9 @@ namespace fire.Editor
     /// <summary>
     /// A strip of tool buttons that can be moved: a grip on its left (top, when it stands vertically) is dragged to another place in its tray, to another
     /// <see cref="ToolStripTray"/> at a window edge, or out of the window, where it floats (<see cref="ToolStripManager"/> does the moving).
-    /// Horizontally the items are the commands of an Avalonia <see cref="CommandBar"/> - with its overflow menu when the strip is too narrow; anything that is not a
-    /// command (combo boxes, split buttons, texts) goes into the content of the bar. Vertically (left and right trays) the same items are stacked; the ones marked
-    /// <see cref="HorizontalOnlyProperty"/> (labels, combo boxes) are left out there.
+    /// The items are laid out by a <see cref="ToolStripPanel"/>: in a line (next to each other, or under each other when the strip stands vertically), with an overflow
+    /// button whose popup takes the items that do not fit; the strip is only as long as what fits. The items that are marked <see cref="HorizontalOnlyProperty"/> (labels,
+    /// combo boxes) are left out when the strip stands vertically.
     /// </summary>
     public class ToolStrip : Border
     {
@@ -36,9 +36,7 @@ namespace fire.Editor
         public static readonly StyledProperty<int> BandProperty = AvaloniaProperty.Register<ToolStrip, int>(nameof(Band));
         public static readonly StyledProperty<int> BandIndexProperty = AvaloniaProperty.Register<ToolStrip, int>(nameof(BandIndex));
 
-        private readonly CommandBar _bar = new() { DefaultLabelPosition = CommandBarDefaultLabelPosition.Right, IsDynamicOverflowEnabled = false, Background = Brushes.Transparent };
-        private readonly StackPanel _barContent = new() { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        private readonly StackPanel _stack = new() { Orientation = Orientation.Vertical, Spacing = 2 };
+        private readonly ToolStripPanel _panel = new() { VerticalAlignment = VerticalAlignment.Center };
         private readonly Border _grip;
         private readonly DockPanel _root = new();
         private ToolStripManager? _manager;
@@ -124,46 +122,24 @@ namespace fire.Editor
             handle.DoubleTapped += (_, e) => { _manager?.ToggleFloating(this); e.Handled = true; };
         }
 
-        /// <summary>The commands of the bar (the items that are commands).</summary>
-        public CommandBar Bar => _bar;
+        /// <summary>True while some items do not fit and are in the overflow popup.</summary>
+        public bool IsOverflowing => _panel.IsOverflowing;
 
         private void Rebuild()
         {
             bool vertical = Orientation == Orientation.Vertical;
-
-            // take everything out of the places it was in (a control has one parent)
-            _bar.PrimaryCommands.Clear();
-            _bar.Content = null;
-            _barContent.Children.Clear();
-            _stack.Children.Clear();
-            _root.Children.Remove(_bar);
-            _root.Children.Remove(_stack);
+            _panel.Orientation = vertical ? Orientation.Vertical : Orientation.Horizontal;
+            _panel.HorizontalAlignment = vertical ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+            _panel.VerticalAlignment = vertical ? VerticalAlignment.Top : VerticalAlignment.Center;
 
             DockPanel.SetDock(_grip, vertical ? Avalonia.Controls.Dock.Top : Avalonia.Controls.Dock.Left);
             _grip.Width = vertical ? double.NaN : 12;
             _grip.Height = vertical ? 12 : double.NaN;
             _grip.Child!.Margin = vertical ? new Thickness(4, 3) : new Thickness(3, 4);
 
-            if (vertical)
-            {
-                foreach (var item in Items)
-                {
-                    item.IsVisible = !GetHorizontalOnly(item);
-                    _stack.Children.Add(item);
-                }
-                _root.Children.Add(_stack);
-            }
-            else
-            {
-                foreach (var item in Items)
-                {
-                    item.IsVisible = true;
-                    if (item is ICommandBarElement command) _bar.PrimaryCommands.Add(command);
-                    else _barContent.Children.Add(item);
-                }
-                _bar.Content = _barContent.Children.Count > 0 ? _barContent : null;
-                _root.Children.Add(_bar);
-            }
+            foreach (var item in Items) item.IsVisible = !vertical || !GetHorizontalOnly(item);
+            _panel.SetItems(Items);
+            if (!_root.Children.Contains(_panel)) _root.Children.Add(_panel);
         }
     }
 }
