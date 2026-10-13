@@ -21,6 +21,15 @@
         <SolidColorBrush x:Key="DockTargetIndicatorBrush" Color="#D6246E"/>
         <SolidColorBrush x:Key="DockSplitterHoverBrush" Color="#B70052"/>
         <SolidColorBrush x:Key="DockSplitterDragBrush" Color="#E8447F"/>
+        <!-- the TableView (lists in the panels): compact rows, the colours of fire for hover and selection -->
+        <SolidColorBrush x:Key="TableViewRowBackgroundPointerOver" Color="#2E2935"/>
+        <SolidColorBrush x:Key="TableViewRowBackgroundSelected" Color="#59B70052"/>
+        <SolidColorBrush x:Key="TableViewRowBackgroundSelectedPointerOver" Color="#73B70052"/>
+        <SolidColorBrush x:Key="TableViewRowBackgroundSelectedPressed" Color="#8CB70052"/>
+        <SolidColorBrush x:Key="TableViewRowBackgroundPressed" Color="#38323F"/>
+        <SolidColorBrush x:Key="TableViewColumnHeaderSeparatorBackground" Color="#4A4252"/>
+        <Thickness x:Key="TableViewCellPadding">6,1</Thickness>
+        <Thickness x:Key="TableViewRowPadding">0</Thickness>
 
 
     </Application.Resources>
@@ -44,9 +53,28 @@
                                        ErrorText="#E5566F"/>
             </FluentTheme.Palettes>
         </FluentTheme>
-        <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
         <StyleInclude Source="avares://AvaloniaEdit/Themes/Fluent/AvaloniaEdit.xaml"/>
         <dock:DockFluentTheme/>
+        <!-- the TableView: no frame, a header band in the tone of the panels, rows of one line -->
+        <Style Selector="TableView">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="TableViewColumnHeader">
+            <Setter Property="Background" Value="#2B2631"/>
+            <Setter Property="Foreground" Value="#C9BED0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="Normal"/>
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="BorderBrush" Value="#3C3544"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+        <Style Selector="TableViewRow">
+            <Setter Property="MinHeight" Value="22"/>
+        </Style>
+        <Style Selector="TableViewCell">
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
         <!-- the tool strips (ToolStrips/), docked and floating -->
         <Style Selector="local|ToolStrip Button">
             <Setter Property="Padding" Value="6,4"/>

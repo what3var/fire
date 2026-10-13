@@ -5,6 +5,7 @@ using Avalonia;
 using Avalonia.Collections;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 
@@ -22,7 +23,16 @@ namespace fire.Editor
         /// <summary>Fires when the number of errors or warnings changes (errors, warnings).</summary>
         public event Action<int, int>? CountChanged;
 
-        public ErrorListPanelControl() => InitializeComponent();
+        // the sort the user chose by a click on a header (the TableView only shows, it does not sort): the index of the column and the direction
+        private static readonly string[] ColumnTitles = { "", "Code", "Description", "File", "Line" };
+        private int _sortColumn = -1;
+        private bool _sortDescending;
+
+        public ErrorListPanelControl()
+        {
+            InitializeComponent();
+            ErrorGrid.AddHandler(PointerReleasedEvent, Header_Released, RoutingStrategies.Bubble, handledEventsToo: true);
+        }
 
         public int ErrorCount => _items.Count(i => i.IsError);
 
@@ -45,15 +55,37 @@ namespace fire.Editor
             ErrorCountText.Text = errors == 1 ? "1 error" : $"{errors} errors";
             WarningCountText.Text = warnings == 1 ? "1 warning" : $"{warnings} warnings";
 
-            var sorts = ErrorGrid.CollectionView?.SortDescriptions.ToList() ?? new List<DataGridSortDescription>();
-
             bool showErrors = ErrorFilterButton.IsChecked == true, showWarnings = WarningFilterButton.IsChecked == true;
-            ErrorGrid.ItemsSource = _items.Where(i => i.IsError ? showErrors : showWarnings).ToList();
+            IEnumerable<ErrorListItem> shown = _items.Where(i => i.IsError ? showErrors : showWarnings);
+            if (_sortColumn >= 0)
+            {
+                Func<ErrorListItem, IComparable> key = _sortColumn switch
+                {
+                    0 => i => i.IsError ? 0 : 1,
+                    1 => i => i.Code,
+                    2 => i => i.Description,
+                    3 => i => i.File,
+                    _ => i => i.Line,
+                };
+                shown = _sortDescending ? shown.OrderByDescending(key) : shown.OrderBy(key);
+            }
+            ErrorGrid.ItemsSource = shown.ToList();
+        }
 
-            var view = ErrorGrid.CollectionView;
-            if (view == null) return;
-            view.SortDescriptions.Clear();
-            foreach (var sort in sorts) view.SortDescriptions.Add(sort);
+        /// <summary>A click on a column header sorts by that column (a second click turns the direction); the arrow in the title shows the sort.</summary>
+        private void Header_Released(object? sender, PointerReleasedEventArgs e)
+        {
+            var source = e.Source as Visual;
+            if (source == null || source.FindAncestorOfType<Thumb>(true) != null) return;   // the end of a resizing drag
+            var header = source.FindAncestorOfType<TableViewColumnHeader>(true);
+            if (header?.Column is not { } column) return;
+            int index = ErrorGrid.Columns.IndexOf(column);
+            if (index < 0) return;
+            _sortDescending = _sortColumn == index && !_sortDescending;
+            _sortColumn = index;
+            for (int i = 0; i < ErrorGrid.Columns.Count && i < ColumnTitles.Length; i++)
+                ErrorGrid.Columns[i].Header = i == _sortColumn ? ColumnTitles[i] + (_sortDescending ? " \u25BC" : " \u25B2") : ColumnTitles[i];
+            Apply();
         }
 
         private void Filter_Click(object? sender, RoutedEventArgs e) => Apply();
@@ -61,7 +93,7 @@ namespace fire.Editor
         private void ErrorGrid_DoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
         {
             // only a double click on a ROW jumps (not one on a column header)
-            if ((e.Source as Visual)?.FindAncestorOfType<DataGridRow>() == null) return;
+            if ((e.Source as Visual)?.FindAncestorOfType<TableViewRow>(true) == null) return;
             if (ErrorGrid.SelectedItem is ErrorListItem item) ItemActivated?.Invoke(item);
         }
     }

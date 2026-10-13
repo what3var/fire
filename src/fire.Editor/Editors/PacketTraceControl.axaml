@@ -26,17 +26,17 @@
 
         <TextBlock x:Name="ErrorText" DockPanel.Dock="Top" IsVisible="False" Margin="8,4" Foreground="#E5566F" TextWrapping="Wrap"/>
 
-        <DataGrid x:Name="PacketList" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
-                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Extended" HeadersVisibility="Column" GridLinesVisibility="None"
-                  SelectionChanged="PacketList_SelectionChanged" LoadingRow="PacketList_LoadingRow">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="#" Width="60" Binding="{Binding Number}"/>
-                <DataGridTextColumn Header="Time" Width="100" Binding="{Binding TimeText}"/>
-                <DataGridTextColumn Header="Direction" Width="120" Binding="{Binding DirectionText}"/>
-                <DataGridTextColumn Header="Device" Width="140" Binding="{Binding DeviceId}"/>
-                <DataGridTextColumn Header="Bytes" Width="60" Binding="{Binding Length}"/>
-                <DataGridTextColumn Header="Content" Width="600" Binding="{Binding Content}"/>
-            </DataGrid.Columns>
-        </DataGrid>
+        <TableView x:Name="PacketList" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
+                   CanUserResizeColumns="True" SelectionMode="Multiple"
+                   SelectionChanged="PacketList_SelectionChanged" ContainerPrepared="PacketList_ContainerPrepared">
+            <TableView.Columns>
+                <TableViewColumn Header="#" Width="60" Binding="{Binding Number}"/>
+                <TableViewColumn Header="Time" Width="100" Binding="{Binding TimeText}"/>
+                <TableViewColumn Header="Direction" Width="120" Binding="{Binding DirectionText}"/>
+                <TableViewColumn Header="Device" Width="140" Binding="{Binding DeviceId}"/>
+                <TableViewColumn Header="Bytes" Width="60" Binding="{Binding Length}"/>
+                <TableViewColumn Header="Content" Width="*" Binding="{Binding Content}"/>
+            </TableView.Columns>
+        </TableView>
     </DockPanel>
 </UserControl>
