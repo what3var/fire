@@ -299,6 +299,12 @@ mode, an error in strict mode). **A method says what it returns** (`int Area()`,
 value and sometimes nothing declares the type of the value, because `undefined` fits every type (a bare `return` is `return undefined`) - `any` is for methods that return values of different
 types. Operators can say it too (`bool operator==(any o)`). A declaration can say that it accepts values of every unit with `: any` (`float width : any`); without a unit declaration nothing is demanded either.
 A `lambda` type counts the parameters of the lambda it takes (`lambda` = none, `lambda<int, int>` = two); an optional callback is therefore declared `any`, because `undefined` is not a lambda.
+**Lambdas are typed**: a lambda takes the types of its parameters and of its result from the target it goes to - the typed parameter, field or variable
+(`int lambda<int, int> add = (x, y) => x + y`: `x` and `y` are `int`, the result must be an `int`); without such a target (`var f = ...`, an `any` parameter) the types
+written at its own parameters count (`var f = (int k, string s) => k`), and a parameter without one is `any` and said so (`TC004`). A lambda with another number of
+parameters than its target, a parameter type that does not take the target's argument, a wrong result (`TC003`) and a call with the wrong number of arguments (`TC002`)
+are reported. **Arrays** have the type of their elements (`int[]`, from the declaration, `new int[n]` or a literal `[1, 2]`): an element, `foreach` over the array and
+`a.length` are typed; `s[i]` of a string is a `char`, `obj[i]` is what the `operator[]` of the class returns.
 
 The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `Foo f`); `var x` derives it from the value. A `:` after the variable name (`var x : mm`), on the other hand, only fixes the **unit** (see "unit declarations") – `var x : int` as a type declaration no longer exists.
 

@@ -20,22 +20,39 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array }
 
-    internal readonly record struct StaticType(StaticKind Kind, string? Class = null)
+    /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
+    internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null)
     {
+        public bool Equals(StaticType? other) =>
+            other is not null && Kind == other.Kind && Class == other.Class && Equals(Element, other.Element) && ParamCount == other.ParamCount && Equals(Return, other.Return)
+            && (Params == null ? other.Params == null : other.Params != null && Params.SequenceEqual(other.Params));
+        public override int GetHashCode() => HashCode.Combine(Kind, Class, Element, ParamCount, Return);
+
         public static readonly StaticType Dynamic = new(StaticKind.Dynamic);
         public static readonly StaticType Bool = new(StaticKind.Bool);
         public static readonly StaticType Int = new(StaticKind.Int);
         public static readonly StaticType Float = new(StaticKind.Float);
         public static readonly StaticType Char = new(StaticKind.Char);
         public static readonly StaticType String = new(StaticKind.String);
+        /// <summary>A lambda whose signature is not known.</summary>
         public static readonly StaticType Lambda = new(StaticKind.Lambda);
         public static readonly StaticType Undefined = new(StaticKind.Undefined);
         /// <summary>The type `class`: any object instance (not a base value, not an array, not a lambda).</summary>
         public static readonly StaticType Object = new(StaticKind.Object);
+        public static StaticType ArrayOf(StaticType element) => new(StaticKind.Array, Element: element);
+        public static StaticType LambdaOf(int paramCount, StaticType? returns, IReadOnlyList<StaticType>? parameters = null) => new(StaticKind.Lambda, ParamCount: paramCount, Return: returns, Params: parameters);
         public bool IsDynamic => Kind == StaticKind.Dynamic;
-        public override string ToString() => Kind == StaticKind.Class ? Class! : Kind.ToString().ToLowerInvariant();
+        public override string ToString() => Kind switch
+        {
+            StaticKind.Class => Class!,
+            StaticKind.Object => "class",
+            StaticKind.Dynamic => "any",
+            StaticKind.Array => Element + "[]",
+            StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
+            _ => Kind.ToString().ToLowerInvariant(),
+        };
     }
 
     /// <summary>
@@ -60,6 +77,8 @@ namespace fire.Compiler
         private readonly List<Diagnostic> _diagnostics = new();
         private readonly List<Dictionary<string, StaticType>> _scopes = new();
         private ClassDecl? _class;
+        /// <summary>The type of `this` in a `class extends string/array/...` (null: the class being checked decides).</summary>
+        private StaticType? _thisType;
         private StaticType? _returnType;
         private int _source;
         /// <summary>The types of the `return` statements of the untyped method that is being checked (null: not collecting; a lambda inside does not count).</summary>
@@ -117,6 +136,16 @@ namespace fire.Compiler
         {
             if (value.IsDynamic || target.IsDynamic || value.Kind == StaticKind.Undefined) return true;
             if (target.Kind == StaticKind.String) return true;                       // everything converts to string (ToString)
+            if (value.Kind == StaticKind.Array || target.Kind == StaticKind.Array)
+                return value.Kind == target.Kind && Assignable(value.Element!, target.Element!);
+            if (value.Kind == StaticKind.Lambda && target.Kind == StaticKind.Lambda)
+            {
+                if (value.ParamCount >= 0 && target.ParamCount >= 0 && value.ParamCount != target.ParamCount) return false;
+                if (value.Params != null && target.Params != null && value.Params.Count == target.Params.Count
+                    && value.Params.Zip(target.Params).Any(p => !Assignable(p.Second, p.First))) return false;
+                // (a lambda that returns a value may stand where nothing is expected of it)
+                return value.Return == null || target.Return == null || target.Return.Kind == StaticKind.Undefined || Assignable(value.Return, target.Return);
+            }
             if (value.Kind == StaticKind.Int && target.Kind == StaticKind.Float) return true;
             if (target.Kind == StaticKind.Object) return value.Kind is StaticKind.Class or StaticKind.Object;   // `class` holds objects only
             if (value.Kind == StaticKind.Object) return target.Kind is StaticKind.Class;                          // (an object may be the class the code expects)
@@ -145,24 +174,41 @@ namespace fire.Compiler
         // -------------------------------------------------------------------------------------------------------------
         // Types of declarations
         // -------------------------------------------------------------------------------------------------------------
-        /// <summary>The static type a type annotation stands for; null for `var` (no annotation).</summary>
+        /// <summary>The static type a type annotation stands for; null for `var` (no annotation). `arrayRanks` are the brackets after the name (`int values[]`).</summary>
         private StaticType? Declared(TypeRef? type, int arrayRanks = 0)
         {
             if (type == null || type.IsInferred) return null;
-            if (arrayRanks > 0 || type.ArrayRank > 0 || type.PointerDepth > 0) return StaticType.Dynamic;
-            switch (type.BaseName)
+            if (type.PointerDepth > 0) return StaticType.Dynamic;
+            var result = type.BaseName == "lambda" ? DeclaredLambda(type.LambdaSignature) : FromName(type.BaseName);
+            for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
+            return result;
+        }
+
+        /// <summary>`[Return] lambda<P1, ..., Pn>`: the number of parameters and the return type (a selector `lambda member<T>` takes one parameter).</summary>
+        private StaticType DeclaredLambda(LambdaSignature? signature)
+        {
+            if (signature == null) return StaticType.LambdaOf(0, null);
+            if (signature.IsSelector) return StaticType.LambdaOf(-1, null);
+            return StaticType.LambdaOf(signature.ParamTypeNames.Count, signature.ReturnTypeName != null ? FromName(signature.ReturnTypeName) : null,
+                signature.ParamTypeNames.Select(FromName).ToList());
+        }
+
+        /// <summary>The static type of a type name (a keyword, `any`, `class`, a class; everything else - an enum, an interface, a type parameter - is not known).</summary>
+        private StaticType FromName(string name)
+        {
+            switch (name)
             {
-                case "int": return StaticType.Int;
+                case "int": case "byte": return StaticType.Int;
                 case "float": return StaticType.Float;
                 case "bool": return StaticType.Bool;
                 case "char": return StaticType.Char;
                 case "string": return StaticType.String;
-                case "lambda": return StaticType.Lambda;
+                case "lambda": return StaticType.LambdaOf(0, null);
                 case "class": return StaticType.Object;
                 case "undefined": return StaticType.Undefined;
                 case "any": return StaticType.Dynamic;
             }
-            string plain = PlainName(type.BaseName);
+            string plain = PlainName(name);
             return _classes.ContainsKey(plain) ? new StaticType(StaticKind.Class, plain) : StaticType.Dynamic;
         }
 
@@ -256,16 +302,18 @@ namespace fire.Compiler
                     Pop();
                     break;
                 case ForeachStmt fe:
-                    Infer(fe.Iterable);
-                    Push();
-                    Declare(fe.VarName, StaticType.Dynamic);
+                    {
+                        var iterable = Infer(fe.Iterable);
+                        Push();
+                        Declare(fe.VarName, iterable.Kind == StaticKind.Array ? iterable.Element! : StaticType.Dynamic);
+                    }
                     CheckScoped(fe.Body);
                     Pop();
                     break;
                 case ReturnStmt r:
                     if (r.Value != null)
                     {
-                        var type = Infer(r.Value);
+                        var type = Infer(r.Value, _returnType);
                         _collectedReturns?.Add(type);
                         if (_returnType is { } expected) CheckAssignable(type, expected, r.Line, "the return value", ReturnCode);
                     }
@@ -284,6 +332,51 @@ namespace fire.Compiler
                     if (t.Finally != null) Check(t.Finally);
                     break;
                 case UnsafeStmt u: Check(u.Body); break;
+                case FireStmt f:
+                    {
+                        // the block runs in a scope of its own: the `taking` copies and the actor of `with` are its variables
+                        var captured = f.TakingCaptures.Select(c => (c.VarName, Type: Infer(c.Source))).ToList();
+                        var actor = f.WithSource != null ? Infer(f.WithSource) : StaticType.Dynamic;
+                        Push();
+                        foreach (var (name, type) in captured) Declare(name, type);
+                        if (f.WithVarName != null) Declare(f.WithVarName, actor);
+                        foreach (var s in f.Body.Statements) Check(s);
+                        Pop();
+                        break;
+                    }
+                case ProcessStmt p: Infer(p.Target); break;
+                case SilenceStmt si: Infer(si.Target); break;
+                case DeleteStmt d: Infer(d.Target); break;
+                case TerminateStmt te: if (te.Value != null) Infer(te.Value); break;
+                case PostGlobalStmt pg: Infer(pg.Lambda); foreach (var a in pg.Args) Infer(a); break;
+                case CatchThreadsDecl ct:
+                    Push();
+                    if (ct.VarName != null) Declare(ct.VarName, DeclaredOrDynamic(ct.TypeRef));
+                    Check(ct.Body);
+                    Pop();
+                    break;
+                case CatchTerminateDecl cte:
+                    Push();
+                    if (cte.VarName != null) Declare(cte.VarName, StaticType.Dynamic);
+                    Check(cte.Body);
+                    Pop();
+                    break;
+                case InterfaceDecl id:
+                    foreach (var sig in id.Methods)
+                    {
+                        CheckParametersTyped(sig.Params, sig.Name, sig.Line);
+                        if (sig.ReturnType == null || sig.ReturnType.IsInferred) ReportNoReturnType(sig.Name, sig.Line);
+                    }
+                    break;
+                case ClassExtensionDecl ext:
+                    {
+                        // `class extends string { ... }`: `this` is a value of the extended type
+                        var previousThis = _thisType;
+                        _thisType = ext.TargetRef.BaseName == "array" ? StaticType.ArrayOf(StaticType.Dynamic) : DeclaredOrDynamic(ext.TargetRef);
+                        CheckMembers(ext.Members, ext.TargetRef.BaseName);
+                        _thisType = previousThis;
+                        break;
+                    }
                 case NamespaceDecl n:
                     foreach (var m in n.Members) Check(m);
                     break;
@@ -302,7 +395,7 @@ namespace fire.Compiler
         private void CheckVarDecl(VarDeclStmt v)
         {
             var declared = Declared(v.Type, v.ArrayRanks.Count);
-            var init = v.Initializer != null ? Infer(v.Initializer) : StaticType.Dynamic;
+            var init = v.Initializer != null ? Infer(v.Initializer, declared) : StaticType.Dynamic;
             if (declared is { } target)
             {
                 if (v.Initializer != null) CheckAssignable(init, target, v.Line, $"'{v.Name}'");
@@ -317,14 +410,24 @@ namespace fire.Compiler
         {
             var previousClass = _class;
             _class = decl;
-            foreach (var member in decl.Members)
+            CheckMembers(decl.Members, decl.Name);
+            _class = previousClass;
+        }
+
+        private void ReportNoReturnType(string method, int line) =>
+            Report(NoReturnTypeCode, $"Method '{method}' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing).", line);
+
+        private void CheckMembers(IReadOnlyList<Stmt> members, string ownerName)
+        {
+            foreach (var member in members)
             {
                 switch (member)
                 {
                     case FieldDecl f when f.Initializer != null:
                         {
-                            var init = Infer(f.Initializer);
-                            if (Declared(f.Type, f.ArrayRanks.Count) is { } target) CheckAssignable(init, target, f.Line, $"field '{f.Name}'");
+                            var declaredField = Declared(f.Type, f.ArrayRanks.Count);
+                            var init = Infer(f.Initializer, declaredField);
+                            if (declaredField is { } target) CheckAssignable(init, target, f.Line, $"field '{f.Name}'");
                             break;
                         }
                     case MethodDecl m:
@@ -332,11 +435,11 @@ namespace fire.Compiler
                             CheckParametersTyped(m.Params, m.Name, m.Line);
                             bool untyped = m.ReturnType == null || m.ReturnType.IsInferred;
                             bool isOperator = m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex";
-                            if (untyped && !isOperator) Report(NoReturnTypeCode, $"Method '{m.Name}' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing).", m.Line);
+                            if (untyped && !isOperator) ReportNoReturnType(m.Name, m.Line);
                             var previousCollected = _collectedReturns;
                             _collectedReturns = untyped && SuggestReturnTypes ? new List<StaticType>() : null;
-                            CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType, m.ReturnType!.ArrayRank));
-                            if (_collectedReturns != null) Console.Error.WriteLine($"SUGGEST\t{decl.Name}\t{m.Name}\t{m.Params.Count}\t{SuggestedType(_collectedReturns)}");
+                            CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType));
+                            if (_collectedReturns != null) Console.Error.WriteLine($"SUGGEST\t{ownerName}\t{m.Name}\t{m.Params.Count}\t{SuggestedType(_collectedReturns)}");
                             _collectedReturns = previousCollected;
                             break;
                         }
@@ -353,7 +456,6 @@ namespace fire.Compiler
                         break;
                 }
             }
-            _class = previousClass;
         }
 
         /// <summary>A parameter without a type is taken as `any`: said so (a warning in lax mode, an error in strict mode), because a declared type tells the user of the class what it expects.</summary>
@@ -398,6 +500,10 @@ namespace fire.Compiler
         // -------------------------------------------------------------------------------------------------------------
         // Expressions
         // -------------------------------------------------------------------------------------------------------------
+        /// <summary>The type of an expression that goes to a target of the type <paramref name="expected"/>: a lambda takes the types of its parameters and of its result from there.</summary>
+        private StaticType Infer(Expr expr, StaticType? expected) =>
+            expr is LambdaExpr lam ? InferLambda(lam, expected) : Infer(expr);
+
         private StaticType Infer(Expr expr)
         {
             switch (expr)
@@ -414,36 +520,19 @@ namespace fire.Compiler
                         _ => StaticType.Dynamic,
                     };
                 case IdentifierExpr id: return Lookup(id.Name);
-                case ThisExpr: return _class != null ? new StaticType(StaticKind.Class, _class.Name) : StaticType.Dynamic;
+                case ThisExpr: return _thisType ?? (_class != null ? new StaticType(StaticKind.Class, _class.Name) : StaticType.Dynamic);
                 case InterpolatedStringExpr s:
                     foreach (var part in s.Parts) if (part is InterpolationExprPart ep) Infer(ep.Expression);
                     return StaticType.String;
                 case UnaryExpr u: return InferUnary(u);
                 case BinaryExpr b: return InferBinary(b);
                 case AssignExpr a: return InferAssign(a);
-                case MemberExpr m:
-                    {
-                        var target = Infer(m.Target);
-                        return target.Kind == StaticKind.Class && FindMember(target.Class!, m.Name) is { } member ? member : StaticType.Dynamic;
-                    }
-                case IndexExpr ix: Infer(ix.Target); Infer(ix.Index); return StaticType.Dynamic;
+                case MemberExpr m: return InferMember(m);
+                case IndexExpr ix: return InferIndex(ix);
                 case CallExpr c: return InferCall(c);
                 case NewExpr n: return InferNew(n);
                 case IncDecExpr inc: return Infer(inc.Target);
-                case LambdaExpr lam:
-                    {
-                        var previousReturn = _returnType;
-                        var previousCollected = _collectedReturns;
-                        _returnType = null;
-                        _collectedReturns = null;
-                        Push();
-                        foreach (var p in lam.Params) Declare(p.Name, DeclaredOrDynamic(p.Type, p.ArrayRanks.Count));
-                        foreach (var s in lam.Body.Statements) Check(s);
-                        Pop();
-                        _returnType = previousReturn;
-                        _collectedReturns = previousCollected;
-                        return StaticType.Lambda;
-                    }
+                case LambdaExpr lam: return InferLambda(lam, null);
                 case IsOfExpr io: Infer(io.Operand); return StaticType.Bool;
                 case IsInExpr ii: Infer(ii.Operand); return StaticType.Bool;
                 case IsFromExpr ifr: Infer(ifr.Operand); Infer(ifr.OwnerExpr); return StaticType.Bool;
@@ -461,10 +550,24 @@ namespace fire.Compiler
                             _ => StaticType.Dynamic,
                         };
                     }
-                case ArrayLiteralExpr arr:
-                    foreach (var element in arr.Elements) Infer(element);
-                    return StaticType.Dynamic;
+                case ArrayLiteralExpr arr: return StaticType.ArrayOf(Join(arr.Elements.Select(Infer).ToList()));
+                case NewArrayExpr na:
+                    {
+                        foreach (var size in na.SizeExprs) if (size != null) Infer(size);
+                        var element = DeclaredOrDynamic(na.ElementType);
+                        for (int i = 0; i < na.SizeExprs.Count; i++) element = StaticType.ArrayOf(element);
+                        return element;
+                    }
+                case NewBufferExpr nb: Infer(nb.SizeExpr); return StaticType.Dynamic;
                 case ThrowExpr th: Infer(th.Value); return StaticType.Dynamic;
+                case SyncExpr sy: Infer(sy.Target); return StaticType.Dynamic;
+                case ProbeExpr pr:
+                    // the handler of a probe gets the object and the value
+                    Infer(pr.Target);
+                    Infer(pr.Handler, StaticType.LambdaOf(2, null, new[] { StaticType.Dynamic, StaticType.Dynamic }));
+                    return StaticType.Dynamic;
+                case TryProcessExpr tp: Infer(tp.Target); return StaticType.Dynamic;
+                case TryCallExpr tc: Infer(tc.Call); return StaticType.Dynamic;
                 default: return StaticType.Dynamic;
             }
         }
@@ -477,6 +580,7 @@ namespace fire.Compiler
                 UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : StaticType.Dynamic,
                 UnaryOp.LogicalNot => StaticType.Bool,
                 UnaryOp.BitNot => StaticType.Int,
+                UnaryOp.FlatCopy or UnaryOp.DeepCopy or UnaryOp.Take => operand,
                 _ => StaticType.Dynamic,
             };
         }
@@ -509,7 +613,6 @@ namespace fire.Compiler
 
         private StaticType InferAssign(AssignExpr a)
         {
-            var value = Infer(a.Value);
             var target = a.Target switch
             {
                 IdentifierExpr id => Lookup(id.Name),
@@ -517,42 +620,138 @@ namespace fire.Compiler
                 IndexExpr ix => InferIndexTarget(ix),
                 _ => StaticType.Dynamic,
             };
-            string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", _ => "the target" };
+            var value = Infer(a.Value, target);
+            string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", IndexExpr => "an element", _ => "the target" };
             CheckAssignable(value, target, a.Line, what);
             return target.IsDynamic ? value : target;
         }
 
-        private StaticType InferMemberTarget(MemberExpr m)
-        {
-            var target = Infer(m.Target);
-            return target.Kind == StaticKind.Class && FindMember(target.Class!, m.Name) is { } member ? member : StaticType.Dynamic;
-        }
+        private StaticType InferMemberTarget(MemberExpr m) => InferMember(m);
 
         private StaticType InferIndexTarget(IndexExpr ix)
         {
-            Infer(ix.Target);
+            var target = Infer(ix.Target);
             Infer(ix.Index);
+            if (target.Kind == StaticKind.Array) return target.Element!;
+            if (target.Kind == StaticKind.Class && FindMethod(target.Class!, "SetIndex", 2) is { } setter) return DeclaredOrDynamic(setter.Params[1].Type, setter.Params[1].ArrayRanks.Count);
+            return StaticType.Dynamic;
+        }
+
+        /// <summary>`a[i]`: the element of an array, the char of a string, what the `operator[]` of a class returns.</summary>
+        private StaticType InferIndex(IndexExpr ix)
+        {
+            var target = Infer(ix.Target);
+            Infer(ix.Index);
+            return target.Kind switch
+            {
+                StaticKind.Array => target.Element!,
+                StaticKind.String => StaticType.Char,
+                StaticKind.Class when FindMethod(target.Class!, "GetIndex", 1) is { ReturnType: { } returns } => DeclaredOrDynamic(returns),
+                _ => StaticType.Dynamic,
+            };
+        }
+
+        /// <summary>`a.Name`: a field or property of a class (also a static one, `Class.Name`), the length of an array or a string.</summary>
+        private StaticType InferMember(MemberExpr m)
+        {
+            var target = Infer(m.Target);
+            if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = new StaticType(StaticKind.Class, staticClass);
+            return target.Kind switch
+            {
+                StaticKind.Class when FindMember(target.Class!, m.Name) is { } member => member,
+                StaticKind.Array when m.Name == "length" => StaticType.Int,
+                StaticKind.String when m.Name == "Length" => StaticType.Int,
+                _ => StaticType.Dynamic,
+            };
+        }
+
+        /// <summary>A lambda: its body is checked on its own (its returns are not those of the method around it). The types of its parameters and of its result come from
+        /// the target it goes to (a typed parameter, field or variable: <paramref name="expected"/>), otherwise from its own declaration (`var f = (int x) => ...`);
+        /// a parameter that has neither is `any` and said so (TC004). Its type has its parameters and, when all its returns agree, the type it returns.</summary>
+        private StaticType InferLambda(LambdaExpr lam, StaticType? expected)
+        {
+            var context = expected is { Kind: StaticKind.Lambda, Params: { } ps } && ps.Count == lam.Params.Count ? ps : null;
+            var expectedReturn = expected is { Kind: StaticKind.Lambda, Return: { Kind: not StaticKind.Undefined } r } ? r : null;
+            var parameterTypes = new List<StaticType>();
+            for (int i = 0; i < lam.Params.Count; i++)
+            {
+                var p = lam.Params[i];
+                var declared = Declared(p.Type, p.ArrayRanks.Count);
+                if (declared != null)
+                {
+                    if (context != null && !Assignable(context[i], declared))
+                        Report(ArgumentCode, $"Parameter '{p.Name}' of the lambda is of type '{declared}', but the lambda is called with '{context[i]}'", lam.Line);
+                    parameterTypes.Add(declared);
+                }
+                else if (context != null) parameterTypes.Add(context[i]);
+                else
+                {
+                    // (a target with another number of parameters is reported as such)
+                    if (expected is not { Kind: StaticKind.Lambda, ParamCount: >= 0 })
+                        Report(UntypedCode, $"Parameter '{p.Name}' of the lambda has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", lam.Line);
+                    parameterTypes.Add(StaticType.Dynamic);
+                }
+            }
+
+            var previousReturn = _returnType;
+            var previousCollected = _collectedReturns;
+            _returnType = expectedReturn;
+            var returns = new List<StaticType>();
+            _collectedReturns = returns;
+            Push();
+            for (int i = 0; i < lam.Params.Count; i++) Declare(lam.Params[i].Name, parameterTypes[i]);
+            foreach (var s in lam.Body.Statements) Check(s);
+            Pop();
+            _returnType = previousReturn;
+            _collectedReturns = previousCollected;
+            var values = returns.Where(r => r.Kind != StaticKind.Undefined).ToList();
+            StaticType? returned = expectedReturn ?? (values.Count == 0 ? StaticType.Undefined : Join(values) is { IsDynamic: false } joined ? joined : null);
+            // (a parameter with a default value makes the number of arguments a range: not claimed)
+            return StaticType.LambdaOf(lam.Params.Any(p => p.DefaultValue != null) ? -1 : lam.Params.Count, returned, parameterTypes);
+        }
+
+        /// <summary>The one type of several values (the elements of an array literal, the returns of a lambda): the same type, `float` for a mix of numbers, otherwise not known.</summary>
+        private static StaticType Join(IReadOnlyList<StaticType> types)
+        {
+            var known = types.Where(t => t.Kind != StaticKind.Undefined).ToList();
+            if (known.Count == 0 || known.Any(t => t.IsDynamic)) return StaticType.Dynamic;
+            if (known.All(t => t == known[0])) return known[0];
+            if (known.All(t => t.Kind is StaticKind.Int or StaticKind.Float)) return StaticType.Float;
             return StaticType.Dynamic;
         }
 
         private StaticType InferCall(CallExpr c)
         {
-            var args = c.Args.Select(Infer).ToList();
+            // the callee first: the declared types of its parameters are what the arguments go to (a lambda argument takes its types from there)
             MethodDecl? method = null;
+            StaticType? lambda = null;
+            string name = "the lambda";
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
                 if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = new StaticType(StaticKind.Class, staticClass);
-                if (target.Kind == StaticKind.Class) method = FindMethod(target.Class!, m.Name, c.Args.Count);
+                if (target.Kind == StaticKind.Class)
+                {
+                    method = FindMethod(target.Class!, m.Name, c.Args.Count);
+                    if (method == null && FindMember(target.Class!, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
+                }
             }
             else if (c.Callee is IdentifierExpr id)
             {
                 if (_class != null && !IsLocal(id.Name)) method = FindMethod(_class.Name, id.Name, c.Args.Count);
+                if (method == null && Lookup(id.Name) is { Kind: StaticKind.Lambda } variable) { lambda = variable; name = id.Name; }
             }
-            else Infer(c.Callee);
+            else if (Infer(c.Callee) is { Kind: StaticKind.Lambda } callee) lambda = callee;
+
+            var expected = new List<StaticType?>();
+            for (int i = 0; i < c.Args.Count; i++)
+                expected.Add(method != null && i < method.Params.Count && !method.Params[i].ByRef ? Declared(method.Params[i].Type, method.Params[i].ArrayRanks.Count)
+                    : lambda?.Params != null && i < lambda.Params.Count ? lambda.Params[i] : null);
+            var args = c.Args.Select((a, i) => Infer(a, expected[i])).ToList();
+            if (lambda != null) return CallLambda(lambda, args, c, name);
             if (method == null) return StaticType.Dynamic;
             CheckArguments(method.Params, args, c.Args, method.Name);
-            return method.ReturnType == null ? StaticType.Dynamic : DeclaredOrDynamic(method.ReturnType, method.ReturnType.ArrayRank);
+            return DeclaredOrDynamic(method.ReturnType);
         }
 
         /// <summary>`Class.Method(...)`: a (possibly namespace-qualified) class name that is not shadowed by a variable or member.</summary>
@@ -565,6 +764,14 @@ namespace fire.Compiler
             return _classes.ContainsKey(name) ? name : null;
         }
 
+        /// <summary>The call of a lambda: the number of arguments must be the number of its parameters; the result is what it returns (when that is known).</summary>
+        private StaticType CallLambda(StaticType lambda, IReadOnlyList<StaticType> args, CallExpr c, string name)
+        {
+            if (lambda.ParamCount >= 0 && args.Count != lambda.ParamCount)
+                Report(ArgumentCode, $"'{name}' ({lambda}) takes {lambda.ParamCount} argument(s), not {args.Count}", c.Line);
+            return lambda.Return is { Kind: not StaticKind.Undefined } returns ? returns : StaticType.Dynamic;
+        }
+
         private bool IsLocal(string name)
         {
             for (int i = _scopes.Count - 1; i >= 1; i--)
@@ -574,11 +781,14 @@ namespace fire.Compiler
 
         private StaticType InferNew(NewExpr n)
         {
-            var args = n.Args.Select(Infer).ToList();
-            string plain = PlainName(n.ClassRef.BaseName);
-            if (!_classes.TryGetValue(plain, out var decl)) return StaticType.Dynamic;
+            // `new Box<int>()`: the generic class (named `Box`1` next to a non-generic `Box`)
+            string plain = n.TypeArgs is { Count: > 0 } typeArgs && _classes.ContainsKey(GenericClassNames.Mangle(PlainName(n.ClassRef.BaseName), typeArgs.Count))
+                ? GenericClassNames.Mangle(PlainName(n.ClassRef.BaseName), typeArgs.Count) : PlainName(n.ClassRef.BaseName);
+            if (!_classes.TryGetValue(plain, out var decl)) { foreach (var a in n.Args) Infer(a); return StaticType.Dynamic; }
             var ctors = decl.Members.OfType<ConstructorDecl>().Where(c => Fits(c.Params, n.Args.Count)).ToList();
-            if (ctors.Count == 1) CheckArguments(ctors[0].Params, args, n.Args, "new " + plain);
+            var ctor = ctors.Count == 1 ? ctors[0] : null;
+            var args = n.Args.Select((a, i) => Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count) : null)).ToList();
+            if (ctor != null) CheckArguments(ctor.Params, args, n.Args, "new " + plain);
             return new StaticType(StaticKind.Class, plain);
         }
     }

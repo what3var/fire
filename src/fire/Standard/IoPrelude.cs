@@ -93,10 +93,10 @@ namespace fire.Standard
                 }
 
                 interface IStream {
-                    int Read(buffer, offset, count)
-                    int Write(buffer, offset, count)
-                    Flush()
-                    Close()
+                    int Read(byte buffer[], int offset, int count)
+                    int Write(byte buffer[], int offset, int count)
+                    undefined Flush()
+                    undefined Close()
                 }
 
                 // Base class for own streams: override Read/Write (and whatever else is

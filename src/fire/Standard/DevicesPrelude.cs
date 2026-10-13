@@ -40,16 +40,16 @@ namespace fire.Standard
             interface IDevice {
                 string Identifier()
                 bool Connect()
-                Disconnect()
-                DoCommand(command)
-                DoCommands(commands)
+                undefined Disconnect()
+                bool DoCommand(string command)
+                bool DoCommands(any commands)
                 bool HasData()
                 string ReadString()
-                Read()
+                any Read()
                 bool WriteString(string text)
-                bool Write(data)
-                bool WaitForString(string text, timeout)
-                bool WaitFor(data, timeout)
+                bool Write(any data)
+                bool WaitForString(string text, any timeout)
+                bool WaitFor(any data, any timeout)
             }
 
             class Device : IDevice {

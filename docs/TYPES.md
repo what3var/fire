@@ -35,8 +35,11 @@ typing. `var x` without an initializer is the error `E4058` (fields declared `va
 library are typed (fields, properties, parameters, callbacks with their number of parameters) and a test compiles every import in strict mode with the checker looking at the library code, too
 (`FIRE_TYPECHECK_ALL=1` does the same for a build). Properties have no unit yet (`float X : m { ... }` is to come with the unit step), lengths of Scene3D are plain `float`.
 
-Known gaps: arrays and elements,
-indexers, `foreach` variables, lambda return values, units, properties set through `this`-less access, statements inside `fire`/`sync` blocks are not looked at yet (they are `dynamic`).
+Step 3a: arrays (element types from declarations, `new`, literals; elements, `length`, `foreach`), indexers (`operator[]`), strings (`s[i]` is a `char`, `Length`), typed
+lambdas (parameter and result types from the target or from the lambda's own declaration, arity of calls and assignments), `fire` blocks (with their `taking`/`with`
+variables), `class extends`, interface signatures (`TC004`/`TC005`) and calls of lambdas in fields and variables are checked.
+
+Known gaps: generics (type arguments in annotations, `List<T>`, `foreach` over an `IEnumerable<T>`), units, properties set through `this`-less access.
 
 ## Decisions
 

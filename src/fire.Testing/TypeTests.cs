@@ -71,7 +71,7 @@ static class TypeTests
             c = "x"
             """) == "TC001 TC001 TC001|");
         Check("var ohne Initialisierer ist ein Fehler (E4058), eine Deklaration mit Typ nicht", Run("var q\nprint(1)") == "|ERROR E4058" && Run("int q\nprint(1)") == "|1");
-        Check("unbekannte Typen (dynamic) melden nichts", Run("var a = [1, 2]\nint x = a[0]\nvar f = n => n\nint y = f(1)\nprint(x)") == "|1");
+        Check("unbekannte Typen (dynamic) melden nichts", Run("var a = [1, 2]\nint x = a[0]\nvar f = (any n) => n\nint y = f(1)\nprint(x)") == "|1");
         Check("die Typpruefung aendert das Programm nicht", Run("var t = 1\nfloat g = t\nprint(g)") == "|1");
 
         // any, class, fields and properties need types, untyped parameters
@@ -101,6 +101,43 @@ static class TypeTests
         Check("Rueckgabetypen: undefined fuer 'nichts', ein Wert- und undefined-Rueckgabe passt zu jedem Typ, ein falscher Typ ist TC003", Run("class A { undefined P() { return }\n    int Q(bool b) { if (b) { return 1 } return undefined }\n    int R() { return \"x\" }\n}\nprint(1)") == "TC003|1"
             && Run("class A { undefined P() { return }\n    int Q(bool b) { if (b) { return 1 } return }\n}\nvar a = new A()\nprint(a.Q(false))", TypeCheckMode.Strict) == "|undefined");
         Check("typisierte Operatoren: `bool operator==(any o)`", Run("class A { int v\n    construct(int v) { this.v = v }\n    bool operator==(any o) { return this.v == o.v }\n    A operator+(A o) { return new A(this.v + o.v) }\n}\nvar a = new A(1)\nvar b = new A(1)\nprint(a == b)\nprint((a + b).v)", TypeCheckMode.Strict) == "|True\n2");
+        Check("Arrays: Elemente, Literale, new, length, foreach haben den Typ der Elemente", Run("""
+            int a[] = [1, 2, 3]
+            a[0] = "x"
+            int whole = a
+            var b = new float[3]
+            bool flag = b[0]
+            foreach (x in a) { bool q = x }
+            int n = a.length + "abc".Length
+            float f[] = [1, 2.5]
+            print(n)
+            """) == "TC001 TC001 TC001 TC001|6");
+        Check("Lambdas: falsche Anzahl Argumente oder Parameter wird schon beim Uebersetzen gemeldet", Run("int lambda<int, int> add = (x, y) => x + y\nlambda<int> three = (x, y) => x\nadd(1)", TypeCheckMode.Strict) == "|ERROR TC001 TC002");
+        Check("Strings und Indexer: s[i] ist ein char, operator[] liefert seinen Rueckgabetyp", Run("""
+            class Box { int v
+                construct(int v) { this.v = v }
+                int operator[](int i) { return this.v }
+            }
+            string t = "abc"
+            int c = t[0]
+            var bx = new Box(3)
+            bool w = bx[0]
+            print(bx[1])
+            """) == "TC001 TC001|3");
+        Check("Lambdas: Typen aus dem Ziel (Parameter, Variable, Feld), aus den eigenen Parametern (var), sonst any mit Hinweis", Run("""
+            int lambda<int, int> add = (x, y) => x + y
+            bool r = add(1, 2)
+            lambda<string> wrong = (int z) => z
+            int lambda<int> sq = x => "s"
+            var u = (p) => p
+            var f = (int k, string m) => k
+            bool g = f(1, "a")
+            class Box { int v
+                construct(int v) { this.v = v }
+                int Twice(int lambda<int> fn) { return fn(this.v) }
+            }
+            print(new Box(3).Twice(v => v * 2))
+            """) == "TC001 TC002 TC001 TC003 TC004 TC001|6");
         Check("eine Einheit : any verlangt keine bestimmte Einheit", Run("any_unit_ok()\nint x : any = 3m\nx = 5s\nprint(x)".Replace("any_unit_ok()\n", "")) == "|5s");
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode

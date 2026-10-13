@@ -52,7 +52,7 @@ namespace fire.Standard
             return sb.ToString();
         }
 
-        /// <summary>The declared parameters (`lambda<int> pred`, `any fallback`) of the method `name` of the class `Query` that takes `arity` of them.</summary>
+        /// <summary>The declared parameters (`bool lambda<any> pred`, `any fallback`) of the method `name` of the class `Query` that takes `arity` of them.</summary>
         private static (string ReturnType, List<string> Parameters) QueryParameters(string name, int arity)
         {
             var match = System.Text.RegularExpressions.Regex.Matches(CoreSource, @"^\s+([A-Za-z\[\]]+)\s+" + name + @"\(([^)]*)\)\s*\{", System.Text.RegularExpressions.RegexOptions.Multiline)
@@ -61,7 +61,7 @@ namespace fire.Standard
             return match;
         }
 
-        /// <summary>Splits a parameter list at the commas outside of `<...>` (`lambda<int, int> fn, any seed`).</summary>
+        /// <summary>Splits a parameter list at the commas outside of `<...>` (`lambda<any, any> fn, any seed`).</summary>
         private static List<string> SplitParameters(string text)
         {
             var parts = new List<string>();
@@ -76,7 +76,7 @@ namespace fire.Standard
             return parts;
         }
 
-        /// <summary>The name of a declared parameter (`lambda<int> pred` -> `pred`, `pred` -> `pred`).</summary>
+        /// <summary>The name of a declared parameter (`bool lambda<any> pred` -> `pred`, `pred` -> `pred`).</summary>
         private static string ParameterName(string declared)
         {
             string withoutDefault = declared.Split('=')[0].Trim();
@@ -344,11 +344,11 @@ namespace fire.Standard
                 }
 
                 // ---- lazy operators
-                Query Where(lambda<int> pred) {
+                Query Where(bool lambda<any> pred) {
                     var f = this.factory
                     return new Query(() => new LinqWhereEnumerator(f(), pred))
                 }
-                Query Select(lambda<int> fn) {
+                Query Select(lambda<any> fn) {
                     var f = this.factory
                     return new Query(() => new LinqSelectEnumerator(f(), fn))
                 }
@@ -376,7 +376,7 @@ namespace fire.Standard
                     path.TakeTo(query)
                     return query
                 }
-                Query SelectMany(lambda<int> fn) {
+                Query SelectMany(lambda<any> fn) {
                     var f = this.factory
                     return new Query(() => new LinqSelectManyEnumerator(f(), fn))
                 }
@@ -388,11 +388,11 @@ namespace fire.Standard
                     var f = this.factory
                     return new Query(() => new LinqSkipEnumerator(f(), n))
                 }
-                Query TakeWhile(lambda<int> pred) {
+                Query TakeWhile(bool lambda<any> pred) {
                     var f = this.factory
                     return new Query(() => new LinqTakeWhileEnumerator(f(), pred))
                 }
-                Query SkipWhile(lambda<int> pred) {
+                Query SkipWhile(bool lambda<any> pred) {
                     var f = this.factory
                     return new Query(() => new LinqSkipWhileEnumerator(f(), pred))
                 }
@@ -400,14 +400,14 @@ namespace fire.Standard
                     var f = this.factory
                     return new Query(() => new LinqConcatEnumerator(f(), Linq.Iter(other)))
                 }
-                Query Zip(IEnumerable other, lambda<int, int> fn) {
+                Query Zip(IEnumerable other, lambda<any, any> fn) {
                     var f = this.factory
                     return new Query(() => new LinqZipEnumerator(f(), Linq.Iter(other), fn))
                 }
 
                 // ---- eager operators (work on a copy, return a Query again)
-                Query OrderBy(lambda<int> key) { return this.Ordered(key, false) }
-                Query OrderByDescending(lambda<int> key) { return this.Ordered(key, true) }
+                Query OrderBy(lambda<any> key) { return this.Ordered(key, false) }
+                Query OrderByDescending(lambda<any> key) { return this.Ordered(key, true) }
                 Query Ordered(any key, bool desc) {
                     var items = this.ToArray()
                     var keys = new class[items.length]
@@ -447,7 +447,7 @@ namespace fire.Standard
                     foreach (x in this) { return x }
                     throw new LinqEmptyException("The sequence contains no element")
                 }
-                any First(lambda<int> pred) {
+                any First(bool lambda<any> pred) {
                     foreach (x in this) { if (pred(x)) { return x } }
                     throw new LinqEmptyException("The sequence contains no matching element")
                 }
@@ -455,7 +455,7 @@ namespace fire.Standard
                     foreach (x in this) { return x }
                     return fallback
                 }
-                any FirstOrDefault(lambda<int> pred, any fallback) {
+                any FirstOrDefault(bool lambda<any> pred, any fallback) {
                     foreach (x in this) { if (pred(x)) { return x } }
                     return fallback
                 }
@@ -478,11 +478,11 @@ namespace fire.Standard
                     foreach (x in this) { return true }
                     return false
                 }
-                bool Any(lambda<int> pred) {
+                bool Any(bool lambda<any> pred) {
                     foreach (x in this) { if (pred(x)) { return true } }
                     return false
                 }
-                bool All(lambda<int> pred) {
+                bool All(bool lambda<any> pred) {
                     foreach (x in this) { if (!pred(x)) { return false } }
                     return true
                 }
@@ -491,7 +491,7 @@ namespace fire.Standard
                     foreach (x in this) { n = n + 1 }
                     return n
                 }
-                int Count(lambda<int> pred) {
+                int Count(bool lambda<any> pred) {
                     var n = 0
                     foreach (x in this) { if (pred(x)) { n = n + 1 } }
                     return n
@@ -501,15 +501,15 @@ namespace fire.Standard
                     foreach (x in this) { s = s + x }
                     return s
                 }
-                int Sum(lambda<int> fn) {
+                int Sum(lambda<any> fn) {
                     var s = 0
                     foreach (x in this) { s = s + fn(x) }
                     return s
                 }
                 any Min() { return this.Select(x => x).Extreme(true) }
-                any Min(lambda<int> fn) { return this.Select(fn).Extreme(true) }
+                any Min(lambda<any> fn) { return this.Select(fn).Extreme(true) }
                 any Max() { return this.Select(x => x).Extreme(false) }
-                any Max(lambda<int> fn) { return this.Select(fn).Extreme(false) }
+                any Max(lambda<any> fn) { return this.Select(fn).Extreme(false) }
                 any Extreme(bool smallest) {
                     var found = false
                     var best = undefined
@@ -522,14 +522,14 @@ namespace fire.Standard
                     return best
                 }
                 float Average() { return this.Average(x => x) }
-                float Average(lambda<int> fn) {
+                float Average(lambda<any> fn) {
                     var s = 0.0
                     var n = 0
                     foreach (x in this) { s = s + fn(x); n = n + 1 }
                     if (n == 0) { throw new LinqEmptyException("The sequence contains no element") }
                     return s / n
                 }
-                any Aggregate(any seed, lambda<int, int> fn) {
+                any Aggregate(any seed, lambda<any, any> fn) {
                     var acc = seed
                     foreach (x in this) { acc = fn(acc, x) }
                     return acc
@@ -538,7 +538,7 @@ namespace fire.Standard
                     foreach (x in this) { if (x == value) { return true } }
                     return false
                 }
-                undefined ForEach(lambda<int> fn) {
+                undefined ForEach(lambda<any> fn) {
                     foreach (x in this) { fn(x) }
                 }
                 string Join(string separator) {

@@ -90,12 +90,12 @@ namespace fire.Standard
             //   Device.Default.DoCommand(home)
             /// <summary>A command as an object that is executed without a context.</summary>
             interface ICommand {
-                Execute()
+                any Execute()
             }
 
             /// <summary>A command as an object that is executed with a context - e.g. `ICommand<IDevice>` is run by `Device.DoCommand` with the device as its context.</summary>
             interface ICommand<T> {
-                Execute(T context)
+                any Execute(T context)
             }
 
             /// <summary>A command object without a context. The lambda in `Command` is its body; derive from the class and override `Execute` if you need more.</summary>
@@ -143,7 +143,7 @@ namespace fire.Standard
 
             interface IEnumerator {
                 bool MoveNext()
-                class GetCurrent()
+                any GetCurrent()
             }
 
             interface IEnumerable {
