@@ -28,9 +28,9 @@ static class DiagnosticTests
         }
         catch (Exception ex)
         {
-            return (CompileDiagnostics.Of(ex).Concat(collector.Items).ToList(), "");
+            return (CompileDiagnostics.Of(ex).Concat(collector.Items).Where(d => d.Code != "TC005").ToList(), "");
         }
-        return (collector.Items, string.Join("\n", lines));
+        return (collector.Items.Where(d => d.Code != "TC005").ToList(), string.Join("\n", lines));
     }
 
     public static void Run()

@@ -110,7 +110,7 @@ namespace fire.Standard
 
                 /// <summary>Calls the lambda `Command`; without a lambda nothing happens.</summary>
                 /// <returns>The result of the lambda, or `undefined`.</returns>
-                Execute() {
+                any Execute() {
                     var body = this.Command
                     if (body == undefined) {
                         return undefined
@@ -132,7 +132,7 @@ namespace fire.Standard
                 /// <summary>Calls the lambda `Command` with the context; without a lambda nothing happens.</summary>
                 /// <param name="context">What the command works on, e.g. the device.</param>
                 /// <returns>The result of the lambda, or `undefined`.</returns>
-                Execute(T context) {
+                any Execute(T context) {
                     var body = this.Command
                     if (body == undefined) {
                         return undefined
@@ -161,12 +161,12 @@ namespace fire.Standard
                     this.index = -1
                 }
 
-                MoveNext() {
+                bool MoveNext() {
                     this.index = this.index + 1
                     return this.index < this.count
                 }
 
-                GetCurrent() {
+                any GetCurrent() {
                     return this.items[this.index]
                 }
             }
@@ -183,12 +183,12 @@ namespace fire.Standard
                     this.index = -1
                 }
 
-                MoveNext() {
+                bool MoveNext() {
                     this.index = this.index + 1
                     return this.index < this.count
                 }
 
-                GetCurrent() {
+                any GetCurrent() {
                     return this.list.items[this.index]
                 }
             }
@@ -219,7 +219,7 @@ namespace fire.Standard
                     }
                 }
 
-                Add(any value) {
+                undefined Add(any value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -240,7 +240,7 @@ namespace fire.Standard
                 }
 
                 // removes the element at `index` (the ones behind it move up); the element itself is not destroyed
-                RemoveAt(int index) {
+                undefined RemoveAt(int index) {
                     var i = index
                     while (i < this.count - 1) {
                         this.items[i] = this.items[i + 1]
@@ -251,7 +251,7 @@ namespace fire.Standard
                 }
 
                 // puts `value` in at `index`; the elements from there on move down
-                Insert(int index, any value) {
+                undefined Insert(int index, any value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -289,7 +289,7 @@ namespace fire.Standard
                 }
 
                 // empties the list (the elements are not destroyed)
-                Clear() {
+                undefined Clear() {
                     var i = 0
                     while (i < this.count) {
                         this.items[i] = undefined
@@ -298,7 +298,7 @@ namespace fire.Standard
                     this.count = 0
                 }
 
-                Grow() {
+                undefined Grow() {
                     var newItems = new class[this.items.length * 2]
                     var i = 0
                     while (i < this.count) {
@@ -312,7 +312,7 @@ namespace fire.Standard
                     delete old
                 }
 
-                GetEnumerator() {
+                ListIter GetEnumerator() {
                     return new ListIter(this, this.count)
                 }
             }

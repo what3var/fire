@@ -156,7 +156,7 @@ namespace fire.Windows.Bridge
                 // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
                 // Callbacks.
                 bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
-                NextEvent() { return __GRPHWinNextEvent(this.id) }
+                any NextEvent() { return __GRPHWinNextEvent(this.id) }
             
             
                 bool RegisterMouseDown(lambda<int,float,float> fn)

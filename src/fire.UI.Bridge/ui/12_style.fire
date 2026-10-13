@@ -17,12 +17,12 @@ namespace UI {
         }
 
         // The element the setter acts on (undefined if the part does not exist).
-        Find(Element owner) {
+        UI.Element Find(Element owner) {
             if (this.target == "") { return owner }
             return owner.FindPart(this.target)
         }
 
-        Apply(Element owner) {
+        undefined Apply(Element owner) {
             var element = this.Find(owner)
             if (element == undefined) { return }
             if (Reflect.Has(element, this.property)) { Reflect.Set(element, this.property, this.value) }
@@ -62,13 +62,13 @@ namespace UI {
             this.And(property, value, source)
         }
 
-        And(string property, any value, string source = "") {
+        undefined And(string property, any value, string source = "") {
             var condition = new Condition(property, value, source)
             condition.TakeTo(this)
             this.conditions.Add(condition)
         }
 
-        Set(string property, any value, string target = "") {
+        undefined Set(string property, any value, string target = "") {
             var setter = new Setter(property, value, target)
             setter.TakeTo(this)
             this.setters.Add(setter)
@@ -100,13 +100,13 @@ namespace UI {
             this.saved = new List()
         }
 
-        Update(Element owner) {
+        undefined Update(Element owner) {
             var holds = this.trigger.Holds(owner)
             if (holds && !this.active) { this.Activate(owner) }
             else if (!holds && this.active) { this.Deactivate() }
         }
 
-        Activate(Element owner) {
+        undefined Activate(Element owner) {
             this.active = true
             for (var i = 0; i < this.trigger.setters.count; i = i + 1) {
                 var setter = this.trigger.setters[i]
@@ -123,7 +123,7 @@ namespace UI {
             }
         }
 
-        Deactivate() {
+        undefined Deactivate() {
             var i = this.saved.count - 1
             while (i >= 0) {
                 var s = this.saved[i]
@@ -152,19 +152,19 @@ namespace UI {
             this.triggers = new List()
         }
 
-        Set(string property, any value) {
+        undefined Set(string property, any value) {
             var setter = new Setter(property, value)
             setter.TakeTo(this)
             this.setters.Add(setter)
         }
 
-        AddTrigger(Trigger trigger) {
+        undefined AddTrigger(Trigger trigger) {
             trigger.TakeTo(this)
             this.triggers.Add(trigger)
         }
 
         // Apply the setters and register the triggers with the element (first those of the base style).
-        Apply(Element owner) {
+        undefined Apply(Element owner) {
             if (this.basedOn != undefined) { this.basedOn.Apply(owner) }
             for (var i = 0; i < this.setters.count; i = i + 1) { this.setters[i].Apply(owner) }
             for (var j = 0; j < this.triggers.count; j = j + 1) { owner.AddTrigger(this.triggers[j]) }
@@ -199,13 +199,13 @@ namespace UI {
             this.triggers = new List()
         }
 
-        Bind(string part, string partProperty, string ownerProperty) {
+        undefined Bind(string part, string partProperty, string ownerProperty) {
             var binding = new TemplateBinding(part, partProperty, ownerProperty)
             binding.TakeTo(this)
             this.bindings.Add(binding)
         }
 
-        AddTrigger(Trigger trigger) {
+        undefined AddTrigger(Trigger trigger) {
             trigger.TakeTo(this)
             this.triggers.Add(trigger)
         }
@@ -217,7 +217,7 @@ namespace UI {
 
         construct(lambda<any> factory) { this.factory = factory }
 
-        Build(any item) {
+        UI.Element Build(any item) {
             var make = this.factory
             return make(item)
         }
@@ -249,7 +249,7 @@ namespace UI {
             this.once = once
         }
 
-        Sync() {
+        undefined Sync() {
             if (this.once && this.synced) { return }
             if (!UI.M.PathHas(this.source, this.sourceProperty) || !Reflect.Has(this.target, this.targetProperty)) { return }
             var s = UI.M.PathGet(this.source, this.sourceProperty)
@@ -299,14 +299,14 @@ namespace UI {
         bool Has(string key) { return this.IndexOf(key) >= 0 }
 
         // The value for the key, otherwise undefined.
-        Get(string key) {
+        any Get(string key) {
             var i = this.IndexOf(key)
             if (i < 0) { return undefined }
             return this.values[i]
         }
 
         // Stores the value (an existing key is overwritten); the dictionary owns it.
-        Set(string key, any value) {
+        undefined Set(string key, any value) {
             UI.M.Own(this, value)
             var i = this.IndexOf(key)
             if (i >= 0) {
@@ -318,7 +318,7 @@ namespace UI {
         }
 
         // An implicit style: applies to all elements with the style key `style.target` below it.
-        AddStyle(Style style) {
+        undefined AddStyle(Style style) {
             style.TakeTo(this)
             for (var i = 0; i < this.styles.count; i = i + 1) {
                 if (this.styles[i].target == style.target) {
@@ -329,7 +329,7 @@ namespace UI {
             this.styles.Add(style)
         }
 
-        FindStyle(string key) {
+        UI.Style FindStyle(string key) {
             for (var i = 0; i < this.styles.count; i = i + 1) {
                 if (this.styles[i].target == key) { return this.styles[i] }
             }
@@ -337,7 +337,7 @@ namespace UI {
         }
 
         // Takes over the entries and styles of another dictionary (it must live as long as this one).
-        Merge(any other) {
+        undefined Merge(any other) {
             for (var i = 0; i < other.keys.count; i = i + 1) {
                 var key = other.keys[i]
                 var at = this.IndexOf(key)

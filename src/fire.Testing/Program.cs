@@ -10570,10 +10570,10 @@ string[] uiDrawExpected = Array.Empty<string>();
 
         string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
         CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
-            script.Contains("class SettingsBase {") && script.Contains("Save(sender) { }") && script.Contains("new Framebuffer(200, 100)")
+            script.Contains("class SettingsBase {") && script.Contains("undefined Save(any sender) { }") && script.Contains("new Framebuffer(200, 100)")
             && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
-            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(container)") && !viewScript.Contains("Run()"));
+            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
 
         // the generated classes against the library: a window (events through the fake window) and a view (bindings)
         string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));

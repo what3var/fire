@@ -51,6 +51,7 @@ namespace fire.Compiler
         public const string ArgumentCode = "TC002";
         public const string ReturnCode = "TC003";
         public const string UntypedCode = "TC004";
+        public const string NoReturnTypeCode = "TC005";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<int, bool> _strictBySource = new();
@@ -61,6 +62,9 @@ namespace fire.Compiler
         private ClassDecl? _class;
         private StaticType? _returnType;
         private int _source;
+        /// <summary>The types of the `return` statements of the untyped method that is being checked (null: not collecting; a lambda inside does not count).</summary>
+        private List<StaticType>? _collectedReturns;
+        private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
         private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource)
         {
@@ -155,6 +159,7 @@ namespace fire.Compiler
                 case "string": return StaticType.String;
                 case "lambda": return StaticType.Lambda;
                 case "class": return StaticType.Object;
+                case "undefined": return StaticType.Undefined;
                 case "any": return StaticType.Dynamic;
             }
             string plain = PlainName(type.BaseName);
@@ -261,8 +266,10 @@ namespace fire.Compiler
                     if (r.Value != null)
                     {
                         var type = Infer(r.Value);
+                        _collectedReturns?.Add(type);
                         if (_returnType is { } expected) CheckAssignable(type, expected, r.Line, "the return value", ReturnCode);
                     }
+                    else _collectedReturns?.Add(StaticType.Undefined);
                     break;
                 case ThrowStmt t: Infer(t.Value); break;
                 case TryStmt t:
@@ -321,9 +328,18 @@ namespace fire.Compiler
                             break;
                         }
                     case MethodDecl m:
-                        CheckParametersTyped(m.Params, m.Name, m.Line);
-                        CheckBody(m.Params, m.Body, m.ReturnType == null ? null : Declared(m.ReturnType, m.ReturnType.ArrayRank));
-                        break;
+                        {
+                            CheckParametersTyped(m.Params, m.Name, m.Line);
+                            bool untyped = m.ReturnType == null || m.ReturnType.IsInferred;
+                            bool isOperator = m.Name.StartsWith("operator", StringComparison.Ordinal) || m.Name is "GetIndex" or "SetIndex";
+                            if (untyped && !isOperator) Report(NoReturnTypeCode, $"Method '{m.Name}' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing).", m.Line);
+                            var previousCollected = _collectedReturns;
+                            _collectedReturns = untyped && SuggestReturnTypes ? new List<StaticType>() : null;
+                            CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType, m.ReturnType!.ArrayRank));
+                            if (_collectedReturns != null) Console.Error.WriteLine($"SUGGEST\t{decl.Name}\t{m.Name}\t{m.Params.Count}\t{SuggestedType(_collectedReturns)}");
+                            _collectedReturns = previousCollected;
+                            break;
+                        }
                     case ConstructorDecl c:
                         CheckParametersTyped(c.Params, "construct", c.Line);
                         CheckBody(c.Params, c.Body, null);
@@ -346,6 +362,26 @@ namespace fire.Compiler
             foreach (var p in parameters)
                 if (p.Type == null || p.Type.IsInferred)
                     Report(UntypedCode, $"Parameter '{p.Name}' of '{owner}' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", line);
+        }
+
+        /// <summary>The return type a method without one could declare, from its `return` statements: `undefined` when it returns no value, the one type of its values (`undefined` goes with every type),
+        /// `any` for a mix, `?` when a value is of a type that is not known.</summary>
+        private static string SuggestedType(List<StaticType> returns)
+        {
+            var values = returns.Where(r => r.Kind != StaticKind.Undefined).ToList();
+            if (values.Count == 0) return "undefined";
+            if (values.Any(v => v.IsDynamic)) return "?";
+            var kinds = values.Select(v => v.Kind == StaticKind.Class ? "class:" + v.Class : v.Kind.ToString()).Distinct().ToList();
+            if (kinds.Count == 1)
+                return values[0].Kind switch
+                {
+                    StaticKind.Class => values[0].Class!,
+                    StaticKind.Object => "class",
+                    StaticKind.Lambda => "any",
+                    _ => values[0].ToString(),
+                };
+            if (kinds.All(k => k is "Int" or "Float")) return "float";
+            return "any";
         }
 
         private void CheckBody(IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body, StaticType? returnType)
@@ -397,12 +433,15 @@ namespace fire.Compiler
                 case LambdaExpr lam:
                     {
                         var previousReturn = _returnType;
+                        var previousCollected = _collectedReturns;
                         _returnType = null;
+                        _collectedReturns = null;
                         Push();
                         foreach (var p in lam.Params) Declare(p.Name, DeclaredOrDynamic(p.Type, p.ArrayRanks.Count));
                         foreach (var s in lam.Body.Statements) Check(s);
                         Pop();
                         _returnType = previousReturn;
+                        _collectedReturns = previousCollected;
                         return StaticType.Lambda;
                     }
                 case IsOfExpr io: Infer(io.Operand); return StaticType.Bool;
@@ -503,6 +542,7 @@ namespace fire.Compiler
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
+                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = new StaticType(StaticKind.Class, staticClass);
                 if (target.Kind == StaticKind.Class) method = FindMethod(target.Class!, m.Name, c.Args.Count);
             }
             else if (c.Callee is IdentifierExpr id)
@@ -513,6 +553,16 @@ namespace fire.Compiler
             if (method == null) return StaticType.Dynamic;
             CheckArguments(method.Params, args, c.Args, method.Name);
             return method.ReturnType == null ? StaticType.Dynamic : DeclaredOrDynamic(method.ReturnType, method.ReturnType.ArrayRank);
+        }
+
+        /// <summary>`Class.Method(...)`: a (possibly namespace-qualified) class name that is not shadowed by a variable or member.</summary>
+        private string? StaticClassRef(Expr target)
+        {
+            Expr root = target;
+            while (root is MemberExpr inner) root = inner.Target;
+            if (root is not IdentifierExpr first || IsLocal(first.Name) || _class != null && FindMember(_class.Name, first.Name) != null) return null;
+            string name = target is MemberExpr member ? member.Name : ((IdentifierExpr)target).Name;
+            return _classes.ContainsKey(name) ? name : null;
         }
 
         private bool IsLocal(string name)

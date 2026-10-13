@@ -103,7 +103,7 @@ namespace fire.Standard
                     }
                     return this
                 }
-                Disconnect() { __DEVDisconnect(this.handle) }
+                undefined Disconnect() { __DEVDisconnect(this.handle) }
 
                 /// <summary>Sends a command. A text goes out as a line (with a line ending, in the device's encoding). A command object
                 /// (`Command<IDevice>`, derived from it, or any object with `Execute(device)`) is executed with the device as its context.</summary>
@@ -139,7 +139,7 @@ namespace fire.Standard
                 string ReadString() { return __DEVReadString(this.handle) }
                 /// <summary>Reads the next received packet as a byte buffer.</summary>
                 /// <returns>The buffer, empty if nothing is waiting.</returns>
-                Read() { return __DEVRead(this.handle) }
+                any Read() { return __DEVRead(this.handle) }
 
                 /// <summary>Writes exactly these characters WITHOUT a line ending - one character per byte (Latin1). For UTF-8 use `text.ToBytes()` with Write.</summary>
                 /// <returns>`false` if the device is not connected.</returns>
@@ -176,7 +176,7 @@ namespace fire.Standard
             class DeviceManagerFacade {
                 construct() { }
 
-                Refresh(bool fastScan) { __DEVMgrRefresh(fastScan) }
+                undefined Refresh(bool fastScan) { __DEVMgrRefresh(fastScan) }
 
                 int Count() { return __DEVMgrCount() }
 

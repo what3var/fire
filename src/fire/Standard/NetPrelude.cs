@@ -74,7 +74,7 @@ namespace fire.Standard
 
                 class NetErrors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __NetLastError()
                         var message = __NetLastErrorMessage()
                         if (code == 2 || code == 7 || code == 12) { throw new ClosedException(message, code) }
@@ -112,7 +112,7 @@ namespace fire.Standard
 
                     // Waits a moment before the next attempt: 1 ms at first, up to 10 ms when it takes long (and not past the deadline). The natives are only asked, never made to wait: a program
                     // that waits for the network does not hold the library, so the other fire threads, `terminate` and the main queue keep working.
-                    static Pause(int deadline, int tries) {
+                    static undefined Pause(int deadline, int tries) {
                         var ms = 1
                         if (tries >= 3) { ms = 2 }
                         if (tries >= 8) { ms = 5 }
@@ -133,7 +133,7 @@ namespace fire.Standard
                 // Name resolution.
                 class Dns {
                     // The addresses of a name as text (IPv4 and IPv6); a literal address gives itself.
-                    static Resolve(string host) {
+                    static List Resolve(string host) {
                         var all = __NetResolve(host)
                         if (all == undefined) { Net.NetErrors.Throw() }
                         var list = new List()
@@ -186,7 +186,7 @@ namespace fire.Standard
 
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new ClosedException("The connection is closed.", 2) }
                     }
 
@@ -320,20 +320,20 @@ namespace fire.Standard
                     }
 
                     // The text as UTF-8.
-                    WriteString(string text) {
+                    undefined WriteString(string text) {
                         var bytes = IO.Utf8.GetBytes(text)
                         this.Write(bytes, 0, bytes.length)
                     }
 
-                    Flush() { }
+                    undefined Flush() { }
 
                     // Ends one direction: 0 receiving, 1 sending (the other side then reads 0), 2 both.
-                    Shutdown(int how) {
+                    undefined Shutdown(int how) {
                         this.Check()
                         if (!__NetShutdown(this.handle, how)) { Net.NetErrors.Throw() }
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __NetClose(this.handle) }
@@ -356,7 +356,7 @@ namespace fire.Standard
 
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new ClosedException("The listener is closed.", 2) }
                     }
 
@@ -393,14 +393,14 @@ namespace fire.Standard
                     }
 
                     // The next connection as a TcpClient; waits without a limit unless one is given, then Net.TimeoutException.
-                    Accept(any timeout = undefined) {
+                    Net.TcpClient Accept(any timeout = undefined) {
                         var c = this.TryAccept(timeout)
                         if (c == undefined) { throw new TimeoutException("No connection arrived in time.") }
                         return c
                     }
 
                     // Like Accept, but undefined instead of the exception when the time runs out.
-                    TryAccept(any timeout = undefined) {
+                    Net.TcpClient TryAccept(any timeout = undefined) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0
@@ -414,7 +414,7 @@ namespace fire.Standard
                         }
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __NetClose(this.handle) }
@@ -441,7 +441,7 @@ namespace fire.Standard
 
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new ClosedException("The socket is closed.", 2) }
                     }
 
@@ -521,7 +521,7 @@ namespace fire.Standard
                         }
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __NetClose(this.handle) }

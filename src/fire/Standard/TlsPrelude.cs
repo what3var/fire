@@ -36,7 +36,7 @@ namespace fire.Standard
 
                 class Errors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __TlsLastError()
                         var message = __TlsLastErrorMessage()
                         if (code == 15) { throw new CertificateException(message) }
@@ -88,7 +88,7 @@ namespace fire.Standard
                     int writeLimit
 
                     // A TLS connection to host:port in one call (the TCP connection is made and the handshake done).
-                    static Connect(string host, int port, Tls.Options options = undefined, any timeout = 10000) {
+                    static Tls.Stream Connect(string host, int port, Tls.Options options = undefined, any timeout = 10000) {
                         var tcp = new Net.TcpClient(host, port, timeout)
                         tcp.NoDelay = true
                         return new Tls.Stream(tcp, host, options, timeout)
@@ -114,7 +114,7 @@ namespace fire.Standard
                     }
 
                     // Does the handshake: asks the natives again and again (sleeping a moment in between) until it is complete, fails or the time runs out (undefined: no limit).
-                    Handshake(any timeout) {
+                    undefined Handshake(any timeout) {
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0
                         while (true) {
@@ -133,7 +133,7 @@ namespace fire.Standard
                     bool CanWrite { get { return !this.closed } }
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new Net.ClosedException("The connection is closed.", 2) }
                     }
 
@@ -207,15 +207,15 @@ namespace fire.Standard
                     }
 
                     // The text as UTF-8.
-                    WriteString(string text) {
+                    undefined WriteString(string text) {
                         var bytes = IO.Utf8.GetBytes(text)
                         this.Write(bytes, 0, bytes.length)
                     }
 
-                    Flush() { }
+                    undefined Flush() { }
 
                     // Ends the TLS session (close_notify) and closes the TCP connection.
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __TlsClose(this.handle) }
@@ -237,7 +237,7 @@ namespace fire.Standard
                     destruct() { this.Close() }
 
                     // The handshake as the server over a connection that a Net.TcpListener accepted; returns the encrypted stream (it owns the connection). Close the streams before the server.
-                    Accept(Net.TcpClient tcp, any timeout = 10000) {
+                    Tls.Stream Accept(Net.TcpClient tcp, any timeout = 10000) {
                         if (this.closed) { throw new Net.ClosedException("The TLS server is closed.", 2) }
                         var stream = new Tls.Stream(tcp)
                         stream.handle = Tls.Errors.Handle(__TlsAccept(this.context, tcp.NativeHandle))
@@ -245,7 +245,7 @@ namespace fire.Standard
                         return stream
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.context >= 0) { __TlsFreeContext(this.context) }

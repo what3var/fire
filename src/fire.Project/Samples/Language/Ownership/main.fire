@@ -7,14 +7,14 @@ class Box {
 class Shelf {
     List boxes
     construct() { this.boxes = new List() }
-    Put(box) {
+    undefined Put(any box) {
         box.TakeTo(this)          // the shelf owns the box from now on
         this.boxes.Add(box)
     }
 }
 
 class Factory {
-    static Make(int v) {
+    static Box Make(int v) {
         var b = new Box(v)
         return b                  // return hands the box to the caller
     }

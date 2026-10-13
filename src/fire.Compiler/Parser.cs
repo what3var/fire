@@ -904,6 +904,23 @@ namespace fire.Compiler
             return PeekAt(offset).Type == TokenType.Identifier;
         }
 
+        /// <summary>A type (keyword or name chain, optional empty brackets) directly followed by `operator`.</summary>
+        private bool TypeThenOperatorAhead()
+        {
+            int offset;
+            if (TypeKeywords.Contains(Peek().Type)) offset = 1;
+            else if (Check(TokenType.Identifier))
+            {
+                offset = 1;
+                while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
+                    offset += 2;
+            }
+            else return false;
+            while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
+                offset += 2;
+            return PeekAt(offset).Type == TokenType.Operator;
+        }
+
         private Stmt ParseIf()
         {
             int line = Peek().Line;
@@ -2049,7 +2066,13 @@ namespace fire.Compiler
             if (Check(TokenType.Destruct))
                 return new List<Stmt> { ParseDestructor() };
             if (Check(TokenType.Operator))
-                return new List<Stmt> { ParseOperatorMember(line) };
+                return new List<Stmt> { ParseOperatorMember(line, null) };
+            // `bool operator==(...)`: an operator with a declared return type
+            if (TypeThenOperatorAhead())
+            {
+                var operatorType = ParseTypeRef(allowArray: true);
+                return new List<Stmt> { ParseOperatorMember(line, operatorType) };
+            }
 
             // 'static' on fields/methods/properties (SPEC "Static
             // members") - ONE shared storage location per class instead of
@@ -2152,7 +2175,7 @@ namespace fire.Compiler
         /// object with a matching method - an overload only for the
         /// RIGHT operand (like C#'s `operator+` with swapped operand
         /// types, or Python's `__radd__`) is deliberately NOT supported.</summary>
-        private Stmt ParseOperatorMember(int line)
+        private Stmt ParseOperatorMember(int line, TypeRef? returnType)
         {
             Expect(TokenType.Operator, "Expected 'operator'");
             string symbol = ParseOperatorSymbol();
@@ -2173,7 +2196,7 @@ namespace fire.Compiler
                 throw Error($"'operator{symbol}' needs exactly 1 parameter (the right operand - 'this' is the left one)", Peek());
 
             var body = ParseBlock();
-            return new MethodDecl(_sourceIndex, line, null, internalName, parms, body, null);
+            return new MethodDecl(_sourceIndex, line, returnType, internalName, parms, body, null);
         }
 
         /// <summary>Reads a single, overloadable operator symbol directly

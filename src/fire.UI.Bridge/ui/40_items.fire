@@ -28,10 +28,10 @@ namespace UI {
         operator[](int index) { return this.items[index] }
 
         // Takes effect at the next drawing (or immediately with Refresh).
-        Invalidate() { this.dirty = true }
+        undefined Invalidate() { this.dirty = true }
 
         // Rebuilds `items`: filter, then sort stably; the current element stays current if it is still there.
-        Refresh() {
+        undefined Refresh() {
             var keep = this.CurrentItem()
             this.items = new List()
             var test = this.filter
@@ -50,7 +50,7 @@ namespace UI {
         }
 
         // Updates the view if the source (its count) or the settings have changed.
-        Update() {
+        undefined Update() {
             if (this.source == undefined) { return }
             if (this.dirty || this.source != this.seenSource || this.source.count != this.sourceCount) { this.Refresh() }
         }
@@ -65,7 +65,7 @@ namespace UI {
         }
 
         // Stable sorting by merging (merge sort).
-        Sorted(List list) {
+        List Sorted(List list) {
             if (list.count < 2) { return list }
             var middle = list.count / 2
             var left = new List()
@@ -98,7 +98,7 @@ namespace UI {
             return merged
         }
 
-        CurrentItem() {
+        any CurrentItem() {
             if (this.current < 0 || this.current >= this.items.count) { return undefined }
             return this.items[this.current]
         }
@@ -115,7 +115,7 @@ namespace UI {
         bool MoveCurrentToPrevious() { return this.MoveCurrentTo(this.current - 1) }
 
         // Sorts by the property (while `descending` gives the direction).
-        SortBy(string member, bool descending = false) {
+        undefined SortBy(string member, bool descending = false) {
             this.sortMember = member
             this.descending = descending
             this.comparer = undefined
@@ -182,14 +182,14 @@ namespace UI {
         bool Focusable() { return true }
 
         // Appends an element; an object belongs to the list from now on (numbers and text belong to nobody).
-        Add(any item) {
+        any Add(any item) {
             UI.M.Own(this, item)
             this.items.Add(item)
             this.Invalidate()
             return item
         }
 
-        Remove(any item) {
+        undefined Remove(any item) {
             var index = this.items.IndexOf(item)
             if (index < 0) { return }
             this.items.RemoveAt(index)
@@ -198,7 +198,7 @@ namespace UI {
             this.Refresh()
         }
 
-        Clear() {
+        undefined Clear() {
             this.items = new List()
             this.selectedIndex = -1
             this.seenSelected = -1
@@ -214,7 +214,7 @@ namespace UI {
         }
 
         // Replaces the elements by `list`; `own`: the list belongs to this control from now on.
-        SetItems(List list, bool own = true) {
+        undefined SetItems(List list, bool own = true) {
             if (own) { list.TakeTo(this) }
             this.view = undefined
             this.items = list
@@ -225,7 +225,7 @@ namespace UI {
         }
 
         // Shows the elements of a CollectionView (the selection follows its `current`).
-        SetView(List source, bool own = true) {
+        undefined SetView(List source, bool own = true) {
             if (own) { source.TakeTo(this) }
             this.view = source
             this.selectedIndex = source.current
@@ -235,14 +235,14 @@ namespace UI {
         }
 
         // After a change in the elements themselves: rebuild the template rows.
-        Refresh() {
+        undefined Refresh() {
             this.DropRows()
             if (this.view != undefined) { this.view.Update() }
             this.Invalidate()
         }
 
         // If the list changes from outside (list.Add) or the view, it is repainted.
-        Poll(Root root) {
+        undefined Poll(Root root) {
             base.Poll(root)
             if (this.selectedIndex != this.seenSelected) {
                 // set from outside (e.g. by a binding): treat like a selection
@@ -269,7 +269,7 @@ namespace UI {
             }
         }
 
-        DropRows() {
+        undefined DropRows() {
             for (var i = 0; i < this.rowElements.count; i = i + 1) {
                 var row = this.rowElements[i]
                 if (row != undefined) { delete row }
@@ -298,7 +298,7 @@ namespace UI {
         }
 
         // Selects the row (-1: none), scrolls it into view and reports the change.
-        Select(int index) {
+        undefined Select(int index) {
             var rows = this.Rows()
             if (index >= rows.count) { index = rows.count - 1 }
             if (index < -1) { index = -1 }
@@ -323,20 +323,20 @@ namespace UI {
             return was
         }
 
-        Activate() {
+        undefined Activate() {
             this.activated = true
             var callback = this.onActivate
             if (callback != undefined) { callback() }
         }
 
         // Scrolls until the row is visible.
-        EnsureVisible(Root root, int index) {
+        undefined EnsureVisible(Root root, int index) {
             var h = this.RowHeight(root)
             if (index * h < this.scroller.offset) { this.scroller.Set(index * h) }
             else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
         }
 
-        MeasureCore(Root root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             if (this.view != undefined) { this.view.Update() }
             var rows = this.Rows()
             var widest = 0
@@ -345,7 +345,7 @@ namespace UI {
             this.ch = rows.count * this.RowHeight(root) + this.headerHeight + 2
         }
 
-        ArrangeCore(Root root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             var rows = this.Rows()
             var rh = this.RowHeight(root)
             this.viewH = UI.M.Max(0, h - 2 - this.headerHeight)
@@ -358,7 +358,7 @@ namespace UI {
         }
 
         // Builds the elements of the rows (only the visible ones, as needed).
-        BuildRows(Root root, List rows) {
+        undefined BuildRows(Root root, List rows) {
             if (this.builtCount != rows.count) {
                 this.DropRows()
                 for (var i = 0; i < rows.count; i = i + 1) { this.rowElements.Add(undefined) }
@@ -383,7 +383,7 @@ namespace UI {
         }
 
         // Draw a row: (x, y) is its top left corner, w x h the size; `text` the font colour (Brush).
-        DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
+        undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
             if (this.itemTemplate != undefined) {
                 var row = this.rowElements[index]
                 if (row != undefined && row.visible) { row.Draw(root, x + row.rx, y + row.ry) }
@@ -392,9 +392,9 @@ namespace UI {
             this.DrawString(root, x + 4, y + (h - this.TextHeight(root)) / 2, this.ItemText(item), text)
         }
 
-        DrawHeader(Root root, int x, int y, int w) { }
+        undefined DrawHeader(Root root, int x, int y, int w) { }
 
-        Draw(Root root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -443,7 +443,7 @@ namespace UI {
             return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size && py >= this.ay + 1 + this.headerHeight
         }
 
-        MouseDown(Root root, int button, int px, int py) {
+        undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.OverBar(px, py)) {
                 this.scroller.Press(py - (this.ay + 1 + this.headerHeight), this.viewH)
@@ -454,15 +454,15 @@ namespace UI {
             if (index >= 0) { this.Select(index) }
         }
 
-        HeaderClick(Root root, int px, int py) { }
+        undefined HeaderClick(Root root, int px, int py) { }
 
-        MouseMove(Root root, int px, int py) {
+        undefined MouseMove(Root root, int px, int py) {
             if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1 + this.headerHeight), this.viewH) }
         }
 
-        MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
+        undefined MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
 
-        Hover(Root root, int px, int py) {
+        undefined Hover(Root root, int px, int py) {
             this.hotIndex = this.RowAt(root, px, py)
             this.scroller.SetHover(this.OverBar(px, py))
         }
@@ -491,7 +491,7 @@ namespace UI {
             return key == UI.Keys.Home() || key == UI.Keys.End() || key == UI.Keys.PageUp() || key == UI.Keys.PageDown()
         }
 
-        KeyDown(Root root, int key, int mod) {
+        undefined KeyDown(Root root, int key, int mod) {
             var rows = this.Rows()
             var index = this.selectedIndex
             var page = UI.M.Max(1, this.viewH / this.RowHeight(root))
@@ -511,11 +511,11 @@ namespace UI {
             this.EnsureVisible(root, index)
         }
 
-        Collect(List list) {
+        undefined Collect(List list) {
             if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
         }
 
-        FindName(string name) {
+        UI.ItemsControl FindName(string name) {
             if (this.name == name) { return this }
             return undefined
         }
@@ -542,14 +542,14 @@ namespace UI {
 
         string StyleKey() { return "ListView" }
 
-        AddColumn(string header, string member = "", int width = 100) {
+        UI.GridColumn AddColumn(string header, string member = "", int width = 100) {
             var column = new GridColumn(header, member, width)
             column.TakeTo(this)
             this.columns.Add(column)
             return column
         }
 
-        MeasureCore(Root root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             this.headerHeight = this.RowHeight(root)
             base.MeasureCore(root, aw, ah)
             var w = 0
@@ -566,7 +566,7 @@ namespace UI {
             return UI.M.Max(20, total - used)
         }
 
-        DrawHeader(Root root, int x, int y, int w) {
+        undefined DrawHeader(Root root, int x, int y, int w) {
             var theme = root.theme
             var r = root.renderer
             var h = this.headerHeight
@@ -592,7 +592,7 @@ namespace UI {
             r.DrawLine(x, y + h - 1, x + w - 1, y + h - 1, theme.border)
         }
 
-        DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
+        undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
             if (this.itemTemplate != undefined || this.columns.count == 0) {
                 base.DrawRow(root, index, item, x, y, w, h, text)
                 return
@@ -609,7 +609,7 @@ namespace UI {
         }
 
         // A click on a title sorts by the column (once more: reversed).
-        HeaderClick(Root root, int px, int py) {
+        undefined HeaderClick(Root root, int px, int py) {
             if (py < this.ay + 1 || py >= this.ay + 1 + this.headerHeight) { return }
             var x = this.ax + 1
             for (var i = 0; i < this.columns.count; i = i + 1) {
@@ -622,7 +622,7 @@ namespace UI {
             }
         }
 
-        SortBy(string member) {
+        undefined SortBy(string member) {
             if (member == "") { return }
             if (member == this.sortedBy) { this.sortDescending = !this.sortDescending }
             else {

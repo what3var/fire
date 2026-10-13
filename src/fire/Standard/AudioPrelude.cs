@@ -58,7 +58,7 @@ namespace fire.Standard
 
                 class Errors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __AudioLastError()
                         var message = __AudioLastErrorMessage()
                         if (code == 3) { throw new NotFoundException(message) }
@@ -80,7 +80,7 @@ namespace fire.Standard
                     static bool Available() { return __AudioSupported() == 1 }
 
                     // The names of the devices: "sim" first, then the real ones ("default", "pulse", "alsa" on Linux, "default" and the names of the devices on Windows, "pwm" on an ESP32 - there with a pin: "pwm:25").
-                    static Devices() {
+                    static List Devices() {
                         var all = __AudioDevices()
                         if (all == undefined) { Audio.Errors.Throw() }
                         var list = new List()
@@ -122,12 +122,12 @@ namespace fire.Standard
                     int Milliseconds { get { return this.Frames * 1000 / this.rate } }
 
                     // An output that fits the sound (its rate and channels) on the device.
-                    Open(string device = "default") {
+                    Audio.Output Open(string device = "default") {
                         return new Output(device, this.rate, this.channels)
                     }
 
                     // A generated tone: the frequency in Hz (a float is fine), the length in milliseconds, the wave and the volume in percent.
-                    static Tone(float frequency, int milliseconds, int wave = 0, int volume = 100, int rate = 22050) {
+                    static Audio.Sound Tone(float frequency, int milliseconds, int wave = 0, int volume = 100, int rate = 22050) {
                         var frames = rate * milliseconds / 1000
                         var data = new byte[frames * 2]
                         if (__AudioWave(data, 0, frames, wave, frequency, volume, rate, 1, 0) < 0) { Audio.Errors.Throw() }
@@ -135,7 +135,7 @@ namespace fire.Standard
                     }
 
                     // Reads a WAV file (the bytes of it): PCM with 16 or 8 bits, mono or stereo, any rate.
-                    static FromWav(byte bytes[]) {
+                    static Audio.Sound FromWav(byte bytes[]) {
                         if (bytes.length < 44 || bytes[0] != 82 || bytes[1] != 73 || bytes[2] != 70 || bytes[3] != 70 || bytes[8] != 87 || bytes[9] != 65 || bytes[10] != 86 || bytes[11] != 69) {
                             throw new AudioException("This is not a WAV file (RIFF/WAVE expected).", 1)
                         }
@@ -242,7 +242,7 @@ namespace fire.Standard
                     // true while something is being played.
                     bool Playing { get { return this.Queued > 0 } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new AudioException("The output is closed.", 2) }
                     }
 
@@ -256,7 +256,7 @@ namespace fire.Standard
                     }
 
                     // Plays `count` bytes of the buffer (all of it from `offset` on without a count): returns when the device has taken them all (that is, when the last part is queued, not played).
-                    Write(byte buffer[], int offset = 0, int count = -1) {
+                    undefined Write(byte buffer[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = buffer.length - offset }
                         while (count > 0) {
@@ -269,7 +269,7 @@ namespace fire.Standard
                     }
 
                     // Plays a sound (queued behind what is playing). Its rate and channels must be those of the output: open it with `sound.Open()`.
-                    Play(Audio.Sound sound) {
+                    undefined Play(Audio.Sound sound) {
                         if (sound.Rate != this.rate || sound.Channels != this.channels) {
                             throw new AudioException("The sound has " + sound.Rate + " Hz and " + sound.Channels + " channel(s), the output " + this.rate + " Hz and " + this.channels + ": open the output with sound.Open().", 1)
                         }
@@ -277,7 +277,7 @@ namespace fire.Standard
                     }
 
                     // Queues a tone and returns: the frequency in Hz (a float is fine), the length in milliseconds, the wave (Audio.Wave.Sine, Square, Triangle, Saw, Noise) and the volume in percent.
-                    Tone(float frequency, int milliseconds, int wave = 0, int volume = 100) {
+                    undefined Tone(float frequency, int milliseconds, int wave = 0, int volume = 100) {
                         this.Check()
                         var left = this.rate * milliseconds / 1000
                         var chunk = 2048
@@ -297,7 +297,7 @@ namespace fire.Standard
                     }
 
                     // A tone that is played to its end before Beep returns (440 Hz, 200 ms without arguments).
-                    Beep(float frequency = 440, int milliseconds = 200, int volume = 100) {
+                    undefined Beep(float frequency = 440, int milliseconds = 200, int volume = 100) {
                         this.Tone(frequency, milliseconds, 0, volume)
                         this.Drain()
                     }
@@ -320,13 +320,13 @@ namespace fire.Standard
                     }
 
                     // Throws away what has not been played yet (the output stays open).
-                    Stop() {
+                    undefined Stop() {
                         this.Check()
                         if (!__AudioStop(this.handle)) { Audio.Errors.Throw() }
                     }
 
                     // Closes the output; what was taken is played to its end first (call Stop() before to cut it off).
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __AudioClose(this.handle) }
@@ -336,10 +336,10 @@ namespace fire.Standard
                 // The simulated device "sim" from the outside: what was played to it (for tests, and to try a program without sound).
                 class Sim {
                     // Forgets what was played; the device plays again (it is not held).
-                    static Reset() { __AudioSimReset() }
+                    static undefined Reset() { __AudioSimReset() }
 
                     // Holds the device (true): it takes only 4096 bytes and keeps them, as a slow device does; releases it (false): what it kept is played.
-                    static Hold(bool hold = true) { __AudioSimHold(hold) }
+                    static undefined Hold(bool hold = true) { __AudioSimHold(hold) }
 
                     // The number of bytes that were played.
                     static int Played() { return __AudioSimInfo(0) }
@@ -349,7 +349,7 @@ namespace fire.Standard
                     // The bytes that wait while the device is held.
                     static int Waiting() { return __AudioSimInfo(3) }
                     // The bytes that were played, as a buffer.
-                    static Data() { return __AudioSimData() }
+                    static any Data() { return __AudioSimData() }
                 }
             }
             """;

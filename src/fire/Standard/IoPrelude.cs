@@ -66,7 +66,7 @@ namespace fire.Standard
 
                 class IOErrors {
                     // Throws the exception matching the last error of a native IO function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __IOLastError()
                         var message = __IOLastErrorMessage()
                         if (code == 2) { throw new StreamClosedException(message) }
@@ -128,8 +128,8 @@ namespace fire.Standard
                         throw new IOException("This stream does not support seeking.", 8)
                     }
 
-                    Flush() { }
-                    Close() { }
+                    undefined Flush() { }
+                    undefined Close() { }
 
                     int Read(byte buffer[]) { return this.Read(buffer, 0, buffer.length) }
                     int Write(byte buffer[]) { return this.Write(buffer, 0, buffer.length) }
@@ -142,14 +142,14 @@ namespace fire.Standard
                         return one[0]
                     }
 
-                    WriteByte(int value) {
+                    undefined WriteByte(int value) {
                         var one = new byte[1]
                         one[0] = value
                         this.Write(one, 0, 1)
                     }
 
                     // Up to `count` bytes as a new buffer (shorter if the stream ends earlier).
-                    ReadBytes(int count) {
+                    byte[] ReadBytes(int count) {
                         var data = new byte[count]
                         var total = 0
                         while (total < count) {
@@ -164,7 +164,7 @@ namespace fire.Standard
                     }
 
                     // Everything up to the end of the stream as a new buffer.
-                    ReadAll() {
+                    byte[] ReadAll() {
                         var all = new MemoryStream()
                         this.CopyTo(all)
                         var result = all.ToBuffer()
@@ -173,7 +173,7 @@ namespace fire.Standard
                     }
 
                     // Copies everything up to the end of this stream into `target`.
-                    CopyTo(IO.Stream target, int bufferSize = 4096) {
+                    undefined CopyTo(IO.Stream target, int bufferSize = 4096) {
                         var chunk = new byte[bufferSize]
                         while (true) {
                             var n = this.Read(chunk, 0, bufferSize)
@@ -209,12 +209,12 @@ namespace fire.Standard
                     bool CanSeek { get { return !this.closed && __IOCanSeek(this.handle) } }
 
                     // Throws if the stream is already closed.
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new StreamClosedException("The stream is closed.") }
                     }
 
                     // Closes the handle; a further Close() has no effect.
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __IOClose(this.handle) }
@@ -276,19 +276,19 @@ namespace fire.Standard
                         return b
                     }
 
-                    WriteByte(int value) {
+                    undefined WriteByte(int value) {
                         this.Check()
                         if (__IOWriteByte(this.handle, value) < 0) { IO.IOErrors.Throw() }
                     }
 
-                    ReadAll() {
+                    byte[] ReadAll() {
                         this.Check()
                         var all = __IOReadRest(this.handle)
                         if (all == undefined) { IO.IOErrors.Throw() }
                         return all
                     }
 
-                    Flush() {
+                    undefined Flush() {
                         this.Check()
                         if (!__IOFlush(this.handle)) { IO.IOErrors.Throw() }
                     }
@@ -320,7 +320,7 @@ namespace fire.Standard
                     }
 
                     // The entire content (regardless of position) as a new buffer.
-                    ToBuffer() {
+                    byte[] ToBuffer() {
                         this.Check()
                         var all = __IOMemToBuffer(this.handle)
                         if (all == undefined) { IO.IOErrors.Throw() }
@@ -331,7 +331,7 @@ namespace fire.Standard
                 // UTF-8 <-> buffer. (`string.ToBytes()` is ASCII only.)
                 class Utf8 {
                     // The text as UTF-8 (without byte-order mark) in a new buffer.
-                    static GetBytes(string text) { return __IOUtf8Encode(text) }
+                    static byte[] GetBytes(string text) { return __IOUtf8Encode(text) }
 
                     // A byte-order mark at the start is removed, invalid sequences
                     // become U+FFFD. Without count: up to the end of the buffer.
@@ -405,31 +405,31 @@ namespace fire.Standard
                     }
 
                     // Time of the last modification: seconds since 1970 (UTC), with the unit s.
-                    static ModifiedTime(string path) {
+                    static any ModifiedTime(string path) {
                         var t = __IOFileTime(path)
                         if (t == undefined) { IO.IOErrors.Throw() }
                         return t * 1s   // the native gives plain seconds (units do not cross the package ABI)
                     }
 
                     // A missing file is not an error.
-                    static Delete(string path) {
+                    static undefined Delete(string path) {
                         if (!__IOFileDelete(path)) { IO.IOErrors.Throw() }
                     }
 
-                    static Copy(string source, string target, bool overwrite = false) {
+                    static undefined Copy(string source, string target, bool overwrite = false) {
                         if (!__IOFileCopy(source, target, overwrite)) { IO.IOErrors.Throw() }
                     }
 
-                    static Move(string source, string target, bool overwrite = false) {
+                    static undefined Move(string source, string target, bool overwrite = false) {
                         if (!__IOFileMove(source, target, overwrite)) { IO.IOErrors.Throw() }
                     }
 
                     // A TextReader/TextWriter on the file (see there); without append it is overwritten.
-                    static OpenText(string path) { return new IO.TextReader(path) }
-                    static CreateText(string path) { return new IO.TextWriter(path) }
-                    static AppendText(string path) { return new IO.TextWriter(path, true) }
+                    static IO.TextReader OpenText(string path) { return new IO.TextReader(path) }
+                    static IO.TextWriter CreateText(string path) { return new IO.TextWriter(path) }
+                    static IO.TextWriter AppendText(string path) { return new IO.TextWriter(path, true) }
 
-                    static ReadAllBytes(string path) {
+                    static byte[] ReadAllBytes(string path) {
                         var stream = new IO.FileStream(path)
                         var data = stream.ReadAll()
                         stream.Close()
@@ -437,13 +437,13 @@ namespace fire.Standard
                     }
 
                     // Creates the file or overwrites it.
-                    static WriteAllBytes(string path, byte buffer[]) {
+                    static undefined WriteAllBytes(string path, byte buffer[]) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
                         stream.Write(buffer)
                         stream.Close()
                     }
 
-                    static AppendAllBytes(string path, byte buffer[]) {
+                    static undefined AppendAllBytes(string path, byte buffer[]) {
                         var stream = new IO.FileStream(path, IO.FileMode.Append)
                         stream.Write(buffer)
                         stream.Close()
@@ -453,21 +453,21 @@ namespace fire.Standard
                         return IO.Utf8.GetString(IO.File.ReadAllBytes(path))
                     }
 
-                    static WriteAllText(string path, string text) {
+                    static undefined WriteAllText(string path, string text) {
                         IO.File.WriteAllBytes(path, IO.Utf8.GetBytes(text))
                     }
 
-                    static AppendAllText(string path, string text) {
+                    static undefined AppendAllText(string path, string text) {
                         IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
                     }
 
                     // All lines as a List of strings (`foreach (line in ...)`, `.count`, `[i]`).
-                    static ReadAllLines(string path) {
+                    static List ReadAllLines(string path) {
                         return new List(__IOSplitLines(IO.File.ReadAllText(path)))
                     }
 
                     // Each line of a List (or an array), each terminated with "\n".
-                    static WriteAllLines(string path, any lines) {
+                    static undefined WriteAllLines(string path, any lines) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
                         if (lines is of List) {
                             foreach (line in lines) {
@@ -490,24 +490,24 @@ namespace fire.Standard
                     }
 
                     // Also creates missing intermediate directories; an existing one is not an error.
-                    static Create(string path) {
+                    static undefined Create(string path) {
                         if (!__IODirCreate(path)) { IO.IOErrors.Throw() }
                     }
 
                     // A non-empty directory only with recursive = true.
-                    static Delete(string path, bool recursive = false) {
+                    static undefined Delete(string path, bool recursive = false) {
                         if (!__IODirDelete(path, recursive)) { IO.IOErrors.Throw() }
                     }
 
                     // Full paths of the files as a sorted List. pattern: e.g. "*.txt".
-                    static GetFiles(string path, string pattern = "*", bool recursive = false) {
+                    static List GetFiles(string path, string pattern = "*", bool recursive = false) {
                         var list = __IODirList(path, pattern, recursive, 0)
                         if (list == undefined) { IO.IOErrors.Throw() }
                         return new List(list)
                     }
 
                     // Full paths of the subdirectories as a sorted List.
-                    static GetDirectories(string path, string pattern = "*", bool recursive = false) {
+                    static List GetDirectories(string path, string pattern = "*", bool recursive = false) {
                         var list = __IODirList(path, pattern, recursive, 1)
                         if (list == undefined) { IO.IOErrors.Throw() }
                         return new List(list)
@@ -569,12 +569,12 @@ namespace fire.Standard
                         }
                     }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new StreamClosedException("The reader is closed.") }
                     }
 
                     // Ensures that chunk[pos..len) contains data; false at the end of the stream.
-                    Fill() {
+                    bool Fill() {
                         if (this.pos < this.len) { return true }
                         if (this.eof) { return false }
                         var n = this.source.Read(this.chunk, 0, 4096)
@@ -590,7 +590,7 @@ namespace fire.Standard
                     }
 
                     // The collected bytes as a line (without a trailing "\r"), empty the collector.
-                    TakeLine() {
+                    string TakeLine() {
                         var bytes = this.pending.ToBuffer()
                         this.pending.Length = 0
                         var count = bytes.length
@@ -599,7 +599,7 @@ namespace fire.Standard
                     }
 
                     // The next line, or undefined at the end.
-                    ReadLine() {
+                    string ReadLine() {
                         this.Check()
                         while (this.Fill()) {
                             var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
@@ -636,7 +636,7 @@ namespace fire.Standard
                     }
 
                     // All remaining lines as a List.
-                    ReadLines() {
+                    List ReadLines() {
                         var lines = new List()
                         var line = this.ReadLine()
                         while (line != undefined) {
@@ -647,9 +647,9 @@ namespace fire.Standard
                     }
 
                     // `foreach (line in reader)` reads line by line.
-                    GetEnumerator() { return new IO.LineEnumerator(this) }
+                    IO.LineEnumerator GetEnumerator() { return new IO.LineEnumerator(this) }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed == undefined || this.closed) { return }
                         this.closed = true
                         if (this.ownsSource) { this.source.Close() }
@@ -666,12 +666,12 @@ namespace fire.Standard
                         this.line = undefined
                     }
 
-                    MoveNext() {
+                    bool MoveNext() {
                         this.line = this.reader.ReadLine()
                         return this.line != undefined
                     }
 
-                    GetCurrent() { return this.line }
+                    string GetCurrent() { return this.line }
                 }
 
                 // Writes UTF-8 text (without byte-order mark) to a stream. `new
@@ -705,28 +705,28 @@ namespace fire.Standard
 
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new StreamClosedException("The writer is closed.") }
                     }
 
                     // Writes the value as text (numbers etc. are converted).
-                    Write(any value) {
+                    undefined Write(any value) {
                         this.Check()
                         this.target.Write(IO.Utf8.GetBytes("" + value))
                     }
 
                     // Like Write, additionally appends a line break.
-                    WriteLine(any value = "") {
+                    undefined WriteLine(any value = "") {
                         this.Check()
                         this.target.Write(IO.Utf8.GetBytes("" + value + "\n"))
                     }
 
-                    Flush() {
+                    undefined Flush() {
                         this.Check()
                         this.target.Flush()
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed == undefined || this.closed) { return }
                         this.closed = true
                         if (this.target == undefined) { return }
@@ -744,7 +744,7 @@ namespace fire.Standard
                         this.handle = IO.IOErrors.Handle(__IOStdHandle(kind))
                     }
 
-                    Close() { }
+                    undefined Close() { }
                 }
 
                 // Convenient access to standard input/output/error:
@@ -758,36 +758,36 @@ namespace fire.Standard
                 // appears when the line break comes in the editor or Flush() is
                 // called.
                 class Stdio {
-                    static In() { return new IO.StdStream(0) }
-                    static Out() { return new IO.StdStream(1) }
-                    static Err() { return new IO.StdStream(2) }
+                    static IO.StdStream In() { return new IO.StdStream(0) }
+                    static IO.StdStream Out() { return new IO.StdStream(1) }
+                    static IO.StdStream Err() { return new IO.StdStream(2) }
 
                     // Writes the value as text to standard output.
-                    static Write(any value) {
+                    static undefined Write(any value) {
                         if (!__IOStdWrite(1, "" + value)) { IO.IOErrors.Throw() }
                     }
 
-                    static WriteLine(any value = "") {
+                    static undefined WriteLine(any value = "") {
                         if (!__IOStdWrite(1, "" + value + "\n")) { IO.IOErrors.Throw() }
                     }
 
                     // The same to standard error.
-                    static ErrorWrite(any value) {
+                    static undefined ErrorWrite(any value) {
                         if (!__IOStdWrite(2, "" + value)) { IO.IOErrors.Throw() }
                     }
 
-                    static ErrorLine(any value = "") {
+                    static undefined ErrorLine(any value = "") {
                         if (!__IOStdWrite(2, "" + value + "\n")) { IO.IOErrors.Throw() }
                     }
 
                     // Outputs buffered output (also an incomplete line).
-                    static Flush() {
+                    static undefined Flush() {
                         __IOStdFlush(1)
                         __IOStdFlush(2)
                     }
 
                     // The next line of standard input, or undefined at the end.
-                    static ReadLine() {
+                    static string ReadLine() {
                         var line = __IOStdReadLine()
                         if (line == undefined && __IOLastError() != 0) { IO.IOErrors.Throw() }
                         return line

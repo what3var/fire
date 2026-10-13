@@ -42,22 +42,22 @@ namespace fire.Standard
                 foreach (int arity in arities)
                 {
                     // the forwarder takes the parameters (types included) of the method of `Query` it hands over to
-                    var declared = QueryParameters(name, arity);
+                    var (returnType, declared) = QueryParameters(name, arity);
                     var arguments = string.Join(", ", declared.Select(ParameterName));
-                    sb.Append($"    {name}({string.Join(", ", declared)}) {{ return Linq.From(this).{name}({arguments}) }}\n");
+                    sb.Append($"    {returnType} {name}({string.Join(", ", declared)}) {{ return Linq.From(this).{name}({arguments}) }}\n");
                 }
             }
-            sb.Append($"    ToList() {{ return {toListExpression} }}\n");
+            sb.Append($"    List ToList() {{ return {toListExpression} }}\n");
             sb.Append("}\n");
             return sb.ToString();
         }
 
         /// <summary>The declared parameters (`lambda<int> pred`, `any fallback`) of the method `name` of the class `Query` that takes `arity` of them.</summary>
-        private static List<string> QueryParameters(string name, int arity)
+        private static (string ReturnType, List<string> Parameters) QueryParameters(string name, int arity)
         {
-            var match = System.Text.RegularExpressions.Regex.Matches(CoreSource, @"^\s+(?:[A-Za-z\[\]]+\s+)?" + name + @"\(([^)]*)\)\s*\{", System.Text.RegularExpressions.RegexOptions.Multiline)
-                .Select(m => SplitParameters(m.Groups[1].Value)).FirstOrDefault(p => p.Count == arity)
-                ?? throw new InvalidOperationException($"Linq: no method {name} with {arity} parameter(s) in Query");
+            var match = System.Text.RegularExpressions.Regex.Matches(CoreSource, @"^\s+([A-Za-z\[\]]+)\s+" + name + @"\(([^)]*)\)\s*\{", System.Text.RegularExpressions.RegexOptions.Multiline)
+                .Select(m => (m.Groups[1].Value, SplitParameters(m.Groups[2].Value))).FirstOrDefault(p => p.Item2.Count == arity);
+            if (match.Item2 == null) throw new InvalidOperationException($"Linq: no typed method {name} with {arity} parameter(s) in Query");
             return match;
         }
 
@@ -94,7 +94,7 @@ namespace fire.Standard
                 lambda<any> pred
                 any current
                 construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     var p = this.pred
                     while (this.inner.MoveNext()) {
                         var item = this.inner.GetCurrent()
@@ -102,7 +102,7 @@ namespace fire.Standard
                     }
                     return false
                 }
-                GetCurrent() { return this.current }
+                any GetCurrent() { return this.current }
             }
 
             class LinqSelectEnumerator : IEnumerator {
@@ -110,13 +110,13 @@ namespace fire.Standard
                 lambda<any> fn
                 any current
                 construct(IEnumerable inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     if (!this.inner.MoveNext()) { return false }
                     var f = this.fn
                     this.current = f(this.inner.GetCurrent())
                     return true
                 }
-                GetCurrent() { return this.current }
+                any GetCurrent() { return this.current }
             }
 
             class LinqSelectManyEnumerator : IEnumerator {
@@ -125,7 +125,7 @@ namespace fire.Standard
                 any sub
                 any current
                 construct(IEnumerable inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     var f = this.fn
                     while (true) {
                         if (this.sub != undefined) {
@@ -138,33 +138,33 @@ namespace fire.Standard
                         this.sub = next
                     }
                 }
-                GetCurrent() { return this.current }
+                any GetCurrent() { return this.current }
             }
 
             class LinqTakeEnumerator : IEnumerator {
                 IEnumerable inner
                 int left
                 construct(IEnumerable inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     if (this.left <= 0) { return false }
                     this.left = this.left - 1
                     return this.inner.MoveNext()
                 }
-                GetCurrent() { return this.inner.GetCurrent() }
+                any GetCurrent() { return this.inner.GetCurrent() }
             }
 
             class LinqSkipEnumerator : IEnumerator {
                 IEnumerable inner
                 int skip
                 construct(IEnumerable inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     while (this.skip > 0) {
                         this.skip = this.skip - 1
                         if (!this.inner.MoveNext()) { return false }
                     }
                     return this.inner.MoveNext()
                 }
-                GetCurrent() { return this.inner.GetCurrent() }
+                any GetCurrent() { return this.inner.GetCurrent() }
             }
 
             class LinqTakeWhileEnumerator : IEnumerator {
@@ -173,7 +173,7 @@ namespace fire.Standard
                 any current
                 bool done
                 construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     if (this.done) { return false }
                     var p = this.pred
                     if (this.inner.MoveNext()) {
@@ -183,7 +183,7 @@ namespace fire.Standard
                     this.done = true
                     return false
                 }
-                GetCurrent() { return this.current }
+                any GetCurrent() { return this.current }
             }
 
             class LinqSkipWhileEnumerator : IEnumerator {
@@ -191,7 +191,7 @@ namespace fire.Standard
                 lambda<any> pred
                 bool started
                 construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     if (this.started) { return this.inner.MoveNext() }
                     this.started = true
                     var p = this.pred
@@ -200,7 +200,7 @@ namespace fire.Standard
                     }
                     return false
                 }
-                GetCurrent() { return this.inner.GetCurrent() }
+                any GetCurrent() { return this.inner.GetCurrent() }
             }
 
             class LinqConcatEnumerator : IEnumerator {
@@ -208,14 +208,14 @@ namespace fire.Standard
                 IEnumerable second
                 bool inSecond
                 construct(IEnumerable first, IEnumerable second) { this.first = first; this.second = second; this.inSecond = false; first.TakeTo(this); second.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     if (!this.inSecond) {
                         if (this.first.MoveNext()) { return true }
                         this.inSecond = true
                     }
                     return this.second.MoveNext()
                 }
-                GetCurrent() {
+                any GetCurrent() {
                     if (this.inSecond) { return this.second.GetCurrent() }
                     return this.first.GetCurrent()
                 }
@@ -227,14 +227,14 @@ namespace fire.Standard
                 lambda<any, any> fn
                 any current
                 construct(IEnumerable a, IEnumerable b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
-                MoveNext() {
+                bool MoveNext() {
                     if (!this.a.MoveNext()) { return false }
                     if (!this.b.MoveNext()) { return false }
                     var f = this.fn
                     this.current = f(this.a.GetCurrent(), this.b.GetCurrent())
                     return true
                 }
-                GetCurrent() { return this.current }
+                any GetCurrent() { return this.current }
             }
 
             class LinqRangeEnumerator : IEnumerator {
@@ -242,23 +242,23 @@ namespace fire.Standard
                 int left
                 int current
                 construct(int start, int count) { this.next = start; this.left = count }
-                MoveNext() {
+                bool MoveNext() {
                     if (this.left <= 0) { return false }
                     this.current = this.next
                     this.next = this.next + 1
                     this.left = this.left - 1
                     return true
                 }
-                GetCurrent() { return this.current }
+                int GetCurrent() { return this.current }
             }
 
             class Linq {
                 // An enumerator for everything iterable: objects with GetEnumerator() and arrays (which are also IEnumerable)
-                static Iter(IEnumerable source) { return source.GetEnumerator() }
+                static IEnumerator Iter(IEnumerable source) { return source.GetEnumerator() }
 
                 // Reads the member chain `path` (names from outside to inside) from `obj` - via reflection, i.e. with its access rules;
                 // the last member must match `kind` ("field", "property" or "member")
-                static GetPath(any obj, any path, string kind) {
+                static any GetPath(any obj, any path, string kind) {
                     var o = obj
                     for (var i = 0; i < path.length; i = i + 1) {
                         if (i == path.length - 1) {
@@ -270,7 +270,7 @@ namespace fire.Standard
                     return o
                 }
 
-                static From(IEnumerable source) {
+                static Query From(IEnumerable source) {
                     var s = source
                     var query = new Query(() => Linq.Iter(s))
                     try source.TakeTo(query)   // `Linq.From(new Bag())`: a fresh argument belongs to this call - the query keeps it
@@ -279,25 +279,25 @@ namespace fire.Standard
 
                 // A query over a collection that was built for it (the result of an eager operator): the query owns the collection -
                 // it reads it lazily, long after the function that built it has returned.
-                static FromOwned(IEnumerable source) {
+                static Query FromOwned(IEnumerable source) {
                     var s = source
                     var query = new Query(() => Linq.Iter(s))
                     source.TakeTo(query)
                     return query
                 }
 
-                static Range(int start, int count) {
+                static Query Range(int start, int count) {
                     return new Query(() => new LinqRangeEnumerator(start, count))
                 }
 
-                static Repeat(any value, int count) {
+                static Query Repeat(any value, int count) {
                     var items = new class[count]
                     for (var i = 0; i < count; i = i + 1) { items[i] = value }
                     return Linq.FromOwned(items)
                 }
 
                 // Stable sorting (merge sort): returns the `items` in the order of the `keys` (arrays of equal length)
-                static Sort(any items, any keys, bool desc) {
+                static any Sort(any items, any keys, bool desc) {
                     var n = items.length
                     var idx = new int[n]
                     var tmp = new int[n]
@@ -338,90 +338,90 @@ namespace fire.Standard
                 // `factory` is a lambda without parameters that supplies a fresh enumerator on every pass
                 construct(lambda factory) { this.factory = factory }
 
-                GetEnumerator() {
+                IEnumerator GetEnumerator() {
                     var f = this.factory
                     return f()
                 }
 
                 // ---- lazy operators
-                Where(lambda<int> pred) {
+                Query Where(lambda<int> pred) {
                     var f = this.factory
                     return new Query(() => new LinqWhereEnumerator(f(), pred))
                 }
-                Select(lambda<int> fn) {
+                Query Select(lambda<int> fn) {
                     var f = this.factory
                     return new Query(() => new LinqSelectEnumerator(f(), fn))
                 }
                 // Projection onto a member, chosen via selector: `list.SelectMember(p => p.name)` (field or property), `SelectField` (a field only),
                 // `SelectProperty` (a property only) - the lambda must be a pure member chain (see `lambda member<T>`). Unlike
                 // `Select(fn)` the access goes via reflection (with its access rules) and a member of the wrong kind is a ReflectionException.
-                SelectField(lambda field<class> sel) {
+                Query SelectField(lambda field<class> sel) {
                     var f = this.factory
                     var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
                     var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "field")))
                     path.TakeTo(query)
                     return query
                 }
-                SelectProperty(lambda property<class> sel) {
+                Query SelectProperty(lambda property<class> sel) {
                     var f = this.factory
                     var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
                     var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "property")))
                     path.TakeTo(query)
                     return query
                 }
-                SelectMember(lambda member<class> sel) {
+                Query SelectMember(lambda member<class> sel) {
                     var f = this.factory
                     var path = flat sel.Path   // (the selector dies with this call; the query keeps its own copy)
                     var query = new Query(() => new LinqSelectEnumerator(f(), x => Linq.GetPath(x, path, "member")))
                     path.TakeTo(query)
                     return query
                 }
-                SelectMany(lambda<int> fn) {
+                Query SelectMany(lambda<int> fn) {
                     var f = this.factory
                     return new Query(() => new LinqSelectManyEnumerator(f(), fn))
                 }
-                Take(int n) {
+                Query Take(int n) {
                     var f = this.factory
                     return new Query(() => new LinqTakeEnumerator(f(), n))
                 }
-                Skip(int n) {
+                Query Skip(int n) {
                     var f = this.factory
                     return new Query(() => new LinqSkipEnumerator(f(), n))
                 }
-                TakeWhile(lambda<int> pred) {
+                Query TakeWhile(lambda<int> pred) {
                     var f = this.factory
                     return new Query(() => new LinqTakeWhileEnumerator(f(), pred))
                 }
-                SkipWhile(lambda<int> pred) {
+                Query SkipWhile(lambda<int> pred) {
                     var f = this.factory
                     return new Query(() => new LinqSkipWhileEnumerator(f(), pred))
                 }
-                Concat(IEnumerable other) {
+                Query Concat(IEnumerable other) {
                     var f = this.factory
                     return new Query(() => new LinqConcatEnumerator(f(), Linq.Iter(other)))
                 }
-                Zip(IEnumerable other, lambda<int, int> fn) {
+                Query Zip(IEnumerable other, lambda<int, int> fn) {
                     var f = this.factory
                     return new Query(() => new LinqZipEnumerator(f(), Linq.Iter(other), fn))
                 }
 
                 // ---- eager operators (work on a copy, return a Query again)
-                OrderBy(lambda<int> key) { return this.Ordered(key, false) }
-                OrderByDescending(lambda<int> key) { return this.Ordered(key, true) }
-                Ordered(any key, bool desc) {
+                Query OrderBy(lambda<int> key) { return this.Ordered(key, false) }
+                Query OrderByDescending(lambda<int> key) { return this.Ordered(key, true) }
+                Query Ordered(any key, bool desc) {
                     var items = this.ToArray()
                     var keys = new class[items.length]
                     for (var i = 0; i < items.length; i = i + 1) { keys[i] = key(items[i]) }
                     return Linq.FromOwned(Linq.Sort(items, keys, desc))
                 }
-                Reverse() {
+                Query Reverse() {
                     var items = this.ToArray()
                     var n = items.length
                     var result = new class[n]
                     for (var i = 0; i < n; i = i + 1) { result[i] = items[n - 1 - i] }
                     return Linq.FromOwned(result)
                 }
-                Distinct() {
+                Query Distinct() {
                     var seen = new List()
                     foreach (x in this) {
                         var known = false
@@ -432,41 +432,41 @@ namespace fire.Standard
                 }
 
                 // ---- Abschluss-Operatoren
-                ToList() {
+                List ToList() {
                     var result = new List()
                     foreach (x in this) { result.Add(x) }
                     return result
                 }
-                ToArray() {
+                any ToArray() {
                     var l = this.ToList()
                     var result = new class[l.count]
                     for (var i = 0; i < l.count; i = i + 1) { result[i] = l[i] }
                     return result
                 }
-                First() {
+                any First() {
                     foreach (x in this) { return x }
                     throw new LinqEmptyException("The sequence contains no element")
                 }
-                First(lambda<int> pred) {
+                any First(lambda<int> pred) {
                     foreach (x in this) { if (pred(x)) { return x } }
                     throw new LinqEmptyException("The sequence contains no matching element")
                 }
-                FirstOrDefault(any fallback) {
+                any FirstOrDefault(any fallback) {
                     foreach (x in this) { return x }
                     return fallback
                 }
-                FirstOrDefault(lambda<int> pred, any fallback) {
+                any FirstOrDefault(lambda<int> pred, any fallback) {
                     foreach (x in this) { if (pred(x)) { return x } }
                     return fallback
                 }
-                Last() {
+                any Last() {
                     var found = false
                     var last = undefined
                     foreach (x in this) { last = x; found = true }
                     if (!found) { throw new LinqEmptyException("The sequence contains no element") }
                     return last
                 }
-                ElementAt(int index) {
+                any ElementAt(int index) {
                     var i = 0
                     foreach (x in this) {
                         if (i == index) { return x }
@@ -474,43 +474,43 @@ namespace fire.Standard
                     }
                     throw new LinqEmptyException("Index " + index + " is outside of the sequence")
                 }
-                Any() {
+                bool Any() {
                     foreach (x in this) { return true }
                     return false
                 }
-                Any(lambda<int> pred) {
+                bool Any(lambda<int> pred) {
                     foreach (x in this) { if (pred(x)) { return true } }
                     return false
                 }
-                All(lambda<int> pred) {
+                bool All(lambda<int> pred) {
                     foreach (x in this) { if (!pred(x)) { return false } }
                     return true
                 }
-                Count() {
+                int Count() {
                     var n = 0
                     foreach (x in this) { n = n + 1 }
                     return n
                 }
-                Count(lambda<int> pred) {
+                int Count(lambda<int> pred) {
                     var n = 0
                     foreach (x in this) { if (pred(x)) { n = n + 1 } }
                     return n
                 }
-                Sum() {
+                int Sum() {
                     var s = 0
                     foreach (x in this) { s = s + x }
                     return s
                 }
-                Sum(lambda<int> fn) {
+                int Sum(lambda<int> fn) {
                     var s = 0
                     foreach (x in this) { s = s + fn(x) }
                     return s
                 }
-                Min() { return this.Select(x => x).Extreme(true) }
-                Min(lambda<int> fn) { return this.Select(fn).Extreme(true) }
-                Max() { return this.Select(x => x).Extreme(false) }
-                Max(lambda<int> fn) { return this.Select(fn).Extreme(false) }
-                Extreme(bool smallest) {
+                any Min() { return this.Select(x => x).Extreme(true) }
+                any Min(lambda<int> fn) { return this.Select(fn).Extreme(true) }
+                any Max() { return this.Select(x => x).Extreme(false) }
+                any Max(lambda<int> fn) { return this.Select(fn).Extreme(false) }
+                any Extreme(bool smallest) {
                     var found = false
                     var best = undefined
                     foreach (x in this) {
@@ -521,27 +521,27 @@ namespace fire.Standard
                     if (!found) { throw new LinqEmptyException("The sequence contains no element") }
                     return best
                 }
-                Average() { return this.Average(x => x) }
-                Average(lambda<int> fn) {
+                float Average() { return this.Average(x => x) }
+                float Average(lambda<int> fn) {
                     var s = 0.0
                     var n = 0
                     foreach (x in this) { s = s + fn(x); n = n + 1 }
                     if (n == 0) { throw new LinqEmptyException("The sequence contains no element") }
                     return s / n
                 }
-                Aggregate(any seed, lambda<int, int> fn) {
+                any Aggregate(any seed, lambda<int, int> fn) {
                     var acc = seed
                     foreach (x in this) { acc = fn(acc, x) }
                     return acc
                 }
-                Contains(any value) {
+                bool Contains(any value) {
                     foreach (x in this) { if (x == value) { return true } }
                     return false
                 }
-                ForEach(lambda<int> fn) {
+                undefined ForEach(lambda<int> fn) {
                     foreach (x in this) { fn(x) }
                 }
-                Join(string separator) {
+                string Join(string separator) {
                     var s = ""
                     var first = true
                     foreach (x in this) {

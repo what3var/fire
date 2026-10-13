@@ -357,5 +357,6 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC002` | Cannot assign a value of type '…' to parameter '…' of '…' of type '…' (an argument that does not fit) |
 | `TC003` | Cannot assign a value of type '…' to the return value of type '…' |
 | `TC004` | Parameter '…' of '…' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). |
+| `TC005` | Method '…' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). |
 
 `…` stands for a part of the message that varies (a name, a number).

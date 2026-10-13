@@ -8,14 +8,14 @@ namespace UI {
             this.text = text
         }
 
-        MeasureCore(Root root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = this.TextWidth(root, this.text)
             this.ch = this.TextHeight(root)
         }
 
         string StyleKey() { return "Label" }
 
-        Draw(Root root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.brush
@@ -40,7 +40,7 @@ namespace UI {
         string StyleKey() { return "Button" }
 
         // Without a fixed size (width/height = -1) as big as the text plus margin
-        MeasureCore(Root root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = this.TextWidth(root, this.text) + 24
             this.ch = this.TextHeight(root) + 12
         }
@@ -52,13 +52,13 @@ namespace UI {
             return was
         }
 
-        Click() {
+        undefined Click() {
             this.clicked = true
             var callback = this.onClick
             if (callback != undefined) { callback() }
         }
 
-        Draw(Root root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var theme = root.theme
@@ -81,17 +81,17 @@ namespace UI {
             this.DrawString(root, tx, ty, this.text, color)
         }
 
-        MouseDown(Root root, int button, int px, int py) {
+        undefined MouseDown(Root root, int button, int px, int py) {
             if (button == 1) { this.pressed = true }
         }
 
-        MouseUp(Root root, int button, int px, int py) {
+        undefined MouseUp(Root root, int button, int px, int py) {
             var was = this.pressed
             this.pressed = false
             if (was && button == 1 && this.Contains(px, py)) { this.Click() }
         }
 
-        KeyDown(Root root, int key, int mod) {
+        undefined KeyDown(Root root, int key, int mod) {
             if (key == UI.Keys.Enter() || key == UI.Keys.Space()) { this.Click() }
         }
     }
@@ -118,7 +118,7 @@ namespace UI {
             return was
         }
 
-        Toggle() {
+        undefined Toggle() {
             this.isChecked = !this.isChecked
             this.changed = true
             var callback = this.onChange
@@ -126,12 +126,12 @@ namespace UI {
         }
 
         // the box, 6 pixels of spacing, the text
-        MeasureCore(Root root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = 14 + 6 + this.TextWidth(root, this.text)
             this.ch = UI.M.Max(this.TextHeight(root), 14)
         }
 
-        Draw(Root root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             var box = 14
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
@@ -158,17 +158,17 @@ namespace UI {
             this.DrawString(root, ax + box + 6, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.text, color)
         }
 
-        MouseDown(Root root, int button, int px, int py) {
+        undefined MouseDown(Root root, int button, int px, int py) {
             if (button == 1) { this.pressed = true }
         }
 
-        MouseUp(Root root, int button, int px, int py) {
+        undefined MouseUp(Root root, int button, int px, int py) {
             var was = this.pressed
             this.pressed = false
             if (was && button == 1 && this.Contains(px, py)) { this.Toggle() }
         }
 
-        KeyDown(Root root, int key, int mod) {
+        undefined KeyDown(Root root, int key, int mod) {
             if (key == UI.Keys.Space() || key == UI.Keys.Enter()) { this.Toggle() }
         }
     }
@@ -206,13 +206,13 @@ namespace UI {
             return was
         }
 
-        SetText(string value) {
+        undefined SetText(string value) {
             this.text = value
             this.caret = value.Length
             this.scroll = 0
         }
 
-        Changed() {
+        undefined Changed() {
             this.changed = true
             var callback = this.onChange
             if (callback != undefined) { callback() }
@@ -236,7 +236,7 @@ namespace UI {
             return count
         }
 
-        Draw(Root root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = theme.inputBack
@@ -276,7 +276,7 @@ namespace UI {
             }
         }
 
-        MouseDown(Root root, int button, int px, int py) {
+        undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             // round to the next character boundary (monospaced: add half a cell width, then divide; otherwise measure the text up to each boundary)
             var column = 0
@@ -306,7 +306,7 @@ namespace UI {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
         }
 
-        KeyDown(Root root, int key, int mod) {
+        undefined KeyDown(Root root, int key, int mod) {
             var length = this.text.Length
             if (key == UI.Keys.Left()) {
                 if (this.caret > 0) { this.caret = this.caret - 1 }
@@ -334,7 +334,7 @@ namespace UI {
             }
         }
 
-        TextInput(Root root, string value) {
+        undefined TextInput(Root root, string value) {
             var length = this.text.Length
             if (this.maxLength > 0 && length + value.Length > this.maxLength) { return }
             this.text = this.text.Substring(0, this.caret) + value + this.text.Substring(this.caret, length - this.caret)

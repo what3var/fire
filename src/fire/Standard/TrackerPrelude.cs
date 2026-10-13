@@ -41,7 +41,7 @@ namespace fire.Standard
                 }
 
                 class Errors {
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __TrackerLastError()
                         var message = __TrackerLastErrorMessage()
                         if (code == 8) { throw new BadFormatException(message) }
@@ -57,7 +57,7 @@ namespace fire.Standard
 
                 // Names of notes: Tracker.Note.Name(428) is "C-2" (the period of a note as the pattern stores it).
                 class Note {
-                    static Name(int period) {
+                    static string Name(int period) {
                         if (period <= 0) { return "---" }
                         var periods = [856, 808, 762, 720, 678, 640, 604, 570, 538, 508, 480, 453, 428, 404, 381, 360, 339, 320, 302, 285, 269, 254, 240, 226, 214, 202, 190, 180, 170, 160, 151, 143, 135, 127, 120, 113]
                         var names = ["C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"]
@@ -86,11 +86,11 @@ namespace fire.Standard
                     }
 
                     // Reads a module from the bytes of a file.
-                    static Load(byte bytes[], int rate = 44100) { return new Song(bytes, rate) }
+                    static Tracker.Song Load(byte bytes[], int rate = 44100) { return new Song(bytes, rate) }
 
                     destruct() { try { this.Close() } catch (TrackerException e) { } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new TrackerException("The song is closed.", 2) }
                     }
 
@@ -101,7 +101,7 @@ namespace fire.Standard
                         return v
                     }
 
-                    SetValue(int what, int value) {
+                    undefined SetValue(int what, int value) {
                         this.Check()
                         if (!__TrackerSet(this.handle, what, value)) { Tracker.Errors.Throw() }
                     }
@@ -160,7 +160,7 @@ namespace fire.Standard
                     }
 
                     // Silences a channel (or lets it play again).
-                    Mute(int channel, bool muted = true) {
+                    undefined Mute(int channel, bool muted = true) {
                         var mask = this.Get(14)
                         var bit = 1 << channel
                         if (muted) { mask = mask | bit } else { mask = mask & (4294967295 # bit) }
@@ -219,7 +219,7 @@ namespace fire.Standard
                     bool ChannelPlaying(int channel) { return this.Cell(0, 0, channel, 7) == 1 }
 
                     // Goes back to the start.
-                    Restart() {
+                    undefined Restart() {
                         this.Check()
                         __TrackerRestart(this.handle)
                     }
@@ -241,7 +241,7 @@ namespace fire.Standard
                     }
 
                     // The whole song as a sound in memory (from the start, without looping; at most `maxMilliseconds`).
-                    ToSound(int maxMilliseconds = 600000, int channels = 2) {
+                    Audio.Sound ToSound(int maxMilliseconds = 600000, int channels = 2) {
                         var wasLoop = this.Loop
                         this.Loop = false
                         this.Restart()
@@ -260,7 +260,7 @@ namespace fire.Standard
                         return new Audio.Sound(rate, channels, data, 0, done * 2 * channels)
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __TrackerClose(this.handle) }
@@ -293,7 +293,7 @@ namespace fire.Standard
                     }
 
                     // An output on `device` that fits the song (its rate, stereo), and the player on it.
-                    static Open(Tracker.Song song, string device = "default") {
+                    static Tracker.Player Open(Tracker.Song song, string device = "default") {
                         var output = new Audio.Output(device, song.Rate, 2)
                         return new Player(song, output)
                     }
@@ -325,12 +325,12 @@ namespace fire.Standard
                     }
 
                     // Plays to the end (a song with Loop = true never ends: stop it from another place with Stop()).
-                    Play() {
+                    undefined Play() {
                         while (this.Pump()) { Sleep(5) }
                     }
 
                     // Stops at once: what was mixed and not yet played is thrown away.
-                    Stop() {
+                    undefined Stop() {
                         this.stopped = true
                         this.output.Stop()
                     }

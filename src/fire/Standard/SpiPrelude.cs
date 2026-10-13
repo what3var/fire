@@ -55,7 +55,7 @@ namespace fire.Standard
 
                 class Errors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __SpiLastError()
                         var message = __SpiLastErrorMessage()
                         if (code == 3) { throw new NotFoundException(message) }
@@ -78,7 +78,7 @@ namespace fire.Standard
                     static bool Available() { return __SpiSupported() == 1 }
 
                     // The names of the devices: "sim" first, then the real ones ("spidev0.0", ... on Linux, "spi-2" and "spi-3" on an ESP32).
-                    static Devices() {
+                    static List Devices() {
                         var all = __SpiDevices()
                         if (all == undefined) { Spi.Errors.Throw() }
                         var list = new List()
@@ -117,12 +117,12 @@ namespace fire.Standard
                     string Name { get { return this.name } }
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new SpiException("The device is closed.", 2) }
                     }
 
                     // Changes the setup of the open device.
-                    Configure(int mode, int speed, bool lsbFirst = false) {
+                    undefined Configure(int mode, int speed, bool lsbFirst = false) {
                         this.Check()
                         var lsb = 0
                         if (lsbFirst) { lsb = 1 }
@@ -148,7 +148,7 @@ namespace fire.Standard
                     }
 
                     // Sends the bytes and receives as many at the same time; returns the received bytes (a byte[]).
-                    Transfer(byte data[]) {
+                    byte[] Transfer(byte data[]) {
                         this.Check()
                         var back = new byte[data.length]
                         if (__SpiTransfer(this.handle, data, 0, back, 0, data.length) < 0) { Spi.Errors.Throw() }
@@ -156,20 +156,20 @@ namespace fire.Standard
                     }
 
                     // The general form: `count` bytes from `out` (from `outOffset`) are sent, the bytes that come in go to `into` (from `inOffset`).
-                    TransferInto(byte out[], int outOffset, byte into[], int inOffset, int count) {
+                    undefined TransferInto(byte out[], int outOffset, byte into[], int inOffset, int count) {
                         this.Check()
                         if (__SpiTransfer(this.handle, out, outOffset, into, inOffset, count) < 0) { Spi.Errors.Throw() }
                     }
 
                     // Sends `count` bytes of the buffer (all from `offset` on without a count); what comes in is dropped.
-                    Write(byte data[], int offset = 0, int count = -1) {
+                    undefined Write(byte data[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = data.length - offset }
                         if (__SpiWrite(this.handle, data, offset, count) < 0) { Spi.Errors.Throw() }
                     }
 
                     // Receives `count` bytes (zeros are sent meanwhile); returns them.
-                    Read(int count) {
+                    byte[] Read(int count) {
                         this.Check()
                         var data = new byte[count]
                         if (__SpiRead(this.handle, data, 0, count) < 0) { Spi.Errors.Throw() }
@@ -177,7 +177,7 @@ namespace fire.Standard
                     }
 
                     // Sends the bytes, then receives `inCount` bytes in the same transfer (the chip select stays low); returns the received ones.
-                    WriteRead(byte data[], int inCount) {
+                    byte[] WriteRead(byte data[], int inCount) {
                         this.Check()
                         var total = data.length + inCount
                         var out = new byte[total]
@@ -189,7 +189,7 @@ namespace fire.Standard
                         return answer
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __SpiClose(this.handle) }
@@ -199,18 +199,18 @@ namespace fire.Standard
                 // The simulated device "sim" from the outside (for tests, and to try a program without the hardware).
                 class Sim {
                     // The device answers with these bytes (one per byte sent, starting with the first - the answer to a command byte comes in the bytes after it, so queue a leading 0 -, then zeros) instead of looping back what was sent.
-                    static Reply(byte data[]) {
+                    static undefined Reply(byte data[]) {
                         if (!__SpiSimReply(data, 0, data.length)) { Spi.Errors.Throw() }
                     }
 
                     // MISO is tied to MOSI again (what is sent comes back); queued answers are dropped.
-                    static Loopback() { __SpiSimLoopback() }
+                    static undefined Loopback() { __SpiSimLoopback() }
 
                     // How many bytes the program sent to the device (the first 65536 are kept).
                     static int SentCount() { return __SpiSimSentCount() }
 
                     // The bytes the program sent to the device since the start or the last Clear.
-                    static Sent() {
+                    static byte[] Sent() {
                         var n = __SpiSimSentCount()
                         var data = new byte[n]
                         for (var i = 0; i < n; i++) { data[i] = __SpiSimSentByte(i) }
@@ -224,7 +224,7 @@ namespace fire.Standard
                     static int Transfers() { return __SpiSimInfo(3) }
 
                     // Forgets what was sent and the queued answers.
-                    static Clear() { __SpiSimClear() }
+                    static undefined Clear() { __SpiSimClear() }
                 }
             }
             """;
