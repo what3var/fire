@@ -304,7 +304,7 @@ A `lambda` type counts the parameters of the lambda it takes (`lambda` = none, `
 written at its own parameters count (`var f = (int k, string s) => k`), and a parameter without one is `any` and said so (`TC004`). A lambda with another number of
 parameters than its target, a parameter type that does not take the target's argument, a wrong result (`TC003`) and a call with the wrong number of arguments (`TC002`)
 are reported. **Arrays** have the type of their elements (`int[]`, from the declaration, `new int[n]` or a literal `[1, 2]`): an element, `foreach` over the array and
-`a.length` are typed; `s[i]` of a string is a `char`, `obj[i]` is what the `operator[]` of the class returns.
+`a.length` are typed; `s[i]` of a string is a `char`, `obj[i]` is what the `operator[]` of the class returns. A **generic method** (`T Id<T>(T x)`) takes its type parameters from the arguments (`Util.Id("a")` is a `string`); the queries of `#import "linq"` are typed this way (`Query<T>`). Using a member that a known class does not have is `TC008`.
 
 The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `Foo f`); `var x` derives it from the value. A `:` after the variable name (`var x : mm`), on the other hand, only fixes the **unit** (see "unit declarations") – `var x : int` as a type declaration no longer exists.
 

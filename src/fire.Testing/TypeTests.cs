@@ -249,6 +249,62 @@ static class TypeTests
             """) == "|1.5\n1.5\n0.5");
         Check("Einheiten: Ueberlauf beim Umrechnen ist eine OverflowException", Run("try { int big : nm = 900000000000km } catch (OverflowException e) { print(\"overflow\") }") == "|overflow");
 
+        Check("Properties und Felder ohne this. (auch aus einer abgeleiteten Klasse) werden geprueft", Run("""
+            class A {
+                int n
+                int Count { get { return this.n } set { this.n = value } }
+                float:m Len { get { return 1m } set { } }
+                undefined Set() { Count = "text"; n = "x"; Len = 3s }
+            }
+            class B : A { undefined Go() { Count = true } }
+            print(1)
+            """) == "TC001 TC001 TC006 TC001|1");
+        Check("unbekannte Member einer bekannten Klasse (TC008) und falsche Argumentzahl (TC002)", Run("""
+            class E2 { string message }
+            class P { int x
+                undefined M(int a, int b = 2) { }
+            }
+            var p = new P()
+            var e = new E2()
+            print(e.Message)
+            p.Nope()
+            p.M()
+            p.M(1)
+            p.TakeTo(e)
+            """, TypeCheckMode.Strict) == "|ERROR TC008 TC008 TC002");
+        Check("generische Methoden: die Typparameter kommen aus den Argumenten (auch aus dem Ergebnis eines Lambdas)", Run("""
+            class Box<T> {
+                T item
+                construct(T item) { this.item = item }
+                Box<R> Map<R>(R lambda<T> fn) { return new Box<R>(fn(this.item)) }
+                static Box<U> Of<U>(U value) { return new Box<U>(value) }
+            }
+            class Util { static T Id<T>(T x) { return x } static T FirstOf<T>(IEnumerable<T> items) { foreach (x in items) { return x } return undefined } }
+            var b = Box.Of(3)
+            var c = b.Map(x => x * 2.5)
+            bool w1 = c.item
+            bool w2 = Util.Id("hi")
+            bool w3 = Util.FirstOf([1, 2])
+            var l = new List<string>()
+            l.Add("a")
+            bool w4 = Util.FirstOf(l)
+            print(c.item)
+            """) == "TC001 TC001 TC001 TC001|7.5");
+        Check("Linq: Query<T> aus List<T> und Arrays, Select<R>, Aggregate<A>; ohne bekannten Typ bleibt es any", Run("""
+            #import "linq"
+            var nums = new List<int>()
+            nums.Add(3)
+            nums.Add(4)
+            var q = nums.Where(x => x > 3).Select(x => "n" + x)
+            bool w1 = q.First()
+            bool w2 = Linq.From([1.5, 2.5]).Sum()
+            int total = nums.Aggregate(0, (acc, x) => acc + x)
+            List<string> names = q.ToList()
+            any raw = nums
+            int anything = Linq.From(raw).First()
+            print(total + " " + names[0] + " " + anything)
+            """) == "TC001 TC001|7 n4 3");
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {

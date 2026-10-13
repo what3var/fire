@@ -225,7 +225,7 @@ namespace UI {
         }
 
         // Shows the elements of a CollectionView (the selection follows its `current`).
-        undefined SetView(List source, bool own = true) {
+        undefined SetView(CollectionView source, bool own = true) {
             if (own) { source.TakeTo(this) }
             this.view = source
             this.selectedIndex = source.current

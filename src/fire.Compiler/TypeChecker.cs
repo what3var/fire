@@ -79,6 +79,7 @@ namespace fire.Compiler
         public const string NoReturnTypeCode = "TC005";
         public const string UnitCode = "TC006";
         public const string UnitLossCode = "TC007";
+        public const string UnknownMemberCode = "TC008";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -909,6 +910,8 @@ namespace fire.Compiler
         {
             var target = Infer(m.Target);
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
+            if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name) && FullyKnown(target))
+                Report(UnknownMemberCode, $"'{target}' has no field, property or method '{m.Name}'", m.Line);
             return target.Kind switch
             {
                 StaticKind.Class when FindMember(target, m.Name) is { } member => member,
@@ -916,6 +919,37 @@ namespace fire.Compiler
                 StaticKind.String when m.Name == "Length" => StaticType.Int,
                 _ => StaticType.Dynamic,
             };
+        }
+
+        /// <summary>`obj.Name(...)` that finds no method: none of that name at all (TC008), or none that takes that many arguments (TC002).</summary>
+        private void ReportMissingMethod(MemberExpr callee, StaticType target, int argc)
+        {
+            if (target.Kind != StaticKind.Class || !FullyKnown(target) || callee.Name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo") return;
+            if (FindMember(target, callee.Name) != null) return;   // (a field or property: a lambda in it, or something else the runtime decides)
+            var named = Chain(target).SelectMany(c => c.Decl.Members.OfType<MethodDecl>()).Where(m => m.Name == callee.Name).ToList();
+            if (named.Count == 0) Report(UnknownMemberCode, $"'{target}' has no method '{callee.Name}'", callee.Line);
+            else if (!named.Any(m => Fits(m.Params, argc)))
+                Report(ArgumentCode, $"'{callee.Name}' of '{target}' takes {string.Join(" or ", named.Select(m => ArityText(m.Params)).Distinct())} argument(s), not {argc}", callee.Line);
+        }
+
+        private static string ArityText(IReadOnlyList<LambdaParam> parameters)
+        {
+            int min = parameters.Count(p => p.DefaultValue == null);
+            return min == parameters.Count ? min.ToString() : $"{min} to {parameters.Count}";
+        }
+
+        private bool HasMethodNamed(StaticType receiver, string name) =>
+            Chain(receiver).Any(c => c.Decl.Members.OfType<MethodDecl>().Any(m => m.Name == name))
+            || receiver.Class != null && _interfaces.TryGetValue(receiver.Class, out var iface) && iface.Methods.Any(m => m.Name == name);
+
+        /// <summary>Whether everything a class has is known here: it is a class (not an interface) and all its base classes and interfaces are declared.</summary>
+        private bool FullyKnown(StaticType receiver)
+        {
+            if (receiver.Class == null || !_classes.ContainsKey(receiver.Class)) return false;
+            foreach (var (decl, _) in Chain(receiver))
+                foreach (var b in decl.BaseRefs ?? Array.Empty<TypeRef>())
+                    if (!_classes.ContainsKey(NameOf(b)) && !_interfaces.ContainsKey(NameOf(b))) return false;
+            return true;
         }
 
         /// <summary>A lambda: its body is checked on its own (its returns are not those of the method around it). The types of its parameters and of its result come from
@@ -982,10 +1016,12 @@ namespace fire.Compiler
             Dictionary<string, StaticType>? map = null;
             StaticType? lambda = null;
             string name = "the lambda";
+            StaticType? calleeTarget = null;
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
                 if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
+                calleeTarget = target;
                 if (target.Kind == StaticKind.Class)
                 {
                     method = FindMethod(target, m.Name, c.Args.Count, out map);
@@ -999,15 +1035,84 @@ namespace fire.Compiler
             }
             else if (Infer(c.Callee) is { Kind: StaticKind.Lambda } callee) lambda = callee;
 
-            var expected = new List<StaticType?>();
+            // a generic method (`R Select<R>(R lambda<T> fn)`): its type parameters are taken from the arguments, one after the other (a later argument
+            // - a lambda - sees what the earlier ones fixed); what is not found is `any`
+            HashSet<string>? open = null;
+            if (method?.TypeParams is { Count: > 0 } typeParams)
+            {
+                map = map == null ? new Dictionary<string, StaticType>() : new Dictionary<string, StaticType>(map);
+                open = typeParams.Select(p => p.Name).ToHashSet();
+                foreach (var p in open) map.Remove(p);
+            }
+            var args = new List<StaticType>();
             for (int i = 0; i < c.Args.Count; i++)
-                expected.Add(method != null && i < method.Params.Count && !method.Params[i].ByRef ? Declared(method.Params[i].Type, method.Params[i].ArrayRanks.Count, map)
-                    : lambda?.Params != null && i < lambda.Params.Count ? lambda.Params[i] : null);
-            var args = c.Args.Select((a, i) => Infer(a, expected[i])).ToList();
+            {
+                StaticType? expected = null;
+                if (method != null && i < method.Params.Count && !method.Params[i].ByRef)
+                {
+                    var param = method.Params[i];
+                    expected = Declared(param.Type, param.ArrayRanks.Count, open == null ? map : WithOpen(map!, open));
+                    // a lambda whose result is a type parameter still to be found: its own result counts
+                    if (open != null && expected is { Kind: StaticKind.Lambda } && param.Type?.LambdaSignature?.ReturnTypeName is { } r && open.Contains(r) && !map!.ContainsKey(r))
+                        expected = expected with { Return = null };
+                }
+                else if (lambda?.Params != null && i < lambda.Params.Count) expected = lambda.Params[i];
+                var arg = Infer(c.Args[i], expected);
+                args.Add(arg);
+                if (open != null && i < method!.Params.Count) Bind(method.Params[i].Type, method.Params[i].ArrayRanks.Count, arg, map!, open);
+            }
+            if (open != null) map = WithOpen(map!, open);
             if (lambda != null) return CallLambda(lambda, args, c, name);
-            if (method == null) return StaticType.Dynamic;
+            if (method == null)
+            {
+                if (c.Callee is MemberExpr callee && calleeTarget != null) ReportMissingMethod(callee, calleeTarget, c.Args.Count);
+                return StaticType.Dynamic;
+            }
             CheckArguments(method.Params, args, c.Args, method.Name, map);
             return DeclaredOrDynamic(method.ReturnType, 0, map);
+        }
+
+        /// <summary>The map with every type parameter that was not found as `any`.</summary>
+        private static Dictionary<string, StaticType> WithOpen(Dictionary<string, StaticType> map, HashSet<string> open)
+        {
+            var result = new Dictionary<string, StaticType>(map);
+            foreach (var p in open) result.TryAdd(p, StaticType.Dynamic);
+            return result;
+        }
+
+        /// <summary>Finds what the type parameters in a declared parameter type stand for from the argument that goes there (`T` of `IEnumerable<T>`
+        /// from a `List<int>` or an `int[]`, `R` of `R lambda<T>` from the result of the lambda); the first finding of a parameter counts.</summary>
+        private void Bind(TypeRef? type, int arrayRanks, StaticType arg, Dictionary<string, StaticType> map, HashSet<string> open)
+        {
+            if (type == null || arg.IsDynamic && type.TypeArgs == null) { if (type != null && open.Contains(type.BaseName) && arrayRanks + type.ArrayRank == 0) map.TryAdd(type.BaseName, arg); return; }
+            int ranks = arrayRanks + type.ArrayRank;
+            if (ranks > 0)
+            {
+                if (arg.Kind == StaticKind.Array) Bind(type with { ArrayRank = 0 }, ranks - 1, arg.Element!, map, open);
+                return;
+            }
+            if (open.Contains(type.BaseName) && type.TypeArgs == null)
+            {
+                if (arg.Kind != StaticKind.Undefined) map.TryAdd(type.BaseName, arg);
+                return;
+            }
+            if (type.BaseName == "lambda" && type.LambdaSignature is { IsSelector: false } signature && arg.Kind == StaticKind.Lambda)
+            {
+                if (signature.ReturnTypeName is { } r && open.Contains(r) && arg.Return is { Kind: not StaticKind.Undefined } returned) map.TryAdd(r, returned);
+                if (arg.Params != null)
+                    for (int i = 0; i < signature.ParamTypeNames.Count && i < arg.Params.Count; i++)
+                        if (open.Contains(signature.ParamTypeNames[i]) && !arg.Params[i].IsDynamic) map.TryAdd(signature.ParamTypeNames[i], arg.Params[i]);
+                return;
+            }
+            if (type.TypeArgs is { Count: > 0 } typeArgs)
+            {
+                string generic = GenericName(PlainName(type.BaseName), typeArgs.Count);
+                IReadOnlyList<StaticType>? actual = null;
+                if (arg.Kind == StaticKind.Array && PlainName(type.BaseName) == "IEnumerable") actual = new[] { arg.Element! };
+                else if (arg.Kind == StaticKind.Class) actual = (arg.Class == generic ? arg : AsBase(arg, generic))?.Args;
+                if (actual == null) return;
+                for (int i = 0; i < typeArgs.Count && i < actual.Count; i++) Bind(typeArgs[i], 0, actual[i], map, open);
+            }
         }
 
         /// <summary>`Class.Method(...)`: a (possibly namespace-qualified) class name that is not shadowed by a variable or member.</summary>

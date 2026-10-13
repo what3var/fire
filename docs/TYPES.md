@@ -49,7 +49,14 @@ a declaration without a unit takes the unit of its initializer (`int a = 5mm`), 
 that goes to a unitless declaration, it emits a run-time check. A whole number converted into a coarser unit is `TC007` (always a warning). Properties carry a unit
 (`float X : m { get ... set ... }`: the setter's `value` and the getter's result are converted); Scene3D declares its lengths (`: m`, parameters `: any m`) and angles (`: any`).
 
-Known gaps: properties set through `this`-less access, generic methods (`Name<T>(...)` is not inferred), Linq queries are raw (`Query` of `any`).
+Step 3e: generic methods (`R Select<R>(R lambda<T> fn)`, `static Box<U> Of<U>(U value)`) take their type parameters from the arguments, one after the other
+(`IEnumerable<T>` from a `List<int>` or an `int[]`, `R` from the result of a lambda argument; what is not found is `any`). Linq is typed: `Linq.From(xs)` is a `Query<T>`,
+`Where`/`OrderBy`/`Take`/... keep `T`, `Select<R>`/`Zip<U, R>`/`Aggregate<A>`/`Sum<R>` take their result types from the lambdas, `First`/`Last`/`Min`/`Max` return `T`,
+`ToList()` a `List<T>`; the operators of a `List<T>` are the same, those of an array take `any` (at run time nothing changes). A member that a fully known class does
+not have (`e.Message` on an `Exception`) is `TC008`, a call with a number of arguments no overload takes is `TC002`. Assignments to fields and properties without
+`this.` (also inherited ones) are checked like those with it.
+
+Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
 
 ## Decisions
 
