@@ -26,8 +26,13 @@ Goal: a leaner and faster native backend (and VM) by proving types where the pro
 
 Each step is independently shippable and tested VM == native.
 
-## Open design questions
+## Decisions
 
-* Mismatch policy in step 1: warning first, error later (proposed), or error at once?
-* `var`: infer from the initializer only (proposed), or also from later assignments?
-* Is an `int` assignable to `float` implicitly (as in the VM today)? Proposed: yes, `float` accepts `int`.
+* **TypeChecking mode `lax` | `strict`.** Project-wide (project setting), per file (`#lax` / `#strict`), or by compiler switch. `lax`: an incompatible assignment, argument or return between two
+  known types is a warning; `strict`: an error. `dynamic` values never report in either mode.
+* **`var` is inferred from the initializer only.** The initializer may be a value, another variable, a return value, or `undefined!TypeName` (a typed null). `var` without an initializer is
+  illegal (unlike a declaration with a type). The type of a target never changes.
+* **Assignability.** `int` -> `float` is implicit (coerced). Everything converts implicitly to `string` (a `ToString` like in C#). Anything else between known types is a conflict.
+* **Units** (step 4): if both types are known and only the unit is not, the site is a *unit adaptation* `b = AdaptUnit(a, targetUnit)` with three outcomes: same unit -> `a` unchanged;
+  same dimension -> `a * factor`; otherwise `UnitMismatchException`. The factor is cached per (source unit, target unit) at the site; where the source unit is also static the whole thing
+  folds at compile time (no-op or a constant multiply). A variable whose unit is statically known does not need a unit field in its unboxed representation at all.
