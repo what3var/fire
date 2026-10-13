@@ -429,6 +429,7 @@ namespace fire.Native
         {
             bool toFloat = demand.StartsWith('#');
             string unit = demand.TrimStart('#');
+            if (unit == "any") return toFloat ? $"intToFloat({value})" : value;
             return $"adaptUnit({value}, {UnitId(DemandUnit(unit))}, {(unit.StartsWith("any ", StringComparison.Ordinal) ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(unit))})";
         }
 

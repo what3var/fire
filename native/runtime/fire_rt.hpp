@@ -1253,10 +1253,13 @@ inline void unitMismatch(Value v, Value expectedText);
 /// CheckUnit (Value.AdaptToUnit): a declaration with a unit takes `v` - a value of the same dimension is converted into `unit`, `undefined` takes it; with
 /// `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float. Another dimension is an UnitMismatchException, a whole number that does not fit any
 /// more after the conversion an OverflowException. Values without a unit (strings, objects) are left alone.
+/// A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays.
+inline Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v; }
+
 inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText) {
     if (!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined)) return v;
+    if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   // a float declaration: a whole number becomes one (`float f = 3` holds 3.0)
     if (unitEq(v.unit, unit)) return v;
-    if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   // a float declaration: a whole number becomes one first
     if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
     if (FIRE_UNLIKELY(!unitCompatible(v.unit, unit))) { unitMismatch(v, expectedText); return v; }
     if (dimensionOnly) return v;

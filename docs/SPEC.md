@@ -297,7 +297,7 @@ instances only (not an `int`, a `string`, an array or a lambda); `undefined` goe
 mode, an error in strict mode). **A method says what it returns** (`int Area()`, `Shape[] Parts()`, `undefined Draw()`): a method without a return type is taken as returning `any` and said so
 (`TC005`, a warning in lax mode, an error in strict mode; constructors, destructors and operators need none). A method that returns nothing is declared `undefined`; one that sometimes returns a
 value and sometimes nothing declares the type of the value, because `undefined` fits every type (a bare `return` is `return undefined`) - `any` is for methods that return values of different
-types. Operators can say it too (`bool operator==(any o)`). A declaration can say that it accepts values of every unit with `: any` (`float width : any`), or of every unit of one dimension with `: any m` (see 3.5); a declaration without a unit is unitless, only `var` without a unit takes any unit.
+types. Operators can say it too (`bool operator==(any o)`). A declaration can say that it accepts values of every unit with `: any` (`float width : any`), or of every unit of one dimension with `: any m` (see 3.5); a declaration without a unit takes the unit of its initializer (`int a = 5mm` is in mm), without one it is unitless; only `var` takes any unit.
 A `lambda` type counts the parameters of the lambda it takes (`lambda` = none, `lambda<int, int>` = two); an optional callback is therefore declared `any`, because `undefined` is not a lambda.
 **Lambdas are typed**: a lambda takes the types of its parameters and of its result from the target it goes to - the typed parameter, field or variable
 (`int lambda<int, int> add = (x, y) => x + y`: `x` and `y` are `int`, the result must be an `int`); without such a target (`var f = ...`, an `any` parameter) the types
@@ -319,8 +319,8 @@ For a binary operation between operands with units:
 - **Chains with more than two operands** (`a + b + c`) are evaluated in the classic left-associative way: `(a + b) + c`. The anchor rule is applied again at every partial step, with the intermediate result (including its already determined unit) counting as the left operand of the next step – so there is no global "all operands at once" view across the whole chain.
 
 ```
-int a : mm = 5mm
-float b : km = undefined
+int a = 5mm
+float b = undefined:km
 
 var c = b + a:!     // a is auto-coerced (unit+type), b is the anchor -> c : float:km
 var d = b: + a:!    // both request auto-coercion -> no anchor -> d : float:unitless
@@ -364,22 +364,28 @@ Any other, unrecognized suffix string on a literal is treated as an **atomic uni
 
 ### 3.5 Unit declarations
 
-A unit after the name of a declaration (`int len : mm`, `float speed : m/s`, a parameter `float v : mm`, a field, a property `float Width : m { get ... set ... }`) fixes the unit of
-everything stored there - the calculation in it always happens in that dimension **and** factor:
+A unit after the name of a declaration (`int len : mm`, `float speed : m/s`, a parameter `float v : mm`, a field, a property `float Width : m { get ... set ... }`) or at
+its type (`float:m len`, the return type of a method `float:m Length()`, `float : mm` with spaces is the same) fixes the unit of everything stored there - the calculation
+in it always happens in that dimension **and** factor:
 
 - A value of the **same dimension is converted** into the declared unit when it is stored: `int a : mm = 2m` holds `2000mm`, `bx.Set(2cm)` with `float v : mm` gets `20mm`.
-  The getter of a property with a unit converts its result the same way. If the converted number does not fit an `int`, that is an `OverflowException` (the factor is never raised for
+  A method with a unit at its return type and the getter of a property with a unit convert their result the same way. If the converted number does not fit an `int`, that is an `OverflowException` (the factor is never raised for
   a declared unit). A whole number converted into a coarser unit may lose its fraction (`int r : m = 5mm` is `0m`) - the compiler warns about that (`TC007`, a warning also in strict mode).
 - A value of **another dimension** (or a unitless number) is a `UnitMismatchException`; where the compiler knows both units it reports it already (`TC006`, a warning in lax mode,
   an error in strict mode). `:` and `::` coerce explicitly when that is really meant (`7:mm`, `x::mm`).
-- **Without a unit** a declaration (`int`, `float`, a parameter, field, property, return value) is **unitless**: `int n = 5mm` is reported (`TC006`) and refused at run time where the
-  compiler cannot prove the unit. Only `var` without a unit is free: `var x = 5mm` and later `x = 3s` are allowed.
+- **Without a unit** a variable or field takes the unit of its **initializer** for good: `int a = 5mm` is in mm from then on (`a = 3cm` holds `30mm`, `a = 2kg` is `TC006`).
+  Without an initializer, with a unitless one (`int n = 5`) and for parameters, properties and return values a declaration without a unit is **unitless**: `n = 5mm` is reported
+  (`TC006`) and refused at run time. When the compiler cannot see the unit of the initializer (a value of type `any`), the unit stays free. `var` without a unit is always
+  free: `var x = 5mm` and later `x = 3s` are allowed.
+- A `float` declaration holds a float: `float f = 3` holds `3.0` (`f / 2` is `1.5`), the same for parameters and return values.
 - `: any` takes every unit unchanged, `: any m` takes every unit of the dimension of `m` (`3km`, `20cm`, ...) without converting it - the code then asks `is in` or converts itself.
 
 ```
 float len : any m = 3km        // stays 3km
 int d : mm = 1.5m              // 1500mm
+int e = 5mm                    // in mm from now on: e = 2cm holds 20mm
 float t : s = 2kg              // TC006, UnitMismatchException at run time
+float:m Width() { ... }         // returns meters (a value in cm is converted)
 ```
 
 ## 4. Scopes & lambdas

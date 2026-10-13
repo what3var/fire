@@ -632,7 +632,7 @@ namespace fire.Compiler
                         }
 
                         case MethodDecl md:
-                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic));
+                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand));
                             break;
 
                         case ConstructorDecl ctor:
@@ -1779,7 +1779,8 @@ namespace fire.Compiler
         /// <summary>The values whose unit is checked at runtime (ResolveResult.UnitChecks) of the program being compiled.</summary>
         [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
 
-        /// <summary>The unit a getter of a property with a unit (`float X : m { get ... }`) converts its return values into, otherwise null.</summary>
+        /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
+        /// converts its return values into, otherwise null.</summary>
         private string? _returnUnit;
 
         private void CompileExpr(Expr expr)

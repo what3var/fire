@@ -51,8 +51,8 @@ namespace fire.Standard
                     throw new Scene3DException("An angle needs a unit (deg or rad), got: " + v)
                 }
 
-                static any Meters(float m) { return m * 1m }
-                static any Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
+                static float:m Meters(float m) { return m * 1m }
+                static float:deg Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
 
                 // The colour 0xAABBGGRR as three fractions.
                 static float Red(int c) { return (c & 255) / 255.0 }

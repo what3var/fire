@@ -45,7 +45,7 @@ interfaces are types; `List<T>`, `IEnumerable<T>`, `IEnumerator<T>` in the prelu
 
 Step 3c: units (SPEC 3.5) - a value carries its unit in the static type (literals, declarations, `:`/`::`, the algebra of `+ - * /` and the comparisons). A declaration
 with a unit converts a value of the same dimension into it (at run time `CheckUnit`, an `int` that does not fit is an `OverflowException`), another dimension is `TC006`;
-a declaration without a unit is unitless (only `var` stays free), `: any` takes every unit, `: any m` every unit of one dimension. Where the compiler cannot see the unit of a value
+a declaration without a unit takes the unit of its initializer (`int a = 5mm`), otherwise it is unitless (only `var` stays free, and an initializer of unknown unit leaves it free), `: any` takes every unit, `: any m` every unit of one dimension; the unit can stand at the type (`float:m Len()` converts the return value); a `float` declaration converts a whole number into a float. Where the compiler cannot see the unit of a value
 that goes to a unitless declaration, it emits a run-time check. A whole number converted into a coarser unit is `TC007` (always a warning). Properties carry a unit
 (`float X : m { get ... set ... }`: the setter's `value` and the getter's result are converted); Scene3D declares its lengths (`: m`, parameters `: any m`) and angles (`: any`).
 

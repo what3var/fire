@@ -680,6 +680,22 @@ namespace fire.Compiler
             return name;
         }
 
+        /// <summary>The unit written at a number type (`float:m Len()`, `float:any m Width()`): a ':' followed by the unit and then the name of the declaration
+        /// (or `[]`); anything else is left alone.</summary>
+        private string? ParseUnitAtType()
+        {
+            if (!Check(TokenType.Colon) || PeekAt(1).Type != TokenType.Identifier) return null;
+            bool NameAt(int offset) => PeekAt(offset).Type == TokenType.Identifier || PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket;
+            if (PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && NameAt(3))
+            {
+                Advance(); Advance();
+                return "any " + Advance().Lexeme;
+            }
+            if (!NameAt(2)) return null;
+            Advance();
+            return Advance().Lexeme;
+        }
+
         /// <summary>"Bare" declaration without `var` (C-like): `Type name[ranks]
         /// [: unit] [= init]`. Semantically identical to `var name : Type`
         /// (except for the additional, optional unit), only a different
@@ -802,10 +818,13 @@ namespace fire.Compiler
             if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
                 typeArgs = ParseTypeArgRefs();
 
+            // `float:m Len()`, `int : mm count`: the unit at the type (a number type only; a name has to follow the unit)
+            string? unit = baseName is "int" or "float" ? ParseUnitAtType() : null;
+
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
 
-            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray),
+            return new TypeRef(baseName, width, pointerDepth, Unit: unit, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray),
                 TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs);
         }
 

@@ -160,10 +160,17 @@ namespace fire.Compiler
         /// unit may lose its fraction (TC007, a warning). Not known units say nothing.</summary>
         private void CheckUnitAssignable(StaticType value, StaticType target, int line, string what, Expr? valueExpr = null)
         {
-            // a number declared without a unit takes unitless numbers only: a value whose unit is not known here is checked at runtime
+            // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
+            if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind == StaticKind.Int))
+                _unitChecks[valueExpr] = "#any";
+            // a number declared without a unit takes unitless numbers only: a value whose unit is not known here (or is another one) is checked at runtime
             if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
-                && (value.IsDynamic || value.IsNumber && value.Unit == null))
+                && (value.IsDynamic || value.IsNumber && value.Unit is not { IsUnitless: true }))
                 _unitChecks[valueExpr] = target.Kind == StaticKind.Float ? "#unitless" : "unitless";
+            // a unit taken from an initializer (`int a = 5mm`): a later value is converted into it at runtime (a declared unit does that itself)
+            if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: false } targetUnit && !target.UnitIsDimension
+                && (value.IsDynamic || value.IsNumber && !targetUnit.Equals(value.Unit)) && DemandText(targetUnit) is { } demand)
+                _unitChecks[valueExpr] = (target.Kind == StaticKind.Float ? "#" : "") + demand;
             if (!value.IsNumber || !target.IsNumber || value.Unit is not { } from || target.Unit is not { } to) return;
             if (!from.IsCompatibleWith(to))
             {
@@ -175,6 +182,14 @@ namespace fire.Compiler
         }
 
         private static string UnitText(Unit unit) => unit.IsUnitless ? "unitless" : unit.ToString();
+
+        /// <summary>The name of a unit as the runtime reads it back (`CheckUnit`); null for a composed unit without such a name (`m^3(×1e-09)`).</summary>
+        private static string? DemandText(Unit unit)
+        {
+            string text = unit.ToString();
+            try { return Unit.Parse(text).Equals(unit) ? text : null; }
+            catch (Exception) { return null; }
+        }
 
         private bool Assignable(StaticType value, StaticType target)
         {
@@ -347,6 +362,30 @@ namespace fire.Compiler
 
         private StaticType DeclaredOrDynamic(TypeRef? type, int arrayRanks = 0, IReadOnlyDictionary<string, StaticType>? map = null) => Declared(type, arrayRanks, map) ?? StaticType.Dynamic;
 
+        /// <summary>A number declared without a unit takes the unit of its initializer for good (SPEC 3.5: `int a = 5mm` is in mm from then on); an initializer
+        /// whose unit is not known leaves the unit free. Without an initializer (or with a unitless one) the declaration stays unitless.</summary>
+        private static StaticType WithInitializerUnit(StaticType declared, TypeRef? type, int arrayRanks, StaticType init) =>
+            declared.IsNumber && arrayRanks == 0 && type is { Unit: null } && !declared.UnitIsDimension
+                ? init.IsNumber && init.Unit is { } unit ? declared.WithUnit(unit) : init.IsDynamic || init.IsNumber ? declared.WithUnit(null) : declared
+                : declared;
+
+        /// <summary>The type of a field: its declaration, with the unit of a literal initializer when it declares none (`float w = 5mm` is in mm).</summary>
+        private StaticType FieldType(FieldDecl f, IReadOnlyDictionary<string, StaticType>? map = null)
+        {
+            var declared = DeclaredOrDynamic(f.Type, f.ArrayRanks.Count, map);
+            return f.Initializer == null ? declared : WithInitializerUnit(declared, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
+        }
+
+        /// <summary>The type of a constant initializer (a number literal, negated or converted with ':'/'::'), Dynamic for anything else.</summary>
+        private static StaticType LiteralType(Expr e) => e switch
+        {
+            LiteralExpr { Value.Kind: ValueKind.Int } l => StaticType.Int.WithUnit(l.Value.Unit ?? Unit.Unitless),
+            LiteralExpr { Value.Kind: ValueKind.Float } l => StaticType.Float.WithUnit(l.Value.Unit ?? Unit.Unitless),
+            UnaryExpr { Op: UnaryOp.Negate } u => LiteralType(u.Operand),
+            UnitCoerceExpr { TargetUnitName: { } unit } c when LiteralType(c.Operand) is { IsNumber: true } t => t.WithUnit(Unit.Parse(unit)),
+            _ => StaticType.Dynamic,
+        };
+
         /// <summary>The type of `this` in the class being checked (its type parameters are `any` there).</summary>
         private StaticType ThisClass() =>
             // `class extends array/string/int` becomes the class `$array`/`$string`/`$int`: `this` there is a value of that base type
@@ -371,7 +410,7 @@ namespace fire.Compiler
             foreach (var (decl, map) in Chain(receiver))
                 foreach (var member in decl.Members)
                 {
-                    if (member is FieldDecl f && f.Name == name) return DeclaredOrDynamic(f.Type, f.ArrayRanks.Count, map);
+                    if (member is FieldDecl f && f.Name == name) return FieldType(f, map);
                     if (member is PropertyDecl p && p.Name == name) return DeclaredOrDynamic(p.Type, 0, map);
                 }
             return null;
@@ -544,7 +583,11 @@ namespace fire.Compiler
             var init = v.Initializer != null ? Infer(v.Initializer, declared) : StaticType.Dynamic;
             if (declared is { } target)
             {
-                if (v.Initializer != null) CheckAssignable(init, target, v.Line, $"'{v.Name}'", valueExpr: v.Initializer);
+                if (v.Initializer != null)
+                {
+                    target = WithInitializerUnit(target, v.Type, v.ArrayRanks.Count, init);
+                    CheckAssignable(init, target, v.Line, $"'{v.Name}'", valueExpr: v.Initializer);
+                }
                 Declare(v.Name, target);
             }
             else
@@ -587,6 +630,7 @@ namespace fire.Compiler
                         {
                             var declaredField = Declared(f.Type, f.ArrayRanks.Count);
                             var init = Infer(f.Initializer, declaredField);
+                            if (declaredField != null) declaredField = WithInitializerUnit(declaredField, f.Type, f.ArrayRanks.Count, LiteralType(f.Initializer));
                             if (declaredField is { } target) CheckAssignable(init, target, f.Line, $"field '{f.Name}'", valueExpr: f.Initializer);
                             break;
                         }

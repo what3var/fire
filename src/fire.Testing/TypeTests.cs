@@ -174,7 +174,8 @@ static class TypeTests
 
         Check("Einheiten: andere Dimension an einer Deklaration, unitless an einer Einheit, Einheit an unitless, Rechnung ueber Dimensionen hinweg (TC006)", Run("""
             int c : mm = 2kg
-            int n = 5mm
+            int n = 5
+            n = 5mm
             var y = 5mm + 2kg
             float bad : any m = 3s
             class Box { float w : mm
@@ -205,6 +206,47 @@ static class TypeTests
             print(b.Len)
             print(b.w)
             """) == "|2.5m\n2.5");
+        Check("Einheiten: die Initialisierung legt die Einheit fest (int a = 5mm ist ab da in mm), ohne Initialisierer oder mit 5 unitless, unbekannt bleibt frei", Run("""
+            int a = 5mm
+            a = 3cm
+            print(a)
+            float w = 1cm
+            w = 2m
+            print(w)
+            int n = 5
+            try { n = 2mm } catch (UnitMismatchException e) { print("unitless") }
+            class P { any v
+                construct(any v) { this.v = v }
+            }
+            int d = new P(5mm).v
+            d = 7s
+            print(d)
+            class B { float len = 1cm }
+            var b = new B()
+            b.len = 2m
+            print(b.len)
+            """) == "TC006|30mm\n200cm\nunitless\n7s\n200cm");
+        Check("Einheiten: die Einheit am Rueckgabetyp (float:m Len(), float : mm, float:any m) rechnet die Rueckgabe um", Run("""
+            class B {
+                float w = 25cm
+                float:m Len() { return this.w }
+                static float : mm Half(float:m x) { return x / 2 }
+                float:any m Raw() { return this.w }
+                float:m Bad() { return 3s }
+            }
+            var b = new B()
+            print(b.Len())
+            print(B.Half(3m))
+            print(b.Raw())
+            float:m x = b.Len()
+            """) == "TC006|0.25m\n1500mm\n25cm");
+        Check("eine float-Deklaration haelt eine Kommazahl (float f = 3 ist 3.0, auch Parameter und Rueckgaben)", Run("""
+            float g = 3
+            print(g / 2)
+            class C { static float H(float x) { return x / 2 } static float One() { return 1 } }
+            print(C.H(3))
+            print(C.One() / 2)
+            """) == "|1.5\n1.5\n0.5");
         Check("Einheiten: Ueberlauf beim Umrechnen ist eine OverflowException", Run("try { int big : nm = 900000000000km } catch (OverflowException e) { print(\"overflow\") }") == "|overflow");
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode

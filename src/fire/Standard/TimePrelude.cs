@@ -32,7 +32,7 @@ namespace fire.Standard
                 static TimeSpan FromDays(float x) { return new TimeSpan(__time_to_ticks(x, 864000000000)) }
 
                 // From a value with a time unit (`TimeSpan.Of(1.5s)`, `Of(250ms)`), a number (milliseconds) or a TimeSpan
-                static any Of(float v) {
+                static TimeSpan Of(any v) {
                     if (v is of TimeSpan) { return v }
                     var t = __time_unit_ticks(v)
                     if (t == undefined) { return new TimeSpan(__time_to_ticks(v, 10000)) }

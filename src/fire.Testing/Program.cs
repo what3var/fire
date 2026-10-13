@@ -16754,7 +16754,14 @@ else
             IO.Directory.Delete(dir, true)
             print(IO.Directory.Exists(dir))
             """),
-        ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m), Overflow, unitless-Pruefung zur Laufzeit", """
+        ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m, Rueckgabe am Typ, Einheit aus der Initialisierung), Overflow, unitless-Pruefung zur Laufzeit", """
+            int i0 = 5mm
+            i0 = 3cm
+            print(i0)
+            float f0 = 3
+            print(f0 / 2)
+            class R { static float : mm Half(float:m x) { return x / 2 } }
+            print(R.Half(3m))
             int a : mm = 2m
             print(a)
             a = 3cm
@@ -16789,7 +16796,10 @@ else
             var q = new P(7)
             int ok = q.v
             print(ok)
-            try { int n = p.v } catch (UnitMismatchException e) { print("caught: " + e.message) }
+            int n = p.v
+            print(n)
+            int u = 5
+            try { u = p.v } catch (UnitMismatchException e) { print("caught: " + e.message) }
             try { int g2 = p.Get() } catch (UnitMismatchException e) { print("caught2: " + e.message) }
             """),
     }).ToArray();

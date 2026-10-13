@@ -218,11 +218,11 @@ namespace fire.Values
             if (value.Kind is not (ValueKind.Int or ValueKind.Float or ValueKind.Undefined)) return UnitAdaptation.Ok;
             if (demand.StartsWith('#'))
             {
-                // the declaration is a float: a whole number becomes one first
+                // the declaration is a float: a whole number becomes one (`float f = 3` holds 3.0)
                 demand = demand.Substring(1);
-                if (value.Kind == ValueKind.Int && !(value.Unit ?? Values.Unit.Unitless).Equals(DemandUnits.GetOrAdd(demand, Values.Unit.Parse)))
-                    value = MakeFloat(value._intValue, value.Unit, value.Width);
+                if (value.Kind == ValueKind.Int) value = MakeFloat(value._intValue, value.Unit);
             }
+            if (demand == "any") return UnitAdaptation.Ok;   // (`#any`: only the int becomes a float, every unit stays)
             bool dimensionOnly = demand.StartsWith("any ", StringComparison.Ordinal);
             var target = DemandUnits.GetOrAdd(dimensionOnly ? demand.Substring(4) : demand, Values.Unit.Parse);
             var actual = value.Unit ?? Values.Unit.Unitless;
