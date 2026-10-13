@@ -365,6 +365,7 @@ namespace fire.Compiler
         public static CompiledProgram Compile(
             IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
         {
+            s_unitChecks = resolveResult.UnitChecks;
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
@@ -605,7 +606,7 @@ namespace fire.Compiler
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
                                 AccessModifier = fd.Access,
-                                RequiredUnit = fd.Type?.RequiredUnit,
+                                RequiredUnit = fd.Type?.UnitDemand,
                                 IsStatic = fd.IsStatic,
                             };
                             // SPEC "Static members": static fields end up
@@ -652,7 +653,7 @@ namespace fire.Compiler
                             // likewise they share the ONE IsStatic (SPEC knows
                             // no mixed static/non-static accessors).
                             if (pd.Getter != null)
-                                rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic));
+                                rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand));
                             if (pd.Setter != null)
                             {
                                 var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };
@@ -820,15 +821,17 @@ namespace fire.Compiler
             // LoadLocal+check+pop technique as above for the lambda signature,
             // only with CheckUnit instead of CheckLambdaSignature (see
             // EmitCheckUnitIfNeeded).
+            // The value is converted into the unit of the parameter and written back (into the caller's variable for a `ref` parameter).
             for (int i = 0; i < parms.Count; i++)
             {
-                string? unit = parms[i].Type?.RequiredUnit;
+                string? unit = parms[i].Type?.UnitDemand;
                 if (unit == null) continue;
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
                 inner._chunk.EmitU16((ushort)i);
                 if (parms[i].ByRef) inner._chunk.EmitOp(OpCode.PtrRead);
                 EmitCheckUnitIfNeeded(inner, unit);
+                inner.EmitStoreVariable(new ResolvedRef.Local(0, i, null, parms[i].ByRef));
                 inner._chunk.EmitOp(OpCode.Pop);
             }
         }
@@ -960,10 +963,11 @@ namespace fire.Compiler
             _chunk.EmitU16(protoIdx);
         }
 
-        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false)
+        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
+            inner._returnUnit = returnUnit;
             // SPEC "Static members": a static method has no
             // bound 'this' - the inner compiler remembers that in order to
             // reject 'this'/'super' in the body (see resolver instead of
@@ -1144,7 +1148,7 @@ namespace fire.Compiler
                     // with every LATER assignment to the same slot, see
                     // CompileAssign, otherwise one could bypass the check through an
                     // "unsuitable" first assignment).
-                    EmitCheckUnitIfNeeded(this, vd.Type?.RequiredUnit);
+                    EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
 
                     _chunk.EmitOp(OpCode.DeclareLocal);
                     break;
@@ -1167,7 +1171,11 @@ namespace fire.Compiler
                     break;
 
                 case ReturnStmt rs:
-                    if (rs.Value != null) CompileExpr(rs.Value);
+                    if (rs.Value != null)
+                    {
+                        CompileExpr(rs.Value);
+                        if (_returnUnit != null) EmitCheckUnitIfNeeded(this, _returnUnit);
+                    }
                     else EmitLoadConst(Value.MakeUndefined());
                     // A `return` in the `catch`: the throw site frozen on throwing (see ClearPendingResume) is discarded, as at the normal end
                     // of the catch block - otherwise it would stay lying around together with its scopes. The exception variable lies in the catch scope (slot 0).
@@ -1768,11 +1776,18 @@ namespace fire.Compiler
         /// line of the INNERMOST affected expression (the throw sites themselves
         /// know no line) - collecting only happens at statement level
         /// (see CompileStmt).</summary>
+        /// <summary>The values whose unit is checked at runtime (ResolveResult.UnitChecks) of the program being compiled.</summary>
+        [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
+
+        /// <summary>The unit a getter of a property with a unit (`float X : m { get ... }`) converts its return values into, otherwise null.</summary>
+        private string? _returnUnit;
+
         private void CompileExpr(Expr expr)
         {
             try
             {
                 CompileExprCore(expr);
+                if (s_unitChecks != null && s_unitChecks.TryGetValue(expr, out var demand)) EmitCheckUnitIfNeeded(this, demand);
             }
             catch (Exception ex) when ((ex is NotSupportedException || ex is InvalidOperationException) && ex is not CompilerException)
             {

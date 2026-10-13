@@ -2589,25 +2589,13 @@ namespace fire.Runtime
                         return false;
                     }
 
-                    // SPEC "Unit declarations" - field access is
-                    // fundamentally dynamic (the actual class
-                    // is only known here, at runtime), therefore
-                    // unlike with local/global variables NO
-                    // compile-time check is possible (see Compiler.
-                    // CompileClassBody comment) - the check itself
-                    // is however identical in content to OpCode.CheckUnit.
-                    string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
-                    if (requiredUnitName != null)
-                    {
-                        hasUnitRule = true; // every assignment must check the unit - do not cache
-                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                        var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                        if (!actualUnit.Equals(requiredUnit))
-                        {
-                            ThrowUnitMismatch(requiredUnitName, actualUnit);
-                            return false;
-                        }
-                    }
+                }
+                // SPEC "Unit declarations": a field with a unit converts what is assigned to it (like OpCode.CheckUnit) - in every mode, as it is part
+                // of what the value means
+                if (obj.RtClass?.FindFieldRequiredUnit(fieldName) is { } requiredUnitName)
+                {
+                    hasUnitRule = true; // every assignment must check the unit - do not cache
+                    if (!AdaptFieldUnit(ref value, requiredUnitName)) return false;
                 }
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
@@ -2697,19 +2685,13 @@ namespace fire.Runtime
             // would let the first, declared
             // value pass completely unchecked without this check here.
             bool hasUnitRule = false;
-            if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
+            if (oi.RtClass != null)   // (converting into the unit of the field is part of what the value means: in every mode)
             {
                 string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
                 if (requiredUnitName != null)
                 {
                     hasUnitRule = true; // every assignment must check the unit - do not cache
-                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                    var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                    if (!actualUnit.Equals(requiredUnit))
-                    {
-                        ThrowUnitMismatch(requiredUnitName, actualUnit);
-                        return;
-                    }
+                    if (!AdaptFieldUnit(ref value, requiredUnitName)) return;
                 }
             }
 
@@ -3195,16 +3177,7 @@ namespace fire.Runtime
                 // SPEC "Unit declarations" - identical in content
                 // to SetField, see there.
                 string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
-                if (requiredUnitName != null)
-                {
-                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                    var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
-                    if (!actualUnit.Equals(requiredUnit))
-                    {
-                        ThrowUnitMismatch(requiredUnitName, actualUnit);
-                        return;
-                    }
-                }
+                if (requiredUnitName != null && !AdaptFieldUnit(ref setValue, requiredUnitName)) return;
             }
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
@@ -3969,20 +3942,7 @@ namespace fire.Runtime
                     if (initOwner == null)
                         throw new InvalidOperationException($"'{initClassName}' has no static field '{initFieldName}'.");
 
-                    if (ExecutionMode != VmExecutionMode.Performance)
-                    {
-                        string? requiredUnitName = initOwner.FindFieldRequiredUnit(initFieldName);
-                        if (requiredUnitName != null)
-                        {
-                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                            var actualUnit = initValue.Unit ?? Values.Unit.Unitless;
-                            if (!actualUnit.Equals(requiredUnit))
-                            {
-                                ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                break;
-                            }
-                        }
-                    }
+                    if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -4348,27 +4308,16 @@ namespace fire.Runtime
 
                 case OpCode.CheckUnit:
                 {
-                    // Like CheckLambdaSignature: checks only Peek() (NOT Pop()),
-                    // the value is still used normally right afterwards
-                    // (see OpCode.CheckUnit documentation/Compiler.EmitCheckUnitIfNeeded).
-                    // Unlike with CheckLambdaSignature (raw C# error), a
-                    // mismatch here throws a REAL script exception, catchable via try/catch
-                    // (see ThrowUnitMismatch) - explicitly wanted by the
-                    // user per SPEC "Unit declarations".
-                    // Skipped in performance mode - like every other
-                    // "extra safety instead of speed" check in
-                    // this VM (access modifiers, array/buffer bounds).
+                    // SPEC "Unit declarations": the value on top of the stack goes into a declaration with a unit - it is converted into that unit
+                    // (the same dimension), another dimension is a catchable UnitMismatchException, a whole number that overflows an OverflowException.
+                    // (Converting is part of what the value means, so it happens in every execution mode.)
                     string requiredUnitName = _constants[ReadU16()].AsString();
-                    if (ExecutionMode != VmExecutionMode.Performance)
+                    ref var adapted = ref _stack[_sp - 1];
+                    var actualUnit = adapted.Unit ?? Values.Unit.Unitless;
+                    switch (Value.AdaptToUnit(ref adapted, requiredUnitName))
                     {
-                        var checkedValue = Peek();
-                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                        var actualUnit = checkedValue.Unit ?? Values.Unit.Unitless;
-                        if (!actualUnit.Equals(requiredUnit))
-                        {
-                            ThrowUnitMismatch(requiredUnitName, actualUnit);
-                            break;
-                        }
+                        case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(requiredUnitName.TrimStart('#'), actualUnit); break;
+                        case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{requiredUnitName.TrimStart('#')}'."); break;
                     }
                     break;
                 }
@@ -5610,6 +5559,26 @@ namespace fire.Runtime
         /// OpCode.CheckUnit (local/global variables, parameters) and
         /// SetField/SetFieldOnThis (fields, see there for the reason
         /// why this is checked there instead of at compile time).</summary>
+        /// <summary>A field with a unit takes `value` (converted into its unit, see Value.AdaptToUnit); false when that threw a script exception.</summary>
+        private bool AdaptFieldUnit(ref Value value, string requiredUnitName)
+        {
+            var actualUnit = value.Unit ?? Values.Unit.Unitless;
+            switch (Value.AdaptToUnit(ref value, requiredUnitName))
+            {
+                case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(requiredUnitName.TrimStart('#'), actualUnit); return false;
+                case Value.UnitAdaptation.Overflow: ThrowOverflow($"{value} does not fit into a whole number in '{requiredUnitName.TrimStart('#')}'."); return false;
+                default: return true;
+            }
+        }
+
+        /// <summary>A whole number that does not fit (a conversion into a finer unit that a declaration demands): a catchable `OverflowException`.</summary>
+        private void ThrowOverflow(string message)
+        {
+            if (!_classes.ContainsKey("OverflowException")) throw new OverflowException(message);
+            var instance = ConstructNested(ResolveClass("OverflowException"), new[] { Value.MakeString(message) });
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
         private void ThrowUnitMismatch(string requiredUnitName, Values.Unit actualUnit)
         {
             var rc = ResolveClass("UnitMismatchException");

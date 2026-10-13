@@ -672,7 +672,13 @@ namespace fire.Compiler
         /// accepts every identifier as an atomic, freely invented unit,
         /// see the documentation there) - a possible check "is mm really
         /// known yet" would be moot anyway.</summary>
-        private string ParseUnitName() => Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
+        /// <summary>The unit of a declaration after ':' - `mm`, `any` (every unit) or `any m` (every unit of the dimension of `m`, nothing converted).</summary>
+        private string ParseUnitName()
+        {
+            string name = Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
+            if (name == "any" && Check(TokenType.Identifier) && Peek().Line == Previous().Line) name += " " + Advance().Lexeme;
+            return name;
+        }
 
         /// <summary>"Bare" declaration without `var` (C-like): `Type name[ranks]
         /// [: unit] [= init]`. Semantically identical to `var name : Type`
@@ -2202,6 +2208,14 @@ namespace fire.Compiler
 
             if (methodTypeParamNames.Count > 0)
                 throw Error("A generic type parameter head '<...>' must be followed by a parameter list '(...)'", Peek());
+
+            // `float Width : mm { get ... set ... }`: a property with a unit (a unit name, or `any`/`any m`, then the body)
+            if (type != null && Check(TokenType.Colon) && PeekAt(1).Type == TokenType.Identifier
+                && (PeekAt(2).Type == TokenType.LBrace || PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && PeekAt(3).Type == TokenType.LBrace))
+            {
+                Advance(); // ':'
+                type = type with { Unit = ParseUnitName() };
+            }
 
             if (Check(TokenType.LBrace))
             {

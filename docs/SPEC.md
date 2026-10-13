@@ -297,7 +297,7 @@ instances only (not an `int`, a `string`, an array or a lambda); `undefined` goe
 mode, an error in strict mode). **A method says what it returns** (`int Area()`, `Shape[] Parts()`, `undefined Draw()`): a method without a return type is taken as returning `any` and said so
 (`TC005`, a warning in lax mode, an error in strict mode; constructors, destructors and operators need none). A method that returns nothing is declared `undefined`; one that sometimes returns a
 value and sometimes nothing declares the type of the value, because `undefined` fits every type (a bare `return` is `return undefined`) - `any` is for methods that return values of different
-types. Operators can say it too (`bool operator==(any o)`). A declaration can say that it accepts values of every unit with `: any` (`float width : any`); without a unit declaration nothing is demanded either.
+types. Operators can say it too (`bool operator==(any o)`). A declaration can say that it accepts values of every unit with `: any` (`float width : any`), or of every unit of one dimension with `: any m` (see 3.5); a declaration without a unit is unitless, only `var` without a unit takes any unit.
 A `lambda` type counts the parameters of the lambda it takes (`lambda` = none, `lambda<int, int>` = two); an optional callback is therefore declared `any`, because `undefined` is not a lambda.
 **Lambdas are typed**: a lambda takes the types of its parameters and of its result from the target it goes to - the typed parameter, field or variable
 (`int lambda<int, int> add = (x, y) => x + y`: `x` and `y` are `int`, the result must be an `int`); without such a target (`var f = ...`, an `any` parameter) the types
@@ -319,8 +319,8 @@ For a binary operation between operands with units:
 - **Chains with more than two operands** (`a + b + c`) are evaluated in the classic left-associative way: `(a + b) + c`. The anchor rule is applied again at every partial step, with the intermediate result (including its already determined unit) counting as the left operand of the next step – so there is no global "all operands at once" view across the whole chain.
 
 ```
-int a = 5mm
-float b = undefined:km
+int a : mm = 5mm
+float b : km = undefined
 
 var c = b + a:!     // a is auto-coerced (unit+type), b is the anchor -> c : float:km
 var d = b: + a:!    // both request auto-coercion -> no anchor -> d : float:unitless
@@ -336,6 +336,7 @@ Prefixes (decimal, implicitly coerced):
 |--------|-------|--------|
 | f      | femto | 1e-15  |
 | p      | pico  | 1e-12  |
+| n      | nano  | 1e-9   |
 | µ      | micro | 1e-6   |
 | m      | milli | 1e-3   |
 | c      | centi | 1e-2   |
@@ -360,6 +361,26 @@ Any other, unrecognized suffix string on a literal is treated as an **atomic uni
 - Multiplication/division combines dimension vectors additively/subtractively via the exponents (`mm * mm → m²` dimension with scaling factor 1e-6, `m / s → m·s⁻¹`).
 - Two units are compatible (can be added/compared) if their dimension vectors match; the conversion is done via the ratio of their scaling factors to the base unit.
 - Multiplication/division with a unitless operand returns EXACTLY the unit of the other operand (`20mm / 2 → 10mm`, not some newly constructed, unnamed unit) - otherwise the display would swallow the scaling factor (see the `mm` example). The same named unit times itself (`radius * radius`) likewise gets a synthesized display name (`mm^2`). For all other composite cases (e.g. chained `a*a*a`, or genuinely mixed units with a scaling factor ≠ 1.0) the output shows the factor explicitly (`m^3(×1e-09)`) instead of silently ignoring it - a deliberate, simple limit instead of a complete "synthesize pretty unit names for arbitrary combinations" system.
+
+### 3.5 Unit declarations
+
+A unit after the name of a declaration (`int len : mm`, `float speed : m/s`, a parameter `float v : mm`, a field, a property `float Width : m { get ... set ... }`) fixes the unit of
+everything stored there - the calculation in it always happens in that dimension **and** factor:
+
+- A value of the **same dimension is converted** into the declared unit when it is stored: `int a : mm = 2m` holds `2000mm`, `bx.Set(2cm)` with `float v : mm` gets `20mm`.
+  The getter of a property with a unit converts its result the same way. If the converted number does not fit an `int`, that is an `OverflowException` (the factor is never raised for
+  a declared unit). A whole number converted into a coarser unit may lose its fraction (`int r : m = 5mm` is `0m`) - the compiler warns about that (`TC007`, a warning also in strict mode).
+- A value of **another dimension** (or a unitless number) is a `UnitMismatchException`; where the compiler knows both units it reports it already (`TC006`, a warning in lax mode,
+  an error in strict mode). `:` and `::` coerce explicitly when that is really meant (`7:mm`, `x::mm`).
+- **Without a unit** a declaration (`int`, `float`, a parameter, field, property, return value) is **unitless**: `int n = 5mm` is reported (`TC006`) and refused at run time where the
+  compiler cannot prove the unit. Only `var` without a unit is free: `var x = 5mm` and later `x = 3s` are allowed.
+- `: any` takes every unit unchanged, `: any m` takes every unit of the dimension of `m` (`3km`, `20cm`, ...) without converting it - the code then asks `is in` or converts itself.
+
+```
+float len : any m = 3km        // stays 3km
+int d : mm = 1.5m              // 1500mm
+float t : s = 2kg              // TC006, UnitMismatchException at run time
+```
 
 ## 4. Scopes & lambdas
 
@@ -798,7 +819,7 @@ itself the `break` would have to be inside a loop construct of its own nested in
 
 `x++`/`x--` count in the unit of the variable: `5cm` becomes `6cm` (they are `x = x + 1<unit>`, not `x + 1` with a unitless 1, which would be a unit mismatch).
 
-An operation with units that do not fit (`5cm + 1`, `1m < 2kg`) throws a `UnitMismatchException` that `try`/`catch` can catch; an unhandled one stops the program at that statement (in the editor a dialog offers to go on after it, with the result `undefined`).
+An operation with units that do not fit (`5cm + 1`, `1m < 2kg`) throws a `UnitMismatchException` that `try`/`catch` can catch (a conversion into a declared unit that does not fit an `int` throws an `OverflowException`); an unhandled one stops the program at that statement (in the editor a dialog offers to go on after it, with the result `undefined`).
 
 ### 5.10 `break`/`continue` in loops
 
@@ -899,7 +920,7 @@ method infrastructure therefore works automatically.
 ### 7.1 Base class
 
 There is a built-in base class `Exception` (a class of the prelude, with a `message`) from which all exception classes inherit. The errors of the runtime (`IndexOutOfBoundsException`, `DestroyedException`,
-`AccessDeniedException`, `UnitMismatchException`, `ReflectionException`) derive from it as well. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
+`AccessDeniedException`, `UnitMismatchException`, `OverflowException`, `ReflectionException`) derive from it as well. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
 simply has an empty message:
 
 ```

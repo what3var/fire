@@ -69,6 +69,7 @@ namespace fire.Values
             ['k'] = 1e3,
             ['M'] = 1e6,
             ['G'] = 1e9,
+            ['n'] = 1e-9,
         };
 
         // Prefixable base units: symbol -> canonical base symbol

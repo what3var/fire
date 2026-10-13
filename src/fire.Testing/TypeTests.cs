@@ -172,6 +172,41 @@ static class TypeTests
             Run("List<int, int> a = new List()") == "|ERROR E4061" && Run("class A { }\nA<int> a = new A()") == "|ERROR E4045");
         Check("eine Einheit : any verlangt keine bestimmte Einheit", Run("any_unit_ok()\nint x : any = 3m\nx = 5s\nprint(x)".Replace("any_unit_ok()\n", "")) == "|5s");
 
+        Check("Einheiten: andere Dimension an einer Deklaration, unitless an einer Einheit, Einheit an unitless, Rechnung ueber Dimensionen hinweg (TC006)", Run("""
+            int c : mm = 2kg
+            int n = 5mm
+            var y = 5mm + 2kg
+            float bad : any m = 3s
+            class Box { float w : mm
+                undefined Set(float v : mm) { this.w = v }
+                float Len() { return this.w }
+            }
+            var bx = new Box()
+            bx.Set(3)
+            """) == "TC006 TC006 TC006 TC006 TC006 TC006|");
+        Check("Einheiten: dieselbe Dimension rechnet um, var ohne Einheit bleibt frei, * und / verrechnen Dimensionen", Run("""
+            int a : mm = 2m
+            var x = 5mm
+            x = 3s
+            var z = 3m * 2s
+            float sp : any m = 3km
+            float v : m = 10m / 2s * 1s
+            print(a)
+            print(v)
+            """) == "|2000mm\n5m");
+        Check("Einheiten: eine ganze Zahl in eine groebere Einheit verliert den Bruchteil (TC007, auch strict nur Warnung)", Run("int r : m = 5mm\nvar q = 5mm:m\nprint(r)", TypeCheckMode.Strict) == "TC007 TC007|0m");
+        Check("Einheiten: strict macht TC006 zum Fehler", Run("int c : mm = 2kg", TypeCheckMode.Strict) == "|ERROR TC006");
+        Check("Einheiten: Property mit Einheit rechnet beim Setzen und Lesen um", Run("""
+            class B { float w
+                float Len : m { get { return this.w * 1m } set { this.w = value / 1m } }
+            }
+            var b = new B()
+            b.Len = 250cm
+            print(b.Len)
+            print(b.w)
+            """) == "|2.5m\n2.5");
+        Check("Einheiten: Ueberlauf beim Umrechnen ist eine OverflowException", Run("try { int big : nm = 900000000000km } catch (OverflowException e) { print(\"overflow\") }") == "|overflow");
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {

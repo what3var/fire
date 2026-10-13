@@ -51,8 +51,8 @@ namespace fire.Standard
                     throw new Scene3DException("An angle needs a unit (deg or rad), got: " + v)
                 }
 
-                static float Meters(float m) { return m * 1m }
-                static float Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
+                static any Meters(float m) { return m * 1m }
+                static any Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
 
                 // The colour 0xAABBGGRR as three fractions.
                 static float Red(int c) { return (c & 255) / 255.0 }
@@ -245,7 +245,7 @@ namespace fire.Standard
                     return l
                 }
 
-                static Light Point(float x, float y, float z, int color = 4294967295, float intensity = 1.0) {
+                static Light Point(float x : any m, float y : any m, float z : any m, int color = 4294967295, float intensity = 1.0) {
                     var l = new Light(2, color, intensity)
                     l.X = x
                     l.Y = y
@@ -259,11 +259,11 @@ namespace fire.Standard
                     this.dz = dz
                 }
 
-                float X { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
-                float Y { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
-                float Z { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
+                float X : m { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
+                float Y : m { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
+                float Z : m { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
                 // The distance at which a point light has half of its strength.
-                float Range { get { return this.range * 1m } set { this.range = S3D.Length(value) } }
+                float Range : m { get { return this.range * 1m } set { this.range = S3D.Length(value) } }
 
                 // The numbers the renderer takes: kind, r, g, b, intensity, position (3), direction (3), range, casts shadows, layers.
                 float[] Parameters() {
@@ -344,7 +344,7 @@ namespace fire.Standard
                 }
 
                 // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
-                construct(int template, float x, float y, float z, float width, float height, float depth, int detail = 24) {
+                construct(int template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {
                     this.Init()
                     var h = __S3DMeshTemplate(template, detail)
                     if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
@@ -406,19 +406,19 @@ namespace fire.Standard
                 }
 
                 // ---- position, rotation, anchor ----
-                float X { get { return this.px * 1m } set { this.px = S3D.Length(value) } }
-                float Y { get { return this.py * 1m } set { this.py = S3D.Length(value) } }
-                float Z { get { return this.pz * 1m } set { this.pz = S3D.Length(value) } }
-                float RotationX { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
-                float RotationY { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
-                float RotationZ { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
+                float X : m { get { return this.px * 1m } set { this.px = S3D.Length(value) } }
+                float Y : m { get { return this.py * 1m } set { this.py = S3D.Length(value) } }
+                float Z : m { get { return this.pz * 1m } set { this.pz = S3D.Length(value) } }
+                float RotationX : any { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
+                float RotationY : any { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
+                float RotationZ : any { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
 
                 // Where the position takes hold of the object, as a fraction of its width, height and depth (default 0.5: the centre).
                 float AnchorX { get { return this.ax } set { this.ax = value } }
                 float AnchorY { get { return this.ay } set { this.ay = value } }
                 float AnchorZ { get { return this.az } set { this.az = value } }
 
-                undefined SetPosition(float x, float y, float z) {
+                undefined SetPosition(float x : any m, float y : any m, float z : any m) {
                     this.X = x
                     this.Y = y
                     this.Z = z
@@ -430,19 +430,19 @@ namespace fire.Standard
                     this.az = z
                 }
 
-                undefined SetRotation(float x, float y, float z) {
+                undefined SetRotation(float x : any, float y : any, float z : any) {
                     this.RotationX = x
                     this.RotationY = y
                     this.RotationZ = z
                 }
 
-                undefined Move(float dx, float dy, float dz) {
+                undefined Move(float dx : any m, float dy : any m, float dz : any m) {
                     this.px = this.px + S3D.Length(dx)
                     this.py = this.py + S3D.Length(dy)
                     this.pz = this.pz + S3D.Length(dz)
                 }
 
-                undefined Rotate(float x, float y, float z) {
+                undefined Rotate(float x : any, float y : any, float z : any) {
                     this.rx = this.rx + S3D.Angle(x)
                     this.ry = this.ry + S3D.Angle(y)
                     this.rz = this.rz + S3D.Angle(z)
@@ -454,7 +454,7 @@ namespace fire.Standard
                 float MeshHeight() { return this.maxY - this.minY }
                 float MeshDepth() { return this.maxZ - this.minZ }
 
-                float Width {
+                float Width : m {
                     get { return (this.sx * this.MeshWidth()) * 1m }
                     set {
                         var w = this.MeshWidth()
@@ -462,7 +462,7 @@ namespace fire.Standard
                         this.sx = S3D.Length(value) / w
                     }
                 }
-                float Height {
+                float Height : m {
                     get { return (this.sy * this.MeshHeight()) * 1m }
                     set {
                         var h = this.MeshHeight()
@@ -470,7 +470,7 @@ namespace fire.Standard
                         this.sy = S3D.Length(value) / h
                     }
                 }
-                float Depth {
+                float Depth : m {
                     get { return (this.sz * this.MeshDepth()) * 1m }
                     set {
                         var d = this.MeshDepth()
@@ -479,7 +479,7 @@ namespace fire.Standard
                     }
                 }
 
-                undefined SetSize(float width, float height, float depth) {
+                undefined SetSize(float width : any m, float height : any m, float depth : any m) {
                     this.Width = width
                     this.Height = height
                     this.Depth = depth
@@ -508,12 +508,12 @@ namespace fire.Standard
                 }
 
                 // The part of the object one copy of the texture covers (default: the whole object once); a smaller size repeats the texture.
-                float TextureWidth { get { return this.tw * 1m } set { this.tw = S3D.Length(value) } }
-                float TextureHeight { get { return this.th * 1m } set { this.th = S3D.Length(value) } }
+                float TextureWidth : m { get { return this.tw * 1m } set { this.tw = S3D.Length(value) } }
+                float TextureHeight : m { get { return this.th * 1m } set { this.th = S3D.Length(value) } }
                 // Where the texture starts on the object, and its rotation.
-                float TextureX { get { return this.tx * 1m } set { this.tx = S3D.Length(value) } }
-                float TextureY { get { return this.ty * 1m } set { this.ty = S3D.Length(value) } }
-                float TextureRotation { get { return S3D.Degrees(this.trot) } set { this.trot = S3D.Angle(value) } }
+                float TextureX : m { get { return this.tx * 1m } set { this.tx = S3D.Length(value) } }
+                float TextureY : m { get { return this.ty * 1m } set { this.ty = S3D.Length(value) } }
+                float TextureRotation : any { get { return S3D.Degrees(this.trot) } set { this.trot = S3D.Angle(value) } }
 
                 int Triangles {
                     get {
@@ -524,7 +524,7 @@ namespace fire.Standard
                 }
 
                 // ---- triangles of an empty object (coordinates in meters, counter clockwise seen from outside) ----
-                undefined AddTriangle(float x1, float y1, float z1, float x2, float y2, float z2, float x3, float y3, float z3) {
+                undefined AddTriangle(float x1 : any m, float y1 : any m, float z1 : any m, float x2 : any m, float y2 : any m, float z2 : any m, float x3 : any m, float y3 : any m, float z3 : any m) {
                     if (this.posList == undefined) { throw new Scene3DException("Only an empty object takes triangles.") }
                     var n = this.posList.count / 3
                     this.posList.Add(S3D.Length(x1))
@@ -676,14 +676,14 @@ namespace fire.Standard
                 }
 
                 Framebuffer Framebuffer { get { return this.framebuffer } }
-                float X { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
-                float Y { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
-                float Z { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
-                float RotationX { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
-                float RotationY { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
-                float RotationZ { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
+                float X : m { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
+                float Y : m { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
+                float Z : m { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
+                float RotationX : any { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
+                float RotationY : any { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
+                float RotationZ : any { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
                 // The vertical angle of view (default 60deg).
-                float FieldOfView {
+                float FieldOfView : any {
                     get { return S3D.Degrees(this.fov) }
                     set {
                         var a = S3D.Angle(value)
@@ -692,17 +692,17 @@ namespace fire.Standard
                     }
                 }
                 // What is nearer than Near or farther than Far is not drawn.
-                float Near { get { return this.nearPlane * 1m } set { this.nearPlane = S3D.Length(value) } }
-                float Far { get { return this.farPlane * 1m } set { this.farPlane = S3D.Length(value) } }
+                float Near : m { get { return this.nearPlane * 1m } set { this.nearPlane = S3D.Length(value) } }
+                float Far : m { get { return this.farPlane * 1m } set { this.farPlane = S3D.Length(value) } }
 
-                undefined SetPosition(float x, float y, float z) {
+                undefined SetPosition(float x : any m, float y : any m, float z : any m) {
                     this.X = x
                     this.Y = y
                     this.Z = z
                 }
 
                 // Turns the camera (pitch and yaw, no roll) towards a point.
-                undefined LookAt(float x, float y, float z) {
+                undefined LookAt(float x : any m, float y : any m, float z : any m) {
                     var a = __S3DLookAt(this.x, this.y, this.z, S3D.Length(x), S3D.Length(y), S3D.Length(z))
                     this.rx = a[0]
                     this.ry = a[1]

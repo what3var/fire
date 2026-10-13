@@ -72,6 +72,10 @@ namespace fire.Ast
         /// <summary>The unit a declaration demands (`: mm`); null when it demands none. `: any` says explicitly that every unit is accepted (checked where the value is used), which demands nothing.</summary>
         [MemoryPack.MemoryPackIgnore] public string? RequiredUnit => Unit is null or "any" ? null : Unit;
 
+        /// <summary>What a declaration demands of the unit of a value (Value.AdaptToUnit): its RequiredUnit, with a leading `#` when the declared type is
+        /// `float` (a whole number is taken as a float before it is converted: `float b : km = 1500m` is 1.5km); null when nothing is demanded.</summary>
+        [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } unit ? (BaseName == "float" ? "#" + unit : unit) : null;
+
         [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;
 

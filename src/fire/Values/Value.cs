@@ -205,6 +205,47 @@ namespace fire.Values
             };
         }
 
+        /// <summary>What a unit declaration does with a value (SPEC "Unit declarations").</summary>
+        public enum UnitAdaptation { Ok, Mismatch, Overflow }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Unit> DemandUnits = new();
+
+        /// <summary>A unit declaration takes `value` (see TypeRef.UnitDemand; a leading `#`: the declaration is a float): `demand` is a unit (`mm`, `unitless`) - a value of the same dimension is converted into it, `undefined`
+        /// takes it - or `any m` - every unit of the dimension of `m`, nothing is converted. Another dimension is a `Mismatch`, a whole number that does not
+        /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone.</summary>
+        public static UnitAdaptation AdaptToUnit(ref Value value, string demand)
+        {
+            if (value.Kind is not (ValueKind.Int or ValueKind.Float or ValueKind.Undefined)) return UnitAdaptation.Ok;
+            if (demand.StartsWith('#'))
+            {
+                // the declaration is a float: a whole number becomes one first
+                demand = demand.Substring(1);
+                if (value.Kind == ValueKind.Int && !(value.Unit ?? Values.Unit.Unitless).Equals(DemandUnits.GetOrAdd(demand, Values.Unit.Parse)))
+                    value = MakeFloat(value._intValue, value.Unit, value.Width);
+            }
+            bool dimensionOnly = demand.StartsWith("any ", StringComparison.Ordinal);
+            var target = DemandUnits.GetOrAdd(dimensionOnly ? demand.Substring(4) : demand, Values.Unit.Parse);
+            var actual = value.Unit ?? Values.Unit.Unitless;
+            if (actual.Equals(target)) return UnitAdaptation.Ok;
+            if (value.Kind == ValueKind.Undefined)
+            {
+                if (!dimensionOnly) value = MakeUndefined(target);
+                return UnitAdaptation.Ok;
+            }
+            if (!actual.IsCompatibleWith(target)) return UnitAdaptation.Mismatch;
+            if (dimensionOnly) return UnitAdaptation.Ok;
+            double factor = actual.ConversionFactorTo(target);
+            if (value.Kind == ValueKind.Float)
+            {
+                value = MakeFloat(value._floatValue * factor, target, value.Width);
+                return UnitAdaptation.Ok;
+            }
+            double converted = Math.Round(value._intValue * factor);
+            if (Math.Abs(converted) >= 9.2e18) return UnitAdaptation.Overflow;
+            value = MakeInt((long)converted, target, value.Width);
+            return UnitAdaptation.Ok;
+        }
+
         /// <summary>`a::unit`: the same number with another unit, nothing is calculated (12mm::unitless is 12, 12mm::m is 12m).</summary>
         public Value RelabelUnit(Unit targetUnit)
         {

@@ -16754,6 +16754,44 @@ else
             IO.Directory.Delete(dir, true)
             print(IO.Directory.Exists(dir))
             """),
+        ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m), Overflow, unitless-Pruefung zur Laufzeit", """
+            int a : mm = 2m
+            print(a)
+            a = 3cm
+            print(a)
+            try { a = 2kg } catch (UnitMismatchException e) { print("mismatch: " + e.message) }
+            float b : km = 1500m
+            print(b)
+            class Box { float w : mm
+                construct() { this.w = 1cm }
+                undefined Set(float v : mm) { this.w = v; print(v) }
+                float Len : m { get { return this.w } set { this.w = value } }
+            }
+            var bx = new Box()
+            print(bx.w)
+            bx.Set(2cm)
+            bx.w = 0.5m
+            print(bx.w)
+            print(bx.Len)
+            bx.Len = 3cm
+            print(bx.w)
+            float len : any m = 3km
+            print(len)
+            try { float bad : any m = 3s } catch (UnitMismatchException e) { print("dim: " + e.message) }
+            try { int big : nm = 900000000000km } catch (OverflowException e) { print("overflow") }
+            int g : cm = 2cm
+            print(g)
+            class P { any v
+                construct(any v) { this.v = v }
+                int Get() { return this.v }
+            }
+            var p = new P(5mm)
+            var q = new P(7)
+            int ok = q.v
+            print(ok)
+            try { int n = p.v } catch (UnitMismatchException e) { print("caught: " + e.message) }
+            try { int g2 = p.Get() } catch (UnitMismatchException e) { print("caught2: " + e.message) }
+            """),
     }).ToArray();
 
     // Graphics (bridges/fire_bridge_graphics.hpp)

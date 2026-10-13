@@ -77,6 +77,11 @@ namespace fire.Standard
                 construct(string message) { this.message = message }
             }
 
+            // A whole number that does not fit any more (converted into the finer unit of a declaration: `int a : nm = 9000000000km`)
+            class OverflowException : Exception {
+                construct(string message) { this.message = message }
+            }
+
             class UnitMismatchException : Exception {
                 string expectedUnit
                 string actualUnit

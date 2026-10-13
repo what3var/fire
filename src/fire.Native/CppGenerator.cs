@@ -417,6 +417,21 @@ namespace fire.Native
             }
         }
 
+        /// <summary>The unit a unit declaration names: `mm`, or of `any m` the `m` (Value.AdaptToUnit).</summary>
+        private static Unit DemandUnit(string demand)
+        {
+            demand = demand.TrimStart('#');
+            return Unit.Parse(demand.StartsWith("any ", StringComparison.Ordinal) ? demand.Substring(4) : demand);
+        }
+
+        /// <summary>The C++ that converts `value` into the unit a declaration demands (fire_rt.hpp adaptUnit; a leading `#`: the declaration is a float).</summary>
+        private string AdaptUnitCall(string value, string demand)
+        {
+            bool toFloat = demand.StartsWith('#');
+            string unit = demand.TrimStart('#');
+            return $"adaptUnit({value}, {UnitId(DemandUnit(unit))}, {(unit.StartsWith("any ", StringComparison.Ordinal) ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(unit))})";
+        }
+
         private string Run()
         {
             CollectPackages();
@@ -670,6 +685,7 @@ namespace fire.Native
                 if (accessError.Rc.FindConstructor(1) is { } accessCtor && accessCtor.ParamCount == 1) GetFunc(accessCtor, FuncKind.Ctor);
                 // a lambda with another number of parameters than its declaration: an ArgumentException (checkLambda)
                 if (!_errorClasses.Contains("ArgumentException")) _errorClasses.Add("ArgumentException");
+                if (!_errorClasses.Contains("OverflowException")) _errorClasses.Add("OverflowException");   // (adaptUnit)
                 foreach (var name in _errorClasses)
                     if (_program.Program.Classes.ContainsKey(name))
                     {
@@ -681,8 +697,8 @@ namespace fire.Native
                 foreach (var cls in _classList.ToList())
                     if (cls.Rc.FieldIndex.ContainsKey(field) && cls.Rc.FindFieldRequiredUnit(field) is { } requiredUnit)
                     {
-                        UnitId(Unit.Parse(requiredUnit));   // the unit and its text for the check in the field setter
-                        Constant(Value.MakeString(requiredUnit));
+                        UnitId(DemandUnit(requiredUnit));   // the unit and its text for the check in the field setter
+                        Constant(Value.MakeString(requiredUnit.TrimStart('#')));
                     }
             foreach (var field in _fieldNames.ToList())
                 foreach (var cls in _classList.ToList())
@@ -988,7 +1004,7 @@ namespace fire.Native
             var unitChecks = new StringBuilder();
             foreach (var cls in _classList)
                 if (indexByClass.ContainsKey(cls.Id) && cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit)
-                    unitChecks.Append($"        case {cls.Id}: checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); break;\n");
+                    unitChecks.Append($"        case {cls.Id}: x = {AdaptUnitCall("x", requiredUnit)}; break;\n");
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{indexCode}\n    return o->fields()[idx];\n}}\n"
                  + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{indexCode}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
@@ -1026,7 +1042,7 @@ namespace fire.Native
                     }
                     get.AppendLine($"{label}{{ {fieldGuard}return o->fields()[{index}]; }}");
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
-                        ? $"checkUnit(x, {UnitId(Unit.Parse(requiredUnit))}, {Constant(Value.MakeString(requiredUnit))}); " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
+                        ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
                     set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
@@ -2529,7 +2545,7 @@ namespace fire.Native
                 {
                     Need(1);
                     string unitText = Str(ins.A[0]);
-                    E($"checkUnit({S(d - 1)}, {UnitId(Unit.Parse(unitText))}, {Constant(chunk.Constants[ins.A[0]])});");
+                    E($"{S(d - 1)} = {AdaptUnitCall(S(d - 1), unitText)};");
                     Check();
                     return Next();
                 }

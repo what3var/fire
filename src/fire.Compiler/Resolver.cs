@@ -51,6 +51,10 @@ namespace fire.Compiler
     public sealed class ResolveResult
     {
         public required IReadOnlyDictionary<Expr, ResolvedRef> References { get; init; }
+
+        /// <summary>Values whose unit the type checker could not prove for the declaration they go to (a number declared without a unit is unitless): the
+        /// compiler checks them at runtime (OpCode.CheckUnit with the demand). Filled by TypeChecker.</summary>
+        public Dictionary<Expr, string> UnitChecks { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }
@@ -1002,7 +1006,7 @@ namespace fire.Compiler
                 // identifier" - a pure follow-up error of the one
                 // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.RequiredUnit);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand);
             }
         }
 
@@ -1094,7 +1098,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.RequiredUnit);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand);
                     if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 
@@ -1485,7 +1489,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.RequiredUnit, isRef: p.ByRef));
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef));
                 if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
             }
 
@@ -2150,7 +2154,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) ValidateTypeRef(p.Type, lambda.Line);
                 ResolveArrayRanks(p.ArrayRanks);
-                Define(p.Name, lambda.Line, requiredUnit: p.Type?.RequiredUnit);
+                Define(p.Name, lambda.Line, requiredUnit: p.Type?.UnitDemand);
             }
 
             if (lambda.AutoCapture) DefineCaptures(lambda, enclosing);

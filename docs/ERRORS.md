@@ -359,5 +359,7 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC003` | Cannot assign a value of type '…' to the return value of type '…' |
 | `TC004` | Parameter '…' of '…' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). |
 | `TC005` | Method '…' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). |
+| `TC006` | A value in '…' does not fit '…' in '…' / '…' and '…' cannot be combined with '…' (another dimension) (units of another dimension, a unit where none is declared, or none where one is) |
+| `TC007` | A whole number in '…' converted into '…' may lose its fraction (a warning also in strict mode) |
 
 `…` stands for a part of the message that varies (a name, a number).

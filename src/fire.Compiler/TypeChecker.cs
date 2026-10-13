@@ -24,12 +24,16 @@ namespace fire.Compiler
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false)
     {
+        /// <summary>The same type with the unit `unit` (null: not known); `dimensionOnly`: a declaration `: any m` that takes every unit of that dimension.</summary>
+        public StaticType WithUnit(Unit? unit, bool dimensionOnly = false) => this with { Unit = unit, UnitIsDimension = dimensionOnly };
+        public bool IsNumber => Kind is StaticKind.Int or StaticKind.Float;
         public bool Equals(StaticType? other) =>
             other is not null && Kind == other.Kind && Class == other.Class && Equals(Element, other.Element) && ParamCount == other.ParamCount && Equals(Return, other.Return)
             && (Params == null ? other.Params == null : other.Params != null && Params.SequenceEqual(other.Params))
-            && (Args == null ? other.Args == null : other.Args != null && Args.SequenceEqual(other.Args));
+            && (Args == null ? other.Args == null : other.Args != null && Args.SequenceEqual(other.Args))
+            && Equals(Unit, other.Unit) && UnitIsDimension == other.UnitIsDimension;
         public override int GetHashCode() => HashCode.Combine(Kind, Class, Element, ParamCount, Return);
 
         public static readonly StaticType Dynamic = new(StaticKind.Dynamic);
@@ -55,7 +59,7 @@ namespace fire.Compiler
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
             StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
-            _ => Kind.ToString().ToLowerInvariant(),
+            _ => Kind.ToString().ToLowerInvariant() + (Unit != null && !Unit.IsUnitless ? (UnitIsDimension ? " : any " : " : ") + Unit : ""),
         };
     }
 
@@ -73,9 +77,12 @@ namespace fire.Compiler
         public const string ReturnCode = "TC003";
         public const string UntypedCode = "TC004";
         public const string NoReturnTypeCode = "TC005";
+        public const string UnitCode = "TC006";
+        public const string UnitLossCode = "TC007";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
+        private readonly Dictionary<Expr, string> _unitChecks;
         private readonly Dictionary<int, bool> _strictBySource = new();
         private readonly TypeCheckMode _defaultMode;
         private readonly int _firstUserSource;
@@ -90,8 +97,9 @@ namespace fire.Compiler
         private List<StaticType>? _collectedReturns;
         private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
-        private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource)
+        private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks)
         {
+            _unitChecks = unitChecks;
             _classes = classes;
             _defaultMode = defaultMode;
             _firstUserSource = firstUserSource;
@@ -101,7 +109,7 @@ namespace fire.Compiler
         /// <paramref name="defaultMode"/> is the project's or the command line's setting; a `#lax` / `#strict` in a file takes its place for that file.</summary>
         public static IReadOnlyList<Diagnostic> Check(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource)
         {
-            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource);
+            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks);
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
@@ -139,13 +147,34 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code != UnitLossCode ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
-        private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode)
+        private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode, Expr? valueExpr = null)
         {
-            if (Assignable(value, target)) return;
-            Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line);
+            if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
+            CheckUnitAssignable(value, target, line, what, valueExpr);
         }
+
+        /// <summary>A number goes into a declaration (SPEC "Unit declarations"): the declared unit is converted into (the same dimension), `: any m` takes every
+        /// unit of the dimension, a declaration without a unit takes unitless numbers only. Another dimension is TC006; a whole number converted into a coarser
+        /// unit may lose its fraction (TC007, a warning). Not known units say nothing.</summary>
+        private void CheckUnitAssignable(StaticType value, StaticType target, int line, string what, Expr? valueExpr = null)
+        {
+            // a number declared without a unit takes unitless numbers only: a value whose unit is not known here is checked at runtime
+            if (valueExpr != null && target.IsNumber && target.Unit is { IsUnitless: true } && !target.UnitIsDimension
+                && (value.IsDynamic || value.IsNumber && value.Unit == null))
+                _unitChecks[valueExpr] = target.Kind == StaticKind.Float ? "#unitless" : "unitless";
+            if (!value.IsNumber || !target.IsNumber || value.Unit is not { } from || target.Unit is not { } to) return;
+            if (!from.IsCompatibleWith(to))
+            {
+                Report(UnitCode, $"A value in '{UnitText(from)}' does not fit {what} in '{(target.UnitIsDimension ? "any " : "")}{UnitText(to)}'", line);
+                return;
+            }
+            if (!target.UnitIsDimension && value.Kind == StaticKind.Int && target.Kind == StaticKind.Int && !from.Equals(to) && from.ConversionFactorTo(to) < 1)
+                Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(to)}' may lose its fraction (declare a float or a finer unit)", line);
+        }
+
+        private static string UnitText(Unit unit) => unit.IsUnitless ? "unitless" : unit.ToString();
 
         private bool Assignable(StaticType value, StaticType target)
         {
@@ -207,6 +236,15 @@ namespace fire.Compiler
             // `List<int>`: the generic class (named `List`1` next to a non-generic `List`) with its type arguments
             if (type.TypeArgs is { Count: > 0 } typeArgs && result.Kind == StaticKind.Class)
                 result = StaticType.ClassOf(GenericName(PlainName(type.BaseName), typeArgs.Count), typeArgs.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
+            // a number declared without a unit is unitless; `: any` takes every unit, `: any m` every unit of that dimension
+            if (result.IsNumber && arrayRanks + type.ArrayRank == 0)
+                result = type.Unit switch
+                {
+                    null => result.WithUnit(Unit.Unitless),
+                    "any" => result,
+                    { } u when u.StartsWith("any ", StringComparison.Ordinal) => result.WithUnit(Unit.Parse(u.Substring(4)), dimensionOnly: true),
+                    { } u => result.WithUnit(Unit.Parse(u)),
+                };
             for (int i = 0; i < arrayRanks + type.ArrayRank; i++) result = StaticType.ArrayOf(result);
             return result;
         }
@@ -377,7 +415,7 @@ namespace fire.Compiler
             {
                 if (parameters[i].ByRef) continue;
                 var declared = Declared(parameters[i].Type, parameters[i].ArrayRanks.Count, map);
-                if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameters[i].Name}' of '{callee}'", ArgumentCode);
+                if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameters[i].Name}' of '{callee}'", ArgumentCode, argExprs[i]);
             }
         }
 
@@ -423,7 +461,7 @@ namespace fire.Compiler
                     {
                         var type = Infer(r.Value, _returnType);
                         _collectedReturns?.Add(type);
-                        if (_returnType is { } expected) CheckAssignable(type, expected, r.Line, "the return value", ReturnCode);
+                        if (_returnType is { } expected) CheckAssignable(type, expected, r.Line, "the return value", ReturnCode, r.Value);
                     }
                     else _collectedReturns?.Add(StaticType.Undefined);
                     break;
@@ -506,12 +544,26 @@ namespace fire.Compiler
             var init = v.Initializer != null ? Infer(v.Initializer, declared) : StaticType.Dynamic;
             if (declared is { } target)
             {
-                if (v.Initializer != null) CheckAssignable(init, target, v.Line, $"'{v.Name}'");
+                if (v.Initializer != null) CheckAssignable(init, target, v.Line, $"'{v.Name}'", valueExpr: v.Initializer);
                 Declare(v.Name, target);
             }
             else
-                // `var x = ...` has the type of its initializer for good; `undefined` alone says nothing (`undefined!Type` does)
-                Declare(v.Name, init.Kind == StaticKind.Undefined ? StaticType.Dynamic : init);
+            {
+                // `var x = ...` has the type of its initializer for good; `undefined` alone says nothing (`undefined!Type` does). Its unit may change
+                // (a `var` without a unit takes every unit), `var x : mm` demands mm.
+                var type = init.Kind == StaticKind.Undefined ? StaticType.Dynamic : init;
+                if (type.IsNumber)
+                {
+                    if (v.Type is { Unit: { } unitName } && unitName != "any")
+                    {
+                        var demanded = unitName.StartsWith("any ", StringComparison.Ordinal) ? type.WithUnit(Unit.Parse(unitName.Substring(4)), dimensionOnly: true) : type.WithUnit(Unit.Parse(unitName));
+                        if (v.Initializer != null) CheckUnitAssignable(init, demanded, v.Line, $"'{v.Name}'");
+                        type = demanded;
+                    }
+                    else type = type.WithUnit(null);
+                }
+                Declare(v.Name, type);
+            }
         }
 
         private void CheckClass(ClassDecl decl)
@@ -535,7 +587,7 @@ namespace fire.Compiler
                         {
                             var declaredField = Declared(f.Type, f.ArrayRanks.Count);
                             var init = Infer(f.Initializer, declaredField);
-                            if (declaredField is { } target) CheckAssignable(init, target, f.Line, $"field '{f.Name}'");
+                            if (declaredField is { } target) CheckAssignable(init, target, f.Line, $"field '{f.Name}'", valueExpr: f.Initializer);
                             break;
                         }
                     case MethodDecl m:
@@ -620,8 +672,8 @@ namespace fire.Compiler
                     return l.Value.Kind switch
                     {
                         ValueKind.Bool => StaticType.Bool,
-                        ValueKind.Int => StaticType.Int,
-                        ValueKind.Float => StaticType.Float,
+                        ValueKind.Int => StaticType.Int.WithUnit(l.Value.Unit ?? Unit.Unitless),
+                        ValueKind.Float => StaticType.Float.WithUnit(l.Value.Unit ?? Unit.Unitless),
                         ValueKind.Char => StaticType.Char,
                         ValueKind.String => StaticType.String,
                         ValueKind.Undefined => StaticType.Undefined,
@@ -644,14 +696,25 @@ namespace fire.Compiler
                 case IsOfExpr io: Infer(io.Operand); return StaticType.Bool;
                 case IsInExpr ii: Infer(ii.Operand); return StaticType.Bool;
                 case IsFromExpr ifr: Infer(ifr.Operand); Infer(ifr.OwnerExpr); return StaticType.Bool;
-                case UnitCoerceExpr uc: Infer(uc.Operand); return StaticType.Dynamic;
+                case UnitCoerceExpr uc:
+                    {
+                        // `x:mm` converts (a whole number into a coarser unit may lose its fraction: TC007), `x::mm` relabels, `x:` takes the unit of the operation (not known here)
+                        var operand = Infer(uc.Operand);
+                        if (!operand.IsNumber) return StaticType.Dynamic;
+                        if (uc.TargetUnitName is not { } targetName) return operand.WithUnit(null);
+                        var target = Unit.Parse(targetName);
+                        if (!uc.Relabel && operand.Kind == StaticKind.Int && operand.Unit is { } from && !from.Equals(target) && from.IsCompatibleWith(target) && from.ConversionFactorTo(target) < 1)
+                            Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(target)}' may lose its fraction (convert a float: 'x!float:{targetName}')", uc.Line);
+                        return operand.WithUnit(target);
+                    }
                 case TypeCoerceExpr tc:
                     {
-                        Infer(tc.Operand);
+                        var operand = Infer(tc.Operand);
+                        var operandUnit = operand.IsNumber ? operand.Unit : null;
                         return tc.TargetTypeKeyword switch
                         {
-                            TokenType.KwInt => StaticType.Int,
-                            TokenType.KwFloat => StaticType.Float,
+                            TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
+                            TokenType.KwFloat => StaticType.Float.WithUnit(operandUnit),
                             TokenType.KwBool => StaticType.Bool,
                             TokenType.KwChar => StaticType.Char,
                             TokenType.KwString => StaticType.String,
@@ -697,6 +760,43 @@ namespace fire.Compiler
         {
             var left = Infer(b.Left);
             var right = Infer(b.Right);
+            var type = InferBinaryType(b, left, right);
+            var unit = BinaryUnit(b, left, right);
+            return type.IsNumber ? type.WithUnit(unit) : type;
+        }
+
+        /// <summary>The unit of the result of a binary operation (SPEC 3.2, 3.4): `+ - %` and comparisons need the same dimension (another one is TC006) and give
+        /// the finer unit of two whole numbers, otherwise the unit of the left operand; `* /` combine the units; `&amp; | #` keep it, a shift the left one.
+        /// Not known when an operand's unit is not known.</summary>
+        private Unit? BinaryUnit(BinaryExpr b, StaticType left, StaticType right)
+        {
+            if (!left.IsNumber || !right.IsNumber || left.Unit is not { } l || right.Unit is not { } r || left.UnitIsDimension || right.UnitIsDimension) return null;
+            switch (b.Op)
+            {
+                case BinaryOp.Add or BinaryOp.Sub or BinaryOp.Mod or BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq
+                    or BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor:
+                    if (!l.IsCompatibleWith(r))
+                    {
+                        Report(UnitCode, $"'{UnitText(l)}' and '{UnitText(r)}' cannot be combined with '{OperatorText(b.Op)}' (another dimension)", b.Line);
+                        return null;
+                    }
+                    if (l.Equals(r)) return l;
+                    return left.Kind == StaticKind.Int && right.Kind == StaticKind.Int ? (l.Scale <= r.Scale ? l : r) : l;
+                case BinaryOp.Mul: return Unit.Multiply(l, r);
+                case BinaryOp.Div: return Unit.Divide(l, r);
+                case BinaryOp.ShiftLeft or BinaryOp.ShiftRight: return l;
+                default: return null;
+            }
+        }
+
+        private static string OperatorText(BinaryOp op) => op switch
+        {
+            BinaryOp.Add => "+", BinaryOp.Sub => "-", BinaryOp.Mod => "%", BinaryOp.Eq => "==", BinaryOp.NotEq => "!=", BinaryOp.Lt => "<", BinaryOp.LtEq => "<=",
+            BinaryOp.Gt => ">", BinaryOp.GtEq => ">=", BinaryOp.BitAnd => "&", BinaryOp.BitOr => "|", BinaryOp.BitXor => "#", _ => op.ToString(),
+        };
+
+        private StaticType InferBinaryType(BinaryExpr b, StaticType left, StaticType right)
+        {
             switch (b.Op)
             {
                 case BinaryOp.And or BinaryOp.Or: return StaticType.Bool;
@@ -730,7 +830,7 @@ namespace fire.Compiler
             };
             var value = Infer(a.Value, target);
             string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", IndexExpr => "an element", _ => "the target" };
-            CheckAssignable(value, target, a.Line, what);
+            CheckAssignable(value, target, a.Line, what, valueExpr: a.Value);
             return target.IsDynamic ? value : target;
         }
 
@@ -825,6 +925,8 @@ namespace fire.Compiler
             var known = types.Where(t => t.Kind != StaticKind.Undefined).ToList();
             if (known.Count == 0 || known.Any(t => t.IsDynamic)) return StaticType.Dynamic;
             if (known.All(t => t == known[0])) return known[0];
+            // numbers of the same kind with other units: the kind (the unit is not known)
+            if (known.All(t => t.IsNumber && t.Kind == known[0].Kind)) return known[0].WithUnit(null);
             if (known.All(t => t.Kind is StaticKind.Int or StaticKind.Float)) return StaticType.Float;
             return StaticType.Dynamic;
         }

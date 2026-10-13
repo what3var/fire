@@ -1250,10 +1250,28 @@ inline void checkLambda(Value v, int nparams) {
 /// A value does not have the unit that its declaration demands (an UnitMismatchException; defined with the exceptions).
 inline void unitMismatch(Value v, Value expectedText);
 
-/// CheckUnit: the value must have exactly this unit.
-inline void checkUnit(Value v, uint32_t unit, Value expectedText) {
-    uint32_t actual = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
-    if (FIRE_UNLIKELY(!unitEq(actual, unit))) unitMismatch(v, expectedText);
+/// CheckUnit (Value.AdaptToUnit): a declaration with a unit takes `v` - a value of the same dimension is converted into `unit`, `undefined` takes it; with
+/// `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float. Another dimension is an UnitMismatchException, a whole number that does not fit any
+/// more after the conversion an OverflowException. Values without a unit (strings, objects) are left alone.
+inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText) {
+    if (!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined)) return v;
+    if (unitEq(v.unit, unit)) return v;
+    if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   // a float declaration: a whole number becomes one first
+    if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
+    if (FIRE_UNLIKELY(!unitCompatible(v.unit, unit))) { unitMismatch(v, expectedText); return v; }
+    if (dimensionOnly) return v;
+    double factor = g_ud[v.unit].scale / g_ud[unit].scale;
+    if (v.kind == K_Float) return Float((Real)((double)v.f * factor), unit);
+    double converted = std::nearbyint((double)v.i * factor);
+    if (FIRE_UNLIKELY(std::fabs(converted) >= 9.2e18)) {
+#ifndef FIRE_LIBRARY
+        fireError("OverflowException", "A whole number does not fit any more after the conversion into the unit of its declaration.");
+#else
+        fatal("A whole number does not fit any more after the conversion into the unit of its declaration.");
+#endif
+        return v;
+    }
+    return Int((int64_t)converted, unit);
 }
 
 /// The byte order of the machine, found out at run time (a 16-bit 1 starts with its low byte in little-endian memory).
