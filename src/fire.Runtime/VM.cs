@@ -2783,11 +2783,17 @@ namespace fire.Runtime
                 // ListEnumerator of the prelude over it (the same class that `List`
                 // uses; it only reads `items[index]`/`count`). Without a prelude (pure
                 // core programs) it stays with the error below.
+                // `foreach (c in text)` likewise: the enumerator indexes the string, `text[i]` is a char.
                 if (methodName == "GetEnumerator" && args.Length == 0
-                    && target.Kind is ValueKind.Array or ValueKind.Buffer
+                    && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String
                     && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
                 {
-                    long itemCount = target.Kind == ValueKind.Array ? target.AsArray().Length : target.AsBuffer().Length;
+                    long itemCount = target.Kind switch
+                    {
+                        ValueKind.Array => target.AsArray().Length,
+                        ValueKind.Buffer => target.AsBuffer().Length,
+                        _ => target.AsString().Length,
+                    };
                     var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
                     Push(Value.MakeClassRef(enumerator));
                     return;
@@ -4332,14 +4338,11 @@ namespace fire.Runtime
                     // TypeRef.LambdaSignature, Compiler.EmitCheckLambdaSignature).
                     int expectedParamCount = ReadByte();
                     var v = Peek();
+                    // a mismatch is a catchable ArgumentException (the value stays on the stack, as the handler unwinds it)
                     if (v.Kind != ValueKind.Lambda)
-                        throw new InvalidOperationException(
-                            $"Expected a lambda value (type 'lambda'), got: {v.Kind}.");
-                    var lambdaVal = (LambdaValue)v.AsLambda();
-                    if (lambdaVal.Proto.ParamCount != expectedParamCount)
-                        throw new InvalidOperationException(
-                            $"Lambda signature does not match: expected {expectedParamCount} parameters, " +
-                            $"the lambda has {lambdaVal.Proto.ParamCount}.");
+                        ThrowArgumentError($"Expected a lambda with {expectedParamCount} parameter(s), got a value that is no lambda.");
+                    else if (((LambdaValue)v.AsLambda()).Proto.ParamCount is var actualCount && actualCount != expectedParamCount)
+                        ThrowArgumentError($"The lambda has {actualCount} parameter(s), its declaration says {expectedParamCount}.");
                     break;
                 }
 
@@ -5824,6 +5827,15 @@ namespace fire.Runtime
                 _stack[_sp - 1] = Value.MakeUndefined();
                 ThrowDivideByZero();
             }
+        }
+
+        /// <summary>A value that does not fit what a declaration demands of it (a lambda with another number of parameters): a catchable `ArgumentException`
+        /// (without the prelude class an internal error, as before).</summary>
+        private void ThrowArgumentError(string message)
+        {
+            if (!_classes.ContainsKey("ArgumentException")) throw new InvalidOperationException(message);
+            var instance = ConstructNested(ResolveClass("ArgumentException"), new[] { Value.MakeString(message) });
+            ThrowException(Value.MakeClassRef(instance));
         }
 
         /// <summary>An integer division or modulo by zero is a catchable script exception (`DivideByZeroException`); floats follow IEEE (infinity, NaN).</summary>

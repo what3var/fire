@@ -173,8 +173,8 @@ namespace fire.Values
         // Coercion
         // ---------------------------------------------------------------
 
-        /// <summary>Converts an Int/Float/Undefined value into another (compatible)
-        /// unit. Throws UnitMismatchException on incompatible dimension.</summary>
+        /// <summary>Converts an Int/Float/Undefined value into another unit: of the same dimension by its factor, of another one the number
+        /// in the base unit gets the target unit (SPEC 3.1: `:` always coerces).</summary>
         public Value CoerceUnit(Unit targetUnit)
         {
             if (Kind != ValueKind.Int && Kind != ValueKind.Float && Kind != ValueKind.Undefined)
@@ -184,14 +184,16 @@ namespace fire.Values
             if (currentUnit.Equals(targetUnit))
                 return this;
 
-            // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact
-            if (targetUnit.IsUnitless && !currentUnit.IsUnitless && Kind != ValueKind.Undefined)
+            // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact.
+            // `a:unit` of another dimension never fails either: the number in the base unit gets the target unit (`5mm:kg` is 0.005kg, `7:s` is 7s).
+            if (Kind != ValueKind.Undefined && (targetUnit.IsUnitless && !currentUnit.IsUnitless || !currentUnit.IsCompatibleWith(targetUnit)))
             {
                 double inBase = (Kind == ValueKind.Int ? _intValue : _floatValue) * currentUnit.Scale;
                 if (Kind == ValueKind.Int && Math.Abs(inBase) < 9.0e15 && inBase == Math.Floor(inBase)) return MakeInt((long)inBase, targetUnit);
                 return MakeFloat(inBase, targetUnit);
             }
 
+            if (Kind == ValueKind.Undefined) return MakeUndefined(targetUnit);
             double factor = currentUnit.ConversionFactorTo(targetUnit);
 
             return Kind switch

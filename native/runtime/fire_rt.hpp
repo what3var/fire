@@ -806,15 +806,18 @@ inline uint32_t unitOf(Value v) { return (v.kind == K_Int || v.kind == K_Float |
 /// The step of `x++`/`x--`: the constant 1 in the unit of `target` (`5cm++` is `6cm`).
 inline Value stepOf(Value target, Value one) { uint32_t u = unitOf(target); if (u && !unitIsUnitless(u) && (one.kind == K_Int || one.kind == K_Float)) one.unit = u; return one; }
 
-/// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even.
+/// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even. Of another dimension it never fails:
+/// the number in its base unit gets the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`).
 inline Value coerceUnit(Value v, uint32_t target) {
     if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
     if (unitEq(v.unit, target)) return v;
-    if (unitIsUnitless(target) && !unitIsUnitless(v.unit) && v.kind != K_Undefined) {   // `a:unitless`: the number in the base unit
+    // `a:unitless`, and `a:unit` of another dimension: the number in the base unit (the dimension is taken out), labelled with the target unit
+    if (v.kind != K_Undefined && ((unitIsUnitless(target) && !unitIsUnitless(v.unit)) || !unitCompatible(v.unit, target))) {
         double inBase = (v.kind == K_Int ? (double)v.i : (double)v.f) * g_ud[v.unit].scale;
         if (v.kind == K_Int && std::fabs(inBase) < 9.0e15 && inBase == std::floor(inBase)) return Int((int64_t)inBase, target);
         return Float((Real)inBase, target);
     }
+    if (v.kind == K_Undefined) return Undef(target);
     double factor = unitFactor(v.unit, target);
     if (v.kind == K_Int) return Int((int64_t)std::nearbyint((double)v.i * factor), target);
     if (v.kind == K_Float) return Float((Real)((double)v.f * factor), target);
@@ -1227,9 +1230,21 @@ inline Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
     return l->fn(callee, args);
 }
 
-/// CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters.
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
+/// CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException).
 inline void checkLambda(Value v, int nparams) {
-    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) fatal("The lambda does not have the declared number of parameters.");
+    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) {
+        char text[120];
+        if (v.kind != K_Lambda) std::snprintf(text, sizeof text, "Expected a lambda with %d parameter(s), got a value that is no lambda.", nparams);
+        else std::snprintf(text, sizeof text, "The lambda has %u parameter(s), its declaration says %d.", lamOf(v)->nparams, nparams);
+#ifndef FIRE_LIBRARY
+        fireError("ArgumentException", text);
+#else
+        fatal(text);
+#endif
+    }
 }
 
 /// A value does not have the unit that its declaration demands (an UnitMismatchException; defined with the exceptions).

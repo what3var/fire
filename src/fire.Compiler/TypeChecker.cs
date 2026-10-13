@@ -273,6 +273,7 @@ namespace fire.Compiler
         private StaticType ElementOf(StaticType iterable)
         {
             if (iterable.Kind == StaticKind.Array) return iterable.Element!;
+            if (iterable.Kind == StaticKind.String) return StaticType.Char;
             if (iterable.Kind != StaticKind.Class) return StaticType.Dynamic;
             if (AsBase(iterable, "IEnumerable") is { Args: [var element] }) return element;
             if (iterable.Class == "IEnumerable" && iterable.Args is [var own]) return own;

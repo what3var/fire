@@ -271,7 +271,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - Directly on a number literal without a separator: `5mm`, `2mm`, `1km`.
 - `:` operator for **unit** annotation/coercion on a value: `undefined : km`.
   - `value:` (without an argument) → the unit is derived automatically from the context of the operation (see 3.4).
-  - `value:unit` → the unit is explicitly forced/converted to `unit`.
+  - `value:unit` → the unit is explicitly forced/converted to `unit`. `:` never fails: a value of the same dimension is converted (`2km:m` is `2000m`), one of another dimension (or a unitless one) gets its number in the base unit with the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`).
   - To `unitless` the **dimension is calculated out**: the number in the base unit, `12mm:unitless` is `0.012` (an int stays an int when the result is whole: `2km:unitless` is `2000`).
 - `::` operator (**relabel**): `value::unit` gives the same number the other unit and calculates nothing - `12mm::unitless` is `12`, `12mm::m` is `12m`. The unit after `::` is always written out.
 - `!` operator for **type** coercion: `value!`, `value!int`.

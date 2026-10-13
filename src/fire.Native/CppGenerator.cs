@@ -668,6 +668,8 @@ namespace fire.Native
                 }
                 var accessError = RegisterClass("AccessDeniedException");
                 if (accessError.Rc.FindConstructor(1) is { } accessCtor && accessCtor.ParamCount == 1) GetFunc(accessCtor, FuncKind.Ctor);
+                // a lambda with another number of parameters than its declaration: an ArgumentException (checkLambda)
+                if (!_errorClasses.Contains("ArgumentException")) _errorClasses.Add("ArgumentException");
                 foreach (var name in _errorClasses)
                     if (_program.Program.Classes.ContainsKey(name))
                     {
@@ -861,7 +863,7 @@ namespace fire.Native
             {
                 var info = _classes["ListEnumerator"];
                 var ctor = _funcByProto[info.Rc.FindConstructor(2)!];
-                sb.AppendLine("        case K_Array: case K_Buffer: {");
+                sb.AppendLine("        case K_Array: case K_Buffer: case K_String: {");   // (a string: the enumerator indexes it, `text[i]` is a char)
                 sb.AppendLine("            bool ok;");
                 sb.AppendLine("            Value count = lengthOf(self, &ok);");
                 sb.AppendLine($"            Value e = newObject({info.Id}, {info.Fields.Count}, list);");
@@ -2522,7 +2524,7 @@ namespace fire.Native
                     d = slot + 1; return Next();
                 }
                 case OpCode.CheckLambdaSignature:
-                    Need(1); E($"checkLambda({S(d - 1)}, {ins.A[0]});"); return Next();
+                    Need(1); E($"checkLambda({S(d - 1)}, {ins.A[0]});"); Check(); return Next();   // (a mismatch throws an ArgumentException)
                 case OpCode.CheckUnit:
                 {
                     Need(1);

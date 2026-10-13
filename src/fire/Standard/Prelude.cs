@@ -72,6 +72,11 @@ namespace fire.Standard
                 construct(string message) { this.message = message }
             }
 
+            // A value that does not fit what its declaration demands: a lambda with another number of parameters than its `lambda<...>` type
+            class ArgumentException : Exception {
+                construct(string message) { this.message = message }
+            }
+
             class UnitMismatchException : Exception {
                 string expectedUnit
                 string actualUnit

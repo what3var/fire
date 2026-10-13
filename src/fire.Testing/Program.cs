@@ -6346,7 +6346,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
-        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'unitless'." });
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
     // --- Stack and scope slots grow
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
@@ -11090,7 +11090,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         try { win.Tick() } catch (e) { print("aeusserer catch") }
         print("weiter " + (1 + 2))
         try { throw new Exception("m") } catch (e) { print("catch " + e.message) }
-        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "weiter 3", "catch m" });
+        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "weiter 3", "catch m" });
 
     CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
         var caught = 0
@@ -11118,7 +11118,7 @@ string[] uiDrawExpected = Array.Empty<string>();
             }
         }
         T.Step(win)
-        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "nach Tick", "finally" });
+        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "nach Tick", "finally" });
 
     // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
     CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
@@ -11168,7 +11168,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         __Keep(func () => { throw new Exception("kaputt") })
         __RunKeptOnOtherThread()
         print("weiter")
-        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': kaputt", "weiter" });
+        """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
 }
@@ -11399,7 +11399,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         fire { g.v = 2 }
         for (var i = 0; i < 100000; i = i + 1) { }
         throw new Exception("kaputt")
-        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'Exception': kaputt" });
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'Exception': kaputt" });
 
     CheckGl("terminate in einem Thread beendet ein Hauptprogramm, das nur `sync globals` ausfuehrt", """
         fire { terminate(1) }
@@ -13702,7 +13702,21 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
         print(5mm + 2kg)
-        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'kg'." });
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'kg'." });
+
+    CheckSc("Einheiten: ':' erzwingt immer - eine andere Dimension bekommt die Zahl in der Basiseinheit (7:s, 5mm:kg), undefined nimmt jede Einheit an", """
+        var k = 7
+        print(k:s)
+        print(5mm:kg)
+        print(2km:m)
+        var u = undefined
+        print(u:s)
+        """, new[] { "7s", "0.005kg", "2000m", "undefined:s" });
+
+    CheckSc("foreach ueber einen string liefert seine Zeichen; ein Lambda mit falscher Parameterzahl ist eine fangbare ArgumentException", """
+        foreach (c in "ab") { print(c) }
+        try { lambda<int> f = (any x, any y) => x } catch (ArgumentException e) { print("caught: " + e.message) }
+        """, new[] { "a", "b", "caught: The lambda has 2 parameter(s), its declaration says 1." });
 
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
@@ -14008,6 +14022,13 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("':' erzwingt Einheiten, foreach ueber string, ArgumentException", """
+            var k = 7
+            print(k:s)
+            print(5mm:kg)
+            foreach (c in "ab") { print(c) }
+            try { lambda<int> f = (any x, any y) => x } catch (ArgumentException e) { print("caught: " + e.message) }
+            """),
         ("Ganzzahl-Arithmetik und Bit-Operationen", """
             print(7 / 2)
             print(-7 / 2)
