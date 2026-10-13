@@ -135,7 +135,7 @@ namespace fire.Editor
             DockPanel.SetDock(_grip, vertical ? Avalonia.Controls.Dock.Top : Avalonia.Controls.Dock.Left);
             _grip.Width = vertical ? double.NaN : 12;
             _grip.Height = vertical ? 12 : double.NaN;
-            _grip.Child!.Margin = vertical ? new Thickness(4, 3) : new Thickness(3, 4);
+            _grip.Child!.Margin = vertical ? new Thickness(1, 3) : new Thickness(3, 1);   // the line: the smaller the margin along it, the longer it is
 
             foreach (var item in Items) item.IsVisible = !vertical || !GetHorizontalOnly(item);
             _panel.SetItems(Items);
