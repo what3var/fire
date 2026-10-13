@@ -123,7 +123,7 @@ namespace fire.UI.Markup
             var code = new Writer();
             string file = string.IsNullOrEmpty(sourceName) ? "the markup" : Path.GetFileName(sourceName);
             code.Line($"// Generated from {file} - do not edit, change the markup. Derive from the class and override the methods named in on...=\"...\":");
-            code.Line($"//     class {document.ClassName} : {document.BaseName} {{ Save(sender) {{ ... }} }}");
+            code.Line($"//     class {document.ClassName} : {document.BaseName} {{ undefined Save(any sender) {{ ... }} }}");
             code.Line("#import \"ui\"");
             code.Line();
             code.Line($"class {(preview ? "FxPreview" : document.BaseName)} {{");

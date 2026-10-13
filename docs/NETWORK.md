@@ -230,10 +230,10 @@ The radio of a board: scan for networks, join one as a **station**, be an **acce
 #import "wifi"
 
 var wifi = new WiFi.Station()                               // the first real interface, or "sim" (a name works too: new WiFi.Station("wifi"))
-foreach (var n in wifi.Scan()) { print(n.ssid + " " + n.rssi + " dBm, channel " + n.channel + ", secure: " + n.Secure) }     // strongest first
+foreach (n in wifi.Scan()) { print(n.ssid + " " + n.rssi + " dBm, channel " + n.channel + ", secure: " + n.Secure) }     // strongest first
 wifi.Connect("home", ReadPasswordFromSomewhere(), 20s)       // waits until joined (default limit 20 s); an empty password joins an open network
 print(wifi.Ip + " " + wifi.Ssid + " " + wifi.Rssi)
-var page = Http.Client().Get("http://example.org/").Text()   // the net package works now
+var page = new Http.Client().Get("http://example.org/").Text()   // the net package works now
 wifi.Disconnect()
 
 var ap = new WiFi.AccessPoint()

@@ -33,7 +33,7 @@ Alle Zugriffe laufen über dieselben Pfade wie normaler Code (`OpSetFieldSlow`, 
 Eine Lambda, die ein Kind/Mitglied eines Objekts auswählt, als Argument statt eines Namens-Strings:
 
 ```
-Watch(lambda member<Circle> selector, Circle c) {
+undefined Watch(lambda member<Circle> selector, Circle c) {
     print(selector.Name)              // "radius"
     var v = selector.Get(c)           // liest c.radius
     selector.Set(c, 3.0)              // schreibt (Zugriffs-/readonly-Regeln wie überall)

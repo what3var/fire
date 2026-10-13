@@ -27,7 +27,7 @@ The elements are the ones of the library `ui` (docs/UI.md): the layout container
 #include "Greeter.fxml"                   // the script generated from the markup is included right here
 
 class UpperConverter : UI.Converter {
-    Convert(value) { return value.ToUpper() }
+    any Convert(any value) { return value.ToUpper() }
 }
 
 class Person {
@@ -36,7 +36,7 @@ class Person {
 }
 
 class GreeterWindow : GreeterBase {        // the inheritance is declared here, in the code-behind
-    Ok(sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of onClick="Ok"
+    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of onClick="Ok"
 }
 
 var window = new GreeterWindow()
@@ -56,7 +56,7 @@ For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..
 | a field per element with `name="..."` | typed with the class of the element: `UI.TextBox nameBox` |
 | `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (title, width, height from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
-| one method per handler name | `Ok(sender) { }` - empty; the derived class overrides it. `sender` is the element |
+| one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
 | `Run(other = undefined)`, `OnTick()` | a window: `Run()` loops `ui.Tick()` until the window is closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
@@ -114,7 +114,7 @@ The attribute names are those of the fire fields (the first letter may be upper 
 
 A text that starts with a brace is written `{}{like this}`.
 
-**Handlers:** `onClick="Ok"` calls the method `Ok(sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
+**Handlers:** `onClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
 override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)
 
 ## Styles, triggers and templates
@@ -190,7 +190,7 @@ or, with `ElementName`, to a property of another named element. It is built on `
   (SPEC 8.14 - what the getter reads through other objects, `this.player.name`, is not followed).
 - **Mode**: `OneWay` (default; the source changes the property), `TwoWay` (the property writes back to the source as well - a `TextBox` as the user types, a `CheckBox` when it is toggled; a write
   that does not change the value stops there, so a converter that normalizes a value cannot make the two chase each other), `OneTime` (read once when the context is set).
-- **Converter**: the key of a converter that sits between the two sides. A converter is a class with `Convert(value)` (source to property) and, for `TwoWay`, `ConvertBack(value)`;
+- **Converter**: the key of a converter that sits between the two sides. A converter is a class with `any Convert(any value)` (source to property) and, for `TwoWay`, `any ConvertBack(any value)`;
   deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter key="Upper" type="UpperConverter"/></Resources>`; these come with the library
   and need no declaration: `Not`, `IsEmpty`, `NotEmpty`, `Text` (`UI.NotConverter`, ...).
 - `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` leaves the elements as they are.

@@ -62,8 +62,8 @@ and gives them a nice name:
 
 ```
 class SensorKit {
-    static Crc8(buffer) { return __sk_crc8(buffer) }
-    static Hex(buffer) { return __sk_hex(buffer) }
+    static int Crc8(any buffer) { return __sk_crc8(buffer) }
+    static string Hex(any buffer) { return __sk_hex(buffer) }
 }
 ```
 

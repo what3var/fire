@@ -36,13 +36,13 @@ r.DrawText(8, 72, "Hello, world", ink)                                          
 
 ```
 class Fonts {
-    static Font Add(resource, string alias = "")   // an embedded .ttf; GraphicsException if it is not a TrueType font
-    static Font FromBytes(data)                    // the bytes of a .ttf (a byte buffer); no name to find it by
+    static Font Add(any resource, string alias = "")   // an embedded .ttf; GraphicsException if it is not a TrueType font
+    static Font FromBytes(byte data[])            // the bytes of a .ttf (a byte buffer); no name to find it by
     static Font Get(string name)                   // see above
     static bool Has(string name)
     static Font Console()                          // the font of the renderer
 }
-class Font { string Name(); bool IsBitmap(); Release() }    // Release frees a font from Add/FromBytes; the built-in ones stay
+class Font { string Name(); bool IsBitmap(); undefined Release() }    // Release frees a font from Add/FromBytes; the built-in ones stay
 ```
 
 A `Font` is only a handle: you do not need to keep it or destroy it. The fonts are shared by the whole program.
