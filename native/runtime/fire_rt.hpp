@@ -217,6 +217,8 @@ FIRE_THREAD_VARS(FIRE_X)
 inline Value indexError(const char* what, int64_t index, int64_t length);
 /// The use of a destroyed object, array or buffer (SPEC 2.3, 2.5): a DestroyedException, or the end of the program when there are no exceptions.
 inline Value destroyedError(Value leaf);
+/// An integer division or modulo by zero: a DivideByZeroException, or the end of the program when there are no exceptions.
+inline Value divideByZero();
 
 #ifdef FIRE_LIBRARY
 // The natives of a package built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.hpp): a run-time error does not end the process,
@@ -711,7 +713,7 @@ FIRE_COLD inline Value subUnits(Value a, Value b) {
 FIRE_COLD inline Value modUnits(Value a, Value b) {
     VPair p = alignUnits(a, b);
     if (p.a.kind == K_Int && p.b.kind == K_Int) {
-        if (FIRE_UNLIKELY(p.b.i == 0)) fatal("Division by zero.");
+        if (FIRE_UNLIKELY(p.b.i == 0)) return divideByZero();
         if (FIRE_UNLIKELY(p.b.i == -1)) return Int(0, p.a.unit);
         return Int(p.a.i % p.b.i, p.a.unit);
     }
@@ -725,7 +727,7 @@ FIRE_COLD inline Value mulUnits(Value a, Value b) {
 FIRE_COLD inline Value divUnits(Value a, Value b) {
     uint32_t u = unitDiv(a.unit, b.unit);
     if (a.kind == K_Int && b.kind == K_Int) {
-        if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+        if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
         if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i), u);
         return Int(a.i / b.i, u);
     }
@@ -770,7 +772,7 @@ inline Value mul(Value a, Value b) {
 inline Value divide(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
         if (a.kind == K_Int && b.kind == K_Int) {
-            if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+            if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
             if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i));
             return Int(a.i / b.i);
         }
@@ -781,7 +783,7 @@ inline Value divide(Value a, Value b) {
 inline Value modulo(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) {
-            if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+            if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
             if (FIRE_UNLIKELY(b.i == -1)) return Int(0, a.unit);
             return Int(a.i % b.i, a.unit);
         }
@@ -2199,6 +2201,22 @@ inline void setDefaultTimeout(Value t) {
 
 /// Generated: builds a DestroyedException (message) owned by the global scope.
 Value makeDestroyedError(Value message);
+
+/// Generated: builds a DivideByZeroException (message) owned by the global scope.
+Value makeDivideError(Value message);
+
+inline Value divideByZero() {
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
+    const char* text = "Division by zero.";
+    uint32_t n = (uint32_t)std::strlen(text);
+    Str* msg = allocStr(n, &unused);
+    widenAscii(text, n, strChars(msg));
+    return throwValue(makeDivideError(StrV(msg)));
+#else
+    fatal("Division by zero.");
+#endif
+}
 
 inline Value destroyedError(Value leaf) {
     const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : "Access to a destroyed array.";

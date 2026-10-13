@@ -88,7 +88,7 @@ namespace fire.Standard
                 }
 
                 class Clock {
-                    static int Millis(limit) {
+                    static int Millis(any limit) {
                         if (limit == undefined) { return -1 }
                         var span = TimeSpan.Of(limit)
                         var ms = span.Ticks / 10000
@@ -171,7 +171,7 @@ namespace fire.Standard
                     bool closed
                     string name
                     int lastState
-                    var onState
+                    lambda<any> onState
 
                     construct(string name = undefined) {
                         this.handle = -1
@@ -193,7 +193,7 @@ namespace fire.Standard
                     }
 
                     // The networks in range, strongest first (a list of WiFi.Network). Waits up to `timeout` (default 15 s) for the scan to finish: WiFi.TimeoutException.
-                    Scan(timeout = 15s) {
+                    Scan(any timeout = 15s) {
                         this.Check()
                         if (!__WiFiScanBegin(this.handle)) { WiFi.Errors.Throw() }
                         var deadline = WiFi.Clock.Deadline(WiFi.Clock.Millis(timeout))
@@ -222,7 +222,7 @@ namespace fire.Standard
                     }
 
                     // Joins the network and waits (up to `timeout`, default 20 s) until it is connected: WiFi.NotFoundException, WiFi.AuthException, WiFi.TimeoutException. An empty password: an open network.
-                    Connect(string ssid, string password = "", timeout = 20s) {
+                    Connect(string ssid, string password = "", any timeout = 20s) {
                         this.Start(ssid, password)
                         var deadline = WiFi.Clock.Deadline(WiFi.Clock.Millis(timeout))
                         var tries = 0

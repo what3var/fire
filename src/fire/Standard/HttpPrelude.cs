@@ -318,10 +318,10 @@ namespace fire.Standard
                     int status
                     string reason
                     Headers headers
-                    var body
+                    byte body[]
                     string url
 
-                    construct(int status = 200, body = undefined) {
+                    construct(int status = 200, any body = undefined) {
                         this.status = status
                         this.reason = Http.Status.Reason(status)
                         this.headers = new Http.Headers()
@@ -330,7 +330,7 @@ namespace fire.Standard
                     }
 
                     // The body as bytes: a text becomes UTF-8, a buffer stays, undefined is empty.
-                    static Bytes(body) {
+                    static Bytes(any body) {
                         if (body == undefined) { return new byte[0] }
                         if (body is of string) { return IO.Utf8.GetBytes(body) }
                         return body
@@ -379,7 +379,7 @@ namespace fire.Standard
                     string queryText
                     string version
                     Headers headers
-                    var body
+                    byte body[]
                     string remoteHost
 
                     construct(string method, string target) {
@@ -400,7 +400,7 @@ namespace fire.Standard
                     }
 
                     // The value of a query parameter (`?name=value&...`, percent decoded), `fallback` if it is not there.
-                    Query(string name, fallback = undefined) {
+                    Query(string name, any fallback = undefined) {
                         if (this.queryText.Length == 0) { return fallback }
                         var pairs = this.queryText.Split("&")
                         for (var i = 0; i < pairs.length; i++) {
@@ -425,13 +425,13 @@ namespace fire.Standard
 
                 // Reads from a stream with a buffer of its own: lines, exact numbers of bytes, the rest.
                 class Reader {
-                    var source
-                    var chunk
+                    IO.Stream source
+                    byte chunk[]
                     int pos
                     int len
                     bool eof
 
-                    construct(source) {
+                    construct(IO.Stream source) {
                         this.source = source
                         this.chunk = new byte[4096]
                         this.pos = 0
@@ -586,7 +586,7 @@ namespace fire.Standard
                     }
 
                     // Writes the start line, the header fields, the empty line and the body.
-                    static Write(stream, string startLine, Headers headers, body) {
+                    static Write(IO.Stream stream, string startLine, Headers headers, any body) {
                         var head = IO.Utf8.GetBytes(startLine + "\r\n" + headers.ToString() + "\r\n")
                         stream.Write(head, 0, head.length)
                         if (body != undefined && body.length > 0) { stream.Write(body, 0, body.length) }
@@ -595,7 +595,7 @@ namespace fire.Standard
 
                 // Opens the connection to a URL (the scheme decides: http is a TCP connection, https a TLS connection over it).
                 class Transport {
-                    static Open(Url url, int timeout, tls = undefined) {
+                    static Open(Url url, int timeout, Tls.Options tls = undefined) {
                         if (url.scheme == "http") {
                             var tcp = new Net.TcpClient(url.host, url.port, timeout)
                             tcp.NoDelay = true
@@ -614,7 +614,7 @@ namespace fire.Standard
                     string userAgent
                     Headers headers
                     // The Tls.Options for https:// URLs (undefined: verify against the system's certificates).
-                    var tls
+                    Tls.Options tls
 
                     construct() {
                         this.tls = undefined
@@ -627,19 +627,19 @@ namespace fire.Standard
                     }
 
                     // GET, POST, PUT, DELETE, HEAD: `headers` is an Http.Headers (or undefined); a body is a text (UTF-8) or a byte buffer.
-                    Get(string url, headers = undefined) { return this.Request("GET", url, undefined, headers) }
-                    Head(string url, headers = undefined) { return this.Request("HEAD", url, undefined, headers) }
-                    Delete(string url, headers = undefined) { return this.Request("DELETE", url, undefined, headers) }
+                    Get(string url, Headers headers = undefined) { return this.Request("GET", url, undefined, headers) }
+                    Head(string url, Headers headers = undefined) { return this.Request("HEAD", url, undefined, headers) }
+                    Delete(string url, Headers headers = undefined) { return this.Request("DELETE", url, undefined, headers) }
 
-                    Post(string url, body, string contentType = undefined, headers = undefined) {
+                    Post(string url, any body, string contentType = undefined, Headers headers = undefined) {
                         return this.WithType("POST", url, body, contentType, headers)
                     }
 
-                    Put(string url, body, string contentType = undefined, headers = undefined) {
+                    Put(string url, any body, string contentType = undefined, Headers headers = undefined) {
                         return this.WithType("PUT", url, body, contentType, headers)
                     }
 
-                    WithType(string method, string url, body, string contentType, headers) {
+                    WithType(string method, string url, any body, string contentType, Headers headers) {
                         var h = new Http.Headers()
                         if (headers != undefined) {
                             for (var i = 0; i < headers.Count; i++) { h.Add(headers.names[i], headers.values[i]) }
@@ -653,7 +653,7 @@ namespace fire.Standard
                     }
 
                     // Sends the request and returns the Http.Response (redirects are followed unless `followRedirects` is false).
-                    Request(string method, string url, body, headers) {
+                    Request(string method, string url, any body, Headers headers) {
                         var current = url
                         var verb = method
                         var payload = body
@@ -680,7 +680,7 @@ namespace fire.Standard
                     }
 
                     // One request and its response over a connection of its own.
-                    Once(string method, Url url, body, headers) {
+                    Once(string method, Url url, any body, Headers headers) {
                         var bytes = undefined
                         if (body != undefined) { bytes = Http.Response.Bytes(body) }
                         var h = new Http.Headers()
@@ -734,9 +734,9 @@ namespace fire.Standard
                 class RouteEntry {
                     string method
                     string path
-                    var handler
+                    lambda<Http.Request> handler
 
-                    construct(string method, string path, handler) {
+                    construct(string method, string path, lambda<Http.Request> handler) {
                         this.method = method
                         this.path = path
                         this.handler = handler
@@ -753,11 +753,11 @@ namespace fire.Standard
                 // A small HTTP server: one connection after the other. `Route(method, path, lambda)` where the lambda gets the Http.Request and returns an Http.Response (a text becomes a
                 // 200 text response, undefined a 204).
                 class Server {
-                    var listener
+                    Net.TcpListener listener
                     List routes
-                    var fallback
-                    var onError
-                    var tlsServer
+                    lambda<Http.Request> fallback
+                    lambda<any> onError
+                    Tls.Server tlsServer
                     int readTimeout
                     int maxBodyBytes
                     bool stopped
@@ -776,17 +776,17 @@ namespace fire.Standard
 
                     int Port { get { return this.listener.Port } }
 
-                    Route(string method, string path, handler) {
+                    Route(string method, string path, lambda<Http.Request> handler) {
                         var entry = new Http.RouteEntry(method, path, handler)
                         entry.TakeTo(this)
                         this.routes.Add(entry)
                     }
 
                     // The answer to every request that no route matches (default: 404).
-                    Fallback(handler) { this.fallback = handler }
+                    Fallback(lambda<Http.Request> handler) { this.fallback = handler }
 
                     // Called with the exception when a route's lambda throws (the client gets a 500).
-                    OnError(handler) { this.onError = handler }
+                    OnError(lambda<any> handler) { this.onError = handler }
 
                     // Serves HTTPS: the certificate (with its chain) and the private key as PEM text. Needs the tls package's support in this build (Tls.Support.Available()).
                     UseTls(string certPem, string keyPem) { this.tlsServer = new Tls.Server(certPem, keyPem) }
@@ -794,7 +794,7 @@ namespace fire.Standard
                     Stop() { this.stopped = true }
 
                     // Waits up to `timeout` for a connection and answers it; true if one was served, false when the time ran out.
-                    ServeOne(timeout = undefined) {
+                    ServeOne(any timeout = undefined) {
                         var connection = this.listener.TryAccept(timeout)
                         if (connection == undefined) { return false }
                         if (this.tlsServer != undefined) {
@@ -813,7 +813,7 @@ namespace fire.Standard
                         while (!this.stopped) { this.ServeOne(250) }
                     }
 
-                    Handle(connection) {
+                    Handle(IO.Stream connection) {
                         try {
                             connection.ReadTimeout = this.readTimeout
                             connection.WriteTimeout = this.readTimeout
@@ -839,7 +839,7 @@ namespace fire.Standard
                     }
 
                     // The request, or undefined if the client closed without sending one.
-                    ReadRequest(connection) {
+                    ReadRequest(IO.Stream connection) {
                         var reader = new Http.Reader(connection)
                         var line = reader.ReadLine(8192)
                         while (line != undefined && line.Length == 0) { line = reader.ReadLine(8192) }
@@ -854,7 +854,7 @@ namespace fire.Standard
                         return request
                     }
 
-                    Dispatch(request) {
+                    Dispatch(Http.Request request) {
                         var result = undefined
                         try {
                             var handler = this.fallback
@@ -877,7 +877,7 @@ namespace fire.Standard
                         return result
                     }
 
-                    Send(connection, response, bool head) {
+                    Send(IO.Stream connection, Http.Response response, bool head) {
                         var h = new Http.Headers()
                         for (var i = 0; i < response.headers.Count; i++) { h.Add(response.headers.names[i], response.headers.values[i]) }
                         h.Set("Content-Length", "" + response.body.length)

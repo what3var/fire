@@ -1,3 +1,6 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace fire.Standard
@@ -38,13 +41,46 @@ namespace fire.Standard
             {
                 foreach (int arity in arities)
                 {
-                    var parameters = string.Join(", ", System.Linq.Enumerable.Range(0, arity).Select(i => "a" + i));
-                    sb.Append($"    {name}({parameters}) {{ return Linq.From(this).{name}({parameters}) }}\n");
+                    // the forwarder takes the parameters (types included) of the method of `Query` it hands over to
+                    var declared = QueryParameters(name, arity);
+                    var arguments = string.Join(", ", declared.Select(ParameterName));
+                    sb.Append($"    {name}({string.Join(", ", declared)}) {{ return Linq.From(this).{name}({arguments}) }}\n");
                 }
             }
             sb.Append($"    ToList() {{ return {toListExpression} }}\n");
             sb.Append("}\n");
             return sb.ToString();
+        }
+
+        /// <summary>The declared parameters (`lambda<int> pred`, `any fallback`) of the method `name` of the class `Query` that takes `arity` of them.</summary>
+        private static List<string> QueryParameters(string name, int arity)
+        {
+            var match = System.Text.RegularExpressions.Regex.Matches(CoreSource, @"^\s+(?:[A-Za-z\[\]]+\s+)?" + name + @"\(([^)]*)\)\s*\{", System.Text.RegularExpressions.RegexOptions.Multiline)
+                .Select(m => SplitParameters(m.Groups[1].Value)).FirstOrDefault(p => p.Count == arity)
+                ?? throw new InvalidOperationException($"Linq: no method {name} with {arity} parameter(s) in Query");
+            return match;
+        }
+
+        /// <summary>Splits a parameter list at the commas outside of `<...>` (`lambda<int, int> fn, any seed`).</summary>
+        private static List<string> SplitParameters(string text)
+        {
+            var parts = new List<string>();
+            int depth = 0, start = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '<') depth++;
+                else if (text[i] == '>') depth--;
+                else if (text[i] == ',' && depth == 0) { parts.Add(text.Substring(start, i - start).Trim()); start = i + 1; }
+            }
+            if (text.Substring(start).Trim().Length > 0) parts.Add(text.Substring(start).Trim());
+            return parts;
+        }
+
+        /// <summary>The name of a declared parameter (`lambda<int> pred` -> `pred`, `pred` -> `pred`).</summary>
+        private static string ParameterName(string declared)
+        {
+            string withoutDefault = declared.Split('=')[0].Trim();
+            return withoutDefault.Substring(withoutDefault.LastIndexOfAny(new[] { ' ', '>' }) + 1);
         }
 
         private const string CoreSource = """
@@ -54,10 +90,10 @@ namespace fire.Standard
             }
 
             class LinqWhereEnumerator : IEnumerator {
-                class inner
-                class pred
-                class current
-                construct(class inner, class pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
+                IEnumerable inner
+                lambda<any> pred
+                any current
+                construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; inner.TakeTo(this) }
                 MoveNext() {
                     var p = this.pred
                     while (this.inner.MoveNext()) {
@@ -70,10 +106,10 @@ namespace fire.Standard
             }
 
             class LinqSelectEnumerator : IEnumerator {
-                class inner
-                class fn
-                class current
-                construct(class inner, class fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+                IEnumerable inner
+                lambda<any> fn
+                any current
+                construct(IEnumerable inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
                 MoveNext() {
                     if (!this.inner.MoveNext()) { return false }
                     var f = this.fn
@@ -84,11 +120,11 @@ namespace fire.Standard
             }
 
             class LinqSelectManyEnumerator : IEnumerator {
-                class inner
-                class fn
-                class sub
-                class current
-                construct(class inner, class fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
+                IEnumerable inner
+                lambda<any> fn
+                any sub
+                any current
+                construct(IEnumerable inner, lambda<any> fn) { this.inner = inner; this.fn = fn; inner.TakeTo(this) }
                 MoveNext() {
                     var f = this.fn
                     while (true) {
@@ -106,9 +142,9 @@ namespace fire.Standard
             }
 
             class LinqTakeEnumerator : IEnumerator {
-                class inner
+                IEnumerable inner
                 int left
-                construct(class inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
+                construct(IEnumerable inner, int n) { this.inner = inner; this.left = n; inner.TakeTo(this) }
                 MoveNext() {
                     if (this.left <= 0) { return false }
                     this.left = this.left - 1
@@ -118,9 +154,9 @@ namespace fire.Standard
             }
 
             class LinqSkipEnumerator : IEnumerator {
-                class inner
+                IEnumerable inner
                 int skip
-                construct(class inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
+                construct(IEnumerable inner, int n) { this.inner = inner; this.skip = n; inner.TakeTo(this) }
                 MoveNext() {
                     while (this.skip > 0) {
                         this.skip = this.skip - 1
@@ -132,11 +168,11 @@ namespace fire.Standard
             }
 
             class LinqTakeWhileEnumerator : IEnumerator {
-                class inner
-                class pred
-                class current
+                IEnumerable inner
+                lambda<any> pred
+                any current
                 bool done
-                construct(class inner, class pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
+                construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.done = false; inner.TakeTo(this) }
                 MoveNext() {
                     if (this.done) { return false }
                     var p = this.pred
@@ -151,10 +187,10 @@ namespace fire.Standard
             }
 
             class LinqSkipWhileEnumerator : IEnumerator {
-                class inner
-                class pred
+                IEnumerable inner
+                lambda<any> pred
                 bool started
-                construct(class inner, class pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
+                construct(IEnumerable inner, lambda<any> pred) { this.inner = inner; this.pred = pred; this.started = false; inner.TakeTo(this) }
                 MoveNext() {
                     if (this.started) { return this.inner.MoveNext() }
                     this.started = true
@@ -168,10 +204,10 @@ namespace fire.Standard
             }
 
             class LinqConcatEnumerator : IEnumerator {
-                class first
-                class second
+                IEnumerable first
+                IEnumerable second
                 bool inSecond
-                construct(class first, class second) { this.first = first; this.second = second; this.inSecond = false; first.TakeTo(this); second.TakeTo(this) }
+                construct(IEnumerable first, IEnumerable second) { this.first = first; this.second = second; this.inSecond = false; first.TakeTo(this); second.TakeTo(this) }
                 MoveNext() {
                     if (!this.inSecond) {
                         if (this.first.MoveNext()) { return true }
@@ -186,11 +222,11 @@ namespace fire.Standard
             }
 
             class LinqZipEnumerator : IEnumerator {
-                class a
-                class b
-                class fn
-                class current
-                construct(class a, class b, class fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
+                IEnumerable a
+                IEnumerable b
+                lambda<any, any> fn
+                any current
+                construct(IEnumerable a, IEnumerable b, lambda<any, any> fn) { this.a = a; this.b = b; this.fn = fn; a.TakeTo(this); b.TakeTo(this) }
                 MoveNext() {
                     if (!this.a.MoveNext()) { return false }
                     if (!this.b.MoveNext()) { return false }
@@ -218,11 +254,11 @@ namespace fire.Standard
 
             class Linq {
                 // An enumerator for everything iterable: objects with GetEnumerator() and arrays (which are also IEnumerable)
-                static Iter(class source) { return source.GetEnumerator() }
+                static Iter(IEnumerable source) { return source.GetEnumerator() }
 
                 // Reads the member chain `path` (names from outside to inside) from `obj` - via reflection, i.e. with its access rules;
                 // the last member must match `kind` ("field", "property" or "member")
-                static GetPath(class obj, class path, string kind) {
+                static GetPath(any obj, any path, string kind) {
                     var o = obj
                     for (var i = 0; i < path.length; i = i + 1) {
                         if (i == path.length - 1) {
@@ -234,7 +270,7 @@ namespace fire.Standard
                     return o
                 }
 
-                static From(class source) {
+                static From(IEnumerable source) {
                     var s = source
                     var query = new Query(() => Linq.Iter(s))
                     try source.TakeTo(query)   // `Linq.From(new Bag())`: a fresh argument belongs to this call - the query keeps it
@@ -243,7 +279,7 @@ namespace fire.Standard
 
                 // A query over a collection that was built for it (the result of an eager operator): the query owns the collection -
                 // it reads it lazily, long after the function that built it has returned.
-                static FromOwned(class source) {
+                static FromOwned(IEnumerable source) {
                     var s = source
                     var query = new Query(() => Linq.Iter(s))
                     source.TakeTo(query)
@@ -254,14 +290,14 @@ namespace fire.Standard
                     return new Query(() => new LinqRangeEnumerator(start, count))
                 }
 
-                static Repeat(class value, int count) {
+                static Repeat(any value, int count) {
                     var items = new class[count]
                     for (var i = 0; i < count; i = i + 1) { items[i] = value }
                     return Linq.FromOwned(items)
                 }
 
                 // Stable sorting (merge sort): returns the `items` in the order of the `keys` (arrays of equal length)
-                static Sort(class items, class keys, bool desc) {
+                static Sort(any items, any keys, bool desc) {
                     var n = items.length
                     var idx = new int[n]
                     var tmp = new int[n]
@@ -297,10 +333,10 @@ namespace fire.Standard
             }
 
             class Query : IEnumerable {
-                class factory
+                lambda factory
 
                 // `factory` is a lambda without parameters that supplies a fresh enumerator on every pass
-                construct(class factory) { this.factory = factory }
+                construct(lambda factory) { this.factory = factory }
 
                 GetEnumerator() {
                     var f = this.factory
@@ -360,11 +396,11 @@ namespace fire.Standard
                     var f = this.factory
                     return new Query(() => new LinqSkipWhileEnumerator(f(), pred))
                 }
-                Concat(class other) {
+                Concat(IEnumerable other) {
                     var f = this.factory
                     return new Query(() => new LinqConcatEnumerator(f(), Linq.Iter(other)))
                 }
-                Zip(class other, lambda<int, int> fn) {
+                Zip(IEnumerable other, lambda<int, int> fn) {
                     var f = this.factory
                     return new Query(() => new LinqZipEnumerator(f(), Linq.Iter(other), fn))
                 }
@@ -372,7 +408,7 @@ namespace fire.Standard
                 // ---- eager operators (work on a copy, return a Query again)
                 OrderBy(lambda<int> key) { return this.Ordered(key, false) }
                 OrderByDescending(lambda<int> key) { return this.Ordered(key, true) }
-                Ordered(class key, bool desc) {
+                Ordered(any key, bool desc) {
                     var items = this.ToArray()
                     var keys = new class[items.length]
                     for (var i = 0; i < items.length; i = i + 1) { keys[i] = key(items[i]) }
@@ -415,11 +451,11 @@ namespace fire.Standard
                     foreach (x in this) { if (pred(x)) { return x } }
                     throw new LinqEmptyException("The sequence contains no matching element")
                 }
-                FirstOrDefault(class fallback) {
+                FirstOrDefault(any fallback) {
                     foreach (x in this) { return x }
                     return fallback
                 }
-                FirstOrDefault(lambda<int> pred, class fallback) {
+                FirstOrDefault(lambda<int> pred, any fallback) {
                     foreach (x in this) { if (pred(x)) { return x } }
                     return fallback
                 }
@@ -493,12 +529,12 @@ namespace fire.Standard
                     if (n == 0) { throw new LinqEmptyException("The sequence contains no element") }
                     return s / n
                 }
-                Aggregate(class seed, lambda<int, int> fn) {
+                Aggregate(any seed, lambda<int, int> fn) {
                     var acc = seed
                     foreach (x in this) { acc = fn(acc, x) }
                     return acc
                 }
-                Contains(class value) {
+                Contains(any value) {
                     foreach (x in this) { if (x == value) { return true } }
                     return false
                 }

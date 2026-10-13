@@ -78,7 +78,7 @@ namespace fire.Standard
                     bool closed
 
                     // `bytes`: the file; `rate` the sample rate of the sound it is mixed to; `offset` and `length` select part of the buffer.
-                    construct(bytes, int rate = 44100, int offset = 0, int length = -1) {
+                    construct(byte bytes[], int rate = 44100, int offset = 0, int length = -1) {
                         this.closed = false
                         this.handle = -1
                         if (length < 0) { length = bytes.length - offset }
@@ -86,7 +86,7 @@ namespace fire.Standard
                     }
 
                     // Reads a module from the bytes of a file.
-                    static Load(bytes, int rate = 44100) { return new Song(bytes, rate) }
+                    static Load(byte bytes[], int rate = 44100) { return new Song(bytes, rate) }
 
                     destruct() { try { this.Close() } catch (TrackerException e) { } }
 
@@ -233,7 +233,7 @@ namespace fire.Standard
 
                     // Mixes `frames` frames into the buffer from `offset` on (16 bit samples, little endian: 2 bytes per frame and channel; `channels` 2 is stereo, 1 mono). Returns how many frames it mixed:
                     // fewer than asked only at the end of the song, 0 when it is over.
-                    int Render(buffer, int offset, int frames, int channels = 2) {
+                    int Render(byte buffer[], int offset, int frames, int channels = 2) {
                         this.Check()
                         var n = __TrackerRender(this.handle, buffer, offset, frames, channels)
                         if (n < 0) { Tracker.Errors.Throw() }
@@ -269,16 +269,16 @@ namespace fire.Standard
 
                 // Plays a song on an audio output. `Pump()` keeps the output fed without waiting - call it from the loop of the program; `Play()` does that until the song is over.
                 class Player {
-                    var song
-                    var output
-                    var buffer
+                    Tracker.Song song
+                    Audio.Output output
+                    byte buffer[]
                     int filled
                     int sent
                     bool ended
                     bool stopped
                     int channels
 
-                    construct(song, output) {
+                    construct(Tracker.Song song, Audio.Output output) {
                         if (output.Rate != song.Rate) {
                             throw new TrackerException("The output plays " + output.Rate + " Hz, the song is mixed to " + song.Rate + ": open the output with Tracker.Player.Open(song).", 1)
                         }
@@ -293,14 +293,14 @@ namespace fire.Standard
                     }
 
                     // An output on `device` that fits the song (its rate, stereo), and the player on it.
-                    static Open(song, device = "default") {
+                    static Open(Tracker.Song song, string device = "default") {
                         var output = new Audio.Output(device, song.Rate, 2)
                         return new Player(song, output)
                     }
 
-                    Output { get { return this.output } }
+                    Audio.Output Output { get { return this.output } }
                     // The song that is played.
-                    Track { get { return this.song } }
+                    Tracker.Song Track { get { return this.song } }
                     bool Ended { get { return this.ended } }
 
                     // Mixes and hands over as much as the output takes at the moment, without waiting. Returns true while there is more to play (or to be heard).

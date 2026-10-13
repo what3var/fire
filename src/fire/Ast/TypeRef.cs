@@ -65,6 +65,9 @@ namespace fire.Ast
         [MemoryPackIgnore]
         public bool IsInferred => BaseName == InferredMarker;
 
+        /// <summary>The unit a declaration demands (`: mm`); null when it demands none. `: any` says explicitly that every unit is accepted (checked where the value is used), which demands nothing.</summary>
+        [MemoryPack.MemoryPackIgnore] public string? RequiredUnit => Unit is null or "any" ? null : Unit;
+
         [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;
 

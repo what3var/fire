@@ -76,7 +76,7 @@ namespace fire.Standard
                 }
 
                 class Clock {
-                    static int Millis(limit) {
+                    static int Millis(any limit) {
                         if (limit == undefined) { return -1 }
                         var span = TimeSpan.Of(limit)
                         var ms = span.Ticks / 10000
@@ -117,7 +117,7 @@ namespace fire.Standard
                     string chip
                     int line
                     int direction
-                    var onEdge
+                    lambda<any, any> onEdge
 
                     // The line `line` of the default chip (Board.DefaultChip()).
                     construct(int line) {
@@ -213,7 +213,7 @@ namespace fire.Standard
                     }
 
                     // Waits for the next edge up to the time limit (a TimeSpan, a time value like 500ms or milliseconds; undefined: for ever): the edge, or Gpio.Edge.None when the time ran out.
-                    int WaitEdge(timeout = undefined) {
+                    int WaitEdge(any timeout = undefined) {
                         var limit = Gpio.Clock.Millis(timeout)
                         var deadline = -1
                         if (limit >= 0) { deadline = Gpio.Clock.Now() + limit * 10000 }

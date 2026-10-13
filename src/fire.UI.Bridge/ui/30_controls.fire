@@ -8,14 +8,14 @@ namespace UI {
             this.text = text
         }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             this.cw = this.TextWidth(root, this.text)
             this.ch = this.TextHeight(root)
         }
 
         string StyleKey() { return "Label" }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.brush
@@ -40,7 +40,7 @@ namespace UI {
         string StyleKey() { return "Button" }
 
         // Without a fixed size (width/height = -1) as big as the text plus margin
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             this.cw = this.TextWidth(root, this.text) + 24
             this.ch = this.TextHeight(root) + 12
         }
@@ -58,7 +58,7 @@ namespace UI {
             if (callback != undefined) { callback() }
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var theme = root.theme
@@ -81,17 +81,17 @@ namespace UI {
             this.DrawString(root, tx, ty, this.text, color)
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button == 1) { this.pressed = true }
         }
 
-        MouseUp(root, int button, int px, int py) {
+        MouseUp(Root root, int button, int px, int py) {
             var was = this.pressed
             this.pressed = false
             if (was && button == 1 && this.Contains(px, py)) { this.Click() }
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             if (key == UI.Keys.Enter() || key == UI.Keys.Space()) { this.Click() }
         }
     }
@@ -126,12 +126,12 @@ namespace UI {
         }
 
         // the box, 6 pixels of spacing, the text
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             this.cw = 14 + 6 + this.TextWidth(root, this.text)
             this.ch = UI.M.Max(this.TextHeight(root), 14)
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             var box = 14
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
@@ -158,17 +158,17 @@ namespace UI {
             this.DrawString(root, ax + box + 6, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.text, color)
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button == 1) { this.pressed = true }
         }
 
-        MouseUp(root, int button, int px, int py) {
+        MouseUp(Root root, int button, int px, int py) {
             var was = this.pressed
             this.pressed = false
             if (was && button == 1 && this.Contains(px, py)) { this.Toggle() }
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             if (key == UI.Keys.Space() || key == UI.Keys.Enter()) { this.Toggle() }
         }
     }
@@ -219,16 +219,16 @@ namespace UI {
         }
 
         // The width of the text between two character positions (`start` and `count` characters) in the font of the field.
-        int Span(root, int start, int count) {
+        int Span(Root root, int start, int count) {
             if (count <= 0) { return 0 }
             return this.TextWidth(root, this.text.Substring(start, count))
         }
 
         // Is the field in the font of the renderer (monospaced, so that columns can be counted instead of measured)?
-        bool Plain(root) { return this.FontName(root) == "" }
+        bool Plain(Root root) { return this.FontName(root) == "" }
 
         // How many characters, from `scroll` on, fit into the field?
-        int Fit(root) {
+        int Fit(Root root) {
             var room = this.actualWidth - 8
             if (this.Plain(root)) { return room / root.cw }
             var count = 0
@@ -236,7 +236,7 @@ namespace UI {
             return count
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = theme.inputBack
@@ -276,7 +276,7 @@ namespace UI {
             }
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             // round to the next character boundary (monospaced: add half a cell width, then divide; otherwise measure the text up to each boundary)
             var column = 0
@@ -306,7 +306,7 @@ namespace UI {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             var length = this.text.Length
             if (key == UI.Keys.Left()) {
                 if (this.caret > 0) { this.caret = this.caret - 1 }
@@ -334,7 +334,7 @@ namespace UI {
             }
         }
 
-        TextInput(root, string value) {
+        TextInput(Root root, string value) {
             var length = this.text.Length
             if (this.maxLength > 0 && length + value.Length > this.maxLength) { return }
             this.text = this.text.Substring(0, this.caret) + value + this.text.Substring(this.caret, length - this.caret)

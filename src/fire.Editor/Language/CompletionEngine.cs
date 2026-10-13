@@ -51,7 +51,7 @@ namespace fire.Editor
             "true", "false", "undefined", "and", "or",
         };
 
-        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte" };
+        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "any" };
 
         public static string? GetCurrentKeyword(string source, int offset)
         {

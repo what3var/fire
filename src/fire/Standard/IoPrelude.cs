@@ -116,11 +116,11 @@ namespace fire.Standard
                         set { throw new IOException("The length of this stream cannot be changed.", 8) }
                     }
 
-                    int Read(buffer, offset, count) {
+                    int Read(byte buffer[], int offset, int count) {
                         throw new IOException("This stream is not readable.", 8)
                     }
 
-                    int Write(buffer, offset, count) {
+                    int Write(byte buffer[], int offset, int count) {
                         throw new IOException("This stream is not writable.", 8)
                     }
 
@@ -131,8 +131,8 @@ namespace fire.Standard
                     Flush() { }
                     Close() { }
 
-                    int Read(buffer) { return this.Read(buffer, 0, buffer.length) }
-                    int Write(buffer) { return this.Write(buffer, 0, buffer.length) }
+                    int Read(byte buffer[]) { return this.Read(buffer, 0, buffer.length) }
+                    int Write(byte buffer[]) { return this.Write(buffer, 0, buffer.length) }
 
                     // A byte (0..255), or -1 at the end of the stream.
                     int ReadByte() {
@@ -173,7 +173,7 @@ namespace fire.Standard
                     }
 
                     // Copies everything up to the end of this stream into `target`.
-                    CopyTo(target, int bufferSize = 4096) {
+                    CopyTo(IO.Stream target, int bufferSize = 4096) {
                         var chunk = new byte[bufferSize]
                         while (true) {
                             var n = this.Read(chunk, 0, bufferSize)
@@ -254,14 +254,14 @@ namespace fire.Standard
                         return p
                     }
 
-                    int Read(buffer, offset, count) {
+                    int Read(byte buffer[], int offset, int count) {
                         this.Check()
                         var n = __IORead(this.handle, buffer, offset, count)
                         if (n < 0) { IO.IOErrors.Throw() }
                         return n
                     }
 
-                    int Write(buffer, offset, count) {
+                    int Write(byte buffer[], int offset, int count) {
                         this.Check()
                         var n = __IOWrite(this.handle, buffer, offset, count)
                         if (n < 0) { IO.IOErrors.Throw() }
@@ -315,7 +315,7 @@ namespace fire.Standard
                         this.handle = IO.IOErrors.Handle(__IOMemNew())
                     }
 
-                    construct(buffer) : base(-1) {
+                    construct(byte buffer[]) : base(-1) {
                         this.handle = IO.IOErrors.Handle(__IOMemFromBuffer(buffer))
                     }
 
@@ -335,7 +335,7 @@ namespace fire.Standard
 
                     // A byte-order mark at the start is removed, invalid sequences
                     // become U+FFFD. Without count: up to the end of the buffer.
-                    static string GetString(buffer, int offset = 0, int count = -1) {
+                    static string GetString(byte buffer[], int offset = 0, int count = -1) {
                         if (count == -1) { count = buffer.length - offset }
                         var text = __IOUtf8Decode(buffer, offset, count)
                         if (text == undefined) { IO.IOErrors.Throw() }
@@ -381,7 +381,7 @@ namespace fire.Standard
 
                     static bool IsRooted(string path) { return __IOPathIsRooted(path) }
 
-                    static string Text(value) {
+                    static string Text(any value) {
                         if (value == undefined) { IO.IOErrors.Throw() }
                         return value
                     }
@@ -437,13 +437,13 @@ namespace fire.Standard
                     }
 
                     // Creates the file or overwrites it.
-                    static WriteAllBytes(string path, buffer) {
+                    static WriteAllBytes(string path, byte buffer[]) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
                         stream.Write(buffer)
                         stream.Close()
                     }
 
-                    static AppendAllBytes(string path, buffer) {
+                    static AppendAllBytes(string path, byte buffer[]) {
                         var stream = new IO.FileStream(path, IO.FileMode.Append)
                         stream.Write(buffer)
                         stream.Close()
@@ -467,7 +467,7 @@ namespace fire.Standard
                     }
 
                     // Each line of a List (or an array), each terminated with "\n".
-                    static WriteAllLines(string path, lines) {
+                    static WriteAllLines(string path, any lines) {
                         var stream = new IO.FileStream(path, IO.FileMode.Create)
                         if (lines is of List) {
                             foreach (line in lines) {
@@ -527,16 +527,16 @@ namespace fire.Standard
                 //
                 // ReadLine() returns undefined at the end of the stream.
                 class TextReader {
-                    var source
+                    IO.Stream source
                     bool ownsSource
-                    var chunk
+                    byte chunk[]
                     int pos
                     int len
                     bool eof
                     bool closed
-                    var pending
+                    IO.MemoryStream pending
 
-                    construct(source, bool leaveOpen = false) {
+                    construct(any source, bool leaveOpen = false) {
                         // Occupy all fields first: if opening below fails (file not
                         // found), destruct() cleans up an otherwise half-built object.
                         this.source = undefined
@@ -658,10 +658,10 @@ namespace fire.Standard
                 }
 
                 class LineEnumerator {
-                    var reader
-                    var line
+                    IO.TextReader reader
+                    string line
 
-                    construct(reader) {
+                    construct(IO.TextReader reader) {
                         this.reader = reader
                         this.line = undefined
                     }
@@ -680,11 +680,11 @@ namespace fire.Standard
                 // writes to an existing stream and CLOSES it too, unless
                 // leaveOpen is true. Lines end with "\n".
                 class TextWriter {
-                    var target
+                    IO.Stream target
                     bool ownsTarget
                     bool closed
 
-                    construct(dest, bool flag = false) {
+                    construct(any dest, bool flag = false) {
                         // Occupy all fields first (see TextReader).
                         this.target = undefined
                         this.ownsTarget = false
@@ -710,13 +710,13 @@ namespace fire.Standard
                     }
 
                     // Writes the value as text (numbers etc. are converted).
-                    Write(value) {
+                    Write(any value) {
                         this.Check()
                         this.target.Write(IO.Utf8.GetBytes("" + value))
                     }
 
                     // Like Write, additionally appends a line break.
-                    WriteLine(value = "") {
+                    WriteLine(any value = "") {
                         this.Check()
                         this.target.Write(IO.Utf8.GetBytes("" + value + "\n"))
                     }
@@ -763,20 +763,20 @@ namespace fire.Standard
                     static Err() { return new IO.StdStream(2) }
 
                     // Writes the value as text to standard output.
-                    static Write(value) {
+                    static Write(any value) {
                         if (!__IOStdWrite(1, "" + value)) { IO.IOErrors.Throw() }
                     }
 
-                    static WriteLine(value = "") {
+                    static WriteLine(any value = "") {
                         if (!__IOStdWrite(1, "" + value + "\n")) { IO.IOErrors.Throw() }
                     }
 
                     // The same to standard error.
-                    static ErrorWrite(value) {
+                    static ErrorWrite(any value) {
                         if (!__IOStdWrite(2, "" + value)) { IO.IOErrors.Throw() }
                     }
 
-                    static ErrorLine(value = "") {
+                    static ErrorLine(any value = "") {
                         if (!__IOStdWrite(2, "" + value + "\n")) { IO.IOErrors.Throw() }
                     }
 

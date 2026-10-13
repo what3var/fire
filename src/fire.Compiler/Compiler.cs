@@ -483,14 +483,14 @@ namespace fire.Compiler
                         meta.Members.Add(new MemberMeta
                         {
                             Name = f.Name, Kind = "field", TypeName = TypeText(f.Type, f.ArrayRanks.Count), Access = AccessText(f.Access),
-                            IsStatic = f.IsStatic, IsReadonly = f.IsReadonly, Unit = f.Type?.Unit ?? "",
+                            IsStatic = f.IsStatic, IsReadonly = f.IsReadonly, Unit = f.Type?.RequiredUnit ?? "",
                         });
                         break;
                     case PropertyDecl pd:
                         meta.Members.Add(new MemberMeta
                         {
                             Name = pd.Name, Kind = "property", TypeName = TypeText(pd.Type), Access = AccessText(pd.Access),
-                            IsStatic = pd.IsStatic, CanRead = pd.Getter != null, CanWrite = pd.Setter != null, Unit = pd.Type?.Unit ?? "",
+                            IsStatic = pd.IsStatic, CanRead = pd.Getter != null, CanWrite = pd.Setter != null, Unit = pd.Type?.RequiredUnit ?? "",
                         });
                         break;
                     case MethodDecl md:
@@ -603,7 +603,7 @@ namespace fire.Compiler
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
                                 AccessModifier = fd.Access,
-                                RequiredUnit = fd.Type?.Unit,
+                                RequiredUnit = fd.Type?.RequiredUnit,
                                 IsStatic = fd.IsStatic,
                             };
                             // SPEC "Static members": static fields end up
@@ -820,7 +820,7 @@ namespace fire.Compiler
             // EmitCheckUnitIfNeeded).
             for (int i = 0; i < parms.Count; i++)
             {
-                string? unit = parms[i].Type?.Unit;
+                string? unit = parms[i].Type?.RequiredUnit;
                 if (unit == null) continue;
                 inner._chunk.EmitOp(OpCode.LoadLocal);
                 inner._chunk.EmitU16(0);
@@ -1142,7 +1142,7 @@ namespace fire.Compiler
                     // with every LATER assignment to the same slot, see
                     // CompileAssign, otherwise one could bypass the check through an
                     // "unsuitable" first assignment).
-                    EmitCheckUnitIfNeeded(this, vd.Type?.Unit);
+                    EmitCheckUnitIfNeeded(this, vd.Type?.RequiredUnit);
 
                     _chunk.EmitOp(OpCode.DeclareLocal);
                     break;

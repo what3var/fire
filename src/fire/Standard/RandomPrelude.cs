@@ -124,13 +124,13 @@ namespace fire.Standard
                 NextBool() { return (this.NextUInt32() & 1) == 1 }
 
                 // A random element of the list (undefined if it is empty).
-                Pick(list) {
+                Pick(any list) {
                     if (list.count == 0) { return undefined }
                     return list[this.Next(list.count)]
                 }
 
                 // Mixes the elements of the list in place (Fisher-Yates) and returns it.
-                Shuffle(list) {
+                Shuffle(any list) {
                     var i = list.count - 1
                     while (i > 0) {
                         var j = this.Next(i + 1)

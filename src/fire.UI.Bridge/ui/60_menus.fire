@@ -2,7 +2,7 @@ namespace UI {
     // A row of a menu: caption, action (lambda without parameters), submenu (Add), separator, check mark, shortcut as text.
     class MenuItem {
         string header = ""
-        var onClick
+        lambda onClick
         List items
         bool separator = false
         // With checkable a click toggles the check mark (isChecked) before onClick runs.
@@ -12,7 +12,7 @@ namespace UI {
         // Only a text on the right of the row (for example "Ctrl+S"), the key assignment itself is the program's business
         string shortcut = ""
 
-        construct(string header = "", onClick = undefined) {
+        construct(string header = "", any onClick = undefined) {
             this.header = header
             this.onClick = onClick
             this.items = new List()
@@ -26,7 +26,7 @@ namespace UI {
         }
 
         // Appends a submenu row; it belongs to this row.
-        Add(item) {
+        Add(any item) {
             item.TakeTo(this)
             this.items.Add(item)
             return item
@@ -50,21 +50,21 @@ namespace UI {
         int subIndex = -1
         MenuPopup parentMenu
 
-        construct(entries) : base(0, 0, -1, -1) {
+        construct(List entries) : base(0, 0, -1, -1) {
             this.entries = entries
             this.grabsKeys = true
         }
 
         string StyleKey() { return "MenuPopup" }
 
-        int RowHeight(root) { return this.TextHeight(root) + 8 }
+        int RowHeight(Root root) { return this.TextHeight(root) + 8 }
 
-        int HeightOf(root, item) {
+        int HeightOf(Root root, any item) {
             if (item.separator) { return 7 }
             return this.RowHeight(root)
         }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 4
             for (var i = 0; i < this.entries.count; i = i + 1) {
@@ -81,7 +81,7 @@ namespace UI {
         }
 
         // The index of the row at the screen height `py`, or -1.
-        int RowAt(root, int py) {
+        int RowAt(Root root, int py) {
             var y = this.ay + 2
             for (var i = 0; i < this.entries.count; i = i + 1) {
                 var h = this.HeightOf(root, this.entries[i])
@@ -91,13 +91,13 @@ namespace UI {
             return -1
         }
 
-        int RowTop(root, int index) {
+        int RowTop(Root root, int index) {
             var y = this.ay + 2
             for (var i = 0; i < index; i = i + 1) { y = y + this.HeightOf(root, this.entries[i]) }
             return y
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -146,7 +146,7 @@ namespace UI {
         }
 
         // Close the submenu if it is open.
-        CloseSub(root) {
+        CloseSub(Root root) {
             if (this.sub != undefined) {
                 var inner = this.sub
                 this.sub = undefined
@@ -157,7 +157,7 @@ namespace UI {
             }
         }
 
-        OpenSub(root, int index) {
+        OpenSub(Root root, int index) {
             var item = this.entries[index]
             if (this.subIndex == index && this.sub != undefined) { return }
             this.CloseSub(root)
@@ -170,7 +170,7 @@ namespace UI {
         }
 
         // Selects the row: a submenu opens, otherwise the action runs and everything closes.
-        Choose(root, int index) {
+        Choose(Root root, int index) {
             var item = this.entries[index]
             if (item.separator || !item.enabled) { return }
             if (item.HasSubmenu()) {
@@ -181,7 +181,7 @@ namespace UI {
             item.Activate()
         }
 
-        Hover(root, int px, int py) {
+        Hover(Root root, int px, int py) {
             var index = this.RowAt(root, py)
             if (index < 0 || this.entries[index].separator) { return }
             this.hot = index
@@ -189,19 +189,19 @@ namespace UI {
         }
 
         // A click outside of all menus closes everything; the menus of a submenu are closed by the root one after the other anyway.
-        bool PopupOutside(root, int px, int py) {
+        bool PopupOutside(Root root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.RowAt(root, py)
             if (index >= 0) { this.Choose(root, index) }
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             // the keys go to the topmost menu
             if (key == UI.Keys.Escape()) {
                 if (this.parentMenu != undefined) {
@@ -265,15 +265,15 @@ namespace UI {
         string StyleKey() { return "MenuBar" }
 
         // Appends a menu of the top level (a MenuItem with submenu rows); it belongs to the bar.
-        Add(item) {
+        Add(any item) {
             item.TakeTo(this)
             this.menus.Add(item)
             return item
         }
 
-        int HeaderWidth(root, item) { return this.TextWidth(root, item.header) + 16 }
+        int HeaderWidth(Root root, any item) { return this.TextWidth(root, item.header) + 16 }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             var w = 0
             for (var i = 0; i < this.menus.count; i = i + 1) { w = w + this.HeaderWidth(root, this.menus[i]) }
             this.cw = w
@@ -281,7 +281,7 @@ namespace UI {
         }
 
         // The index of the title at the screen position px, or -1.
-        int IndexAt(root, int px) {
+        int IndexAt(Root root, int px) {
             var x = this.ax
             for (var i = 0; i < this.menus.count; i = i + 1) {
                 var w = this.HeaderWidth(root, this.menus[i])
@@ -291,14 +291,14 @@ namespace UI {
             return -1
         }
 
-        int HeaderLeft(root, int index) {
+        int HeaderLeft(Root root, int index) {
             var x = this.ax
             for (var i = 0; i < index; i = i + 1) { x = x + this.HeaderWidth(root, this.menus[i]) }
             return x
         }
 
         // A menu that has closed is no longer open.
-        Poll(root) {
+        Poll(Root root) {
             base.Poll(root)
             if (this.open != undefined && !root.IsPopup(this.open)) {
                 this.open = undefined
@@ -306,7 +306,7 @@ namespace UI {
             }
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var back = this.background
@@ -330,7 +330,7 @@ namespace UI {
             }
         }
 
-        Open(root, int index) {
+        Open(Root root, int index) {
             if (this.open != undefined) {
                 root.CloseAllPopups()
                 this.open = undefined
@@ -345,14 +345,14 @@ namespace UI {
             this.open = root.ShowMenu(item.items, this.HeaderLeft(root, index), this.ay + this.actualHeight, this)
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.IndexAt(root, px)
             if (index >= 0) { this.Open(root, index) }
         }
 
         // With a menu open, the pointer over another title opens its menu.
-        Hover(root, int px, int py) {
+        Hover(Root root, int px, int py) {
             this.hotIndex = this.IndexAt(root, px)
             if (this.open == undefined) { return }
             var index = this.hotIndex

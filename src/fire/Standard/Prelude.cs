@@ -67,6 +67,11 @@ namespace fire.Standard
                 }
             }
 
+            // An integer division or modulo by zero (floats give infinity or NaN instead).
+            class DivideByZeroException : Exception {
+                construct(string message) { this.message = message }
+            }
+
             class UnitMismatchException : Exception {
                 string expectedUnit
                 string actualUnit
@@ -146,11 +151,11 @@ namespace fire.Standard
             }
 
             class ListEnumerator : IEnumerator {
-                class items
+                any items
                 int count
                 int index
 
-                construct(class items, int count) {
+                construct(any items, int count) {
                     this.items = items
                     this.count = count
                     this.index = -1
@@ -168,11 +173,11 @@ namespace fire.Standard
 
             // The enumerator of a List: reads through the list, so it stays valid when the list grows (its backing array is replaced).
             class ListIter : IEnumerator {
-                class list
+                any list
                 int count
                 int index
 
-                construct(class list, int count) {
+                construct(any list, int count) {
                     this.list = list
                     this.count = count
                     this.index = -1
@@ -189,7 +194,7 @@ namespace fire.Standard
             }
 
             class List : IEnumerable {
-                class items
+                any items
                 int count
 
                 construct() {
@@ -206,7 +211,7 @@ namespace fire.Standard
                 // Add() calls can keep growing quite normally, without
                 // being bound to the exact size of the array originally
                 // passed in.
-                construct(class initial) {
+                construct(any initial) {
                     this.items = new class[8]
                     this.count = 0
                     for (var i = 0; i < initial.length; i = i + 1) {
@@ -214,7 +219,7 @@ namespace fire.Standard
                     }
                 }
 
-                Add(class value) {
+                Add(any value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -228,7 +233,7 @@ namespace fire.Standard
                     return this.items[index]
                 }
 
-                operator[](int index, class value) {
+                operator[](int index, any value) {
                     if (value is of class)
                         try value.TakeTo(this)
                     this.items[index] = value
@@ -246,7 +251,7 @@ namespace fire.Standard
                 }
 
                 // puts `value` in at `index`; the elements from there on move down
-                Insert(int index, class value) {
+                Insert(int index, any value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -262,7 +267,7 @@ namespace fire.Standard
                 }
 
                 // the index of `value` (the same object), -1 if it is not in the list
-                int IndexOf(class value) {
+                int IndexOf(any value) {
                     var i = 0
                     while (i < this.count) {
                         if (this.items[i] == value) {
@@ -274,7 +279,7 @@ namespace fire.Standard
                 }
 
                 // removes `value` (the first one); false if it is not in the list
-                bool Remove(class value) {
+                bool Remove(any value) {
                     var at = this.IndexOf(value)
                     if (at < 0) {
                         return false

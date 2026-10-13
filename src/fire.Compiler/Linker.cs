@@ -33,6 +33,9 @@ namespace fire.Compiler
         /// <summary>The mode the command line asked for (`--types lax|strict`); used by every linker that has no mode of its own set.</summary>
         public static TypeCheckMode? ProcessDefaultTypeChecking { get; set; }
 
+        /// <summary>Also check the preludes and libraries (not only the code of the user): used by the tests that keep the declared types of the standard library honest (`FIRE_TYPECHECK_ALL=1` does it for a build).</summary>
+        public bool TypeCheckLibraries { get; set; } = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_ALL") == "1";
+
         private TypeCheckMode EffectiveTypeChecking => TypeChecking ?? ProcessDefaultTypeChecking
             ?? (string.Equals(Plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax);
 
@@ -427,7 +430,7 @@ namespace fire.Compiler
             var program = Parser.ParseMultiple(processedSources);
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             var resolveResult = Resolver.Resolve(program, natives.Names);
-            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, firstUserSource);
+            TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
 

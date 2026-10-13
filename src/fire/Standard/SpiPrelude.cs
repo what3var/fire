@@ -98,7 +98,7 @@ namespace fire.Standard
 
                     // `device`: a name ("spidev0.0", "spi-2", "spi-2.5" - the number after the dot is the chip select pin on an ESP32, "sim") or the end of a Linux name ("0.0" is "spidev0.0"); `mode` 0..3 is the clock
                     // polarity and phase, `speed` the clock in Hz, `lsbFirst` the bit order.
-                    construct(device, int mode = 0, int speed = 1000000, bool lsbFirst = false) {
+                    construct(string device, int mode = 0, int speed = 1000000, bool lsbFirst = false) {
                         this.handle = -1
                         this.closed = false
                         this.mode = mode
@@ -148,7 +148,7 @@ namespace fire.Standard
                     }
 
                     // Sends the bytes and receives as many at the same time; returns the received bytes (a byte[]).
-                    Transfer(data) {
+                    Transfer(byte data[]) {
                         this.Check()
                         var back = new byte[data.length]
                         if (__SpiTransfer(this.handle, data, 0, back, 0, data.length) < 0) { Spi.Errors.Throw() }
@@ -156,13 +156,13 @@ namespace fire.Standard
                     }
 
                     // The general form: `count` bytes from `out` (from `outOffset`) are sent, the bytes that come in go to `into` (from `inOffset`).
-                    TransferInto(out, int outOffset, into, int inOffset, int count) {
+                    TransferInto(byte out[], int outOffset, byte into[], int inOffset, int count) {
                         this.Check()
                         if (__SpiTransfer(this.handle, out, outOffset, into, inOffset, count) < 0) { Spi.Errors.Throw() }
                     }
 
                     // Sends `count` bytes of the buffer (all from `offset` on without a count); what comes in is dropped.
-                    Write(data, int offset = 0, int count = -1) {
+                    Write(byte data[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = data.length - offset }
                         if (__SpiWrite(this.handle, data, offset, count) < 0) { Spi.Errors.Throw() }
@@ -177,7 +177,7 @@ namespace fire.Standard
                     }
 
                     // Sends the bytes, then receives `inCount` bytes in the same transfer (the chip select stays low); returns the received ones.
-                    WriteRead(data, int inCount) {
+                    WriteRead(byte data[], int inCount) {
                         this.Check()
                         var total = data.length + inCount
                         var out = new byte[total]
@@ -199,7 +199,7 @@ namespace fire.Standard
                 // The simulated device "sim" from the outside (for tests, and to try a program without the hardware).
                 class Sim {
                     // The device answers with these bytes (one per byte sent, starting with the first - the answer to a command byte comes in the bytes after it, so queue a leading 0 -, then zeros) instead of looping back what was sent.
-                    static Reply(data) {
+                    static Reply(byte data[]) {
                         if (!__SpiSimReply(data, 0, data.length)) { Spi.Errors.Throw() }
                     }
 

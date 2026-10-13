@@ -93,11 +93,11 @@ namespace fire.Standard
                 class Sound {
                     int rate
                     int channels
-                    var data
+                    byte data[]
                     int offset
                     int length
 
-                    construct(int rate, int channels, data, int offset = 0, int length = -1) {
+                    construct(int rate, int channels, byte data[], int offset = 0, int length = -1) {
                         if (rate < 1000 || rate > 192000) { throw new AudioException("The rate must be between 1000 and 192000 Hz.", 1) }
                         if (channels < 1 || channels > 2) { throw new AudioException("A sound has one (mono) or two (stereo) channels.", 1) }
                         if (length < 0) { length = data.length - offset }
@@ -112,7 +112,7 @@ namespace fire.Standard
                     int Rate { get { return this.rate } }
                     int Channels { get { return this.channels } }
                     // The samples (a buffer of bytes), starting at Offset.
-                    Data { get { return this.data } }
+                    byte[] Data { get { return this.data } }
                     int Offset { get { return this.offset } }
                     // The number of bytes of the sound.
                     int Length { get { return this.length } }
@@ -122,12 +122,12 @@ namespace fire.Standard
                     int Milliseconds { get { return this.Frames * 1000 / this.rate } }
 
                     // An output that fits the sound (its rate and channels) on the device.
-                    Open(device = "default") {
+                    Open(string device = "default") {
                         return new Output(device, this.rate, this.channels)
                     }
 
                     // A generated tone: the frequency in Hz (a float is fine), the length in milliseconds, the wave and the volume in percent.
-                    static Tone(frequency, int milliseconds, int wave = 0, int volume = 100, int rate = 22050) {
+                    static Tone(float frequency, int milliseconds, int wave = 0, int volume = 100, int rate = 22050) {
                         var frames = rate * milliseconds / 1000
                         var data = new byte[frames * 2]
                         if (__AudioWave(data, 0, frames, wave, frequency, volume, rate, 1, 0) < 0) { Audio.Errors.Throw() }
@@ -135,7 +135,7 @@ namespace fire.Standard
                     }
 
                     // Reads a WAV file (the bytes of it): PCM with 16 or 8 bits, mono or stereo, any rate.
-                    static FromWav(bytes) {
+                    static FromWav(byte bytes[]) {
                         if (bytes.length < 44 || bytes[0] != 82 || bytes[1] != 73 || bytes[2] != 70 || bytes[3] != 70 || bytes[8] != 87 || bytes[9] != 65 || bytes[10] != 86 || bytes[11] != 69) {
                             throw new AudioException("This is not a WAV file (RIFF/WAVE expected).", 1)
                         }
@@ -193,7 +193,7 @@ namespace fire.Standard
                     int volume
 
                     // `device`: a name ("default", "pulse", "alsa", "sim", ...) or a number - the GPIO pin of a PWM speaker on an ESP32; `rate` in Hz; `channels` 1 (mono) or 2 (stereo).
-                    construct(device = "default", int rate = 44100, int channels = 1) {
+                    construct(string device = "default", int rate = 44100, int channels = 1) {
                         this.handle = -1
                         this.closed = false
                         this.rate = rate
@@ -247,7 +247,7 @@ namespace fire.Standard
                     }
 
                     // Takes as much of the bytes as fits into the buffer of the device (whole frames) and returns how many it took (0: full) - without waiting.
-                    int Offer(buffer, int offset = 0, int count = -1) {
+                    int Offer(byte buffer[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = buffer.length - offset }
                         var n = __AudioWrite(this.handle, buffer, offset, count)
@@ -256,7 +256,7 @@ namespace fire.Standard
                     }
 
                     // Plays `count` bytes of the buffer (all of it from `offset` on without a count): returns when the device has taken them all (that is, when the last part is queued, not played).
-                    Write(buffer, int offset = 0, int count = -1) {
+                    Write(byte buffer[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = buffer.length - offset }
                         while (count > 0) {
@@ -269,7 +269,7 @@ namespace fire.Standard
                     }
 
                     // Plays a sound (queued behind what is playing). Its rate and channels must be those of the output: open it with `sound.Open()`.
-                    Play(sound) {
+                    Play(Audio.Sound sound) {
                         if (sound.Rate != this.rate || sound.Channels != this.channels) {
                             throw new AudioException("The sound has " + sound.Rate + " Hz and " + sound.Channels + " channel(s), the output " + this.rate + " Hz and " + this.channels + ": open the output with sound.Open().", 1)
                         }
@@ -277,7 +277,7 @@ namespace fire.Standard
                     }
 
                     // Queues a tone and returns: the frequency in Hz (a float is fine), the length in milliseconds, the wave (Audio.Wave.Sine, Square, Triangle, Saw, Noise) and the volume in percent.
-                    Tone(frequency, int milliseconds, int wave = 0, int volume = 100) {
+                    Tone(float frequency, int milliseconds, int wave = 0, int volume = 100) {
                         this.Check()
                         var left = this.rate * milliseconds / 1000
                         var chunk = 2048
@@ -297,7 +297,7 @@ namespace fire.Standard
                     }
 
                     // A tone that is played to its end before Beep returns (440 Hz, 200 ms without arguments).
-                    Beep(frequency = 440, int milliseconds = 200, int volume = 100) {
+                    Beep(float frequency = 440, int milliseconds = 200, int volume = 100) {
                         this.Tone(frequency, milliseconds, 0, volume)
                         this.Drain()
                     }

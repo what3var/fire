@@ -291,6 +291,12 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 `string`, `undefined` goes to everything, an object goes to the class it derives from. The type of a variable never changes. `var x = expr` has the type of its initializer (a value, a variable, a
 return value, `undefined!Type`); `var x` without an initializer is an error (declare it with a type: `int x`). Untyped values are `dynamic` and never reported.
 
+**`any`** is the type that accepts every value (also in strict mode); use it where every type is really allowed - everywhere else a declaration says what it holds. **`class`** holds object
+instances only (not an `int`, a `string`, an array or a lambda); `undefined` goes to every type (it is the typed null). **A field and a property always have a type** (`int count`, `lambda<int> onTick`,
+`any value`): `var` is for local variables, because their type comes from the initializer (error `E4059`/`E4060`). A parameter without a type is taken as `any` and said so (`TC004`: a warning in lax
+mode, an error in strict mode). A declaration can say that it accepts values of every unit with `: any` (`float width : any`); without a unit declaration nothing is demanded either.
+A `lambda` type counts the parameters of the lambda it takes (`lambda` = none, `lambda<int, int>` = two); an optional callback is therefore declared `any`, because `undefined` is not a lambda.
+
 The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `Foo f`); `var x` derives it from the value. A `:` after the variable name (`var x : mm`), on the other hand, only fixes the **unit** (see "unit declarations") – `var x : int` as a type declaration no longer exists.
 
 ### 3.2 Target unit in operations ("anchor rule")

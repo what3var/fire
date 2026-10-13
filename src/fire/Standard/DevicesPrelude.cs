@@ -109,7 +109,7 @@ namespace fire.Standard
                 /// (`Command<IDevice>`, derived from it, or any object with `Execute(device)`) is executed with the device as its context.</summary>
                 /// <param name="command">The text to send, or the command object to execute.</param>
                 /// <returns>`false` if the device is not connected (or `Execute` returned `false`), otherwise `true`.</returns>
-                bool DoCommand(command) {
+                bool DoCommand(string command) {
                     if (command is of string) {
                         return __DEVDoCommand(this.handle, command)
                     }
@@ -123,7 +123,7 @@ namespace fire.Standard
                 /// <summary>Executes the commands in order and stops at the first one that returns `false` (e.g. because the device is not connected).</summary>
                 /// <param name="commands">An array, a List, or anything that can be iterated with foreach.</param>
                 /// <returns>`true` if all commands ran.</returns>
-                bool DoCommands(commands) {
+                bool DoCommands(any commands) {
                     foreach (c in commands) {
                         if (!this.DoCommand(c)) {
                             return false
@@ -147,14 +147,14 @@ namespace fire.Standard
                 /// <summary>Writes exactly these bytes.</summary>
                 /// <param name="data">A byte buffer.</param>
                 /// <returns>`false` if the device is not connected.</returns>
-                bool Write(data) { return __DEVWrite(this.handle, data) }
+                bool Write(any data) { return __DEVWrite(this.handle, data) }
 
                 /// <summary>Waits until the characters appear in the receive buffer (also across packet boundaries) and cuts the buffer behind them:
                 /// everything before them and the match are consumed, what came after stays - also a second occurrence, so the same call can succeed again right away.</summary>
                 /// <param name="text">The characters to wait for.</param>
                 /// <param name="timeout">A TimeSpan, a time value (`5s`, `500ms`) or milliseconds. Without it the program's `#timeout` applies, otherwise 30 seconds.</param>
                 /// <returns>`true` if they arrived; `false` after the time ran out, if the device is disconnected, or if the program ends.</returns>
-                bool WaitForString(string text, timeout = undefined) {
+                bool WaitForString(string text, any timeout = undefined) {
                     var r = __DEVWaitForString(this.handle, text, timeout)
                     if (r < 0) {
                         throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)")
@@ -164,7 +164,7 @@ namespace fire.Standard
                 /// <summary>Like WaitForString, but waits for a sequence of bytes.</summary>
                 /// <param name="data">A byte buffer with the bytes to wait for.</param>
                 /// <param name="timeout">A TimeSpan, a time value (`5s`, `500ms`) or milliseconds.</param>
-                bool WaitFor(data, timeout = undefined) {
+                bool WaitFor(any data, any timeout = undefined) {
                     var r = __DEVWaitFor(this.handle, data, timeout)
                     if (r < 0) {
                         throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)")

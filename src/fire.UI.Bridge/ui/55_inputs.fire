@@ -11,7 +11,7 @@ namespace UI {
         bool horizontal = false
         int spacing = 6
         string header = ""
-        var onChange
+        lambda onChange
         bool changed = false
         int hotIndex = -1
 
@@ -23,16 +23,16 @@ namespace UI {
 
         bool Focusable() { return true }
 
-        Add(item) {
+        Add(any item) {
             UI.M.Own(this, item)
             this.items.Add(item)
             this.Invalidate()
             return item
         }
 
-        string ItemText(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
 
-        selectedItem {
+        any selectedItem {
             get {
                 if (this.selectedIndex < 0 || this.selectedIndex >= this.items.count) { return undefined }
                 return this.items[this.selectedIndex]
@@ -56,17 +56,17 @@ namespace UI {
             return was
         }
 
-        int OptionHeight(root) { return UI.M.Max(this.TextHeight(root), 14) }
+        int OptionHeight(Root root) { return UI.M.Max(this.TextHeight(root), 14) }
 
-        int HeaderHeight(root) {
+        int HeaderHeight(Root root) {
             if (this.header == "") { return 0 }
             return this.TextHeight(root) + this.spacing
         }
 
         // The width of an option: circle, spacing, text.
-        int OptionWidth(root, int index) { return 14 + 6 + this.TextWidth(root, this.ItemText(this.items[index])) }
+        int OptionWidth(Root root, int index) { return 14 + 6 + this.TextWidth(root, this.ItemText(this.items[index])) }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 0
             var oh = this.OptionHeight(root)
@@ -88,7 +88,7 @@ namespace UI {
         }
 
         // The rectangle of the option `index` on the screen, as (x, y, w, h) in a Rect.
-        OptionRect(root, int index) {
+        OptionRect(Root root, int index) {
             var x = this.ax
             var y = this.ay + this.HeaderHeight(root)
             var oh = this.OptionHeight(root)
@@ -100,7 +100,7 @@ namespace UI {
             return r
         }
 
-        int OptionAt(root, int px, int py) {
+        int OptionAt(Root root, int px, int py) {
             for (var i = 0; i < this.items.count; i = i + 1) {
                 var r = this.OptionRect(root, i)
                 var inside = r.Contains(px, py)
@@ -110,7 +110,7 @@ namespace UI {
             return -1
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -139,13 +139,13 @@ namespace UI {
             }
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             var index = this.OptionAt(root, px, py)
             if (index >= 0) { this.Select(index) }
         }
 
-        Hover(root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
+        Hover(Root root, int px, int py) { this.hotIndex = this.OptionAt(root, px, py) }
 
         // The arrow keys change the option - at the first and last the group releases them (the focus moves on)
         bool WantsKey(int key) {
@@ -155,7 +155,7 @@ namespace UI {
             return false
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             var step = 0
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { step = 1 }
             else if (key == UI.Keys.Up() || key == UI.Keys.Left()) { step = -1 }
@@ -170,7 +170,7 @@ namespace UI {
     class SuggestList : ListBox {
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) { }
 
-        bool PopupOutside(root, int px, int py) {
+        bool PopupOutside(Root root, int px, int py) {
             root.ClosePopup(this)
             return false
         }
@@ -182,12 +182,12 @@ namespace UI {
     class AutoSuggestBox : TextBox {
         List suggestions
         string displayMember = ""
-        var provider
+        lambda<string> provider
         int maxSuggestions = 6
         SuggestList popupList
-        var onChosen
+        lambda onChosen
         bool chosen = false
-        var chosenItem
+        any chosenItem
         bool suppress = false
 
         construct(string text = "", int x = 0, int y = 0, int width = 160, int height = 24) : base(text, x, y, width, height) {
@@ -197,7 +197,7 @@ namespace UI {
 
         string StyleKey() { return "AutoSuggestBox" }
 
-        AddSuggestion(item) {
+        AddSuggestion(any item) {
             UI.M.Own(this, item)
             this.suggestions.Add(item)
             return item
@@ -209,7 +209,7 @@ namespace UI {
             return was
         }
 
-        string TextOf(item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+        string TextOf(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
 
         // The suggestions matching the text.
         List Matches() {
@@ -268,7 +268,7 @@ namespace UI {
         }
 
         // Accepts a suggestion.
-        Choose(item) {
+        Choose(any item) {
             this.suppress = true
             this.SetText(this.TextOf(item))
             this.CloseList()
@@ -280,7 +280,7 @@ namespace UI {
             this.suppress = false
         }
 
-        Poll(root) {
+        Poll(Root root) {
             base.Poll(root)
             // a click in the list has chosen
             if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
@@ -293,7 +293,7 @@ namespace UI {
             return base.WantsKey(key)
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             if (this.ListOpen()) {
                 var list = this.popupList
                 if (key == UI.Keys.Down()) {
@@ -325,12 +325,12 @@ namespace UI {
 
         string StyleKey() { return "Separator" }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             this.cw = 5
             this.ch = 5
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var pen = this.pen
             if (pen == undefined) { pen = root.theme.border }
@@ -351,7 +351,7 @@ namespace UI {
 
         string StyleKey() { return "ToolBar" }
 
-        AddButton(string text, onClick = undefined) {
+        AddButton(string text, any onClick = undefined) {
             var button = new Button(text, 0, 0, -1, -1)
             button.onClick = onClick
             this.Add(button)
@@ -364,7 +364,7 @@ namespace UI {
             return s
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             // a line below the bar
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
@@ -378,13 +378,13 @@ namespace UI {
         Framebuffer source
         int stretch = UI.Stretch.Uniform
 
-        construct(source = undefined, int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+        construct(any source = undefined, int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.source = source
         }
 
         string StyleKey() { return "Image" }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             if (this.source == undefined) {
                 this.cw = 0
                 this.ch = 0
@@ -394,7 +394,7 @@ namespace UI {
             this.ch = this.source.Height()
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
             if (this.source == undefined) { return }

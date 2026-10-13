@@ -94,7 +94,7 @@ namespace fire.Standard
 
                 // Time limits: milliseconds from a number, a time value or a TimeSpan (undefined: no limit, -1).
                 class Clock {
-                    static int Millis(limit) {
+                    static int Millis(any limit) {
                         if (limit == undefined) { return -1 }
                         var span = TimeSpan.Of(limit)
                         var ms = span.Ticks / 10000
@@ -153,7 +153,7 @@ namespace fire.Standard
                     int writeLimit
 
                     // new TcpClient("host", 80) / ("host", 80, 5s): connects; the limit of connecting is 10 seconds unless given (undefined: no limit).
-                    construct(string host, int port, timeout = 10000) {
+                    construct(string host, int port, any timeout = 10000) {
                         this.handle = -1
                         this.closed = false
                         this.readLimit = -1
@@ -191,12 +191,12 @@ namespace fire.Standard
                     }
 
                     // The limits of Read and Write (undefined: no limit; the default).
-                    ReadTimeout {
+                    any ReadTimeout {
                         get { return this.readLimit }
                         set { this.readLimit = Net.Clock.Millis(value) }
                     }
 
-                    WriteTimeout {
+                    any WriteTimeout {
                         get { return this.writeLimit }
                         set { this.writeLimit = Net.Clock.Millis(value) }
                     }
@@ -250,7 +250,7 @@ namespace fire.Standard
                     }
 
                     // true if something can be read (or the other side has closed) within the time (default: do not wait).
-                    bool WaitReadable(timeout = 0) {
+                    bool WaitReadable(any timeout = 0) {
                         this.Check()
                         var ms = Net.Clock.Millis(timeout)
                         var deadline = Net.Clock.Deadline(ms)
@@ -284,7 +284,7 @@ namespace fire.Standard
                     }
 
                     // Up to `count` bytes (at least one unless the other side has closed: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-                    int Read(buffer, offset, count) {
+                    int Read(byte buffer[], int offset, int count) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(this.readLimit)
                         var tries = 0
@@ -299,7 +299,7 @@ namespace fire.Standard
                     }
 
                     // All `count` bytes (waits as long as the system needs; WriteTimeout limits each wait).
-                    int Write(buffer, offset, count) {
+                    int Write(byte buffer[], int offset, int count) {
                         this.Check()
                         var done = 0
                         while (done < count) {
@@ -378,7 +378,7 @@ namespace fire.Standard
                     }
 
                     // true if a connection is waiting (within the time, default: do not wait).
-                    bool Pending(timeout = 0) {
+                    bool Pending(any timeout = 0) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0
@@ -393,14 +393,14 @@ namespace fire.Standard
                     }
 
                     // The next connection as a TcpClient; waits without a limit unless one is given, then Net.TimeoutException.
-                    Accept(timeout = undefined) {
+                    Accept(any timeout = undefined) {
                         var c = this.TryAccept(timeout)
                         if (c == undefined) { throw new TimeoutException("No connection arrived in time.") }
                         return c
                     }
 
                     // Like Accept, but undefined instead of the exception when the time runs out.
-                    TryAccept(timeout = undefined) {
+                    TryAccept(any timeout = undefined) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0
@@ -474,12 +474,12 @@ namespace fire.Standard
                     }
 
                     // Sends `count` bytes of the buffer as one datagram; returns the number of bytes sent.
-                    int SendTo(buffer, int offset, int count, string host, int port) {
+                    int SendTo(byte buffer[], int offset, int count, string host, int port) {
                         this.Check()
                         return Net.NetErrors.Handle(__NetSendTo(this.handle, buffer, offset, count, host, port))
                     }
 
-                    int SendTo(buffer, string host, int port) { return this.SendTo(buffer, 0, buffer.length, host, port) }
+                    int SendTo(byte buffer[], string host, int port) { return this.SendTo(buffer, 0, buffer.length, host, port) }
 
                     // The text as UTF-8 in one datagram.
                     int SendString(string text, string host, int port) {
@@ -488,7 +488,7 @@ namespace fire.Standard
                     }
 
                     // true if a datagram can be received within the time (default: do not wait).
-                    bool WaitReadable(timeout = 0) {
+                    bool WaitReadable(any timeout = 0) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0
@@ -503,7 +503,7 @@ namespace fire.Standard
                     }
 
                     // Receives one datagram into the buffer (a longer one is cut) and returns its size; the sender is FromHost/FromPort. Waits without a limit unless one is given, then Net.TimeoutException.
-                    int ReceiveFrom(buffer, int offset, int count, timeout = undefined) {
+                    int ReceiveFrom(byte buffer[], int offset, int count, any timeout = undefined) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0

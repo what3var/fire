@@ -655,6 +655,8 @@ namespace fire.Native
                 // run-time errors (index out of range) are thrown as this prelude class
                 var indexError = RegisterClass("IndexOutOfBoundsException");
                 if (indexError.Rc.FindConstructor(3) is { } indexCtor && indexCtor.ParamCount == 3) GetFunc(indexCtor, FuncKind.Ctor);
+                var divideError = RegisterClass("DivideByZeroException");
+                if (divideError.Rc.FindConstructor(1) is { } divideCtor && divideCtor.ParamCount == 1) GetFunc(divideCtor, FuncKind.Ctor);
                 var destroyedError = RegisterClass("DestroyedException");
                 if (destroyedError.Rc.FindConstructor(1) is { } destroyedCtor && destroyedCtor.ParamCount == 1) GetFunc(destroyedCtor, FuncKind.Ctor);
                 var unitError = RegisterClass("UnitMismatchException");
@@ -1121,6 +1123,12 @@ namespace fire.Native
                 sb.AppendLine("}");
                 var indexClass = _classes.GetValueOrDefault("IndexOutOfBoundsException") ?? throw new NativeNotSupportedException("exceptions need the prelude class IndexOutOfBoundsException");
                 var destroyedClass = _classes.GetValueOrDefault("DestroyedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DestroyedException");
+                var divideClass = _classes.GetValueOrDefault("DivideByZeroException") ?? throw new NativeNotSupportedException("exceptions need the prelude class DivideByZeroException");
+                sb.AppendLine("Value makeDivideError(Value message) {");
+                sb.AppendLine($"    Value o = newObject({divideClass.Id}, {divideClass.Fields.Count}, g_globalOwn);");
+                sb.AppendLine($"    {_funcByProto[divideClass.Rc.FindConstructor(1)!].Name}(o, message);");
+                sb.AppendLine("    return o;");
+                sb.AppendLine("}");
                 sb.AppendLine("Value makeDestroyedError(Value message) {");
                 sb.AppendLine($"    Value o = newObject({destroyedClass.Id}, {destroyedClass.Fields.Count}, g_globalOwn);");
                 sb.AppendLine($"    {_funcByProto[destroyedClass.Rc.FindConstructor(1)!].Name}(o, message);");

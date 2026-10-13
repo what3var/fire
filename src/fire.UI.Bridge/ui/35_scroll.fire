@@ -15,7 +15,7 @@ namespace UI {
         int grab = 0
         bool hover = false
         // the element that shows the bar: it is repainted when something about the bar changes
-        var owner
+        Element owner
 
         construct(bool horizontal = false) { this.horizontal = horizontal }
 
@@ -58,7 +58,7 @@ namespace UI {
         }
 
         // Draws the bar into the rectangle (x, y, length `track` in the running direction, `size` across).
-        Draw(root, int x, int y, int track) {
+        Draw(Root root, int x, int y, int track) {
             var theme = root.theme
             var start = this.ThumbStart(track)
             var length = this.ThumbLength(track)
@@ -126,7 +126,7 @@ namespace UI {
             this.hbar.owner = this
         }
 
-        Poll(root) {
+        Poll(Root root) {
             base.Poll(root)
             if (this.content != undefined) { this.content.Poll(root) }
         }
@@ -134,7 +134,7 @@ namespace UI {
         string StyleKey() { return "ScrollViewer" }
 
         // The child belongs to the ScrollViewer from now on.
-        SetContent(element) {
+        SetContent(Element element) {
             if (this.content != undefined) { this.content.parent = undefined }
             this.content = element
             element.TakeTo(this)
@@ -142,7 +142,7 @@ namespace UI {
             this.Invalidate()
         }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             var c = this.content
             if (c == undefined) {
                 this.cw = 0
@@ -186,7 +186,7 @@ namespace UI {
             return 0
         }
 
-        ArrangeCore(root, int w, int h) {
+        ArrangeCore(Root root, int w, int h) {
             var c = this.content
             if (c == undefined) { return }
             this.viewW = UI.M.Max(0, w - this.ShownBar(this.showV))
@@ -201,7 +201,7 @@ namespace UI {
             c.Arrange(root, -this.hbar.offset, -this.vbar.offset, UI.M.Max(c.dw, this.viewW), UI.M.Max(c.dh, this.viewH))
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.content
@@ -228,7 +228,7 @@ namespace UI {
             return this
         }
 
-        Collect(list) {
+        Collect(List list) {
             if (!this.visible || !this.enabled) { return }
             if (this.content != undefined) { this.content.Collect(list) }
         }
@@ -239,7 +239,7 @@ namespace UI {
             return undefined
         }
 
-        bool MouseWheel(root, int dx, int dy) {
+        bool MouseWheel(Root root, int dx, int dy) {
             var step = this.TextHeight(root) * 3
             if (dx != 0 && this.showH) {
                 this.hbar.By(-dx * step)
@@ -260,25 +260,25 @@ namespace UI {
 
         bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
 
-        bool PanBy(root, int dx, int dy) {
+        bool PanBy(Root root, int dx, int dy) {
             if (!this.showV && !this.showH) { return false }
             if (this.showH) { this.hbar.By(-dx) }
             if (this.showV) { this.vbar.By(-dy) }
             return true
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.showV && px >= this.ax + this.viewW && py < this.ay + this.viewH) { this.vbar.Press(py - this.ay, this.viewH) }
             else if (this.showH && py >= this.ay + this.viewH && px < this.ax + this.viewW) { this.hbar.Press(px - this.ax, this.viewW) }
         }
 
-        MouseMove(root, int px, int py) {
+        MouseMove(Root root, int px, int py) {
             if (this.vbar.dragging) { this.vbar.Drag(py - this.ay, this.viewH) }
             if (this.hbar.dragging) { this.hbar.Drag(px - this.ax, this.viewW) }
         }
 
-        MouseUp(root, int button, int px, int py) {
+        MouseUp(Root root, int button, int px, int py) {
             this.vbar.Release()
             this.hbar.Release()
         }

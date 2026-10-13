@@ -6,10 +6,10 @@ namespace UI {
     // Gives a property a value. `target`: name of a part of the element's template (empty: the element itself).
     class Setter {
         string property
-        var value
+        any value
         string target = ""
 
-        construct(string property, value, string target = "") {
+        construct(string property, any value, string target = "") {
             this.property = property
             this.value = value
             this.target = target
@@ -17,12 +17,12 @@ namespace UI {
         }
 
         // The element the setter acts on (undefined if the part does not exist).
-        Find(owner) {
+        Find(Element owner) {
             if (this.target == "") { return owner }
             return owner.FindPart(this.target)
         }
 
-        Apply(owner) {
+        Apply(Element owner) {
             var element = this.Find(owner)
             if (element == undefined) { return }
             if (Reflect.Has(element, this.property)) { Reflect.Set(element, this.property, this.value) }
@@ -32,16 +32,16 @@ namespace UI {
     // A condition of a trigger: the property has the value. `source`: name of a part of the template (empty: the element itself).
     class Condition {
         string property
-        var value
+        any value
         string source = ""
 
-        construct(string property, value, string source = "") {
+        construct(string property, any value, string source = "") {
             this.property = property
             this.value = value
             this.source = source
         }
 
-        bool Holds(owner) {
+        bool Holds(Element owner) {
             var element = owner
             if (this.source != "") { element = owner.FindPart(this.source) }
             if (element == undefined) { return false }
@@ -56,25 +56,25 @@ namespace UI {
         List conditions
         List setters
 
-        construct(string property, value, string source = "") {
+        construct(string property, any value, string source = "") {
             this.conditions = new List()
             this.setters = new List()
             this.And(property, value, source)
         }
 
-        And(string property, value, string source = "") {
+        And(string property, any value, string source = "") {
             var condition = new Condition(property, value, source)
             condition.TakeTo(this)
             this.conditions.Add(condition)
         }
 
-        Set(string property, value, string target = "") {
+        Set(string property, any value, string target = "") {
             var setter = new Setter(property, value, target)
             setter.TakeTo(this)
             this.setters.Add(setter)
         }
 
-        bool Holds(owner) {
+        bool Holds(Element owner) {
             for (var i = 0; i < this.conditions.count; i = i + 1) {
                 if (!this.conditions[i].Holds(owner)) { return false }
             }
@@ -86,7 +86,7 @@ namespace UI {
     class Saved {
         Element element
         string property
-        var value
+        any value
     }
 
     // The state of a trigger on ONE element (style and template are shared by many elements).
@@ -95,18 +95,18 @@ namespace UI {
         bool active = false
         List saved
 
-        construct(trigger) {
+        construct(Trigger trigger) {
             this.trigger = trigger
             this.saved = new List()
         }
 
-        Update(owner) {
+        Update(Element owner) {
             var holds = this.trigger.Holds(owner)
             if (holds && !this.active) { this.Activate(owner) }
             else if (!holds && this.active) { this.Deactivate() }
         }
 
-        Activate(owner) {
+        Activate(Element owner) {
             this.active = true
             for (var i = 0; i < this.trigger.setters.count; i = i + 1) {
                 var setter = this.trigger.setters[i]
@@ -152,19 +152,19 @@ namespace UI {
             this.triggers = new List()
         }
 
-        Set(string property, value) {
+        Set(string property, any value) {
             var setter = new Setter(property, value)
             setter.TakeTo(this)
             this.setters.Add(setter)
         }
 
-        AddTrigger(trigger) {
+        AddTrigger(Trigger trigger) {
             trigger.TakeTo(this)
             this.triggers.Add(trigger)
         }
 
         // Apply the setters and register the triggers with the element (first those of the base style).
-        Apply(owner) {
+        Apply(Element owner) {
             if (this.basedOn != undefined) { this.basedOn.Apply(owner) }
             for (var i = 0; i < this.setters.count; i = i + 1) { this.setters[i].Apply(owner) }
             for (var j = 0; j < this.triggers.count; j = j + 1) { owner.AddTrigger(this.triggers[j]) }
@@ -189,11 +189,11 @@ namespace UI {
     // AddTrigger(...) changes it under a condition (setters with `target` = name of the part).
     // Without a template the control draws itself.
     class ControlTemplate {
-        var factory
+        lambda<Element> factory
         List bindings
         List triggers
 
-        construct(factory) {
+        construct(lambda<Element> factory) {
             this.factory = factory
             this.bindings = new List()
             this.triggers = new List()
@@ -205,7 +205,7 @@ namespace UI {
             this.bindings.Add(binding)
         }
 
-        AddTrigger(trigger) {
+        AddTrigger(Trigger trigger) {
             trigger.TakeTo(this)
             this.triggers.Add(trigger)
         }
@@ -213,11 +213,11 @@ namespace UI {
 
     // Builds the element that shows a data item (a row of a list, a tree): `factory` is a lambda with one parameter (the data item).
     class DataTemplate {
-        var factory
+        lambda<any> factory
 
-        construct(factory) { this.factory = factory }
+        construct(lambda<any> factory) { this.factory = factory }
 
-        Build(item) {
+        Build(any item) {
             var make = this.factory
             return make(item)
         }
@@ -229,17 +229,17 @@ namespace UI {
     class Binding {
         Element target
         string targetProperty
-        var source
+        any source
         string sourceProperty
         bool twoWay = false
-        var converter
+        Converter converter
         bool once = false
         // state at the last reconciliation
         bool synced = false
-        var lastSource
-        var lastTarget
+        any lastSource
+        any lastTarget
 
-        construct(Element target, string targetProperty, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
+        construct(Element target, string targetProperty, any source, string sourceProperty, bool twoWay = false, Converter converter = undefined, bool once = false) {
             this.target = target
             this.targetProperty = targetProperty
             this.source = source
@@ -306,7 +306,7 @@ namespace UI {
         }
 
         // Stores the value (an existing key is overwritten); the dictionary owns it.
-        Set(string key, value) {
+        Set(string key, any value) {
             UI.M.Own(this, value)
             var i = this.IndexOf(key)
             if (i >= 0) {
@@ -318,7 +318,7 @@ namespace UI {
         }
 
         // An implicit style: applies to all elements with the style key `style.target` below it.
-        AddStyle(style) {
+        AddStyle(Style style) {
             style.TakeTo(this)
             for (var i = 0; i < this.styles.count; i = i + 1) {
                 if (this.styles[i].target == style.target) {
@@ -337,7 +337,7 @@ namespace UI {
         }
 
         // Takes over the entries and styles of another dictionary (it must live as long as this one).
-        Merge(other) {
+        Merge(any other) {
             for (var i = 0; i < other.keys.count; i = i + 1) {
                 var key = other.keys[i]
                 var at = this.IndexOf(key)

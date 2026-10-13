@@ -2,19 +2,19 @@ namespace UI {
     // A node of a TreeView: text, an arbitrary value (`value`), children (Add), expanded or not.
     class TreeNode {
         string text = ""
-        var value
+        any value
         List children
         bool expanded = false
         TreeNode parent
 
-        construct(string text = "", value = undefined) {
+        construct(string text = "", any value = undefined) {
             this.text = text
             this.value = value
             this.children = new List()
         }
 
         // Appends a node as a child; it belongs to this node.
-        Add(node) {
+        Add(TreeNode node) {
             node.TakeTo(this)
             node.parent = this
             this.children.Add(node)
@@ -45,7 +45,7 @@ namespace UI {
         int indent = 16
         int rowHeight = -1
         Scroller scroller
-        var onSelect
+        lambda onSelect
         bool changed = false
         // the visible nodes of the last arrangement, from top to bottom
         List visibleNodes
@@ -65,7 +65,7 @@ namespace UI {
 
         bool Focusable() { return true }
 
-        AddNode(node) {
+        AddNode(TreeNode node) {
             node.TakeTo(this)
             this.nodes.Add(node)
             this.Invalidate()
@@ -92,7 +92,7 @@ namespace UI {
             return sig
         }
 
-        Poll(root) {
+        Poll(Root root) {
             base.Poll(root)
             var sig = this.Signature()
             if (sig != this.seenSignature) {
@@ -101,12 +101,12 @@ namespace UI {
             }
         }
 
-        int RowHeight(root) {
+        int RowHeight(Root root) {
             if (this.rowHeight >= 0) { return this.rowHeight }
             return this.TextHeight(root) + 6
         }
 
-        Collect_(list, node) {
+        Collect_(List list, TreeNode node) {
             list.Add(node)
             if (node.expanded) {
                 for (var i = 0; i < node.children.count; i = i + 1) { this.Collect_(list, node.children[i]) }
@@ -119,7 +119,7 @@ namespace UI {
             for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
         }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             this.Flatten()
             var widest = 0
             for (var i = 0; i < this.visibleNodes.count; i = i + 1) {
@@ -130,7 +130,7 @@ namespace UI {
             this.ch = this.visibleNodes.count * this.RowHeight(root) + 2
         }
 
-        ArrangeCore(root, int w, int h) {
+        ArrangeCore(Root root, int w, int h) {
             this.viewH = UI.M.Max(0, h - 2)
             this.scroller.extent = this.visibleNodes.count * this.RowHeight(root)
             this.scroller.viewport = this.viewH
@@ -144,7 +144,7 @@ namespace UI {
             return this.visibleNodes.IndexOf(this.selected)
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
@@ -182,14 +182,14 @@ namespace UI {
         }
 
         // The box with plus (collapsed) or minus (expanded).
-        DrawBox(root, int x, int y, bool open, color) {
+        DrawBox(Root root, int x, int y, bool open, int color) {
             var pen = new Pen(color.Color)
             root.renderer.DrawRect(x, y, 9, 9, pen)
             root.renderer.DrawLine(x + 2, y + 4, x + 6, y + 4, pen)
             if (!open) { root.renderer.DrawLine(x + 4, y + 2, x + 4, y + 6, pen) }
         }
 
-        int RowAt(root, int px, int py) {
+        int RowAt(Root root, int px, int py) {
             var top = this.ay + 1
             if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
             var index = (py - top + this.scroller.offset) / this.RowHeight(root)
@@ -201,7 +201,7 @@ namespace UI {
             return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size
         }
 
-        SelectNode(node) {
+        SelectNode(TreeNode node) {
             if (node == this.selected) { return }
             this.selected = node
             this.changed = true
@@ -216,7 +216,7 @@ namespace UI {
         }
 
         // Scrolls until the node is visible (it must be visible, i.e. its parent path expanded).
-        EnsureVisible(root, node) {
+        EnsureVisible(Root root, TreeNode node) {
             var index = this.visibleNodes.IndexOf(node)
             if (index < 0) { return }
             var h = this.RowHeight(root)
@@ -224,7 +224,7 @@ namespace UI {
             else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.OverBar(px, py)) {
                 this.scroller.Press(py - (this.ay + 1), this.viewH)
@@ -241,18 +241,18 @@ namespace UI {
             this.SelectNode(node)
         }
 
-        MouseMove(root, int px, int py) {
+        MouseMove(Root root, int px, int py) {
             if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1), this.viewH) }
         }
 
-        MouseUp(root, int button, int px, int py) { this.scroller.Release() }
+        MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
 
-        Hover(root, int px, int py) {
+        Hover(Root root, int px, int py) {
             this.hotIndex = this.RowAt(root, px, py)
             this.scroller.SetHover(this.OverBar(px, py))
         }
 
-        bool MouseWheel(root, int dx, int dy) {
+        bool MouseWheel(Root root, int dx, int dy) {
             if (!this.scroller.Needed()) { return false }
             this.scroller.By(-dy * this.RowHeight(root) * 3)
             return true
@@ -262,7 +262,7 @@ namespace UI {
 
         bool Dragging() { return this.scroller.dragging }
 
-        bool PanBy(root, int dx, int dy) {
+        bool PanBy(Root root, int dx, int dy) {
             if (!this.scroller.Needed()) { return false }
             this.scroller.By(-dy)
             return true
@@ -277,7 +277,7 @@ namespace UI {
             return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
         }
 
-        KeyDown(root, int key, int mod) {
+        KeyDown(Root root, int key, int mod) {
             var index = this.IndexOfSelected()
             var count = this.visibleNodes.count
             if (count == 0) { return }
@@ -313,7 +313,7 @@ namespace UI {
             this.EnsureVisible(root, node)
         }
 
-        Collect(list) {
+        Collect(List list) {
             if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
         }
     }

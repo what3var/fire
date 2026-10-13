@@ -50,6 +50,15 @@ static class SyntaxTests
             print(total)
             """) == "6");
 
+        Check("Ganzzahl-Division und Modulo durch 0: fangbare DivideByZeroException (VM)", Output("""
+            int z = 0
+            try { print(7 / z) } catch (DivideByZeroException e) { print("div: " + e.message) }
+            try { print(7 % z) } catch (DivideByZeroException e) { print("mod: " + e.message) }
+            float f = 0.0
+            print(1.0 / f)
+            print(7 / 2)
+            """) == "div: Division by zero.\nmod: Division by zero.\nInfinity\n3");
+
         Check("Verbundzuweisungen auf Variablen", Output("""
             var a = 10
             a += 5

@@ -201,7 +201,7 @@ namespace UI {
             return 0
         }
 
-        Apply(int command, args) {
+        Apply(int command, any args) {
             var relative = command >= 97
             var c = command
             if (relative) { c = c - 32 }
@@ -236,7 +236,7 @@ namespace UI {
 
         string StyleKey() { return "Rectangle" }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.fill) }
             if (this.stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.stroke) }
@@ -249,7 +249,7 @@ namespace UI {
 
         string StyleKey() { return "Ellipse" }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var rx = this.actualWidth / 2
             var ry = this.actualHeight / 2
@@ -277,12 +277,12 @@ namespace UI {
 
         string StyleKey() { return "Line" }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             this.cw = UI.M.Max(this.x1, this.x2) + 1
             this.ch = UI.M.Max(this.y1, this.y2) + 1
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.stroke != undefined) { root.renderer.DrawLine(ax + this.x1, ay + this.y1, ax + this.x2, ay + this.y2, this.stroke) }
         }
@@ -293,7 +293,7 @@ namespace UI {
     class Path : Shape {
         Geometry data
 
-        construct(data = undefined, int x = 0, int y = 0) : base(x, y, -1, -1) {
+        construct(any data = undefined, int x = 0, int y = 0) : base(x, y, -1, -1) {
             this.data = data
         }
 
@@ -304,7 +304,7 @@ namespace UI {
             this.data = UI.Geometry.Parse(text)
         }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             if (this.data == undefined) {
                 this.cw = 0
                 this.ch = 0
@@ -314,7 +314,7 @@ namespace UI {
             this.ch = this.data.Height() + 1
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.data == undefined) { return }
             for (var i = 0; i < this.data.figures.count; i = i + 1) {
@@ -338,10 +338,10 @@ namespace UI {
     class DrawingCanvas : Element {
         Framebuffer framebuffer
         Renderer renderer
-        var onPaint
-        var onMouseDown
-        var onMouseMove
-        var onMouseUp
+        lambda<DrawingCanvas> onPaint
+        lambda<int, int, int> onMouseDown
+        lambda<int, int> onMouseMove
+        lambda<int, int, int> onMouseUp
         bool continuous = false
         bool dirty = true
         bool external = false
@@ -359,7 +359,7 @@ namespace UI {
         }
 
         // onPaint runs here (not while painting): what it changes on the elements then reports itself like any other change.
-        Poll(root) {
+        Poll(Root root) {
             base.Poll(root)
             if (this.continuous) { this.dirty = true }
             // the element has a different size than the surface: it is created anew and repainted
@@ -376,7 +376,7 @@ namespace UI {
         }
 
         // Shows `source` (a framebuffer that you own yourself) instead of the own surface.
-        SetSource(source) {
+        SetSource(any source) {
             this.DropOwn()
             this.framebuffer = source
             this.external = true
@@ -402,7 +402,7 @@ namespace UI {
             this.dirty = true
         }
 
-        MeasureCore(root, int aw, int ah) {
+        MeasureCore(Root root, int aw, int ah) {
             if (this.external && this.framebuffer != undefined) {
                 this.cw = this.framebuffer.Width()
                 this.ch = this.framebuffer.Height()
@@ -412,7 +412,7 @@ namespace UI {
             this.ch = 0
         }
 
-        Draw(root, int ax, int ay) {
+        Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.framebuffer == undefined) { return }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
@@ -420,22 +420,22 @@ namespace UI {
             root.PopClip()
         }
 
-        MouseDown(root, int button, int px, int py) {
+        MouseDown(Root root, int button, int px, int py) {
             var callback = this.onMouseDown
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }
 
-        MouseMove(root, int px, int py) {
+        MouseMove(Root root, int px, int py) {
             var callback = this.onMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
-        Hover(root, int px, int py) {
+        Hover(Root root, int px, int py) {
             var callback = this.onMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
-        MouseUp(root, int button, int px, int py) {
+        MouseUp(Root root, int button, int px, int py) {
             var callback = this.onMouseUp
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }

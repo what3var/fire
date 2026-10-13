@@ -31,7 +31,7 @@ namespace fire.Standard
             class Resource {
                 int id
 
-                construct(id) { this.id = id }
+                construct(int id) { this.id = id }
 
                 // the path as it was written in the source
                 string Name() { return __ResourceCall(3, this.id) }

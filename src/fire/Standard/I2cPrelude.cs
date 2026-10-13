@@ -103,7 +103,7 @@ namespace fire.Standard
                     int speed
 
                     // `bus`: a number (1 is "i2c-1"), a name ("i2c-1", "sim") or the text of a number; `speed` in Hz (the ESP32 uses it; Linux leaves it to the device tree).
-                    construct(bus, int speed = 100000) {
+                    construct(any bus, int speed = 100000) {
                         this.handle = -1
                         this.closed = false
                         this.speed = speed
@@ -132,7 +132,7 @@ namespace fire.Standard
                     }
 
                     // Writes `count` bytes of the buffer (all of it from `offset` on without a count) to the device.
-                    Write(int address, buffer, int offset = 0, int count = -1) {
+                    Write(int address, byte buffer[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = buffer.length - offset }
                         if (__I2cWrite(this.handle, address, buffer, offset, count) < 0) { I2c.Errors.Throw() }
@@ -145,7 +145,7 @@ namespace fire.Standard
                     }
 
                     // Reads `count` bytes from the device into the buffer.
-                    ReadInto(int address, buffer, int offset, int count) {
+                    ReadInto(int address, byte buffer[], int offset, int count) {
                         this.Check()
                         if (__I2cRead(this.handle, address, buffer, offset, count) < 0) { I2c.Errors.Throw() }
                     }
@@ -158,7 +158,7 @@ namespace fire.Standard
                     }
 
                     // Writes `outCount` bytes (without: all), then reads `inCount` bytes with a repeated start in between (no other master can step in); returns the bytes read.
-                    WriteRead(int address, buffer, int inCount, int outCount = -1) {
+                    WriteRead(int address, byte buffer[], int inCount, int outCount = -1) {
                         this.Check()
                         if (outCount < 0) { outCount = buffer.length }
                         var data = new byte[inCount]
@@ -189,7 +189,7 @@ namespace fire.Standard
                     }
 
                     // Writes the bytes into the registers from `register` on.
-                    WriteRegisters(int address, int register, data) {
+                    WriteRegisters(int address, int register, byte data[]) {
                         var b = new byte[data.length + 1]
                         b[0] = register & 255
                         for (var i = 0; i < data.length; i++) { b[i + 1] = data[i] }

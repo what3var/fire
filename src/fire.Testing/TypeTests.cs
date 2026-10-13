@@ -74,6 +74,67 @@ static class TypeTests
         Check("unbekannte Typen (dynamic) melden nichts", Run("var a = [1, 2]\nint x = a[0]\nvar f = n => n\nint y = f(1)\nprint(x)") == "|1");
         Check("die Typpruefung aendert das Programm nicht", Run("var t = 1\nfloat g = t\nprint(g)") == "|1");
 
+        // any, class, fields and properties need types, untyped parameters
+        Check("any nimmt alles, class nur Objekte", Run("""
+            class Thing { }
+            class H { class o
+                any a }
+            var h = new H()
+            h.a = 5
+            h.a = "s"
+            h.o = new Thing()
+            h.o = 5
+            h.o = "text"
+            """) == "TC001 TC001|");
+        Check("any als Parametertyp: jeder Wert, ein Objekt-Parameter (class) nur Objekte", Run("""
+            class K { Take(any v) { } Obj(class o) { } }
+            var k = new K()
+            k.Take(1)
+            k.Obj(new K())
+            k.Obj(7)
+            """) == "TC002|");
+        Check("ein Feld mit var ist ein Fehler (E4059), ein Feld ohne Typ auch, any ist erlaubt", Run("class A { var x }") == "|ERROR E4059" && Run("class A { x }") == "|ERROR E4059" && Run("class A { any x\n}\nprint(1)") == "|1");
+        Check("eine Property ohne Typ ist ein Fehler (E4060)", Run("class A { int v\n    P { get { return this.v } }\n}") == "|ERROR E4060" && Run("class A { int v\n    int P { get { return this.v } }\n}\nprint(1)") == "|1");
+        Check("ein Parameter ohne Typ: Warnung (lax) mit Hinweis, Fehler (strict)", Run("class A { M(x) { } }\nprint(1)") == "TC004|1" && Run("class A { M(x) { } }", TypeCheckMode.Strict) == "|ERROR TC004");
+        Check("eine Einheit : any verlangt keine bestimmte Einheit", Run("any_unit_ok()\nint x : any = 3m\nx = 5s\nprint(x)".Replace("any_unit_ok()\n", "")) == "|5s");
+
+        // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
+        foreach (var import in new[] { "io", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
+        {
+            Environment.SetEnvironmentVariable("FIRE_TYPECHECK_ALL", "1");
+            try { Check($"Bibliothek {import}: strikt typgeprueft ohne Befund", Run($"#import \"{import}\"\nprint(1)", TypeCheckMode.Strict) == "|1"); }
+            finally { Environment.SetEnvironmentVariable("FIRE_TYPECHECK_ALL", null); }
+        }
+
         Console.WriteLine(_failures == 0 ? "Alle Typpruefungs-Pruefungen bestanden." : $"FEHLER: {_failures} Typpruefungs-Pruefung(en) fehlgeschlagen.");
+    }
+
+    /// <summary>A development aid (`FIRE_TESTS_ONLY=snippets`, `FIRE_SRC` = the folder of the test sources): compiles every plain raw string of the tests and lists those that fail with a field, property or `var` error.</summary>
+    public static void Snippets()
+    {
+        string dir = Environment.GetEnvironmentVariable("FIRE_SRC") ?? ".";
+        var pattern = new System.Text.RegularExpressions.Regex("(?<!\\$)\"\"\"\\r?\\n(.*?)\"\"\"", System.Text.RegularExpressions.RegexOptions.Singleline);
+        int bad = 0, total = 0;
+        foreach (var file in Directory.GetFiles(dir, "*.cs"))
+        {
+            string text = File.ReadAllText(file);
+            foreach (System.Text.RegularExpressions.Match m in pattern.Matches(text))
+            {
+                string snippet = m.Groups[1].Value;
+                if (snippet.Contains("{{") || !(snippet.Contains("class ") || snippet.Contains("var "))) continue;
+                total++;
+                try { RuntimeSession.Build(new[] { snippet }, VmExecutionMode.Release, a => Value.MakeUndefined()); }
+                catch (Exception ex)
+                {
+                    var codes = CompileDiagnostics.Of(ex).Where(d => d.Code is "E4058" or "E4059" or "E4060").ToList();
+                    if (codes.Count == 0) continue;
+                    bad++;
+                    int line = text.Substring(0, m.Index).Count(c => c == '\n') + 1;
+                    Console.WriteLine($"{Path.GetFileName(file)}:{line}: {codes[0].Code} {codes[0].Message}");
+                }
+                finally { Value.SingleFloats = false; }
+            }
+        }
+        Console.WriteLine($"{total} Ausschnitte, {bad} mit Feld-/Property-/var-Fehler");
     }
 }

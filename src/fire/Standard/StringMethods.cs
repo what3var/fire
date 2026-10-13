@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using fire.Bytecode;
 using fire.Values;
@@ -48,27 +49,27 @@ namespace fire.Standard
         /// then determines the overload.</summary>
         private static readonly (StringMethod Id, string Returns, string Name, string Params)[] Signatures =
         {
-            (StringMethod.IndexOf, "int", "IndexOf", "value"),
-            (StringMethod.IndexOf, "int", "IndexOf", "value, start"),
-            (StringMethod.LastIndexOf, "int", "LastIndexOf", "value"),
-            (StringMethod.LastIndexOf, "int", "LastIndexOf", "value, start"),
-            (StringMethod.Substring, "string", "Substring", "start"),
-            (StringMethod.Substring, "string", "Substring", "start, count"),
-            (StringMethod.CharAt, "char", "CharAt", "index"),
-            (StringMethod.Contains, "bool", "Contains", "value"),
-            (StringMethod.StartsWith, "bool", "StartsWith", "value"),
-            (StringMethod.EndsWith, "bool", "EndsWith", "value"),
+            (StringMethod.IndexOf, "int", "IndexOf", "any value"),
+            (StringMethod.IndexOf, "int", "IndexOf", "any value, int start"),
+            (StringMethod.LastIndexOf, "int", "LastIndexOf", "any value"),
+            (StringMethod.LastIndexOf, "int", "LastIndexOf", "any value, int start"),
+            (StringMethod.Substring, "string", "Substring", "int start"),
+            (StringMethod.Substring, "string", "Substring", "int start, int count"),
+            (StringMethod.CharAt, "char", "CharAt", "int index"),
+            (StringMethod.Contains, "bool", "Contains", "any value"),
+            (StringMethod.StartsWith, "bool", "StartsWith", "any value"),
+            (StringMethod.EndsWith, "bool", "EndsWith", "any value"),
             (StringMethod.ToUpper, "string", "ToUpper", ""),
             (StringMethod.ToLower, "string", "ToLower", ""),
             (StringMethod.Trim, "string", "Trim", ""),
             (StringMethod.TrimStart, "string", "TrimStart", ""),
             (StringMethod.TrimEnd, "string", "TrimEnd", ""),
-            (StringMethod.Replace, "string", "Replace", "oldValue, newValue"),
-            (StringMethod.Split, "string[]", "Split", "separator"),
-            (StringMethod.PadLeft, "string", "PadLeft", "width"),
-            (StringMethod.PadLeft, "string", "PadLeft", "width, fill"),
-            (StringMethod.PadRight, "string", "PadRight", "width"),
-            (StringMethod.PadRight, "string", "PadRight", "width, fill"),
+            (StringMethod.Replace, "string", "Replace", "any oldValue, any newValue"),
+            (StringMethod.Split, "string[]", "Split", "any separator"),
+            (StringMethod.PadLeft, "string", "PadLeft", "int width"),
+            (StringMethod.PadLeft, "string", "PadLeft", "int width, any fill"),
+            (StringMethod.PadRight, "string", "PadRight", "int width"),
+            (StringMethod.PadRight, "string", "PadRight", "int width, any fill"),
         };
 
         /// <summary>The fire source `class extends string { ... }` for the prelude, generated from
@@ -84,7 +85,8 @@ namespace fire.Standard
             sb.AppendLine("class extends string {");
             foreach (var (id, returns, name, parms) in Signatures)
             {
-                string call = $"{NativeName}({(int)id}, this{(parms.Length == 0 ? "" : ", " + parms)})";
+                string names = string.Join(", ", parms.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim().Split(' ')[^1]));
+                string call = $"{NativeName}({(int)id}, this{(names.Length == 0 ? "" : ", " + names)})";
                 sb.AppendLine($"    {(returns.Length == 0 ? "" : returns + " ")}{name}({parms}) {{ return {call} }}");
             }
             sb.AppendLine("}");

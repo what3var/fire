@@ -118,7 +118,7 @@ namespace fire.Compiler
         /// effort.</summary>
         private static readonly HashSet<string> PrimitiveTypeNames = new()
         {
-            "bool", "int", "float", "char", "string", "class", "undefined", "lambda",
+            "bool", "int", "float", "char", "string", "class", "undefined", "lambda", "any",
         };
 
         private readonly Dictionary<Expr, ResolvedRef> _refs = new(ReferenceEqualityComparer.Instance);
@@ -983,7 +983,7 @@ namespace fire.Compiler
                 // identifier" - a pure follow-up error of the one
                 // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.RequiredUnit);
             }
         }
 
@@ -1075,7 +1075,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.Unit);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.RequiredUnit);
                     if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 
@@ -1335,7 +1335,10 @@ namespace fire.Compiler
                             // An invalid type does not prevent the resolution of the
                             // initialiser (and vice versa) - both individually
                             // guarded, so that ALL errors are reported.
-                            if (fd.Type != null) Guard(() => ValidateTypeRef(fd.Type, fd.Line));
+                            if (fd.Name.StartsWith("_Auto", StringComparison.Ordinal) && fd.Access == AccessModifier.Private && (fd.Type == null || fd.Type.IsInferred)) { }   // (the backing field of an untyped auto-property: the property is reported)
+                            else if (fd.Type == null || fd.Type.IsInferred)
+                                AddError(new ResolverException($"Field '{fd.Name}' of class '{cd.Name}' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed)", fd.Line));
+                            else Guard(() => ValidateTypeRef(fd.Type, fd.Line));
                             ResolveArrayRanks(fd.ArrayRanks);
                             ResolveFieldInitializer(fd);
                             break;
@@ -1372,7 +1375,9 @@ namespace fire.Compiler
                             break;
 
                         case PropertyDecl pd:
-                            if (pd.Type != null) Guard(() => ValidateTypeRef(pd.Type, pd.Line));
+                            if (pd.Type == null || pd.Type.IsInferred)
+                                AddError(new ResolverException($"Property '{pd.Name}' of class '{cd.Name}' needs a type (use the type it holds, or 'any' if every type is allowed)", pd.Line));
+                            else Guard(() => ValidateTypeRef(pd.Type, pd.Line));
                             // Getter: like a parameterless method. Setter: like
                             // a method with exactly one parameter 'value' of the
                             // property type (implicit, like C#'s setter parameter) -
@@ -1461,7 +1466,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.Unit, isRef: p.ByRef));
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.RequiredUnit, isRef: p.ByRef));
                 if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
             }
 
@@ -2126,7 +2131,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) ValidateTypeRef(p.Type, lambda.Line);
                 ResolveArrayRanks(p.ArrayRanks);
-                Define(p.Name, lambda.Line, requiredUnit: p.Type?.Unit);
+                Define(p.Name, lambda.Line, requiredUnit: p.Type?.RequiredUnit);
             }
 
             if (lambda.AutoCapture) DefineCaptures(lambda, enclosing);

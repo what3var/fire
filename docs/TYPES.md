@@ -31,7 +31,11 @@ Each step is independently shippable and tested VM == native.
 Step 1 is in: `src/fire.Compiler/TypeChecker.cs` runs after the resolver on the code of the user (not the preludes and libraries). It reports conflicts between two known types as `TC001`
 (assignment, initializer, field), `TC002` (argument of a method or constructor with exactly one candidate) and `TC003` (return value, reserved); in lax mode as warnings, in strict mode as errors.
 Select the mode with `--types lax|strict` (compiler switch, wins), the project setting `typeChecking`, and `#lax` / `#strict` in a file (wins for that file). The editor shows the same diagnostics while
-typing. `var x` without an initializer is the error `E4058` (fields declared `var name` in a class stay allowed: the libraries use them as untyped fields). Known gaps: arrays and elements,
+typing. `var x` without an initializer is the error `E4058` (fields declared `var name` in a class stay allowed: the libraries use them as untyped fields). Step 2 (the language and the standard library): `any`, `class` for objects only, no `var` fields/properties (`E4059`/`E4060`), untyped parameters reported (`TC004`), the unit `: any`. All preludes and the UI
+library are typed (fields, properties, parameters, callbacks with their number of parameters) and a test compiles every import in strict mode with the checker looking at the library code, too
+(`FIRE_TYPECHECK_ALL=1` does the same for a build). Properties have no unit yet (`float X : m { ... }` is to come with the unit step), lengths of Scene3D are plain `float`.
+
+Known gaps: arrays and elements,
 indexers, `foreach` variables, lambda return values, units, properties set through `this`-less access, statements inside `fire`/`sync` blocks are not looked at yet (they are `dynamic`).
 
 ## Decisions

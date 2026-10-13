@@ -29,6 +29,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -1014,7 +1015,7 @@ Console.WriteLine("=== Bytecode-Test: resume (fortsetzbare Exceptions) ===");
 
 string resumeSample = """
 class MyError {
-    message
+    string message
     construct(msg) { this.message = msg }
 }
 
@@ -1058,7 +1059,7 @@ Console.WriteLine("=== Bytecode-Test: nie fortgesetzte Exception (normaler catch
 
 string noResumeSample = """
 class MyError {
-    message
+    string message
     construct(msg) { this.message = msg }
 }
 
@@ -1814,7 +1815,7 @@ Console.WriteLine("=== Bytecode-Test: Extension-Klasse für unbekannte Klasse (m
 
 string extendUnknownSample = """
 class extends DoesNotExist {
-    var x
+    any x
 }
 """;
 
@@ -5435,7 +5436,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("eigener Stream (Basisklasse IO.Stream)", """
         class Upper : IO.Stream {
-            var inner
+            any inner
             construct(inner) { this.inner = inner }
             bool CanWrite { get { return true } }
             int Write(buffer, offset, count) {
@@ -6337,11 +6338,11 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(1.5 < 1.6)
         """, new[] { "10", "-3", "42", "3", "3", "3.5", "3.5", "3.75", "-1", "7mm", "6mm", "3mm", "True", "True", "False", "True", "True" });
 
-    CheckPerf("Division und Modulo durch 0 bleiben Fehler", """
+    CheckPerf("Division und Modulo durch 0 sind eine fangbare Ausnahme", """
         var zero = 0
         try { print(5 % zero) } catch (Exception e) { print("mod") }
         print("weiter")
-        """, new[] { "AUSNAHME: Attempted to divide by zero." });
+        """, new[] { "mod", "weiter" });
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
@@ -10690,9 +10691,9 @@ string[] uiDrawExpected = Array.Empty<string>();
                 class Model {
                     int _v = 1
                     string _l = "a"
-                    Volume { get { return this._v } set { this._v = value } }
-                    Label { get { return this._l } set { this._l = value + "!" } }
-                    Summary { get { return this._l + this._v } }
+                    any Volume { get { return this._v } set { this._v = value } }
+                    string Label { get { return this._l } set { this._l = value + "!" } }
+                    string Summary { get { return this._l + this._v } }
                 }
                 var d = new Prop1Base()
                 var m = new Model()
@@ -13103,7 +13104,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         class Item { string n
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
-        class Holder { var kept
+        class Holder { any kept
           construct() { }
           // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
           Adopt(x) { return try x.TakeTo(this) }
@@ -13118,7 +13119,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(h.AdoptNew(mine))
         print(h.AdoptNew(new Item("tmp")))
         // children of a list: the items go to the list
-        class Bag { var list
+        class Bag { any list
           construct() { this.list = new List() } }
         var items = new List()
         var a = new Item("la")
@@ -13174,7 +13175,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
         class Box { Item slot
-          items = [new Item("x0")]
+          any items = [new Item("x0")]
           Put(x) { x.TakeTo(this); print("put " + x.n) }
           destruct() { print("~box") } }
         class T {
@@ -13213,7 +13214,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
         class Item { string n
-          var arr
+          any arr
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
         class F {
@@ -13637,7 +13638,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
 
     CheckSc("Einheiten: ++ und -- zaehlen in der Einheit der Variablen (5cm++ ist 6cm), auch bei Feldern und Elementen", """
-        class P { static py = 0cm }
+        class P { static any py = 0cm }
         var i = 5.0cm
         i--
         print(i)
@@ -15992,6 +15993,16 @@ else
     // Fire threads (THREADING_DESIGN): only programs whose output does not depend on how the threads interleave
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Ganzzahl-Division und Modulo durch 0 sind eine fangbare DivideByZeroException, Float-Division gibt Infinity/NaN", """
+            int z = 0
+            try { print(7 / z) } catch (DivideByZeroException e) { print("div: " + e.message) }
+            try { print(7 % z) } catch (DivideByZeroException e) { print("mod: " + e.message) }
+            try { print(7m / z) } catch (DivideByZeroException e) { print("unit div") }
+            float f = 0.0
+            print(1.0 / f)
+            print(-1.0 / f)
+            print(7 / 2)
+            """),
         ("Threads: leave im Hauptprogramm wartet auf Fire-Threads, dann werden die Globals zerstoert", """
             class Item {
                 int n
@@ -16284,7 +16295,7 @@ else
             }
             class Inv {
                 int gold
-                var items
+                any items
                 Item best
                 construct() { this.gold = 0; this.items = [1, 2]; this.best = new Item(1) }
             }
@@ -17136,7 +17147,7 @@ else
             class Item { string n
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
-            class Holder { var kept
+            class Holder { any kept
               construct() { }
               // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
               Adopt(x) { return try x.TakeTo(this) }
@@ -17151,7 +17162,7 @@ else
             print(h.AdoptNew(mine))
             print(h.AdoptNew(new Item("tmp")))
             // children of a list: the items go to the list
-            class Bag { var list
+            class Bag { any list
               construct() { this.list = new List() } }
             var items = new List()
             var a = new Item("la")
@@ -17210,7 +17221,7 @@ else
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class Box { Item slot
-              items = [new Item("x0")]
+              any items = [new Item("x0")]
               Put(x) { x.TakeTo(this); print("put " + x.n) }
               destruct() { print("~box") } }
             class T {
@@ -17305,7 +17316,7 @@ else
             """),
         ("Besitz: Takes.Locals ueber den Methoden-Verteiler", """
             class Item { string n
-              var child
+              any child
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class Fake { TakeTo(a, b) { print("fake") } }
@@ -17328,7 +17339,7 @@ else
             """),
         ("Besitz: Ein Array besitzt, was return und Takes mitnehmen", """
             class Item { string n
-              var arr
+              any arr
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class F {

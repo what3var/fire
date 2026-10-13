@@ -1550,7 +1550,7 @@ namespace fire.Runtime
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Multiply(_stack[_sp - 2], _stack[_sp - 1])); return; }
                     break;
                 case OpCode.Div:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Divide(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Divide); return; }
                     break;
                 case OpCode.Mod:
                     if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
@@ -5805,6 +5805,7 @@ namespace fire.Runtime
             }
             try { Push(op(a, b)); }
             catch (UnitMismatchException ex) { Push(Value.MakeUndefined()); ThrowUnitConflict(ex); }
+            catch (DivideByZeroException) { Push(Value.MakeUndefined()); ThrowDivideByZero(); }
         }
 
         /// <summary>Replaces the two topmost values by `f(left, right)`; units that cannot be put together are a script exception (`UnitMismatchException`): catchable, and an unhandled one stops at this instruction with the result `undefined` on the stack.</summary>
@@ -5817,6 +5818,21 @@ namespace fire.Runtime
                 _stack[_sp - 1] = Value.MakeUndefined();
                 ThrowUnitConflict(ex);
             }
+            catch (DivideByZeroException)
+            {
+                _sp--;
+                _stack[_sp - 1] = Value.MakeUndefined();
+                ThrowDivideByZero();
+            }
+        }
+
+        /// <summary>An integer division or modulo by zero is a catchable script exception (`DivideByZeroException`); floats follow IEEE (infinity, NaN).</summary>
+        private void ThrowDivideByZero()
+        {
+            _arithFault = true;
+            var rc = ResolveClass("DivideByZeroException");
+            var instance = ConstructNested(rc, new[] { Value.MakeString("Division by zero.") });
+            ThrowException(Value.MakeClassRef(instance));
         }
 
         /// <summary>Set when ThrowUnitConflict raised an exception (read by the statement forms of `x++`/`x += c`, which must not store a result then).</summary>

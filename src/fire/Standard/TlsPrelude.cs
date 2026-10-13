@@ -83,12 +83,12 @@ namespace fire.Standard
                 class Stream : IO.Stream {
                     int handle
                     bool closed
-                    var tcp
+                    Net.TcpClient tcp
                     int readLimit
                     int writeLimit
 
                     // A TLS connection to host:port in one call (the TCP connection is made and the handshake done).
-                    static Connect(string host, int port, options = undefined, timeout = 10000) {
+                    static Connect(string host, int port, Tls.Options options = undefined, any timeout = 10000) {
                         var tcp = new Net.TcpClient(host, port, timeout)
                         tcp.NoDelay = true
                         return new Tls.Stream(tcp, host, options, timeout)
@@ -96,7 +96,7 @@ namespace fire.Standard
 
                     // The handshake as a client over `tcp`: `serverName` is the host name that the certificate must be for (and that SNI announces); the connection belongs to this stream from now on.
                     // Without a serverName nothing is done (the server side fills the stream, see Tls.Server.Accept).
-                    construct(tcp, string serverName = undefined, options = undefined, timeout = 10000) {
+                    construct(Net.TcpClient tcp, string serverName = undefined, Tls.Options options = undefined, any timeout = 10000) {
                         this.handle = -1
                         this.closed = false
                         this.readLimit = -1
@@ -114,7 +114,7 @@ namespace fire.Standard
                     }
 
                     // Does the handshake: asks the natives again and again (sleeping a moment in between) until it is complete, fails or the time runs out (undefined: no limit).
-                    Handshake(timeout) {
+                    Handshake(any timeout) {
                         var deadline = Net.Clock.Deadline(Net.Clock.Millis(timeout))
                         var tries = 0
                         while (true) {
@@ -137,18 +137,18 @@ namespace fire.Standard
                         if (this.closed) { throw new Net.ClosedException("The connection is closed.", 2) }
                     }
 
-                    ReadTimeout {
+                    any ReadTimeout {
                         get { return this.readLimit }
                         set { this.readLimit = Net.Clock.Millis(value) }
                     }
 
-                    WriteTimeout {
+                    any WriteTimeout {
                         get { return this.writeLimit }
                         set { this.writeLimit = Net.Clock.Millis(value) }
                     }
 
                     // The TCP connection underneath (do not read or write it: that would break the encryption).
-                    Connection { get { return this.tcp } }
+                    Net.TcpClient Connection { get { return this.tcp } }
 
                     string RemoteHost { get { return this.tcp.RemoteHost } }
                     int RemotePort { get { return this.tcp.RemotePort } }
@@ -164,14 +164,14 @@ namespace fire.Standard
                     }
 
                     // true if something can be read within the time (default: do not wait).
-                    bool WaitReadable(timeout = 0) {
+                    bool WaitReadable(any timeout = 0) {
                         this.Check()
                         if (__TlsPending(this.handle) > 0) { return true }
                         return this.tcp.WaitReadable(timeout)
                     }
 
                     // Up to `count` bytes (at least one unless the other side has ended the connection: then 0). Waits up to ReadTimeout, then Net.TimeoutException.
-                    int Read(buffer, offset, count) {
+                    int Read(byte buffer[], int offset, int count) {
                         this.Check()
                         var deadline = Net.Clock.Deadline(this.readLimit)
                         var tries = 0
@@ -186,7 +186,7 @@ namespace fire.Standard
                     }
 
                     // All `count` bytes.
-                    int Write(buffer, offset, count) {
+                    int Write(byte buffer[], int offset, int count) {
                         this.Check()
                         var done = 0
                         while (done < count) {
@@ -237,7 +237,7 @@ namespace fire.Standard
                     destruct() { this.Close() }
 
                     // The handshake as the server over a connection that a Net.TcpListener accepted; returns the encrypted stream (it owns the connection). Close the streams before the server.
-                    Accept(tcp, timeout = 10000) {
+                    Accept(Net.TcpClient tcp, any timeout = 10000) {
                         if (this.closed) { throw new Net.ClosedException("The TLS server is closed.", 2) }
                         var stream = new Tls.Stream(tcp)
                         stream.handle = Tls.Errors.Handle(__TlsAccept(this.context, tcp.NativeHandle))

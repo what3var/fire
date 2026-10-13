@@ -36,7 +36,7 @@ namespace fire.Standard
                 class ParamNames
                 class ParamTypes
 
-                construct(class d) {
+                construct(any d) {
                     this.Name = d[0]
                     this.Kind = d[1]
                     this.TypeName = d[2]
@@ -58,11 +58,11 @@ namespace fire.Standard
 
                 // Use with an instance (access rules as in normal code)
                 Get(class obj) { return Reflect.Get(obj, this.Name) }
-                Set(class obj, class value) { Reflect.Set(obj, this.Name, value) }
-                Call(class obj, class args) { return Reflect.Call(obj, this.Name, args) }
+                Set(class obj, any value) { Reflect.Set(obj, this.Name, value) }
+                Call(class obj, any args) { return Reflect.Call(obj, this.Name, args) }
 
                 // Like `probe obj.name changed|changing handler` (returns the handle for Reflect.SilenceHandle)
-                Probe(class obj, string kind, class handler) { return Reflect.Probe(obj, this.Name, kind, handler) }
+                Probe(class obj, string kind, any handler) { return Reflect.Probe(obj, this.Name, kind, handler) }
             }
 
             // A class: name, base, interfaces and all (also inherited) members
@@ -87,7 +87,7 @@ namespace fire.Standard
                 }
 
                 // The class of an object (or the one with this name if a string is passed)
-                static Of(class x) {
+                static Of(any x) {
                     var name = __refl_class_name(x)
                     if (name == undefined) { throw new ReflectionException("Not an object and not a known class") }
                     return new Type(name)
@@ -119,8 +119,8 @@ namespace fire.Standard
                 }
                 Has(string name) { return this.Find(name) != undefined }
 
-                IsSubclassOf(class other) { return __refl_is_sub(this.Name, other.Name) }
-                New(class args) { return Reflect.New(this.Name, args) }
+                IsSubclassOf(Type other) { return __refl_is_sub(this.Name, other.Name) }
+                New(any args) { return Reflect.New(this.Name, args) }
             }
 
             // A selector: the reflection of the member that a lambda `c => c.radius` selects (parameter type `lambda member<T>`; `Kind` is the
@@ -130,7 +130,7 @@ namespace fire.Standard
                 string Name
                 string Kind
 
-                construct(class path, string kind) {
+                construct(any path, string kind) {
                     this.Path = flat path   // (a copy that belongs to the selector)
                     this.Name = path[path.length - 1]
                     this.Kind = kind
@@ -159,14 +159,14 @@ namespace fire.Standard
                     if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' is a method - Call(obj, args) calls it") }
                     return Reflect.Get(parent, this.Name)
                 }
-                Set(class obj, class value) {
+                Set(class obj, any value) {
                     var parent = this.CheckKind(this.Parent(obj))
                     if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("'" + this.Name + "' is a method and cannot be assigned") }
                     Reflect.Set(parent, this.Name, value)
                 }
 
                 // Call a method (only for `lambda selector<T>`, which permits methods)
-                Call(class obj, class args) {
+                Call(class obj, any args) {
                     var parent = this.CheckKind(this.Parent(obj))
                     if (__refl_member_kind(parent, this.Name) != "method") { throw new ReflectionException("'" + this.Name + "' is not a method") }
                     return Reflect.Call(parent, this.Name, args)
@@ -175,7 +175,7 @@ namespace fire.Standard
                 Describe(class obj) { return Type.Of(this.CheckKind(this.Parent(obj))).Find(this.Name) }
 
                 // Probe on the selected field/property (kind: "changed" or "changing"); Silence removes it again
-                Probe(class obj, string kind, class handler) {
+                Probe(class obj, string kind, any handler) {
                     var parent = this.CheckKind(this.Parent(obj))
                     if (__refl_member_kind(parent, this.Name) == "method") { throw new ReflectionException("A probe cannot be registered on a method ('" + this.Name + "')") }
                     return Reflect.Probe(parent, this.Name, kind, handler)
@@ -185,42 +185,42 @@ namespace fire.Standard
 
             class Reflect {
                 static Get(class obj, string name) { return __refl_get(obj, name) }
-                static Set(class obj, string name, class value) { __refl_set(obj, name, value) }
-                static Call(class obj, string name, class args) { return __refl_call(obj, name, args) }
-                static New(string className, class args) { return __refl_new(className, args) }
+                static Set(class obj, string name, any value) { __refl_set(obj, name, value) }
+                static Call(class obj, string name, any args) { return __refl_call(obj, name, args) }
+                static New(string className, any args) { return __refl_new(className, args) }
                 static Has(class obj, string name) { return __refl_has(obj, name) }
 
                 // Probes (see `probe`/`silence`): kind is "changed" or "changing"; depending on the parameter count the handler gets
                 // (new), (old, new), (object, old, new) or (object, name, old, new). Returns the handle.
-                static Probe(class obj, string name, string kind, class handler) { return __refl_probe(obj, name, kind, handler) }
-                static ProbeAll(class obj, string kind, class handler) { return __refl_probe(obj, undefined, kind, handler) }
+                static Probe(class obj, string name, string kind, any handler) { return __refl_probe(obj, name, kind, handler) }
+                static ProbeAll(class obj, string kind, any handler) { return __refl_probe(obj, undefined, kind, handler) }
                 static Silence(class obj, string name) { __refl_silence(obj, name) }
                 static SilenceAll(class obj) { __refl_silence(obj, undefined) }
-                static SilenceHandle(class handle) { __refl_silence_handle(handle) }
+                static SilenceHandle(any handle) { __refl_silence_handle(handle) }
 
                 // Converts the lambda of a selector parameter (`lambda field|property|member|selector<T>`) into a Selector (called by the compiler at the
                 // start of the function); `kind` is the kind of the parameter type
-                static SelectorOf(class l, string kind) {
+                static SelectorOf(any l, string kind) {
                     if (l is of Selector) { return l }
                     return new Selector(__refl_selector_path(l), kind)
                 }
 
                 // May a member of this kind (actual: "field", "property", "method" or undefined) be chosen by a selector of this kind?
-                static KindAllowed(class actual, string kind) {
+                static KindAllowed(any actual, string kind) {
                     if (actual == undefined) { return false }
                     if (kind == "selector") { return true }
                     if (kind == "member") { return actual == "field" || actual == "property" }
                     return actual == kind
                 }
 
-                static KindWord(class actual) {
+                static KindWord(any actual) {
                     if (actual == "field") { return "a field" }
                     if (actual == "property") { return "a property" }
                     return "a method"
                 }
 
                 // Message for a member that does not match the selector
-                static KindMessage(string name, class actual, string kind) {
+                static KindMessage(string name, any actual, string kind) {
                     if (actual == undefined) { return "'" + name + "' is not a member" }
                     var expected = "a field"
                     if (kind == "property") { expected = "a property" }

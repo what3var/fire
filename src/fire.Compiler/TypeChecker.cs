@@ -20,7 +20,7 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object }
 
     internal readonly record struct StaticType(StaticKind Kind, string? Class = null)
     {
@@ -32,6 +32,8 @@ namespace fire.Compiler
         public static readonly StaticType String = new(StaticKind.String);
         public static readonly StaticType Lambda = new(StaticKind.Lambda);
         public static readonly StaticType Undefined = new(StaticKind.Undefined);
+        /// <summary>The type `class`: any object instance (not a base value, not an array, not a lambda).</summary>
+        public static readonly StaticType Object = new(StaticKind.Object);
         public bool IsDynamic => Kind == StaticKind.Dynamic;
         public override string ToString() => Kind == StaticKind.Class ? Class! : Kind.ToString().ToLowerInvariant();
     }
@@ -48,6 +50,7 @@ namespace fire.Compiler
         public const string AssignCode = "TC001";
         public const string ArgumentCode = "TC002";
         public const string ReturnCode = "TC003";
+        public const string UntypedCode = "TC004";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<int, bool> _strictBySource = new();
@@ -111,6 +114,8 @@ namespace fire.Compiler
             if (value.IsDynamic || target.IsDynamic || value.Kind == StaticKind.Undefined) return true;
             if (target.Kind == StaticKind.String) return true;                       // everything converts to string (ToString)
             if (value.Kind == StaticKind.Int && target.Kind == StaticKind.Float) return true;
+            if (target.Kind == StaticKind.Object) return value.Kind is StaticKind.Class or StaticKind.Object;   // `class` holds objects only
+            if (value.Kind == StaticKind.Object) return target.Kind is StaticKind.Class;                          // (an object may be the class the code expects)
             if (value.Kind == StaticKind.Class && target.Kind == StaticKind.Class)
                 return DerivesFrom(value.Class!, target.Class!) || DerivesFrom(target.Class!, value.Class!);   // (a downcast is let through: the code may know better)
             return value.Kind == target.Kind;
@@ -149,6 +154,8 @@ namespace fire.Compiler
                 case "char": return StaticType.Char;
                 case "string": return StaticType.String;
                 case "lambda": return StaticType.Lambda;
+                case "class": return StaticType.Object;
+                case "any": return StaticType.Dynamic;
             }
             string plain = PlainName(type.BaseName);
             return _classes.ContainsKey(plain) ? new StaticType(StaticKind.Class, plain) : StaticType.Dynamic;
@@ -314,9 +321,11 @@ namespace fire.Compiler
                             break;
                         }
                     case MethodDecl m:
+                        CheckParametersTyped(m.Params, m.Name, m.Line);
                         CheckBody(m.Params, m.Body, m.ReturnType == null ? null : Declared(m.ReturnType, m.ReturnType.ArrayRank));
                         break;
                     case ConstructorDecl c:
+                        CheckParametersTyped(c.Params, "construct", c.Line);
                         CheckBody(c.Params, c.Body, null);
                         break;
                     case DestructorDecl d:
@@ -329,6 +338,14 @@ namespace fire.Compiler
                 }
             }
             _class = previousClass;
+        }
+
+        /// <summary>A parameter without a type is taken as `any`: said so (a warning in lax mode, an error in strict mode), because a declared type tells the user of the class what it expects.</summary>
+        private void CheckParametersTyped(IReadOnlyList<LambdaParam> parameters, string owner, int line)
+        {
+            foreach (var p in parameters)
+                if (p.Type == null || p.Type.IsInferred)
+                    Report(UntypedCode, $"Parameter '{p.Name}' of '{owner}' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", line);
         }
 
         private void CheckBody(IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body, StaticType? returnType)
