@@ -28,6 +28,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { Proje
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -13197,7 +13198,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         {
           var inner = new Item("inner")
           var out = new Item("out")
-          var x
+          var x = undefined
           x = take out
           box.items[0] = take inner
         }
@@ -13418,7 +13419,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             static Odd(int n) { if (n == 0) { return false } return T.Even(n - 1) }
             static MakeAdder(int n) { var k = n * 2; return x => x + k }
             static Sum(int n) { var local = [n]; if (n == 0) { return 0 } return local[0] + T.Sum(n - 1) }
-            static Locals() { var a; var b; var c = 3; return "" + a + "," + b + "," + c }
+            static Locals() { var a = undefined; var b = undefined; var c = 3; return "" + a + "," + b + "," + c }
         }
         print(T.Fib(15))
         print(T.Even(10) + " " + T.Odd(10))
@@ -13545,7 +13546,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     CheckSc("Zuweisung an eine aeussere Variable schiebt den Besitz bis in die Funktions-Scope (nicht aus der Funktion hinaus)", scHead + """
         class T {
             static Run() {
-                var keep
+                var keep = undefined
                 for (var i = 0; i < 3; i = i + 1) {
                     var a = new D("a" + i)
                     var b = new D("b" + i)
@@ -13960,6 +13961,7 @@ static int CountOccurrences(string haystack, string needle)
 ProjectTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
+TypeTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -17232,7 +17234,7 @@ else
             {
               var inner = new Item("inner")
               var out = new Item("out")
-              var x
+              var x = undefined
               x = take out
               box.items[0] = take inner
             }
@@ -17261,7 +17263,7 @@ else
                 print("filled")
               }
             }
-            var h
+            var h = undefined
             {
               var it = new Item("i1")
               h = new Holder(take it)

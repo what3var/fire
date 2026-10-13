@@ -1092,6 +1092,9 @@ namespace fire.Compiler
                 case NoOpStmt:
                     break;
 
+                case TypeCheckDirective:
+                    break;
+
                 case NoSyncDirective:
                     break; // see Compile: `SetAutoSync 0` already stands at the program start
 

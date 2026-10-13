@@ -1037,6 +1037,9 @@ namespace fire.Compiler
                     // - nothing more to do here.
                     break;
 
+                case TypeCheckDirective:
+                    break; // read by the type checker
+
                 case NoSyncDirective:
                     break; // takes effect only at runtime (see Compiler.Compile: SetAutoSync)
 
@@ -1048,6 +1051,8 @@ namespace fire.Compiler
                     if (vd.Initializer != null) ResolveExprAllowTake(vd.Initializer);
                     if (vd.Type != null) ValidateTypeRef(vd.Type, vd.Line);
                     ResolveArrayRanks(vd.ArrayRanks);
+                    if (vd.Initializer == null && vd.ArrayRanks.Count == 0 && (vd.Type == null || vd.Type.IsInferred))
+                        throw new ResolverException($"'var {vd.Name}' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int {vd.Name}')", vd.Line);
                     if (vd.IsReadonly && vd.Initializer == null &&
                         !(vd.ArrayRanks.Count > 0 && vd.ArrayRanks[0] != null))
                         throw new ResolverException(

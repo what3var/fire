@@ -21,6 +21,8 @@ namespace fire.Compiler
         public VmExecutionMode? Mode { get; init; }
         /// <summary>`-f`: precision of `float` (32 or 64); null = the one in the script (`#floatwidth`) or 64.</summary>
         public int? FloatWidth { get; init; }
+        /// <summary>`--types lax|strict`: how a type conflict is reported (docs/TYPES.md); null = the project's setting, else lax.</summary>
+        public TypeCheckMode? TypeChecking { get; init; }
 
         /// <summary>`-D name` (repeatable): extra symbols for `#if`.</summary>
         public IReadOnlyList<string> Defines { get; init; } = Array.Empty<string>();
@@ -84,6 +86,8 @@ namespace fire.Compiler
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
             -f      Precision of float in bits: 32 or 64 (default: whatever the script sets with #floatwidth, otherwise 64).
+            --types lax|strict  How a type conflict (assigning a string to an int, a wrong argument type) is reported: a warning (lax, the default) or an error (strict). A project setting
+                    typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
             ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
@@ -113,6 +117,7 @@ namespace fire.Compiler
             var files = new List<string>();
             VmExecutionMode? mode = null;
             int? floatWidth = null;
+            TypeCheckMode? typeChecking = null;
             TargetProfile? target = null;
             string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null;
             bool keep = false;
@@ -172,6 +177,12 @@ namespace fire.Compiler
                     if (command != CommandKind.Build) return Fail(command, "--keep is only available with build.");
                     keep = true;
                 }
+                else if (TryOption(arg, "--types", "--types", out var typesInline))
+                {
+                    string? value = typesInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (value == null || Unquote(value).ToLowerInvariant() is not ("lax" or "strict")) return Fail(command, "--types must be followed by lax or strict.");
+                    typeChecking = Unquote(value).ToLowerInvariant() == "strict" ? TypeCheckMode.Strict : TypeCheckMode.Lax;
+                }
                 else if (TryOption(arg, "-f", "--float", out var floatInline))
                 {
                     string? value = floatInline ?? (i + 1 < args.Count ? args[++i] : null);
@@ -214,6 +225,7 @@ namespace fire.Compiler
                 Files = files,
                 Mode = mode,
                 FloatWidth = floatWidth,
+                TypeChecking = typeChecking,
                 Defines = defines,
                 Target = target,
                 TargetName = targetName,
@@ -290,6 +302,7 @@ namespace fire.Compiler
                 stderr.WriteLine(CommandLineParser.Usage);
                 return ExitUsage;
             }
+            Linker.ProcessDefaultTypeChecking = options.TypeChecking;
             if (options.Command == CommandKind.Help)
             {
                 stdout.WriteLine(CommandLineParser.Usage);
@@ -531,7 +544,7 @@ namespace fire.Compiler
         internal static string DescribeErrors(Exception ex) => string.Join(Environment.NewLine, CompileDiagnostics.Of(ex).Select(d => d.ToLogLine()));
 
         internal static bool IsCompileError(Exception ex) =>
-            ex is ParseException or LexException or ResolverException or CompilerException
+            ex is ParseException or LexException or ResolverException or CompilerException or TypeCheckException
                 or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException;
     }
 }

@@ -298,6 +298,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4055` | '…' was already captured in this 'fire' |
 | `E4056` | Class '…' has no static member '…' |
 | `E4057` | '….…' is an instance member - it needs an object, not the class name |
+| `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
 
 ### E5xxx - Bytecode compiler
 

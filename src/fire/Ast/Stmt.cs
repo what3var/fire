@@ -38,6 +38,10 @@ namespace fire.Ast
     /// program (the compiler emits `SetAutoSync 0` at the very start for this); must be a top-level statement.</summary>
     public sealed record NoSyncDirective(int Source, int Line) : Stmt(Source, Line);
 
+    /// <summary>`#lax` / `#strict` (docs/TYPES.md): the type checking mode of the file this stands in (`Strict` false = lax: a type conflict is a warning, true = strict: an error). Read by the
+    /// type checker only; it takes the place of the project's setting for the statements of its file that follow.</summary>
+    public sealed record TypeCheckDirective(int Source, int Line, bool Strict) : Stmt(Source, Line);
+
     /// <summary>`#timeout value` (e.g. `#timeout 10s`, `#timeout 500ms`, `#timeout 2000`): the wait time that wait functions without their own duration
     /// use (`Device.WaitFor`/`WaitForString`; 30 seconds without the directive). `value`: a time value (`10s`), a `TimeSpan` is not possible here (the
     /// directive is evaluated at the very start of the program) or a number in milliseconds - as with `Sleep`. The compiler emits for this at the very start

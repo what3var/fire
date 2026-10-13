@@ -204,6 +204,8 @@ namespace fire.Compiler
                     return new[] { new Diagnostic(l.Line, l.RawMessage, DiagnosticSeverity.Error, l.Code, file, l.Column) };
                 case ResolverException r:
                     return r.Errors.Select(e => new Diagnostic(e.Line, e.RawMessage, DiagnosticSeverity.Error, e.Code, file)).ToList();
+                case TypeCheckException t:
+                    return t.Errors.Select(e => e with { File = e.File ?? file }).ToList();
                 case CompilerException c:
                     return c.Errors.Select(e => new Diagnostic(e.Line, e.RawMessage, DiagnosticSeverity.Error, e.Code, file)).ToList();
                 case PreprocessorException pre:
