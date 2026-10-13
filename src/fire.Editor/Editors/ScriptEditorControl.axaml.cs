@@ -1,3 +1,4 @@
+using fire.Compiler;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -618,7 +619,8 @@ namespace fire.Editor
         {
             string text = Editor.Text;
             _colorizer.Spans = SyntaxHighlighter.Highlight(text, ConditionalSymbolsForView());
-            _errorSquiggles.ErrorLines = _diagnostics.Select(d => d.Line).ToHashSet();
+            _errorSquiggles.ErrorLines = _diagnostics.Where(d => d.IsError).Select(d => d.Line).ToHashSet();
+            _errorSquiggles.WarningLines = _diagnostics.Where(d => d.IsWarning).Select(d => d.Line).ToHashSet();
             Editor.TextArea.TextView.Redraw();
         }
 

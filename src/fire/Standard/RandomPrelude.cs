@@ -29,7 +29,7 @@ namespace fire.Standard
                 int s3
 
                 // From the clock.
-                construct() { this.Seed(DateTime.UtcNow().Ticks) }
+                construct() { this.Seed(DateTime.UtcNow.Ticks) }
 
                 // From a number: the same number gives the same sequence.
                 construct(int seed) { this.Seed(seed) }

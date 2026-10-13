@@ -101,7 +101,7 @@ namespace fire.Values
         /// </summary>
         public static Unit Parse(string symbol)
         {
-            if (string.IsNullOrEmpty(symbol))
+            if (string.IsNullOrEmpty(symbol) || symbol == "unitless")
                 return Unitless;
 
             // 1) Exact hit on a named (possibly non-prefixable) unit name first,

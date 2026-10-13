@@ -6,8 +6,9 @@ using fire.Runtime;
 
 namespace fire.Compiler
 {
-    /// <summary>The result of a native build: where the program (or, for a toolchain that only writes files, the folder) is, and what the tools said.</summary>
-    public sealed record NativeBuildResult(bool Ok, string Output, string Log);
+    /// <summary>The result of a native build: where the program (or, for a toolchain that only writes files, the folder) is, what the tools said, and the errors and warnings of the compile
+    /// (<see cref="Diagnostic"/>, with codes; <see cref="NativeBuilder.BuildSafe"/> fills them).</summary>
+    public sealed record NativeBuildResult(bool Ok, string Output, string Log, IReadOnlyList<Diagnostic>? Diagnostics = null);
 
     /// <summary>
     /// Builds a program natively: translate it to C++ (<see cref="CppGenerator"/>) for a target, write the runtime and the platform package of the target next to it,
@@ -111,12 +112,15 @@ namespace fire.Compiler
                     // nothing to compile with: offer to provide a toolchain (the host asks the user: install, change, cancel)
                     var provided = ToolchainProvider.Require(toolchain, "A native build translates the program to C++ and compiles it with a C++ toolchain.");
                     if (provided == null)
-                        return new NativeBuildResult(false, exe, $"The compiler '{toolchain.EffectiveCompiler}' was not found. Install it, name another one in the toolchain of {NativeConfig.FileName}, or build with the toolchain 'files' and compile the sources yourself.");
+                    {
+                        string notFound = $"The compiler '{toolchain.EffectiveCompiler}' was not found. Install it, name another one in the toolchain of {NativeConfig.FileName}, or build with the toolchain 'files' and compile the sources yourself.";
+                        return new NativeBuildResult(false, exe, notFound, new[] { new Diagnostic(0, notFound, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
+                    }
                     toolchain = provided;
                 }
                 // a window needs the development files of SDL2: look for them, offer to download them (Windows)
                 if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
-                    return new NativeBuildResult(false, exe, missingLibrary);
+                    return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
                 var (exeName, arguments) = CompilerCommand(toolchain, target, cppFile, workDir, exe, gui: gui);
                 log.AppendLine($"{exeName} {arguments}");
                 var (ok, text) = Run(exeName, arguments, workDir);
@@ -124,8 +128,8 @@ namespace fire.Compiler
                 bool built = ok && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
                 // a Windows program with a window needs SDL2.dll next to it
-                if (built && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
-                return new NativeBuildResult(built, exe, log.ToString());
+                if (built && toolchain.EffectiveKind != "emscripten" && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
+                return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
             }
             finally
             {
@@ -137,10 +141,19 @@ namespace fire.Compiler
         public static NativeBuildResult BuildSafe(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
         {
-            try { return Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan); }
-            catch (NativeNotSupportedException ex) { return new NativeBuildResult(false, output, "Not supported by the native backend yet: " + ex.Message); }
-            catch (NativeConfigException ex) { return new NativeBuildResult(false, output, ex.Message); }
-            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex)) { return new NativeBuildResult(false, output, CompileErrors.Describe(ex)); }
+            // the warnings of the code (`warn 123: "text"`) are collected while the parser reads it
+            var warnings = new DiagnosticCollector();
+            using var collecting = warnings.Begin();
+            NativeBuildResult Failed(string log, IEnumerable<Diagnostic> errors) =>
+                new(false, output, log, errors.Concat(warnings.Items).ToList());
+            try
+            {
+                var result = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan);
+                return result with { Diagnostics = (result.Diagnostics ?? Array.Empty<Diagnostic>()).Concat(warnings.Items).ToList() };
+            }
+            catch (NativeNotSupportedException ex) { return Failed("Not supported by the native backend yet: " + ex.Message, CompileDiagnostics.Of(ex)); }
+            catch (NativeConfigException ex) { return Failed(ex.Message, new[] { new Diagnostic(0, ex.Message, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) }); }
+            catch (Exception ex) when (CommandLineRunner.IsCompileError(ex)) { return Failed(CompileErrors.Describe(ex), CompileDiagnostics.Of(ex)); }
         }
 
         /// <summary>The compiler command line for the generated file.</summary>
@@ -160,7 +173,8 @@ namespace fire.Compiler
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             var libDirs = new List<string>();
             // SDL2: where its headers and import library are (Toolchain\SDL2, SDL2_DIR, the prefix of the compiler, the system), see SdlSetup
-            if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
+            if (kind == "emscripten") libs = libs.Select(l => l == "-lSDL2" ? "-sUSE_SDL=2" : l).ToList();   // Emscripten brings SDL2 itself
+            else if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
             {
                 includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
                 libDirs.AddRange(sdl.LibDirs);
@@ -217,7 +231,7 @@ namespace fire.Compiler
         {
             try
             {
-                var psi = new ProcessStartInfo(exe, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
+                var psi = new ProcessStartInfo(exe, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = workDir };   // (CreateNoWindow: the console window of the compiler stays away)
                 // a portable toolchain (w64devkit) finds its other programs through the PATH: its folder comes first
                 if (Path.IsPathRooted(exe) && Path.GetDirectoryName(exe) is { Length: > 0 } toolDir)
                     psi.Environment["PATH"] = toolDir + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
@@ -270,6 +284,6 @@ namespace fire.Compiler
         }
 
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>
-        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.IsEmbedded ? "out" : "out";
+        public static string DefaultOutput(TargetProfile target) => target.Name == "windows" ? "out.exe" : target.Name == "wasm" ? "out.html" : target.IsEmbedded ? "out" : "out";
     }
 }

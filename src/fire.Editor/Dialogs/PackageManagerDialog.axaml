@@ -9,16 +9,15 @@
             <TextBox x:Name="txtSearch" ToolTip.Tip="Part of a name or of a description; empty: everything"/>
         </DockPanel>
 
-        <DataGrid Grid.Row="1" x:Name="lvPackages" AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column"
-                  GridLinesVisibility="None" SelectionChanged="Packages_SelectionChanged">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Package" Width="150" Binding="{Binding Name}"/>
-                <DataGridTextColumn Header="Version" Width="80" Binding="{Binding Latest}"/>
-                <DataGridTextColumn Header="Installed" Width="80" Binding="{Binding InstalledVersion}"/>
-                <DataGridTextColumn Header="Author" Width="110" Binding="{Binding Author}"/>
-                <DataGridTextColumn Header="Description" Width="*" Binding="{Binding Description}"/>
-            </DataGrid.Columns>
-        </DataGrid>
+        <TableView Grid.Row="1" x:Name="lvPackages" CanUserResizeColumns="True" SelectionMode="Single" SelectionChanged="Packages_SelectionChanged">
+            <TableView.Columns>
+                <TableViewColumn Header="Package" Width="150" Binding="{Binding Name}"/>
+                <TableViewColumn Header="Version" Width="80" Binding="{Binding Latest}"/>
+                <TableViewColumn Header="Installed" Width="80" Binding="{Binding InstalledVersion}"/>
+                <TableViewColumn Header="Author" Width="110" Binding="{Binding Author}"/>
+                <TableViewColumn Header="Description" Width="*" Binding="{Binding Description}"/>
+            </TableView.Columns>
+        </TableView>
 
         <TextBlock Grid.Row="2" x:Name="txtDetails" TextWrapping="Wrap" Margin="2,6" MinHeight="34"/>
 

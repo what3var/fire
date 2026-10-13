@@ -2,6 +2,6 @@
   "title": "Native Library",
   "description": "A library with C++ natives in the folder native/: fire code wraps them in a class. The C++ goes into the package too.",
   "icon": "native",
-  "open": [ "$identlower$.script" ],
+  "open": [ "$identlower$.fire" ],
   "order": 40
 }

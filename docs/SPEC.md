@@ -97,6 +97,15 @@ break that. Since type argument lists run through their own, completely separate
 methods (never through the normal expression precedence chain), there is
 no conflict anyway.
 
+**Compound assignment**: `a += b`, `-=`, `*=`, `/=`, `%=`, `^=` (power), `&=`, `|=`, `#=` (xor), `<<=` and `>>=` mean `a = a op b` (the right side is
+the whole expression to the right: `a *= b + c` is `a = a * (b + c)`; the operators are right-associative like `=`; `+=` also appends to a string; units work as
+in `a = a + b`). The target is evaluated twice, so it must not have effects of its own: a name, a member (`c.n += 1`) or an element whose operands are names,
+members, literals and operators (`arr[i + 1] *= 5`) is fine, a call, `++`/`--` or an assignment in the target is the error `E3159` (write the assignment out).
+`<<=` and `>>=` are the only shift tokens the lexer knows (`<<` and `>>` stay two single characters, see above, since `>>=` can never close a type argument list).
+
+**Loops**: the initialiser of a `for` is a declaration with `var` or with a type (`for (int i = 0; i < n; i++)`, `for (float x = 0.5; ...)`) or an expression; `foreach (x in list)` can also be written
+`foreach (var x in list)`.
+
 **Number literals in binary/hexadecimal notation**: `0b`/`0x` prefix
 (upper or lower case of both letters allowed), e.g. `0b01101100`,
 `0xFFCC8080` - always `int`, never `float` (no fraction/exponent for a
@@ -263,6 +272,8 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - `:` operator for **unit** annotation/coercion on a value: `undefined : km`.
   - `value:` (without an argument) → the unit is derived automatically from the context of the operation (see 3.4).
   - `value:unit` → the unit is explicitly forced/converted to `unit`.
+  - To `unitless` the **dimension is calculated out**: the number in the base unit, `12mm:unitless` is `0.012` (an int stays an int when the result is whole: `2km:unitless` is `2000`).
+- `::` operator (**relabel**): `value::unit` gives the same number the other unit and calculates nothing - `12mm::unitless` is `12`, `12mm::m` is `12m`. The unit after `::` is always written out.
 - `!` operator for **type** coercion: `value!`, `value!int`.
   - `value!` (without an argument) → the type is derived from the context.
   - `value!type` → the type is explicitly forced.
@@ -757,6 +768,10 @@ directly in one of its `case` branches therefore ends **the switch branch, not t
 loop** (as in most C-style languages) – for the loop
 itself the `break` would have to be inside a loop construct of its own nested in the `case` branch.
 
+`x++`/`x--` count in the unit of the variable: `5cm` becomes `6cm` (they are `x = x + 1<unit>`, not `x + 1` with a unitless 1, which would be a unit mismatch).
+
+An operation with units that do not fit (`5cm + 1`, `1m < 2kg`) throws a `UnitMismatchException` that `try`/`catch` can catch; an unhandled one stops the program at that statement (in the editor a dialog offers to go on after it, with the result `undefined`).
+
 ### 5.10 `break`/`continue` in loops
 
 ```
@@ -991,7 +1006,7 @@ library framework that builds on `extern`/`#extern`.
 ### 8.1.2 `#include "fileName"`
 
 ```
-#include "shapes.script"
+#include "shapes.fire"
 
 var c = new Circle(2.0)
 ```
@@ -1239,6 +1254,40 @@ never lexed, parsed or checked, so they may use libraries, classes or syntax tha
 
 The VM that runs a script in the editor uses the machine it runs on (`windows`, `linux` or `macos`, `vm`), so the same script does the same thing in the editor and
 as a native program for the same system. The live diagnostics of the editor do the same; an `#import` in a branch that is not taken does not import. The editor greys out the lines of the branches that are not taken (the symbols follow the configuration of the script: with `"engine": "native"` in the nearest `fire.native.json` its target, engine `native` and its defines, otherwise the machine and `vm`); they get no syntax colours.
+
+### 8.1.8 Warnings (`warn`) and error codes
+
+```
+class Cache {
+    Flush() {
+        warn 204: "Flush is obsolete, use Clear() - it goes away in the next version"
+        this.Clear()
+    }
+}
+```
+
+`warn <id>: "text"` is a **warning of the developer in the code**: it points to a problem or to something that is going to be obsolete. It is a statement, and it may stand wherever a statement
+or a member of a class may. The compiler **reports** it (the editor lists it in the Error List and in the Build Log, an amber squiggle marks the line; the command line prints
+`warning W204: ... (line 3)` to stderr) and **does not compile** it: nothing of a `warn` reaches the program, it costs nothing at run time, and the build does not fail because of it. `id` is
+a whole number from 0 to 99999 that names the warning - its code is `W<id>`, e.g. `W204`. `warn` is a keyword only where a number and a colon follow it, so it remains usable as a name.
+
+**Where it is reported** depends on where it is written:
+
+* in the code of the program (outside of classes): where it stands;
+* in a **class body**, outside of its members: the class is obsolete - reported at every `new` of the class and at every static access (`Cache.Make()`);
+* in a **constructor**: reported at `new` with that many arguments;
+* in a **method**: reported at every call of the method (that name, that many arguments);
+* in a **property** (or next to a field it belongs to): reported at every access.
+
+A warning of a class or member that is never used is never reported, and each place of use gets it once (`Flush is obsolete, use Clear() (Cache.Flush)`: the text and where it was declared). The
+class's own code is not told about its own obsolete parts. As the language has no static types, the compiler knows the class of an object only when it is clear from the code - `this`, `new Cache()`,
+a variable declared with a class (`Cache c`) or with `new` (`var c = new Cache()`), a parameter with a class. A call on an object of unknown class (an untyped parameter, the result of a call) reports
+the declared warnings of every class that has a member of that name and that number of arguments - with the class in the message, so that it can be told.
+
+Every **error** of the compiler has a code, too: `E` and four digits (`E4022: Unknown identifier 'x'`); docs/ERRORS.md lists them. After a build, its errors and warnings are in the Error List
+until the next build replaces them; the Error List has a filter for the warnings.
+
+A reference `ClassName.Member` to a static member that the class (or a base class) does not have is an error when the program is compiled (`E4056`), not a failure at run time.
 
 ### 8.2 Bit widths for `int`/`float`
 
@@ -2032,7 +2081,7 @@ print(duration)                                   // 00:01:30
 print(duration.TotalMinutes + " " + duration.Seconds)   // 1.5 30
 var w = TimeSpan.Of(250ms)                        // from a value with a time unit, a number (ms) or a TimeSpan
 
-var now = DateTime.Now()                          // UtcNow(), Today(); new DateTime(2024, 3, 15) / (y, m, d, h, mi, s) / (..., ms)
+var now = DateTime.Now                            // UtcNow, Today (properties, like in .NET); new DateTime(2024, 3, 15) / (y, m, d, h, mi, s) / (..., ms)
 var tomorrow = now + TimeSpan.FromDays(1)
 print(tomorrow.ToString("dd.MM.yyyy HH:mm"))
 print(DateTime.Parse("2024-12-24 18:00") - now)   // a TimeSpan
@@ -2150,7 +2199,7 @@ that points to `ember`. The natives of a package are C++ (docs/PACKAGE_NATIVES.m
 ### 8.19 Random numbers (`#import "random"`)
 
 `PseudoRandom` is a pseudo random number generator written in fire (the package `fire-random`, no natives): xoshiro128** with four 32-bit words computed in the 64-bit `int`, so the same seed gives the
-same numbers in the virtual machine, in a native build and on every platform. It brings `time` along: `new PseudoRandom()` starts from the clock (`DateTime.UtcNow().Ticks`; two generators made within the same
+same numbers in the virtual machine, in a native build and on every platform. It brings `time` along: `new PseudoRandom()` starts from the clock (`DateTime.UtcNow.Ticks`; two generators made within the same
 100 ns tick get the same sequence - give them seeds then), `new PseudoRandom(seed)` from a number.
 
 - `Next()`: 0 .. 2147483646 (like .NET); `Next(max)`: 0 .. max - 1 (any `max` above 0, also above 2^32); `Next(min, max)`: min .. max - 1. The values are unbiased (no modulo skew). A `max` that is not above 0 (or `max <= min`) throws `RandomException`.
@@ -2214,9 +2263,13 @@ bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels
 file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
 The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
 
+### 8.28b 3D scenes (`#import "scene3d"`)
+
+The package `fire-scene3d` (docs/SCENE3D.md is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C++, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels.
+
 ### 8.29 Projects and solutions
 
-A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.script` of its
+A program can be given to the compiler as a **project** (`name.fireproj`, JSON) or a **solution** (`name.firesln`) instead of a list of files (docs/PROJECTS.md is the reference). A project names its files (default: all `*.fire` of its
 folder), its type (`exe`, or `library` without an entry point - a statement at the top level is an error), its build settings, and its references (projects of the solution, installed packages). A reference makes a library available;
 `#import "Name"` in the source turns it on, exactly as for a package, and the library's files are processed before the files of the project. The files of a project are part of the program without an `#include` (UI markup files, `.fxml`, as the script generated from them); an `#include` of such a file adds nothing. A project may have C++ natives in its folder `native/`: each `inline Value name(Value ...)` there is the native function `__name`, built like the natives of a package. A library is packed with `fire build Core.fireproj` into an ordinary `.fpk`.
 Build settings are taken from the project first, then from the solution, then from the tags in the source (`#debug`, `#name "..."`, `#floatwidth 32`, `#noconsole`, ...), then the defaults; `#if` symbols of all levels are added up; options on the command line go before the project.

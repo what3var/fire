@@ -1,0 +1,78 @@
+#import "windows"
+#import "scene3d"
+// A scene holds objects, lights and cameras (lengths have units: 1m, 20cm, 3mm; angles: 45deg).
+// The camera draws what it sees into a framebuffer, the window shows the framebuffer.
+var fb = new Framebuffer(480, 320)
+var win = new Window(fb, "Scene3D")
+var scene = new Scene()
+
+var floor = new Object(Template.Plane, 0m, 0m, 0m, 8m, 0m, 8m)
+floor.Texture = Texture.Checker(64, 8, S3D.Rgb(235, 235, 235), S3D.Rgb(90, 100, 120))
+floor.TextureWidth = 1m
+floor.TextureHeight = 1m
+scene.Add(floor, "floor")
+
+// x, y, z of the position, then width, height and depth; the anchor says which point of the object sits at the position
+var box = new Object(Template.Box, -1.2m, 0m, 0m, 1m, 1m, 1m)
+box.AnchorY = 0.0
+box.Texture = Texture.Checker(32, 4, S3D.Rgb(255, 200, 0), S3D.Rgb(200, 60, 0))
+box.TextureWidth = 50cm
+box.TextureHeight = 50cm
+scene.Add(box, "box")
+
+var ball = new Object(Template.Sphere, 0.4m, 0.5m, 0.3m, 1m, 1m, 1m)
+ball.Color = S3D.Rgb(200, 40, 40)
+ball.Material = Material.Metal()
+scene.Add(ball, "ball")
+
+var cone = new Object(Template.Cone, 1.8m, 0m, -0.5m, 0.8m, 1.4m, 0.8m)
+cone.AnchorY = 0.0
+cone.Color = S3D.Rgb(40, 160, 70)
+scene.Add(cone)
+
+// bump map: the lighting follows the brightness of the texture, so the squares look carved
+box.Texture.AddBumpmap()
+box.Texture.BumpStrength = 1.5
+
+// transparency: a pane of glass (Opacity < 1, or a texture with transparent pixels)
+var glass = new Object(Template.Box, 1.0m, 0.5m, 1.8m, 1.2m, 1.0m, 0.05m)
+glass.Color = S3D.Rgb(120, 190, 255)
+glass.Opacity = 0.4
+scene.Add(glass, "glass")
+
+// a billboard always turns to the camera: a round "bush" on a quad, with transparent corners (AlphaCutoff makes the edge hard, so no sorting is needed)
+var bytes = new byte[32 * 32 * 4]
+for (var y = 0; y < 32; y++) {
+    for (var x = 0; x < 32; x++) {
+        var dx = x - 15.5
+        var dy = y - 15.5
+        var i = (y * 32 + x) * 4
+        bytes[i] = 40 + (x * 3) % 60
+        bytes[i + 1] = 140 + (y * 3) % 80
+        bytes[i + 2] = 50
+        if (dx * dx + dy * dy < 15.0 * 15.0) { bytes[i + 3] = 255 } else { bytes[i + 3] = 0 }
+    }
+}
+var bush = new Object(Template.Quad, -2.6m, 0.6m, -1.2m, 1.2m, 1.2m, 0m)
+bush.Texture = new Texture(32, 32, bytes)
+bush.AlphaCutoff = 0.5
+bush.Billboard = BillboardMode.Vertical
+bush.CastShadows = false
+scene.Add(bush, "bush")
+
+scene.Add(Light.Directional(-0.5, -1.0, -0.4, S3D.Rgb(255, 250, 240), 0.9))
+var lamp = Light.Point(-2m, 3m, 2m, S3D.Rgb(255, 220, 180), 0.5)
+lamp.CastShadows = false      // a light, an object or the whole scene can switch shadows off (scene.Shadows = false is the fast way)
+scene.Add(lamp)
+scene.ShadowResolution = 1024
+
+var cam = new Camera(fb)
+cam.SetPosition(2.5m, 2.2m, 4.5m)
+cam.LookAt(0m, 0.4m, 0m)
+scene.Add(cam)
+
+while (win.Tick()) {
+    box.Rotate(0deg, 1deg, 0deg)
+    cone.Rotate(0deg, -2deg, 0deg)
+    cam.Render()
+}

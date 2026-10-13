@@ -25,6 +25,9 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -6341,7 +6344,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
-        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'unitless'." });
+        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
     // --- Stack and scope slots grow
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
@@ -7517,6 +7520,50 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var applyLog = new System.Text.StringBuilder();
         fire.Compiler.NativeBuilder.ApplyPeMetadata(Path.Combine(sfDir, "none.exe"), nativeInfo, winTarget!, applyLog);
         SfCheck(applyLog.Length == 0, "nativer Build: eine fehlende Datei oder ein anderes System laesst die Metadaten in Ruhe");
+        // the target wasm (WebAssembly in the browser, Emscripten)
+        {
+            bool known = TargetProfile.TryGet("wasm", out var wasm);
+            SfCheck(known && wasm!.Native.Platform == "wasm" && !wasm.Native.SupportsThreads && wasm.Native.Toolchain == "emscripten" && wasm.Symbols.Contains("browser") && wasm.Symbols.Contains("wasm"), "wasm: das Ziel gibt es (Plattform wasm, Toolchain emscripten, keine Threads, Symbole wasm und browser)");
+            var wasmCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm!, "p.cpp", sfDir, "p.html");
+            SfCheck(wasmCmd.Executable.EndsWith("em++") && wasmCmd.Arguments.Contains("-fexceptions") && wasmCmd.Arguments.Contains("-sASYNCIFY") && wasmCmd.Arguments.Contains("-sSINGLE_FILE=1") && wasmCmd.Arguments.Contains("p.html"),
+                "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
+            SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(wasm) == "out.html", "wasm: die Standardausgabe ist out.html");
+            string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
+            SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.hpp") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
+            string threadError = "";
+            try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm); }
+            catch (fire.Native.NativeNotSupportedException ex) { threadError = ex.Message; }
+            SfCheck(threadError.Contains("threads are not supported by the platform 'wasm'"), "wasm: ein fire-Thread wird beim Uebersetzen abgelehnt");
+            // with Emscripten and node on this machine: the program is built for the browser's WebAssembly and runs (here under node); it prints what the VM prints (exceptions, floats, Sleep)
+            string? FindOnPath(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+            if (FindOnPath("em++") != null && FindOnPath("node") != null)
+            {
+                const string wasmSource = "#import \"time\"\nclass Oops : Exception { construct(string m) : base(m) { } }\nvar sum = 0\nfor (var i = 0; i < 5; i++) { sum = sum + i; Sleep(1ms) }\nprint(\"sum \" + sum + \" \" + (sum / 4.0) + \" \" + (1.0 / 3.0))\ntry { throw new Oops(\"caught\") } catch (Oops e) { print(e.message) }\n";
+                string wasmDir = Path.Combine(sfDir, "wasm");
+                fire.Native.NativeRuntimeFiles.WriteTo(wasmDir, "wasm");
+                File.WriteAllText(Path.Combine(wasmDir, "p.cpp"), fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wasmSource }, null, null, VmExecutionMode.Release, null, wasm), wasm));
+                var (emExe, emArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm, Path.Combine(wasmDir, "p.cpp"), wasmDir, Path.Combine(wasmDir, "p.js"));
+                using (var em = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(emExe, emArgs) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!)
+                {
+                    var emErr = em.StandardError.ReadToEndAsync();
+                    em.StandardOutput.ReadToEnd();
+                    em.WaitForExit();
+                }
+                bool emBuilt = File.Exists(Path.Combine(wasmDir, "p.js"));
+                SfCheck(emBuilt, "wasm: em++ baut das Programm (p.js mit eingebetteter WebAssembly)");
+                if (emBuilt)
+                {
+                    using var node = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{Path.Combine(wasmDir, "p.js")}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                    var nodeErr = node.StandardError.ReadToEndAsync();
+                    string nodeOut = node.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                    node.WaitForExit();
+                    var vmLines = new List<string>();
+                    RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+                    Value.SingleFloats = false;
+                    SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
+                }
+            }
+        }
         var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
         SfCheck(noconsole.GuiSubsystem && !linkedSf.GuiSubsystem, "der Linker meldet das Subsystem (#noconsole) an das gelinkte Programm");
     }
@@ -11648,11 +11695,11 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "devices"
         #import "time"
         var d = Device.Default.EnsureConnected()
-        var t0 = DateTime.Now()
+        var t0 = DateTime.Now
         print(d.WaitForString("nie", 120ms))
         print(d.WaitForString("nie", 120))
         print(d.WaitForString("nie", TimeSpan.FromMilliseconds(120)))
-        var ms = (DateTime.Now() - t0).TotalMilliseconds
+        var ms = (DateTime.Now - t0).TotalMilliseconds
         print((ms >= 330) + " " + (ms < 5000))
         try { d.WaitForString("a", "x") } catch (e) { print((e is of DeviceArgumentException) + " " + e.message) }
         """, new[] { "False", "False", "False", "True True", "True Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)" }, defaultId: "loopback:echo");
@@ -11662,9 +11709,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "time"
         #timeout 200ms
         var d = Device.Default.EnsureConnected()
-        var t0 = DateTime.Now()
+        var t0 = DateTime.Now
         print(d.WaitForString("nie"))
-        var ms = (DateTime.Now() - t0).TotalMilliseconds
+        var ms = (DateTime.Now - t0).TotalMilliseconds
         print((ms >= 190) + " " + (ms < 5000))
         """, new[] { "False", "True True" }, defaultId: "loopback:echo");
 
@@ -11673,9 +11720,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "time"
         var d = Device.Default.EnsureConnected()
         d.Disconnect()
-        var t0 = DateTime.Now()
+        var t0 = DateTime.Now
         print(d.WaitForString("x", 20s))
-        print((DateTime.Now() - t0).TotalMilliseconds < 3000)
+        print((DateTime.Now - t0).TotalMilliseconds < 3000)
         """, new[] { "False", "True" }, defaultId: "loopback:echo");
 
     CheckDev("DoCommand: Text als Zeile, Command<IDevice> mit dem Geraet als Kontext, abgeleitete Befehle, DoCommands", """
@@ -11767,7 +11814,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "io"
         var fb = new Framebuffer(8, 4)
         print(fb.Width() + "x" + fb.Height())
-        print(DateTime.Now().Year > 2000)
+        print(DateTime.Now.Year > 2000)
         print(Type.Of(fb).Name)
         print(new DeviceManagerFacade().Count())
         print(IO.File.Exists("/gibt/es/nicht"))
@@ -12065,8 +12112,8 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(DateTime.FromUnixSeconds(86400).ToString() + " " + DateTime.FromUnixSeconds(86400).ToUnixSeconds())
         try { new DateTime(2024, 13, 1) } catch (x) { print("1 " + x.message) }
         try { DateTime.Parse("quatsch") } catch (x) { print("2 " + x.message) }
-        print(DateTime.Now().Year >= 2024)
-        print(DateTime.UtcNow().Kind + " " + DateTime.Now().Kind)
+        print(DateTime.Now.Year >= 2024)
+        print(DateTime.UtcNow.Kind + " " + DateTime.Now.Kind)
         """, new[]
         {
             "2024-03-15 14:30:05 2024 3 15 5 Friday 75",
@@ -12102,11 +12149,11 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         });
 
     CheckLq("Sleep: Zeitspanne, Zeitwert und Millisekunden; Dauer stimmt", timeHead + """
-        var t0 = DateTime.UtcNow()
+        var t0 = DateTime.UtcNow
         Sleep(TimeSpan.FromMilliseconds(120))
         Sleep(60ms)
         Sleep(30)
-        var ms = (DateTime.UtcNow() - t0).TotalMilliseconds
+        var ms = (DateTime.UtcNow - t0).TotalMilliseconds
         print((ms >= 190) + " " + (ms < 2000))
         try { Sleep("x") } catch (e) { print(e.message) }
         """, new[] { "True True", "Sleep expects a TimeSpan, a time value or milliseconds, got: String." });
@@ -13574,6 +13621,58 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print((2m + 500mm) / 3)
         """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
 
+    CheckSc("Einheiten: ++ und -- zaehlen in der Einheit der Variablen (5cm++ ist 6cm), auch bei Feldern und Elementen", """
+        class P { static py = 0cm }
+        var i = 5.0cm
+        i--
+        print(i)
+        ++i
+        i++
+        print(i)
+        var n = 2m
+        n++
+        print(n)
+        P.py++
+        P.py++
+        print(P.py)
+        var arr = [1cm, 2cm]
+        arr[1]++
+        --arr[0]
+        print(arr[0] + " " + arr[1])
+        var plain = 4
+        plain++
+        print(plain)
+        for (var h = 3.0cm; h > 0cm; h--) { print(h) }
+        """, new[] { "4cm", "6cm", "3m", "2cm", "0cm 3cm", "5", "3cm", "2cm", "1cm" });
+
+    CheckSc("Einheiten: a:unitless rechnet die Dimension heraus (12mm -> 0.012), a::unitless laesst die Zahl (12), a::m benennt nur um", """
+        var a = 12mm
+        var b = a:unitless
+        print(b)
+        print(b is in mm)
+        var c = a::unitless
+        print(c)
+        print(a::m)
+        var k = 2km
+        print(k:unitless)
+        print((3.5cm):unitless)
+        var t = 4
+        print(t:unitless)
+        """, new[] { "0.012", "False", "12", "12m", "2000", "0.035", "4" });
+
+    CheckSc("Einheiten: a:: ohne Einheit nimmt die Einheit des anderen Operanden (nur umbenennen), ohne Gegenstueck ist es einheitenlos", """
+        var a = 12mm
+        var b = 3m
+        print(a:: + b)
+        print(a: + b)
+        print(a:: + b::)
+        print((a::) is in mm)
+        print((a::) + 1)
+        var e = 0
+        try { e = 5cm + 1 } catch (UnitMismatchException x) { e = -1 }
+        print(e)
+        """, new[] { "15m", "3m", "15", "False", "13", "-1" });
+
     CheckSc("Einheiten: Floats bleiben Floats und behalten die Einheit des linken Operanden", """
         print(1.5mm + 1m)
         print(2.5m + 250mm)
@@ -13587,7 +13686,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
         print(5mm + 2kg)
-        """, new[] { "AUSNAHME: Incompatible units: 'mm' cannot be converted to 'kg'." });
+        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'kg'." });
 
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
@@ -13845,6 +13944,8 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+DiagnosticTests.Run();
+SyntaxTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -16667,8 +16768,8 @@ else
             class W {
                 int n = 0
                 Wait(int ms) {
-                    var start = DateTime.UtcNow()
-                    while ((DateTime.UtcNow() - start).TotalMilliseconds < ms) { Sleep(2) }
+                    var start = DateTime.UtcNow
+                    while ((DateTime.UtcNow - start).TotalMilliseconds < ms) { Sleep(2) }
                     this.n = this.n + 1
                 }
             }
@@ -17817,6 +17918,9 @@ else
             """),
     }).ToArray();
 
+    // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
+    natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
+
     // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
@@ -18347,9 +18451,9 @@ else
             Sleep(2)
             Sleep(0.002s)
             print("slept")
-            var t0 = DateTime.UtcNow()
+            var t0 = DateTime.UtcNow
             Sleep(60ms)
-            var el = DateTime.UtcNow() - t0
+            var el = DateTime.UtcNow - t0
             print(el >= TimeSpan.FromMilliseconds(55))
             print(el < TimeSpan.FromMilliseconds(500))
             """),
@@ -18448,10 +18552,10 @@ else
                 throw new Boom()
             }
             catch threads(Boom e) { print("caught in main: " + e.message) }
-            var start = DateTime.UtcNow()
+            var start = DateTime.UtcNow
             Sleep(400ms)
             print("main woke up")
-            print((DateTime.UtcNow() - start) >= TimeSpan.FromMilliseconds(100))
+            print((DateTime.UtcNow - start) >= TimeSpan.FromMilliseconds(100))
             """),
     }).ToArray();
 

@@ -15,6 +15,7 @@ using Dock.Model.Controls;
 using Dock.Model.Core;
 using fire.Compiler;
 using fire.Compiler.Assembly;
+using fire.Projects;
 using DockDocument = Dock.Model.Avalonia.Controls.Document;
 using DockTool = Dock.Model.Avalonia.Controls.Tool;
 
@@ -36,6 +37,7 @@ namespace fire.Editor
         private readonly DebuggerPanels _debugger;
 
         private readonly OutputPanelControl _output = new();
+        private readonly BuildLogPanelControl _buildLog = new();
         private readonly ErrorListPanelControl _errorList = new();
         private readonly ThreadsPanelControl _threadsPanel = new();
         private readonly ScopePanelControl _scopePanel = new();
@@ -53,7 +55,7 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
-            ["output"] = "Output", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer",
+            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer",
         };
 
         /// <summary>What kind of document a tab holds.</summary>
@@ -130,7 +132,7 @@ namespace fire.Editor
         private static readonly HashSet<string> ImageExtensions = new() { ".png", ".bmp", ".gif", ".jpg", ".jpeg" };
         private static readonly HashSet<string> TextExtensions = new() { ".txt", ".json", ".xml", ".csv", ".ini", ".cfg", ".yaml", ".yml", ".html", ".htm", ".css", ".js", ".log", ".tsv", ".toml", ".cmake", ".mk", ".sh", ".bat", ".cs" };
 
-        private static readonly HashSet<string> ScriptExtensions = new() { ".script", ".fi", ".fic", ".fire", "" };
+        private static readonly HashSet<string> ScriptExtensions = new() { ".fire", ".script", ".fi", ".fic", "" };
 
         /// <summary>Does the file start with bytes that no text has (a zero byte in the first 8 KB)? A file that cannot be read is not binary (opening it reports the problem).</summary>
         private static bool LooksBinary(string path)
@@ -165,6 +167,7 @@ namespace fire.Editor
                 new()
                 {
                     ("output", PanelTitles["output"], _output),
+                    ("buildlog", PanelTitles["buildlog"], _buildLog),
                     ("errors", PanelTitles["errors"], _errorList),
                     ("threads", PanelTitles["threads"], _threadsPanel),
                     ("scope", PanelTitles["scope"], _scopePanel),
@@ -216,17 +219,13 @@ namespace fire.Editor
             mnuLoopback.IsChecked = _devices.LoopbackEnabled;
             RefreshDefaultDeviceCombo();
 
-            _errorList.CountChanged += count =>
+            _errorList.CountChanged += (errors, warnings) =>
             {
-                if (_tools.TryGetValue("errors", out var tool)) tool.Title = count == 0 ? PanelTitles["errors"] : $"{PanelTitles["errors"]} ({count})";
+                if (_tools.TryGetValue("errors", out var tool))
+                    tool.Title = errors == 0 && warnings == 0 ? PanelTitles["errors"] : warnings == 0 ? $"{PanelTitles["errors"]} ({errors})" : $"{PanelTitles["errors"]} ({errors}, {warnings} warning{(warnings == 1 ? "" : "s")})";
             };
-            _errorList.ItemActivated += item =>
-            {
-                if (ActiveScript is not { } script) return;
-                script.ScrollToLine(item.Line);
-                script.SetCaretByLineColumn(Math.Max(0, item.Line - 1), 0);
-                script.Focus();
-            };
+            _errorList.ItemActivated += item => ShowLocation(item.Path, item.File, item.Line);
+            _buildLog.LocationActivated += (file, line) => ShowLocation(null, file, line);
 
             _session.OutputWritten += OnScriptOutput;
             // IMPORTANT: Post (non-blocking), NOT Invoke - these handlers can fire from the OWN background thread of a fire thread that is just starting/pausing while the
@@ -243,6 +242,7 @@ namespace fire.Editor
                     _isBusy = false;
                     AfterStep(!ctx.IsFinished);
                 }
+                if (ctx.RuntimeError != null) _ = ReportRuntimeErrorAsync(ctx);   // the main program or any thread: the program stands still, the user decides
             });
 
             // Runs CONTINUOUSLY - output can arrive at any time, even in the middle of a long run, and should become visible soon, only bundled instead of one by one.
@@ -265,14 +265,14 @@ namespace fire.Editor
             _defaultLayout = SerializeLayout();
             LoadLayout();
             LoadToolStrips();
+            _nativeTargetChoice = _settings.NativeTarget;
+            RefreshTargetCombo();
 
-            // Files passed on the command line, else an empty welcome script.
+            // Files passed on the command line; without any the editor starts empty (new files come from the welcome window or File > New).
             foreach (var arg in (Environment.GetCommandLineArgs()).Skip(1))
                 if (File.Exists(arg)) OpenFile(arg);
             _ = _devices.RefreshAsync(fastScan: true); // list the devices (fast); the availability check is done by "Search"
             bool fromCommandLine = _documents.Count > 0;
-            if (_documents.Count == 0)
-                NewScript("// Welcome to the fire editor\nprint(\"Hello, world!\")\n");
             // the welcome window, once the splash is gone (not when files were given on the command line)
             if (!fromCommandLine && _settings.ShowWelcome) _ = ShowWelcomeAfterSplash();
         }
@@ -384,7 +384,7 @@ namespace fire.Editor
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
             {
-                ["output"] = _output, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel,
+                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
             _factory.InitLayout(layout);
@@ -396,6 +396,7 @@ namespace fire.Editor
                     tool.Title = PanelTitles[tool.Id];
                 }
             }
+            EnsureBuildLogTool(layout, contents["buildlog"]);
             DockHost.Layout = layout;
 
             var documentDock = DocumentDock as Dock.Model.Avalonia.Controls.DocumentDock
@@ -609,12 +610,71 @@ namespace fire.Editor
         // Error list
         // -----------------------------------------------------------
 
+        /// <summary>The errors and warnings of the last build (null: there was none yet in this session). They stay in the error list until the next build replaces them.</summary>
+        private IReadOnlyList<ErrorListItem>? _buildItems;
+        private string _buildItemsSource = "";
+
+        /// <summary>The error list: the result of the last build until the next one replaces it; before the first build the live analysis of the active script (the squiggles in the editor
+        /// are the live analysis always).</summary>
         private void UpdateErrorPanel()
         {
+            if (_buildItems != null)
+            {
+                _errorList.SetSource(_buildItemsSource);
+                _errorList.SetItems(_buildItems);
+                return;
+            }
             var doc = ActiveDocument;
             var diagnostics = doc?.Script?.Diagnostics ?? (IReadOnlyList<Diagnostic>)Array.Empty<Diagnostic>();
             string file = doc?.DisplayName ?? "";
-            _errorList.SetItems(diagnostics.Select(d => new ErrorListItem("Error", d.Message, file, d.Line)).ToList());
+            string? path = FullPathOf(doc);
+            _errorList.SetSource(doc?.Script != null ? $"Live: {file}" : "");
+            _errorList.SetItems(diagnostics.Select(d => ToItem(d, file, path)).ToList());
+        }
+
+        private static ErrorListItem ToItem(Diagnostic d, string? defaultFile, string? defaultPath) =>
+            new(d.IsError ? "Error" : "Warning", d.Code, d.Message, d.File ?? defaultFile ?? "", d.Line, d.File != null && Path.IsPathRooted(d.File) ? d.File : defaultPath);
+
+        /// <summary>Opens the file (when it is not open yet) and puts the caret on the line: a double click in the error list or in the build log. Without a file it is the active script.</summary>
+        private void ShowLocation(string? path, string? file, int line)
+        {
+            OpenDocument? doc = null;
+            string? full = path;
+            if (full == null && file != null)
+            {
+                if (Path.IsPathRooted(file)) full = file;
+                else doc = _documents.FirstOrDefault(d => d.DisplayName == file || (FullPathOf(d) is { } p && Path.GetFileName(p) == file));
+            }
+            if (doc == null && full != null && File.Exists(full))
+            {
+                string fullPath = Path.GetFullPath(full);
+                doc = _documents.FirstOrDefault(d => FullPathOf(d) is { } p && ProjectFiles.PathComparer.Equals(p, fullPath)) ?? OpenFile(fullPath);
+            }
+            doc ??= ActiveDocument;
+            if (doc?.Script is not { } script || line < 1) return;
+            if (!ReferenceEquals(doc, ActiveDocument)) Activate(doc);
+            script.ScrollToLine(line);
+            script.SetCaretByLineColumn(Math.Max(0, line - 1), 0);
+            script.Focus();
+        }
+
+        /// <summary>A layout saved before the build log existed has no such panel: it goes next to the output.</summary>
+        private void EnsureBuildLogTool(IRootDock layout, Control content)
+        {
+            if (AllTools(layout).Any(t => t.Id == "buildlog")) return;
+            var dock = _factory.Find(layout, d => d is IToolDock td && td.VisibleDockables != null && td.VisibleDockables.Any(x => x.Id == "output")).OfType<IToolDock>().FirstOrDefault();
+            if (dock == null) return;
+            var tool = new DockTool { Id = "buildlog", Title = PanelTitles["buildlog"], Content = content, CanClose = true, CanFloat = true };
+            _factory.AddDockable(dock, tool);
+        }
+
+        /// <summary>Brings a panel to the front (also one that was closed or collapsed).</summary>
+        private void RevealTool(string id)
+        {
+            if (!_tools.TryGetValue(id, out var tool)) return;
+            if (RootDock != null && _factory.IsDockablePinned(tool, RootDock)) _factory.UnpinDockable(tool);
+            else if (!IsToolVisible(tool)) _factory.RestoreDockable(tool);
+            _factory.SetActiveDockable(tool);
         }
 
         // -----------------------------------------------------------
@@ -747,6 +807,7 @@ namespace fire.Editor
             UpdateErrorPanel();
             UpdateSaveCommands();
             RefreshProjectUi();
+            RefreshTargetCombo();
             _debugger.Refresh(BreakpointDescriptions());
         }
 

@@ -10,16 +10,6 @@ using fire.Runtime;
 
 namespace fire.Editor
 {
-    public enum DiagnosticSeverity
-    {
-        Error,
-    }
-
-    public sealed record Diagnostic(int Line, string Message, DiagnosticSeverity Severity = DiagnosticSeverity.Error)
-    {
-        public override string ToString() => $"Line {Line}: {Message}";
-    }
-
     /// <summary>
     /// Live error analysis for the editor: runs the parser, resolver AND compiler
     /// (in this order, as in real compiling) on the current
@@ -66,6 +56,9 @@ namespace fire.Editor
             var diagnostics = new List<Diagnostic>();
             if (string.IsNullOrWhiteSpace(source)) return diagnostics;
 
+            // the warnings of the code (`warn 123: "text"`, collected while the parser reads it) are diagnostics, too
+            var warnings = new DiagnosticCollector();
+            using var collecting = warnings.Begin();
             try
             {
                 var natives = NativeRegistry.CreateDefault();
@@ -109,46 +102,15 @@ namespace fire.Editor
                 var resolveResult = Resolver.Resolve(program, natives.Names);
                 Compiler.Compiler.Compile(program, resolveResult, natives);
             }
-            catch (ParseException ex)
-            {
-                diagnostics.Add(new Diagnostic(ex.Line, ex.Message));
-            }
-            catch (ResolverException ex)
-            {
-                foreach (var error in ex.Errors)
-                    diagnostics.Add(new Diagnostic(error.Line, error.Message));
-            }
-            catch (CompilerException ex)
-            {
-                foreach (var error in ex.Errors)
-                    diagnostics.Add(new Diagnostic(error.Line, error.Message));
-            }
-            catch (PreprocessorException ex)
-            {
-                // No Line field present (see the class comment there,
-                // concerns #include/#extern directives, which are processed before any
-                // line bookkeeping of the actual lexer happens) - line 1 as the best
-                // possible placeholder, so that the
-                // error view still shows something clickable/visible.
-                diagnostics.Add(new Diagnostic(1, ex.Message));
-            }
-            catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
-            {
-                // Error without line information of its own that did not come via the
-                // compiler (which reports via CompilerException WITH a line) -
-                // likewise line 1 as a placeholder.
-                diagnostics.Add(new Diagnostic(1, ex.Message));
-            }
             catch (Exception ex)
             {
-                // Deliberately caught broadly (like DebugSession.RunGuarded):
-                // live diagnostics INEVITABLY run again and again over short-
-                // lived, still broken intermediate states while typing -
-                // EVERY kind of unexpected exception ends up here as a generic
-                // diagnostic, instead of ending uncaught in the DispatcherTimer tick
-                // and dragging the whole editor application down with it.
-                diagnostics.Add(new Diagnostic(1, ex.Message));
+                // Deliberately caught broadly (like DebugSession.RunGuarded): live diagnostics INEVITABLY run again and again over short-lived, still broken intermediate states while
+                // typing - EVERY kind of exception ends up here as a diagnostic (CompileDiagnostics.Of knows the exceptions of the compiler and takes their line and code; anything
+                // else is a general error in line 1), instead of ending uncaught in the DispatcherTimer tick and dragging the whole editor application down with it.
+                // The resolver and the compiler report ALL their errors, the parser (which does not resume after a syntax error) and the others one.
+                diagnostics.AddRange(CompileDiagnostics.Of(ex));
             }
+            diagnostics.AddRange(warnings.Items);
 
             // Resolver/compiler errors come in the order of resolution
             // (e.g. first all classes, then the top-level code), not in

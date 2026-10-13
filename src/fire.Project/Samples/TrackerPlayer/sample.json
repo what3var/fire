@@ -1,6 +1,0 @@
-{
-  "title": "Tracker: play a module",
-  "description": "Plays a ProTracker .mod file embedded in the program and shows the position.",
-  "open": [ "main.script" ],
-  "order": 80
-}

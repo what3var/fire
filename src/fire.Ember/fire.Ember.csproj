@@ -14,6 +14,9 @@
     <Product>ember</Product>
     <AssemblyTitle>ember</AssemblyTitle>
     <LangVersion>latest</LangVersion>
+
+	<PublishSingleFile>true</PublishSingleFile>
+	<SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

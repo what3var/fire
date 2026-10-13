@@ -48,6 +48,7 @@ namespace fire.Lexing
         Caret,       // '^'  -> power (NOT bitwise XOR - that is Hash, see there)
         Pipe,        // '|'  -> bitwise or. '||' remains a token of its own (Or).
         Assign, Eq, NotEq, Lt, LtEq, Gt, GtEq,
+        PlusAssign, MinusAssign, StarAssign, SlashAssign, PercentAssign, CaretAssign, AmpAssign, PipeAssign, HashAssign, ShlAssign, ShrAssign, // += -= *= /= %= ^= &= |= #= <<= >>= (compound assignment, desugared by Parser.ParseAssignment)
         Bang,        // '!'  -> as a prefix: logical negation. As a suffix: type coercion.
         Tilde,       // '~'  -> prefix: bitwise inversion
         Amp,         // '&'  -> prefix: address-of (unsafe). '&&' remains a token of its own (And).

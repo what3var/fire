@@ -22,7 +22,7 @@ namespace fire.Native
             [OpCode.StoreGlobal] = new[] { 2 },
             [OpCode.DeclareLocal] = Array.Empty<int>(),
             [OpCode.Add] = Array.Empty<int>(), [OpCode.Sub] = Array.Empty<int>(), [OpCode.Mul] = Array.Empty<int>(),
-            [OpCode.Div] = Array.Empty<int>(), [OpCode.Mod] = Array.Empty<int>(),
+            [OpCode.RelabelUnit] = new[] { 2 }, [OpCode.RelabelUnitDynamic] = Array.Empty<int>(), [OpCode.StepAdd] = Array.Empty<int>(), [OpCode.StepSub] = Array.Empty<int>(), [OpCode.Div] = Array.Empty<int>(), [OpCode.Mod] = Array.Empty<int>(),
             [OpCode.BitAnd] = Array.Empty<int>(), [OpCode.BitOr] = Array.Empty<int>(), [OpCode.BitXor] = Array.Empty<int>(),
             [OpCode.ShiftLeft] = Array.Empty<int>(), [OpCode.ShiftRight] = Array.Empty<int>(), [OpCode.Power] = Array.Empty<int>(),
             [OpCode.FormatValue] = new[] { 2 },

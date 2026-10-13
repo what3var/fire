@@ -8,7 +8,14 @@
     <RootNamespace>fire.Runtime</RootNamespace>
     <AssemblyName>runtime</AssemblyName>
     <LangVersion>latest</LangVersion>
+	<PublishSingleFile>true</PublishSingleFile>
+	<SelfContained>true</SelfContained>
+	<ApplicationIcon>ico fireapp.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="ico fireapp.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\fire.Terminal.Bridge\fire.Terminal.Bridge.csproj" />

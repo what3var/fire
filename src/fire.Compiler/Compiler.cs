@@ -23,12 +23,19 @@ namespace fire.Compiler
     {
         public int Line { get; }
 
+        /// <summary>The message without the line.</summary>
+        public string RawMessage { get; }
+
+        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        public string Code => ErrorCatalog.CodeOf(ErrorArea.Compiler, RawMessage);
+
         public IReadOnlyList<CompilerException> Errors { get; }
 
         public CompilerException(string message, int line)
             : base($"{message} ({line})")
         {
             Line = line;
+            RawMessage = message;
             Errors = new[] { this };
         }
 
@@ -37,6 +44,7 @@ namespace fire.Compiler
             : base(errors[0].Message)
         {
             Line = errors[0].Line;
+            RawMessage = errors[0].RawMessage;
             Errors = errors;
         }
     }
@@ -1397,6 +1405,7 @@ namespace fire.Compiler
             IdentifierExpr? target;
             Value constant;
             bool subtract;
+            bool isStep = false;
 
             switch (expr)
             {
@@ -1404,6 +1413,7 @@ namespace fire.Compiler
                     target = incTarget;
                     constant = Value.MakeInt(1);
                     subtract = !incDec.IsIncrement;
+                    isStep = true;
                     break;
 
                 case AssignExpr { Target: IdentifierExpr assignTarget, Value: BinaryExpr { Op: BinaryOp.Add or BinaryOp.Sub, Left: IdentifierExpr left, Right: LiteralExpr literal } binary }
@@ -1426,13 +1436,13 @@ namespace fire.Compiler
                     _chunk.EmitU16(local.Depth);
                     _chunk.EmitU16(local.Slot);
                     _chunk.EmitU16(_chunk.AddConstant(constant));
-                    _chunk.EmitByte(subtract ? (byte)1 : (byte)0);
+                    _chunk.EmitByte((byte)((subtract ? 1 : 0) | (isStep ? 2 : 0)));
                     return true;
                 case ResolvedRef.Global { RequiredUnit: null } global:
                     _chunk.EmitOp(OpCode.ArithGlobalConstPop);
                     _chunk.EmitU16(global.Slot);
                     _chunk.EmitU16(_chunk.AddConstant(constant));
-                    _chunk.EmitByte(subtract ? (byte)1 : (byte)0);
+                    _chunk.EmitByte((byte)((subtract ? 1 : 0) | (isStep ? 2 : 0)));
                     return true;
                 default:
                     return false;
@@ -1783,6 +1793,12 @@ namespace fire.Compiler
 
                 case BinaryExpr b:
                     CompileBinary(b);
+                    break;
+
+                case UnitCoerceExpr { Relabel: true, TargetUnitName: not null } relabel:
+                    CompileExpr(relabel.Operand);
+                    _chunk.EmitOp(OpCode.RelabelUnit);
+                    _chunk.EmitU16(_chunk.AddUnit(fire.Values.Unit.Parse(relabel.TargetUnitName!)));
                     break;
 
                 case UnitCoerceExpr:
@@ -2369,7 +2385,14 @@ namespace fire.Compiler
             if (info.ExplicitUnit != null)
                 EmitCoerceUnitStatic(fire.Values.Unit.Parse(info.ExplicitUnit));
             else if (info.UnitIsAuto)
-                EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
+                EmitUnitStatic(fire.Values.Unit.Unitless, info.RelabelAuto);
+        }
+
+        private void EmitUnitStatic(fire.Values.Unit unit, bool relabel)
+        {
+            if (!relabel) { EmitCoerceUnitStatic(unit); return; }
+            _chunk.EmitOp(OpCode.RelabelUnit);
+            _chunk.EmitU16(_chunk.AddUnit(unit));
         }
 
         /// <summary>Reads a local variable; for a `ref` parameter the slot holds a pointer to the caller's variable - then it is dereferenced.</summary>
@@ -2634,7 +2657,7 @@ namespace fire.Compiler
         ///   without evaluating array/index a second time.</summary>
         private void CompileIncDec(IncDecExpr e)
         {
-            var addSubOp = e.IsIncrement ? OpCode.Add : OpCode.Sub;
+            var addSubOp = e.IsIncrement ? OpCode.StepAdd : OpCode.StepSub;
 
             if (e.Target is IndexExpr ix)
             {
@@ -2953,14 +2976,14 @@ namespace fire.Compiler
                 // if it were first rounded to km and only then promoted to float).
                 _chunk.EmitOp(OpCode.Swap);
                 if (left.TypeIsAuto) _chunk.EmitOp(OpCode.CoerceTypeDynamic);
-                if (left.UnitIsAuto) _chunk.EmitOp(OpCode.CoerceUnitDynamic);
+                if (left.UnitIsAuto) _chunk.EmitOp(left.RelabelAuto ? OpCode.RelabelUnitDynamic : OpCode.CoerceUnitDynamic);
                 _chunk.EmitOp(OpCode.Swap);
             }
             else if (rightAuto && !leftAuto)
             {
                 // left (TOS-1) is the anchor; adjust right (TOS) directly (type before unit, see above).
                 if (right.TypeIsAuto) _chunk.EmitOp(OpCode.CoerceTypeDynamic);
-                if (right.UnitIsAuto) _chunk.EmitOp(OpCode.CoerceUnitDynamic);
+                if (right.UnitIsAuto) _chunk.EmitOp(right.RelabelAuto ? OpCode.RelabelUnitDynamic : OpCode.CoerceUnitDynamic);
             }
             else if (leftAuto && rightAuto)
             {
@@ -2968,17 +2991,17 @@ namespace fire.Compiler
                 if (left.UnitIsAuto)
                 {
                     _chunk.EmitOp(OpCode.Swap);
-                    EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
+                    EmitUnitStatic(fire.Values.Unit.Unitless, left.RelabelAuto);
                     _chunk.EmitOp(OpCode.Swap);
                 }
-                if (right.UnitIsAuto) EmitCoerceUnitStatic(fire.Values.Unit.Unitless);
+                if (right.UnitIsAuto) EmitUnitStatic(fire.Values.Unit.Unitless, right.RelabelAuto);
             }
             // otherwise: both fixed/explicit -> no further adjustment; the
             // arithmetic operation itself checks compatibility at runtime.
         }
 
         private readonly record struct CoercionInfo(
-            Expr Inner, bool WantsUnit, string? ExplicitUnit, bool WantsType, TokenType? ExplicitType)
+            Expr Inner, bool WantsUnit, string? ExplicitUnit, bool WantsType, TokenType? ExplicitType, bool RelabelAuto = false)
         {
             public bool UnitIsAuto => WantsUnit && ExplicitUnit == null;
             public bool TypeIsAuto => WantsType && ExplicitType == null;
@@ -2992,14 +3015,17 @@ namespace fire.Compiler
         {
             bool wantsUnit = false; string? explicitUnit = null;
             bool wantsType = false; TokenType? explicitType = null;
+            bool relabelAuto = false;
             var current = expr;
 
             while (true)
             {
-                if (current is UnitCoerceExpr uc)
+                if (current is UnitCoerceExpr { Relabel: false } or UnitCoerceExpr { Relabel: true, TargetUnitName: null })
                 {
+                    var uc = (UnitCoerceExpr)current;
                     wantsUnit = true;
                     explicitUnit = uc.TargetUnitName;
+                    if (uc.Relabel) relabelAuto = true;
                     current = uc.Operand;
                 }
                 else if (current is TypeCoerceExpr tc)
@@ -3014,7 +3040,7 @@ namespace fire.Compiler
                 }
             }
 
-            return new CoercionInfo(current, wantsUnit, explicitUnit, wantsType, explicitType);
+            return new CoercionInfo(current, wantsUnit, explicitUnit, wantsType, explicitType, relabelAuto);
         }
 
         private static TypeTag TokenTypeToTag(TokenType t) => t switch

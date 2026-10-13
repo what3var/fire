@@ -13,9 +13,12 @@
     <AssemblyName>spark</AssemblyName>
     <LangVersion>latest</LangVersion>
     <AssemblyTitle>fire spark</AssemblyTitle>
-    <ApplicationIcon>Assets\Logo.ico</ApplicationIcon>
+    <!--<ApplicationIcon>Assets\Logo.ico</ApplicationIcon>-->
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+
+	<PublishSingleFile>true</PublishSingleFile>
+	<SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,7 +26,6 @@
     <PackageReference Include="Avalonia.Desktop" Version="12.1.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.3" />
-    <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
     <PackageReference Include="Avalonia.AvaloniaEdit" Version="12.0.0" />
     <PackageReference Include="Dock.Avalonia" Version="12.1.0.7" />
     <PackageReference Include="Dock.Model.Avalonia" Version="12.1.0.7" />
@@ -43,8 +45,13 @@
     <!-- The help pages behind the "?" menu (Help folder): copied to Help\ next to the executable and opened from there (see MainWindow.OpenHelp). -->
     <None Include="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\icons\*.png" />
+    <None Remove="fileicons.res" />
     <AvaloniaResource Include="Assets\Logo-64.png" />
   </ItemGroup>
+
+  <PropertyGroup>
+	  <Win32Resource>fileicons.res</Win32Resource>
+  </PropertyGroup>
 
   <Import Project="..\BridgePackages.targets" />
 

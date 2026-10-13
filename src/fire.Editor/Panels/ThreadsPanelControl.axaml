@@ -10,16 +10,16 @@
             </StackPanel>
         </Border>
 
-        <DataGrid x:Name="ThreadsList" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
-                  AutoGenerateColumns="False" IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="None"
+        <TableView x:Name="ThreadsList" FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" FontSize="12" BorderThickness="0"
+                  CanUserResizeColumns="True" SelectionMode="Single"
                   SelectionChanged="ThreadsList_SelectionChanged">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="" Width="28" Binding="{Binding Marker}"/>
-                <DataGridTextColumn Header="Name" Width="140" Binding="{Binding Name}"/>
-                <DataGridTextColumn Header="Status" Width="200" Binding="{Binding Status}"/>
-                <DataGridTextColumn Header="Line" Width="60" Binding="{Binding Line}"/>
-                <DataGridTextColumn Header="Call depth" Width="90" Binding="{Binding Depth}"/>
-            </DataGrid.Columns>
-        </DataGrid>
+			<TableView.Columns>
+				<TableViewColumn Header="" Width="28" Binding="{Binding Marker}"/>
+				<TableViewColumn Header="Name" Width="140" Binding="{Binding Name}"/>
+				<TableViewColumn Header="Status" Width="200" Binding="{Binding Status}"/>
+				<TableViewColumn Header="Line" Width="60" Binding="{Binding Line}"/>
+				<TableViewColumn Header="Call depth" Width="90" Binding="{Binding Depth}"/>
+            </TableView.Columns>
+        </TableView>
     </DockPanel>
 </UserControl>

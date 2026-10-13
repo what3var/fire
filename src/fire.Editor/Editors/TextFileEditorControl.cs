@@ -12,7 +12,7 @@ namespace fire.Editor
 {
     /// <summary>
     /// A plain text editor that is tied to nothing: no project, no completion, no diagnostics - so it takes what is not valid code on its own: the C++ of the natives, notes, data, and the files of
-    /// a template (docs/TEMPLATES.md; `$name$` is no fire). The file gets colours by its extension: C and C++, fire (.script) or markup (.fxml). Used for every text file that no other editor takes,
+    /// a template (docs/TEMPLATES.md; `$name$` is no fire). The file gets colours by its extension: C and C++, fire (.fire) or markup (.fxml). Used for every text file that no other editor takes,
     /// and for "Open as Text".
     /// </summary>
     public sealed class TextFileEditorControl : UserControl, IDocumentView
@@ -109,7 +109,7 @@ namespace fire.Editor
         {
             FilePath = filePath;
             string ext = filePath == null ? "" : System.IO.Path.GetExtension(filePath).ToLowerInvariant();
-            _colours = filePath == null ? Colours.None : CppHighlighter.IsCppFile(filePath) ? Colours.Cpp : ext is ".script" or ".fi" or ".fic" ? Colours.Fire : ext == ".fxml" ? Colours.Markup : Colours.None;
+            _colours = filePath == null ? Colours.None : CppHighlighter.IsCppFile(filePath) ? Colours.Cpp : ext is ".fire" or ".script" or ".fi" or ".fic" ? Colours.Fire : ext == ".fxml" ? Colours.Markup : Colours.None;
             _loading = true;
             try { _editor.Text = text; }
             finally { _loading = false; }

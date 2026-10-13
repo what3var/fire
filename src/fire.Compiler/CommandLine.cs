@@ -79,7 +79,7 @@ namespace fire.Compiler
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
-            -t      Target of a native build: windows, linux, macos, esp32, freertos or one that fire.native.json defines (default: this machine). The target decides the
+            -t      Target of a native build: windows, linux, macos, esp32, freertos, wasm (a page for the browser, needs Emscripten) or one that fire.native.json defines (default: this machine). The target decides the
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
             --config  The native build configuration (default: the nearest fire.native.json next to the first file, else built-in defaults): engine, target,
                     toolchain (which C++ compiler), own targets. The editor edits the same file.
@@ -296,6 +296,10 @@ namespace fire.Compiler
                 return ExitOk;
             }
 
+            // the warnings of the code (`warn 123: "text"`) are printed to stderr while the program is compiled; they do not stop anything
+            var collector = new DiagnosticCollector { OnReport = d => { if (d.IsWarning) stderr.WriteLine(d.ToLogLine()); } };
+            using var collecting = collector.Begin();
+
             if (options.Files.Count == 1 && IsProjectFile(options.Files[0])) return RunProject(options, stdout, stderr);
 
             var sources = new List<string>();
@@ -330,7 +334,7 @@ namespace fire.Compiler
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
-                stderr.WriteLine(CompileErrors.Describe(ex));
+                stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
             stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({new FileInfo(options.OutputFile).Length} bytes)");
@@ -362,8 +366,8 @@ namespace fire.Compiler
                 return ExitOk;
             }
             catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
-            catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(CompileErrors.Describe(ex)); return ExitScriptError; }
-            catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine("Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
+            catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(DescribeErrors(ex)); return ExitScriptError; }
+            catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine($"error {ErrorCatalog.NativeUnsupported}: Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
         }
 
         private static int Native(CommandLineOptions options, List<string> sources, TextWriter stdout, TextWriter stderr)
@@ -386,12 +390,12 @@ namespace fire.Compiler
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
-                stderr.WriteLine(CompileErrors.Describe(ex));
+                stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
             catch (fire.Native.NativeNotSupportedException ex)
             {
-                stderr.WriteLine("Not supported by the native backend yet: " + ex.Message);
+                stderr.WriteLine($"error {ErrorCatalog.NativeUnsupported}: Not supported by the native backend yet: " + ex.Message);
                 return ExitScriptError;
             }
             return ExitOk;
@@ -436,7 +440,7 @@ namespace fire.Compiler
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
-                stderr.WriteLine(CompileErrors.Describe(ex));
+                stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
             session.Run();
@@ -481,10 +485,10 @@ namespace fire.Compiler
                 return ExitOk;
             }
             catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
-            catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine("Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
+            catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine($"error {ErrorCatalog.NativeUnsupported}: Not supported by the native backend yet: " + ex.Message); return ExitScriptError; }
             catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
             catch (Package.Manager.PackageException ex) { stderr.WriteLine(ex.Message); return ExitScriptError; }
-            catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(CompileErrors.Describe(ex)); return ExitScriptError; }
+            catch (Exception ex) when (IsCompileError(ex)) { stderr.WriteLine(DescribeErrors(ex)); return ExitScriptError; }
         }
 
         private static int Execute(CommandLineOptions options, List<string> sources, TextWriter stderr)
@@ -501,7 +505,7 @@ namespace fire.Compiler
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
-                stderr.WriteLine(CompileErrors.Describe(ex));
+                stderr.WriteLine(DescribeErrors(ex));
                 return ExitScriptError;
             }
 
@@ -523,8 +527,11 @@ namespace fire.Compiler
         /// else is an error in the tool and is to stay visible with its stack trace.</summary>
         public static bool IsCompileErrorForEditor(Exception ex) => IsCompileError(ex);
 
+        /// <summary>The errors of a failed compile, one per line, each with its code: `error E4005: Unknown identifier 'x' (line 3)`.</summary>
+        internal static string DescribeErrors(Exception ex) => string.Join(Environment.NewLine, CompileDiagnostics.Of(ex).Select(d => d.ToLogLine()));
+
         internal static bool IsCompileError(Exception ex) =>
-            ex is ParseException or ResolverException or CompilerException
+            ex is ParseException or LexException or ResolverException or CompilerException
                 or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException;
     }
 }

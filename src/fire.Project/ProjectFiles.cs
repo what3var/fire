@@ -74,7 +74,7 @@ namespace fire.Projects
         {
             string? dir = project.Directory;
             if (dir == null) return new List<string>();
-            // no files named: one sweep over all fire files below, by path (the default pattern has all the extensions in one: `{script,fi,fic}`)
+            // no files named: one sweep over all fire files below, by path (the default pattern has all the extensions in one: `{fire,script,fi,fic}`)
             var patterns = project.Files.Count > 0 ? project.Files : FireProject.DefaultFiles.ToList();
             var excludes = project.Exclude.Select(PatternToRegex).ToList();
             List<string>? walked = null;

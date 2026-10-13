@@ -5,6 +5,6 @@
   -->
   <Target Name="BuildBridgePackages" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' And Exists('$(TargetDir)forge.dll')">
     <Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; bridge-packages &quot;$(TargetDir)PackageSource&quot;" ContinueOnError="true" StandardOutputImportance="low" />
-	<Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; bridge-packages &quot;$(TargetDir)..\..\publish\PackageSource&quot;" ContinueOnError="true" StandardOutputImportance="low" />
+	<Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; bridge-packages &quot;$(TargetDir)..\..\..\publish\PackageSource&quot;" ContinueOnError="true" StandardOutputImportance="low" />
   </Target>
 </Project>

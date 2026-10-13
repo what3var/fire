@@ -68,19 +68,37 @@ namespace fire.Editor
             double across = 0, longest = 0;
             foreach (var band in Bands())
             {
-                // natural sizes first; when the band is too long the strips get a share of the length each (a command bar then moves what does not fit into its overflow menu)
+                // natural sizes first; when the band is too long the strips get a share of the length each (a strip then moves what does not fit into its overflow popup)
                 foreach (var s in band) s.Measure(Size.Infinity);
                 double natural = band.Sum(s => v ? s.DesiredSize.Height : s.DesiredSize.Width) + Gap * (band.Count - 1);
                 if (!double.IsInfinity(along) && natural > along)
                 {
                     double usable = Math.Max(0, along - Gap * (band.Count - 1));
                     double total = band.Sum(s => v ? s.DesiredSize.Height : s.DesiredSize.Width);
-                    foreach (var s in band)
+                    // water filling: a strip that needs less than a fair share gets what it needs, the others share the rest
+                    var shares = new Dictionary<ToolStrip, double>();
+                    var open = band.OrderBy(s => v ? s.DesiredSize.Height : s.DesiredSize.Width).ToList();
+                    double left = usable;
+                    while (open.Count > 0)
                     {
-                        double share = usable * (v ? s.DesiredSize.Height : s.DesiredSize.Width) / Math.Max(1, total);
-                        s.Measure(v ? new Size(double.PositiveInfinity, share) : new Size(share, double.PositiveInfinity));
+                        double fair = left / open.Count;
+                        var first = open[0];
+                        double need = v ? first.DesiredSize.Height : first.DesiredSize.Width;
+                        if (need <= fair) { shares[first] = need; left -= need; open.RemoveAt(0); }
+                        else { foreach (var s in open) shares[s] = fair; break; }
                     }
-                    natural = along;
+                    for (int round = 0; round < 3; round++)
+                    {
+                        foreach (var s in band) s.Measure(v ? new Size(double.PositiveInfinity, shares[s]) : new Size(shares[s], double.PositiveInfinity));
+                        // a strip that needs less than its share leaves the rest to the strips that overflow
+                        double used = band.Sum(s => v ? s.DesiredSize.Height : s.DesiredSize.Width);
+                        double spare = usable - used;
+                        var needy = band.Where(s => s.IsOverflowing).ToList();
+                        if (spare < 1 || needy.Count == 0) break;
+                        foreach (var s in band) shares[s] = v ? s.DesiredSize.Height : s.DesiredSize.Width;
+                        foreach (var s in needy) shares[s] += spare / needy.Count;
+                    }
+                    natural = band.Sum(s => v ? s.DesiredSize.Height : s.DesiredSize.Width) + Gap * (band.Count - 1);
                 }
                 longest = Math.Max(longest, natural);
                 across += band.Max(s => v ? s.DesiredSize.Width : s.DesiredSize.Height);

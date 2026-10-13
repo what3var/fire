@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using fire.Projects;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -209,6 +210,10 @@ namespace fire.Editor
             }
 
             _output.Clear();
+            string buildWhat = project != null ? project.Name : doc?.DisplayName ?? "script";
+            BeginBuildLog(buildWhat);
+            string? buildFile = project != null ? null : doc?.DisplayName;
+            string? buildPath = project != null ? null : FullPathOf(doc);
             while (_pendingOutput.TryDequeue(out _)) { } // discard what is left of a previous run that has not flowed off yet
             ShowDebugLocation(null);
             _debugIsProject = project != null;
@@ -216,7 +221,10 @@ namespace fire.Editor
             _isBusy = false;
             _session.UpdateBreakpoints(BreakpointLocations());
 
-            if (!_session.Compile(sources, filename, baseDirectory, plan))
+            bool compiled = _session.Compile(sources, filename, baseDirectory, plan);
+            // the errors and warnings of the compile: into the build log and the error list (until the next build)
+            FinishBuild("Compile", compiled, _session.LastDiagnostics, buildFile, buildPath);
+            if (!compiled)
             {
                 UpdateStatus($"Compile error: {_session.CompileError}");
                 _ = Dialogs.Message(this, _session.CompileError, "Compile error");
@@ -268,6 +276,36 @@ namespace fire.Editor
             _session.Continue(BreakpointLocations());
         }
 
+        /// <summary>The threads whose current error was shown already (a thread that ignores its error and fails again is shown again).</summary>
+        private readonly HashSet<DebugThreadContext> _reportedErrors = new();
+
+        /// <summary>An error that nothing catches (in the main program or in a thread) stops that part of the program: the dialog shows the error and where it happened and offers to go on after it
+        /// (like `resume()` in a `catch`) or to stop the program.</summary>
+        private async Task ReportRuntimeErrorAsync(DebugThreadContext ctx)
+        {
+            if (ctx.RuntimeError is not { } error || !_reportedErrors.Add(ctx)) return;
+            var text = new System.Text.StringBuilder();
+            text.Append(ctx.IsMain ? "The program stopped at an error that nothing catches.\n\n" : $"The thread '{ctx.Name}' stopped at an error that nothing catches.\n\n");
+            text.Append(error).Append("\n");
+            if (ctx.ErrorTrace is { Count: > 0 } trace)
+            {
+                text.Append("\nStack (innermost first):\n");
+                foreach (var loc in trace) text.Append($"   at {DocumentOfSourceName(loc.SourceIndex)}line {loc.Line}\n");
+            }
+            bool canContinue = ctx.CanIgnoreError;
+            if (canContinue) text.Append("\n'Continue' ignores the error and goes on right after the failing statement.");
+            var answer = canContinue
+                ? await Dialogs.Ask(this, text.ToString(), "Error", ("Continue", Dialogs.Answer.Yes), ("Stop program", Dialogs.Answer.No), ("Keep stopped", Dialogs.Answer.Cancel))
+                : await Dialogs.Ask(this, text.ToString(), "Error", ("Stop program", Dialogs.Answer.No), ("Keep stopped", Dialogs.Answer.Cancel));
+            if (answer == Dialogs.Answer.Yes && ctx.IgnoreError())
+            {
+                _reportedErrors.Remove(ctx);
+                if (ReferenceEquals(ctx, _session.ActiveThread)) BeginStep();
+                _session.ContinueThread(ctx, BreakpointLocations());
+            }
+            else if (answer == Dialogs.Answer.No) Stop_Click(this, new RoutedEventArgs());
+        }
+
         private void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
             if (_session.Vm == null) CompileAndPrepare(null);
@@ -287,6 +325,7 @@ namespace fire.Editor
         private void Stop_Click(object? sender, RoutedEventArgs e)
         {
             _session.Reset();
+            _reportedErrors.Clear();
             _isBusy = false;
             ShowDebugLocation(null);
             _debugger.Refresh(BreakpointDescriptions());

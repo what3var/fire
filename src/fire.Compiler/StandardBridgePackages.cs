@@ -15,8 +15,10 @@ namespace fire.Compiler
         {
             string header = $"bridges/fire_bridge_{bridge}.hpp";
             if (NativeRuntimeFiles.ReadText(header) == null) yield break;
-            yield return header;
+            // (the files of a package end up in one source: scene3d's engine has to come before the bridge that uses it)
+            if (bridge != "scene3d") yield return header;
             foreach (string name in NativeRuntimeFiles.ResourceNames($"bridges/{bridge}/")) yield return name;
+            if (bridge == "scene3d") yield return header;
         }
 
         /// <summary>The version of the standard packages: the version of this compiler.</summary>
@@ -39,6 +41,7 @@ namespace fire.Compiler
             "wifi" => new[] { "time" },
             "audio" => new[] { "time" },
             "tracker" => new[] { "audio", "time" },
+            "scene3d" => new[] { "graphics" },
             "http" => new[] { "net", "tls", "io", "time" },
             "tls" => new[] { "net", "io", "time" },
             "net" => new[] { "io", "time" },   // a connection is an IO.Stream; the time limits need the clock
@@ -59,6 +62,7 @@ namespace fire.Compiler
             "wifi" => fire.Standard.WifiPrelude.Source,
             "audio" => fire.Standard.AudioPrelude.Source,
             "tracker" => fire.Standard.TrackerPrelude.Source,
+            "scene3d" => fire.Standard.Scene3DPrelude.Source,
             "io" => fire.Standard.IoPrelude.Source,
             "devices" => fire.Standard.DevicesPrelude.Source,
             _ => ImportedPreludes.TrySourceFor(bridge),
@@ -199,6 +203,20 @@ namespace fire.Compiler
                 })
                     yield return f;
             }
+            if (bridge == "scene3d")
+            {
+                foreach (var f in new[]
+                {
+                    F("__S3DMeshNew", 3, "s3d::MeshNew"), F("__S3DMeshTemplate", 2, "s3d::MeshTemplate"), F("__S3DMeshFromObj", 1, "s3d::MeshFromObj"),
+                    F("__S3DLookAt", 6, "s3d::LookAt", list: true), F("__S3DMeshRetain", 1, "s3d::MeshRetain"), F("__S3DMeshFree", 1, "s3d::MeshFree"),
+                    F("__S3DMeshBounds", 1, "s3d::MeshBounds", list: true), F("__S3DMeshTriangleCount", 1, "s3d::MeshTriangleCount"),
+                    F("__S3DTexNew", 3, "s3d::TexNew"), F("__S3DTexChecker", 4, "s3d::TexChecker"), F("__S3DTexFree", 1, "s3d::TexFree"),
+                    F("__S3DTexBumpAuto", 1, "s3d::TexBumpAuto"), F("__S3DTexBump", 5, "s3d::TexBump"), F("__S3DTexBumpClear", 1, "s3d::TexBumpClear"),
+                    F("__S3DFrameNew", 2, "s3d::FrameNew"), F("__S3DFrameFree", 1, "s3d::FrameFree"), F("__S3DFrameClear", 5, "s3d::FrameClear"),
+                    F("__S3DDraw", 5, "s3d::Draw"), F("__S3DFlush", 5, "s3d::Flush"),
+                })
+                    yield return f;
+            }
             if (bridge == "tls")
             {
                 foreach (var f in new[]
@@ -253,7 +271,7 @@ namespace fire.Compiler
             }
             catch (PackageException ex)
             {
-                Console.Error.WriteLine($"fire-{bridge}: no prebuilt library for {PackageLibrary.Rid} ({ex.Message.Split('\n')[0]})");
+                Console.Error.WriteLine($"fire-{bridge}: no prebuilt library for {PackageLibrary.Rid} ({string.Join('\n', ex.Message.Split('\n').Take(40))})");
                 return null;
             }
         }
@@ -307,6 +325,7 @@ namespace fire.Compiler
                     if (bridge == "spi") native.Reset = "spi::reset";
                     if (bridge == "wifi") native.Reset = "wifi::reset";
                     if (bridge == "tracker") native.Reset = "tracker::reset";
+                    if (bridge == "scene3d") native.Reset = "s3d::reset";
                     if (bridge == "audio")
                     {
                         native.Reset = "audio::reset";

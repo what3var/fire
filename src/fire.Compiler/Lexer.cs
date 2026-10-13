@@ -10,12 +10,17 @@ namespace fire.Compiler
     {
         public int Line { get; }
         public int Column { get; }
+        /// <summary>The message without the position.</summary>
+        public string RawMessage { get; }
+        /// <summary>The code of the message (docs/ERRORS.md).</summary>
+        public string Code => ErrorCatalog.CodeOf(ErrorArea.Lexer, RawMessage);
 
         public LexException(string message, int line, int column)
             : base($"{message} ({line}:{column})")
         {
             Line = line;
             Column = column;
+            RawMessage = message;
         }
     }
 
@@ -562,12 +567,18 @@ namespace fire.Compiler
             {
                 case '+':
                     if (Match('+')) return Tok(TokenType.PlusPlus, "++", line, col, newlineBefore);
+                    if (Match('=')) return Tok(TokenType.PlusAssign, "+=", line, col, newlineBefore);
                     return Tok(TokenType.Plus, "+", line, col, newlineBefore);
                 case '-':
                     if (Match('-')) return Tok(TokenType.MinusMinus, "--", line, col, newlineBefore);
+                    if (Match('=')) return Tok(TokenType.MinusAssign, "-=", line, col, newlineBefore);
                     return Tok(TokenType.Minus, "-", line, col, newlineBefore);
-                case '*': return Tok(TokenType.Star, "*", line, col, newlineBefore);
-                case '%': return Tok(TokenType.Percent, "%", line, col, newlineBefore);
+                case '*':
+                    if (Match('=')) return Tok(TokenType.StarAssign, "*=", line, col, newlineBefore);
+                    return Tok(TokenType.Star, "*", line, col, newlineBefore);
+                case '%':
+                    if (Match('=')) return Tok(TokenType.PercentAssign, "%=", line, col, newlineBefore);
+                    return Tok(TokenType.Percent, "%", line, col, newlineBefore);
                 case '.': return Tok(TokenType.Dot, ".", line, col, newlineBefore);
                 case '~': return Tok(TokenType.Tilde, "~", line, col, newlineBefore);
                 case ',': return Tok(TokenType.Comma, ",", line, col, newlineBefore);
@@ -581,9 +592,11 @@ namespace fire.Compiler
                 case '#':
                     // `##` is a synonym for `!=` (`#` alone is the bitwise xor or the start of a directive)
                     if (Match('#')) return Tok(TokenType.NotEq, "##", line, col, newlineBefore);
+                    if (Match('=')) return Tok(TokenType.HashAssign, "#=", line, col, newlineBefore);
                     return Tok(TokenType.Hash, "#", line, col, newlineBefore);
 
                 case '/':
+                    if (Match('=')) return Tok(TokenType.SlashAssign, "/=", line, col, newlineBefore);
                     return Tok(TokenType.Slash, "/", line, col, newlineBefore);
 
                 case ':':
@@ -602,11 +615,13 @@ namespace fire.Compiler
                     return Tok(TokenType.Assign, "=", line, col, newlineBefore);
 
                 case '<':
+                    if (Peek() == '<' && PeekNext() == '=') { Advance(); Advance(); return Tok(TokenType.ShlAssign, "<<=", line, col, newlineBefore); }
                     if (Match('='))
                         return Tok(TokenType.LtEq, "<=", line, col, newlineBefore);
                     return Tok(TokenType.Lt, "<", line, col, newlineBefore);
 
                 case '>':
+                    if (Peek() == '>' && PeekNext() == '=') { Advance(); Advance(); return Tok(TokenType.ShrAssign, ">>=", line, col, newlineBefore); }
                     if (Match('='))
                         return Tok(TokenType.GtEq, ">=", line, col, newlineBefore);
                     return Tok(TokenType.Gt, ">", line, col, newlineBefore);
@@ -614,14 +629,19 @@ namespace fire.Compiler
                 case '&':
                     if (Match('&'))
                         return Tok(TokenType.And, "&&", line, col, newlineBefore);
+                    if (Match('='))
+                        return Tok(TokenType.AmpAssign, "&=", line, col, newlineBefore);
                     return Tok(TokenType.Amp, "&", line, col, newlineBefore);
 
                 case '|':
                     if (Match('|'))
                         return Tok(TokenType.Or, "||", line, col, newlineBefore);
+                    if (Match('='))
+                        return Tok(TokenType.PipeAssign, "|=", line, col, newlineBefore);
                     return Tok(TokenType.Pipe, "|", line, col, newlineBefore);
 
                 case '^':
+                    if (Match('=')) return Tok(TokenType.CaretAssign, "^=", line, col, newlineBefore);
                     return Tok(TokenType.Caret, "^", line, col, newlineBefore);
 
                 default:

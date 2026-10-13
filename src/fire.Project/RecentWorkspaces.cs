@@ -95,6 +95,9 @@ namespace fire.Projects
         /// <summary>Show the welcome window when the editor starts.</summary>
         public bool ShowWelcome { get; set; } = true;
 
+        /// <summary>The target of a native build that was chosen in the build tool strip (null: the target of the project or of the native build settings).</summary>
+        public string? NativeTarget { get; set; }
+
         public static string DefaultPath => System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "fire", "spark-settings.json");
 
         private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };

@@ -16,7 +16,7 @@ namespace fire.Projects
         public string? Icon { get; set; }
         /// <summary>The name that the dialog proposes (a code template; default: the title without spaces).</summary>
         public string? DefaultName { get; set; }
-        /// <summary>The extension that the dialog shows behind the name (`.script`); default: the one of the first file that has `$name$` in its name.</summary>
+        /// <summary>The extension that the dialog shows behind the name (`.fire`); default: the one of the first file that has `$name$` in its name.</summary>
         public string? Extension { get; set; }
         /// <summary>The files (relative to what the template makes) that the editor opens afterwards; default: the first one (a code template) or the main file of the project.</summary>
         public List<string>? Open { get; set; }

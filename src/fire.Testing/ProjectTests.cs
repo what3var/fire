@@ -51,10 +51,12 @@ static class ProjectTests
             var samples = SampleCatalog.Load();
             Check("Beispiele: die mitgelieferten Beispielprojekte werden gefunden (Titel, Beschreibung, Projektdatei)",
                 samples.Count >= 14 && samples.All(x => x.Title.Length > 0 && x.Description.Length > 0 && x.ProjectFile.EndsWith(".fireproj") && x.Open.Count > 0 && x.Open.All(f => File.Exists(Path.Combine(x.Folder, f)))), string.Join(", ", samples.Select(x => x.Name)));
+            var sampleCategories = SampleCatalog.Categories(samples);
+            Check("Beispiele: die Unterordner sind Kategorien, die Kategorien stehen in der Reihenfolge ihrer Beispiele", samples.All(x => x.Category.Length > 0) && sampleCategories.Count >= 4 && sampleCategories[0] == "Language" && samples.First(x => x.Name == "HelloWorld").Category == "Language" && samples.First(x => x.Name == "Http").Category == "Network and Devices", string.Join(" | ", sampleCategories));
             string target = Path.Combine(root, "samples", "copy");
             var hello = samples.First(x => x.Name == "HelloWorld");
             string projectFile = SampleCatalog.CopyTo(hello, target);
-            Check("Beispiele: eine Kopie enthaelt das Projekt, aber nicht sample.json", File.Exists(projectFile) && File.Exists(Path.Combine(target, "main.script")) && !File.Exists(Path.Combine(target, "sample.json")), projectFile);
+            Check("Beispiele: eine Kopie enthaelt das Projekt, aber nicht sample.json", File.Exists(projectFile) && File.Exists(Path.Combine(target, "main.fire")) && !File.Exists(Path.Combine(target, "sample.json")), projectFile);
             string again = "";
             try { SampleCatalog.CopyTo(hello, target); } catch (ProjectException ex) { again = ex.Message; }
             Check("Beispiele: in einen Ordner mit Inhalt wird nicht kopiert", again.Contains("not empty"), again);
@@ -204,7 +206,7 @@ static class ProjectTests
         var created = Workspace.CreateSolution(Path.Combine(c, "New.firesln"));
         var lib = created.CreateProject(Path.Combine(c, "Lib", "Lib.fireproj"), OutputType.Library);
         var prog = created.CreateProject(Path.Combine(c, "Prog", "Prog.fireproj"), OutputType.Exe);
-        Check("Aenderungen: neue Projekte stehen in der Mappe und auf der Platte", created.Projects.Count == 2 && File.Exists(Path.Combine(c, "Lib", "lib.script")) && File.Exists(Path.Combine(c, "Prog", "main.script")) && File.ReadAllText(Path.Combine(c, "New.firesln")).Contains("Lib/Lib.fireproj"));
+        Check("Aenderungen: neue Projekte stehen in der Mappe und auf der Platte", created.Projects.Count == 2 && File.Exists(Path.Combine(c, "Lib", "lib.fire")) && File.Exists(Path.Combine(c, "Prog", "main.fire")) && File.ReadAllText(Path.Combine(c, "New.firesln")).Contains("Lib/Lib.fireproj"));
         created.AddReference(prog, lib);
         created.SetStartup(prog);
         var reopened = Workspace.Open(Path.Combine(c, "New.firesln"));
@@ -212,9 +214,9 @@ static class ProjectTests
         Check("Aenderungen: die neue Bibliothek und das neue Programm laufen zusammen", Ok(() => ProjectBuilder.Check(BuildPlan.Create(reopened, reopened.FindByName("Prog")!))));
         string extra = Write(root, "elsewhere/extra.script", "class Extra { }\n");
         created.AddFile(prog, extra);
-        Check("Aenderungen: eine Datei ausserhalb wird namentlich aufgenommen, die Muster bleiben", prog.Contains(extra) && prog.Contains(Path.Combine(c, "Prog", "main.script")));
-        created.RemoveFile(prog, Path.Combine(c, "Prog", "main.script"));
-        Check("Aenderungen: eine Datei, die ein Muster nimmt, wird ausgeschlossen", !prog.Contains(Path.Combine(c, "Prog", "main.script")) && prog.Project.Exclude.Count == 1 && File.Exists(Path.Combine(c, "Prog", "main.script")));
+        Check("Aenderungen: eine Datei ausserhalb wird namentlich aufgenommen, die Muster bleiben", prog.Contains(extra) && prog.Contains(Path.Combine(c, "Prog", "main.fire")));
+        created.RemoveFile(prog, Path.Combine(c, "Prog", "main.fire"));
+        Check("Aenderungen: eine Datei, die ein Muster nimmt, wird ausgeschlossen", !prog.Contains(Path.Combine(c, "Prog", "main.fire")) && prog.Project.Exclude.Count == 1 && File.Exists(Path.Combine(c, "Prog", "main.fire")));
         created.RemoveProject(lib);
         Check("Aenderungen: ein Projekt aus der Mappe nehmen (die Dateien bleiben)", created.Projects.Count == 1 && File.Exists(Path.Combine(c, "Lib", "Lib.fireproj")) && !File.ReadAllText(Path.Combine(c, "New.firesln")).Contains("Lib.fireproj"));
         int changed = 0; created.Changed += () => changed++;
@@ -275,7 +277,7 @@ static class ProjectTests
 
         var terminal = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Terminal"), Path.Combine(t, "T"), "T");
         Check("Vorlagen: Terminal = Mappe im eigenen Ordner, das Projekt im Unterordner gleichen Namens",
-            File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.script")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
+            File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.fire")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
         // Desktop comes with the package fire-windows (PackageTemplates/windows, packed by bridge-packages); the folder has the same layout as a Templates folder
@@ -297,7 +299,7 @@ static class ProjectTests
         var nativeSolution = Workspace.Open(Path.Combine(nativeApp, "N.firesln"));
         string header = Path.Combine(nativeApp, "N", "native", "n.hpp");
         File.AppendAllText(header, "\nnamespace fire {\ninline Value n_twice(Value a) { return Int(a.i * 2); }\ninline Value n_text(OwnList* list) { Str* s = allocStr(3, list); strChars(s)[0] = 'a'; strChars(s)[1] = 'b'; strChars(s)[2] = 'c'; return StrV(s); }\n}\n");
-        File.WriteAllText(Path.Combine(nativeApp, "N", "n.script"), "namespace N {\n    class Native {\n        static int Add(int a, int b) { return __n_add(a, b) }\n        static int Twice(int a) { return __n_twice(a) }\n        static string Text() { return __n_text() }\n    }\n}\n");
+        File.WriteAllText(Path.Combine(nativeApp, "N", "n.fire"), "namespace N {\n    class Native {\n        static int Add(int a, int b) { return __n_add(a, b) }\n        static int Twice(int a) { return __n_twice(a) }\n        static string Text() { return __n_text() }\n    }\n}\n");
         var found = ProjectNatives.Resolve(nativeSolution.Projects[0])!;
         Check("Natives: die Funktionen stehen im C++ und werden gefunden", found.Native.Functions.Select(f => f.Name).OrderBy(n => n).SequenceEqual(new[] { "__n_add", "__n_text", "__n_twice" }) && found.Native.Functions.First(f => f.Name == "__n_text").NeedsList && found.Native.Functions.First(f => f.Name == "__n_add").Arguments == 2, string.Join(",", found.Native.Functions.Select(f => f.Name + "/" + f.Arguments)));
         Check("Natives: auch in Kommentaren steht nichts", ProjectNatives.Discover("// inline Value nope(Value a) { return a; }\n/* inline Value nor(Value a) */\ninline Value yes(Value a) { return a; }\ninline int helper(int x) { return x; }\n").Select(f => f.Cpp).SequenceEqual(new[] { "yes" }));
@@ -352,16 +354,16 @@ static class ProjectTests
         // ---- templates as folders (docs/TEMPLATES.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
         var codeTitles = catalog.Code.Select(x => x.Title).ToList();
         Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "FXML Window", "FXML View" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
-        Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".script" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".script" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");
+        Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".fire" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".fire" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");
         Check("Vorlagen: ein vorgeschlagener Name", Tpl(TemplateScope.Code, "Fire Class").DefaultName == "MyClass" && Tpl(TemplateScope.Code, "FXML Window").DefaultName == "MainWindow");
 
         string codeDir = Path.Combine(t, "code");
         var made1 = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Fire Class"), codeDir, new TemplateValues("Greeter", "Demo"));
-        Check("Vorlagen: eine Klasse folgt dem Dateinamen", made1.Count == 1 && Path.GetFileName(made1[0]) == "Greeter.script" && File.ReadAllText(made1[0]).Contains("class Greeter {"), made1.Count > 0 ? File.ReadAllText(made1[0]) : "");
+        Check("Vorlagen: eine Klasse folgt dem Dateinamen", made1.Count == 1 && Path.GetFileName(made1[0]) == "Greeter.fire" && File.ReadAllText(made1[0]).Contains("class Greeter {"), made1.Count > 0 ? File.ReadAllText(made1[0]) : "");
         var made2 = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Fire Class"), codeDir, new TemplateValues("my-thing"));
-        Check("Vorlagen: ein Name wird fuer die Klasse zum Namen mit Grossbuchstaben", File.ReadAllText(made2[0]).Contains("class My_thing {") && Path.GetFileName(made2[0]) == "my-thing.script");
+        Check("Vorlagen: ein Name wird fuer die Klasse zum Namen mit Grossbuchstaben", File.ReadAllText(made2[0]).Contains("class My_thing {") && Path.GetFileName(made2[0]) == "my-thing.fire");
         Check("Vorlagen: eine vorhandene Datei wird nicht ueberschrieben", Throws(() => TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Fire Class"), codeDir, new TemplateValues("Greeter"))));
-        Check("Vorlagen: ein Name, der den Ordner verlaesst, wird abgelehnt", Throws(() => TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Script"), codeDir, new TemplateValues("../escape"))) && !File.Exists(Path.Combine(t, "escape.script")));
+        Check("Vorlagen: ein Name, der den Ordner verlaesst, wird abgelehnt", Throws(() => TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "Script"), codeDir, new TemplateValues("../escape"))) && !File.Exists(Path.Combine(t, "escape.fire")));
 
         // the markup windows and views compile inside a project
         var winProject = terminal.Projects[0];

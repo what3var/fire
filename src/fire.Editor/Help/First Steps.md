@@ -18,18 +18,23 @@ Welcome to **spark**, the editor for the **fire** scripting language. This page 
 
 ## The editor at a glance
 
-Every file you open gets its own tab. Scripts (`.script`) open in the code editor, Markdown files (`.md`, like this one) in the Markdown editor, and device packet recordings (`.fplog`) in the packet viewer.
+Every file you open gets its own tab. Scripts (`.fire`) open in the code editor, Markdown files (`.md`, like this one) in the Markdown editor, and device packet recordings (`.fplog`) in the packet viewer.
 
 | Area | What it is for |
 | --- | --- |
 | **Output** | Everything your program prints. |
-| **Error list** | Compile errors and warnings. They are found while you type; double-click one to jump to the line. |
+| **Build log** | What a build said: the output of the compilers (the C++ compiler of a native build) and the errors and warnings of the fire compiler. It starts again with every build. |
+| **Error list** | The errors and warnings of the last build, each with a code (`E4022`, `W204`; see `docs/ERRORS.md`) - they stay until the next build replaces them. The two buttons on top show or hide the errors and the warnings; double-click a row to jump to the line. Before the first build it shows what is found while you type. |
 | **Threads, Scope, Stack** | Appear in use while you debug: all running threads, the variables of the selected frame, and the call stack. |
 | **Devices** | Serial and simulated devices you can talk to from scripts. |
 
 All panels can be dragged to any side of the window, stacked as tabs, floated as separate windows or auto-hidden. **View → Reset Layout** brings the original arrangement back.
 
 The tool bars are *tool strips*: drag one by its grip (the bar on its left) to another place in its row, to the top, bottom, left or right edge of the window (a mark shows where it will land; drop it beside a row to start a row of its own), or out of the window to let it float. Double-clicking the grip floats a strip or puts a floating one back, and the grip's context menu docks, floats or hides it (**View → Toolbars** shows hidden ones again). Strips with combo boxes cannot stand at the left or right edge. **View → Reset Layout** resets the tool strips as well.
+
+The **Build** tool strip has the execution mode and the **target** of a native build (the combo box offers the targets the build settings know: `windows`, `linux`, `macos`, `esp32`, `freertos`, `wasm` for the browser, and your own from `fire.native.json`; *Default* is the target of the project or of the build settings).
+
+`warn 123: "text"` in your code is a warning for yourself: it is shown in the error list (and as an amber squiggle) when you build, but is not compiled and does not stop the build. Inside a class, a method or a property it marks that part as obsolete (or as a trap): the warning appears only where the class or the member is used.
 
 Handy shortcuts in the code editor:
 

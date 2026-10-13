@@ -200,4 +200,4 @@ On Linux and macOS the toolchain has to come from the package manager (`g++`/`cl
 2. Everything you allocate for the result is allocated in `list`.
 3. The prelude wraps the natives; the natives are called by their package names.
 4. Code for one system lives in `platformSources` or behind `FIRE_TARGET_*` / `FIRE_HAL_*`.
-5. Try both engines: `fire.Compiler run script.script` (VM, library) and `fire.Compiler build script.script --engine native -t linux`.
+5. Try both engines: `fire.Compiler run script.fire` (VM, library) and `fire.Compiler build script.fire --engine native -t linux`.

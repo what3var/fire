@@ -92,7 +92,15 @@ namespace fire.Runtime
             },
         };
 
-        private static readonly TargetProfile[] BuiltIn = { Windows, Linux, MacOs, Esp32, FreeRtos };
+        /// <summary>A program in the browser (WebAssembly, built with Emscripten): one thread (no fire threads), `Sleep` hands the thread back to the page, the window is the canvas of the page (SDL2 of
+        /// Emscripten), the files are in memory, there are no sockets. The result is a single `.html` file that opens as it is.</summary>
+        public static readonly TargetProfile Wasm = new()
+        {
+            Name = "wasm", Symbols = new[] { "wasm", "browser" }, HalPackage = "wasm",
+            Native = new NativeTarget { Platform = "wasm", SupportsThreads = false, Toolchain = "emscripten" },
+        };
+
+        private static readonly TargetProfile[] BuiltIn = { Windows, Linux, MacOs, Esp32, FreeRtos, Wasm };
 
         public static IReadOnlyList<TargetProfile> All => BuiltIn;
 

@@ -6,6 +6,8 @@ namespace fire.Projects
     public sealed class FireSample
     {
         public string Folder { get; init; } = "";
+        /// <summary>The category: the folders between `Samples\` and the sample, joined with " / " (empty: the sample lies directly in `Samples\`).</summary>
+        public string Category { get; init; } = "";
         public string Title { get; init; } = "";
         public string Description { get; init; } = "";
         public int Order { get; init; } = 100;
@@ -17,7 +19,8 @@ namespace fire.Projects
         public string Name => Path.GetFileName(Folder);
     }
 
-    /// <summary>The sample projects that ship with fire (Help > Samples): found in `Samples\`, each opened as a copy in a folder of the user's choice.</summary>
+    /// <summary>The sample projects that ship with fire (Help > Samples): found in `Samples\` (a folder with a project file is a sample, any other folder is a category that holds samples),
+    /// each opened as a copy in a folder of the user's choice.</summary>
     public static class SampleCatalog
     {
         public static string BuiltinRoot => Path.Combine(AppContext.BaseDirectory, "Samples");
@@ -27,14 +30,25 @@ namespace fire.Projects
             root ??= BuiltinRoot;
             var list = new List<FireSample>();
             if (!Directory.Exists(root)) return list;
-            foreach (string folder in Directory.GetDirectories(root))
+            Collect(root, "", list);
+            return list.OrderBy(s => s.Order).ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static void Collect(string folder, string category, List<FireSample> list)
+        {
+            foreach (string sub in Directory.GetDirectories(folder))
             {
-                string project = Directory.GetFiles(folder, "*.fireproj").FirstOrDefault() ?? "";
-                if (project.Length == 0) continue;
-                string title = Path.GetFileName(folder), description = "";
+                string project = Directory.GetFiles(sub, "*.fireproj").FirstOrDefault() ?? "";
+                if (project.Length == 0)
+                {
+                    // no project file: a category folder, its samples are below
+                    Collect(sub, category.Length == 0 ? Path.GetFileName(sub) : category + " / " + Path.GetFileName(sub), list);
+                    continue;
+                }
+                string title = Path.GetFileName(sub), description = "";
                 int order = 100;
                 var open = new List<string>();
-                string json = Path.Combine(folder, "sample.json");
+                string json = Path.Combine(sub, "sample.json");
                 if (File.Exists(json))
                 {
                     try
@@ -49,10 +63,13 @@ namespace fire.Projects
                     }
                     catch (JsonException) { }
                 }
-                list.Add(new FireSample { Folder = folder, Title = title, Description = description, Order = order, Open = open, ProjectFile = Path.GetFileName(project) });
+                list.Add(new FireSample { Folder = sub, Category = category, Title = title, Description = description, Order = order, Open = open, ProjectFile = Path.GetFileName(project) });
             }
-            return list.OrderBy(s => s.Order).ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase).ToList();
         }
+
+        /// <summary>The categories of the samples in the order of their first sample (empty when no sample has one).</summary>
+        public static IReadOnlyList<string> Categories(IEnumerable<FireSample> samples) =>
+            samples.Where(s => s.Category.Length > 0).OrderBy(s => s.Order).ThenBy(s => s.Title, StringComparer.OrdinalIgnoreCase).Select(s => s.Category).Distinct().ToList();
 
         /// <summary>Copies the sample (without `sample.json`) into `target`, which must not exist or be empty; returns the path of the project file.</summary>
         public static string CopyTo(FireSample sample, string target)

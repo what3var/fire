@@ -141,7 +141,7 @@ namespace fire.Editor
             SetModified(true);
             UpdateInfo();
             if (AutoScrollBox.IsChecked == true && _rows.Count > 0)
-                PacketList.ScrollIntoView(_rows[^1], null);
+                PacketList.ScrollIntoView(_rows.Count - 1);
         }
 
         private void RecordToggle_Click(object? sender, RoutedEventArgs e) => _recording = RecordToggle.IsChecked == true;
@@ -167,8 +167,11 @@ namespace fire.Editor
         private static readonly IBrush IncomingBrush = new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.FromArgb(0x38, 0x4C, 0x9A, 0x4C));
         private static readonly IBrush OutgoingBrush = new Avalonia.Media.Immutable.ImmutableSolidColorBrush(Color.FromArgb(0x38, 0x3C, 0x78, 0xD8));
 
-        private void PacketList_LoadingRow(object? sender, DataGridRowEventArgs e) =>
-            e.Row.Background = e.Row.DataContext is PacketRow { IsOutgoing: true } ? OutgoingBrush : IncomingBrush;
+        private void PacketList_ContainerPrepared(object? sender, ContainerPreparedEventArgs e)
+        {
+            if (e.Container is Avalonia.Controls.Primitives.TemplatedControl row)
+                row.Background = row.DataContext is PacketRow { IsOutgoing: true } ? OutgoingBrush : IncomingBrush;
+        }
 
         private void UpdateInfo()
         {
@@ -244,7 +247,7 @@ namespace fire.Editor
             if (_rows.Count == 0) return;
             var row = _rows[Math.Max(1, Math.Min(line, _rows.Count)) - 1];
             PacketList.SelectedItem = row;
-            PacketList.ScrollIntoView(row, null);
+            PacketList.ScrollIntoView(row);
             PacketList.Focus();
         }
 

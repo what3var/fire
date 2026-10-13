@@ -105,7 +105,7 @@ namespace fire.Native
         {
             try
             {
-                var psi = new ProcessStartInfo("pkg-config", "--cflags --libs-only-L sdl2") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                var psi = new ProcessStartInfo("pkg-config", "--cflags --libs-only-L sdl2") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
                 using var p = Process.Start(psi);
                 if (p == null) return null;
                 string output = p.StandardOutput.ReadToEnd();

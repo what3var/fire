@@ -12,12 +12,12 @@ namespace fire.Editor
     // File menu: new, open, save, close, Markdown links, help.
     public partial class MainWindow
     {
-        private static readonly FilePickerFileType ScriptFiles = new("fire files") { Patterns = new[] { "*.script", "*.fi", "*.fic" } };
+        private static readonly FilePickerFileType ScriptFiles = new("fire files") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic" } };
         private static readonly FilePickerFileType MarkdownFiles = new("Markdown") { Patterns = new[] { "*.md", "*.markdown" } };
         private static readonly FilePickerFileType PacketLogFiles = new("Packet logs") { Patterns = new[] { "*.fplog" } };
         private static readonly FilePickerFileType PictureFiles = new("Pictures (PNG, BMP)") { Patterns = new[] { "*.png", "*.bmp" } };
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
-        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
+        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -278,7 +278,7 @@ namespace fire.Editor
                 DocumentKind.Pixel => await PickSavePath("Save picture (PNG or BMP)", suggested, "png", PictureFiles),
                 DocumentKind.Hex => await PickSavePath("Save", suggested, "bin"),
                 DocumentKind.PacketLog => await PickSavePath("Save", suggested, fire.Device.Manager.DeviceManager.PacketLog.FileExtension.TrimStart('.'), PacketLogFiles),
-                _ => await PickSavePath("Save", suggested, "script", ScriptFiles),
+                _ => await PickSavePath("Save", suggested, "fire", ScriptFiles),
             };
             return path != null && await WriteDocument(doc, path);
         }

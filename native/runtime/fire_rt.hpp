@@ -271,8 +271,16 @@ inline int formatFloating(T v, char* out) {
     if (v == 0) { if (std::signbit(v)) { out[0] = '-'; out[1] = '0'; return 2; } out[0] = '0'; return 1; }
 
     char sci[40];
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     auto r = std::to_chars(sci, sci + sizeof sci, v, std::chars_format::scientific);
     *r.ptr = 0;
+#else
+    // a standard library without floating point `to_chars` (libc++ before 20, so Emscripten and older Apple toolchains): the fewest digits that read back as the same number
+    for (int precision = 0; precision < 17; precision++) {
+        std::snprintf(sci, sizeof sci, "%.*e", precision, (double)v);
+        if ((T)std::strtod(sci, nullptr) == v) break;
+    }
+#endif
     // sci = [-]d[.ddd]e[+-]XX
     char digits[24] = {0}; int nd = 0; bool negative = false; const char* c = sci;
     if (*c == '-') { negative = true; c++; }
@@ -793,15 +801,28 @@ inline Value power(Value a, Value b) {
 }
 /// The unit a value carries (only numbers and `undefined` can have one).
 inline uint32_t unitOf(Value v) { return (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0; }
+/// The step of `x++`/`x--`: the constant 1 in the unit of `target` (`5cm++` is `6cm`).
+inline Value stepOf(Value target, Value one) { uint32_t u = unitOf(target); if (u && !unitIsUnitless(u) && (one.kind == K_Int || one.kind == K_Float)) one.unit = u; return one; }
 
 /// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even.
 inline Value coerceUnit(Value v, uint32_t target) {
     if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
     if (unitEq(v.unit, target)) return v;
+    if (unitIsUnitless(target) && !unitIsUnitless(v.unit) && v.kind != K_Undefined) {   // `a:unitless`: the number in the base unit
+        double inBase = (v.kind == K_Int ? (double)v.i : (double)v.f) * g_ud[v.unit].scale;
+        if (v.kind == K_Int && std::fabs(inBase) < 9.0e15 && inBase == std::floor(inBase)) return Int((int64_t)inBase, target);
+        return Float((Real)inBase, target);
+    }
     double factor = unitFactor(v.unit, target);
     if (v.kind == K_Int) return Int((int64_t)std::nearbyint((double)v.i * factor), target);
     if (v.kind == K_Float) return Float((Real)((double)v.f * factor), target);
     return Undef(target);
+}
+/// `value::unit` - the same number with another unit (Value.RelabelUnit).
+inline Value relabelUnit(Value v, uint32_t target) {
+    if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be relabelled.");
+    v.unit = target;
+    return v;
 }
 /// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType).
 inline Value coerceType(Value v, uint8_t target) {

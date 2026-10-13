@@ -31,7 +31,7 @@ namespace fire.Editor
             catch (Exception) { logo = TemplateIcon.Create("script", 96); }
 
             var version = typeof(SplashWindow).Assembly.GetName().Version;
-            string versionText = version == null ? "" : $"Version {version.Major}.{version.Minor}";
+            string versionText = version == null ? "" : $"Version 2610";
 
             var title = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 0, 0, 0) };
             title.Children.Add(new TextBlock { Text = "spark", FontSize = 52, FontWeight = FontWeight.SemiBold, Foreground = EditorTheme.Magenta });
