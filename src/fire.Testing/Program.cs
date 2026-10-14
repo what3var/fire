@@ -9238,6 +9238,48 @@ string[] uiDrawExpected = Array.Empty<string>();
         return lines;
     }
 
+    // ---- debugger: the variables have their names (globals, inner blocks, foreach), the field initialisers their line ----
+    {
+        string dbgScript = """
+            class Rod {
+                int length = Rod.Calc()
+                static int Calc() { __dbgSnap(); return 4 }
+            }
+            var first = 1
+            var r = new Rod()
+            {
+                var inner = 7
+                foreach (k in [5]) {
+                    __dbgSnap()
+                }
+            }
+            """;
+        var snaps = new List<string>();
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
+        {
+            snaps.Clear();
+            var natives = new NativeRegistry();
+            natives.Register("__dbgSnap", args =>
+            {
+                var vm = VM.CurrentThreadVm!;
+                string locals = string.Join(",", vm.DebugScopeChain().SelectMany(l => l.Variables).Select(v => v.Name + "=" + v.Value));
+                string globals = string.Join(",", vm.DebugGlobals().Select(v => v.Name + "=" + v.Value));
+                snaps.Add($"[{locals}] [{globals}] line {vm.CurrentLine}");
+                return Value.MakeUndefined();
+            });
+            natives.RegisterBaseTypeNatives();
+            var dbgProgram = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, dbgScript }.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory())).ToList());
+            var dbgResolved = Resolver.Resolve(dbgProgram, natives.Names);
+            var dbgCompiled = Compiler.Compile(dbgProgram, dbgResolved, natives);
+            var dbgVm = new VM(dbgCompiled.TopLevel, new Scope(null, isGlobal: true), natives, dbgCompiled.Classes, isMainThreadVm: true, executionMode: mode);
+            dbgVm.Run();
+            var expected = new[] { "[] [first=1] line 3", "[k=5,inner=7] [first=1,r=<object Rod>] line 10" };
+            bool ok = snaps.SequenceEqual(expected);
+            Console.WriteLine(ok ? $"OK: Debugger: Variablen mit Namen (global, innere Bloecke, foreach) [{mode}]" : $"FEHLER: Debugger: Variablen mit Namen [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", snaps)}");
+            if (!ok) uiFailures++;
+        }
+    }
+
     uiDrawExpected = RunUi(uiDrawScript, VmExecutionMode.Release).ToArray();
 
     void CheckUi(string title, string script, string[] expected)

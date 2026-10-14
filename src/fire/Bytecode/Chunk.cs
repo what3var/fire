@@ -152,6 +152,13 @@ namespace fire.Bytecode
 
         public void MarkLocalName(int depth, int slot, string name) => DebugLocalNames[(depth, slot)] = name;
 
+        // The names of the variables a `DeclareLocal` makes, by the offset of the instruction: the VM writes them into the scope when it makes the slot
+        // (see Scope.DebugNameOf), so the debugger shows every variable - globals and those of inner blocks too - with its name. Kept in the same
+        // table (key depth -1, slot = offset), so the serialised form of a chunk does not change.
+        private const int DeclaredNameDepth = -1;
+        public void MarkDeclaredName(int offset, string name) => DebugLocalNames[(DeclaredNameDepth, offset)] = name;
+        public string? DeclaredNameAt(int offset) => DebugLocalNames.TryGetValue((DeclaredNameDepth, offset), out var name) ? name : null;
+
         // Array copies of code and constants for the VM (see VM.ReadByte/LoadConst): an array access is
         // considerably cheaper than the indexer of a List<T>, and the code is read 1-3 times per instruction.
         // On building (Emit*/Patch*/AddConstant) the copy is discarded and recreated on the next read;

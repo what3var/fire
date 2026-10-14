@@ -646,7 +646,7 @@ namespace fire.Compiler
                     {
                         case FieldDecl fd:
                         {
-                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic);
+                            var fieldInit = CompileFieldInitProto(rc, fd.Type, fd.Initializer, fd.IsStatic, fd.Line);
                             rc.OwnFieldInfo[fd.Name] = new FieldInfo()
                             {
                                 AccessModifier = fd.Access,
@@ -771,12 +771,14 @@ namespace fire.Compiler
             return true;
         }
 
-        private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false)
+        private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false, int line = 0)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
+                // the line of the field: a debugger that steps into the initialiser shows it (and an error in it names it)
+                if (line > 0) inner._chunk.MarkLine(inner.CurrentSourceIndex, line);
                 // An instance field with `new X()`/`flat x`/`copy x` as initialiser: the new object belongs to the instance
                 // (`this` is bound during evaluation, see CallProtoWithThis), not the initialiser scope - otherwise
                 // it would be destroyed after the constructor while the field points to it (SPEC 2.1).
@@ -1038,6 +1040,9 @@ namespace fire.Compiler
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = rc;
+            // the base call and the field initialisers belong to the line of `construct` (of the class, when it declares none): a debugger shows that, not line 0
+            int headerLine = ctor?.Line ?? rc.Decl?.Line ?? 0;
+            if (headerLine > 0) inner._chunk.MarkLine(inner.CurrentSourceIndex, headerLine);
 
             if (ctor != null)
             {
@@ -1194,6 +1199,7 @@ namespace fire.Compiler
                     // "unsuitable" first assignment).
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
 
+                    _chunk.MarkDeclaredName(_chunk.Here, vd.Name);
                     _chunk.EmitOp(OpCode.DeclareLocal);
                     break;
                 }
@@ -1649,6 +1655,7 @@ namespace fire.Compiler
             // Stack: [enumerator, current]
 
             EmitEnterScope(); // corresponds to Resolver.PushScope() for the loop variable
+            _chunk.MarkDeclaredName(_chunk.Here, fs.VarName);
             _chunk.EmitOp(OpCode.DeclareLocal); // pop 'current', slot 0 of this new scope
             // Stack: [enumerator]
 

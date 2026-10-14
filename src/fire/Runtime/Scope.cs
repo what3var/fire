@@ -88,7 +88,20 @@ namespace fire.Runtime
         {
             _parent = parent;
             _pooled = true;
+            _debugNames = null;
         }
+
+        // the names of the slots, for the debugger only (the VM sets them when it is not in performance mode); null: none known
+        private string?[]? _debugNames;
+
+        public void SetDebugName(int slot, string name)
+        {
+            if (_debugNames == null || _debugNames.Length <= slot) Array.Resize(ref _debugNames, Math.Max(slot + 1, 8));
+            _debugNames[slot] = name;
+        }
+
+        /// <summary>The name of a slot as the program declared it (null when the VM did not record it).</summary>
+        public string? DebugNameOf(int slot) => _debugNames != null && slot < _debugNames.Length ? _debugNames[slot] : null;
 
         /// <summary>Like <see cref="Reinit"/> for a call: ensures a slot array with at least `capacity` places (the existing one is
         /// reused if it suffices) and occupies the first `paramCount` slots - the caller copies the parameters directly into it
@@ -97,6 +110,7 @@ namespace fire.Runtime
         {
             _parent = parent;
             _pooled = true;
+            _debugNames = null;
             if (_slots == null || _slots.Length < capacity) _slots = new Value[capacity];
             _slotCount = paramCount;
         }

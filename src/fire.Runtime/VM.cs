@@ -560,7 +560,11 @@ namespace fire.Runtime
         {
             var broker = _ownerBroker!;
             broker.Lock.Enter();
-            try { _globalScope.DefineSlot(value); }
+            try
+            {
+                int slot = _globalScope.DefineSlot(value);
+                if (ExecutionMode != VmExecutionMode.Performance && _currentChunk.DeclaredNameAt(_ip - 1) is { } name) _globalScope.SetDebugName(slot, name);
+            }
             finally { broker.Lock.Exit(); }
         }
 
@@ -1369,6 +1373,12 @@ namespace fire.Runtime
         /// separately. Names reliable only for parameters of the top-
         /// level (see Chunk.DebugLocalNames comment), everything else
         /// as "(local N)".</summary>
+        /// <summary>Gives the slot just made by `DeclareLocal` (the instruction before `_ip`) the name of its variable, for the debugger.</summary>
+        private void NameDeclaredSlot(int slot)
+        {
+            if (_currentChunk.DeclaredNameAt(_ip - 1) is { } name) _currentScope.SetDebugName(slot, name);
+        }
+
         public IReadOnlyList<ScopeLevel> DebugScopeChain()
         {
             var result = new List<ScopeLevel>();
@@ -1380,9 +1390,8 @@ namespace fire.Runtime
                 var vars = new List<(string, Value)>();
                 for (int slot = 0; slot < scope.SlotCount; slot++)
                 {
-                    string name = isFunctionTopLevel && _currentChunk.DebugLocalNames.TryGetValue((0, slot), out var n)
-                        ? n
-                        : $"(local {slot})";
+                    string name = scope.DebugNameOf(slot)
+                        ?? (isFunctionTopLevel && _currentChunk.DebugLocalNames.TryGetValue((0, slot), out var n) ? n : $"(local {slot})");
                     vars.Add((name, scope.GetSlot(slot)));
                 }
                 result.Add(new ScopeLevel(depth, isFunctionTopLevel, vars));
@@ -1400,7 +1409,7 @@ namespace fire.Runtime
         public IEnumerable<(string Name, Value Value)> DebugGlobals()
         {
             for (int slot = 0; slot < _globalScope.SlotCount; slot++)
-                yield return ($"(global {slot})", _globalScope.GetSlot(slot));
+                yield return (_globalScope.DebugNameOf(slot) ?? $"(global {slot})", _globalScope.GetSlot(slot));
         }
 
         /// <summary>Executes instructions until the call stack has fallen below
@@ -1552,7 +1561,10 @@ namespace fire.Runtime
 
                 case OpCode.DeclareLocal:
                     if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); return; }
-                    _currentScope.DefineSlot(Pop());
+                    {
+                        int declared = _currentScope.DefineSlot(Pop());
+                        if (ExecutionMode != VmExecutionMode.Performance) NameDeclaredSlot(declared);
+                    }
                     return;
 
                 // Binary operators: the left operand lies at _sp-2, the right at _sp-1; the result
@@ -3648,7 +3660,11 @@ namespace fire.Runtime
 
                 case OpCode.DeclareLocal:
                     if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) DeclareOwnerGlobal(Pop());
-                    else _currentScope.DefineSlot(Pop());
+                    else
+                    {
+                        int declared = _currentScope.DefineSlot(Pop());
+                        if (ExecutionMode != VmExecutionMode.Performance) NameDeclaredSlot(declared);
+                    }
                     break;
 
                 case OpCode.StepAdd:
