@@ -47,6 +47,28 @@ window.Run()
 `#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.fire]` writes the generated
 script (to look at it, or to ship it), and the editor shows it too (*Generated script* in the markup editor). Mistakes in the markup are reported with the line of the markup file.
 
+## Namespaces
+
+The root element says which namespace the markup belongs to and which other namespaces it uses:
+
+```xml
+<Window class="Shop" namespace="App" namespace:m="App.Models" namespace:ui2="Widgets">
+  <Resources>
+    <Converter key="Price" type="PriceConverter"/>          <!-- unqualified: found in App, App.Models or Widgets -->
+    <Converter key="Name" type="m:NameConverter"/>          <!-- App.Models.NameConverter -->
+  </Resources>
+  <Label color="{Enum local:Palette.Accent}" background="[ui2:Gradient #000000, #336699]"/>
+</Window>
+```
+
+- `namespace="App"` puts the generated class into `namespace App` (`App.ShopBase`); `local:Name` is a name in it.
+- `namespace:prefix="Name.Space"` binds another namespace to a prefix: `m:Person` is `App.Models.Person`.
+- A type name without a prefix (a converter, `[Type ...]`) is looked up in the namespace of the markup first and then in all bound namespaces (the generated script carries a `#using` for
+  each). As long as only one of them has the name, that is enough; when two bound namespaces have it, the compiler reports the name as ambiguous (`E4062`) - write it with its prefix.
+- `{Enum ...}` and `{Static ...}` are fire code, and fire reaches a static member or an enum only by its full name (`#using` applies to type names): write them with a prefix (`{Enum m:Colors.Red}`) or fully qualified.
+
+The `#using` lines of the generated script also apply to the file that includes it (`#include` inserts the script), so the code-behind can use the same names.
+
 ## The generated class
 
 For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..."` chooses another name). It has
@@ -113,6 +135,12 @@ The attribute names are those of the fire fields (the first letter may be upper 
 - `{Binding ...}`: a data binding (below); `{TemplateBinding ...}`: inside a control template (below).
 
 A text that starts with a brace is written `{}{like this}`.
+
+**Objects:** `[Type Arg1, Arg2]` assigns a new instance of `Type` - the arguments go to its constructor: `background="[SolidBrush #336699]"`, `itemsSource="[Names 'Ada', 'Bob']"`.
+An argument is a number (also with a unit: `2.5mm`), a text in quotes (`'it''s'` - single quotes are easiest inside an attribute; two quotes stand for one), `#RRGGBB` (a colour number),
+`true`/`false`/`undefined`, `{Enum ...}`/`{Static ...}`/`{Expr ...}` or another object (`[Pair 1, [Point 2, 3]]`). The value is used as it is: a colour property gets the brush itself, not a
+`SolidBrush` around it. The design view makes objects of the libraries (`UI.*`, `SolidBrush`, `Pen`); objects of your own classes are left out there, like `{Expr ...}`.
+A text that starts with `[` and a name is written `{}[like this]`.
 
 **Handlers:** `onClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
 override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)

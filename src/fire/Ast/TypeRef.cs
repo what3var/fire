@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MemoryPack;
 
 namespace fire.Ast
@@ -109,6 +110,22 @@ namespace fire.Ast
                     if (isKnown(candidate)) return candidate;
                 }
             return BaseName;
+        }
+
+        /// <summary>The fully qualified names `BaseName` stands for when it is AMBIGUOUS: not known as written, not in `ownNamespace` (the namespace of the
+        /// code that writes it, which wins as the first candidate), but in more than one of the `#using` namespaces - then there is no first match, the name
+        /// must be written in full. Empty when the name is not ambiguous.</summary>
+        public IReadOnlyList<string> AmbiguousCandidates(Func<string, bool> isKnown, string? ownNamespace)
+        {
+            if (Namespaces == null || Namespaces.Count < 2 || isKnown(BaseName)) return Array.Empty<string>();
+            if (ownNamespace != null && Namespaces[0] == ownNamespace && isKnown(ownNamespace + "." + BaseName)) return Array.Empty<string>();
+            var matches = new List<string>();
+            foreach (var ns in Namespaces)
+            {
+                string candidate = ns + "." + BaseName;
+                if (isKnown(candidate) && !matches.Contains(candidate)) matches.Add(candidate);
+            }
+            return matches.Count > 1 ? matches : Array.Empty<string>();
         }
 
         public override string ToString()

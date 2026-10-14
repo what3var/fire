@@ -135,6 +135,25 @@ namespace fire.Compiler
         /// parser EXACTLY at the place where `tr` was parsed - the
         /// resolver needs no "current class"/"active
         /// usings" state of its own for that any more.</summary>
+        /// <summary>An unqualified name that more than one `#using` namespace has (TypeRef.AmbiguousCandidates) must be written in full. `ownNamespace`:
+        /// the namespace of the code that writes the name (its own namespace comes first and is not ambiguous).</summary>
+        private void CheckAmbiguous(TypeRef tr, int line, Func<string, bool> known, string? ownNamespace)
+        {
+            int typeArgs = tr.TypeArgs?.Count ?? tr.TypeArgCount;
+            var matches = tr.AmbiguousCandidates(n => known(n) || typeArgs > 0 && known(GenericClassNames.Mangle(n, typeArgs)), ownNamespace);
+            if (matches.Count > 1)
+                throw new ResolverException($"'{tr.BaseName}' is ambiguous: {string.Join(", ", matches)} (more than one '#using' brings it); write the full name", line);
+        }
+
+        /// <summary>The namespace a class is declared in (`Geo.Shapes.Circle` -> `Geo.Shapes`), null for a class outside every namespace.</summary>
+        private static string? NamespaceOf(string? className)
+        {
+            if (className == null) return null;
+            string plain = GenericClassNames.PlainName(className);
+            int dot = plain.LastIndexOf('.');
+            return dot < 0 ? null : plain.Substring(0, dot);
+        }
+
         private string ResolveTypeRef(TypeRef tr) =>
             tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, IsKnownClassName) : tr.ResolveBaseName(IsKnownClassName);
 
@@ -412,6 +431,8 @@ namespace fire.Compiler
                 string? baseName = null;
                 foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
                 {
+                    try { CheckAmbiguous(baseRef, cd.Line, n => n == "Exception" || _classes.ContainsKey(n) || _interfaces.ContainsKey(n), NamespaceOf(cd.Name)); }
+                    catch (ResolverException ambiguous) { AddError(ambiguous); continue; }
                     string n = ResolveBaseRef(baseRef);
                     bool isClass = n == "Exception" || _classes.ContainsKey(n);
                     if (isClass)
@@ -792,6 +813,7 @@ namespace fire.Compiler
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
+            CheckAmbiguous(tr, line, n => IsKnownClassName(n) || _interfaces.ContainsKey(n), NamespaceOf(_currentClass?.Name));
             if (!IsKnownClassName(ResolveTypeRef(tr)) && !_interfaces.ContainsKey(ResolveBaseRef(tr)))
                 throw new ResolverException($"Unknown type '{tr.BaseName}'", line);
             if (tr.TypeArgs is { Count: > 0 } typeArgs) ValidateTypeArgs(tr, typeArgs, line);
@@ -1726,6 +1748,7 @@ namespace fire.Compiler
                         // The number of type arguments chooses between a
                         // non-generic and a generic class of the same name
                         // (see GenericClassNames).
+                        CheckAmbiguous(ne.ClassRef with { TypeArgCount = ne.TypeArgs?.Count ?? 0 }, ne.Line, IsKnownClassName, NamespaceOf(_currentClass?.Name));
                         string resolvedNewClassName = GenericClassNames.ResolveNewTarget(
                             ne.ClassRef, ne.TypeArgs?.Count ?? 0, IsKnownClassName);
                         if (!IsKnownClassName(resolvedNewClassName))

@@ -7,6 +7,9 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using AvaloniaEdit.CodeCompletion;
+using AvaloniaEdit.Document;
+using AvaloniaEdit.Editing;
 using fire.Compiler;
 using fire.UI.Markup;
 
@@ -45,7 +48,18 @@ namespace fire.Editor
                 if (!_loading) SetModified(true);
                 _timer!.Stop();
                 _timer.Start();
+                // an open list follows the text (also Backspace, which TextEntered does not see)
+                if (_completionWindow != null) ShowOrUpdateCompletion(closeIfEmpty: true);
             };
+            Editor.TextArea.TextEntered += Editor_TextEntered;
+            Editor.AddHandler(KeyDownEvent, (object? _, KeyEventArgs e) =>
+            {
+                if (e.Key == Key.Space && e.KeyModifiers == KeyModifiers.Control)
+                {
+                    ShowOrUpdateCompletion(closeIfEmpty: true);
+                    e.Handled = true;
+                }
+            }, RoutingStrategies.Tunnel);
             Editor.TextArea.Caret.PositionChanged += (_, _) =>
             {
                 int line = GetCaretLine();
@@ -177,6 +191,64 @@ namespace fire.Editor
         }
 
         private void Script_Click(object? sender, RoutedEventArgs e) => ShowScriptRequested?.Invoke();
+
+        // -----------------------------------------------------------
+        // IntelliSense: the logic is MarkupCompletion (fire.UI.Markup), here only the list of AvaloniaEdit
+        // -----------------------------------------------------------
+
+        private CompletionWindow? _completionWindow;
+
+        private void Editor_TextEntered(object? sender, TextInputEventArgs e)
+        {
+            if (_completionWindow != null || string.IsNullOrEmpty(e.Text)) return;
+            char c = e.Text[^1];
+            bool opens = c is '<' or ' ' or '"' or '\'' or '{' or ',' or '=' or ':' or '[' or '/';
+            if (!opens && (char.IsLetter(c) || c == '_'))
+            {
+                // only at the start of a word, not in the middle of one
+                int before = Editor.CaretOffset - 2;
+                opens = before < 0 || !(char.IsLetterOrDigit(Editor.Document.GetCharAt(before)) || Editor.Document.GetCharAt(before) is '_' or '.' or ':');
+            }
+            if (opens) ShowOrUpdateCompletion(closeIfEmpty: true);
+        }
+
+        private void ShowOrUpdateCompletion(bool closeIfEmpty)
+        {
+            int offset = Editor.CaretOffset;
+            var result = MarkupCompletion.Suggest(Editor.Text, offset);
+            if (result.Items.Count == 0)
+            {
+                if (closeIfEmpty) _completionWindow?.Close();
+                return;
+            }
+            _completionWindow?.Close();
+            var window = new CompletionWindow(Editor.TextArea) { StartOffset = result.ReplaceStart, EndOffset = offset };
+            window.CompletionList.ListBox.Background = EditorTheme.DarkSurface;
+            window.CompletionList.ListBox.Foreground = EditorTheme.Text;
+            foreach (var item in result.Items) window.CompletionList.CompletionData.Add(new MarkupCompletionData(item));
+            window.CompletionList.SelectedItem = window.CompletionList.CompletionData[0];
+            window.Closed += (_, _) => { if (_completionWindow == window) _completionWindow = null; };
+            _completionWindow = window;
+            window.Show();
+        }
+
+        /// <summary>A suggestion of <see cref="MarkupCompletion"/> in the list of AvaloniaEdit: inserting it puts the caret into the quotes of `name=""`.</summary>
+        private sealed class MarkupCompletionData : ICompletionData
+        {
+            private readonly MarkupCompletionItem _item;
+            public MarkupCompletionData(MarkupCompletionItem item) => _item = item;
+            public Avalonia.Media.IImage? Image => null;
+            public string Text => _item.Label;
+            public object Content => _item.Label;
+            public object Description => _item.Detail ?? _item.Kind.ToString();
+            public double Priority => 0;
+
+            public void Complete(TextArea textArea, ISegment completionSegment, EventArgs insertionRequestEventArgs)
+            {
+                textArea.Document.Replace(completionSegment, _item.Text);
+                if (_item.CaretBack > 0) textArea.Caret.Offset -= _item.CaretBack;
+            }
+        }
 
         // -----------------------------------------------------------
         // Insert elements

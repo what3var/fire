@@ -125,7 +125,16 @@ namespace fire.UI.Markup
             code.Line($"// Generated from {file} - do not edit, change the markup. Derive from the class and override the methods named in on...=\"...\":");
             code.Line($"//     class {document.ClassName} : {document.BaseName} {{ undefined Save(any sender) {{ ... }} }}");
             code.Line("#import \"ui\"");
+            // the namespaces of the markup: an unqualified type name is looked up in them (a name that two of them have must be written with its prefix)
+            foreach (var ns in document.Namespaces.Values.Distinct()) code.Line($"#using {ns}");
+            bool inNamespace = document.Namespace != null && !preview;
+            if (inNamespace) code.Line($"#using {document.Namespace}");
             code.Line();
+            if (inNamespace)
+            {
+                code.Line($"namespace {document.Namespace} {{");
+                code.Indent++;
+            }
             code.Line($"class {(preview ? "FxPreview" : document.BaseName)} {{");
             code.Indent++;
 
@@ -243,6 +252,11 @@ namespace fire.UI.Markup
 
             code.Indent--;
             code.Line("}");
+            if (inNamespace)
+            {
+                code.Indent--;
+                code.Line("}");
+            }
 
             if (errors.Count > 0) throw new MarkupException(errors);
             return code.ToString();
@@ -353,6 +367,8 @@ namespace fire.UI.Markup
         private static string? ValueCode(PropertyDef property, MarkupAttribute attribute, List<MarkupDiagnostic> errors) => attribute.Value switch
         {
             ExpressionValue when s_preview => null,   // code of the program: the design view does not run it
+            ObjectValue { PreviewSafe: false } when s_preview => null,
+            ObjectValue instance => instance.Code,   // a ready value (a brush, a pen, any object): no SolidBrush/Pen around it
             ExpressionValue expression => property.Kind switch
             {
                 PropertyKind.Color when !expression.IsRaw => $"new SolidBrush({expression.Code})",

@@ -10708,6 +10708,111 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print(d.ed.text + " " + d.sum.text)
                 """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
 
+            // IntelliSense of the markup editor: `|` is the caret
+            List<string> Suggest(string withCaret)
+            {
+                int caret = withCaret.IndexOf('|');
+                var result = fire.UI.Markup.MarkupCompletion.Suggest(withCaret.Remove(caret, 1), caret);
+                return result.Items.Select(x => x.Label).ToList();
+            }
+            bool Has(List<string> list, params string[] names) => names.All(list.Contains);
+            var sRoot = Suggest("<|");
+            CheckMarkup("Markup-IntelliSense: im leeren Dokument Window und View", sRoot.SequenceEqual(new[] { "Window", "View" }), string.Join(",", sRoot));
+            var sChildren = Suggest("<Window class=\"A\">\n  <St|");
+            CheckMarkup("Markup-IntelliSense: Elemente im Fenster, gefiltert nach dem Getippten", sChildren.Count > 0 && sChildren.All(x => x.Contains("St", StringComparison.OrdinalIgnoreCase)) && Has(sChildren, "Stack", "StackPanel"), string.Join(",", sChildren));
+            var sParts = Suggest("<Window class=\"A\"><ListView><|");
+            CheckMarkup("Markup-IntelliSense: in einer Liste nur ihre Teile", sParts.SequenceEqual(new[] { "Column", "Item" }), string.Join(",", sParts));
+            var sRes = Suggest("<Window class=\"A\"><Resources><|");
+            CheckMarkup("Markup-IntelliSense: in Resources die Ressourcen", Has(sRes, "Converter", "Style", "ControlTemplate", "DataTemplate", "CollectionView") && sRes.Count == 5, string.Join(",", sRes));
+            var sClose = Suggest("<Window class=\"A\"><Stack><Label/></|");
+            CheckMarkup("Markup-IntelliSense: </ schliesst das offene Element", sClose.SequenceEqual(new[] { "Stack>" }), string.Join(",", sClose));
+            var sAttr = Suggest("<Window class=\"A\"><Button text=\"x\" |");
+            CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "name", "onClick", "margin", "Grid.Row") && !sAttr.Contains("text"), string.Join(",", sAttr));
+            var sRootAttr = Suggest("<Window |");
+            CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "class", "namespace", "namespace:prefix", "title"), string.Join(",", sRootAttr));
+            var sEnum = Suggest("<Window class=\"A\"><Label halign=\"|");
+            CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
+            var sBool = Suggest("<Window class=\"A\"><Label visible=\"f|");
+            CheckMarkup("Markup-IntelliSense: true/false, gefiltert", sBool.SequenceEqual(new[] { "false" }), string.Join(",", sBool));
+            var sStyle = Suggest("<Window class=\"A\"><Resources><Style key=\"Primary\" target=\"Button\"/><Style key=\"Big\" target=\"Label\"/></Resources><Button style=\"|");
+            CheckMarkup("Markup-IntelliSense: Schluessel der Styles", sStyle.SequenceEqual(new[] { "Primary", "Big" }), string.Join(",", sStyle));
+            var sSetter = Suggest("<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"back|");
+            CheckMarkup("Markup-IntelliSense: Setter-Eigenschaften des Style-Ziels", sSetter.SequenceEqual(new[] { "background" }), string.Join(",", sSetter));
+            var sSetterValue = Suggest("<Window class=\"A\"><Resources><Style target=\"Label\"><Setter property=\"halign\" value=\"|");
+            CheckMarkup("Markup-IntelliSense: Setter-Wert nach der Eigenschaft", Has(sSetterValue, "Left", "Center"), string.Join(",", sSetterValue));
+            var sExt = Suggest("<Window class=\"A\"><Label text=\"{B|");
+            CheckMarkup("Markup-IntelliSense: Markup-Erweiterungen, was mit dem Getippten anfaengt zuerst", sExt.SequenceEqual(new[] { "Binding", "TemplateBinding" }), string.Join(",", sExt));
+            var sConv = Suggest("<Window class=\"A\"><Resources><Converter key=\"Upper\" type=\"U\"/></Resources><Label text=\"{Binding Name, Converter=|");
+            CheckMarkup("Markup-IntelliSense: Converter einer Bindung (eigene und eingebaute)", Has(sConv, "Upper", "Not", "IsEmpty"), string.Join(",", sConv));
+            var sMode = Suggest("<Window class=\"A\"><TextBox text=\"{Binding Name, |");
+            CheckMarkup("Markup-IntelliSense: Optionen einer Bindung", Has(sMode, "Mode=", "Converter=", "ElementName="), string.Join(",", sMode));
+            var sNs = Suggest("<Window class=\"A\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"|");
+            CheckMarkup("Markup-IntelliSense: Namespace-Praefixe bei Typnamen", sNs.SequenceEqual(new[] { "local:", "m:" }), string.Join(",", sNs));
+            var sHandler = Suggest("<Window class=\"A\"><Button onClick=\"Save\"/><Button onClick=\"|");
+            CheckMarkup("Markup-IntelliSense: vorhandene Handler-Namen", sHandler.SequenceEqual(new[] { "Save" }), string.Join(",", sHandler));
+            var sComment = Suggest("<Window class=\"A\"><!-- <|");
+            CheckMarkup("Markup-IntelliSense: in einem Kommentar nichts", sComment.Count == 0, string.Join(",", sComment));
+            var sAttrItem = fire.UI.Markup.MarkupCompletion.Suggest("<Window class=\"A\"><Button ", 27).Items.First(x => x.Label == "onClick");
+            CheckMarkup("Markup-IntelliSense: ein Attribut wird mit =\"\" eingefuegt, der Cursor kommt zwischen die Anfuehrungszeichen", sAttrItem.Text == "onClick=\"\"" && sAttrItem.CaretBack == 1);
+
+            // namespaces of the markup and object values
+            string nsScript = Generate("<Window class=\"N\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"m:Upper\"/><Converter key=\"L\" type=\"local:Lower\"/></Resources>"
+                + "<Label background=\"[SolidBrush #FF0000]\" text=\"{Binding Name, Converter=U}\"/><Label color=\"{Enum m:Colors.Red}\"/></Window>");
+            CheckMarkup("Markup: Namespaces - #using, namespace-Block, Praefixe werden qualifiziert, Objektwerte",
+                nsScript.Contains("#using App.Models") && nsScript.Contains("namespace App {") && nsScript.Contains("App.Models.Upper fxConv_U") && nsScript.Contains("App.Lower fxConv_L")
+                && nsScript.Contains("new SolidBrush(UI.Color.Rgb(255, 0, 0))") && !nsScript.Contains("new SolidBrush(new SolidBrush") && nsScript.Contains("App.Models.Colors.Red"), nsScript);
+            ExpectGenerateError("unbekanntes Namespace-Praefix", "<Window class=\"A\"><Label color=\"{Enum x:Colors.Red}\"/></Window>", "Unknown namespace prefix 'x'");
+            ExpectGenerateError("Objektwert: Argument ohne Anfuehrungszeichen", "<Window class=\"A\"><Label background=\"[SolidBrush red]\"/></Window>", "is no argument value");
+            ExpectGenerateError("Objektwert: offener Text", "<Window class=\"A\"><Label background=\"[X 'a]\"/></Window>", "is not closed");
+            CheckMarkup("Markup: Objektwert - Texte in '' (zwei stehen fuer eines), verschachtelte Objekte, Zahlen mit Einheit",
+                Generate("<Window class=\"A\"><ListBox itemsSource=\"[Names 'it''s', &quot;b&quot;, [Pair 1, 2.5mm], true]\"/></Window>") is var objScript
+                && objScript.Contains("new Names(\"it's\", \"b\", new Pair(1, 2.5mm), true)"), objScript);
+            CheckMarkup("Markup: local: ohne namespace ist der Name selbst; ohne Namespace kein namespace-Block",
+                Generate("<Window class=\"A\"><Resources><Converter key=\"U\" type=\"local:Up\"/></Resources></Window>") is var localScript
+                && localScript.Contains("Up fxConv_U") && !localScript.Contains("namespace ") && !localScript.Contains("#using"), localScript);
+            File.WriteAllText(P("Ns.fxml"), """
+                <View class="NsView" namespace="Shop" namespace:m="Shop.Models" namespace:x="Shop.Extra" width="200" height="100">
+                  <Resources>
+                    <Converter key="Up" type="Upper"/>
+                    <Converter key="Ex" type="x:Shout"/>
+                  </Resources>
+                  <Stack name="box">
+                    <Label name="title" text="{Binding Name, Converter=Up}" background="[SolidBrush #102030]"/>
+                    <Label name="other" text="{Binding Name, Converter=Ex}"/>
+                    <ListBox name="names" itemsSource="[Names 'Ada', 'it''s']"/>
+                  </Stack>
+                </View>
+                """);
+            CheckUi("Markup: Namespaces - eigener Namespace, gebundene Namespaces, unqualifizierte Typnamen, Objektwerte", uiHead + $$"""
+                namespace Shop.Models {
+                    class Upper : UI.Converter { any Convert(any value) { return value.ToUpper() } }
+                    class Names : List { construct(string a, string b) { this.Add(a)
+                        this.Add(b) } }
+                }
+                namespace Shop.Extra {
+                    class Shout : UI.Converter { any Convert(any value) { return "x" + value } }
+                }
+                class Item { string Name = "fire" }
+                #include "{{P("Ns.fxml")}}"
+                class MyView : NsViewBase { }
+                var v = new MyView()
+                v.Attach(ui.content)
+                v.SetDataContext(new Item())
+                print(v.title.text + " " + v.other.text + " " + (v.title.background is of SolidBrush))
+                print(v.names.itemsSource.count + " " + v.names.itemsSource[1])
+                """, new[] { "FIRE xfire True", "2 it's" });
+            File.WriteAllText(P("Amb.fxml"), """
+                <View class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
+                  <Resources><Converter key="Up" type="Upper"/></Resources>
+                  <Label text="{Binding Name, Converter=Up}"/>
+                </View>
+                """);
+            CheckUi("Markup: Namespaces - ein Name in zwei gebundenen Namespaces muss qualifiziert werden", $$"""
+                namespace Amb.A { class Upper : UI.Converter { } }
+                namespace Amb.B { class Upper : UI.Converter { } }
+                #include "{{P("Amb.fxml")}}"
+                """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (20)" });
+
             File.WriteAllText(P("Rich.fxml"), """
                 <Window class="Rich" title="Rich" width="480" height="320">
                   <Resources>
