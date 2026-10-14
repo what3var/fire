@@ -364,7 +364,7 @@ Any other, unrecognized suffix string on a literal is treated as an **atomic uni
 
 ### 3.5 Unit declarations
 
-A unit after the name of a declaration (`int len : mm`, `float speed : m/s`, a parameter `float v : mm`, a field, a property `float Width : m { get ... set ... }`) or at
+A unit after the name of a declaration (`int len : mm`, `float t : s`, a parameter `float v : mm`, a field, a property `float Width : m { get ... set ... }`) or at
 its type (`float:m len`, the return type of a method `float:m Length()`, `float : mm` with spaces is the same) fixes the unit of everything stored there - the calculation
 in it always happens in that dimension **and** factor:
 
@@ -398,7 +398,7 @@ float:m Width() { ... }         // returns meters (a value in cm is converted)
 ### 4.2 Lambdas
 
 - During name lookup a lambda sees **its own scope, the global scope and copies of the outer local values that its body uses** (captures, see 4.2.1) – no closure over scopes in between.
-- `on obj` binds an object as the `this` context, either at definition (`func (X) on obj => { ... }`) or afterwards on assignment (`var b = a on obj2;`, creates a new lambda value with a different `this`, `a` remains unchanged).
+- `on obj` binds an object as the `this` context, at definition (`func (X) on obj => { ... }`). (Rebinding an existing lambda value - `var b = a on obj2` - is planned, not implemented.)
 - Member variables of the bound `this` object are visible unqualified in the lambda body: for a lambda with `on target` (`func (x) on win => { n = n + x; Hello() }`) unknown names are members of the target - reading, writing, `++` and method calls act as if `this.` were in front (the class is only known at run time, an unknown name there is a run-time error). Local variables, parameters and captures take precedence. A lambda without `on` knows no members (an unknown name is a compile error).
 - Ownership of the lambda value follows section 2.1 (field assignment → object owner, otherwise scope owner) – independent of the `on` binding.
 - For a type annotation that expects a lambda value (field, parameter, return type, `var`), the type name **`lambda`** is available, optionally with a signature: `[ReturnType] lambda[<ParamType1,...,ParamTypeN>]`. Deliberately **not** `func` (that introduces a lambda *expression*, `func (x) => ...`, and as a type name it would collide with that expression syntax). See 4.3 for details.
@@ -1266,7 +1266,7 @@ Registers several related native functions at once, all
 under the same name prefix - the name actually registered for each
 entry is `prefix + suffix`. A pure convenience/naming scheme for
 self-contained API groups (e.g. a graphics/console bridge, see
-`ScriptLang.Terminal.Bridge`, docs/CONSOLE.md) - equivalent to several
+`fire.Terminal.Bridge`, docs/CONSOLE.md) - equivalent to several
 individual `Register(...)` calls, and additionally returns the list of the
 names created.
 
@@ -1548,7 +1548,7 @@ class List : IEnumerable {
   prelude for that (without the prelude it remains an error).
 - `IEnumerable`/`IEnumerator`/`List`/`ListEnumerator` as well as
   `IndexOutOfBoundsException` are part of the **prelude**
-  (`Standard/Prelude.cs`) – deliberately written in ScriptLang itself instead of
+  (`Standard/Prelude.cs`) – deliberately written in fire itself instead of
   natively in C#, since the language has long had enough substance for it (classes,
   arrays, interfaces), and it is automatically prepended to every program
   (`Parser.ParseWithPrelude`). `List` internally uses a fixed-size array
@@ -1582,12 +1582,8 @@ in other methods of the same class, not in derived classes, not
 from outside) – this allows fields to be expressed that are set once per instance and are then
 immutable (like C#'s `readonly`).
 
-**Known limit**: the check is purely static and only refers to
-the lexically recognizable case `this.field = ...`. An assignment via a
-dynamic target (`obj.field = ...`, where `obj` is an arbitrary expression)
-is NOT detected, since the language has no static type system that would know at
-compile time which class `obj` is an instance of – a real
-run-time safeguard for that is a possible later stage.
+**Known limit**: the check is static and only refers to the lexically recognizable case `this.field = ...`. An assignment via another
+target (`obj.field = ...`) is not detected yet, neither by the compiler nor at run time (see the roadmap of the language reference).
 
 ### 8.7 `enum`
 
@@ -1697,12 +1693,6 @@ is a clear run-time error (no silent field creation - that
 would otherwise permanently shadow the property with a field of the same name).
 Reading a write-only property is likewise a clear
 error.
-
-**No auto-properties**: unlike C#'s `{ get; set; }` short form (without a
-body, with an implicit backing field), a real body must ALWAYS
-be given here - a field alone already covers the "simple case without logic of its own",
-an automatically generated backing-field variant would bring
-little additional value for it.
 
 ### 8.9 Format strings (`$"..."`)
 

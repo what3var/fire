@@ -13,10 +13,9 @@ namespace fire.Values
     /// routinely triggered by real scripts and therefore
     /// deliberately implemented WITHOUT exceptions). Nowhere in the whole core
     /// is this type deliberately caught and "handled" - it always
-    /// propagates all the way to the abort (see docs/PORTING.md, section
-    /// "VM-internal control flow").
+    /// propagates all the way to the abort.
     ///
-    /// For the later C++ port (see docs/PORTING.md) this is the
+    /// For the C++ runtime this is the
     /// decisive distinction: THIS type translates to an
     /// `assert(...)`/panic handler (also works without C++ exceptions,
     /// common on embedded targets), NOT as a `TryX()` return value like

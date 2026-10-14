@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -98,6 +99,31 @@ namespace fire.Editor
         }
 
         private void HelpEmbedding_Click(object? sender, RoutedEventArgs e) => OpenHelp("Embedding.md");
+
+        /// <summary>The folder of the language reference below Help (docs/language of the repository, copied there by the build).</summary>
+        private const string LanguageHelpFolder = "Language";
+
+        /// <summary>Help > The fire Language: the contents page, one entry per topic page and the further pages (the roadmap), in the order of the
+        /// contents page Help\Language\README.md. Without the folder (a build without the docs) the entry opens the contents page and reports that it is missing.</summary>
+        private void BuildLanguageHelpMenu()
+        {
+            mnuLanguage.Items.Clear();
+            mnuLanguage.Items.Add(LanguageHelpItem("_Contents", "README.md"));
+            string readme = Path.Combine(AppContext.BaseDirectory, "Help", LanguageHelpFolder, "README.md");
+            if (!File.Exists(readme)) return;
+            var (topics, more) = LanguageHelp.Contents(File.ReadAllText(readme));
+            if (topics.Count > 0) mnuLanguage.Items.Add(new Separator());
+            foreach (var (title, file) in topics) mnuLanguage.Items.Add(LanguageHelpItem(title, file));
+            if (more.Count > 0) mnuLanguage.Items.Add(new Separator());
+            foreach (var (title, file) in more) mnuLanguage.Items.Add(LanguageHelpItem(title, file));
+        }
+
+        private MenuItem LanguageHelpItem(string header, string file)
+        {
+            var item = new MenuItem { Header = header };
+            item.Click += (_, _) => OpenHelp(Path.Combine(LanguageHelpFolder, file));
+            return item;
+        }
 
         /// <summary>Opens a page of the Help folder (next to the executable) as a viewer.</summary>
         private void OpenHelp(string fileName)

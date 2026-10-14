@@ -1,4 +1,4 @@
-# ScriptLang – Bytecode-ISA (v0.1)
+# fire – Bytecode-ISA
 
 Ergänzt `SPEC.md` um die konkrete Bytecode-Zielarchitektur. Stack-basierte VM,
 bewusst klein und orthogonal – jede Instruktion soll sich später ohne größere
@@ -263,7 +263,7 @@ der Elemente.
 **Bounds-Checking als fangbare Skript-Exception**: `ScriptArray.TryGet`/
 `TrySet` (siehe Abschnitt 19, `Values.ByteBuffer` ebenso) liefern bei einem
 ungültigen Index `false` statt zu werfen (bewusst OHNE C#-Exception im Hot
-Path, siehe docs/PORTING.md) - `ArrayGet`/`ArraySet` prüfen genau DIESEN
+Path) - `ArrayGet`/`ArraySet` prüfen genau DIESEN
 Rückgabewert und rufen bei `false` `VM.ThrowIndexOutOfBounds` auf, das eine
 `IndexOutOfBoundsException`-Instanz (Prelude, `: Exception`) verschachtelt
 konstruiert (`ConstructNested`, dieselbe Technik wie `CallMethodNested`) und
@@ -411,8 +411,8 @@ Basisklassen-Kette - alle Methoden des Interfaces per Name+Arität"). Weder
   `{ }`-Body, terminiert durch `;`/Zeilenumbruch. Keine Felder, kein
   Konstruktor.
 - **`List`** (und `IEnumerable`/`IEnumerator` selbst) sind bewusst **in
-  ScriptLang selbst geschrieben**, nicht nativ in C# (`Standard/Prelude.cs`,
-  ein Stück ScriptLang-Quelltext, das `Parser.ParseWithPrelude` vor jedes
+  fire selbst geschrieben**, nicht nativ in C# (`Standard/Prelude.cs`,
+  ein Stück fire-Quelltext, das `Parser.ParseWithPrelude` vor jedes
   Programm setzt) - klassisches dynamisches Array (verdoppelt sich bei
   Bedarf), nutzt die Arrays/Klassen/Interfaces, die schon stehen, statt eine
   Sonderimplementierung zu brauchen.
@@ -740,7 +740,7 @@ Verdrahtung, da er über denselben `CompileMethodProto`-Pfad läuft.
 Auch Feld-Initialisierer werden geprüft (`CompileFieldInitProto` bekam
 dafür den deklarierten Typ als zusätzlichen Parameter).
 
-## 15. Debug-Erweiterungen (für `src/ScriptLang.Editor`)
+## 15. Debug-Erweiterungen (für den Editor, `src/fire.Editor`)
 
 Zwei rein additive Ergänzungen, ausschließlich für externe Werkzeuge (den
 Editor) - die normale Ausführung (`VM.Run()`) ist davon unberührt:
@@ -751,13 +751,10 @@ Editor) - die normale Ausführung (`VM.Run()`) ist davon unberührt:
   tatsächlich geändert hat (Run-Length-artig, keine Redundanz pro
   Instruktion). `Chunk.GetLine(ip)` sucht den letzten Eintrag mit
   Offset ≤ `ip`.
-- **`Chunk.DebugLocalNames`**: `(Depth, Slot) -> Name`, aber NUR für
-  Parameter (Methoden/Konstruktoren/Lambdas tragen ihre Parameter direkt
-  beim Kompilieren ein, immer an Depth 0 - der Depth ihrer eigenen
-  Top-Level-Scope). Verschachtelte `var`-Deklarationen werden NICHT erfasst
-  (dafür bräuchte es einen zum Resolver parallelen Slot-Zähler im Compiler,
-  der bei jedem Scope-Wechsel mitgeführt wird - für diese Ausbaustufe
-  bewusst nicht gebaut).
+- **Variablennamen**: `Chunk.DebugLocalNames` (`(Depth, Slot) -> Name`) trägt die Parameter von Methoden, Konstruktoren und Lambdas ein;
+  jede andere Deklaration (`var`, typisierte Variablen, auch in Blöcken und Schleifen) merkt sich ihren Namen an der Instruktion, die den
+  Slot anlegt (`Chunk.MarkDeclaredName`/`DeclaredNameAt`), und die VM gibt ihn dem Slot zur Laufzeit (`Scope.SetDebugName`) - die
+  Scope-Ansicht des Debuggers zeigt so überall die Namen aus dem Quelltext.
 - **`VM`-Stepping-API**: `StepInstruction()` (eine einzelne Instruktion,
   Gegenstück zu `Run()`s Schleifenkörper - stoppt zusätzlich sauber, sobald
   `UnhandledException` gesetzt wird, siehe dort, statt einfach weiterzulaufen
@@ -778,47 +775,12 @@ Editor) - die normale Ausführung (`VM.Run()`) ist davon unberührt:
   jede Ebene separat statt einer einzigen flachen Liste, damit der Editor
   sichtbar machen kann, welche Variablen zum aktiven Block gehören und
   welche aus einer umschließenden Ebene "durchgereicht" werden),
-  `DebugGlobals()` (globale Variablen - ohne Namens-Register, siehe
-  `DebugLocalNames`-Kommentar, erscheinen als `(global N)`),
+  `DebugGlobals()` (globale Variablen mit ihren Namen, siehe oben; ohne
+  bekannten Namen als `(global N)`),
   `UnhandledException` (siehe Abschnitt 19: gesetzt statt geworfen, wenn ein
   `throw` in DIESER VM-Instanz keinen passenden `catch` findet - Editor/
   Host-Code prüft dieses Feld NACH einem Run()/Step*()-Aufruf, statt einen
   `try`/`catch` darum zu legen).
-
-### Editor-UI (WPF, `src/ScriptLang.Editor/MainWindow.xaml(.cs)`)
-
-- **Hotkeys** laufen über einen explizit registrierten `PreviewKeyDown`-
-  Handler am Fenster (`Window_PreviewKeyDown`, per `AddHandler(...,
-  handledEventsToo: true)` im Konstruktor - bewusst kein `OnKeyDown`/
-  `OnPreviewKeyDown`-Override), aus zwei Gründen: WPF behandelt F10 bei
-  vorhandenem `Menu`-Element speziell (aktiviert die Tastatur-Navigation
-  des Menüs), Preview (Tunneling) läuft VOR dieser eingebauten Behandlung.
-  WICHTIGER, der eigentliche ursprüngliche Bug: F10 ist (wie Alt) unter
-  Windows eine SYSTEM-Taste (WM_SYSKEYDOWN) - WPF liefert dafür
-  `e.Key == Key.System`, die tatsächliche Taste steht in `e.SystemKey`,
-  NICHT in `e.Key` - ein Vergleich gegen `e.Key == Key.F10` matcht deshalb
-  NIE, unabhängig von der Event-Phase. Der Handler löst das über
-  `Key key = e.Key == Key.System ? e.SystemKey : e.Key;` VOR dem eigentlichen
-  `switch`. Die `InputGestureText`-Angaben an den `MenuItem`s (z.B. "F5")
-  sind rein kosmetisch (zeigen nur Text im Menü) und erzeugen KEINE echte
-  Tastatur-Bindung - die eigentliche Zuordnung Taste -> Aktion lebt
-  ausschließlich in diesem einen `switch`, muss also bei einer neuen Aktion
-  an BEIDEN Stellen gepflegt werden (Menü-Text UND switch-Fall).
-  Belegung: F5 (Starten), Strg+F5 (Bis Ende durchlaufen), Umschalt+F5
-  (Stopp), F10 (Step Over), F11 (Step Into), Umschalt+F11 (Step Out), F8
-  (Weiter bis Haltepunkt), F9 (Haltepunkt umschalten), Strg+N/O/S (Neu/
-  Öffnen/Speichern).
-- **Aufklappbare Feldanzeige** im Scope-Baum (`RefreshDebugPanels`/
-  `BuildVariableTreeItem`): Objekte (Klassenname + Erzeugungs-ID,
-  `obj.Fields` aufklappbar) und Arrays (`Array[N]`, Elemente `[0]`, `[1]`,
-  ... aufklappbar) lassen sich verschachtelt öffnen, inkl. `this` (über
-  `VM.DebugThisValue`). LAZY per `TreeViewItem.Expanded` (baut Kind-Knoten
-  erst beim tatsächlichen Aufklappen, nicht den ganzen Graphen sofort) mit
-  Zyklenschutz über die Menge der bereits auf dem aktuellen Pfad besuchten
-  Objekte/Arrays (Referenzidentität) - eine mehrfache Referenz auf
-  dasselbe Objekt an VERSCHIEDENEN Stellen ist dagegen kein Zyklus und
-  bleibt aufklappbar. Byte-Puffer bleiben bewusst eine einzeilige Anzeige
-  (`<buffer N bytes>`), keine Byte-für-Byte-Aufklappung.
 
 ## 16. Methodenüberladung, `with`, Extension-Klassen, Konstruktor-Überladung, optionale Parameter, `switch`, Generics
 
@@ -1089,7 +1051,7 @@ Index-Zugriff/`length`, `[]`-Operator-Überladung per Namenskonvention
 Exceptions (`throw`/`try`/`catch`/`finally`, **inkl. `resume`**), Interfaces
 (reiner Resolver-Check, keine Laufzeit-Repräsentation), `foreach` (über
 `GetEnumerator`/`MoveNext`/`GetCurrent`, Duck-Typing), `List`
-(Standardbibliotheks-Prelude in ScriptLang selbst), `is in`/`is of`/
+(Standardbibliotheks-Prelude in fire selbst), `is in`/`is of`/
 `is from`/`is under`, `extern`-Linking (echte native Aufrufe per
 `ExternRegistry` oder dynamisch per `#extern "libName"`, inkl. Pointer-
 Marshalling zu echtem unmanaged Speicher), `#include` (Textvorverarbeitung),
@@ -1227,7 +1189,7 @@ analog zu lokalen Variablen), mit Dictionary-Fallback für alles andere.
   geerbte Slot wird ungenutzt (etwas Speicher verschwendet, aber
   unbedenklich, siehe RuntimeClass.FieldIndex-Doku).
 
-Für die C++-Portierung (docs/PORTING.md) ist das zusätzlich ein Schritt in
+Für die C++-Runtime ist das zusätzlich ein Schritt in
 die richtige Richtung: Array + vorab berechneter Index-Tabelle ist deutlich
 näher an dem, was eine C++-Fassung ohnehin bräuchte, als ein generisches
 `Dictionary<string,Value>` pro Instanz.
@@ -1515,7 +1477,7 @@ Debug/Release/Performance unterscheiden sich dadurch nicht mehr (`ShutdownCheckI
 **Beenden ohne Exception.** `StopExecution()` setzt `_stopExecutionRequested` und stellt Chunk/ip auf `StopChunk` (nur `Halt`); die aufrufende Instruktion kehrt sofort zurück
 (`if (PollSignals()) return;`, wie nach `ThrowException`), `Run()` liest das `Halt` und endet. Verschachtelte Schleifen, `StepInstruction` und `CallLambdaEntry` prüfen das Flag weiterhin
 (sie sind nicht der heiße Pfad); `RunDestructor` und die `RunNestedUntil`-Aufrufer verwerfen den Rückgabewert nur, wenn nicht gestoppt wurde (`PopNestedResult`), und ein Destruktor, der
-die VM beendet, bricht die restliche Kaskade ab. (Eine Ausnahme als Abbruchweg wurde bewusst nicht gewählt, siehe docs/PORTING.md.)
+die VM beendet, bricht die restliche Kaskade ab. (Eine Ausnahme als Abbruchweg wurde bewusst nicht gewählt: die C++-Runtime kommt ohne Exceptions aus.)
 
 **Programmende.** Beim `Halt` der Hauptschleife (nicht beim `Halt` des `StopChunk`) wird der globale Scope freigegeben (`ReleaseGlobalScopeAtEnd`): das Hauptprogramm (jede VM, die kein
 Fire-Thread ist) wartet vorher mit `FireRuntime.WaitForAllFireThreads()` auf alle lebenden Fire-Threads (`FireRuntime.Fire` zählt sie), ein Fire-Thread gibt nur Objekte ohne `SyncOrigin`

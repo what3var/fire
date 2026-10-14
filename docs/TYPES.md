@@ -1,16 +1,16 @@
-# Gradual typing (plan)
+# Gradual typing
 
 Goal: a leaner and faster native backend (and VM) by proving types where the program states them, without losing what the dynamic language can do today
 (reflection, properties by name, probes/bindings, units from data).
 
-## Where we are (measured)
+## Starting point (measured before step 1; the steps below changed it)
 
 * The parser already keeps `TypeRef` for declarations, parameters, return types, fields, `catch` and `is of` (`src/fire/Ast/TypeRef.cs`), and `var` exists.
 * **Annotations are not enforced.** `int x = 3; x = "hello"` and `int y = "text"` run and print the string; a parameter `int a` accepts `"s"`. Types are documentation only.
 * The native backend therefore treats every value as a tagged `Value`; every method call goes through `call_<name>_<argc>` (a switch over all registered classes), every field
   access through `gf_/sf_/fp_<name>` (a switch over class ids). In the 3D sample that is about a quarter of the generated lines; the C++ compiler already drops the unused ones.
 
-## Plan
+## Steps
 
 0. **Inventory** (this document): what carries types, what is enforced, what a dispatcher costs.
 1. **Make annotations mean something (checker only, no codegen change).** A new pass after the resolver computes a static type for every expression where it can

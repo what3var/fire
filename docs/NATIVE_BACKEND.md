@@ -21,7 +21,7 @@ C++-Compiler zusammen mit der Runtime sieht und optimiert. Dafür sprechen:
   Compiler eingebettet, der Rest bleibt ein Aufruf - genau so, wie man es erwartet.
 
 Ein portables Binärformat braucht nur noch der **Interpreter** - und den braucht man nur, wenn Skripte auf dem Gerät *zur Laufzeit*
-nachgeladen werden sollen (ohne neu zu flashen). Das ist ein eigener, späterer Schritt (siehe `PORTING.md`); die
+nachgeladen werden sollen (ohne neu zu flashen). Das ist ein eigener, späterer Schritt; die
 AOT-Übersetzung hängt nicht davon ab.
 
 ## Architektur

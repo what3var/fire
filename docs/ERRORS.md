@@ -355,7 +355,7 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 
 | Code | Message |
 |---|---|
-| `TC001` | Cannot assign a value of type '…' to '…' of type '…' (assignment, initializer, field) |
+| `TC001` | Cannot assign a value of type '…' to '…' of type '…' (assignment, initializer, field) / A condition must be a 'bool', not '…' (`if`, `while`, `for`) |
 | `TC002` | Cannot assign a value of type '…' to parameter '…' of '…' of type '…' (an argument that does not fit) |
 | `TC003` | Cannot assign a value of type '…' to the return value of type '…' |
 | `TC004` | Parameter '…' of '…' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). |

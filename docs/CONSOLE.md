@@ -1,45 +1,34 @@
-# ScriptLang.Terminal – eigenständige SDL3-Konsole
+# fire.Terminal – Framebuffer, Zeichnen und Fenster
 
-Vier eigene Projekte, komplett unabhängig von `ScriptLang.Editor` (referenziert
-ihn nicht, wird nicht von ihm referenziert) - gedacht zur direkten
-Wiederverwendung in einer späteren, eigenständigen Laufzeit (Runtime).
+Die Grafikschicht von fire in eigenen Projekten, unabhängig vom Editor (`fire.Editor` referenziert sie nicht und wird nicht von ihnen
+referenziert). Die native C++-Runtime hat dieselbe Schicht pixelgleich (`native/bridges/fire_bridge_graphics.hpp`, `fire_bridge_windows.hpp`).
 
 ## Projekt-Aufteilung
 
 ```
-ScriptLang.Terminal            (net8.0, PLATTFORMUNABHÄNGIG)
-  PixelColor, Palette, Framebuffer, Renderer,
-  IGlyphFont, IFramebufferRenderer, IdManager,
-  FramebufferManager, RendererManager
-  IRenderTarget, Surface (Blending), Brush/SolidBrush, Pen, Shapes (sink-basiert)
+fire.Terminal                  (net10.0, plattformunabhängig)
+  PixelColor, Palette, Framebuffer, Renderer, Surface (Blending), Brush, Pen, Shapes (sink-basiert),
+  Blitter, Bilder (PNG/BMP/GIF), Schriften (IntegratedGlyphFont, TrueType), Slicer,
+  IGlyphFont, IFramebufferRenderer, IdManager, FramebufferManager, RendererManager
 
-ScriptLang.Terminal.Sdl        (net8.0, referenziert nur .Terminal)
+fire.Terminal.Sdl              (net10.0, referenziert nur .Terminal)
   SdlFramebufferRenderer         – IFramebufferRenderer über SDL3-CS
 
-ScriptLang.Terminal.Windows    (net8.0-windows, referenziert .Terminal + .Sdl)
-  GdiGlyphFont                    – IGlyphFont über System.Drawing/GDI+
+fire.Terminal.Windows          (net10.0, referenziert .Terminal + .Sdl)
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
   WindowManager                   – verwaltet ConsoleWindow-Instanzen über IDs
 
-ScriptLang.Terminal.Demo       (net8.0-windows, referenziert .Windows)
-  Program.cs                      – Standalone-Demo (rohes C#-Manager-API)
-
-ScriptLang.Terminal.Bridge     (referenziert ScriptLang + .Terminal - KEIN Fenster, kein SDL)
-  GraphicsBridge.cs                – Framebuffer, Renderer, Brush, Pen, Slicer: native Funktionsregistrierung + ScriptLang-Prelude (`#import "graphics"`)
+fire.Terminal.Bridge           (referenziert fire + .Terminal - KEIN Fenster, kein SDL)
+  GraphicsBridge.cs                – Framebuffer, Renderer, Brush, Pen, Slicer: native Funktionen + fire-Prelude (`#import "graphics"`)
 
 fire.Windows.Bridge            (referenziert fire + .Terminal + .Windows)
   WindowsBridge.cs                 – `Window`, `EventType` und der WindowManager als native Funktionen (`#import "windows"`)
-
-ScriptLang.Terminal.Bridge.Test (net8.0-windows, referenziert .Bridge)
-  Program.cs                      – End-to-End-Test: Skript ruft die Grafik-API auf
 ```
 
-**Warum diese Trennung**: `ScriptLang.Terminal` selbst enthält KEINE Windows-/
-SDL-/GDI-Abhängigkeit und zielt bewusst auf `net8.0` statt `net8.0-windows`.
-Genau das ist die Schicht, die später möglichst 1:1 portierbar bleiben soll
-(z.B. nach C++) bzw. an die eine ScriptLang-Brücke direkt andocken kann.
+**Warum diese Trennung**: `fire.Terminal` selbst enthält keine SDL- oder Fenster-Abhängigkeit. Ein Programm, das nur `graphics` importiert,
+läuft auch dort, wo es kein Fenster gibt (ein Display auf einem Board, eine Datei als Ausgabe).
 
-## Die Brücke zur Skriptsprache (`ScriptLang.Terminal.Bridge`)
+## Die Brücke zur Skriptsprache (`fire.Terminal.Bridge`)
 
 **Grafik und Fenster sind getrennt** (`#import "graphics"` und `#import "windows"`): `graphics` bringt `Framebuffer`, `Renderer`, `Brush`, `Pen` und `Slicer` und braucht
 weder SDL noch ein Fenster - auf einer Plattform ohne Fenster (Embedded) importiert ein Programm nur `graphics` und bindet statt `Window` ein Display ein.
@@ -53,7 +42,7 @@ Funktionsgruppe bekommt ein eigenes Namens-Präfix
 jede Manager-Methode ist abgebildet, nur Erzeugen/Zerstören plus eine
 repräsentative Auswahl der gängigsten Operationen je Ressourcenart.
 
-`GraphicsBridge.PreludeSource` ist ScriptLang-Quelltext (nach demselben
+`GraphicsBridge.PreludeSource` ist fire-Quelltext (nach demselben
 Muster wie `Standard.Prelude.Source`, siehe Parser.ParseWithPrelude), der
 diese nativen Funktionen hinter drei gewöhnlichen Klassen versteckt:
 
@@ -382,33 +371,3 @@ Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM un
 - `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
   (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe docs/UI.md "Bedienung").
 - Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
-
-## Bewusst noch NICHT Teil dieser Ausbaustufe
-
-- **Keine Anbindung an ScriptLang selbst** (keine neuen `NativeRegistry`-
-  Funktionen). Das bestehende `print` in `ScriptLang`/
-  `NativeRegistry.CreateDefault()` bleibt unverändert. Die drei Manager-
-  Klassen sind aber genau so geschnitten (flache, ID-basierte Methoden mit
-  Primitive-Parametern), dass eine spätere Anbindung im Wesentlichen nur noch
-  aus "jede Manager-Methode als native Funktion registrieren" bestehen
-  dürfte.
-- **Kein Puffer-Swapping/Double-Buffering-Komfort.**
-- **Keine eingebettete Bitmap-Schrift.** `GdiGlyphFont` nutzt eine
-  installierte Systemschrift (Default: "Consolas") über GDI+ – funktioniert
-  nur unter Windows.
-
-## Bekannter Vorbehalt: SDL3-CS ungetestet
-
-Diese Sandbox hat keinen Netzwerkzugriff (kein NuGet-Restore, kein Kompilieren
-möglich). `SdlFramebufferRenderer.cs` ist gegen die tatsächliche SDL3-CS-
-Namenskonvention geschrieben (verifiziert über die offiziellen Beispiele in
-github.com/edwardgushchin/SDL3-CS): kein doppeltes `SDL_`-Präfix mehr (`SDL.
-Init` statt `SDL_Init`), Konstanten-Gruppen als echte C#-Enums (`SDL.
-EventType.Quit`, `SDL.PixelFormat.RGBA8888`), `SDL.CreateWindowAndRenderer`
-als kombinierter Aufruf. Trotzdem noch NICHT selbst gegen das tatsächliche
-Paket kompiliert worden - am unsichersten bleibt die genaue Schreibweise von
-`SDL.TextureAccess.Streaming` sowie ob `SDL.Event.Type` bereits
-`SDL.EventType` ist oder ein roher `uint`-Wert (dafür steht im Code bewusst
-die per Cast robuste Variante). Bitte beim ersten lokalen Build per
-IntelliSense gegenprüfen. Sollte sich die tatsächliche API leicht
-unterscheiden, ist nur `ScriptLang.Terminal.Sdl` betroffen.

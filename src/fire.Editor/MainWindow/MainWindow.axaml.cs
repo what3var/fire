@@ -184,6 +184,7 @@ namespace fire.Editor
             _strips = new ToolStripManager(this, DockArea, DockHint, trayTop, trayBottom, trayLeft, trayRight);
             _strips.Adopt();
             BuildToolbarsMenu();
+            BuildLanguageHelpMenu();
             _defaultStrips = _strips.Save();
 
             RegisterToolchainPrompts();
