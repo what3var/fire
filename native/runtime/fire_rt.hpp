@@ -475,6 +475,9 @@ inline double unitFactor(uint32_t from, uint32_t to) {
     return factor;
 }
 
+/// unitFactor between two units the generator knows (their ids are fixed): looked up once.
+template <uint32_t From, uint32_t To> inline double unitFactorConst() { static const double factor = unitFactor(From, To); return factor; }
+
 /// Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; `mm * mm` is `mm^2`.
 inline uint32_t unitMul(uint32_t a, uint32_t b) {
     if (unitIsUnitless(b)) return a;
@@ -1066,21 +1069,21 @@ inline int compare(Value a, Value b) {
 inline bool lt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f < b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) < 0;   // (NaN sorts below everything, like the VM)
     }
     return compare(a, b) < 0;
 }
 inline bool le(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i <= b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f <= b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) <= 0;   // (NaN sorts below everything, like the VM)
     }
     return compare(a, b) <= 0;   // (-1 or 0; a failed comparison gives 2)
 }
 inline bool gt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i > b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f > b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) > 0;   // (NaN sorts below everything, like the VM)
     }
     int c = compare(a, b);
     return c > 0 && c != 2;
@@ -1088,7 +1091,7 @@ inline bool gt(Value a, Value b) {
 inline bool ge(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i >= b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f >= b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) >= 0;   // (NaN sorts below everything, like the VM)
     }
     int c = compare(a, b);
     return c >= 0 && c != 2;

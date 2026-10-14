@@ -14315,6 +14315,93 @@ else
             unit Test: dBx { coerce to mW => Bad.Boom(value)
                              coerce from mW => value }
             """),
+        ("Typ-Analyse nativ: Ganzzahl-Ueberlauf, / und % durch -1 und 0, NaN-Vergleiche, gemischte int/float, Variablen mit wechselndem Typ", """
+            int big = 9223372036854775807
+            big = big + 1
+            int m = -9223372036854775807 - 1
+            print(big + " " + m / -1 + " " + m % -1 + " " + -7 % 3 + " " + 7 % -3 + " " + -7 / 2)
+            float nan = 0.0 / 0.0
+            print((nan < 1.0) + " " + (nan < 1) + " " + (1 < nan) + " " + (nan == nan) + " " + (nan != nan) + " " + (nan >= 1) + " " + (nan <= nan) + " " + (1 == 1.0))
+            bool t = true
+            bool u = false
+            print((t == u) + " " + (t != u) + " " + !t)
+            var x = 5
+            for (int i = 0; i < 3; i++) { x = x * 2 }
+            any y = 1
+            y = y + 0.5
+            any z = 3
+            for (int k = 0; k < 3; k++) { if (k == 1) { z = "s" } else { z = z + 1 } }
+            float f = 1
+            f += 2
+            int q = 10
+            q -= 3
+            q += 1
+            print(x + " " + y + " " + z + " " + f + " " + q + " " + -q + " " + -f + " " + 7 / 2.0 + " " + 7.5 % 2)
+            print((2 <= 2.0) + " " + (3 > 2.5) + " " + (3 >= 3.5))
+            int cnt = 0
+            while (cnt < 5 && !(cnt == 3)) { cnt++ }
+            print(cnt)
+            try {
+                int zero = 0
+                print(5 / zero)
+            } catch (Exception e) { print(e.message) }
+            try {
+                int zero2 = 0
+                print(5 % zero2)
+            } catch (Exception e) { print(e.message) }
+            float sum = 0
+            for (int j = 1; j <= 4; j++) { sum = sum + 1.0 / j }
+            print(sum)
+            print(Shape.Total(3) + " " + new Sq(2).Area() + " " + new Ci(1).Area() + " " + new Sq(3).Name())
+            class Shape { static float Total(int n) { float s = 0
+                                                      for (int i = 0; i < n; i++) { s += i * 0.5 }
+                                                      return s }
+                          float Area() { return 0.0 }
+                          string Name() { return "shape" } }
+            class Sq : Shape { float a = 0.0
+                                     construct(float x) { this.a = x }
+                                     float Area() { return this.a * this.a }
+                                     int Name() { return 4 } }
+            class Ci : Shape { float r = 0.0
+                                     construct(float x) { this.r = x }
+                                     float Area() { return 3.0 * this.r * this.r } }
+            """),
+        ("Typ-Analyse nativ: Zahlen mit Einheiten (gleiche Einheit, Faktor, Skalar, Umrechnung, Deklarationen, Offset-Einheiten)", """
+            float:m len = 0m
+            for (int i = 0; i < 10; i++) { len = len + 0.5m }
+            int:mm a = 5mm
+            a++
+            a += 3mm
+            print(len + " " + a + " " + (a + 2cm) + " " + (len + 30cm) + " " + (30cm + len))
+            float:cm c = len
+            print(c + " " + len * 2 + " " + 2 * len + " " + len / 4 + " " + len * len + " " + len / 2m + " " + -len + " " + -a)
+            print((len < 6m) + " " + (len < 600cm) + " " + (len == 5m) + " " + (len == 500cm) + " " + len % 2m + " " + a % 4mm)
+            print(len:cm + " " + len::s + " " + a:unitless + " " + 5:mm)
+            int:mm b = 1m
+            float g = 3
+            float:km k = 1500m
+            float : any m dist = 250cm
+            print(b + " " + g + " " + k + " " + dist)
+            float:m s = 0m
+            for (int j = 0; j < 5; j++) { s += 0.25m * 2 }
+            float:m x1 = 1m
+            float:m y1 = 2m
+            print(s + " " + (x1 < y1 && y1 > x1) + " " + (x1 + y1 > 2.5m))
+            float:C t = 20C
+            for (int n = 0; n < 3; n++) { t = t + 1C }
+            float:F tf = t
+            float:K tk = t
+            int:C ic = 20C
+            ic++
+            print(t + " " + t:F + " " + tf + " " + (t + 9F) + " " + (t < 25C) + " " + (t == 23C) + " " + tk + " " + ic + " " + ic:K)
+            float:m d = 1m
+            for (int r = 0; r < 4; r++) { d = d * 2 }
+            float:s tm = 2s
+            print(d + " " + (d + 10cm) + " " + d / 2 + " " + d / tm)
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Fahrenheit: F { coerce C => (value - 32) / 1.8 }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))

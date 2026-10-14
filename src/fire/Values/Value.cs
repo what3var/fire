@@ -454,7 +454,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits % b._bits, a._ref);
+                    return new Value(ValueKind.Int, b._bits == -1 ? 0 : a._bits % b._bits, a._ref);   // (long.MinValue % -1 overflows in .NET)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() % b.ToDouble())), a._ref);
             }
 
@@ -463,7 +463,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() % b.ToDouble(), a.Unit);
-            return MakeInt(a._intValue % b._intValue, a.Unit);
+            return MakeInt(b._intValue == -1 ? 0 : a._intValue % b._intValue, a.Unit);
         }
 
         public static Value Divide(Value a, Value b)
@@ -472,7 +472,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits / b._bits, a._ref);
+                    return new Value(ValueKind.Int, b._bits == -1 ? unchecked(-a._bits) : a._bits / b._bits, a._ref);   // (long.MinValue / -1 wraps, like the native code)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() / b.ToDouble())), a._ref);
             }
 
@@ -481,7 +481,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() / b.ToDouble(), resultUnit);
-            return MakeInt(a._intValue / b._intValue, resultUnit);
+            return MakeInt(b._intValue == -1 ? unchecked(-a._intValue) : a._intValue / b._intValue, resultUnit);
         }
 
         public static Value Multiply(Value a, Value b)
