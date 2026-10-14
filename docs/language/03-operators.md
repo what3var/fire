@@ -77,6 +77,13 @@ s += "!"
 print(a + " " + s)
 ```
 
+Because an assignment is an expression, it can stand inside another one: `int b = (a = 5) + 1`, `x = y = 7` (right to left),
+`while ((i += 2) < 7)`, `print(arr[1] += 4)`. Put it in parentheses - it has the lowest precedence of all operators.
+
+As the condition of `if`, `while`, `for`, `do ... while` or `? :`, a plain assignment is almost always a typo for `==`: `if (ok = true)` is the warning
+`TC009`. Write it in its own parentheses if the assignment is meant: `if ((line = reader.ReadLine()) != undefined)` needs none (the condition is the
+comparison), `if ((found = Search()))` says it on purpose.
+
 The target of a compound assignment is evaluated twice, so it must not have effects of its own: a name, a member (`c.n += 1`) or an element
 (`arr[i + 1] *= 5`) is fine; a call or `++` in the target is the error `E3159`.
 

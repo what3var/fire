@@ -195,6 +195,7 @@ static class TypeTests
             print(a)
             print(v)
             """) == "|2000mm\n5m");
+        Check("Zuweisung als Bedingung: TC009 (auch strict nur Warnung), doppelt geklammert und Verbundzuweisung nicht", Run("bool ok = false\nint a = 0\nif (ok = true) { print(1) }\nif ((ok = true)) { print(2) }\nwhile ((a += 1) < 3) { }\nwhile (ok = false) { }\nprint(a)", TypeCheckMode.Strict) == "TC009 TC009|1\n2\n3");
         Check("Einheiten: eine ganze Zahl in eine groebere Einheit verliert den Bruchteil (TC007, auch strict nur Warnung)", Run("int r : m = 5mm\nvar q = 5mm:m\nprint(r)", TypeCheckMode.Strict) == "TC007 TC007|0m");
         Check("Einheiten: strict macht TC006 zum Fehler", Run("int c : mm = 2kg", TypeCheckMode.Strict) == "|ERROR TC006");
         Check("Einheiten: Property mit Einheit rechnet beim Setzen und Lesen um", Run("""

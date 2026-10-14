@@ -94,7 +94,7 @@ while you type and when the mouse rests on the name.
 /// A circle with a radius.
 class Circle {
     /// The radius, in millimeters.
-    float radius
+    float radius = 5
 
     /// <summary>Scales the circle.</summary>
     /// <param name="factor">What the radius is multiplied by.</param>

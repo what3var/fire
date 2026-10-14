@@ -80,6 +80,7 @@ namespace fire.Compiler
         public const string UnitCode = "TC006";
         public const string UnitLossCode = "TC007";
         public const string UnknownMemberCode = "TC008";
+        public const string AssignInConditionCode = "TC009";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -148,11 +149,16 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code != UnitLossCode ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
         {
+            // `if (a = b)` is almost always a typo for `==`; `if ((a = b))` says it is meant (a warning in strict mode too)
+            // (a compound assignment `a |= b` is `a = a | b` with the target itself as the left operand - not a typo)
+            if (condition is AssignExpr assign && !(assign.Value is BinaryExpr bin && ReferenceEquals(bin.Left, assign.Target))
+                && !Parser.ParenthesizedAssignments.TryGetValue(condition, out _))
+                Report(AssignInConditionCode, "An assignment as a condition - did you mean '=='? (write '((a = b))' if the assignment is meant)", condition.Line);
             var type = Infer(condition);
             if (!Assignable(type, StaticType.Bool)) Report(AssignCode, $"A condition must be a 'bool', not '{type}'", condition.Line);
         }

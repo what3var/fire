@@ -83,7 +83,7 @@ namespace fire.Ast
 
         /// <summary>What a declaration demands of the unit of a value (Value.AdaptToUnit): its RequiredUnit, with a leading `#` when the declared type is
         /// `float` (a whole number is taken as a float before it is converted: `float b : km = 1500m` is 1.5km); null when nothing is demanded.</summary>
-        [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } unit ? (BaseName == "float" ? "#" + unit : unit) : null;
+        [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } required && fire.Values.Unit.DemandText(required) is var unit ? (BaseName == "float" ? "#" + unit : unit) : null;
 
         [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;

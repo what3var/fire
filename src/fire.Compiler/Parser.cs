@@ -176,6 +176,23 @@ namespace fire.Compiler
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
         {
             var combined = new List<Stmt>();
+            // The units the sources declare come first (`5in` in one file may use the `unit Inch: in` of another, or of a line further down)
+            var tokenLists = new List<Token>[sources.Count];
+            var unitDecls = new List<(UnitDeclStmt Decl, string? File)>();
+            for (int i = 0; i < sources.Count; i++)
+            {
+                var src = sources[i];
+                try
+                {
+                    tokenLists[i] = new Lexer(src.Source).Tokenize();
+                    foreach (var decl in FindUnitDecls(tokenLists[i], i)) unitDecls.Add((decl, src.Name));
+                }
+                catch (ParseException ex) when (src.Name != null && ex.FileName == null)
+                {
+                    throw new ParseException(ex.RawMessage, ex.Line, ex.Column, src.Name);
+                }
+            }
+            DefineUnits(unitDecls);
             //var byStmt = new Dictionary<Stmt, int>(ReferenceEqualityComparer.Instance);
             for (int i = 0; i < sources.Count; i++)
             {
@@ -183,7 +200,7 @@ namespace fire.Compiler
                 List<Stmt> stmts;
                 try
                 {
-                    var tokens = new Lexer(src.Source).Tokenize();
+                    var tokens = tokenLists[i];
                     var parser = new Parser(tokens);
                     parser._usingNamespaces = src.Usings;
                     parser._sourceIndex = i;
@@ -196,7 +213,7 @@ namespace fire.Compiler
                 }
                 //foreach (var stmt in stmts)
                 //    byStmt[stmt] = i;
-                combined.AddRange(stmts);
+                combined.AddRange(stmts.Where(stmt => stmt is not UnitDeclStmt));   // (read already, see DefineUnits)
             }
             //sourceIndexByStmt = byStmt;
             // Disambiguation BEFORE the extensions: `class extends Box` means
@@ -208,6 +225,138 @@ namespace fire.Compiler
                 combined.RemoveAll(s => s is ClassDecl cd && cd.Name.StartsWith("__enum_", StringComparison.Ordinal));
             return MergeClassExtensions(DisambiguateGenericClasses(LetOwnExceptionReplacePrelude(FlattenNamespaceWrappers(combined), sources)));
         }
+
+        /// <summary>The `unit` declarations at the top level of a source (outside of every brace).</summary>
+        private static List<UnitDeclStmt> FindUnitDecls(List<Token> tokens, int sourceIndex)
+        {
+            var found = new List<UnitDeclStmt>();
+            int depth = 0;
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var t = tokens[i];
+                if (t.Type == TokenType.LBrace) depth++;
+                else if (t.Type == TokenType.RBrace) depth--;
+                else if (depth == 0 && t.Type == TokenType.Identifier && t.Lexeme is "unit" or "prefixed" or "unprefixed"
+                         && (i == 0 || t.NewlineBefore || tokens[i - 1].Type is TokenType.Semicolon or TokenType.RBrace))
+                {
+                    var parser = new Parser(tokens) { _pos = i, _sourceIndex = sourceIndex };
+                    if (!parser.IsUnitDeclStart()) continue;
+                    found.Add((UnitDeclStmt)parser.ParseUnitDecl());
+                    i = parser._pos - 1;
+                }
+            }
+            return found;
+        }
+
+        /// <summary>Makes the declared units known (Unit.UseCustomUnits) - in an order in which each one comes after the units its `coerce` names.
+        /// A unit without `coerce` is a dimension of its own; with `coerce` it has the dimension of the unit it names and a factor: 1 symbol = factor
+        /// target. A conversion must be a factor (`value * k`, `value / k`, with numbers, `Math.PI` and `Math.E`); several must agree.</summary>
+        private static void DefineUnits(List<(UnitDeclStmt Decl, string? File)> decls)
+        {
+            Unit.UseCustomUnits(null);
+            if (decls.Count == 0) return;
+            ParseException Fail(UnitDeclStmt d, string? file, string message, int? line = null) => new(message, line ?? d.Line, 0, file);
+
+            var words = new Dictionary<string, UnitDeclStmt>();
+            foreach (var (d, file) in decls)
+            {
+                foreach (var word in d.Name == d.Symbol ? new[] { d.Symbol } : new[] { d.Symbol, d.Name })
+                {
+                    if (Unit.BuiltInMeaning(word) is { } builtIn)
+                        throw Fail(d, file, $"'{word}' is already a unit of fire{(builtIn == word ? "" : $" ({builtIn})")} - choose another name or symbol for '{d.Name}'");
+                    if (words.TryGetValue(word, out var other))
+                        throw Fail(d, file, $"The unit '{word}' is declared twice (first in line {other.Line})");
+                    words[word] = d;
+                }
+            }
+
+            // a factor of a unit text (`in`, `kV`, `m/in^2`) that is a declared unit, by its declaration
+            UnitDeclStmt? DeclaredFactor(string factor)
+            {
+                if (words.TryGetValue(factor, out var exact)) return exact;
+                if (factor.Length >= 2 && words.TryGetValue(factor.Substring(1), out var prefixed) && prefixed.Prefixed && prefixed.Symbol == factor.Substring(1)
+                    && Unit.BuiltInMeaning(factor) == null) return prefixed;
+                return null;
+            }
+            IEnumerable<UnitDeclStmt> Needs(UnitDeclStmt d) =>
+                d.Coerces.SelectMany(c => c.TargetUnit.Split('/', '*', '^')).Select(DeclaredFactor).Where(x => x != null)!;
+
+            var defined = new List<CustomUnit>();
+            var pending = decls.ToList();
+            while (pending.Count > 0)
+            {
+                var ready = pending.FirstOrDefault(p => Needs(p.Decl).All(n => defined.Any(u => u.Symbol == n.Symbol)));
+                if (ready.Decl == null)
+                {
+                    var (d, file) = pending[0];
+                    throw Fail(d, file, $"The unit '{d.Symbol}' is defined by units that are defined by it ({string.Join(", ", pending.Select(p => p.Decl.Symbol))}) - one of them needs a 'coerce' to a unit outside of the circle, or none");
+                }
+                pending.Remove(ready);
+                defined.Add(DefineUnit(ready.Decl, ready.File, Fail));
+                Unit.UseCustomUnits(defined);
+            }
+        }
+
+        private static CustomUnit DefineUnit(UnitDeclStmt d, string? file, Func<UnitDeclStmt, string?, string, int?, ParseException> fail)
+        {
+            if (d.Coerces.Count == 0)
+                return new CustomUnit(d.Name, d.Symbol, d.Prefixed, new Dictionary<string, int> { [d.Symbol] = 1 }, 1.0);
+            Dictionary<string, int>? dims = null;
+            double scale = 0;
+            foreach (var c in d.Coerces)
+            {
+                var target = Unit.Parse(c.TargetUnit);
+                if (target.IsUnitless) throw fail(d, file, $"'coerce' needs a unit to convert from or to, not '{c.TargetUnit}'", c.Line);
+                if (target.Dimensions.ContainsKey(d.Symbol)) throw fail(d, file, $"The unit '{d.Symbol}' cannot be converted into itself", c.Line);
+                bool usesValue = MentionsValue(c.Conversion);
+                double At(double x)
+                {
+                    try { return EvalConversion(c.Conversion, x); }
+                    catch (InvalidOperationException ex) { throw fail(d, file, ex.Message, c.Line); }
+                }
+                double one = At(1), zero = usesValue ? At(0) : 0, two = usesValue ? At(2) : 2 * one;
+                if (double.IsNaN(one) || double.IsInfinity(one) || one <= 0)
+                    throw fail(d, file, $"The conversion of '{d.Symbol}' must give a positive, finite factor (it gives {one.ToString(System.Globalization.CultureInfo.InvariantCulture)} for 1{d.Symbol})", c.Line);
+                if (Math.Abs(zero) > 1e-12 * one || Math.Abs(two - 2 * one) > 1e-9 * one)
+                    throw fail(d, file, $"The conversion of '{d.Symbol}' must be a factor ('value * k' or 'value / k') - a unit with an offset (like degrees Fahrenheit) is not supported", c.Line);
+                if (c.Direction == CoerceDirection.Factor && usesValue)
+                    throw fail(d, file, "'coerce unit => k' takes a number (1 symbol = k unit); a conversion with 'value' is written 'coerce to unit => ...' or 'coerce from unit => ...'", c.Line);
+                // To / Factor: 1 symbol = one target;  From: 1 target = one symbol
+                double factorTo = c.Direction == CoerceDirection.From ? 1.0 / one : one;
+                double thisScale = factorTo * target.Scale;
+                if (dims == null) { dims = new Dictionary<string, int>(target.Dimensions); scale = thisScale; continue; }
+                if (!new Dictionary<string, int>(target.Dimensions).OrderBy(k => k.Key).SequenceEqual(dims.OrderBy(k => k.Key)))
+                    throw fail(d, file, $"The conversions of '{d.Symbol}' name units of different dimensions", c.Line);
+                if (Math.Abs(thisScale - scale) > 1e-9 * scale)
+                    throw fail(d, file, $"The conversions of '{d.Symbol}' do not agree (1{d.Symbol} is {(scale / target.Scale).ToString("G10", System.Globalization.CultureInfo.InvariantCulture)}{c.TargetUnit} by the first one, {factorTo.ToString("G10", System.Globalization.CultureInfo.InvariantCulture)}{c.TargetUnit} by this one)", c.Line);
+            }
+            return new CustomUnit(d.Name, d.Symbol, d.Prefixed, dims!, Unit.NiceFactor(scale));
+        }
+
+        private static bool MentionsValue(Expr e) => e switch
+        {
+            IdentifierExpr { Name: "value" } => true,
+            BinaryExpr b => MentionsValue(b.Left) || MentionsValue(b.Right),
+            UnaryExpr u => MentionsValue(u.Operand),
+            _ => false,
+        };
+
+        /// <summary>A conversion of a `coerce`, computed while compiling: numbers without a unit, `value`, `+ - * / ^`, a minus sign, `Math.PI`, `Math.E`.</summary>
+        private static double EvalConversion(Expr e, double value) => e switch
+        {
+            LiteralExpr { Value: var v } when v.Kind == ValueKind.Int && (v.Unit == null || v.Unit.IsUnitless) => v.AsInt(),
+            LiteralExpr { Value: var v } when v.Kind == ValueKind.Float && (v.Unit == null || v.Unit.IsUnitless) => v.AsFloat(),
+            IdentifierExpr { Name: "value" } => value,
+            MemberExpr { Target: IdentifierExpr { Name: "Math" }, Name: "PI" } => Math.PI,
+            MemberExpr { Target: IdentifierExpr { Name: "Math" }, Name: "E" } => Math.E,
+            UnaryExpr { Op: UnaryOp.Negate } u => -EvalConversion(u.Operand, value),
+            BinaryExpr { Op: BinaryOp.Add } b => EvalConversion(b.Left, value) + EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Sub } b => EvalConversion(b.Left, value) - EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Mul } b => EvalConversion(b.Left, value) * EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Div } b => EvalConversion(b.Left, value) / EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Power } b => Math.Pow(EvalConversion(b.Left, value), EvalConversion(b.Right, value)),
+            _ => throw new InvalidOperationException("A conversion of 'coerce' is computed while compiling: it may use numbers without a unit, 'value', + - * / ^, Math.PI and Math.E"),
+        };
 
         /// <summary>The prelude declares the base class `Exception` (SPEC 7.1). Programs written before that declare their own - it replaces the one of the
         /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it).</summary>
@@ -392,6 +541,8 @@ namespace fire.Compiler
                 if (TryParseWarn()) continue;
                 if (Check(TokenType.Catch) && NextLooksLikeGlobalHandler())
                     statements.Add(ParseGlobalHandlerDecl());
+                else if (IsUnitDeclStart())
+                    statements.Add(ParseUnitDecl());
                 else
                     statements.Add(ParseStatement());
             }
@@ -401,6 +552,9 @@ namespace fire.Compiler
 
         /// <summary>The enums of this source: each gets a hidden class with `Name(value)`, `Parse(text)` and `IsDefined(value)` (see EnumHelperClass).</summary>
         private readonly List<EnumDecl> _enumDecls = new();
+
+        /// <summary>The assignments written in their own parentheses (`(a = b)`): as a condition they are meant, see TypeChecker.CheckCondition.</summary>
+        public static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Expr, object?> ParenthesizedAssignments = new();
 
         /// <summary>The name of the hidden helper class of an enum (`Color.Name(c)` is `__enum_Color.Name(c)`, see Resolver).</summary>
         public static string EnumHelperClassName(string enumName) => "__enum_" + enumName.Replace('.', '_');
@@ -434,6 +588,68 @@ namespace fire.Compiler
                 "}";
             var parser = new Parser(new Lexer(source).Tokenize()) { _sourceIndex = _sourceIndex, _fileName = _fileName };
             return parser.ParseProgram();
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // Own units (SPEC "Own units"): `prefixed unit Volt: V`, `unit Inch: in { coerce m => 0.0254 }`
+        // -------------------------------------------------------------------------------------------------------------
+
+        /// <summary>A word (an identifier or a keyword such as `in`) - the name or symbol of a unit may be one.</summary>
+        private static bool IsWord(Token t) =>
+            t.Type is not (TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.StringLiteral or TokenType.Eof) && t.Lexeme.Length > 0
+            && (char.IsLetter(t.Lexeme[0]) || t.Lexeme[0] == '_') && t.Lexeme.All(c => char.IsLetterOrDigit(c) || c == '_');
+
+        /// <summary>A keyword that a unit of the program uses as its symbol (`unit Inch: in`): at a unit position it is the unit.</summary>
+        private bool IsCustomUnitWordAt(int offset) =>
+            PeekAt(offset) is { Type: not TokenType.Identifier } t && IsWord(t) && Unit.IsCustomUnitWord(t.Lexeme);
+
+        /// <summary>`unit Name : symbol` or `prefixed`/`unprefixed unit Name : symbol` starts here.</summary>
+        private bool IsUnitDeclStart()
+        {
+            int i = 0;
+            if (Check(TokenType.Identifier) && Peek().Lexeme is "prefixed" or "unprefixed") i = 1;
+            return PeekAt(i) is { Type: TokenType.Identifier, Lexeme: "unit" } && IsWord(PeekAt(i + 1)) && PeekAt(i + 2).Type == TokenType.Colon
+                && (i == 0 || PeekAt(1).Line == Peek().Line);
+        }
+
+        /// <summary>`[prefixed|unprefixed] unit Name : symbol [{ coerce [from|to] unit => expression ... }]`. The symbol is what follows a number
+        /// (`5in`) and what is printed; `prefixed` allows the SI prefixes in front of it (`mV`, `kV`). Without `coerce` the unit is a dimension of its
+        /// own; `coerce m => 0.0254` says 1 symbol = 0.0254m, `coerce to m => value * 0.0254` and `coerce from m => value / 0.0254` say the same as
+        /// conversions (Parser.DefineUnits computes the factor).</summary>
+        private Stmt ParseUnitDecl()
+        {
+            int line = Peek().Line;
+            bool prefixed = false;
+            if (Peek().Lexeme is "prefixed" or "unprefixed") prefixed = Advance().Lexeme == "prefixed";
+            Advance();   // unit
+            var nameTok = Advance();
+            Expect(TokenType.Colon, "Expected ':' and the symbol of the unit after its name");
+            var symbolTok = Peek();
+            if (!IsWord(symbolTok) || symbolTok.Lexeme.Any(c => !char.IsLetter(c)) || symbolTok.Line != nameTok.Line)
+                throw Error("Expected the symbol of the unit after ':' - letters only ('in', 'V', 'Pa'), it stands directly after a number (5in)", symbolTok);
+            Advance();
+            var coerces = new List<UnitCoerce>();
+            if (Check(TokenType.LBrace))
+            {
+                Advance();
+                while (!Check(TokenType.RBrace))
+                {
+                    if (Match(TokenType.Semicolon)) continue;
+                    if (!(Check(TokenType.Identifier) && Peek().Lexeme == "coerce"))
+                        throw Error("Expected 'coerce' in the body of a unit ('coerce m => 0.0254', 'coerce to m => value * 0.0254', 'coerce from m => value / 0.0254')", Peek());
+                    int coerceLine = Advance().Line;
+                    var direction = CoerceDirection.Factor;
+                    if (Match(TokenType.From)) direction = CoerceDirection.From;
+                    else if (Check(TokenType.Identifier) && Peek().Lexeme == "to" && PeekAt(1).Type != TokenType.Arrow) { Advance(); direction = CoerceDirection.To; }
+                    if (!IsWord(Peek())) throw Error("Expected the unit to convert from or to after 'coerce'", Peek());
+                    string target = Advance().Lexeme + ParseCombinedUnitTail();
+                    Expect(TokenType.Arrow, "Expected '=>' after the unit of 'coerce'");
+                    coerces.Add(new UnitCoerce(coerceLine, direction, target, ParseExpression()));
+                }
+                Expect(TokenType.RBrace, "Expected '}' after the conversions of the unit");
+            }
+            Match(TokenType.Semicolon);
+            return new UnitDeclStmt(_sourceIndex, line, nameTok.Lexeme, symbolTok.Lexeme, prefixed, coerces);
         }
 
         /// <summary>After 'catch' follows either 'terminate' (real keyword)
@@ -484,6 +700,7 @@ namespace fire.Compiler
             // `delete x`: context-dependent like `probe`/`silence` - only if a name/`this` follows directly (on the same line)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "delete" && PeekAt(1) is { NewlineBefore: false, Type: TokenType.Identifier or TokenType.This or TokenType.Star })
                 return ParseDelete();
+            if (IsUnitDeclStart()) throw Error("A unit is declared at the top level of a file, not inside a block, a class or a namespace", Peek());
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
@@ -723,8 +940,8 @@ namespace fire.Compiler
         /// <summary>The unit of a declaration after ':' - `mm`, `any` (every unit) or `any m` (every unit of the dimension of `m`, nothing converted).</summary>
         private string ParseUnitName()
         {
-            string name = Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
-            if (name == "any" && Check(TokenType.Identifier) && Peek().Line == Previous().Line) name += " " + Advance().Lexeme;
+            string name = IsCustomUnitWordAt(0) ? Advance().Lexeme : Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
+            if (name == "any" && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)) && Peek().Line == Previous().Line) name += " " + Advance().Lexeme + ParseCombinedUnitTail();
             else name += ParseCombinedUnitTail();
             return name;
         }
@@ -742,7 +959,7 @@ namespace fire.Compiler
                     sb.Append('^').Append(Convert.ToInt64(Advance().LiteralValue));
                     continue;
                 }
-                if (LineContinues() && (Check(TokenType.Slash) || Check(TokenType.Star)) && PeekAt(1).Type == TokenType.Identifier && !PeekAt(1).NewlineBefore)
+                if (LineContinues() && (Check(TokenType.Slash) || Check(TokenType.Star)) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)) && !PeekAt(1).NewlineBefore)
                 {
                     sb.Append(Advance().Lexeme).Append(Advance().Lexeme);
                     continue;
@@ -755,9 +972,9 @@ namespace fire.Compiler
         /// (or `[]`); anything else is left alone.</summary>
         private string? ParseUnitAtType()
         {
-            if (!Check(TokenType.Colon) || PeekAt(1).Type != TokenType.Identifier) return null;
+            if (!Check(TokenType.Colon) || PeekAt(1).Type != TokenType.Identifier && !IsCustomUnitWordAt(1)) return null;
             bool NameAt(int offset) => PeekAt(offset).Type == TokenType.Identifier || PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket;
-            if (PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && NameAt(3))
+            if (PeekAt(1).Lexeme == "any" && (PeekAt(2).Type == TokenType.Identifier || IsCustomUnitWordAt(2)) && NameAt(3))
             {
                 Advance(); Advance();
                 return "any " + Advance().Lexeme;
@@ -2748,7 +2965,7 @@ namespace fire.Compiler
                     int line = Advance().Line;
                     if (Match(TokenType.In))
                     {
-                        string unitName = Expect(TokenType.Identifier, "Expected a unit name after 'is in'").Lexeme;
+                        string unitName = IsCustomUnitWordAt(0) ? Advance().Lexeme : Expect(TokenType.Identifier, "Expected a unit name after 'is in'").Lexeme;
                         left = new IsInExpr(line, left, unitName);
                     }
                     else if (Match(TokenType.Of))
@@ -2963,7 +3180,7 @@ namespace fire.Compiler
                     // `a::unit`: only the unit changes, the number stays (`a:unit` converts); `a::` takes the unit from the context like `a:`
                     int line = Advance().Line;
                     Advance();
-                    string? relabelUnit = LineContinues() && Check(TokenType.Identifier) ? Advance().Lexeme : null;
+                    string? relabelUnit = LineContinues() && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)) ? Advance().Lexeme : null;
                     expr = new UnitCoerceExpr(line, expr, relabelUnit, Relabel: true);
                 }
                 else if (Check(TokenType.Colon) && _suppressColonPostfixAtDepth != _bracketDepth)
@@ -2973,7 +3190,7 @@ namespace fire.Compiler
                     // line - otherwise exactly the original bug: an
                     // identifier that actually belongs to the next line/statement
                     // would wrongly be swallowed here along with it.
-                    string? unitName = LineContinues() && Check(TokenType.Identifier)
+                    string? unitName = LineContinues() && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0))
                         ? Advance().Lexeme : null;
                     expr = new UnitCoerceExpr(line, expr, unitName);
                 }
@@ -3245,6 +3462,8 @@ namespace fire.Compiler
                     Advance();
                     var inner = ParseExpression();
                     Expect(TokenType.RParen, "Expected ')' after the parenthesized expression");
+                    // `if ((a = b))`: the extra parentheses say the assignment is meant (no TC009, see TypeChecker.CheckCondition)
+                    if (inner is AssignExpr) ParenthesizedAssignments.AddOrUpdate(inner, null);
                     return inner;
                 }
 

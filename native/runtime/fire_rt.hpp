@@ -438,9 +438,24 @@ FIRE_COLD inline void unitConflict(uint32_t from, uint32_t to) {
 #endif
 }
 /// Unit.ConversionFactorTo
+/// The factor between two units without the rounding error of the scales, like the VM (Unit.NiceFactor): `0.3048 / 0.0254` is 12, not
+/// 12.000000000000002; a factor that is not a few units in the last place away from a number with 12 significant digits stays as it is.
+inline double unitNiceFactor(double factor) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.12g", factor);
+    double nice = std::strtod(text, nullptr);
+    return std::fabs(nice - factor) <= 8 * 2.220446049250313e-16 * std::fabs(factor) ? nice : factor;
+}
 inline double unitFactor(uint32_t from, uint32_t to) {
+    if (from == to) return 1.0;
     if (!unitCompatible(from, to)) { unitConflict(from, to); return 1.0; }
-    return g_ud[from].scale / g_ud[to].scale;
+    struct Entry { uint32_t from, to; double factor; };
+    static thread_local Entry cache[64] = {};
+    Entry& e = cache[(from * 31u + to) & 63u];
+    if (e.from == from && e.to == to && e.factor != 0) return e.factor;
+    double factor = unitNiceFactor(g_ud[from].scale / g_ud[to].scale);
+    e = {from, to, factor};
+    return factor;
 }
 
 /// Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; `mm * mm` is `mm^2`.
@@ -719,9 +734,11 @@ FIRE_COLD inline VPair alignUnits(Value a, Value b) {
         Value& fine = aIsFine ? a : b;
         Value& coarse = aIsFine ? b : a;
         uint32_t uFine = aIsFine ? ua : ub, uCoarse = aIsFine ? ub : ua;
+        // (a value a rounding error away from a whole number is that number: 1ft is 11.999999999999998in by the factors - Value.SnapWhole)
+        auto snap = [](double x) { double r = std::round(x); return std::fabs(x - r) <= 1e-9 * std::fmax(1.0, std::fabs(x)) ? r : std::trunc(x); };
         double up = (double)coarse.i * unitFactor(uCoarse, uFine);
-        if (up >= -9.2e18 && up <= 9.2e18) coarse = Int((int64_t)up, uFine);
-        else fine = Int((int64_t)((double)fine.i * unitFactor(uFine, uCoarse)), uCoarse);
+        if (up >= -9.2e18 && up <= 9.2e18) coarse = Int((int64_t)snap(up), uFine);
+        else fine = Int((int64_t)snap((double)fine.i * unitFactor(uFine, uCoarse)), uCoarse);
         return {a, b};
     }
     double factor = unitFactor(ub, ua);
@@ -1382,7 +1399,7 @@ inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat,
     if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
     if (FIRE_UNLIKELY(!unitCompatible(v.unit, unit))) { unitMismatch(v, expectedText); return v; }
     if (dimensionOnly) return v;
-    double factor = g_ud[v.unit].scale / g_ud[unit].scale;
+    double factor = unitFactor(v.unit, unit);
     if (v.kind == K_Float) return Float((Real)((double)v.f * factor), unit);
     double converted = std::nearbyint((double)v.i * factor);
     if (FIRE_UNLIKELY(std::fabs(converted) >= 9.2e18)) {
@@ -2121,7 +2138,7 @@ inline Value mathCall(int64_t method, Value x, Value y) {
                 std::snprintf(text, sizeof text, "Math.Atan2 expects two values of the same dimension, not '%s' and '%s'.", g_ud[x.unit].name, g_ud[y.unit].name);
                 return fireError("ArgumentException", text);
             }
-            return Float((Real)std::atan2(v * (g_ud[x.unit].scale / g_ud[y.unit].scale), (double)toR(y)));
+            return Float((Real)std::atan2(v * unitFactor(x.unit, y.unit), (double)toR(y)));
         }
     }
     if (!unitIsUnitless(x.unit)) {

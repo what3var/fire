@@ -59,6 +59,7 @@ The checker runs after every compile and in the editor while you type. Its findi
 | `TC006` | a unit does not fit (another dimension) |
 | `TC007` | a whole number loses its fraction when it is converted into a coarser unit (always a warning) |
 | `TC008` | a member that the (fully known) class does not have |
+| `TC009` | an assignment as a condition (`if (a = b)`, probably meant `==`; always a warning) |
 
 In **lax** mode (the default) these are warnings; in **strict** mode they are errors. Choose the mode with `#strict` or `#lax` at the top of a file, the project
 setting `typeChecking`, or the compiler switch `--types strict`.

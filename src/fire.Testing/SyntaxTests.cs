@@ -29,6 +29,21 @@ static class SyntaxTests
         return string.Join("\n", lines);
     }
 
+    private static string Output2(string main, string other)
+    {
+        var lines = new List<string>();
+        try
+        {
+            var session = RuntimeSession.Build(new[] { main, other }, VmExecutionMode.Release, a => { lines.Add(a[0].ToString()!); return Value.MakeUndefined(); });
+            session.Run();
+        }
+        catch (Exception ex)
+        {
+            return "ERROR " + string.Join(" | ", CompileDiagnostics.Of(ex).Select(d => d.Code + " " + d.Message));
+        }
+        return string.Join("\n", lines);
+    }
+
     public static void Run()
     {
         Console.WriteLine("=== Syntax: for (int i ...) und Verbundzuweisungen ===");
@@ -177,6 +192,29 @@ static class SyntaxTests
             var c = new C()
             c.r = 5
             """).StartsWith("ERROR"));
+
+        Console.WriteLine("=== Syntax: eigene Einheiten (unit) ===");
+
+        Check("unit: Faktor, to/from, Name als Einheit, Schluesselwort als Symbol, Einheit vor der Deklaration benutzt", Output("""
+            print(5in + 1ft)
+            float d : in = 2.54cm
+            print(d + " " + 2Inch + " " + (5in is in m) + " " + 3mV)
+            var unit = 5
+            print(unit)
+            unit Inch: in { coerce m => 0.0254 }
+            unit Foot: ft { coerce to in => value * 12 }
+            prefixed unit Volt: V
+            """) == "17in\n1in 2in True 3mV\n5");
+        Check("unit: Umrechnungen aus einer anderen Datei", Output2("float f : ft = 1m\nprint(f)", "unit Foot: ft { coerce from m => value / 0.3048 }") == "3.280839895013123ft");
+        string UnitError(string source) => Output(source) is var o && o.StartsWith("ERROR") ? o : "";
+        Check("unit: eingebaute Einheit (auch mit Praefix) ist ein Fehler", UnitError("unit Meter: m") is var e1 && e1.Contains("already a unit of fire") && UnitError("unit Gauss: Gs { coerce m => 1 }").Contains("the prefix 'G' in front of 's'"), e1);
+        Check("unit: doppelt deklariert, im Kreis definiert, Konvertierungen widersprechen sich", UnitError("unit Inch: in\nunit Zoll: in").Contains("declared twice")
+            && UnitError("unit A: aa { coerce cc => 2 }\nunit C: cc { coerce aa => 3 }").Contains("circle")
+            && UnitError("unit X: xx { coerce m => 2\n coerce cm => 300 }").Contains("do not agree"));
+        Check("unit: Umrechnung mit Offset (Fahrenheit), ohne Konstante, im Block", UnitError("unit Fahrenheit: F { coerce to K => (value - 32) * 5 / 9 + 273.15 }").Contains("offset")
+            && UnitError("unit X: xx { coerce m => foo }").Contains("computed while compiling")
+            && UnitError("if (true) { unit X: xx }").Contains("top level"));
+        Check("unit: Einheiten eines Programms gelten nicht fuer das naechste", Output("print(5in)") == "5in");
 
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }

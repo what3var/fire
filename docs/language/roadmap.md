@@ -20,6 +20,8 @@ tested is listed here. The order inside a group is the suggested order of work.
 | 2.2 | Enum types: `Color c` as a declared type, `c.ToString()` gives the name | today an enum value is an `int`; `Color.Name(c)` gives the name |
 | 2.3 | Combined units at a return type: `float:m/s Speed()` | combined units work in declarations of variables, fields and parameters |
 | 2.4 | Bit widths `float[16]` and `float[8]` take effect on assignment | `int[N]`, `byte` and `float[32]` are cut, the small floats not yet |
+| 2.5 | Own units with an offset (degrees Fahrenheit, Celsius) | `unit ... { coerce ... }` takes a factor only |
+| 2.6 | The prefix `d` (deci) and `h` (hecto): `dm^3`, `hPa` | `d` is the day today |
 
 ## 3. Type checker
 
@@ -65,3 +67,7 @@ These problems were found by the examples and fixed right away:
   has the type `T`, so `x => x.nmae` is found at compile time.
 - Native backend: an operator with operands of the wrong type, a non-`bool` condition, a wrong index and a unit conflict throw the same catchable
   `ArgumentException`/`IndexOutOfBoundsException`/`UnitMismatchException` with the same message as the VM.
+- Own units: `prefixed unit Volt: V`, `unit Inch: in { coerce m => 0.0254 }` (also `coerce to`/`coerce from` with `value`), VM and native. Converting two whole
+  numbers in units with an uneven factor (`10in + 1ft`) no longer loses 1 by a rounding error, and the factor between two units has no rounding error of
+  its own any more (`1.0mm:cm` is `0.1cm`, `2ft:in` is `24in`).
+- An assignment as a condition (`if (a = b)`) is the warning `TC009`.

@@ -363,5 +363,6 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC006` | A value in '…' does not fit '…' in '…' / '…' and '…' cannot be combined with '…' (another dimension) (units of another dimension, a unit where none is declared, or none where one is) |
 | `TC007` | A whole number in '…' converted into '…' may lose its fraction (a warning also in strict mode) |
 | `TC008` | '…' has no field, property or method '…' / '…' has no method '…' (a member that a fully known class does not have) |
+| `TC009` | An assignment as a condition - did you mean '=='? (`if (a = b)`; `if ((a = b))` says the assignment is meant; a warning also in strict mode) |
 
 `…` stands for a part of the message that varies (a name, a number).

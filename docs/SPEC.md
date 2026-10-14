@@ -358,6 +358,33 @@ Time units that do not accept prefixes but are dimension-compatible with `s`, wi
 
 Any other, unrecognized suffix string on a literal is treated as an **atomic unit** (compatible only with itself), e.g. `5apples`.
 
+### 3.3.1 Own units
+
+A program declares units of its own at the top level of a file (not in a block, a class or a namespace); they are known in all files of the program and above
+their declaration, too:
+
+```
+prefixed unit Volt: V                       // a new dimension V, with prefixes: mV, kV, MV, ...
+unit Inch: in { coerce m => 0.0254 }        // 1in = 0.0254m: the dimension of m, no prefixes
+unit Foot: ft { coerce to in => value * 12 }
+unit Mile: mi
+{
+    coerce from m => value / 1609.344       // the same as `coerce m => 1609.344`
+}
+unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
+```
+
+- `unit Name : symbol`: the **symbol** stands after a number (`5in`) and is printed; it is written with letters only and may be a keyword (`in`). The **name** may be used
+  wherever a unit is written, too (`2Inch` is `2in`). `prefixed` allows the prefixes of 3.3 in front of the symbol (not in front of the name), `unprefixed` (the default) does not.
+- Without a body the unit is a **dimension of its own** (like an atomic unit, but with prefixes if `prefixed`).
+- `coerce target => k` says 1 symbol = k target: the unit gets the dimension of `target` (any unit, also a combined one `m/s`, `kg*m^2/s^3`, or another own unit) and the factor
+  k. `coerce to target => expression` converts a value of the unit into `target`, `coerce from target => expression` a value of `target` into the unit (`value` is the value) -
+  the compiler computes the factor from it. A body may hold several conversions; they must agree.
+- A conversion is computed while compiling (numbers without a unit, `value`, `+ - * / ^`, `Math.PI`, `Math.E`) and must be a **factor**: a conversion with an offset (degrees
+  Fahrenheit: `(value - 32) * 5 / 9`) is an error.
+- A symbol or name that is already a unit of fire (`m`, `min`, `km`, `Gs` = giga-second) is an error, so is a unit declared twice and units that are only defined by each other.
+- An own unit behaves exactly like a built-in one: conversion with `:`, declarations (`float d : in = 30cm`), `is in`, arithmetic, comparison (`12in == 1ft`), VM and native code.
+
 ### 3.4 Dimension arithmetic
 
 - Multiplication/division combines dimension vectors additively/subtractively via the exponents (`mm * mm → m²` dimension with scaling factor 1e-6, `m / s → m·s⁻¹`).

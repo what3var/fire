@@ -49,6 +49,7 @@ namespace fire.Editor
             "with", "extends", "switch", "case", "default", "break", "continue", "where",
             "fire", "taking", "sync", "flat", "copy", "take", "leave", "terminate", "actor", "process", "operator",
             "true", "false", "undefined", "and", "or",
+            "unit", "prefixed", "unprefixed", "coerce",
         };
 
         private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "any" };

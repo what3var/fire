@@ -76,6 +76,13 @@ namespace fire.Ast
     /// <summary>`do Body while (Condition)`: the body runs at least once.</summary>
     public sealed record DoWhileStmt(int Source, int Line, Stmt Body, Expr Condition) : Stmt(Source, Line);
 
+    /// <summary>`coerce m => 0.0254` (Factor: 1 unit = factor m), `coerce to m => value * 0.0254`, `coerce from m => value / 0.0254`.</summary>
+    public enum CoerceDirection { Factor, From, To }
+    public sealed record UnitCoerce(int Line, CoerceDirection Direction, string TargetUnit, Expr Conversion);
+    /// <summary>`[prefixed] unit Name : symbol [{ coerce ... }]` (SPEC "Own units"): read before everything else (Parser.DefineUnits), not part of
+    /// the program the resolver sees.</summary>
+    public sealed record UnitDeclStmt(int Source, int Line, string Name, string Symbol, bool Prefixed, IReadOnlyList<UnitCoerce> Coerces) : Stmt(Source, Line);
+
     public sealed record ForStmt(
         int Source, int Line, Stmt? Init, Expr? Condition, Expr? Increment, Stmt Body) : Stmt(Source, Line);
 

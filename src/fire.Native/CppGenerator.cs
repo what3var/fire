@@ -430,7 +430,7 @@ namespace fire.Native
             bool toFloat = demand.StartsWith('#');
             string unit = demand.TrimStart('#');
             if (unit == "any") return toFloat ? $"intToFloat({value})" : value;
-            return $"adaptUnit({value}, {UnitId(DemandUnit(unit))}, {(unit.StartsWith("any ", StringComparison.Ordinal) ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(unit))})";
+            return $"adaptUnit({value}, {UnitId(DemandUnit(unit))}, {(unit.StartsWith("any ", StringComparison.Ordinal) ? "true" : "false")}, {(toFloat ? "true" : "false")}, {Constant(Value.MakeString(Unit.DemandDisplay(unit)))})";
         }
 
         private string Run()
@@ -700,7 +700,7 @@ namespace fire.Native
                     if (cls.Rc.FieldIndex.ContainsKey(field) && cls.Rc.FindFieldRequiredUnit(field) is { } requiredUnit)
                     {
                         UnitId(DemandUnit(requiredUnit));   // the unit and its text for the check in the field setter
-                        Constant(Value.MakeString(requiredUnit.TrimStart('#')));
+                        Constant(Value.MakeString(Unit.DemandDisplay(requiredUnit)));
                     }
             foreach (var field in _fieldNames.ToList())
                 foreach (var cls in _classList.ToList())

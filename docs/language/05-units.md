@@ -26,6 +26,35 @@ Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` (1e-6), `m` (1e-3), `c` (1e
 
 Any other word is an **own unit** that is only compatible with itself: `5apples + 3apples` is `8apples`, `5apples + 3pears` is an error.
 
+## Declaring units
+
+A program can declare units of its own - with a name, a symbol and, if it has one, a conversion into a unit that already exists:
+
+```fire
+prefixed unit Volt: V
+unit Inch: in { coerce m => 0.0254 }
+unit Foot: ft { coerce to in => value * 12 }
+unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
+
+print(5V + 300mV)             // 5300mV
+print(1.0m:in)                // 39.37007874015748in
+print(10in + 1ft)             // 22in
+float speed : kn = 10m / 1s
+print(speed)                  // 19.438444924406046kn
+print(2Inch)                  // 2in - the name works like the symbol
+```
+
+- `unit Name : symbol` - the symbol stands after the number and is printed. It is written with letters only.
+- `prefixed` allows the prefixes (`mV`, `kV`); `unprefixed`, the default, does not.
+- Without a body the unit is a new dimension. With `coerce` it gets the dimension of the unit it names:
+  - `coerce m => 0.0254` - 1in is 0.0254m;
+  - `coerce to m => value * 0.0254` - how a value in inches becomes metres;
+  - `coerce from m => value / 0.0254` - how a value in metres becomes inches.
+
+  The compiler computes the factor from either form (and checks that several of them agree).
+- A conversion must be a factor. A unit with an offset, like degrees Fahrenheit (`(value - 32) * 5 / 9`), cannot be declared.
+- Declare units at the top level of a file. They are known everywhere in the program, also above the declaration and in other files.
+
 ## Calculating with units
 
 - `+`, `-`, `%` and the comparisons need the **same dimension**. Different scales are converted automatically: two `int`s are converted into the **finer** unit
@@ -142,3 +171,4 @@ A chain `a + b + c` is calculated from left to right: `(a + b) + c`, and the rul
 3. What is the difference between `150cm:m` and `150cm::m`? Print both.
 4. Catch the error of `1m + 1s` and print its message.
 5. Store file sizes with `B` and `kB` and add them. In which unit is the result?
+6. Declare `Yard` (`yd`, 3 feet) on top of `Foot` and print a 100m run in yards.

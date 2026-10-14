@@ -433,6 +433,7 @@ namespace fire.Compiler
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
+            compiled.CustomUnits = fire.Values.Unit.CustomUnits.ToList();   // (read by Parser.ParseMultiple)
 
             if (target != null)
                 foreach (var import in nativeImports)

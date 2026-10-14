@@ -210,6 +210,9 @@ namespace fire.Values
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Unit> DemandUnits = new();
 
+        /// <summary>The units of the program changed (Unit.UseCustomUnits): a demand may mean another unit now.</summary>
+        internal static void ForgetDemandUnits() => DemandUnits.Clear();
+
         /// <summary>A unit declaration takes `value` (see TypeRef.UnitDemand; a leading `#`: the declaration is a float): `demand` is a unit (`mm`, `unitless`) - a value of the same dimension is converted into it, `undefined`
         /// takes it - or `any m` - every unit of the dimension of `m`, nothing is converted. Another dimension is a `Mismatch`, a whole number that does not
         /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone.</summary>
@@ -733,18 +736,26 @@ namespace fire.Values
                 double up = coarse._intValue * uCoarse.ConversionFactorTo(uFine);
                 if (up >= -9.2e18 && up <= 9.2e18)
                 {
-                    coarse = MakeInt((long)up, uFine);                       // 2m -> 2000mm
+                    coarse = MakeInt((long)SnapWhole(up), uFine);            // 2m -> 2000mm
                 }
                 else
                 {
                     double down = fine._intValue * uFine.ConversionFactorTo(uCoarse);
-                    fine = MakeInt((long)down, uCoarse);                     // 500mm -> 0m (fraction cut off)
+                    fine = MakeInt((long)SnapWhole(down), uCoarse);          // 500mm -> 0m (fraction cut off)
                 }
                 return;
             }
 
             double factor = ub.ConversionFactorTo(ua);
             b = b.Kind == ValueKind.Int ? MakeFloat(b._intValue * factor, ua) : MakeFloat(b._floatValue * factor, ua);
+        }
+
+        /// <summary>A converted whole number: a value a rounding error away from a whole number is that number (1ft is 11.999999999999998in by the
+        /// factors), any other fraction is cut off.</summary>
+        internal static double SnapWhole(double x)
+        {
+            double r = Math.Round(x);
+            return Math.Abs(x - r) <= 1e-9 * Math.Max(1.0, Math.Abs(x)) ? r : Math.Truncate(x);
         }
 
         private static void RequireSameUnit(Value a, Value b)

@@ -14263,6 +14263,27 @@ else
             try { print(1m >= 1s) } catch (UnitMismatchException e) { print("ge " + e.message) }
             print(1m < 200cm)
             """),
+        ("Eigene Einheiten: prefixed unit, coerce (Faktor, to, from), Ketten, Name als Einheit, Deklarationen", """
+            print(5V + 300mV)
+            print(2kV:V + " " + 1.0m:in + " " + 3ft:in + " " + 1.0mi:km)
+            float d : in = 30cm
+            print(d + " " + (10in + 1ft) + " " + (12in == 1ft) + " " + 1l:ml + " " + 2Inch)
+            float speed : kn = 10m / 1s
+            print(speed)
+            try { var bad = 3m; float v : V = bad } catch (UnitMismatchException e) { print(e.message) }
+            print(1MV:kV + " " + (5in is in m) + " " + 1W:mW)
+            prefixed unit Volt: V;
+            unit Inch: in
+            {
+                coerce from m => value / 0.0254
+                coerce to m => value * 0.0254
+            }
+            unit Foot: ft { coerce in => 12 }
+            unit Mile: mi { coerce ft => 5280 }
+            prefixed unit Liter: l { coerce m^3 => 0.001 }
+            unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
+            prefixed unit Watt: W { coerce kg*m^2/s^3 => 1 }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))
