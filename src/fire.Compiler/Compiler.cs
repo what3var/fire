@@ -171,8 +171,9 @@ namespace fire.Compiler
         /// but into its `finally` (completion "jump"); after the `finally` an exit piece behind the `try` continues the journey (it is
         /// the same `break`/`continue`, only translated from outside the `try`, see CompileTry). Otherwise it closes the remaining scopes and jumps - the
         /// address goes into the matching list (Break-/ContinueJumpPatchAddrs) and is resolved when the loop is compiled completely.</summary>
-        private void CompileBreakOrContinue(bool isBreak)
+        private void CompileBreakOrContinue(bool isBreak, int levels = 1)
         {
+            if (levels > 1) { CompileMultiLevelBreakOrContinue(isBreak, levels); return; }
             var ctx = _loopStack.Peek();
             int depth = _currentScopeDepth;      // actual depth at the jump; `_currentScopeDepth` itself stays unchanged
 
@@ -212,6 +213,43 @@ namespace fire.Compiler
             for (; depth > ctx.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
             _chunk.EmitOp(OpCode.Jump);
             (isBreak ? ctx.BreakJumpPatchAddrs : ctx.ContinueJumpPatchAddrs).Add(_chunk.Here);
+            _chunk.EmitU16(0);
+        }
+
+        /// <summary>`break 2` / `continue 3`: leaves the inner loops (their scopes, the enumerators of `foreach` loops on the stack, `try` blocks
+        /// without `finally`) and jumps to the end (break) or the next round (continue) of the loop `levels` out. Leaving a `try` with a
+        /// `finally` that way is not supported yet.</summary>
+        private void CompileMultiLevelBreakOrContinue(bool isBreak, int levels)
+        {
+            var loops = _loopStack.Take(levels).ToList();      // innermost first
+            var target = loops[^1];
+            int targetLoopCount = _loopStack.Count - levels + 1;   // loops open inside the target loop's body: count >= this
+            int depth = _currentScopeDepth;
+            for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount >= targetLoopCount; k--)
+            {
+                var t = _tryStack[k];
+                if (t.Stmt.Finally != null)
+                    throw new NotSupportedException($"'{(isBreak ? "break" : "continue")} {levels}' cannot leave a 'try' with 'finally' yet - leave the loops one by one");
+                int innerTarget = t.Phase == TryPhase.Catch ? t.OuterDepth + 1 : t.OuterDepth;
+                for (; depth > innerTarget; depth--) _chunk.EmitOp(OpCode.ExitScope);
+                if (t.Phase == TryPhase.Try)
+                {
+                    _chunk.EmitOp(OpCode.UnregisterHandler);
+                }
+                else
+                {
+                    _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
+                    _chunk.EmitOp(OpCode.ClearPendingResume);
+                    _chunk.EmitOp(OpCode.ExitScope);
+                    depth--;
+                }
+            }
+            for (; depth > target.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
+            // the enumerators of the inner `foreach` loops lie on the stack above the target loop's own values
+            foreach (var inner in loops.Take(levels - 1))
+                if (inner.IsForeach) _chunk.EmitOp(OpCode.Pop);
+            _chunk.EmitOp(OpCode.Jump);
+            (isBreak ? target.BreakJumpPatchAddrs : target.ContinueJumpPatchAddrs).Add(_chunk.Here);
             _chunk.EmitU16(0);
         }
 
@@ -291,6 +329,9 @@ namespace fire.Compiler
         {
             private readonly Dictionary<(string Name, int Argc), bool[]> _methods = new();
             private readonly Dictionary<(string Class, int Argc), bool[]> _constructors = new();
+            private readonly HashSet<string> _methodNames = new();
+            private readonly HashSet<string> _lambdaFieldNames = new();
+            private readonly Dictionary<string, int> _fieldWidths = new();
 
             public static RefParamTable Build(IEnumerable<ClassDecl> classes)
             {
@@ -299,7 +340,17 @@ namespace fire.Compiler
                 foreach (var cls in classes)
                     foreach (var member in cls.Members)
                     {
-                        if (member is MethodDecl md) table.Register(table._methods, md.Name, md.Params, md.Line, $"method '{md.Name}'");
+                        if (member is FieldDecl wd)
+                        {
+                            // the width of a field name; names declared with different widths in different classes are not cut (-1)
+                            int code = wd.ArrayRanks.Count == 0 ? wd.Type?.WidthCode ?? 0 : 0;
+                            table._fieldWidths[wd.Name] = table._fieldWidths.TryGetValue(wd.Name, out int known) && known != code ? -1 : code;
+                        }
+                        if (member is MethodDecl md) { table.Register(table._methods, md.Name, md.Params, md.Line, $"method '{md.Name}'"); table._methodNames.Add(md.Name); }
+                        else if (member is FieldDecl fd && fd.ArrayRanks.Count == 0 && (fd.Type == null || fd.Type.LambdaSignature != null || fd.Type.BaseName is "lambda" or "any"))
+                            table._lambdaFieldNames.Add(fd.Name);
+                        else if (member is PropertyDecl pd && (pd.Type == null || pd.Type.LambdaSignature != null || pd.Type.BaseName is "lambda" or "any"))
+                            table._lambdaFieldNames.Add(pd.Name);
                         else if (member is ConstructorDecl cd) table.Register(table._constructors, cls.Name, cd.Params, cd.Line, $"the constructor of '{cls.Name}'");
                     }
                 return table;
@@ -319,6 +370,10 @@ namespace fire.Compiler
 
             /// <summary>The `ref` mask of a method (null: no parameter is `ref`).</summary>
             public bool[]? ForMethod(string name, int argc) => _methods.TryGetValue((name, argc), out var m) && m.Any(x => x) ? m : null;
+            /// <summary>`obj.name(...)` where no class has a method `name`, but a field or property `name` can hold a lambda: the lambda in it is called.</summary>
+            /// <summary>The bit width (TypeRef.WidthCode) of the fields called `name` - 0 when none declares one, or when classes declare it differently.</summary>
+            public int FieldWidth(string name) => _fieldWidths.TryGetValue(name, out int code) && code > 0 ? code : 0;
+            public bool IsLambdaField(string name) => _lambdaFieldNames.Contains(name) && !_methodNames.Contains(name);
             public bool[]? ForConstructor(string cls, int argc) => _constructors.TryGetValue((cls, argc), out var m) && m.Any(x => x) ? m : null;
         }
 
@@ -411,6 +466,7 @@ namespace fire.Compiler
                     // top-level code, without an OwnerClass context
                     // matching its own class). Unlike SetStaticField it also pushes
                     // nothing back, no pop needed.
+                    EmitWidthIfNeeded(compiler, compiler._refParams.FieldWidth(fieldName));
                     compiler._chunk.EmitOp(OpCode.SetStaticFieldOnInit);
                     compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(rc.Name)));
                     compiler._chunk.EmitU16(compiler._chunk.AddConstant(Value.MakeString(fieldName)));
@@ -822,6 +878,20 @@ namespace fire.Compiler
 
         private void EmitLambdaParamChecks(Compiler inner, IReadOnlyList<LambdaParam> parms)
         {
+            // a parameter with a bit width cuts its argument (SPEC 8.2: "copied into a variable/parameter")
+            for (int i = 0; i < parms.Count; i++)
+                if (!parms[i].ByRef && parms[i].ArrayRanks.Count == 0 && parms[i].Type?.WidthCode is { } code and not 0)
+                {
+                    inner._chunk.EmitOp(OpCode.LoadLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    EmitWidthIfNeeded(inner, code);
+                    inner._chunk.EmitOp(OpCode.StoreLocal);
+                    inner._chunk.EmitU16(0);
+                    inner._chunk.EmitU16((ushort)i);
+                    inner._chunk.EmitOp(OpCode.Pop);
+                }
+
             for (int i = 0; i < parms.Count; i++)
                 if (parms[i].ByRef)
                 {
@@ -889,6 +959,16 @@ namespace fire.Compiler
         /// (see VM.ThrowUnitMismatch). Only peeks (see OpCode.CheckUnit
         /// documentation) - the caller itself decides whether/when it
         /// still needs the value afterwards or pops it.</summary>
+        /// <summary>A variable, parameter or field declared with a bit width (`int[8]`, `byte`, `float[32]`, see TypeRef.WidthCode): the value on top of
+        /// the stack is cut to it (SPEC 8.2). Implicit (flag 4): only a number of the declared kind is cut, every other value stays as it is.</summary>
+        private static void EmitWidthIfNeeded(Compiler target, int widthCode)
+        {
+            if (widthCode == 0) return;
+            target._chunk.EmitOp(OpCode.ConvertWidth);
+            target._chunk.EmitByte((byte)(widthCode & 0xFF));
+            target._chunk.EmitByte((byte)(((widthCode & 0x100) != 0 ? 1 : 0) | ((widthCode & 0x200) != 0 ? 2 : 0) | 4));
+        }
+
         private static void EmitCheckUnitIfNeeded(Compiler target, string? unit)
         {
             if (unit == null) return;
@@ -1074,6 +1154,7 @@ namespace fire.Compiler
                 {
                     if (!fieldsMayBeTouched && constant.Kind == ValueKind.Undefined) continue;
                     inner.EmitLoadConst(constant);
+                    EmitWidthIfNeeded(inner, _refParams.FieldWidth(fieldName));
                     inner._chunk.EmitOp(OpCode.SetFieldOnThis);
                     inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
                     continue;
@@ -1084,6 +1165,7 @@ namespace fire.Compiler
                 inner._chunk.EmitOp(OpCode.CallProtoWithThis);
                 inner._chunk.EmitU16(protoIdx);
                 inner._chunk.EmitByte(0);
+                EmitWidthIfNeeded(inner, _refParams.FieldWidth(fieldName));
                 inner._chunk.EmitOp(OpCode.SetFieldOnThis);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(fieldName)));
                 fieldsMayBeTouched = true;
@@ -1198,6 +1280,7 @@ namespace fire.Compiler
                     // CompileAssign, otherwise one could bypass the check through an
                     // "unsuitable" first assignment).
                     EmitCheckUnitIfNeeded(this, vd.Type?.UnitDemand);
+                    if (vd.ArrayRanks.Count == 0) EmitWidthIfNeeded(this, vd.Type?.WidthCode ?? 0);
 
                     _chunk.MarkDeclaredName(_chunk.Here, vd.Name);
                     _chunk.EmitOp(OpCode.DeclareLocal);
@@ -1210,6 +1293,10 @@ namespace fire.Compiler
 
                 case WhileStmt ws:
                     CompileWhile(ws);
+                    break;
+
+                case DoWhileStmt dws:
+                    CompileDoWhile(dws);
                     break;
 
                 case ForStmt fs:
@@ -1274,15 +1361,14 @@ namespace fire.Compiler
                     CompileTry(trys);
                     break;
 
-                case BreakStmt:
-                    // The resolver has already checked that we are in a loop
-                    // and that no try/catch/finally boundary
-                    // is crossed - _loopStack.Peek() is therefore always safe here.
-                    CompileBreakOrContinue(isBreak: true);
+                case BreakStmt bs:
+                    // The resolver has already checked that we are in enough loops
+                    // and that no finally block is left - _loopStack is therefore deep enough here.
+                    CompileBreakOrContinue(isBreak: true, bs.Levels);
                     break;
 
-                case ContinueStmt:
-                    CompileBreakOrContinue(isBreak: false);
+                case ContinueStmt cs:
+                    CompileBreakOrContinue(isBreak: false, cs.Levels);
                     break;
 
                 case FireStmt fireStmt:
@@ -1494,14 +1580,14 @@ namespace fire.Compiler
             if (!_refs.TryGetValue(target, out var reference)) return false;
             switch (reference)
             {
-                case ResolvedRef.Local { RequiredUnit: null, ByRef: false } local:
+                case ResolvedRef.Local { RequiredUnit: null, ByRef: false, Width: 0 } local:
                     _chunk.EmitOp(OpCode.ArithLocalConstPop);
                     _chunk.EmitU16(local.Depth);
                     _chunk.EmitU16(local.Slot);
                     _chunk.EmitU16(_chunk.AddConstant(constant));
                     _chunk.EmitByte((byte)((subtract ? 1 : 0) | (isStep ? 2 : 0)));
                     return true;
-                case ResolvedRef.Global { RequiredUnit: null } global:
+                case ResolvedRef.Global { RequiredUnit: null, Width: 0 } global:
                     _chunk.EmitOp(OpCode.ArithGlobalConstPop);
                     _chunk.EmitU16(global.Slot);
                     _chunk.EmitU16(_chunk.AddConstant(constant));
@@ -1559,6 +1645,30 @@ namespace fire.Compiler
             int continueTarget = _chunk.Here;
             foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
 
+            _chunk.EmitOp(OpCode.Jump);
+            _chunk.EmitU16(loopStart);
+
+            int loopEnd = _chunk.Here;
+            _chunk.PatchU16(endJumpAt, loopEnd);
+            foreach (var addr in ctx.BreakJumpPatchAddrs) _chunk.PatchU16(addr, loopEnd);
+
+            _loopStack.Pop();
+        }
+
+        private void CompileDoWhile(DoWhileStmt s)
+        {
+            var ctx = new LoopCompileContext { ScopeDepthAtLoopBodyStart = _currentScopeDepth };
+            _loopStack.Push(ctx);
+
+            int loopStart = _chunk.Here;
+            CompileScopedBody(s.Body);
+
+            // `continue` jumps to the condition
+            _chunk.MarkLine(CurrentSourceIndex, s.Line);
+            int continueTarget = _chunk.Here;
+            foreach (var addr in ctx.ContinueJumpPatchAddrs) _chunk.PatchU16(addr, continueTarget);
+            CompileExpr(s.Condition);
+            int endJumpAt = EmitJumpIfFalse();
             _chunk.EmitOp(OpCode.Jump);
             _chunk.EmitU16(loopStart);
 
@@ -1867,10 +1977,43 @@ namespace fire.Compiler
                     CompileBinary(b);
                     break;
 
+                case RebindExpr rb:
+                    CompileExpr(rb.Lambda);
+                    CompileExpr(rb.Target);
+                    _chunk.EmitOp(OpCode.RebindLambda);
+                    break;
+
+                case ConditionalExpr ce:
+                    {
+                        CompileExpr(ce.Condition);
+                        int elseJumpAt = EmitJumpIfFalse();
+                        CompileExpr(ce.Then);
+                        _chunk.EmitOp(OpCode.Jump);
+                        int endJumpAt = _chunk.Here;
+                        _chunk.EmitU16(0);
+                        _chunk.PatchU16(elseJumpAt, _chunk.Here);
+                        CompileExpr(ce.Else);
+                        _chunk.PatchU16(endJumpAt, _chunk.Here);
+                        break;
+                    }
+
                 case UnitCoerceExpr { Relabel: true, TargetUnitName: not null } relabel:
                     CompileExpr(relabel.Operand);
                     _chunk.EmitOp(OpCode.RelabelUnit);
                     _chunk.EmitU16(_chunk.AddUnit(fire.Values.Unit.Parse(relabel.TargetUnitName!)));
+                    break;
+
+                case TypeCoerceExpr { TargetClass: not null } cast:
+                    CompileExpr(cast.Operand);
+                    _chunk.EmitOp(OpCode.CastTo);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveTypeRef(cast.TargetClass))));
+                    break;
+
+                case TypeCoerceExpr { Width: > 0 } widthCast:
+                    CompileExpr(widthCast.Operand);
+                    _chunk.EmitOp(OpCode.ConvertWidth);
+                    _chunk.EmitByte((byte)widthCast.Width);
+                    _chunk.EmitByte((byte)((widthCast.TargetTypeKeyword == TokenType.KwFloat ? 1 : 0) | (widthCast.Unsigned ? 2 : 0)));
                     break;
 
                 case UnitCoerceExpr:
@@ -2348,6 +2491,15 @@ namespace fire.Compiler
                     return;
                 }
 
+                if (resolved is ResolvedRef.ImplicitThisMember && _refParams.IsLambdaField(calleeId.Name))
+                {
+                    CompileExpr(calleeId);
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    _chunk.EmitOp(OpCode.Call);
+                    _chunk.EmitByte((byte)call.Args.Count);
+                    return;
+                }
+
                 if (resolved is ResolvedRef.ImplicitThisMember)
                 {
                     // SPEC "Implicit member references" - bare name
@@ -2421,6 +2573,16 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.CallBaseMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_enclosingClass.Base.Name)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
+                    _chunk.EmitByte((byte)call.Args.Count);
+                    return;
+                }
+
+                if (_refParams.IsLambdaField(me.Name))
+                {
+                    // `this.onClick()`: read the field, call the lambda in it
+                    CompileExpr(me);
+                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    _chunk.EmitOp(OpCode.Call);
                     _chunk.EmitByte((byte)call.Args.Count);
                     return;
                 }
@@ -2553,6 +2715,7 @@ namespace fire.Compiler
                 if (_refs.TryGetValue(me, out var staticTargetRef) && staticTargetRef is ResolvedRef.StaticMember sm)
                 {
                     CompileExpr(a.Value);
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -2581,6 +2744,7 @@ namespace fire.Compiler
                     CompileExpr(a.Value);
                 }
 
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 return;
@@ -2627,6 +2791,7 @@ namespace fire.Compiler
                 TryCompileOwnedCreation(a.Value);       // [new object]
                 _chunk.EmitOp(OpCode.LoadThis);         // [value, obj]
                 _chunk.EmitOp(OpCode.Swap);             // [obj, value]
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                 return;
@@ -2643,12 +2808,14 @@ namespace fire.Compiler
                     // initial check simply through a later, "wrong"
                     // assignment.
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
+                    EmitWidthIfNeeded(this, local.Width);
                     // an assignment from an inner block to a variable of an outer one: the value must not die with the block (SPEC 2.1)
                     if (local.Depth > 0 && !local.ByRef) _chunk.EmitOp(OpCode.HoistValue);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
+                    EmitWidthIfNeeded(this, global.Width);
                     if (_currentScopeDepth > 0 && IsTopLevelCode) _chunk.EmitOp(OpCode.HoistValue);   // top-level block assigning to a global
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
@@ -2663,6 +2830,7 @@ namespace fire.Compiler
                     // SPEC "Static members" - bare name instead of
                     // 'ClassName.Name = ...' (see Resolver.
                     // ResolveIdentifierRef/ResolveAssignTarget).
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
@@ -2677,6 +2845,7 @@ namespace fire.Compiler
                     // value].
                     _chunk.EmitOp(OpCode.LoadThis); // [value, obj]
                     _chunk.EmitOp(OpCode.Swap);     // [obj, value]
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
@@ -2691,11 +2860,13 @@ namespace fire.Compiler
             {
                 case ResolvedRef.Local local:
                     EmitCheckUnitIfNeeded(this, local.RequiredUnit);
+                    EmitWidthIfNeeded(this, local.Width);
                     EmitTakeToScope(local.ByRef ? 0 : local.Depth);
                     EmitStoreVariable(local);
                     break;
                 case ResolvedRef.Global global:
                     EmitCheckUnitIfNeeded(this, global.RequiredUnit);
+                    EmitWidthIfNeeded(this, global.Width);
                     EmitTakeToScope(0xFFFF);
                     _chunk.EmitOp(OpCode.StoreGlobal);
                     _chunk.EmitU16(global.Slot);
@@ -2704,6 +2875,7 @@ namespace fire.Compiler
                     _chunk.EmitOp(OpCode.LoadThis);         // [value, this]
                     _chunk.EmitOp(OpCode.Swap);             // [this, value]
                     _chunk.EmitOp(OpCode.TakeToObject);
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
                     _chunk.EmitOp(OpCode.SetField);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name)));
                     break;
@@ -2756,6 +2928,7 @@ namespace fire.Compiler
                     if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
                     EmitLoadConst(Value.MakeInt(1));
                     _chunk.EmitOp(addSubOp); // Prefix: [newVal] / Postfix: [oldVal, newVal]
+                    EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
                     _chunk.EmitOp(OpCode.SetStaticField);
                     _chunk.EmitU16(classNameConstIdx);
                     _chunk.EmitU16(fieldNameConstIdx);
@@ -2776,6 +2949,7 @@ namespace fire.Compiler
                 EmitLoadConst(Value.MakeInt(1));
                 _chunk.EmitOp(addSubOp);           // Prefix: [obj, newVal] / Postfix: [obj, oldVal, newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, obj, newVal]
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(me.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name))); // [...,newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
@@ -2817,6 +2991,7 @@ namespace fire.Compiler
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Dup); // Postfix: [oldVal, oldVal]
                 EmitLoadConst(Value.MakeInt(1));
                 _chunk.EmitOp(addSubOp); // Prefix: [newVal] / Postfix: [oldVal, newVal]
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
                 _chunk.EmitOp(OpCode.SetStaticField);
                 _chunk.EmitU16(classNameConstIdx);
                 _chunk.EmitU16(fieldNameConstIdx);
@@ -2839,6 +3014,7 @@ namespace fire.Compiler
                 EmitLoadConst(Value.MakeInt(1));
                 _chunk.EmitOp(addSubOp);           // Prefix: [obj, newVal] / Postfix: [obj, oldVal, newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.RotateUnderTop); // [oldVal, obj, newVal]
+                EmitWidthIfNeeded(this, _refParams.FieldWidth(id.Name));
                 _chunk.EmitOp(OpCode.SetField);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(id.Name))); // [...,newVal]
                 if (!e.IsPrefix) _chunk.EmitOp(OpCode.Pop); // [oldVal]
@@ -2870,10 +3046,12 @@ namespace fire.Compiler
                         // `++`/`--` is after all only an (more compactly written)
                         // assignment.
                         EmitCheckUnitIfNeeded(this, local.RequiredUnit);
+                    EmitWidthIfNeeded(this, local.Width);
                         EmitStoreVariable(local);
                         break;
                     case ResolvedRef.Global global:
                         EmitCheckUnitIfNeeded(this, global.RequiredUnit);
+                    EmitWidthIfNeeded(this, global.Width);
                         _chunk.EmitOp(OpCode.StoreGlobal);
                         _chunk.EmitU16(global.Slot);
                         break;
@@ -3100,7 +3278,7 @@ namespace fire.Compiler
                     if (uc.Relabel) relabelAuto = true;
                     current = uc.Operand;
                 }
-                else if (current is TypeCoerceExpr tc)
+                else if (current is TypeCoerceExpr { TargetClass: null, Width: 0 } tc)
                 {
                     wantsType = true;
                     explicitType = tc.TargetTypeKeyword;

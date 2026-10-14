@@ -1380,6 +1380,15 @@ namespace fire.Runtime
         }
 
         /// <summary>`value!type`: a conversion that `!` cannot do (only int and float convert into each other) is a catchable `ArgumentException`.</summary>
+        private static Value CoerceWidthChecked(Value value, int bits, bool toFloat, bool unsigned)
+        {
+            try { return value.ConvertWidth(bits, toFloat, unsigned); }
+            catch (InvalidOperationException ex) when (ex is not ScriptErrorException)
+            {
+                throw new ScriptErrorException("ArgumentException", ex.Message);
+            }
+        }
+
         private static Value CoerceTypeChecked(Value value, ValueKind kind)
         {
             try { return value.CoerceType(kind); }
@@ -1820,7 +1829,10 @@ namespace fire.Runtime
                     if (!Value.TryCompareFast(in _stack[_sp - 2], in _stack[_sp - 1], kind, out result))
                     {
                         // Fast path does not apply (different unit/kind, object with operator overloading ...): the ordinary comparison
+                        int ipAfter = _ip;
+                        var chunkBefore = _currentChunk;
                         ExecuteCompareSlow(kind switch { 0 => OpCode.Lt, 1 => OpCode.LtEq, 2 => OpCode.Gt, _ => OpCode.GtEq });
+                        if (_ip != ipAfter || !ReferenceEquals(_currentChunk, chunkBefore)) return;   // it threw (`1m < 1s`): the handler already continues
                         result = _stack[--_sp].AsBool();
                     }
                     else _sp -= 2;
@@ -3758,6 +3770,38 @@ namespace fire.Runtime
                 {
                     var unit = _currentChunk.Units[ReadU16()];
                     Push(Pop().RelabelUnit(unit));
+                    break;
+                }
+                case OpCode.CastTo:
+                {
+                    string typeName = _constants[ReadU16()].AsString();
+                    var v = Peek();
+                    if (v.Kind != ValueKind.Undefined && !IsOfType(v, typeName))
+                    {
+                        string have = v.Kind == ValueKind.Class ? ((ObjectInstance)v.AsObjectRef()).ClassName : v.Kind.ToString();
+                        ThrowArgumentError($"Cannot convert a value of type '{have}' to '{typeName}'.");
+                    }
+                    break;
+                }
+                case OpCode.RebindLambda:
+                {
+                    var onTarget = Pop();
+                    var lambdaValue = Pop();
+                    if (lambdaValue.Kind != ValueKind.Lambda)
+                    {
+                        ThrowArgumentError("'on' binds a lambda to an object; the value before 'on' is not a lambda.");
+                        break;
+                    }
+                    Push(Value.MakeLambda(((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget))));
+                    break;
+                }
+                case OpCode.ConvertWidth:
+                {
+                    int bits = ReadByte();
+                    int flags = ReadByte();
+                    // implicit (an assignment to a declared width): only a number of the declared kind is cut
+                    if ((flags & 4) != 0 && Peek().Kind != ((flags & 1) != 0 ? ValueKind.Float : ValueKind.Int)) break;
+                    Push(CoerceWidthChecked(Pop(), bits, (flags & 1) != 0, (flags & 2) != 0));
                     break;
                 }
                 case OpCode.CoerceUnitDynamic:

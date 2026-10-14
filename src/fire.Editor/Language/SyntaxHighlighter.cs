@@ -55,7 +55,7 @@ namespace fire.Editor
         private static readonly HashSet<TokenType> Keywords = new()
         {
             TokenType.Var, TokenType.Func, TokenType.Class, TokenType.Construct, TokenType.Destruct,
-            TokenType.Return, TokenType.If, TokenType.Else, TokenType.While, TokenType.For,
+            TokenType.Return, TokenType.If, TokenType.Else, TokenType.While, TokenType.Do, TokenType.For,
             TokenType.Foreach, TokenType.In, TokenType.On, TokenType.New, TokenType.Base, TokenType.This,
             TokenType.Try, TokenType.Catch, TokenType.Finally, TokenType.Throw,
             TokenType.Is, TokenType.Of, TokenType.From, TokenType.Under,

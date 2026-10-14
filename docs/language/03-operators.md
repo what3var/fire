@@ -7,6 +7,7 @@ From the loosest to the tightest binding:
 | Operators | Meaning |
 |---|---|
 | `=` `+=` `-=` `*=` `/=` `%=` `^=` `&=` `\|=` `#=` `<<=` `>>=` | assignment (right-associative) |
+| `cond ? a : b` | conditional (right-associative) |
 | `\|\|` `or` | logical or |
 | `&&` `and` | logical and |
 | `\|` | bitwise or (int only) |
@@ -19,14 +20,15 @@ From the loosest to the tightest binding:
 | `*` `/` `%` | multiplication, division, remainder |
 | `^` | power (right-associative) |
 | `-` `!` `~` `*` `&` (prefix) | sign, not, bit inversion, dereference, address-of |
-| `x++` `x--` `x!` `x:unit` `x::unit` `.` `[]` `()` | postfix, conversions, member, index, call |
+| `x++` `x--` `x!` `x:unit` `x::unit` `.` `[]` `()` `f on obj` | postfix, conversions, member, index, call, rebinding a lambda |
 
 fire differs from C-style languages in a few places:
 
 - **`^` is the power**, not exclusive or. Exclusive or is `#`. A sign in front binds looser than `^`: `-2^2` is `-4`; the exponent may start with a sign: `2^-1` is `0.5`.
 - **`##`** is another way to write `!=`.
 - **`and`/`or`** are words for `&&`/`||`.
-- There is **no `?:` operator** - use `if`/`else`.
+- **`cond ? a : b`** gives `a` when the condition is `true`, otherwise `b`; only that side is evaluated. Inside the middle part a `:` ends it, so
+  a unit conversion there needs brackets: `ok ? (x:m) : 0m`.
 
 ```fire
 print(2 ^ 10)        // 1024
@@ -39,6 +41,9 @@ print(~0)            // -1
 print(1 << 4)        // 16
 print(3 ## 4)        // True
 print(true and !false)
+var n = 7
+print(n % 2 == 0 ? "even" : "odd")              // odd
+print(n < 0 ? "neg" : n == 0 ? "zero" : "pos")   // pos
 ```
 
 ## Arithmetic
@@ -90,7 +95,7 @@ print(++i)          // 3
 
 `==` and `!=` compare numbers by value (units are converted: `1m == 100cm`), texts by their characters, `bool` and `char` by value, and objects, arrays and
 lambdas **by reference** - unless the class defines `operator==` ([Classes](08-classes.md#operator-overloading)). `<`, `<=`, `>`, `>=` compare numbers (with
-units) and characters.
+units), characters and texts (ordinal, see [Strings](06-strings.md#comparing)).
 
 ```fire
 print(1m == 100cm)          // True
@@ -140,7 +145,8 @@ class Bag {
 
 ## Conversions: `!`, `:` and `::`
 
-- `value!type` converts between `int` and `float` (see [Types](02-types.md#converting-)).
+- `value!type` converts between numbers and `char`, cuts to a bit width (`300!int[8]`, `x!byte`) and casts objects to a derived class or an
+  interface (`animal!Dog`) - see [Types](02-types.md#converting-).
 - `value:unit` converts a number into another unit of the same dimension (`2km:m` is `2000m`); `value::unit` only relabels it (`12mm::m` is `12m`). See [Units](05-units.md).
 
 ## Exercises

@@ -98,6 +98,24 @@ print(c.n)                      // 5
 
 Unknown names in the body are members of the bound object; local variables, parameters and captured values come first.
 
+`lambda on other` gives a **new** lambda with the same body, bound to another object; the old one stays as it was:
+
+```fire
+class Counter {
+    int n = 0
+}
+var a = new Counter()
+var b = new Counter()
+var inc = func () on a => { n++ }
+var incB = inc on b
+inc()
+incB()
+incB()
+print(a.n + " " + b.n)          // 1 2
+```
+
+The value before `on` must be a lambda (otherwise an `ArgumentException`).
+
 ## Lambdas as fields: callbacks
 
 ```fire
@@ -106,17 +124,17 @@ class Button {
     any onClick                 // a callback; undefined until one is set
     construct(string text) { this.text = text }
     undefined Click() {
-        var handler = this.onClick
-        if (handler != undefined) { handler() }
+        if (this.onClick != undefined) { this.onClick() }
     }
 }
 var b = new Button("OK")
 b.onClick = () => print("clicked")
 b.Click()
+b.onClick()
 ```
 
-`obj.name()` always calls a **method** `name`; to call a lambda that is stored in a field, read it into a variable first (`var handler = this.onClick`)
-and call that.
+`obj.name()` calls the method `name`; when no class has a method of that name but a field (or property) `name` can hold a lambda (declared as
+`lambda`, `any` or without a type), the lambda in the field is called - also as `onClick()` inside the class.
 
 Lambdas work well with lists and queries (see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq)) and are the bodies of threads
 (see [Threads and actors](15-threads-and-actors.md)).

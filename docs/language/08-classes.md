@@ -124,8 +124,9 @@ try {
 
 ## `readonly`
 
-A `readonly` field is meant to be set only in its initializer or in a constructor of its own class. The compiler reports `this.field = ...` in other
-methods; an assignment from outside (`obj.field = ...`) is not detected yet (see the [Roadmap](roadmap.md)).
+A `readonly` field can be set only in its initializer or in a constructor of its own class (as `this.field = ...`). The compiler reports
+`this.field = ...` in other methods and `obj.field = ...` from anywhere else (when every class that declares a field of this name declares it
+`readonly`).
 
 ```fire
 class Circle {

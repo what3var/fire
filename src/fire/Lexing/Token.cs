@@ -12,7 +12,7 @@ namespace fire.Lexing
 
         // Keywords – declaration/control flow
         Var, Func, Class, Construct, Destruct, Return,
-        If, Else, While, For, Foreach, In, On, New, Base, This,
+        If, Else, While, Do, For, Foreach, In, On, New, Base, This,
         Try, Catch, Finally, Throw,
         Is, Of, From, Under,
         Extern, Unsafe,
@@ -56,6 +56,7 @@ namespace fire.Lexing
         Arrow,       // '=>'
         Dot, Comma, Semicolon,
         LParen, RParen, LBrace, RBrace, LBracket, RBracket,
+        Question,    // '?'  -> the conditional operator `cond ? a : b`
         Hash,        // '#'  -> preprocessor directives (statement start, see Parser.ParseDirective) OR bitwise XOR (mid-expression, see Parser.ParseBitwiseXor) - distinguished purely by position, no conflict: a directive always sits at the STATEMENT start, XOR always AFTER an already parsed left operand.
 
         Eof,

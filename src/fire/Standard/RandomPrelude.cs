@@ -123,15 +123,22 @@ namespace fire.Standard
                 // true or false, each half of the time.
                 bool NextBool() { return (this.NextUInt32() & 1) == 1 }
 
-                // A random element of the list (undefined if it is empty).
-                any Pick(any list) {
-                    if (list.count == 0) { return undefined }
-                    return list[this.Next(list.count)]
+                // The number of elements of a List or an array.
+                int CountOf(any list) {
+                    if (list is of List) { return list.count }
+                    return list.length
                 }
 
-                // Mixes the elements of the list in place (Fisher-Yates) and returns it.
+                // A random element of the list or array (undefined if it is empty).
+                any Pick(any list) {
+                    var n = this.CountOf(list)
+                    if (n == 0) { return undefined }
+                    return list[this.Next(n)]
+                }
+
+                // Mixes the elements of the list or array in place (Fisher-Yates) and returns it.
                 any Shuffle(any list) {
-                    var i = list.count - 1
+                    var i = this.CountOf(list) - 1
                     while (i > 0) {
                         var j = this.Next(i + 1)
                         var tmp = list[i]

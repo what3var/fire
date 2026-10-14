@@ -202,6 +202,10 @@ namespace fire.Compiler
             // Disambiguation BEFORE the extensions: `class extends Box` means
             // (like every reference without type arguments) the non-generic
             // class, see GenericClassNames.
+            // The hidden enum helper classes (see EnumHelperClass) throw an ArgumentException - a program without the prelude has none, so it does
+            // without them (`Color.Name(c)` is then an unknown member).
+            if (!combined.Any(s => s is ClassDecl { Name: "ArgumentException" }))
+                combined.RemoveAll(s => s is ClassDecl cd && cd.Name.StartsWith("__enum_", StringComparison.Ordinal));
             return MergeClassExtensions(DisambiguateGenericClasses(LetOwnExceptionReplacePrelude(FlattenNamespaceWrappers(combined), sources)));
         }
 
@@ -379,6 +383,7 @@ namespace fire.Compiler
             var statements = new List<Stmt>();
             while (!Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 // 'catch threads(...)'/'catch terminate(...)' are GLOBAL
                 // declarations (see ParseGlobalHandlerDecl), no
                 // normal statements - recognised only here at top-level,
@@ -390,7 +395,45 @@ namespace fire.Compiler
                 else
                     statements.Add(ParseStatement());
             }
+            foreach (var ed in _enumDecls) statements.AddRange(EnumHelperClass(ed));
             return statements;
+        }
+
+        /// <summary>The enums of this source: each gets a hidden class with `Name(value)`, `Parse(text)` and `IsDefined(value)` (see EnumHelperClass).</summary>
+        private readonly List<EnumDecl> _enumDecls = new();
+
+        /// <summary>The name of the hidden helper class of an enum (`Color.Name(c)` is `__enum_Color.Name(c)`, see Resolver).</summary>
+        public static string EnumHelperClassName(string enumName) => "__enum_" + enumName.Replace('.', '_');
+
+        /// <summary>`enum Color { Red, Green }` gets `class __enum_Color` with static methods that know the names: `Name(int)` (the name of a value, the
+        /// number as text if no member has it), `Parse(string)` (the value of a name; an `ArgumentException` for an unknown name) and `IsDefined(int)`.
+        /// The values are computed as in the resolver (an int literal or the predecessor + 1); a faulty member is reported there.</summary>
+        private List<Stmt> EnumHelperClass(EnumDecl ed)
+        {
+            var name = new System.Text.StringBuilder();
+            var parse = new System.Text.StringBuilder();
+            var defined = new System.Text.StringBuilder();
+            var seen = new HashSet<long>();
+            long next = 0;
+            foreach (var m in ed.Members)
+            {
+                long value = m.ValueExpr is LiteralExpr { Value.Kind: ValueKind.Int } lit ? lit.Value.AsInt() : next;
+                next = value + 1;
+                if (seen.Add(value))
+                {
+                    name.Append($"if (v == {value}) {{ return \"{m.Name}\" }} ");
+                    defined.Append($"if (v == {value}) {{ return true }} ");
+                }
+                parse.Append($"if (s == \"{m.Name}\") {{ return {value} }} ");
+            }
+            string source =
+                $"class {EnumHelperClassName(ed.Name)} {{\n" +
+                $"    static string Name(int v) {{ {name}return \"\" + v }}\n" +
+                $"    static int Parse(string s) {{ {parse}throw new ArgumentException(\"'\" + s + \"' is not a member of '{ed.Name}'.\") }}\n" +
+                $"    static bool IsDefined(int v) {{ {defined}return false }}\n" +
+                "}";
+            var parser = new Parser(new Lexer(source).Tokenize()) { _sourceIndex = _sourceIndex, _fileName = _fileName };
+            return parser.ParseProgram();
         }
 
         /// <summary>After 'catch' follows either 'terminate' (real keyword)
@@ -451,6 +494,7 @@ namespace fire.Compiler
             if (NextLooksLikeTypeThenName()) return ParseBareTypedDecl();
             if (Check(TokenType.If)) return ParseIf();
             if (Check(TokenType.While)) return ParseWhile();
+            if (Check(TokenType.Do)) return ParseDoWhile();
             if (Check(TokenType.For)) return ParseFor();
             if (Check(TokenType.Foreach)) return ParseForeach();
             if (Check(TokenType.Return)) return ParseReturn();
@@ -474,14 +518,16 @@ namespace fire.Compiler
             if (Check(TokenType.Break))
             {
                 int breakLine = Advance().Line;
+                int levels = ParseLoopLevels("break");
                 ExpectStatementTerminator();
-                return new BreakStmt(_sourceIndex ,breakLine);
+                return new BreakStmt(_sourceIndex, breakLine, levels);
             }
             if (Check(TokenType.Continue))
             {
                 int continueLine = Advance().Line;
+                int levels = ParseLoopLevels("continue");
                 ExpectStatementTerminator();
-                return new ContinueStmt(_sourceIndex, continueLine);
+                return new ContinueStmt(_sourceIndex, continueLine, levels);
             }
             if (Check(TokenType.Leave))
             {
@@ -513,6 +559,7 @@ namespace fire.Compiler
             var statements = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 if (Check(TokenType.Catch))
                 {
                     statements.Add(ParseImplicitCatchTail());
@@ -542,6 +589,7 @@ namespace fire.Compiler
             var restStatements = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 if (Check(TokenType.Catch))
                 {
                     // Weitere nackte catch-Ketten direkt hintereinander -> ebenfalls einsammeln.
@@ -677,7 +725,30 @@ namespace fire.Compiler
         {
             string name = Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
             if (name == "any" && Check(TokenType.Identifier) && Peek().Line == Previous().Line) name += " " + Advance().Lexeme;
+            else name += ParseCombinedUnitTail();
             return name;
+        }
+
+        /// <summary>The rest of a combined unit in a declaration (`m/s`, `kg*m/s^2`, `m^2`): factors joined by `*` or `/`, each with an optional `^power`,
+        /// on the same line. "" for a single unit.</summary>
+        private string ParseCombinedUnitTail()
+        {
+            var sb = new System.Text.StringBuilder();
+            while (true)
+            {
+                if (LineContinues() && Check(TokenType.Caret) && PeekAt(1).Type == TokenType.IntLiteral)
+                {
+                    Advance();
+                    sb.Append('^').Append(Convert.ToInt64(Advance().LiteralValue));
+                    continue;
+                }
+                if (LineContinues() && (Check(TokenType.Slash) || Check(TokenType.Star)) && PeekAt(1).Type == TokenType.Identifier && !PeekAt(1).NewlineBefore)
+                {
+                    sb.Append(Advance().Lexeme).Append(Advance().Lexeme);
+                    continue;
+                }
+                return sb.ToString();
+            }
         }
 
         /// <summary>The unit written at a number type (`float:m Len()`, `float:any m Width()`): a ':' followed by the unit and then the name of the declaration
@@ -800,7 +871,7 @@ namespace fire.Compiler
                     throw Error("'byte' already has a fixed width of 8 bits - no additional '[...]' may follow", Peek());
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), Unsigned: true);
             }
 
             // `[8]` = bit width; empty brackets `[]` belong to the array return type (see below).
@@ -1038,6 +1109,36 @@ namespace fire.Compiler
             return new IfStmt(_sourceIndex, line, cond, thenBranch, elseBranch);
         }
 
+        /// <summary>`break 2` / `continue 2`: the number of loops (on the same line, without a unit); 1 without a number.</summary>
+        private int ParseLoopLevels(string keyword)
+        {
+            if (!(LineContinues() && Check(TokenType.IntLiteral))) return 1;
+            var tok = Advance();
+            long n = Convert.ToInt64(tok.LiteralValue);
+            if (n < 1 || n > 64 || tok.UnitSuffix is { Length: > 0 })
+                throw Error($"The number after '{keyword}' counts the loops to leave: 1, 2, 3, ...", tok);
+            return (int)n;
+        }
+
+        /// <summary>`do statement while (condition)` - a `;` or a line break may follow.</summary>
+        private Stmt ParseDoWhile()
+        {
+            int line = Peek().Line;
+            Expect(TokenType.Do, "Expected 'do'");
+            // `do x++ while (x < 5)`: a single statement may end directly before the `while`
+            bool savedDoBody = _inDoBody;
+            _inDoBody = true;
+            Stmt body;
+            try { body = ParseStatement(); }
+            finally { _inDoBody = savedDoBody; }
+            Expect(TokenType.While, "Expected 'while' after the body of 'do'");
+            Expect(TokenType.LParen, "Expected '(' after 'while'");
+            var cond = ParseExpression();
+            Expect(TokenType.RParen, "Expected ')' after the while condition");
+            ExpectStatementTerminator();
+            return new DoWhileStmt(_sourceIndex, line, body, cond);
+        }
+
         private Stmt ParseWhile()
         {
             int line = Peek().Line;
@@ -1236,6 +1337,7 @@ namespace fire.Compiler
             };
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 if (Check(TokenType.Catch))
                 {
                     statements.Add(ParseImplicitCatchTail());
@@ -1293,24 +1395,30 @@ namespace fire.Compiler
                     continue;
                 }
 
-                BinaryOp op = BinaryOp.Eq;
-                if (Check(TokenType.Lt) || Check(TokenType.LtEq) || Check(TokenType.Gt) ||
-                    Check(TokenType.GtEq) || Check(TokenType.Eq) || Check(TokenType.NotEq))
+                // `case 5, 6:` / `case < 0, > 100:` - several conditions, one of them must hold
+                Expr? condition = null;
+                do
                 {
-                    var opTok = Advance();
-                    op = opTok.Type switch
+                    BinaryOp op = BinaryOp.Eq;
+                    if (Check(TokenType.Lt) || Check(TokenType.LtEq) || Check(TokenType.Gt) ||
+                        Check(TokenType.GtEq) || Check(TokenType.Eq) || Check(TokenType.NotEq))
                     {
-                        TokenType.Lt => BinaryOp.Lt,
-                        TokenType.LtEq => BinaryOp.LtEq,
-                        TokenType.Gt => BinaryOp.Gt,
-                        TokenType.GtEq => BinaryOp.GtEq,
-                        TokenType.Eq => BinaryOp.Eq,
-                        _ => BinaryOp.NotEq,
-                    };
-                }
-                var valueExpr = ParseSwitchCaseValue();
+                        var opTok = Advance();
+                        op = opTok.Type switch
+                        {
+                            TokenType.Lt => BinaryOp.Lt,
+                            TokenType.LtEq => BinaryOp.LtEq,
+                            TokenType.Gt => BinaryOp.Gt,
+                            TokenType.GtEq => BinaryOp.GtEq,
+                            TokenType.Eq => BinaryOp.Eq,
+                            _ => BinaryOp.NotEq,
+                        };
+                    }
+                    var valueExpr = ParseSwitchCaseValue();
+                    var test = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
+                    condition = condition == null ? test : new BinaryExpr(line, BinaryOp.Or, condition, test);
+                } while (Match(TokenType.Comma));
                 Expect(TokenType.Colon, "Expected ':' after the case condition");
-                var condition = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
                 cases.Add((condition, ParseSwitchCaseBody()));
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the switch");
@@ -1366,8 +1474,11 @@ namespace fire.Compiler
             var body = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Case) && !Check(TokenType.Eof))
             {
-                if (Match(TokenType.Break))
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
+                // `break` ends the case; `break 2` leaves loops (it is a statement of its own)
+                if (Check(TokenType.Break) && !(PeekAt(1).Type == TokenType.IntLiteral && !PeekAt(1).NewlineBefore))
                 {
+                    Advance();
                     ExpectStatementTerminator();
                     break;
                 }
@@ -1983,7 +2094,9 @@ namespace fire.Compiler
             }
 
             Expect(TokenType.RBrace, "Expected '}' after the enum members");
-            return new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
+            var decl = new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
+            _enumDecls.Add(decl);
+            return decl;
         }
 
         /// <summary>`Type Name { get { ... } set { ... } }` - see
@@ -2470,7 +2583,7 @@ namespace fire.Compiler
 
         private Expr ParseAssignment()
         {
-            var left = ParseOr();
+            var left = ParseConditional();
             if (LineContinues() && Check(TokenType.Assign))
             {
                 Advance();
@@ -2492,6 +2605,23 @@ namespace fire.Compiler
                 return new AssignExpr(opTok.Line, left, new BinaryExpr(opTok.Line, op, left, value));
             }
             return left;
+        }
+
+        /// <summary>`cond ? a : b` (right-associative: `a ? b : c ? d : e`). In the middle branch a `:` ends the branch instead of being a unit
+        /// conversion - write `(x:m)` there.</summary>
+        private Expr ParseConditional()
+        {
+            var condition = ParseOr();
+            if (!(LineContinues() && Check(TokenType.Question))) return condition;
+            int line = Advance().Line;
+            var savedSuppress = _suppressColonPostfixAtDepth;
+            _suppressColonPostfixAtDepth = _bracketDepth;
+            Expr then;
+            try { then = ParseConditional(); }
+            finally { _suppressColonPostfixAtDepth = savedSuppress; }
+            Expect(TokenType.Colon, "Expected ':' in 'condition ? a : b'");
+            var otherwise = ParseConditional();
+            return new ConditionalExpr(line, condition, then, otherwise);
         }
 
         private static BinaryOp? CompoundOperator(TokenType t) => t switch
@@ -2847,11 +2977,37 @@ namespace fire.Compiler
                         ? Advance().Lexeme : null;
                     expr = new UnitCoerceExpr(line, expr, unitName);
                 }
+                else if (Check(TokenType.On))
+                {
+                    // `handler on other`: the lambda with another `this`
+                    int line = Advance().Line;
+                    expr = new RebindExpr(line, expr, ParsePostfix());
+                }
                 else if (Check(TokenType.Bang))
                 {
                     int line = Advance().Line;
+                    // `x!Dog` / `x!IShape`: a class or interface (one name, `#using` applies; `(x!Dog).Bark()` or `x!Dog.Bark()` calls on the result)
+                    if (LineContinues() && Check(TokenType.Identifier))
+                    {
+                        string className = Advance().Lexeme;
+                        expr = new TypeCoerceExpr(line, expr, null, TargetClass: new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()));
+                        continue;
+                    }
                     TokenType? typeKw = LineContinues() && TypeKeywords.Contains(Peek().Type)
                         ? Advance().Type : null;
+                    if (typeKw == TokenType.KwByte) { expr = new TypeCoerceExpr(line, expr, TokenType.KwInt, Width: 8, Unsigned: true); continue; }
+                    // `x!int[8]`, `x!float[32]`: a bit width directly after the type
+                    if (typeKw is TokenType.KwInt or TokenType.KwFloat && Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.IntLiteral && PeekAt(2).Type == TokenType.RBracket)
+                    {
+                        Advance();
+                        var widthTok = Advance();
+                        Advance();
+                        int width = Convert.ToInt32(widthTok.LiteralValue);
+                        bool ok = typeKw == TokenType.KwInt ? width is 8 or 16 or 32 or 64 : width is 32 or 64;
+                        if (!ok) throw Error(typeKw == TokenType.KwInt ? "A bit width after '!int' is 8, 16, 32 or 64" : "A bit width after '!float' is 32 or 64", widthTok);
+                        expr = new TypeCoerceExpr(line, expr, typeKw, Width: width);
+                        continue;
+                    }
                     expr = new TypeCoerceExpr(line, expr, typeKw);
                 }
                 else
@@ -3320,9 +3476,12 @@ namespace fire.Compiler
         /// there must be a ';' or a line break. End of block ('}') and end of file
         /// also count as a valid termination (e.g. for single-line blocks like
         /// `{ return x }`).</summary>
+        private bool _inDoBody;
+
         private void ExpectStatementTerminator()
         {
             if (Match(TokenType.Semicolon)) return;
+            if (_inDoBody && Check(TokenType.While)) return;
             if (Peek().NewlineBefore) return;
             if (Check(TokenType.RBrace) || Check(TokenType.Eof)) return;
             throw Error("Expected ';' or a line break between statements", Peek());

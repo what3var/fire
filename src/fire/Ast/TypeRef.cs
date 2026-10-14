@@ -49,8 +49,16 @@ namespace fire.Ast
     /// see LambdaSignature docs and SPEC "Lambda types with signature".
     /// </summary>
     [MemoryPackable]
-    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null)
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null, bool Unsigned = false)
     {
+        /// <summary>The declared width as the operand of an implicit OpCode.ConvertWidth (0: nothing to cut): the bits | 0x100 for a float | 0x200 for
+        /// `byte` (unsigned). `int[8]`, `int[16]`, `int[32]`, `byte` and `float[32]` cut a value on every assignment (SPEC 8.2); 64 bits, arrays, pointers
+        /// and other types have nothing to cut.</summary>
+        public int WidthCode => PointerDepth > 0 || ArrayRank > 0 || BitWidth is not { } bits ? 0
+            : BaseName == "int" && bits is 8 or 16 or 32 ? bits | (Unsigned ? 0x200 : 0)
+            : BaseName == "float" && bits == 32 ? bits | 0x100
+            : 0;
+
         /// <summary>Sentinel for `BaseName` when a declaration uses `var`
         /// together with an EXPLICIT unit, but WITHOUT an explicit type
         /// (`var a : mm`) - the actual type remains, as with

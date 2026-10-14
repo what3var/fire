@@ -277,6 +277,8 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - `!` operator for **type** coercion: `value!`, `value!int`.
   - `value!` (without an argument) → the type is derived from the context.
   - `value!type` → the type is explicitly forced.
+  - Targets: `int`, `float`, `bool`, `string`, `char` (from/to the character code; a float is rounded), a bit width `int[8|16|32|64]` (signed two's complement), `byte` (unsigned 8 bits), `float[32|64]` (`float[32]` rounds to single precision).
+  - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged.
 - `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`.
 
 ### 3.1.1 `!` depends on the context by position (prefix vs. suffix)
@@ -398,7 +400,8 @@ float:m Width() { ... }         // returns meters (a value in cm is converted)
 ### 4.2 Lambdas
 
 - During name lookup a lambda sees **its own scope, the global scope and copies of the outer local values that its body uses** (captures, see 4.2.1) – no closure over scopes in between.
-- `on obj` binds an object as the `this` context, at definition (`func (X) on obj => { ... }`). (Rebinding an existing lambda value - `var b = a on obj2` - is planned, not implemented.)
+- `on obj` binds an object as the `this` context, at definition (`func (X) on obj => { ... }`). `a on obj2` rebinds an existing lambda value: a NEW lambda with the same body, captures and default values and `obj2` as `this` (`a` stays as it is; a value that is not a lambda is an `ArgumentException`).
+- `obj.name(args)`: when no class declares a method `name` but a field or property `name` that can hold a lambda (`lambda`, `any` or untyped), the lambda in it is called (also `name(args)` inside the class).
 - Member variables of the bound `this` object are visible unqualified in the lambda body: for a lambda with `on target` (`func (x) on win => { n = n + x; Hello() }`) unknown names are members of the target - reading, writing, `++` and method calls act as if `this.` were in front (the class is only known at run time, an unknown name there is a run-time error). Local variables, parameters and captures take precedence. A lambda without `on` knows no members (an unknown name is a compile error).
 - Ownership of the lambda value follows section 2.1 (field assignment → object owner, otherwise scope owner) – independent of the `on` binding.
 - For a type annotation that expects a lambda value (field, parameter, return type, `var`), the type name **`lambda`** is available, optionally with a signature: `[ReturnType] lambda[<ParamType1,...,ParamTypeN>]`. Deliberately **not** `func` (that introduces a lambda *expression*, `func (x) => ...`, and as a type name it would collide with that expression syntax). See 4.3 for details.
@@ -1369,9 +1372,13 @@ sbyte/short/int), for `float` correspondingly via float (32 bits) or
 IEEE754 binary16 (16 bits, `System.Half`) or a documented,
 simple 8-bit minifloat (no widespread standard format exists, see
 the comment at `NumericWidth`). The mechanism (`Value.Width` +
-`Value.TruncateTo`) is implemented; the *automatic* application on every
-assignment (the resolver would have to keep track of the declared type of every slot
-for that) is not wired up yet – next stage.
+`Value.TruncateTo`) is applied on every assignment: the resolver keeps the
+declared width of every variable and parameter, the compiler that of every field name
+(when all classes that declare it agree), and emits an implicit `ConvertWidth`
+before the store. Implicit means: only a number of the declared kind is cut
+(`int[8]` cuts an `int`, `float[32]` rounds a `float`); every other value is
+stored as it is. `byte` keeps `0`...`255` (unsigned), `int[N]` wraps in two's
+complement; `float[16]`/`float[8]` are not cut yet.
 
 #### 8.2.1 Program-wide float precision (`#floatwidth`)
 
@@ -1766,7 +1773,7 @@ A `byte` buffer is a run-time type of its own (`Values.ByteBuffer`,
 IO (serial, network, files).
 
 `byte` as a **scalar type** (e.g. `byte b = 5`), on the other hand, is NOT an
-`ValueKind` of its own, but pure parser sugar for `int[8]` (an
+`ValueKind` of its own, but parser sugar for an unsigned `int[8]` (`0`...`255`; an
 explicit bit width directly after `byte` is therefore an error, it would be
 redundant) - a single element of a buffer (`buf[i]`) is thus
 simply a perfectly normal `int` value with this width, no

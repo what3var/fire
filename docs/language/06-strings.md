@@ -30,6 +30,21 @@ print(msg)
 Every value can be converted: numbers (with their unit: `"" + 5mm` is `"5mm"`), `bool` (`True`/`False`), `char`, `undefined`, objects (their
 `ToString()` if the class has one).
 
+`+=` in a loop copies the whole text every time. For many pieces, collect them and join them once: `separator.Join(items)` joins the elements of
+a `List` or an array (each converted like `"" + x`), and a `StringBuilder` collects pieces with `Append`:
+
+```fire
+print(", ".Join([1, 2, 3]))         // 1, 2, 3
+var sb = new StringBuilder()
+for (int i = 0; i < 5; i++) { sb.Append(i) }
+sb.AppendLine("!")
+sb.Append("end")
+print(sb.ToString())                // 01234! and end on the next line
+print(sb.Length)                    // 10
+```
+
+`StringBuilder`: `Append(value)`, `AppendLine(value)`, `Length`, `Clear()`, `ToString()`.
+
 ## Format strings: `$"..."`
 
 A string with a leading `$` may contain `{expression}` and `{expression:format}`:
@@ -82,6 +97,10 @@ foreach (c in "abc") { print(c) }
 | `PadLeft(width)`, `PadLeft(width, fill)`, `PadRight(...)` | fill up to a minimum width |
 | `ToBytes()` | a byte buffer, one byte per character |
 | `ToUnicode(n)` | a byte buffer, `n` bytes per character |
+| `ToInt()`, `ToFloat()` | the number in the text; an `ArgumentException` if it is none |
+| `TryToInt()`, `TryToFloat()` | the number, or `undefined` if the text is none |
+| `CompareTo(other)` | `-1`, `0` or `1`: the order of the two texts (ordinal) |
+| `Join(items)` | the elements of a list or an array as text, with this text between them |
 
 Searching and comparing are **ordinal**: case matters, there is no culture.
 
@@ -97,6 +116,20 @@ print("  x  ".Trim() + "|")     // x|
 print("a-b-c".Replace("-", "+"))
 foreach (part in "a,b,c".Split(",")) { print(part) }
 print("7".PadLeft(3, '0'))      // 007
+```
+
+### Numbers from text
+
+`ToInt()` reads a whole number: spaces around it are ignored, a sign is allowed, also `0x`/`0b` and `_` between digits. `ToFloat()` also reads a
+fraction and an exponent (`2.5`, `.5`, `1e3`). Units are not read (`"5mm"` is no number).
+
+```fire
+print("42".ToInt() + 1)             // 43
+print(" -17 ".ToInt())              // -17
+print("0xFF".ToInt())               // 255
+print("2.5".ToFloat() * 2)          // 5
+print("abc".TryToInt())             // undefined
+try { "12a".ToInt() } catch (ArgumentException e) { print(e.message) }   // '12a' is not a whole number.
 ```
 
 ## Methods of `char`
@@ -121,8 +154,13 @@ print('a' < 'b')            // True - characters can be compared
 
 ## Comparing
 
-`==` and `!=` compare texts character by character. `<`, `>`, `<=`, `>=` work on `char`s, but not on whole strings (that is an
-`ArgumentException`) - compare character by character if you need an order.
+`==` and `!=` compare texts character by character. `<`, `>`, `<=`, `>=` and `CompareTo` order texts **ordinally** - by the codes of their
+characters, so `"Z" < "a"` (upper case comes first) and `"abc" < "abd"`; a shorter text that is the start of a longer one comes first.
+
+```fire
+print("apple" < "banana")           // True
+print("b".CompareTo("a"))           // 1
+```
 
 ## Bytes and text
 

@@ -29,6 +29,12 @@ namespace fire.Standard
         Split = 14,
         PadLeft = 15,
         PadRight = 16,
+        ToInt = 17,
+        ToFloat = 18,
+        TryToInt = 19,
+        TryToFloat = 20,
+        CompareTo = 21,
+        Join = 22,
     }
 
     /// <summary>
@@ -70,6 +76,11 @@ namespace fire.Standard
             (StringMethod.PadLeft, "string", "PadLeft", "int width, any fill"),
             (StringMethod.PadRight, "string", "PadRight", "int width"),
             (StringMethod.PadRight, "string", "PadRight", "int width, any fill"),
+            (StringMethod.ToInt, "int", "ToInt", ""),
+            (StringMethod.ToFloat, "float", "ToFloat", ""),
+            (StringMethod.TryToInt, "any", "TryToInt", ""),
+            (StringMethod.TryToFloat, "any", "TryToFloat", ""),
+            (StringMethod.CompareTo, "int", "CompareTo", "any other"),
         };
 
         /// <summary>The fire source `class extends string { ... }` for the prelude, generated from
@@ -89,9 +100,49 @@ namespace fire.Standard
                 string call = $"{NativeName}({(int)id}, this{(names.Length == 0 ? "" : ", " + names)})";
                 sb.AppendLine($"    {(returns.Length == 0 ? "" : returns + " ")}{name}({parms}) {{ return {call} }}");
             }
+            // `", ".Join(items)`: the elements of a List or an array as text (like `"" + x`), joined by this text - in one piece, natively
+            sb.AppendLine("    string Join(any items) {");
+            sb.AppendLine("        int n = 0");
+            sb.AppendLine("        if (items is of List) { n = items.count } else { n = items.length }");
+            sb.AppendLine("        var texts = new string[n]");
+            sb.AppendLine("        for (int i = 0; i < n; i++) { texts[i] = \"\" + items[i] }");
+            sb.AppendLine($"        return {NativeName}({(int)StringMethod.Join}, this, texts)");
+            sb.AppendLine("    }");
             sb.AppendLine("}");
+            sb.AppendLine(StringBuilderSource);
             return sb.ToString();
         }
+
+        /// <summary>`StringBuilder`: collects pieces of text and joins them once at the end (`+=` in a loop copies the whole text every time).</summary>
+        private const string StringBuilderSource = """
+
+            /// Collects pieces of text and joins them at the end: `Append` is cheap, `ToString()` builds the text once.
+            class StringBuilder {
+                List<string> parts
+                int size = 0
+                construct() { this.parts = new List<string>() }
+                /// Appends a value as text (like `"" + value`).
+                undefined Append(any value) {
+                    string t = "" + value
+                    this.parts.Add(t)
+                    this.size = this.size + t.Length
+                }
+                /// Appends a value as text and a line break.
+                undefined AppendLine(any value) {
+                    this.Append(value)
+                    this.Append("\n")
+                }
+                /// The number of characters collected so far.
+                int Length { get { return this.size } }
+                /// Removes everything collected.
+                undefined Clear() {
+                    this.parts.Clear()
+                    this.size = 0
+                }
+                /// The collected text.
+                string ToString() { return "".Join(this.parts) }
+            }
+            """;
 
         /// <summary>The native function `__StringCall(id, text, arguments...)`.</summary>
         public static Value Call(Value[] args)
@@ -203,9 +254,111 @@ namespace fire.Standard
                     return Value.MakeString(method == StringMethod.PadLeft ? s.PadLeft((int)width, fill) : s.PadRight((int)width, fill));
                 }
 
+                // numbers from text (SPEC 8.12): spaces around are ignored; an int may have a sign, `0x`/`0b` and `_` between digits, a float
+                // also a fraction and an exponent. ToInt/ToFloat throw (ArgumentException in the VM), TryToInt/TryToFloat give undefined.
+                case StringMethod.ToInt:
+                case StringMethod.TryToInt:
+                    Arity(method, argc, 0, 0);
+                    if (ParseInt(s, out long whole)) return Value.MakeInt(whole);
+                    if (method == StringMethod.TryToInt) return Value.MakeUndefined();
+                    throw new InvalidOperationException($"'{s}' is not a whole number.");
+
+                case StringMethod.ToFloat:
+                case StringMethod.TryToFloat:
+                    Arity(method, argc, 0, 0);
+                    if (ParseFloat(s, out double number)) return Value.MakeFloat(number);
+                    if (method == StringMethod.TryToFloat) return Value.MakeUndefined();
+                    throw new InvalidOperationException($"'{s}' is not a number.");
+
+                case StringMethod.Join:
+                {
+                    Arity(method, argc, 1, 1);
+                    if (a0.Kind != ValueKind.Array) throw new InvalidOperationException("Join expects a List or an array.");
+                    var items = a0.AsArray();
+                    var parts = new string[items.Length];
+                    for (int i = 0; i < parts.Length; i++) parts[i] = items.Items[i].AsString();
+                    return Value.MakeString(string.Join(s, parts));
+                }
+
+                case StringMethod.CompareTo:
+                    Arity(method, argc, 1, 1);
+                    return Value.MakeInt(Math.Sign(string.CompareOrdinal(s, Text(a0))));
+
                 default:
                     throw new InvalidOperationException($"{NativeName}: unknown method ID {(int)method}.");
             }
+        }
+
+        private static bool IsSpace(char c) => c is ' ' or '\t' or '\r' or '\n';
+
+        /// <summary>The text between the spaces at both ends, and whether a sign stood in front (consumed).</summary>
+        private static (int Start, int End, bool Negative) Body(string s)
+        {
+            int start = 0, end = s.Length;
+            while (start < end && IsSpace(s[start])) start++;
+            while (end > start && IsSpace(s[end - 1])) end--;
+            bool negative = false;
+            if (start < end && s[start] is '+' or '-') { negative = s[start] == '-'; start++; }
+            return (start, end, negative);
+        }
+
+        /// <summary>Digits of `radix` with `_` only between two digits; at least one digit. Must be identical to fire_rt.hpp: parseIntText.</summary>
+        public static bool ParseInt(string s, out long value)
+        {
+            value = 0;
+            var (i, end, negative) = Body(s);
+            int radix = 10;
+            if (end - i > 2 && s[i] == '0' && s[i + 1] is 'x' or 'X') { radix = 16; i += 2; }
+            else if (end - i > 2 && s[i] == '0' && s[i + 1] is 'b' or 'B') { radix = 2; i += 2; }
+            if (i >= end) return false;
+            ulong magnitude = 0;
+            ulong limit = negative ? 9223372036854775808UL : 9223372036854775807UL;
+            for (int k = i; k < end; k++)
+            {
+                char c = s[k];
+                if (c == '_' && k > i && k + 1 < end && s[k + 1] != '_') continue;
+                int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : 99;
+                if (digit >= radix) return false;
+                if (magnitude > (limit - (ulong)digit) / (ulong)radix) return false;
+                magnitude = magnitude * (ulong)radix + (ulong)digit;
+            }
+            value = negative ? (long)(0UL - magnitude) : (long)magnitude;
+            return true;
+        }
+
+        /// <summary>Digits with `_` between them, an optional fraction (`2.5`, `.5`, `2.`) and exponent (`1e3`, `2.5E-2`). Must be identical to fire_rt.hpp: parseFloatText.</summary>
+        public static bool ParseFloat(string s, out double value)
+        {
+            value = 0;
+            var (i, end, negative) = Body(s);
+            var clean = new StringBuilder();
+            int digits = 0;
+            bool Digits(ref int k)
+            {
+                int start = k;
+                while (k < end && (char.IsAsciiDigit(s[k]) || (s[k] == '_' && k > start && k + 1 < end && char.IsAsciiDigit(s[k + 1]))))
+                {
+                    if (s[k] != '_') { clean.Append(s[k]); digits++; }
+                    k++;
+                }
+                return k > start;
+            }
+            int p = i;
+            Digits(ref p);
+            if (p < end && s[p] == '.') { clean.Append('.'); p++; Digits(ref p); }
+            if (digits == 0) return false;
+            if (p < end && s[p] is 'e' or 'E')
+            {
+                clean.Append('e'); p++;
+                if (p < end && s[p] is '+' or '-') clean.Append(s[p++]);
+                int before = digits;
+                Digits(ref p);
+                if (digits == before) return false;
+            }
+            if (p != end) return false;
+            value = double.Parse(clean.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture);
+            if (negative) value = -value;
+            return true;
         }
 
         /// <summary>String or character as a string.</summary>

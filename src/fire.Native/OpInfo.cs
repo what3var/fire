@@ -55,7 +55,7 @@ namespace fire.Native
             [OpCode.NewArray] = Array.Empty<int>(), [OpCode.MakeArrayLiteral] = new[] { 2 }, [OpCode.MakeBuffer] = Array.Empty<int>(),
             [OpCode.ArrayGet] = Array.Empty<int>(), [OpCode.ArraySet] = Array.Empty<int>(),
             [OpCode.RegisterHandler] = new[] { 2 }, [OpCode.UnregisterHandler] = Array.Empty<int>(), [OpCode.Throw] = Array.Empty<int>(),
-            [OpCode.IsInUnit] = new[] { 2 }, [OpCode.IsOfType] = new[] { 2 }, [OpCode.IsFrom] = new[] { 1 },
+            [OpCode.IsInUnit] = new[] { 2 }, [OpCode.IsOfType] = new[] { 2 }, [OpCode.CastTo] = new[] { 2 }, [OpCode.ConvertWidth] = new[] { 1, 1 }, [OpCode.RebindLambda] = Array.Empty<int>(), [OpCode.IsFrom] = new[] { 1 },
             [OpCode.ResumeException] = Array.Empty<int>(), [OpCode.ClearPendingResume] = Array.Empty<int>(),
             [OpCode.CheckLambdaSignature] = new[] { 1 }, [OpCode.CheckUnit] = new[] { 2 },
             [OpCode.Fire] = new[] { 2, 2, 1, 1 }, [OpCode.Sync] = new[] { 1 },

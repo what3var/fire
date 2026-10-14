@@ -29,6 +29,19 @@ switch (c) {
 - A member is written with the enum name: `Color.Red`. The compiler replaces it by its number.
 - An enum value **is an `int`**: it can be compared, calculated with and stored in `int` variables; `Color.Red is of int` is `True`. There is no type
   `Color` at run time, and `print` shows the number, not the name.
+- Names and numbers: `Color.Name(value)` gives the name of a member (the number as text if no member has it), `Color.Parse("Red")` the value of a
+  name (an `ArgumentException` for an unknown one), `Color.IsDefined(value)` whether a member has the value:
+
+```fire
+enum Color { Red, Green = 5, Blue }
+print(Color.Name(Color.Blue))   // Blue
+print(Color.Name(42))           // 42
+print(Color.Parse("Green"))     // 5
+print(Color.IsDefined(1))       // False
+try { Color.Parse("Pink") } catch (ArgumentException e) { print(e.message) }
+```
+
+  (A member called `Name`, `Parse` or `IsDefined` hides the helper of the same name.)
 - The members are separated by commas and may stand on several lines.
 
 ## Namespaces

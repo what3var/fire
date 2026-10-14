@@ -73,6 +73,8 @@ namespace fire.Ast
 
     public sealed record IfStmt(int Source, int Line, Expr Condition, Stmt Then, Stmt? Else) : Stmt(Source, Line);
     public sealed record WhileStmt(int Source, int Line, Expr Condition, Stmt Body) : Stmt(Source, Line);
+    /// <summary>`do Body while (Condition)`: the body runs at least once.</summary>
+    public sealed record DoWhileStmt(int Source, int Line, Stmt Body, Expr Condition) : Stmt(Source, Line);
 
     public sealed record ForStmt(
         int Source, int Line, Stmt? Init, Expr? Condition, Expr? Increment, Stmt Body) : Stmt(Source, Line);
@@ -95,8 +97,10 @@ namespace fire.Ast
     /// arises only for a `break` OUTSIDE a switch case (e.g.
     /// directly in a loop, even one that is itself inside a switch
     /// case).</summary>
-    public sealed record BreakStmt(int Source, int Line) : Stmt(Source, Line);
-    public sealed record ContinueStmt(int Source, int Line) : Stmt(Source, Line);
+    /// <summary>`break` / `break 2`: Levels = how many enclosing loops are left.</summary>
+    public sealed record BreakStmt(int Source, int Line, int Levels = 1) : Stmt(Source, Line);
+    /// <summary>`continue` / `continue 2`: continues the loop Levels loops out (the inner ones are left).</summary>
+    public sealed record ContinueStmt(int Source, int Line, int Levels = 1) : Stmt(Source, Line);
 
     /// <summary>A single `taking` capture in a `fire` statement
     /// (see Ast.FireStmt docs) - `VarName` is the name under which the value is

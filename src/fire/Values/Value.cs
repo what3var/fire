@@ -274,6 +274,17 @@ namespace fire.Values
                     return MakeInt(0, Unit);
                 case (ValueKind.Undefined, ValueKind.Float):
                     return MakeFloat(0, Unit);
+                // characters: the number of the 16-bit code unit (`65!char` is 'A', `'A'!int` is 65); a number outside 0..65535 wraps like a 16-bit cast
+                case (ValueKind.Int, ValueKind.Char):
+                    return MakeChar(unchecked((char)_intValue));
+                case (ValueKind.Float, ValueKind.Char):
+                    return MakeChar(unchecked((char)(long)Math.Round(_floatValue)));
+                case (ValueKind.Char, ValueKind.Int):
+                    return MakeInt(_intValue);
+                case (ValueKind.Char, ValueKind.Float):
+                    return MakeFloat(_intValue);
+                case (ValueKind.Undefined, ValueKind.Char):
+                    return MakeChar('\0');
                 default:
                     throw new InvalidOperationException(
                         $"Cannot coerce type {Kind} to {targetKind}.");
@@ -576,6 +587,19 @@ namespace fire.Values
         /// storage always stays long/double (full width); TruncateTo applies
         /// only the value range/precision enforced by the target width
         /// and marks the result with the new Width.</summary>
+        /// <summary>`x!int[8]`, `x!byte`, `x!float[32]` (OpCode.ConvertWidth): the value as a number of that kind (like `!int`/`!float`, also from a char)
+        /// cut to the width - an int in two's complement (`300!int[8]` is 44, `200!int[8]` is -56), `unsigned` keeps 0..2^bits-1 (`byte`: `300!byte` is 44,
+        /// `-1!byte` is 255); a float is rounded to float32 (64 leaves it).</summary>
+        public Value ConvertWidth(int bits, bool toFloat, bool unsigned)
+        {
+            var number = CoerceType(toFloat ? ValueKind.Float : ValueKind.Int);
+            if (toFloat) return bits == 32 ? MakeFloat((float)number._floatValue, number.Unit, NumericWidth.W32) : MakeFloat(number._floatValue, number.Unit);
+            if (bits >= 64) return MakeInt(number._intValue, number.Unit);
+            long mask = (1L << bits) - 1, raw = number._intValue & mask;
+            if (!unsigned && (raw & (1L << (bits - 1))) != 0) raw -= 1L << bits;
+            return MakeInt(raw, number.Unit, (NumericWidth)bits);
+        }
+
         public Value TruncateTo(NumericWidth width)
         {
             if (Kind == ValueKind.Int)
@@ -662,6 +686,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b))
                 return a.ToDouble().CompareTo(b.ToDouble());
             if (a.Kind == ValueKind.Char && b.Kind == ValueKind.Char) return a.AsChar().CompareTo(b.AsChar());   // characters by their code
+            if (a.Kind == ValueKind.String && b.Kind == ValueKind.String) return Math.Sign(string.CompareOrdinal(a.AsString(), b.AsString()));   // texts by their codes
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);

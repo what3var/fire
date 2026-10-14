@@ -53,7 +53,8 @@ var sum = 1 _
 print(sum)      // 6
 ```
 
-A block `{ ... }` groups statements. The end of a block also ends a statement, so `{ return x }` needs no separator.
+A block `{ ... }` groups statements. The end of a block also ends a statement, so `{ return x }` needs no separator; a `;` after a block is allowed
+as well (`foreach (x in a) { s += x }; print(s)` on one line).
 
 ## Comments
 
@@ -98,7 +99,7 @@ print(Pi * 2)
 
 | Literal | Examples | Type |
 |---|---|---|
-| whole number | `42`, `-7`, `0x1F`, `0b1010` (no digit separators: `1000`, not `1_000`) | `int` |
+| whole number | `42`, `-7`, `0x1F`, `0b1010`, `1_000_000` (`_` between digits separates groups) | `int` |
 | decimal number | `2.5`, `0.001` (a leading digit is needed: `0.5`, not `.5`) | `float` |
 | number with unit | `5mm`, `2.5kg`, `500ms`, `0xFFmm` | `int`/`float` with a unit |
 | text | `"Hello"`, `"line\n"` | `string` |
@@ -114,6 +115,7 @@ Escape sequences in texts and characters: `\n` (line feed), `\t` (tab), `\r`, `\
 print("a tab:\there, a quote: \" and a backslash: \\")
 print('x')
 print(0xFF + 0b11)      // 258
+print(1_000_000 + 0xFF_FF)   // 1065535
 ```
 
 `0x`/`0b` only start a hexadecimal/binary number when a valid digit follows: `0b` alone is the number `0` with the unit `b` (bit).

@@ -129,6 +129,55 @@ static class SyntaxTests
             print(16 >> 2)
             """) == "True\n8\n4");
 
+        Console.WriteLine("=== Syntax: Bedingungsoperator, do-while, break N, case-Listen, Ziffern-Trenner, readonly ===");
+
+        Check("cond ? a : b, verschachtelt, nur ein Zweig wird ausgewertet", Output("""
+            int n = 5
+            print(n > 3 ? "big" : "small")
+            print(n > 9 ? "a" : n > 4 ? "b" : "c")
+            print(true ? 1 : 1 / 0)
+            """) == "big\nb\n1");
+
+        Check("do-while laeuft mindestens einmal, continue prueft die Bedingung", Output("""
+            int i = 0
+            do { i++; if (i == 2) continue; print(i) } while (i < 3)
+            do print("once") while (false)
+            """) == "1\n3\nonce");
+
+        Check("break 2 / continue 2 verlassen verschachtelte Schleifen (auch foreach und try)", Output("""
+            foreach (a in [1, 2, 3]) {
+                foreach (b in [10, 20]) {
+                    try { if (a == 2) continue 2; if (a == 3 && b == 20) break 2; print(a * b) } catch (Exception e) { }
+                }
+            }
+            print("end")
+            """) == "10\n20\n30\nend");
+
+        Check("break 2 ausserhalb von zwei Schleifen ist ein Fehler", Output("""
+            while (true) { break 2 }
+            """).StartsWith("ERROR"));
+
+        Check("case mit mehreren Werten und Vergleichen", Output("""
+            foreach (n in [5, 6, 7, -1]) {
+                switch (n) {
+                    case 5, 6: print("five-six")
+                    case < 0, > 100: print("out")
+                    case default: print("other")
+                }
+            }
+            """) == "five-six\nfive-six\nother\nout");
+
+        Check("Ziffern-Trenner und ; nach einem Block", Output("""
+            print(1_000_000 + 0xFF_FF)
+            foreach (x in [1]) { print(x) }; print("same line")
+            """) == "1065535\n1\nsame line");
+
+        Check("readonly-Feld von aussen zuweisen ist ein Fehler", Output("""
+            class C { readonly int r; construct() { this.r = 1 } }
+            var c = new C()
+            c.r = 5
+            """).StartsWith("ERROR"));
+
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");
     }
 }

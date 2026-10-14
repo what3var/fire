@@ -39,7 +39,13 @@ namespace fire.Runtime
         /// remembers the redirection: the native call then returns no result (see CallNativeGuarded).</summary>
         internal Value NativeFail(string className, string message)
         {
-            var instance = ConstructNested(ResolveClass(className), new[] { Value.MakeString(message) });
+            // the message first; a class whose constructor wants more (IndexOutOfBoundsException: message, index, length) gets undefined for the rest
+            var rc = ResolveClass(className);
+            int arity = rc.Constructors.ContainsKey(1) || rc.Constructors.Count == 0 ? 1 : rc.Constructors.Keys.Where(k => k > 1).DefaultIfEmpty(1).Min();
+            var args = new Value[arity];
+            args[0] = Value.MakeString(message);
+            for (int i = 1; i < arity; i++) args[i] = Value.MakeUndefined();
+            var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
             _nativeRedirected = true;
             return default;

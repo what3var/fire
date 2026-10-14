@@ -14237,6 +14237,136 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("Laufzeitfehler: Operanden falschen Typs, Bedingungen, Index und Einheitenkonflikte sind abfangbar (gleiche Texte)", """
+            try { print(undefined * 2) } catch (ArgumentException e) { print("1 " + e.message) }
+            try { print(-"a") } catch (ArgumentException e) { print("2 " + e.message) }
+            try { var x = 5; if (x) { print("y") } } catch (ArgumentException e) { print("3 " + e.message) }
+            try { print(!5) } catch (ArgumentException e) { print("4 " + e.message) }
+            try { print("a" - 1) } catch (ArgumentException e) { print("5 " + e.message) }
+            try { print(true + 1) } catch (ArgumentException e) { print("6 " + e.message) }
+            try { print(2 ^ "x") } catch (ArgumentException e) { print("7 " + e.message) }
+            try { var u = undefined; u++ } catch (ArgumentException e) { print("8 " + e.message) }
+            try { var n = 5; print(n[0]) } catch (ArgumentException e) { print("9 " + e.message) }
+            try { print(1 < "a") } catch (ArgumentException e) { print("10 " + e.message) }
+            try { print(~2.5) } catch (ArgumentException e) { print("11 " + e.message) }
+            try { print(true && 5) } catch (ArgumentException e) { print("12 " + e.message) }
+            print("end")
+            int loops = 0
+            while (loops < 3) { loops++; try { var q = undefined; q = q * 2 } catch (ArgumentException e) { print("loop " + loops) } }
+            try { var w2 = 1; while (w2) { w2 = 0 } } catch (ArgumentException e) { print(e.message) }
+            try { var s = "abc"; s[0] = 'x' } catch (ArgumentException e) { print(e.message) }
+            try { print(1m + 1s) } catch (UnitMismatchException e) { print(e.message + " | " + e.expectedUnit + " | " + e.actualUnit) }
+            try { print(2m < 3kg) } catch (UnitMismatchException e) { print(e.message) }
+            print("end")
+            try { print(2m ^ 2s) } catch (UnitMismatchException e) { print(e.message) }
+            try { var big = 3m; if (big > 2kg) { print("no") } } catch (UnitMismatchException e) { print("gt " + e.message) }
+            try { print(1m >= 1s) } catch (UnitMismatchException e) { print("ge " + e.message) }
+            print(1m < 200cm)
+            """),
+        ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
+            print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
+            print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))
+            print(Math.Round(2.5) + " " + Math.Round(-2.5) + " " + Math.Floor(2.7m) + " " + Math.Ceiling(2.1) + " " + Math.Round(7) + " " + Math.Sign(-4))
+            print(Math.Sin(0) + " " + Math.Cos(0) + " " + Math.Atan2(1m, 1m) * 4 + " " + Math.Log(Math.E) + " " + Math.Log10(1000) + " " + Math.Exp(0))
+            try { Math.Sqrt(2m) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sin(1m) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sqrt("x") } catch (ArgumentException e) { print(e.message) }
+            print("42".ToInt() + 1)
+            print(" -17 ".ToInt() + " " + "0xFF".ToInt() + " " + "0b101".ToInt() + " " + "1_000".ToInt() + " " + "-9223372036854775808".ToInt())
+            print("2.5".ToFloat() * 2 + " " + "1e3".ToFloat() + " " + ".5".ToFloat() + " " + "-2.5E-2".ToFloat())
+            print("abc".TryToInt() + " " + "2.5".TryToInt() + " " + "x".TryToFloat() + " " + "9223372036854775808".TryToInt())
+            try { "12a".ToInt() } catch (ArgumentException e) { print(e.message) }
+            try { "".ToFloat() } catch (ArgumentException e) { print(e.message) }
+            print("apple".CompareTo("banana") + " " + "b".CompareTo("a") + " " + "x".CompareTo("x") + " " + "ab".CompareTo("abc"))
+            print(("abc" < "abd") + " " + ("Z" < "a") + " " + ("b" >= "b"))
+            print(", ".Join([1, 2.5, 'c', "d"]))
+            var names = new List<string>()
+            names.Add("Ada")
+            names.Add("Grace")
+            print(" & ".Join(names) + "|" + "-".Join([]) + "|")
+            var sb = new StringBuilder()
+            for (int i = 0; i < 5; i++) { sb.Append(i) }
+            sb.AppendLine("!")
+            sb.Append(2.5m)
+            print(sb.ToString())
+            print(sb.Length)
+            sb.Clear()
+            print(sb.Length + sb.ToString())
+            """),
+        ("Sprache: ?:, do-while, break N, case-Listen, Ziffern-Trenner, Lambda-Felder, on, Enum-Namen, m/s, Bitbreiten", """
+            int a = 5
+            print(a > 3 ? "big" : "small")
+            print((a > 3 ? 2m : 3m) + 1cm)
+            int i = 0
+            do { i++; if (i == 2) continue; print("do " + i) } while (i < 4)
+            for (int x = 0; x < 3; x++) { for (int y = 0; y < 3; y++) { if (y == 1) continue 2; if (x == 2) break 2; print(x + "," + y) } }
+            int w = 0
+            while (true) { foreach (k in [1, 2, 3]) { w += k; if (k == 2) { break 2 } } }
+            print(w)
+            foreach (n in [5, 9, -3]) { switch (n) { case 5, 6: print("five-six"); case < 0, > 100: print("out"); case default: print("other") } }
+            print(1_000_000)
+            class Button { lambda onClick; construct(lambda f) { this.onClick = f } undefined Click() { this.onClick(); onClick() } }
+            var b = new Button(() => print("clicked"))
+            b.Click()
+            b.onClick()
+            class Counter { int n = 0; string label; construct(string l) { label = l } }
+            var c1 = new Counter("one")
+            var c2 = new Counter("two")
+            var inc = func () on c1 => { n++; print(label + " " + n) }
+            inc()
+            var inc2 = inc on c2
+            inc2()
+            inc()
+            try { var bad = 5 on c1 } catch (ArgumentException e) { print(e.message) }
+            enum Color { Red, Green = 5, Blue }
+            print(Color.Name(Color.Green) + " " + Color.Name(6) + " " + Color.Name(42) + " " + Color.Parse("Blue") + " " + Color.IsDefined(1))
+            try { print(Color.Parse("Pink")) } catch (ArgumentException e) { print(e.message) }
+            float speed : m/s = 36km / 1h
+            print(speed)
+            float acc : m/s^2 = 9.81m / 1s / 1s
+            print(acc)
+            int[8] small = 300
+            print(small)
+            small = 200
+            small++
+            print(small)
+            byte bt = 300
+            print(bt)
+            class Reg { int[8] v = 0; undefined Set(int x) { v = x } }
+            var r = new Reg()
+            r.Set(511)
+            print(r.v)
+            class Calc { static int Narrow(int[16] x) { return x } }
+            print(Calc.Narrow(70000))
+            float[32] f = 0.1
+            print(f)
+            """),
+        ("! wandelt nach char und Bitbreiten und castet Objekte", """
+            interface IAnimal { string Name() }
+            class Dog : IAnimal {
+                string Name() { return "Rex" }
+                string Bark() { return "Woof" }
+            }
+            class Cat : IAnimal { string Name() { return "Tom" } }
+            IAnimal a = new Dog()
+            print(a!Dog.Bark())
+            IAnimal c = new Cat()
+            try { print(c!Dog.Bark()) } catch (ArgumentException e) { print(e.message) }
+            IAnimal u = undefined
+            print(u!Dog)
+            print(65!char)
+            print('b'!int)
+            print(66.4!char)
+            print(300!int[8])
+            print(200!int[8])
+            print(300!byte)
+            print((-1)!byte)
+            print(70000!int[16])
+            print(5000000000!int[32])
+            print(0.1!float[32])
+            try { print("42"!int) } catch (ArgumentException e) { print("caught") }
+            try { print(5!Dog) } catch (ArgumentException e) { print(e.message) }
+            """),
         ("':' erzwingt Einheiten, foreach ueber string, ArgumentException", """
             var k = 7
             print(k:s)

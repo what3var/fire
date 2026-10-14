@@ -26,7 +26,7 @@ namespace fire.Standard
         /// `string` and `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), which are generated from the
         /// method tables in <see cref="StringMethods"/>/<see cref="CharMethods"/>,
         /// so that the method IDs in the fire text do not have to be maintained by hand.</summary>
-        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource;
+        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource + MathMethods.PreludeSource;
 
         private const string CoreSource = """
             /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);

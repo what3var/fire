@@ -105,6 +105,10 @@ namespace fire.Values
             if (string.IsNullOrEmpty(symbol) || symbol == "unitless")
                 return Unitless;
 
+            // A combined unit of a declaration: `m/s`, `kg*m/s^2`, `m^2` - factors joined by `*` and `/` (everything after a `/` divides), each with an optional power
+            if (symbol.IndexOfAny(CombiningChars) >= 0)
+                return ParseCombined(symbol);
+
             // 1) Exact hit on a named (possibly non-prefixable) unit name first,
             //    so that e.g. "min" is not wrongly split into prefix 'm' + base "in".
             if (NamedUnits.TryGetValue(symbol, out var named))
@@ -151,6 +155,52 @@ namespace fire.Values
             if (!IsCompatibleWith(target))
                 throw new UnitMismatchException(this, target);
             return Scale / target.Scale;
+        }
+
+        private static readonly char[] CombiningChars = { '/', '*', '^' };
+
+        private static Unit ParseCombined(string symbol)
+        {
+            var result = Unitless;
+            bool divide = false;
+            int i = 0;
+            while (i < symbol.Length)
+            {
+                int start = i;
+                while (i < symbol.Length && symbol[i] is not ('/' or '*' or '^')) i++;
+                var factor = Parse(symbol.Substring(start, i - start));
+                int power = 1;
+                if (i < symbol.Length && symbol[i] == '^')
+                {
+                    int numberStart = ++i;
+                    if (i < symbol.Length && symbol[i] == '-') i++;
+                    while (i < symbol.Length && char.IsDigit(symbol[i])) i++;
+                    power = int.Parse(symbol.Substring(numberStart, i - numberStart), System.Globalization.CultureInfo.InvariantCulture);
+                }
+                for (int p = 0; p < Math.Abs(power); p++)
+                    result = divide ^ power < 0 ? Divide(result, factor) : Multiply(result, factor);
+                if (i < symbol.Length)
+                {
+                    if (symbol[i] == '/') divide = true;
+                    i++;
+                }
+            }
+            return new Unit(new Dictionary<string, int>(result.Dimensions), result.Scale, symbol);
+        }
+
+        /// <summary>The square root of the unit (`m^2` → `m`, `cm^2` → `cm`, `m^2/s^2` → `m/s`); null when an exponent is odd (`m` has no root). A display
+        /// symbol that ends in `^2` loses it, otherwise the root has none.</summary>
+        public Unit? Sqrt()
+        {
+            if (IsUnitless) return this;
+            var dims = new Dictionary<string, int>();
+            foreach (var (key, exp) in Dimensions)
+            {
+                if (exp % 2 != 0) return null;
+                dims[key] = exp / 2;
+            }
+            string? display = _displaySymbol is { } d && d.EndsWith("^2", StringComparison.Ordinal) && d.IndexOfAny(CombiningChars, 0, d.Length - 2) < 0 ? d[..^2] : null;
+            return new Unit(dims, Math.Sqrt(Scale), display);
         }
 
         public static Unit Multiply(Unit a, Unit b)

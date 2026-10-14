@@ -75,12 +75,49 @@ print(Calc.Twice(21))
 
 ## Converting: `!`
 
-`value!type` converts a number between `int` and `float`; `value!` without a type takes the type from the other side of the operation.
+`value!type` converts a value to another type; `value!` without a type takes the type from the other side of the operation.
 
 ```fire
 print(3.7!int)          // 4 (rounded)
 print(5!float / 2)      // 2.5
 print(undefined!int)    // 0
+print(65!char)          // A
+print('b'!int)          // 98
+print(66.4!char)        // B (rounded)
+```
+
+| Target | Converts from |
+|---|---|
+| `int`, `float` | `int`, `float`, `char` (its code), `bool`, `undefined` (`0`) |
+| `char` | `int` (the code), `float` (rounded), `undefined` (`'\0'`) |
+| `int[8]`, `int[16]`, `int[32]`, `int[64]`, `byte` | like `int`, then cut to the width (see [Bit widths](#bit-widths)) |
+| `float[32]`, `float[64]` | like `float`; `float[32]` rounds to single precision |
+| a class or interface | an object of that class or of a derived class, `undefined` - see below |
+
+### Casting objects
+
+`value!ClassName` tells the compiler "I know this is a `ClassName`": the result has that type, so its members can be used. At run time the cast
+is checked: an object of another class throws an `ArgumentException`. `undefined` passes unchanged.
+
+```fire
+interface IAnimal { string Name() }
+class Dog : IAnimal {
+    string Name() { return "Rex" }
+    string Bark() { return "Woof" }
+}
+class Cat : IAnimal {
+    string Name() { return "Tom" }
+}
+
+IAnimal a = new Dog()
+print(a!Dog.Bark())             // Woof
+IAnimal c = new Cat()
+try {
+    print(c!Dog.Bark())
+} catch (ArgumentException e) {
+    print(e.message)            // Cannot convert a value of type 'Cat' to 'Dog'.
+}
+if (c is of Dog) { print("never") }     // test first with `is of` when unsure
 ```
 
 Other conversions are methods: `'A'.ToInt()` (65), `65.ToChar()` (`'A'`), `"x".ToBytes()`, `value.ToString()`. A conversion that `!` cannot do
@@ -108,12 +145,38 @@ brackets stand after the **name** (`int[8] small`, `int values[10]`).
 int[8] small = 100
 int[16] medium = 30000
 float[32] single = 0.1
-byte b = 200            // byte is int[8]
+byte b = 200            // byte: 8 bits without sign (0 ... 255)
 print(small + medium)
 ```
 
-The width says how the value is stored natively and how it is marshalled to native functions. **The VM does not cut a value to the width on
-assignment yet** (`int[8] small = 300` keeps `300`); keep the values in range yourself. A byte buffer (`new byte[n]`) does cut its elements to 8 bits.
+The width says how the value is stored natively and how it is marshalled to native functions, and every assignment cuts the value to it: a
+variable, a parameter or a field declared `int[8]` wraps an `int` in two's complement, `byte` keeps `0`...`255`, `float[32]` rounds a `float` to
+single precision. Only a number of the declared kind is cut (an `int[8]` that gets a `float` or a text keeps it as it is; the type checker
+reports that). A byte buffer (`new byte[n]`) cuts its elements to 8 bits as well.
+
+```fire
+int[8] small = 300
+print(small)            // 44
+small = 200
+print(small)            // -56
+byte b = 300
+print(b)                // 44
+class Calc { static int Narrow(int[16] x) { return x } }
+print(Calc.Narrow(70000))   // 4464
+```
+
+A conversion with `!` cuts a value to a width explicitly - `int[N]` is signed (two's complement), `byte` is unsigned:
+
+```fire
+print(300!int[8])           // 44
+print(200!int[8])           // -56
+print(300!byte)             // 44
+print((-1)!byte)            // 255
+print(5000000000!int[32])   // 705032704
+print(0.1!float[32])        // 0.10000000149011612
+```
+
+`-1!byte` is `-(1!byte)`: the `!` binds tighter than the minus sign, so write `(-1)!byte`.
 
 A whole program can use 32-bit floats with `#floatwidth 32` (see [Preprocessor](17-preprocessor.md)) - useful for small targets like the ESP32; the VM then
 rounds exactly like a 32-bit CPU.

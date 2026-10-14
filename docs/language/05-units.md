@@ -90,7 +90,17 @@ A unit after the name (`int length : mm`) or at the type (`float:m width`) fixes
   number without unit) it is unitless. `var` is free: `var x = 5mm` and later `x = 3s` is allowed.
 - The return type of a method and a property can have a unit too: `float:m Length()` converts its result into metres.
 
-Only a single unit name can be written in a declaration (`mm`, `s`, `kB`) - a combined unit like `m/s` comes from a calculation and is kept with `var`.
+A declaration can also name a **combined unit**: units joined by `*` and `/`, each with an optional power - `m/s`, `km/h`, `m/s^2`, `kg*m/s^2`,
+`m^2`. Everything after a `/` divides.
+
+```fire
+float speed : km/h = 10m / 1s
+print(speed)                    // 36km/h
+float g : m/s^2 = 9.81m / 1s / 1s
+print(g)                        // 9.81m/s^2
+float area : m^2 = 2m * 3m
+print(area)                     // 6m^2
+```
 
 ```fire
 int a : mm = 2m

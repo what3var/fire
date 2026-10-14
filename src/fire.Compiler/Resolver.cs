@@ -871,6 +871,8 @@ namespace fire.Compiler
             /// name in THIS scope if the declaration had an explicit
             /// `: unit` - see Define/ResolveIdentifierRef.</summary>
             public readonly Dictionary<string, string> RequiredUnits = new();
+            /// <summary>Declared bit widths (TypeRef.WidthCode) of the variables of this scope: an assignment cuts the value to them.</summary>
+            public readonly Dictionary<string, int> Widths = new();
 
             /// <summary>Names of the `ref` parameters of this scope (the slot holds a pointer to the caller's variable).</summary>
             public readonly HashSet<string> RefNames = new();
@@ -892,7 +894,7 @@ namespace fire.Compiler
         private void PushScope() => _current = new ResolverScope(_current);
         private void PopScope() => _current = _current.Parent!;
 
-        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null, bool isRef = false)
+        private void Define(string name, int line, bool isReadonly = false, string? requiredUnit = null, bool isRef = false, int width = 0)
         {
             if (_current.Slots.ContainsKey(name))
             {
@@ -906,11 +908,13 @@ namespace fire.Compiler
                 _current.ReadonlySlots.Remove(name);
                 _current.RequiredUnits.Remove(name);
                 _current.RefNames.Remove(name);
+                _current.Widths.Remove(name);
             }
             _current.Slots[name] = _current.Slots.Count;
             if (isRef) _current.RefNames.Add(name);
             if (isReadonly) _current.ReadonlySlots.Add(name);
             if (requiredUnit != null) _current.RequiredUnits[name] = requiredUnit;
+            if (width != 0) _current.Widths[name] = width;
         }
 
         private ResolvedRef ResolveIdentifierRef(string name, int line)
@@ -922,9 +926,10 @@ namespace fire.Compiler
                 if (scope.Slots.TryGetValue(name, out int slot))
                 {
                     scope.RequiredUnits.TryGetValue(name, out var requiredUnit);
+                    scope.Widths.TryGetValue(name, out int width);
                     return scope.IsGlobal
-                        ? new ResolvedRef.Global(slot, requiredUnit)
-                        : new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name));
+                        ? new ResolvedRef.Global(slot, requiredUnit, width)
+                        : new ResolvedRef.Local(depth, slot, requiredUnit, scope.RefNames.Contains(name), width);
                 }
                 depth++;
                 scope = scope.Parent;
@@ -1028,7 +1033,7 @@ namespace fire.Compiler
                 // identifier" - a pure follow-up error of the one
                 // real error.
                 if (stmt is VarDeclStmt vd && !_current.Slots.ContainsKey(vd.Name))
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
             }
         }
 
@@ -1036,12 +1041,12 @@ namespace fire.Compiler
         /// statement/class member temporarily changes (see
         /// ResolveStmt).</summary>
         private readonly record struct ResolverState(
-            ResolverScope Current, int FunctionDepth, int LoopDepth, int TryDepth, int UnsafeDepth,
+            ResolverScope Current, int FunctionDepth, int LoopDepth, System.Collections.Immutable.ImmutableStack<int> LoopFinallyDepths, int TryDepth, int UnsafeDepth,
             ClassDecl? CurrentClass, bool CurrentClassHasBase, bool InConstructor, bool InStaticMethod,
             Dictionary<string, int>? TypeParamNames);
 
         private ResolverState SaveState() => new(
-            _current, _functionDepth, _loopDepth, _tryDepth, _unsafeDepth,
+            _current, _functionDepth, _loopDepth, _loopFinallyDepths, _tryDepth, _unsafeDepth,
             _currentClass, _currentClassHasBase, _inConstructor, _inStaticMethod,
             _currentTypeParamNames.Count > 0 ? new Dictionary<string, int>(_currentTypeParamNames) : null);
 
@@ -1050,6 +1055,7 @@ namespace fire.Compiler
             _current = state.Current;
             _functionDepth = state.FunctionDepth;
             _loopDepth = state.LoopDepth;
+            _loopFinallyDepths = state.LoopFinallyDepths;
             _tryDepth = state.TryDepth;
             _unsafeDepth = state.UnsafeDepth;
             _currentClass = state.CurrentClass;
@@ -1120,7 +1126,7 @@ namespace fire.Compiler
                         throw new ResolverException(
                             $"'{vd.Name}[{sizeLit.Value.AsInt()}]' expects {sizeLit.Value.AsInt()} elements, " +
                             $"but the array literal initializer has {arrLit.Elements.Count}", vd.Line);
-                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand);
+                    Define(vd.Name, vd.Line, vd.IsReadonly, vd.Type?.UnitDemand, width: vd.ArrayRanks.Count == 0 ? vd.Type?.WidthCode ?? 0 : 0);
                     if (KnownClassOf(vd.Type, vd.Initializer, vd.ArrayRanks.Count > 0) is { } declaredClass) _current.KnownClasses[vd.Name] = declaredClass;
                     break;
 
@@ -1134,10 +1140,25 @@ namespace fire.Compiler
                     ResolveExpr(ws.Condition);
                     _loopDepth++;
                     int savedFinallyDepth = _tryDepth; _tryDepth = 0;
+                    _loopFinallyDepths = _loopFinallyDepths.Push(savedFinallyDepth);
                     ResolveStmtAsScope(ws.Body);
+                    _loopFinallyDepths = _loopFinallyDepths.Pop();
                     _tryDepth = savedFinallyDepth;
                     _loopDepth--;
                     break;
+
+                case DoWhileStmt dws:
+                    {
+                        _loopDepth++;
+                        int savedDoFinallyDepth = _tryDepth; _tryDepth = 0;
+                        _loopFinallyDepths = _loopFinallyDepths.Push(savedDoFinallyDepth);
+                        ResolveStmtAsScope(dws.Body);
+                        _loopFinallyDepths = _loopFinallyDepths.Pop();
+                        _tryDepth = savedDoFinallyDepth;
+                        _loopDepth--;
+                        ResolveExpr(dws.Condition);
+                        break;
+                    }
 
                 case ForStmt fs:
                     ResolveFor(fs);
@@ -1168,15 +1189,13 @@ namespace fire.Compiler
                 case BreakStmt bs:
                     if (_loopDepth == 0)
                         throw new ResolverException("'break' outside of a loop ('while'/'for'/'foreach')", bs.Line);
-                    if (_tryDepth > 0)
-                        throw new ResolverException("'break' cannot be used to leave a 'finally' block (a limitation of this stage - see BYTECODE.md)", bs.Line);
+                    CheckLoopLevels("break", bs.Levels, bs.Line);
                     break;
 
                 case ContinueStmt cs:
                     if (_loopDepth == 0)
                         throw new ResolverException("'continue' outside of a loop ('while'/'for'/'foreach')", cs.Line);
-                    if (_tryDepth > 0)
-                        throw new ResolverException("'continue' cannot be used to leave a 'finally' block (a limitation of this stage - see BYTECODE.md)", cs.Line);
+                    CheckLoopLevels("continue", cs.Levels, cs.Line);
                     break;
 
                 case FireStmt fireStmt:
@@ -1288,6 +1307,19 @@ namespace fire.Compiler
             PopScope();
         }
 
+        /// <summary>Finally depth outside each open loop (innermost on top): `break 2` must not leave a `finally` block of an outer loop either.</summary>
+        private System.Collections.Immutable.ImmutableStack<int> _loopFinallyDepths = System.Collections.Immutable.ImmutableStack<int>.Empty;
+
+        private void CheckLoopLevels(string keyword, int levels, int line)
+        {
+            int open = _loopFinallyDepths.Count();
+            if (levels > open)
+                throw new ResolverException($"'{keyword} {levels}' needs {levels} enclosing loops, there {(open == 1 ? "is 1" : $"are {open}")}", line);
+            bool crossesFinally = _tryDepth > 0 || _loopFinallyDepths.Take(levels - 1).Any(d => d > 0);
+            if (crossesFinally)
+                throw new ResolverException($"'{keyword}' cannot be used to leave a 'finally' block (a limitation of this stage - see BYTECODE.md)", line);
+        }
+
         private void ResolveFor(ForStmt fs)
         {
             PushScope(); // encloses init/condition/increment/body together
@@ -1296,7 +1328,9 @@ namespace fire.Compiler
             if (fs.Increment != null) ResolveExpr(fs.Increment);
             _loopDepth++;
             int savedFinallyDepth = _tryDepth; _tryDepth = 0;
+            _loopFinallyDepths = _loopFinallyDepths.Push(savedFinallyDepth);
             ResolveStmtAsScope(fs.Body);
+            _loopFinallyDepths = _loopFinallyDepths.Pop();
             _tryDepth = savedFinallyDepth;
             _loopDepth--;
             PopScope();
@@ -1309,7 +1343,9 @@ namespace fire.Compiler
             Define(fe.VarName, fe.Line);
             _loopDepth++;
             int savedFinallyDepth = _tryDepth; _tryDepth = 0;
+            _loopFinallyDepths = _loopFinallyDepths.Push(savedFinallyDepth);
             ResolveStmtAsScope(fe.Body);
+            _loopFinallyDepths = _loopFinallyDepths.Pop();
             _tryDepth = savedFinallyDepth;
             _loopDepth--;
             PopScope();
@@ -1511,7 +1547,7 @@ namespace fire.Compiler
             {
                 if (p.Type != null) Guard(() => ValidateTypeRef(p.Type, body.Line));
                 ResolveArrayRanks(p.ArrayRanks);
-                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef));
+                Guard(() => Define(p.Name, body.Line, requiredUnit: p.Type?.UnitDemand, isRef: p.ByRef, width: p.ArrayRanks.Count == 0 ? p.Type?.WidthCode ?? 0 : 0));
                 if (KnownClassOf(p.Type, null, p.ArrayRanks.Count > 0) is { } parameterClass) _current.KnownClasses[p.Name] = parameterClass;
             }
 
@@ -1536,6 +1572,7 @@ namespace fire.Compiler
             int savedLoopDepth = _loopDepth;
             int savedTryDepth = _tryDepth;
             _loopDepth = 0;
+            var savedLoopFinallyDepths = _loopFinallyDepths; _loopFinallyDepths = System.Collections.Immutable.ImmutableStack<int>.Empty;
             _tryDepth = 0;
 
             _functionDepth++;
@@ -1543,6 +1580,7 @@ namespace fire.Compiler
             _functionDepth--;
 
             _loopDepth = savedLoopDepth;
+            _loopFinallyDepths = savedLoopFinallyDepths;
             _tryDepth = savedTryDepth;
 
             _inConstructor = savedInConstructor;
@@ -1622,12 +1660,25 @@ namespace fire.Compiler
                     ResolveExpr(b.Right);
                     break;
 
+                case RebindExpr rb:
+                    ResolveExpr(rb.Lambda);
+                    ResolveExpr(rb.Target);
+                    break;
+
+                case ConditionalExpr ce:
+                    ResolveExpr(ce.Condition);
+                    ResolveExpr(ce.Then);
+                    ResolveExpr(ce.Else);
+                    break;
+
                 case UnitCoerceExpr uc:
                     ResolveExpr(uc.Operand);
                     break;
 
                 case TypeCoerceExpr tc:
                     ResolveExpr(tc.Operand);
+                    // `x!Dog`: a class or an interface (like `is of`)
+                    if (tc.TargetClass is { } castType && !_interfaces.ContainsKey(castType.BaseName)) ValidateTypeName(castType, tc.Line);
                     break;
 
                 case IsInExpr iin:
@@ -1667,6 +1718,12 @@ namespace fire.Compiler
                     string? enumName = DottedName(me.Target);
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
+                        if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
+                        {
+                            // `Color.Name(c)`, `Color.Parse("Red")`: the hidden helper class of the enum (see Parser.EnumHelperClass)
+                            _refs[me] = new ResolvedRef.StaticMember(Parser.EnumHelperClassName(enumName));
+                            break;
+                        }
                         if (!enumMembers.TryGetValue(me.Name, out long enumValue))
                             throw new ResolverException($"'{enumName}' has no member '{me.Name}'", me.Line);
                         _refs[me] = new ResolvedRef.EnumMember(enumValue);
@@ -1884,6 +1941,11 @@ namespace fire.Compiler
                     // resolver, lacking a static type system, can NOT know which
                     // class is meant - a deliberate limit of this development stage,
                     // see FieldDecl documentation.
+                    // 'obj.field = ...' from anywhere else: an error when every class that declares a field of this name declares it 'readonly'
+                    // (the class of 'obj' is not known here; a name that some class declares writable stays allowed)
+                    if (me.Target is not ThisExpr && IsReadonlyEverywhere(me.Name))
+                        throw new ResolverException(
+                            $"'{me.Name}' is 'readonly' and can only be assigned inside a constructor of its class (as 'this.{me.Name} = ...')", me.Line);
                     if (me.Target is ThisExpr && _currentClass != null && IsReadonlyField(_currentClass, me.Name) && !_inConstructor)
                         throw new ResolverException(
                             $"'{_currentClass.Name}.{me.Name}' is 'readonly' and can only be assigned inside a " +
@@ -1931,6 +1993,20 @@ namespace fire.Compiler
 
         /// <summary>Is `fieldName` declared as `readonly` in `cd` (ONLY this class
         /// itself, no base-class chain - deliberate limit)?</summary>
+        /// <summary>Is `fieldName` declared by at least one class, and `readonly` in every class that declares it?</summary>
+        private bool IsReadonlyEverywhere(string fieldName)
+        {
+            bool any = false;
+            foreach (var cd in _classes.Values)
+                foreach (var m in cd.Members)
+                    if (m is FieldDecl fd && fd.Name == fieldName)
+                    {
+                        if (!fd.IsReadonly) return false;
+                        any = true;
+                    }
+            return any;
+        }
+
         private static bool IsReadonlyField(ClassDecl cd, string fieldName) =>
             cd.Members.Any(m => m is FieldDecl { IsReadonly: true } fd && fd.Name == fieldName);
 
@@ -2037,6 +2113,7 @@ namespace fire.Compiler
             int savedFunctionDepth = _functionDepth;
             bool savedInConstructor = _inConstructor;
             _loopDepth = 0;
+            var savedLoopFinallyDepths = _loopFinallyDepths; _loopFinallyDepths = System.Collections.Immutable.ImmutableStack<int>.Empty;
             _tryDepth = 0;
             _functionDepth = 0;
             _inConstructor = false;
@@ -2044,6 +2121,7 @@ namespace fire.Compiler
             foreach (var s in fs.Body.Statements) ResolveStmt(s);
 
             _loopDepth = savedLoopDepth;
+            _loopFinallyDepths = savedLoopFinallyDepths;
             _tryDepth = savedTryDepth;
             _functionDepth = savedFunctionDepth;
             _inConstructor = savedInConstructor;
@@ -2088,6 +2166,7 @@ namespace fire.Compiler
             int savedFunctionDepth = _functionDepth;
             bool savedInConstructor = _inConstructor;
             _loopDepth = 0;
+            var savedLoopFinallyDepths = _loopFinallyDepths; _loopFinallyDepths = System.Collections.Immutable.ImmutableStack<int>.Empty;
             _tryDepth = 0;
             _functionDepth = 0;
             _inConstructor = false;
@@ -2095,6 +2174,7 @@ namespace fire.Compiler
             foreach (var s in body.Statements) ResolveStmt(s);
 
             _loopDepth = savedLoopDepth;
+            _loopFinallyDepths = savedLoopFinallyDepths;
             _tryDepth = savedTryDepth;
             _functionDepth = savedFunctionDepth;
             _inConstructor = savedInConstructor;
@@ -2185,6 +2265,7 @@ namespace fire.Compiler
             int savedLoopDepth = _loopDepth;
             int savedTryDepth = _tryDepth;
             _loopDepth = 0;
+            var savedLoopFinallyDepths = _loopFinallyDepths; _loopFinallyDepths = System.Collections.Immutable.ImmutableStack<int>.Empty;
             _tryDepth = 0;
 
             _functionDepth++;
@@ -2192,6 +2273,7 @@ namespace fire.Compiler
             _functionDepth--;
 
             _loopDepth = savedLoopDepth;
+            _loopFinallyDepths = savedLoopFinallyDepths;
             _tryDepth = savedTryDepth;
 
             _inConstructor = savedInConstructor;

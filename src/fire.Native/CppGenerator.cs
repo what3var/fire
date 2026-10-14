@@ -1806,6 +1806,21 @@ namespace fire.Native
                 if (!_usesExceptions || sb == null) return;
                 E($"if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
             }
+            // After an operation that throws only on its slow path: `failed` is a cheap test that holds whenever it may have thrown (an arithmetic result
+            // is never undefined, a condition that threw is false) - only then the unwinding flag is read.
+            void CheckIf(string failed)
+            {
+                if (!_usesExceptions || sb == null) return;
+                E($"if (FIRE_UNLIKELY({failed}) && FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)};");
+            }
+            // A condition: a value that is no bool throws an ArgumentException (truthy gives false then) - with exceptions the false path checks first.
+            void JumpOnCondition(string value, bool jumpIfTrue, int target)
+            {
+                if (!_usesExceptions || sb == null) { E($"if ({(jumpIfTrue ? "" : "!")}truthy({value})) goto L{target};"); return; }
+                string exit = ExitLabel(f, st, locals);
+                if (jumpIfTrue) E($"if (truthy({value})) {{ goto L{target}; }} if (FIRE_UNLIKELY(g_unwind.active)) goto {exit};");
+                else E($"if (!truthy({value})) {{ if (FIRE_UNLIKELY(g_unwind.active)) goto {exit}; goto L{target}; }}");
+            }
             void E(string text) { sb?.Append("    ").AppendLine(text); }
             void Need(int n)
             {
@@ -1985,7 +2000,10 @@ namespace fire.Native
                         Check();
                     }
                     else
+                    {
                         E(SectionFor(v).Length > 0 ? $"{{ {SectionFor(v)}{v} = {(subtract ? "sub" : "add")}({v}, {k}); }}" : $"{v} = {(subtract ? "sub" : "add")}({v}, {k});");
+                        CheckIf($"{v}.kind == K_Undefined");
+                    }
                     return Next();
                 }
 
@@ -2006,7 +2024,7 @@ namespace fire.Native
                         Check();
                         d--; SetR(d - 1, true);
                     }
-                    else { E($"{S(d - 2)} = add({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); }
+                    else { E($"{S(d - 2)} = add({S(d - 2)}, {S(d - 1)});"); CheckIf($"{S(d - 2)}.kind == K_Undefined"); d--; SetR(d - 1, false); }
                     return Next();
                 }
                 case OpCode.Power: return Binary("power", "operator^");
@@ -2042,6 +2060,38 @@ namespace fire.Native
                 case OpCode.CoerceType:
                     Need(1);
                     E($"{S(d - 1)} = coerceType({S(d - 1)}, {(TypeTag)ins.A[0] switch { TypeTag.Bool => "K_Bool", TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", TypeTag.Char => "K_Char", _ => "K_String" }});");
+                    Check();
+                    return Next();
+                case OpCode.CastTo:
+                {
+                    // `x!Dog`: the same value, `undefined` passes, anything else that is not `is of` the type is an ArgumentException
+                    Need(1);
+                    string castName = chunk.Constants[ins.A[0]].AsString();
+                    string castTest = castName switch
+                    {
+                        "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
+                    };
+                    string test = castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"isof_{Mangle(castName)}({S(d - 1)})";
+                    if (castTest.Length == 0) _isOfTypes.Add(castName);
+                    E($"if (FIRE_UNLIKELY({S(d - 1)}.kind != K_Undefined && !({test}))) castFailed({S(d - 1)}, {CString(castName)});");
+                    Check();
+                    return Next();
+                }
+                case OpCode.RebindLambda:
+                    Need(2);
+                    E($"{S(d - 2)} = rebindLam({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
+                    Check();
+                    d--; SetR(d - 1, true); return Next();
+                case OpCode.ConvertWidth:
+                    Need(1);
+                    if ((ins.A[1] & 4) != 0)
+                    {
+                        // implicit (an assignment to a declared width): only a number of the declared kind is cut - this cannot fail
+                        E($"if ({S(d - 1)}.kind == {((ins.A[1] & 1) != 0 ? "K_Float" : "K_Int")}) {S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
+                        return Next();
+                    }
+                    E($"{S(d - 1)} = convertWidth({S(d - 1)}, {ins.A[0]}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {((ins.A[1] & 2) != 0 ? "true" : "false")});");
+                    Check();
                     return Next();
                 case OpCode.CoerceTypeDynamic:
                     Need(2); E($"{S(d - 1)} = coerceType({S(d - 1)}, {S(d - 2)}.kind);"); return Next();
@@ -2091,13 +2141,13 @@ namespace fire.Native
                     return new StepResult(false, null, new List<(int, Flow)> { (target, exitState) });
                 }
                 case OpCode.JumpIfFalse:
-                    Need(1); E($"if (!truthy({S(d - 1)})) goto L{ins.A[0]};"); d--; st.Depth = d;
+                    Need(1); JumpOnCondition(S(d - 1), false, ins.A[0]); d--; st.Depth = d;
                     return new StepResult(true, ins.A[0]);
                 case OpCode.JumpIfFalsePeek:
-                    Need(1); E($"if (!truthy({S(d - 1)})) goto L{ins.A[0]};");
+                    Need(1); JumpOnCondition(S(d - 1), false, ins.A[0]);
                     return new StepResult(true, ins.A[0]);
                 case OpCode.JumpIfTruePeek:
-                    Need(1); E($"if (truthy({S(d - 1)})) goto L{ins.A[0]};");
+                    Need(1); JumpOnCondition(S(d - 1), true, ins.A[0]);
                     return new StepResult(true, ins.A[0]);
                 case OpCode.JumpIfNotLt: return JumpIfNot("lt", false, "operator<");
                 case OpCode.JumpIfNotLtEq: return JumpIfNot("le", false, "operator<=");
@@ -2164,6 +2214,13 @@ namespace fire.Native
                         E($"{S(first)} = resourceCall({S(first)}.i, {S(first + 1)}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
+                    }
+                    if (native == MathMethods.NativeName && argc is 2 or 3)
+                    {
+                        int first = d - argc;
+                        E($"{S(first)} = mathCall({S(first)}.i, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")});");
+                        Check();
+                        d = first + 1; SetR(first, false); return Next();
                     }
                     if (native == CharMethods.NativeName && argc == 2)
                     {
@@ -2998,11 +3055,11 @@ namespace fire.Native
                     E($"{S(d - 2)} = {OperatorWrapper(opMethod)}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
                     Check(); d--; SetR(d - 1, true); return Next();
                 }
-                E($"{S(d - 2)} = {fnName}({S(d - 2)}, {S(d - 1)});"); d--; SetR(d - 1, false); return Next();
+                E($"{S(d - 2)} = {fnName}({S(d - 2)}, {S(d - 1)});"); CheckIf($"{S(d - 2)}.kind == K_Undefined"); d--; SetR(d - 1, false); return Next();
             }
             StepResult Unary(string fnName)
             {
-                Need(1); E($"{S(d - 1)} = {fnName}({S(d - 1)});"); SetR(d - 1, false); return Next();
+                Need(1); E($"{S(d - 1)} = {fnName}({S(d - 1)});"); CheckIf($"{S(d - 1)}.kind == K_Undefined"); SetR(d - 1, false); return Next();
             }
             StepResult Compare(string fnName, bool negate, string opMethod)
             {
@@ -3012,7 +3069,7 @@ namespace fire.Native
                     E($"{S(d - 2)} = {OperatorWrapper(opMethod)}({S(d - 2)}, {S(d - 1)}, &{OwnerList()});");
                     Check(); d--; SetR(d - 1, true); return Next();
                 }
-                E($"{S(d - 2)} = Bool({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}));"); d--; SetR(d - 1, false); return Next();
+                E($"{S(d - 2)} = Bool({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}));"); CheckIf(negate ? "true" : $"{S(d - 2)}.i == 0"); d--; SetR(d - 1, false); return Next();
             }
             StepResult JumpIfNot(string fnName, bool negate, string opMethod)
             {
@@ -3026,7 +3083,9 @@ namespace fire.Native
                     d -= 2; st.Depth = d;
                     return new StepResult(true, ins.A[0]);
                 }
-                E($"if (!({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}))) goto L{ins.A[0]};");
+                if (_usesExceptions && sb != null && !negate)
+                    E($"if (!({fnName}({S(d - 2)}, {S(d - 1)}))) {{ if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)}; goto L{ins.A[0]}; }}");
+                else E($"if (!({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}))) goto L{ins.A[0]};");
                 d -= 2; st.Depth = d;
                 return new StepResult(true, ins.A[0]);
             }

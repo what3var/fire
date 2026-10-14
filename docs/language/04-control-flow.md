@@ -29,7 +29,20 @@ while (w > 0) {
 print(w)        // -2
 ```
 
-The condition is checked before every round. There is no `do ... while`: write `while (true) { ...; if (done) { break } }` instead.
+The condition is checked before every round.
+
+## `do` ... `while`
+
+The body runs first and the condition is checked after every round, so the body runs at least once. `continue` jumps to the condition.
+
+```fire
+var n = 0
+do {
+    n++
+    print(n)        // 1 2 3
+} while (n < 3)
+do print("once") while (false)
+```
 
 ## `for`
 
@@ -94,7 +107,18 @@ while (i < 10) {
 ```
 
 - Outside a loop they are an error. A lambda does not see the loop around it.
-- There are no labels; to leave two loops, use a `bool` flag or move the loops into a method and `return`.
+- **`break 2`** leaves two loops at once (`break 3` three, ...); **`continue 2`** ends the inner loop and goes on with the next round of the outer one:
+
+```fire
+foreach (row in [[1, 2], [3, -1], [5, 6]]) {
+    foreach (cell in row) {
+        if (cell < 0) { break 2 }      // stops both loops
+        print(cell)                    // 1 2 3
+    }
+}
+```
+
+  Leaving a `try` with a `finally` this way is not supported yet (leave the loops one by one there).
 - Inside a `switch`, `break` ends the **branch**, not the loop around the `switch` (see below).
 
 ## `switch`
@@ -128,7 +152,7 @@ switch (s) {
 - The value after `switch` is evaluated once.
 - A case starts on a line of its own; the statements of the branch follow on the next lines.
 - `break` at the end of a branch is allowed but not needed. If it is used, it must be the last statement of the branch.
-- A case takes **one** value - `case 5, 6:` does not exist; write `case >= 5:` or two cases.
+- A case can list several values and comparisons, separated by commas: `case 5, 6:`, `case < 0, > 100:` - it matches when one of them does.
 - Strings, numbers (also with units: `case < 1m:`), characters and enum values can be compared.
 
 ## `with`

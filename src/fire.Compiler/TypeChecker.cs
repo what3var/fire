@@ -157,6 +157,12 @@ namespace fire.Compiler
             if (!Assignable(type, StaticType.Bool)) Report(AssignCode, $"A condition must be a 'bool', not '{type}'", condition.Line);
         }
 
+        /// <summary>An operand of `&&`, `||` or `!` must be a bool (like a condition): a number is an ArgumentException at run time.</summary>
+        private void CheckLogicalOperand(StaticType operand, string op, int line)
+        {
+            if (!Assignable(operand, StaticType.Bool)) Report(AssignCode, $"An operand of '{op}' must be a 'bool', not '{operand}'", line);
+        }
+
         private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode, Expr? valueExpr = null)
         {
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
@@ -276,7 +282,9 @@ namespace fire.Compiler
         private StaticType DeclaredLambda(LambdaSignature? signature, IReadOnlyDictionary<string, StaticType>? map = null)
         {
             if (signature == null) return StaticType.LambdaOf(0, null);
-            if (signature.IsSelector) return StaticType.LambdaOf(-1, null);
+            // a selector `lambda member<T>`: one parameter of the type T (so `x => x.nmae` is reported); without a type (`selector<>`) any number
+            if (signature.IsSelector)
+                return signature.ParamTypeNames.Count == 1 ? StaticType.LambdaOf(1, null, new List<StaticType> { FromName(signature.ParamTypeNames[0], map) }) : StaticType.LambdaOf(-1, null);
             return StaticType.LambdaOf(signature.ParamTypeNames.Count, signature.ReturnTypeName != null ? FromName(signature.ReturnTypeName, map) : null,
                 signature.ParamTypeNames.Select(n => FromName(n, map)).ToList());
         }
@@ -486,6 +494,7 @@ namespace fire.Compiler
                     if (i.Else != null) CheckScoped(i.Else);
                     break;
                 case WhileStmt w: CheckCondition(w.Condition); CheckScoped(w.Body); break;
+                case DoWhileStmt dw: CheckScoped(dw.Body); CheckCondition(dw.Condition); break;
                 case ForStmt f:
                     Push();
                     if (f.Init != null) Check(f.Init);
@@ -738,6 +747,8 @@ namespace fire.Compiler
                     return StaticType.String;
                 case UnaryExpr u: return InferUnary(u);
                 case BinaryExpr b: return InferBinary(b);
+                case RebindExpr rb: Infer(rb.Target); return Infer(rb.Lambda);
+                case ConditionalExpr ce: CheckCondition(ce.Condition); return Join([Infer(ce.Then), Infer(ce.Else)]);
                 case AssignExpr a: return InferAssign(a);
                 case MemberExpr m: return InferMember(m);
                 case IndexExpr ix: return InferIndex(ix);
@@ -763,6 +774,7 @@ namespace fire.Compiler
                     {
                         var operand = Infer(tc.Operand);
                         var operandUnit = operand.IsNumber ? operand.Unit : null;
+                        if (tc.TargetClass is { } castType) return Declared(castType, 0) ?? StaticType.Dynamic;
                         return tc.TargetTypeKeyword switch
                         {
                             TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),
@@ -798,6 +810,7 @@ namespace fire.Compiler
         private StaticType InferUnary(UnaryExpr u)
         {
             var operand = Infer(u.Operand);
+            if (u.Op == UnaryOp.LogicalNot) CheckLogicalOperand(operand, "!", u.Line);
             return u.Op switch
             {
                 UnaryOp.Negate => operand.Kind is StaticKind.Int or StaticKind.Float ? operand : StaticType.Dynamic,
@@ -812,6 +825,12 @@ namespace fire.Compiler
         {
             var left = Infer(b.Left);
             var right = Infer(b.Right);
+            if (b.Op is BinaryOp.And or BinaryOp.Or)
+            {
+                string op = b.Op == BinaryOp.And ? "&&" : "||";
+                CheckLogicalOperand(left, op, b.Line);
+                CheckLogicalOperand(right, op, b.Line);
+            }
             var type = InferBinaryType(b, left, right);
             var unit = BinaryUnit(b, left, right);
             return type.IsNumber ? type.WithUnit(unit) : type;

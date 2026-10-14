@@ -9,43 +9,30 @@ tested is listed here. The order inside a group is the suggested order of work.
 
 | # | Task | Why |
 |---|---|---|
-| 1.1 | **A math library** (`Math.Sqrt`, `Abs`, `Min`, `Max`, `Round`, `Floor`, `Ceiling`, `Sin`, `Cos`, `Tan`, `Atan2`, `Log`, `Exp`, `PI`, `E`) - in the VM and natively, with units where they make sense (`Math.Sqrt(9m^2)` is `3m`) | today only `^` exists; a square root needs `x ^ 0.5` |
-| 1.2 | **Numbers from text**: `"42".ToInt()`, `"2.5".ToFloat()`, `int.TryParse`-like methods that return `undefined` instead of throwing, optionally with a unit (`"5mm"`) | reading numbers from files, the console and the network |
-| 1.3 | **Ordering strings**: `string.CompareTo(other)` (ordinal) and `<`/`>` on strings | sorting names with `OrderBy` works only through a key today |
-| 1.4 | `PseudoRandom.Pick` and `Shuffle` for arrays too (today they take a `List`) | `rnd.Pick([1, 2, 3])` is an error |
-| 1.5 | A `StringBuilder` (or `List<string>.Join`) for building long texts | `+=` in a loop copies the text every time |
+| 1.1 | Numbers with a unit from text: `"5mm".ToFloat()` | `ToInt`/`ToFloat` read only the number |
+| 1.2 | `Math` for whole arrays and lists (`Sum`, `Average`, `Min`, `Max` of many values) | today a loop or `#import "linq"` |
 
 ## 2. Language
 
 | # | Task | Why |
 |---|---|---|
-| 2.1 | **Call a lambda stored in a field directly**: `this.onClick()` | today it looks for a method `onClick`; the lambda has to be read into a variable first |
-| 2.2 | **Rebind a lambda**: `var b = a on other` (described in the specification, not implemented) | reuse a handler for several objects |
-| 2.3 | `switch` with several values per case: `case 5, 6:` | today two cases or a range are needed |
-| 2.4 | The conditional operator `cond ? a : b` | short choices in expressions |
-| 2.5 | `do { ... } while (cond)` | loops that run at least once |
-| 2.6 | Leaving nested loops: `break` with a label, or `break 2` | today a flag or a method with `return` is needed |
-| 2.7 | Combined units in declarations: `float speed : m/s` | today only a single unit name can be written; `m/s` comes only from a calculation |
-| 2.8 | Enum names: `Color.Red.ToString()` gives `"Red"`, `Color.Parse("Red")` | `print` shows only the number |
-| 2.9 | `;` after a block as a separator: `foreach (x in a) { ... }; return t` on one line | today it is a syntax error |
-| 2.10 | Digit separators in number literals: `1_000_000` | readability of large numbers |
-| 2.11 | Bit widths take effect on assignment: `int[8] x = 300` wraps to `44`, `float[32]` rounds (the mechanism `Value.TruncateTo` exists) | today the width is only metadata in the VM |
-| 2.12 | `readonly` fields are protected everywhere: `obj.field = ...` from outside is an error (today only `this.field = ...` outside the constructor is checked) | `c.r = 5` on a readonly field works today |
+| 2.1 | `break`/`continue` with a number across a `try` with `finally` | `break 2` cannot leave such a `try` yet |
+| 2.2 | Enum types: `Color c` as a declared type, `c.ToString()` gives the name | today an enum value is an `int`; `Color.Name(c)` gives the name |
+| 2.3 | Combined units at a return type: `float:m/s Speed()` | combined units work in declarations of variables, fields and parameters |
+| 2.4 | Bit widths `float[16]` and `float[8]` take effect on assignment | `int[N]`, `byte` and `float[32]` are cut, the small floats not yet |
 
 ## 3. Type checker
 
 | # | Task | Why |
 |---|---|---|
-| 3.1 | A condition that is not a `bool` is reported (`TC001`) where the type is known - **done**; also for `&&`, `||` and `!` operands | an `int` as condition is a run-time error |
-| 3.2 | Lambda parameters of selector types (`lambda member<T>`) get the type `T` | today the parameter is `any`, so `x => x.nmae` is found only at run time |
-| 3.3 | Report a comparison with `<` between two strings at compile time | it is an `ArgumentException` at run time |
+| 3.1 | Check the target of `!` statically (`x!Dog` where `x` can never be a `Dog`) | today a cast that can never succeed is found only at run time |
+| 3.2 | Know the enum type: `Color c = 5` is a warning, `c.ToString()` the name (see 2.2) | today an enum value is an `int` for the checker |
 
 ## 4. Runtime and native backend
 
 | # | Task | Why |
 |---|---|---|
-| 4.1 | Native backend: an operator with operands of the wrong type (`undefined * 2`, `-"a"`) and a non-`bool` condition throw an `ArgumentException` like the VM | the native program ends there today; the VM throws a catchable exception |
-| 4.2 | Native backend: the same messages as the VM for all run-time errors (conformance tests for error texts) | users see the same error in the editor and on the device |
+| 4.1 | Conformance tests that compare the error texts of VM and native for every run-time error | the texts match for all errors found so far, but they are checked by single tests |
 
 ## 5. Documentation and tools
 
@@ -66,3 +53,15 @@ These problems were found by the examples and fixed right away:
 - `"42"!int`, `undefined * 2`, `-"a"`, `!5`, an index on a number, `x++` on `undefined`, a non-`bool` condition and other operations on values of the
   wrong type crashed the VM with an internal error - they are catchable `ArgumentException`s now.
 - `e.resume(...)` and selector lambdas got false warnings of the type checker.
+- `!` converts from and to `char` (`65!char`, `'a'!int`), cuts to a bit width (`300!int[8]`, `x!byte`, `x!float[32]`) and casts an object to a
+  derived class or an interface (`animal!Dog`, checked at run time).
+- New: the conditional operator `cond ? a : b`, `do ... while`, `break 2`/`continue 2`, `case 5, 6:`, digit separators (`1_000_000`), a `;` after a
+  block, calling a lambda in a field (`this.onClick()`), rebinding a lambda (`f on other`), `Color.Name`/`Parse`/`IsDefined` for enums, combined
+  units in declarations (`float v : m/s`), bit widths that take effect on every assignment, `readonly` fields protected from outside.
+- New in the standard library: `Math` (`Sqrt` with units, `Abs`, `Min`, `Max`, `Round`, ..., `Sin`, `Atan2`, `Log`, `PI`, `E`), numbers from text
+  (`ToInt`, `ToFloat`, `TryToInt`, `TryToFloat`), `CompareTo` and `<`/`>` on strings, `Join` and `StringBuilder`, `Pick`/`Shuffle` for arrays.
+- An error that a native of a package throws (`IndexOutOfBounds`, ...) arrives in the VM as a catchable exception of its class.
+- The type checker reports operands of `&&`, `||` and `!` that are not `bool` (`TC001`), and the parameter of a selector lambda (`lambda member<T>`)
+  has the type `T`, so `x => x.nmae` is found at compile time.
+- Native backend: an operator with operands of the wrong type, a non-`bool` condition, a wrong index and a unit conflict throw the same catchable
+  `ArgumentException`/`IndexOutOfBoundsException`/`UnitMismatchException` with the same message as the VM.
