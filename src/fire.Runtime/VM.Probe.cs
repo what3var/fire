@@ -122,7 +122,8 @@ namespace fire.Runtime
         }
 
         /// <summary>Registers a probe. `member == null`: all members. false with a message if the target is not an object, the member is unknown or
-        /// the handler is not a lambda with 0 to 4 parameters.</summary>
+        /// the handler is not a lambda with 0 to 4 parameters; false with an EMPTY message if the getter of a computed property threw while it was
+        /// read for the first time - that exception is already on its way to a handler, the caller must not raise another one.</summary>
         public bool TryProbeAdd(Value target, string? member, bool changing, Value handler, out long id, out string error)
         {
             id = 0;
@@ -141,7 +142,7 @@ namespace fire.Runtime
             {
                 if (changing) { error = $"'{member}' of '{obj.ClassName}' is a computed property (a getter without a setter): it can only be probed with 'changed'."; return false; }
                 var current = CallMethodNested(obj, "get_" + member, Array.Empty<Value>());
-                if (current == null) { error = $"The getter of '{member}' threw an exception."; return false; }
+                if (current == null) return false;   // the getter's own exception is already redirected
                 last = current.Value;
             }
 
@@ -188,7 +189,10 @@ namespace fire.Runtime
             var target = Pop();
             string? member = (flags & 2) != 0 ? null : _constants[nameIdx].AsString();
             if (!TryProbeAdd(target, member, (flags & 1) != 0, handler, out long id, out string error))
+            {
+                if (error.Length == 0) return;   // the getter threw: execution already continues in its handler
                 throw new ScriptErrorException(ProbeErrorClass(error), error);
+            }
             Push(Value.MakeInt(id));
         }
 

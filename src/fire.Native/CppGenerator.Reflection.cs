@@ -450,6 +450,7 @@ namespace fire.Native
             if (changing) { std::snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
             OwnList current = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
             Value now = getter(target, &current);
+            if (FIRE_UNLIKELY(g_unwind.active)) { leave(&current); return -2; }   // the getter threw: its exception is already unwinding, no probe
             int64_t id = probeAddEntry(asObj(target), member, changing, handler, deps, getter, now);
             leave(&current);
             return id;
@@ -479,6 +480,7 @@ namespace fire.Native
     if (member.kind == K_String) { strToUtf8(member, m, sizeof m); mem = m; }
     char err[500];
     int64_t id = rf_probeAdd(obj, mem, std::strcmp(k, ""changing"") == 0, handler, err, sizeof err);
+    if (id == -2) return Undef();   // the getter's own exception unwinds
     if (id < 0) return rfFail(err);
     return Int(id);
 }

@@ -2720,7 +2720,7 @@ namespace fire.Native
                 {
                     Need(2); UseProbes();
                     string member = (ins.A[1] & 2) != 0 ? "nullptr" : CString(Str(ins.A[0]));
-                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id < 0) {{ fireError(std::strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
+                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id == -2) {{ }} else if (id < 0) {{ fireError(std::strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
                     Check();
                     d--; SetR(d - 1, false); return Next();
                 }

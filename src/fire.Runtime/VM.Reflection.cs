@@ -32,6 +32,9 @@ namespace fire.Runtime
         /// <summary>Throws a `ReflectionException` (catchable) and remembers the redirection for the native call.</summary>
         internal Value ReflectFail(string message) => NativeFail("ReflectionException", message);
 
+        /// <summary>A native function whose nested script call already redirected an exception: it returns no result (see CallNativeGuarded).</summary>
+        internal Value NativeRedirected() { _nativeRedirected = true; return default; }
+
         /// <summary>Raises, from within a NATIVE function, a catchable script exception of the class `className` (with the constructor `(message)`) and
         /// remembers the redirection: the native call then returns no result (see CallNativeGuarded).</summary>
         internal Value NativeFail(string className, string message)

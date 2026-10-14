@@ -139,7 +139,7 @@ namespace fire.Runtime
             if (kind is not ("changed" or "changing"))
                 return vm.ReflectFail($"The kind of a probe is \"changed\" or \"changing\", got: \"{kind}\".");
             if (!vm.TryProbeAdd(obj, member.Kind == ValueKind.String ? member.AsString() : null, kind == "changing", handler, out long id, out string error))
-                return vm.ReflectFail(error);
+                return error.Length == 0 ? vm.NativeRedirected() : vm.ReflectFail(error);
             return Value.MakeInt(id);
         }
 

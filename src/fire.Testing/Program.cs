@@ -16799,6 +16799,21 @@ else
             p.first = "Ada"
             print(p.Name)
             """),
+        ("Probes auf berechnete Properties: wirft der Getter beim Registrieren, ist das abfangbar und es bleibt keine Probe zurueck (probe und Reflect.Probe)", """
+            #import "reflection"
+            class Rod {
+                int length = 2
+                int Inv { get { return 10 / (this.length - 2) } }
+            }
+            var r = new Rod()
+            try { var h = probe r.Inv changed (any o, any n) => { print("inv " + n) } } catch (e) { print("probe: " + e.message) }
+            try { Reflect.Probe(r, "Inv", "changed", (any o, any n) => { print("reflect " + n) }) } catch (e) { print("reflect: " + e.message) }
+            r.length = 7
+            var h2 = probe r.Inv changed (any o, any n) => { print("inv " + n) }
+            r.length = 12
+            try { r.length = 2 } catch (e) { print("write: " + e.message) }
+            print("end " + r.length)
+            """),
         ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m, Rueckgabe am Typ, Einheit aus der Initialisierung), Overflow, unitless-Pruefung zur Laufzeit", """
             int i0 = 5mm
             i0 = 3cm
