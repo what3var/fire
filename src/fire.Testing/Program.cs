@@ -6025,9 +6025,9 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         catch (IndexOutOfBoundsException e) { print("Index " + e.index + " Laenge " + e.length) }
         """, "ell", "HELLO", "True", "Index 9 Laenge 5");
 
-    CheckExt("native Funktion: falsches Argument wird gemeldet", $$"""
-        print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x"))
-        """, "AUSNAHME: __StringCall(id, text, ...) expects the string as the second argument.");
+    CheckExt("native Funktion: falsches Argument wird gemeldet (als abfangbare ArgumentException)", $$"""
+        try { print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x")) } catch (ArgumentException e) { print("caught: " + e.message) }
+        """, "caught: __StringCall(id, text, ...) expects the string as the second argument.");
 
     CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "may only contain methods");
     CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "property 'Size' is not allowed");
@@ -6306,7 +6306,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         """, new[] { "4", "4", "undefined", "14", "12", "99", "77" });
 
     // --- Value: equality and arithmetic (compact layout, fast paths)
-    CheckPerf("Gleichheit: Art, Einheit und Breite", """
+    CheckPerf("Gleichheit: Zahlen nach Wert (int/float, Einheiten umgerechnet)", """
         print(1 == 1)
         print(1 == 1.0)
         print(5mm == 5)
@@ -6316,7 +6316,32 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(1.5 == 1.5)
         print(undefined == undefined)
         print(1 != 2)
-        """, new[] { "True", "False", "True", "True", "True", "True", "True", "True", "True" });
+        print(1m == 100cm)
+        print(1m == 1cm)
+        """, new[] { "True", "True", "True", "True", "True", "True", "True", "True", "True", "True", "False" });
+
+    CheckPerf("Falsche Operanden sind abfangbare ArgumentExceptions (kein Absturz der VM)", """
+        class Probe {
+            static undefined Try(string what, any lambda f) {
+                try { print(what + " " + f()) } catch (ArgumentException e) { print(what + " caught") }
+            }
+        }
+        any u = undefined
+        any s = "a"
+        any n = 5
+        Probe.Try("mul", () => u * 2)
+        Probe.Try("neg", () => -s)
+        Probe.Try("not", () => !n)
+        Probe.Try("lt", () => s < 1)
+        Probe.Try("inc", () => { any x = undefined; x++; return x })
+        Probe.Try("idx", () => { any x = 5; return x[0] })
+        Probe.Try("cond", () => { if (n) { return 1 } return 0 })
+        Probe.Try("conv", () => "42"!int)
+        any g = undefined
+        try { g++ } catch (ArgumentException e) { print("global caught") }
+        print("end")
+        """, new[] { "mul caught", "neg caught", "not caught", "lt caught", "inc caught", "idx caught", "cond caught", "conv caught", "global caught", "end" },
+        new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
     CheckPerf("Arithmetik: int, float, gemischt, Einheiten", """
         print(7 + 3)
@@ -13926,6 +13951,48 @@ static int CountOccurrences(string haystack, string needle)
         }
     }
 
+    // The language reference (docs/language, copied to Help\Language): every link stays in the folder and points to an existing page and heading;
+    // its contents page gives the entries of Help > The fire Language.
+    string languageDir = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "..", "docs", "language");
+    if (Directory.Exists(languageDir))
+    {
+        HashSet<string> AnchorsOf(string file)
+        {
+            var set = new HashSet<string>();
+            foreach (var block in fire.Editor.MarkdownParser.Parse(File.ReadAllText(file)))
+                if (block is fire.Editor.MdHeading h) fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), set);
+            return set;
+        }
+        var broken = new List<string>();
+        foreach (var page in Directory.GetFiles(languageDir, "*.md").OrderBy(f => f))
+        {
+            string text = File.ReadAllText(page);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\]\(([^)\s]*)\)"))
+            {
+                string target = m.Groups[1].Value;
+                if (target.Contains("://")) continue;
+                int hash = target.IndexOf('#');
+                string file = hash < 0 ? target : target.Substring(0, hash), anchorName = hash < 0 ? "" : target.Substring(hash + 1);
+                string targetPath = file.Length == 0 ? page : Path.Combine(languageDir, file);
+                if (file.Contains('/') || file.Contains('\\') || !File.Exists(targetPath)) { broken.Add($"{Path.GetFileName(page)} -> {target}"); continue; }
+                if (anchorName.Length > 0 && !AnchorsOf(targetPath).Contains(anchorName)) broken.Add($"{Path.GetFileName(page)} -> {target}");
+            }
+        }
+        CheckMd("Sprachdoku: alle Links zeigen auf vorhandene Seiten und Ueberschriften im selben Ordner", string.Join(", ", broken), "");
+        var (topics, more) = fire.Editor.LanguageHelp.Contents(File.ReadAllText(Path.Combine(languageDir, "README.md")));
+        CheckMd("Sprachdoku: das Inhaltsverzeichnis liefert die Themenseiten fuers Hilfemenue",
+            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "19 1. Basics=01-basics.md 19-standard-library.md");
+        CheckMd("Sprachdoku: weitere Seiten (Roadmap) nach den Themen", string.Join(",", more.Select(p => p.Title + "=" + p.File)), "Roadmap=roadmap.md");
+        var unlisted = Directory.GetFiles(languageDir, "*.md").Select(Path.GetFileName)
+            .Where(f => f != "README.md" && !topics.Concat(more).Any(t => t.File == f)).ToList();
+        CheckMd("Sprachdoku: jede Seite steht im Inhaltsverzeichnis", string.Join(",", unlisted), "");
+    }
+    else
+    {
+        mdFailures++;
+        Console.WriteLine($"FEHLER: docs/language nicht gefunden: {languageDir}");
+    }
+
     Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -17014,6 +17081,24 @@ else
     // Graphics (bridges/fire_bridge_graphics.hpp)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Vergleiche: == mit Einheiten und int/float, Zeichen mit <, Fehler als ArgumentException", """
+            print(1m == 100cm)
+            print(1m == 1cm)
+            print(1000mm != 1m)
+            print(1 == 1.0)
+            print(2.5 == 2)
+            var a = 1m
+            var b = 100cm
+            if (a == b) { print("same length") }
+            print('a' < 'b')
+            print('z' <= 'a')
+            print("abc" == "abc")
+            try { print("a" < "b") } catch (ArgumentException e) { print("caught: " + e.message) }
+            try { print("42"!int) } catch (ArgumentException e) { print("caught: " + e.message) }
+            """),
+    }).ToArray();
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
         ("Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)", """
             class Person {
                 string name
@@ -19737,13 +19822,13 @@ else
                 string abiVm;
                 try { abiVm = vmOutput(abiScript); } catch (Exception ex) { abiVm = ex.Message; }
                 string abiFail;
-                try { vmOutput("#import \"pkabi\"\nPkAbi.Fail(7)"); abiFail = ""; } catch (Exception ex) { abiFail = ex.Message; }
+                try { abiFail = vmOutput("#import \"pkabi\"\ntry { PkAbi.Fail(7) } catch (IndexOutOfBoundsException e) { print(\"caught: \" + e.message) }"); } catch (Exception ex) { abiFail = ex.Message; }
                 CheckNat("Paket: Zahlen, Text (UTF-16), Arrays und Byte-Puffer gehen ueber die C-ABI hin und zurueck",
                     abiVm == "HELLO W\u00f6RLD\n6.5\n2 3 0 255\n", abiVm);
                 string fillVm;
                 try { fillVm = vmOutput("#import \"pkabi\"\nvar big = new byte[1000000]\nprint(PkAbi.Fill(big, 7))\nprint(big[0] + \" \" + big[500000] + \" \" + big[999999])\nvar small = new byte[4]\nPkAbi.Fill(small, 9)\nprint(small[3])"); } catch (Exception ex) { fillVm = ex.Message; }
                 CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
-                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) meldet die VM mit seinem Text", abiFail.Contains("Array index 7 out of range"), abiFail);
+                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) wird eine abfangbare Ausnahme seiner Klasse mit seinem Text", abiFail.StartsWith("caught: ") && abiFail.Contains("Array index 7 out of range"), abiFail);
 
                 // per platform: sources of the target are added; the VM uses those of this machine
                 string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>

@@ -150,6 +150,13 @@ namespace fire.Compiler
         private void Report(string code, string message, int line) =>
             _diagnostics.Add(new Diagnostic(line, message, Strict && code != UnitLossCode ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
+        /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
+        private void CheckCondition(Expr condition)
+        {
+            var type = Infer(condition);
+            if (!Assignable(type, StaticType.Bool)) Report(AssignCode, $"A condition must be a 'bool', not '{type}'", condition.Line);
+        }
+
         private void CheckAssignable(StaticType value, StaticType target, int line, string what, string code = AssignCode, Expr? valueExpr = null)
         {
             if (!Assignable(value, target)) { Report(code, $"Cannot assign a value of type '{value}' to {what} of type '{target}'", line); return; }
@@ -474,15 +481,15 @@ namespace fire.Compiler
                 case ExprStmt e: Infer(e.Expression); break;
                 case VarDeclStmt v: CheckVarDecl(v); break;
                 case IfStmt i:
-                    Infer(i.Condition);
+                    CheckCondition(i.Condition);
                     CheckScoped(i.Then);
                     if (i.Else != null) CheckScoped(i.Else);
                     break;
-                case WhileStmt w: Infer(w.Condition); CheckScoped(w.Body); break;
+                case WhileStmt w: CheckCondition(w.Condition); CheckScoped(w.Body); break;
                 case ForStmt f:
                     Push();
                     if (f.Init != null) Check(f.Init);
-                    if (f.Condition != null) Infer(f.Condition);
+                    if (f.Condition != null) CheckCondition(f.Condition);
                     if (f.Increment != null) Infer(f.Increment);
                     CheckScoped(f.Body);
                     Pop();
@@ -925,6 +932,7 @@ namespace fire.Compiler
         private void ReportMissingMethod(MemberExpr callee, StaticType target, int argc)
         {
             if (target.Kind != StaticKind.Class || !FullyKnown(target) || callee.Name is "TakeLocal" or "TakeUpwards" or "TakeGlobal" or "TakeTo") return;
+            if (callee.Name == "resume" && DerivesFrom(target.Class!, "Exception")) return;   // the built-in `e.resume(value)` of every exception (SPEC 7.5)
             if (FindMember(target, callee.Name) != null) return;   // (a field or property: a lambda in it, or something else the runtime decides)
             var named = Chain(target).SelectMany(c => c.Decl.Members.OfType<MethodDecl>()).Where(m => m.Name == callee.Name).ToList();
             if (named.Count == 0) Report(UnknownMemberCode, $"'{target}' has no method '{callee.Name}'", callee.Line);
@@ -973,8 +981,8 @@ namespace fire.Compiler
                 else if (context != null) parameterTypes.Add(context[i]);
                 else
                 {
-                    // (a target with another number of parameters is reported as such)
-                    if (expected is not { Kind: StaticKind.Lambda, ParamCount: >= 0 })
+                    // (a target with another number of parameters is reported as such; a selector `lambda member<T>` (ParamCount -1) takes `x => x.member` as it is)
+                    if (expected is not { Kind: StaticKind.Lambda })
                         Report(UntypedCode, $"Parameter '{p.Name}' of the lambda has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed).", lam.Line);
                     parameterTypes.Add(StaticType.Dynamic);
                 }

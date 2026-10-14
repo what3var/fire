@@ -639,12 +639,29 @@ namespace fire.Values
         /// (e.g. Bool vs Int simply yields false, no error).</summary>
         public static bool ValuesEqual(Value a, Value b) => a.Equals(b);
 
+        /// <summary>The operators `==`/`!=`: numbers compare by value - an `int` and a `float` alike (`1 == 1.0`), and units of the same dimension are converted
+        /// like for `<` (`1m == 100cm`); a number with a unit of another dimension (or a unitless one) is compared as written (`5cm == 5`, the type checker
+        /// reports it, TC006). Everything else as <see cref="ValuesEqual"/>.</summary>
+        public static bool OperatorEquals(Value a, Value b)
+        {
+            if (a.Kind is not (ValueKind.Int or ValueKind.Float) || b.Kind is not (ValueKind.Int or ValueKind.Float)) return a.Equals(b);
+            if (!ReferenceEquals(a._ref, b._ref))
+            {
+                var ua = a.Unit ?? Values.Unit.Unitless;
+                var ub = b.Unit ?? Values.Unit.Unitless;
+                if (!ua.Equals(ub) && ua.IsCompatibleWith(ub)) AlignUnits(ref a, ref b);
+            }
+            if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int) return a._intValue == b._intValue;
+            return a.ToDouble() == b.ToDouble();
+        }
+
         /// <summary>For '&lt;'/'&lt;='/'&gt;'/'&gt;=' - only for numeric values with
         /// matching unit (like Add/Subtract).</summary>
         public static int Compare(Value a, Value b)
         {
             if (BothNumericSameUnit(a, b))
                 return a.ToDouble().CompareTo(b.ToDouble());
+            if (a.Kind == ValueKind.Char && b.Kind == ValueKind.Char) return a.AsChar().CompareTo(b.AsChar());   // characters by their code
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);

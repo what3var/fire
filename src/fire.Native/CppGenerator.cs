@@ -114,7 +114,7 @@ namespace fire.Native
         {
             ["operator+"] = "addR(a, b, list)", ["operator-"] = "sub(a, b)", ["operator*"] = "mul(a, b)", ["operator/"] = "divide(a, b)", ["operator%"] = "modulo(a, b)",
             ["operator^"] = "power(a, b)", ["operator&"] = "bitAnd(a, b)", ["operator|"] = "bitOr(a, b)", ["operator#"] = "bitXor(a, b)", ["operator<<"] = "shl(a, b)", ["operator>>"] = "shr(a, b)",
-            ["operator=="] = "Bool(eq(a, b))", ["operator!="] = "Bool(!eq(a, b))", ["operator<"] = "Bool(lt(a, b))", ["operator<="] = "Bool(le(a, b))",
+            ["operator=="] = "Bool(opEq(a, b))", ["operator!="] = "Bool(!opEq(a, b))", ["operator<"] = "Bool(lt(a, b))", ["operator<="] = "Bool(le(a, b))",
             ["operator>"] = "Bool(gt(a, b))", ["operator>="] = "Bool(ge(a, b))",
         };
 
@@ -2065,8 +2065,8 @@ namespace fire.Native
                 case OpCode.LogicalNot: return Unary("lnot");
                 case OpCode.BitNot: return Unary("bitNot");
 
-                case OpCode.Eq: return Compare("eq", false, "operator==");
-                case OpCode.NotEq: return Compare("eq", true, "operator!=");
+                case OpCode.Eq: return Compare("opEq", false, "operator==");
+                case OpCode.NotEq: return Compare("opEq", true, "operator!=");
                 case OpCode.Lt: return Compare("lt", false, "operator<");
                 case OpCode.LtEq: return Compare("le", false, "operator<=");
                 case OpCode.Gt: return Compare("gt", false, "operator>");
@@ -2103,8 +2103,8 @@ namespace fire.Native
                 case OpCode.JumpIfNotLtEq: return JumpIfNot("le", false, "operator<=");
                 case OpCode.JumpIfNotGt: return JumpIfNot("gt", false, "operator>");
                 case OpCode.JumpIfNotGtEq: return JumpIfNot("ge", false, "operator>=");
-                case OpCode.JumpIfNotEq: return JumpIfNot("eq", false, "operator==");
-                case OpCode.JumpIfNotNotEq: return JumpIfNot("eq", true, "operator!=");
+                case OpCode.JumpIfNotEq: return JumpIfNot("opEq", false, "operator==");
+                case OpCode.JumpIfNotNotEq: return JumpIfNot("opEq", true, "operator!=");
 
                 case OpCode.EnterScope:
                 {

@@ -829,14 +829,27 @@ inline Value relabelUnit(Value v, uint32_t target) {
     v.unit = target;
     return v;
 }
-/// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType).
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
+/// The name of a kind as the VM writes it in its messages (ValueKind).
+inline const char* coerceKindName(uint8_t kind) {
+    switch (kind) {
+        case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_Pointer: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        default: return "Undefined";
+    }
+}
+/// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType); anything else is an ArgumentException.
 inline Value coerceType(Value v, uint8_t target) {
     if (v.kind == target) return v;
     if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
     if (v.kind == K_Float && target == K_Int) return Int((int64_t)std::nearbyint((double)v.f), v.unit);
     if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
     if (v.kind == K_Undefined && target == K_Float) return Float(0, v.unit);
-    fatal("A value of this type cannot be coerced to the requested type.");
+    char text[96];
+    std::snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(v.kind), coerceKindName(target));
+    return fireError("ArgumentException", text);
 }
 
 inline Value negate(Value v) {
@@ -889,7 +902,11 @@ inline int compare(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (isNumeric(a) && isNumeric(b)) return compareNumeric(a, b);
     } else if (isNumeric(a) && isNumeric(b)) { VPair p = alignUnits(a, b); return compareNumeric(p.a, p.b); }
-    opFailed("<");
+    if (a.kind == K_Char && b.kind == K_Char) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
+    char msg[64];
+    std::snprintf(msg, sizeof msg, "Type %s is not numeric.", coerceKindName(isNumeric(a) ? b.kind : a.kind));
+    fireError("ArgumentException", msg);
+    return 0;
 }
 inline bool lt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
@@ -934,8 +951,19 @@ inline bool eq(Value a, Value b) {
         default: return a.p == b.p;
     }
 }
+/// Value.OperatorEquals - the `==` of the language: numbers compare by value (`1 == 1.0`), compatible units are converted (`1m == 100cm`).
+inline bool opEq(Value a, Value b) {
+    if (!isNumeric(a) || !isNumeric(b)) return eq(a, b);
+    if (a.unit != b.unit && !unitEq(a.unit, b.unit) && unitCompatible(a.unit, b.unit)) { VPair p = alignUnits(a, b); a = p.a; b = p.b; }
+    if (a.kind == K_Int && b.kind == K_Int) return a.i == b.i;
+    return toR(a) == toR(b);
+}
 inline bool truthy(Value v) {
-    if (FIRE_UNLIKELY(v.kind != K_Bool)) fatal("A condition must be a bool.");
+    if (FIRE_UNLIKELY(v.kind != K_Bool)) {
+        char msg[64];
+        std::snprintf(msg, sizeof msg, "A condition must be a bool, not %s.", coerceKindName(v.kind));
+        fatal(msg);
+    }
     return v.i != 0;
 }
 
