@@ -14284,6 +14284,37 @@ else
             unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
             prefixed unit Watt: W { coerce kg*m^2/s^3 => 1 }
             """),
+        ("Eigene Einheiten mit Offset und Umrechnungsfunktionen (auch eine, die wirft)", """
+            print(100.0C:F)
+            print(32.0F:C + " " + 0.0C:K + " " + (20C + 9F) + " " + (20.0C + 50.0F) + " " + (100C > 200F))
+            float t : C = 300K
+            print(t)
+            print(30.0dBm:W + " " + 1.0W:dBm + " " + (20.0dBm + 1.0mW) + " " + 30.0mpg:lhkm)
+            float v : dBm = 2mW
+            print(v + " " + 20C * 2 + " " + 20.0C * 2s + " " + 20.0C:unitless)
+            print(2.0dBx:mW)
+            try { print(9.0dBx:mW) } catch (ArgumentException e) { print("caught: " + e.message) }
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Fahrenheit: F { coerce C => (value - 32) * 5 / 9 }
+            prefixed unit Watt: W
+            unit DecibelMilliwatt: dBm
+            {
+                coerce to mW => 10 ^ (value / 10)
+                coerce from mW => 10 * Math.Log10(value)
+            }
+            unit MilesPerGallon: mpg
+            {
+                coerce to km/l => value * 1.609344 / 3.785411784
+                coerce from km/l => value / 1.609344 * 3.785411784
+            }
+            unit LitersPerHundredKm: lhkm { coerce to km/l => 100 / value
+                                           coerce from km/l => 100 / value }
+            class Bad { static float Boom(float x) { if (x > 5) { throw new ArgumentException("too big") }
+                                                     return x } }
+            unit Test: dBx { coerce to mW => Bad.Boom(value)
+                             coerce from mW => value }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))

@@ -42,13 +42,31 @@ namespace fire.Values
 
         public static readonly Unit Unitless = new Unit(new Dictionary<string, int>(), 1.0, null);
 
+        /// <summary>A unit with an offset (`unit Celsius: C { coerce K => value + 273.15 }`): value_in_base = value * Scale + Offset. 0 for the units of
+        /// fire and every unit that is only a factor.</summary>
+        public double Offset { get; }
+
+        /// <summary>A unit converted by functions (`coerce to W => 10 ^ (value / 10)` and `coerce from W => ...`): the name of the hidden class whose static
+        /// methods `To` and `From` convert a value into the reference unit and back; Scale and Offset are those of the reference unit. Null for every
+        /// other unit.</summary>
+        public string? Converter { get; }
+
         [MemoryPackConstructor]
-        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol)
+        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter)
         {
             Dimensions = dimensions;
             Scale = scale;
             _displaySymbol = displaySymbol;
+            Offset = offset;
+            Converter = converter;
         }
+
+        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol) : this(dimensions, scale, displaySymbol, 0, null) { }
+
+        /// <summary>A unit that is only a factor of its base unit (all units of fire, `unit Inch: in { coerce m => 0.0254 }`) - not one with an offset or
+        /// conversion functions.</summary>
+        [MemoryPackIgnore]
+        public bool IsLinear => Offset == 0 && Converter == null;
 
         public bool IsUnitless => Dimensions.Count == 0;
 
@@ -122,7 +140,7 @@ namespace fire.Values
 
             // 1b) A unit of the program (`unit Inch: in { ... }`), by its symbol or its name
             if (custom.Count > 0 && custom.TryGetValue(symbol, out var own))
-                return new Unit(own.DimensionTable, own.Scale, own.Symbol);
+                return new Unit(own.DimensionTable, own.Scale, own.Symbol, own.Offset, own.Converter);
 
             // 2) Prefix + prefixable base unit, e.g. "mm" = 'm'(milli) + "m"(metre)
             if (symbol.Length >= 2)
@@ -152,8 +170,12 @@ namespace fire.Values
         // ---------------------------------------------------------------
         // Units of the program (`unit Inch: in { coerce m => 0.0254 }`, SPEC "Own units")
         // ---------------------------------------------------------------
-        private static Dictionary<string, CustomUnit> _customUnits = new();
-        private static List<CustomUnit> _customUnitList = new();
+        // Per thread: a compilation reads the declarations and uses them on its thread (several programs may be compiled at the same time); a running
+        // program needs none of them (its declarations carry their units, see DemandText).
+        [ThreadStatic] private static Dictionary<string, CustomUnit>? _customUnitTable;
+        [ThreadStatic] private static List<CustomUnit>? _customUnitsOfThread;
+        private static Dictionary<string, CustomUnit> _customUnits => _customUnitTable ??= new();
+        private static List<CustomUnit> _customUnitList => _customUnitsOfThread ??= new();
 
         /// <summary>The units the program declares (in the order of their declarations).</summary>
         public static IReadOnlyList<CustomUnit> CustomUnits => _customUnitList;
@@ -172,9 +194,8 @@ namespace fire.Values
                 table[u.Symbol] = u;
                 if (u.Name != u.Symbol) table.TryAdd(u.Name, u);
             }
-            _customUnitList = units.ToList();
-            _customUnits = table;
-            Value.ForgetDemandUnits();
+            _customUnitsOfThread = units.ToList();
+            _customUnitTable = table;
         }
 
         private const char DemandMark = '§';
@@ -189,7 +210,7 @@ namespace fire.Values
             if (!unitText.Split(CombiningChars).Any(IsCustomUnitWord)) return unitText;
             var u = Parse(unitText);
             string dims = string.Join(",", u.Dimensions.OrderBy(d => d.Key, StringComparer.Ordinal).Select(d => d.Key + ":" + d.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-            return $"{DemandMark}{u}{DemandMark}{dims}{DemandMark}{u.Scale.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}";
+            return $"{DemandMark}{u}{DemandMark}{dims}{DemandMark}{u.Scale.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}{DemandMark}{u.Offset.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}{DemandMark}{u.Converter}";
         }
 
         /// <summary>The unit of a demand as the user wrote it (for messages): `#§in§m:1§0.0254` is `in`, `any §in§...` is `any in`.</summary>
@@ -202,14 +223,15 @@ namespace fire.Values
 
         private static Unit DecodeDemand(string text)
         {
-            var parts = text.Split(DemandMark);   // "", symbol, dimensions, scale
+            var parts = text.Split(DemandMark);   // "", symbol, dimensions, scale, offset, converter
             var dims = new Dictionary<string, int>();
             foreach (var entry in parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
                 int colon = entry.LastIndexOf(':');
                 dims[entry.Substring(0, colon)] = int.Parse(entry.Substring(colon + 1), System.Globalization.CultureInfo.InvariantCulture);
             }
-            return new Unit(dims, double.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture), parts[1]);
+            return new Unit(dims, double.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture), parts[1],
+                double.Parse(parts[4], System.Globalization.CultureInfo.InvariantCulture), parts[5].Length == 0 ? null : parts[5]);
         }
 
         /// <summary>A unit symbol that only a unit of the program defines (a word the lexer reads as a keyword, `in`, can still be a unit then).</summary>
@@ -244,6 +266,8 @@ namespace fire.Values
         {
             if (!IsCompatibleWith(target))
                 throw new UnitMismatchException(this, target);
+            if (!IsLinear || !target.IsLinear)
+                throw new InvalidOperationException($"'{this}' and '{target}' are not converted by a factor (one of them has an offset or conversion functions).");
             if (ReferenceEquals(target, this)) return 1.0;
             var cache = _factorCache;
             if (cache != null && ReferenceEquals(cache.Target, target)) return cache.Factor;
@@ -252,7 +276,42 @@ namespace fire.Values
             return factor;
         }
 
-        private sealed record FactorCache(Unit Target, double Factor);
+        private sealed record FactorCache(Unit Target, double Factor, double Shift = 0);
+
+        /// <summary>Calls the conversion function `method` (`To` or `From`) of the hidden class of a unit (see Converter) - set by the VM.</summary>
+        public static Func<string, string, double, double>? ConverterCall;
+
+        /// <summary>A number in this unit converted into <paramref name="target"/> (the same dimension): by the factor for units that are only one; with an
+        /// offset (`20C` is `68F`) and conversion functions it goes through the reference units: to(value) * scale + offset is the base value, and
+        /// back. The factor and the shift between two units have no rounding error of their own (NiceFactor).</summary>
+        public double Convert(double value, Unit target)
+        {
+            if (ReferenceEquals(target, this)) return value;
+            if (IsLinear && target.IsLinear) return value * ConversionFactorTo(target);
+            if (!IsCompatibleWith(target)) throw new UnitMismatchException(this, target);
+            var cache = _factorCache;
+            if (cache == null || !ReferenceEquals(cache.Target, target))
+            {
+                double shift = (Offset - target.Offset) / target.Scale;
+                cache = new FactorCache(target, NiceFactor(Scale / target.Scale), shift == 0 ? 0 : NiceFactor(shift));
+                _factorCache = cache;
+            }
+            double x = Converter != null ? CallConverter(Converter, "To", value) : value;
+            double scaled = x * cache.Factor, y = scaled + cache.Shift;
+            if (Math.Abs(y) <= 1e-12 * Math.Max(Math.Abs(scaled), Math.Abs(cache.Shift))) y = 0;   // (32F is 0C, not 5.7E-14C)
+            return target.Converter != null ? CallConverter(target.Converter, "From", y) : y;
+        }
+
+        /// <summary>The number in the base unit (`5mm` is 0.005, `20C` is 293.15) - for `x:unitless`.</summary>
+        public double ToBase(double value) => (Converter != null ? CallConverter(Converter, "To", value) : value) * Scale + Offset;
+
+        private static double CallConverter(string converter, string method, double value) =>
+            (ConverterCall ?? throw new InvalidOperationException("The units of this program need the VM to be converted."))(converter, method, value);
+
+        /// <summary>The unit that the product with another unit has (`20C * 2s`, `10dB / 1m`): a unit with an offset or conversion functions counts as its
+        /// reference unit there (a difference: the offset and the functions do not take part).</summary>
+        [MemoryPackIgnore]
+        public Unit LinearPart => IsLinear ? this : new Unit(Dimensions, Scale, null);
         [MemoryPackIgnore] private FactorCache? _factorCache;
 
         /// <summary>The factor between two units without the rounding error of the scales: they are binary approximations of decimal numbers, so `0.3048 /
@@ -300,6 +359,7 @@ namespace fire.Values
         public Unit? Sqrt()
         {
             if (IsUnitless) return this;
+            if (!IsLinear) return LinearPart.Sqrt();
             var dims = new Dictionary<string, int>();
             foreach (var (key, exp) in Dimensions)
             {
@@ -323,6 +383,8 @@ namespace fire.Values
             // ToString() comment below).
             if (b.IsUnitless) return a;
             if (a.IsUnitless) return b;
+            a = a.LinearPart;
+            b = b.LinearPart;
 
             var dims = new Dictionary<string, int>(a.Dimensions);
             foreach (var (key, exp) in b.Dimensions)
@@ -357,6 +419,8 @@ namespace fire.Values
             // dimensionally something GENUINELY NEW (1/length) - deliberately NO
             // special case for that, it must go through the normal dimension construction.
             if (b.IsUnitless) return a;
+            a = a.LinearPart;
+            b = b.LinearPart;
 
             var dims = new Dictionary<string, int>(a.Dimensions);
             foreach (var (key, exp) in b.Dimensions)
@@ -372,7 +436,7 @@ namespace fire.Values
             if (other is null) return false;
             if (ReferenceEquals(this, other)) return true; // the most common case: the same unit (usually `Unitless`)
             if (!IsCompatibleWith(other)) return false;
-            return Math.Abs(Scale - other.Scale) < 1e-12;
+            return Math.Abs(Scale - other.Scale) < 1e-12 && Offset == other.Offset && Converter == other.Converter;
         }
 
         public override bool Equals(object? obj) => obj is Unit u && Equals(u);
@@ -432,13 +496,13 @@ namespace fire.Values
     /// <summary>A unit the program declares: `prefixed unit Volt: V` (a new dimension `V`, `mV`, `kV`, ...) or `unit Inch: in { coerce m => 0.0254 }`
     /// (the dimension of `m`, 1in = 0.0254m). <see cref="Dimensions"/> and <see cref="Scale"/> are those of a parsed unit (value_in_base = value * Scale).</summary>
     [MemoryPackable]
-    public sealed partial record CustomUnit(string Name, string Symbol, bool Prefixed, Dictionary<string, int> Dimensions, double Scale)
+    public sealed partial record CustomUnit(string Name, string Symbol, bool Prefixed, Dictionary<string, int> Dimensions, double Scale, double Offset = 0, string? Converter = null)
     {
         [MemoryPackIgnore]
         internal IReadOnlyDictionary<string, int> DimensionTable => Dimensions;
 
         public bool Equals(CustomUnit? other) =>
-            other is not null && Name == other.Name && Symbol == other.Symbol && Prefixed == other.Prefixed && Scale.Equals(other.Scale)
+            other is not null && Name == other.Name && Symbol == other.Symbol && Prefixed == other.Prefixed && Scale.Equals(other.Scale) && Offset.Equals(other.Offset) && Converter == other.Converter
             && Dimensions.Count == other.Dimensions.Count && Dimensions.All(d => other.Dimensions.TryGetValue(d.Key, out int e) && e == d.Value);
 
         public override int GetHashCode() => HashCode.Combine(Name, Symbol, Prefixed, Scale);

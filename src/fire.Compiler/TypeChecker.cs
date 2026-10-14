@@ -197,7 +197,7 @@ namespace fire.Compiler
                 Report(UnitCode, $"A value in '{UnitText(from)}' does not fit {what} in '{(target.UnitIsDimension ? "any " : "")}{UnitText(to)}'", line);
                 return;
             }
-            if (!target.UnitIsDimension && value.Kind == StaticKind.Int && target.Kind == StaticKind.Int && !from.Equals(to) && from.ConversionFactorTo(to) < 1)
+            if (!target.UnitIsDimension && value.Kind == StaticKind.Int && target.Kind == StaticKind.Int && !from.Equals(to) && from.IsLinear && to.IsLinear && from.ConversionFactorTo(to) < 1)
                 Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(to)}' may lose its fraction (declare a float or a finer unit)", line);
         }
 
@@ -772,7 +772,7 @@ namespace fire.Compiler
                         if (!operand.IsNumber) return StaticType.Dynamic;
                         if (uc.TargetUnitName is not { } targetName) return operand.WithUnit(null);
                         var target = Unit.Parse(targetName);
-                        if (!uc.Relabel && operand.Kind == StaticKind.Int && operand.Unit is { } from && !from.Equals(target) && from.IsCompatibleWith(target) && from.ConversionFactorTo(target) < 1)
+                        if (!uc.Relabel && operand.Kind == StaticKind.Int && operand.Unit is { } from && !from.Equals(target) && from.IsCompatibleWith(target) && from.IsLinear && target.IsLinear && from.ConversionFactorTo(target) < 1)
                             Report(UnitLossCode, $"A whole number in '{UnitText(from)}' converted into '{UnitText(target)}' may lose its fraction (convert a float: 'x!float:{targetName}')", uc.Line);
                         return operand.WithUnit(target);
                     }

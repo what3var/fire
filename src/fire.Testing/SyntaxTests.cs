@@ -211,9 +211,27 @@ static class SyntaxTests
         Check("unit: doppelt deklariert, im Kreis definiert, Konvertierungen widersprechen sich", UnitError("unit Inch: in\nunit Zoll: in").Contains("declared twice")
             && UnitError("unit A: aa { coerce cc => 2 }\nunit C: cc { coerce aa => 3 }").Contains("circle")
             && UnitError("unit X: xx { coerce m => 2\n coerce cm => 300 }").Contains("do not agree"));
-        Check("unit: Umrechnung mit Offset (Fahrenheit), ohne Konstante, im Block", UnitError("unit Fahrenheit: F { coerce to K => (value - 32) * 5 / 9 + 273.15 }").Contains("offset")
+        Check("unit: Kurzform nur Faktor und Offset, Funktionen brauchen to und from, ohne Konstante, im Block", UnitError("unit D: dBx { coerce mW => 10 ^ (value / 10) }").Contains("factor and an offset")
+            && UnitError("unit D: dBx { coerce to mW => 10 ^ (value / 10) }").Contains("needs both directions")
+            && UnitError("prefixed unit Celsius: C { coerce K => value + 273.15 }").Contains("takes no prefixes")
             && UnitError("unit X: xx { coerce m => foo }").Contains("computed while compiling")
             && UnitError("if (true) { unit X: xx }").Contains("top level"));
+        Check("unit: Offset (Celsius/Fahrenheit) und Funktionen (dBm), auch ueber to/from mit Faktor und Offset", Output("""
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Fahrenheit: F { coerce to C => (value - 32) * 5 / 9
+                                 coerce from C => value * 9 / 5 + 32 }
+            prefixed unit Watt: W
+            unit DecibelMilliwatt: dBm
+            {
+                coerce to mW => 10 ^ (value / 10)
+                coerce from mW => 10 * Math.Log10(value)
+            }
+            print(100.0C:F + " " + 32.0F:C + " " + 0.0C:K + " " + (20C + 9F) + " " + (100C > 200F))
+            print(30.0dBm:W + " " + 1.0W:dBm + " " + (20.0dBm + 1.0mW) + " " + 20.0C * 2s)
+            float t : C = 300.0K
+            print(t)
+            """) == "212F 0C 273.15K 7C True\n1W 30dBm 20dBm 40K*s\n26.850000000000023C");
         Check("unit: Einheiten eines Programms gelten nicht fuer das naechste", Output("print(5in)") == "5in");
 
         Console.WriteLine(_failures == 0 ? "Alle Syntax-Pruefungen bestanden." : $"FEHLER: {_failures} Syntax-Pruefung(en) fehlgeschlagen.");

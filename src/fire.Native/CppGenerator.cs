@@ -89,6 +89,8 @@ namespace fire.Native
         private readonly IReadOnlyList<string> _natives;
         private readonly TargetProfile _target;
         private readonly List<Unit> _units = new() { Unit.Unitless };
+        /// <summary>The units with conversion functions: the hidden class -> its index in the tables of the runtime (g_unitTo/g_unitFrom) and the functions.</summary>
+        private readonly Dictionary<string, (int Index, Func To, Func From)> _unitConverters = new();
         private readonly List<string> _strings = new();
         private readonly Dictionary<string, int> _stringIndex = new();
         private readonly HashSet<int> _globals = new();
@@ -514,10 +516,21 @@ namespace fire.Native
             {
                 var dims = dimNames.Count == 0 ? "0" : string.Join(", ", dimNames.Select(n => u.Dimensions.TryGetValue(n, out int e) ? e.ToString(CultureInfo.InvariantCulture) : "0"));
                 string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "nullptr";
-                sb.AppendLine($"    {{{{{dims}}}, {DoubleLiteral(u.Scale, false)}, {display}}},");
+                int conv = u.Converter is { } converter ? _unitConverters[converter].Index : -1;
+                sb.AppendLine($"    {{{{{dims}}}, {DoubleLiteral(u.Scale, false)}, {display}, {DoubleLiteral(u.Offset, false)}, {conv}}},");
             }
             sb.AppendLine("};");
-            sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
+            if (_unitConverters.Count > 0)
+            {
+                // the conversion functions of the units (`coerce to`/`coerce from`), in the order of their indices
+                var converters = _unitConverters.Values.OrderBy(c => c.Index).ToList();
+                foreach (var (_, to, from) in converters) sb.AppendLine($"{to.Signature};\n{from.Signature};");
+                sb.AppendLine($"static const UnitConvFn kUnitTo[] = {{{string.Join(", ", converters.Select(c => c.To.Name))}}};");
+                sb.AppendLine($"static const UnitConvFn kUnitFrom[] = {{{string.Join(", ", converters.Select(c => c.From.Name))}}};");
+                sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + ", kUnitTo, kUnitFrom), true);");
+            }
+            else
+                sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
             // the files of `new Resource("path")` are part of the binary (docs/RESOURCES.md)
             var resources = _program.Program.Resources;
             if (resources.Count > 0)
@@ -3099,6 +3112,13 @@ namespace fire.Native
             if (unit == null || unit.IsUnitless) return 0;
             for (int i = 1; i < _units.Count; i++) if (_units[i].Equals(unit)) return i;
             _units.Add(unit);
+            if (unit.Converter is { } converter && !_unitConverters.ContainsKey(converter))
+            {
+                // the conversion functions of the unit (static To and From of its hidden class) are called by the runtime: they are generated
+                var rc = FindClass(converter);
+                Func Conv(string method) => GetFunc(rc.FindMethodWithAccess(method, 1).Proto ?? throw new NativeNotSupportedException($"the conversion function {converter}.{method} is missing"), FuncKind.Static);
+                _unitConverters[converter] = (_unitConverters.Count, Conv("To"), Conv("From"));
+            }
             return _units.Count - 1;
         }
 

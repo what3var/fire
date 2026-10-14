@@ -52,8 +52,45 @@ print(2Inch)                  // 2in - the name works like the symbol
   - `coerce from m => value / 0.0254` - how a value in metres becomes inches.
 
   The compiler computes the factor from either form (and checks that several of them agree).
-- A conversion must be a factor. A unit with an offset, like degrees Fahrenheit (`(value - 32) * 5 / 9`), cannot be declared.
 - Declare units at the top level of a file. They are known everywhere in the program, also above the declaration and in other files.
+
+### Offsets and other conversions
+
+`coerce unit => ...` without `to` or `from` is a **factor and an offset**: the expression may use `value`, numbers, `+ - * / ^`, `Math.PI` and
+`Math.E`. The compiler computes it and inverts it itself:
+
+```fire
+unit Kelvin: K
+unit Celsius: C { coerce K => value + 273.15 }
+unit Fahrenheit: F { coerce C => (value - 32) * 5 / 9 }
+
+print(100.0C:F)        // 212F
+print(32.0F:C)         // 0C
+print(20C + 9F)        // 7C - the right operand is converted into the unit of the left one
+```
+
+`coerce to` and `coerce from` take **any expression** - a method call, `Math.Log10`, a calculation of your own. Such a unit needs both
+directions; they are called at run time (slower than a factor):
+
+```fire
+prefixed unit Watt: W
+unit DecibelMilliwatt: dBm
+{
+    coerce to mW => 10 ^ (value / 10)
+    coerce from mW => 10 * Math.Log10(value)
+}
+
+print(30.0dBm:W)       // 1W
+print(1.0W:dBm)        // 30dBm
+float level : dBm = 2mW
+print(level)           // 3.010299956639812dBm
+```
+
+- If `coerce to` and `coerce from` turn out to be a factor and an offset, the compiler uses that - nothing is called at run time.
+- A unit with an offset or conversion functions takes no prefixes.
+- Multiplied with another unit (`20C * 2s`) such a unit counts as its reference unit: the offset and the functions do not take part (`40K*s`).
+  A number keeps the unit (`20C * 2` is `40C`).
+- An exception in a conversion function is thrown where the conversion happens.
 
 ## Calculating with units
 

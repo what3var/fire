@@ -188,12 +188,16 @@ namespace fire.Values
             // `a:unit` of another dimension never fails either: the number in the base unit gets the target unit (`5mm:kg` is 0.005kg, `7:s` is 7s).
             if (Kind != ValueKind.Undefined && (targetUnit.IsUnitless && !currentUnit.IsUnitless || !currentUnit.IsCompatibleWith(targetUnit)))
             {
-                double inBase = (Kind == ValueKind.Int ? _intValue : _floatValue) * currentUnit.Scale;
+                double inBase = currentUnit.ToBase(Kind == ValueKind.Int ? _intValue : _floatValue);
                 if (Kind == ValueKind.Int && Math.Abs(inBase) < 9.0e15 && inBase == Math.Floor(inBase)) return MakeInt((long)inBase, targetUnit);
                 return MakeFloat(inBase, targetUnit);
             }
 
             if (Kind == ValueKind.Undefined) return MakeUndefined(targetUnit);
+            if (!currentUnit.IsLinear || !targetUnit.IsLinear)   // an offset or conversion functions (`20C:F`)
+                return Kind == ValueKind.Int
+                    ? MakeInt((long)Math.Round(currentUnit.Convert(_intValue, targetUnit)), targetUnit)
+                    : MakeFloat(currentUnit.Convert(_floatValue, targetUnit), targetUnit);
             double factor = currentUnit.ConversionFactorTo(targetUnit);
 
             return Kind switch
@@ -209,9 +213,6 @@ namespace fire.Values
         public enum UnitAdaptation { Ok, Mismatch, Overflow }
 
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Unit> DemandUnits = new();
-
-        /// <summary>The units of the program changed (Unit.UseCustomUnits): a demand may mean another unit now.</summary>
-        internal static void ForgetDemandUnits() => DemandUnits.Clear();
 
         /// <summary>A unit declaration takes `value` (see TypeRef.UnitDemand; a leading `#`: the declaration is a float): `demand` is a unit (`mm`, `unitless`) - a value of the same dimension is converted into it, `undefined`
         /// takes it - or `any m` - every unit of the dimension of `m`, nothing is converted. Another dimension is a `Mismatch`, a whole number that does not
@@ -237,6 +238,14 @@ namespace fire.Values
             }
             if (!actual.IsCompatibleWith(target)) return UnitAdaptation.Mismatch;
             if (dimensionOnly) return UnitAdaptation.Ok;
+            if (!actual.IsLinear || !target.IsLinear)
+            {
+                double result = actual.Convert(value.Kind == ValueKind.Float ? value._floatValue : value._intValue, target);
+                if (value.Kind == ValueKind.Float) { value = MakeFloat(result, target, value.Width); return UnitAdaptation.Ok; }
+                if (Math.Abs(Math.Round(result)) >= 9.2e18) return UnitAdaptation.Overflow;
+                value = MakeInt((long)Math.Round(result), target, value.Width);
+                return UnitAdaptation.Ok;
+            }
             double factor = actual.ConversionFactorTo(target);
             if (value.Kind == ValueKind.Float)
             {
@@ -723,6 +732,14 @@ namespace fire.Values
             var ub = b.Unit ?? Values.Unit.Unitless;
             if (ua.Equals(ub)) return;
             if (!ua.IsCompatibleWith(ub)) throw new UnitMismatchException(ua, ub);
+
+            if (!ua.IsLinear || !ub.IsLinear)
+            {
+                // an offset or conversion functions: the right operand goes into the unit of the left one (`20C + 9F`)
+                double converted = ub.Convert(b.Kind == ValueKind.Int ? b._intValue : b._floatValue, ua);
+                b = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int ? MakeInt((long)Math.Round(converted), ua) : MakeFloat(converted, ua);
+                return;
+            }
 
             if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
             {

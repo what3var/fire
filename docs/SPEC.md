@@ -380,8 +380,18 @@ unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
 - `coerce target => k` says 1 symbol = k target: the unit gets the dimension of `target` (any unit, also a combined one `m/s`, `kg*m^2/s^3`, or another own unit) and the factor
   k. `coerce to target => expression` converts a value of the unit into `target`, `coerce from target => expression` a value of `target` into the unit (`value` is the value) -
   the compiler computes the factor from it. A body may hold several conversions; they must agree.
-- A conversion is computed while compiling (numbers without a unit, `value`, `+ - * / ^`, `Math.PI`, `Math.E`) and must be a **factor**: a conversion with an offset (degrees
-  Fahrenheit: `(value - 32) * 5 / 9`) is an error.
+- `coerce target => expression` (without `to`/`from`) is a **factor and an offset**, computed while compiling (numbers without a unit, `value`, `+ - * / ^`,
+  `Math.PI`, `Math.E`; 1 symbol = a target, 0 symbol = b target for `a * value + b`): `unit Celsius: C { coerce K => value + 273.15 }`,
+  `unit Fahrenheit: F { coerce C => (value - 32) * 5 / 9 }`. Anything else is an error there.
+- `coerce to target => expression` and `coerce from target => expression` take any expression (`value` is the number, as a `float`). When they are a factor
+  and an offset, the unit is one; otherwise they are **conversion functions**: both directions are needed (into the same unit, which itself has no
+  conversion functions), they become the static methods `To` and `From` of a hidden class and are called at run time (VM and native) - in the VM
+  nested on the VM that converts, like a getter or setter (with the globals of the program). An exception in them is thrown where the conversion
+  happens (the same exception object).
+- A unit with an offset or conversion functions takes no prefixes. Converting it into another unit of the same dimension goes through the base unit
+  (`to(value) * scale + offset` and back); adding, subtracting and comparing convert the right operand into the unit of the left one. Multiplied or
+  divided by another unit it counts as its reference unit (the offset and the functions do not take part: `20C * 2s` is `40K*s`), by a number it
+  keeps its unit.
 - A symbol or name that is already a unit of fire (`m`, `min`, `km`, `Gs` = giga-second) is an error, so is a unit declared twice and units that are only defined by each other.
 - An own unit behaves exactly like a built-in one: conversion with `:`, declarations (`float d : in = 30cm`), `is in`, arithmetic, comparison (`12in == 1ft`), VM and native code.
 

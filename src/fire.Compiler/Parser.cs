@@ -215,6 +215,7 @@ namespace fire.Compiler
                 //    byStmt[stmt] = i;
                 combined.AddRange(stmts.Where(stmt => stmt is not UnitDeclStmt));   // (read already, see DefineUnits)
             }
+            combined.AddRange(UnitConverterClasses(unitDecls.Select(u => u.Decl)));
             //sourceIndexByStmt = byStmt;
             // Disambiguation BEFORE the extensions: `class extends Box` means
             // (like every reference without type arguments) the non-generic
@@ -297,40 +298,101 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>The name of the hidden class with the conversion functions of a unit (`coerce to`/`coerce from` that are not a factor and offset).</summary>
+        public static string UnitConverterClassName(string symbol) => "__unit_" + symbol;
+
+        /// <summary>a * value + b, computed while compiling; null when the conversion cannot be computed then (it calls a method, uses a variable, ...)
+        /// or is not of that form (`10 ^ (value / 10)`).</summary>
+        private static (double A, double B)? AffineOf(Expr conversion)
+        {
+            try
+            {
+                if (!MentionsValue(conversion)) return (EvalConversion(conversion, 0), 0);   // a number k: 1 symbol = k target
+                // the slope from a distant point (exact division by 1024, little cancellation): (value - 32) * 5 / 9 gives 5/9 to the last digit
+                double at0 = EvalConversion(conversion, 0), at2 = EvalConversion(conversion, 2), at10 = EvalConversion(conversion, 10), atFar = EvalConversion(conversion, 1024);
+                double a = Unit.NiceFactor((atFar - at0) / 1024), b = at0 == 0 ? 0 : Unit.NiceFactor(at0), size = Math.Max(1.0, Math.Max(Math.Abs(a), Math.Abs(b)));
+                if (double.IsNaN(a) || double.IsInfinity(a) || double.IsNaN(b) || double.IsInfinity(b)) return null;
+                if (Math.Abs(at2 - (2 * a + b)) > 1e-9 * size || Math.Abs(at10 - (10 * a + b)) > 1e-9 * size * 10) return null;
+                return (a, b);
+            }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        /// <summary>A unit from its declaration. `coerce X => ...` is a factor and an offset (a * value + b, computed while compiling: 1 symbol = a X, 0
+        /// symbol = b X); `coerce to X => ...` and `coerce from X => ...` take any expression - when both together are a factor and an offset the unit
+        /// is one, otherwise they become the static methods To and From of a hidden class (Parser.UnitConverterClasses) that convert at run time.</summary>
         private static CustomUnit DefineUnit(UnitDeclStmt d, string? file, Func<UnitDeclStmt, string?, string, int?, ParseException> fail)
         {
             if (d.Coerces.Count == 0)
                 return new CustomUnit(d.Name, d.Symbol, d.Prefixed, new Dictionary<string, int> { [d.Symbol] = 1 }, 1.0);
+            var ic = System.Globalization.CultureInfo.InvariantCulture;
             Dictionary<string, int>? dims = null;
-            double scale = 0;
+            double scale = 0, offset = 0;
+            CoerceDirection? functions = null;
+            UnitCoerce? to = null, from = null;
             foreach (var c in d.Coerces)
             {
                 var target = Unit.Parse(c.TargetUnit);
                 if (target.IsUnitless) throw fail(d, file, $"'coerce' needs a unit to convert from or to, not '{c.TargetUnit}'", c.Line);
                 if (target.Dimensions.ContainsKey(d.Symbol)) throw fail(d, file, $"The unit '{d.Symbol}' cannot be converted into itself", c.Line);
-                bool usesValue = MentionsValue(c.Conversion);
-                double At(double x)
+                if (target.Converter != null) throw fail(d, file, $"'{c.TargetUnit}' is converted by functions - convert '{d.Symbol}' into its reference unit instead", c.Line);
+                if (c.Direction == CoerceDirection.To) to = c;
+                if (c.Direction == CoerceDirection.From) from = c;
+                var affine = AffineOf(c.Conversion);
+                if (affine == null)
                 {
-                    try { return EvalConversion(c.Conversion, x); }
-                    catch (InvalidOperationException ex) { throw fail(d, file, ex.Message, c.Line); }
+                    if (c.Direction == CoerceDirection.Factor)
+                        throw fail(d, file, $"'coerce {c.TargetUnit} => ...' is a factor and an offset computed while compiling (numbers, 'value', + - * / ^, Math.PI, Math.E) - any other conversion is written 'coerce to {c.TargetUnit} => ...' and 'coerce from {c.TargetUnit} => ...'", c.Line);
+                    functions = c.Direction;
+                    continue;
                 }
-                double one = At(1), zero = usesValue ? At(0) : 0, two = usesValue ? At(2) : 2 * one;
-                if (double.IsNaN(one) || double.IsInfinity(one) || one <= 0)
-                    throw fail(d, file, $"The conversion of '{d.Symbol}' must give a positive, finite factor (it gives {one.ToString(System.Globalization.CultureInfo.InvariantCulture)} for 1{d.Symbol})", c.Line);
-                if (Math.Abs(zero) > 1e-12 * one || Math.Abs(two - 2 * one) > 1e-9 * one)
-                    throw fail(d, file, $"The conversion of '{d.Symbol}' must be a factor ('value * k' or 'value / k') - a unit with an offset (like degrees Fahrenheit) is not supported", c.Line);
-                if (c.Direction == CoerceDirection.Factor && usesValue)
-                    throw fail(d, file, "'coerce unit => k' takes a number (1 symbol = k unit); a conversion with 'value' is written 'coerce to unit => ...' or 'coerce from unit => ...'", c.Line);
-                // To / Factor: 1 symbol = one target;  From: 1 target = one symbol
-                double factorTo = c.Direction == CoerceDirection.From ? 1.0 / one : one;
-                double thisScale = factorTo * target.Scale;
-                if (dims == null) { dims = new Dictionary<string, int>(target.Dimensions); scale = thisScale; continue; }
+                var (a, b) = affine.Value;
+                if (a == 0) throw fail(d, file, $"The conversion of '{d.Symbol}' gives the same value for every value", c.Line);
+                // To / Factor: v symbol = a*v + b target;  From: x target = a*x + b symbol, so v symbol = (v - b) / a target
+                double s1 = c.Direction == CoerceDirection.From ? 1.0 / a : a, o1 = c.Direction == CoerceDirection.From ? -b / a : b;
+                double thisScale = Unit.NiceFactor(s1 * target.Scale), thisOffset = o1 * target.Scale + target.Offset;
+                thisOffset = thisOffset == 0 ? 0 : Unit.NiceFactor(thisOffset);
+                if (dims == null) { dims = new Dictionary<string, int>(target.Dimensions); scale = thisScale; offset = thisOffset; continue; }
                 if (!new Dictionary<string, int>(target.Dimensions).OrderBy(k => k.Key).SequenceEqual(dims.OrderBy(k => k.Key)))
                     throw fail(d, file, $"The conversions of '{d.Symbol}' name units of different dimensions", c.Line);
-                if (Math.Abs(thisScale - scale) > 1e-9 * scale)
-                    throw fail(d, file, $"The conversions of '{d.Symbol}' do not agree (1{d.Symbol} is {(scale / target.Scale).ToString("G10", System.Globalization.CultureInfo.InvariantCulture)}{c.TargetUnit} by the first one, {factorTo.ToString("G10", System.Globalization.CultureInfo.InvariantCulture)}{c.TargetUnit} by this one)", c.Line);
+                if (Math.Abs(thisScale - scale) > 1e-9 * scale || Math.Abs(thisOffset - offset) > 1e-9 * Math.Max(1.0, Math.Abs(offset)))
+                    throw fail(d, file, $"The conversions of '{d.Symbol}' do not agree (1{d.Symbol} is {((scale + offset - target.Offset) / target.Scale).ToString("G10", ic)}{c.TargetUnit} by the first one, {(s1 + o1).ToString("G10", ic)}{c.TargetUnit} by this one)", c.Line);
             }
-            return new CustomUnit(d.Name, d.Symbol, d.Prefixed, dims!, Unit.NiceFactor(scale));
+
+            if (functions != null)
+            {
+                // conversion functions: exactly one `coerce to` and one `coerce from`, into the same unit
+                if (to == null || from == null)
+                    throw fail(d, file, $"A conversion that is not a factor and an offset needs both directions: 'coerce to {(to ?? from)!.TargetUnit} => ...' and 'coerce from {(to ?? from)!.TargetUnit} => ...'", (to ?? from)!.Line);
+                if (d.Coerces.Count != 2)
+                    throw fail(d, file, $"A unit with conversion functions has exactly one 'coerce to' and one 'coerce from'", d.Coerces[2].Line);
+                var reference = Unit.Parse(to.TargetUnit);
+                if (!reference.Equals(Unit.Parse(from.TargetUnit)))
+                    throw fail(d, file, $"'coerce to' and 'coerce from' of '{d.Symbol}' must name the same unit ('{to.TargetUnit}', '{from.TargetUnit}')", from.Line);
+                if (d.Prefixed) throw fail(d, file, $"A unit with conversion functions takes no prefixes - declare '{d.Symbol}' without 'prefixed'", d.Line);
+                return new CustomUnit(d.Name, d.Symbol, false, new Dictionary<string, int>(reference.Dimensions), reference.Scale, reference.Offset, UnitConverterClassName(d.Symbol));
+            }
+            if (d.Prefixed && offset != 0) throw fail(d, file, $"A unit with an offset takes no prefixes - declare '{d.Symbol}' without 'prefixed'", d.Line);
+            return new CustomUnit(d.Name, d.Symbol, d.Prefixed, dims!, scale, offset);
+        }
+
+        /// <summary>The hidden classes with the conversion functions of the units that have them: `class __unit_dB { static float To(float value) { return
+        /// ... } static float From(float value) { return ... } }` - compiled like any class (VM and native), called by the conversions at run time.</summary>
+        private static IEnumerable<Stmt> UnitConverterClasses(IEnumerable<UnitDeclStmt> decls)
+        {
+            foreach (var d in decls)
+            {
+                if (Unit.CustomUnits.FirstOrDefault(u => u.Symbol == d.Symbol) is not { Converter: { } className }) continue;
+                var floatType = new TypeRef("float", null, 0);
+                MethodDecl Method(string name, UnitCoerce c) => new(d.Source, c.Line, floatType, name,
+                    new[] { new LambdaParam("value", floatType, Array.Empty<Expr?>()) },
+                    new Stmt.BlockStmt(d.Source, c.Line, new Stmt[] { new ReturnStmt(d.Source, c.Line, c.Conversion) }), IsStatic: true);
+                yield return new ClassDecl(d.Source, d.Line, className, null, new Stmt[]
+                {
+                    Method("To", d.Coerces.First(c => c.Direction == CoerceDirection.To)),
+                    Method("From", d.Coerces.First(c => c.Direction == CoerceDirection.From)),
+                });
+            }
         }
 
         private static bool MentionsValue(Expr e) => e switch

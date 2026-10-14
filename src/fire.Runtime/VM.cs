@@ -19,7 +19,14 @@ namespace fire.Runtime
     public sealed class ScriptErrorException : InvalidOperationException
     {
         public string ClassName { get; }
+        /// <summary>An exception object that already exists (thrown by a conversion function of a unit): it is thrown as it is.</summary>
+        public ObjectInstance? Instance { get; }
         public ScriptErrorException(string className, string message) : base(message) { ClassName = className; }
+        public ScriptErrorException(ObjectInstance instance) : base(instance.Fields.TryGetValue("message", out var m) ? m.ToString() : instance.ClassName)
+        {
+            ClassName = instance.ClassName;
+            Instance = instance;
+        }
     }
 
     internal readonly struct CallFrame
@@ -284,6 +291,32 @@ namespace fire.Runtime
         private static VM? _currentThreadVm;
 
         public static VM? CurrentThreadVm => _currentThreadVm;
+
+        // A unit with conversion functions (`coerce to W => ...`) converts by calling them on the VM of the calling thread.
+        static VM()
+        {
+            Unit.ConverterCall = (className, method, value) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A unit with conversion functions can only be converted while the program runs."))
+                    .CallUnitConverter(className, method, value);
+        }
+
+        /// <summary>Calls a conversion function of a unit (`coerce to`/`coerce from`) nested on this VM, like a getter or setter: in the middle of the
+        /// instruction that converts, with the globals of the program. An exception in it is thrown where the conversion happened.</summary>
+        private double CallUnitConverter(string className, string method, double value)
+        {
+            if (!_classes.TryGetValue(className, out var rc) || rc.FindMethodWithAccess(method, 1).Proto is not { } proto)
+                throw new InvalidOperationException($"The conversion function '{className}.{method}' of a unit is missing.");
+            string symbol = className.StartsWith("__unit_", StringComparison.Ordinal) ? className.Substring(7) : className;
+            var error = CallInline(new LambdaValue(proto, null), new[] { Value.MakeFloat(value) }, out var result);
+            if (error != null) throw new ScriptErrorException(error);
+            if (_stopExecutionRequested) return double.NaN;   // (`leave`/`terminate` in the conversion: the program ends right after the instruction)
+            return result.Kind switch
+            {
+                ValueKind.Int => result.AsInt(),
+                ValueKind.Float => result.AsFloat(),
+                _ => throw new InvalidOperationException($"The conversion of '{symbol}' must give a number, not a value of type '{result.Kind}'."),
+            };
+        }
 
         /// <summary>Marks EXACTLY one VM instance in the whole program as "the"
         /// main-thread instance - basis for `catch threads(...)`/`catch
@@ -5250,8 +5283,12 @@ namespace fire.Runtime
         /// happens on the thread of this VM (`VM.CurrentThreadVm`). Returns null if the lambda ended normally (or the program
         /// was ended), otherwise the unhandled exception of the lambda - which does NOT interrupt the caller: like for any callback
         /// the host reports it, the program keeps running.</summary>
-        public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args)
+        public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args) => CallInline(lambda, args, out _);
+
+        /// <summary>CallLambdaInline with the result of the lambda (undefined when it threw or the program ended).</summary>
+        private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result)
         {
+            result = Value.MakeUndefined();
             CheckArity(lambda.Proto, args.Length);
             args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 
@@ -5301,7 +5338,7 @@ namespace fire.Runtime
             _callbackError = null;
             if (error != null) return error;
 
-            PopNestedResult(); // the (unused) return value of the lambda
+            if (!_stopExecutionRequested) result = Pop();
             return null;
         }
 
@@ -6065,6 +6102,7 @@ namespace fire.Runtime
 
         private void RaiseScriptError(ScriptErrorException error)
         {
+            if (error.Instance != null) { ThrowException(Value.MakeClassRef(error.Instance)); return; }
             if (!_classes.ContainsKey(error.ClassName)) throw new InvalidOperationException(error.Message, error);
             var instance = ConstructNested(ResolveClass(error.ClassName), new[] { Value.MakeString(error.Message) });
             ThrowException(Value.MakeClassRef(instance));

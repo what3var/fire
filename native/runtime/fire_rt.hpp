@@ -325,13 +325,20 @@ inline int formatReal(Real v, char* out) { return formatFloating<Real>(v, out); 
 /// The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code.
 extern const char* const g_dimNames[];
 
-struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; };
+struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; double offset; int32_t conv; };
 struct UnitDef {
     int32_t dims[FIRE_NDIMS];
     double scale;
     const char* display;   // the symbol of a named unit (`mm`), null for a derived one
     const char* name;      // Unit.ToString()
+    double offset;         // Unit.Offset: value_in_base = value * scale + offset (`unit Celsius: C { coerce K => value + 273.15 }`)
+    int32_t conv;          // Unit.Converter: the index of the conversion functions of the unit (g_unitTo/g_unitFrom), -1 for none
 };
+struct Value;
+/// The conversion functions of the units that have them (the static methods To and From of their hidden classes, generated).
+typedef Value (*UnitConvFn)(Value);
+inline const UnitConvFn* g_unitTo = nullptr;
+inline const UnitConvFn* g_unitFrom = nullptr;
 inline UnitDef* g_ud = nullptr;
 inline uint32_t g_udCount = 0, g_udCap = 0;
 
@@ -383,7 +390,9 @@ inline char* unitBuildName(const int32_t* dims, double scale, const char* displa
     return out;
 }
 
-inline void unitsInit(const UnitInit* init, uint32_t count) {
+inline void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* to = nullptr, const UnitConvFn* from = nullptr) {
+    g_unitTo = to;
+    g_unitFrom = from;
     g_udCap = count + 32;
     g_ud = static_cast<UnitDef*>(std::malloc(sizeof(UnitDef) * g_udCap));
     if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
@@ -392,6 +401,8 @@ inline void unitsInit(const UnitInit* init, uint32_t count) {
         g_ud[i].scale = init[i].scale;
         g_ud[i].display = init[i].display;
         g_ud[i].name = unitBuildName(init[i].dims, init[i].scale, init[i].display);
+        g_ud[i].offset = init[i].offset;
+        g_ud[i].conv = init[i].conv;
     }
     g_udCount = count;
 }
@@ -400,7 +411,7 @@ inline void unitsInit(const UnitInit* init, uint32_t count) {
 inline uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
     for (uint32_t i = 0; i < g_udCount; i++) {
         const UnitDef& d = g_ud[i];
-        if (d.scale == scale && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
+        if (d.scale == scale && d.offset == 0 && d.conv < 0 && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
     }
     if (g_udCount == g_udCap) {
         g_udCap *= 2;
@@ -412,12 +423,18 @@ inline uint32_t unitIntern(const int32_t* dims, double scale, const char* displa
     d.scale = scale;
     d.display = display;
     d.name = unitBuildName(dims, scale, display);
+    d.offset = 0;
+    d.conv = -1;
     return g_udCount++;
 }
 
 inline bool unitCompatible(uint32_t a, uint32_t b) { return a == b || std::memcmp(g_ud[a].dims, g_ud[b].dims, sizeof g_ud[a].dims) == 0; }
 /// Unit.Equals: same dimensions and the scales differ by less than 1e-12.
-inline bool unitEq(uint32_t a, uint32_t b) { return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12); }
+inline bool unitEq(uint32_t a, uint32_t b) {
+    return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12 && g_ud[a].offset == g_ud[b].offset && g_ud[a].conv == g_ud[b].conv);
+}
+/// Unit.IsLinear: only a factor of its base unit (no offset, no conversion functions).
+inline bool unitLinear(uint32_t u) { return g_ud[u].offset == 0 && g_ud[u].conv < 0; }
 
 #ifdef FIRE_EXCEPTIONS
 inline void unitConflictThrow(uint32_t from, uint32_t to);
@@ -467,7 +484,8 @@ inline uint32_t unitMul(uint32_t a, uint32_t b) {
     int32_t dims[FIRE_NDIMS];
     for (int i = 0; i < FIRE_NDIMS; i++) dims[i] = x.dims[i] + y.dims[i];
     const char* display = nullptr;
-    if (x.display && y.display && std::strcmp(x.display, y.display) == 0) {
+    // (a unit with an offset or conversion functions counts as its reference unit: Unit.LinearPart, no `C^2`)
+    if (x.display && y.display && unitLinear(a) && unitLinear(b) && std::strcmp(x.display, y.display) == 0) {
         size_t l = std::strlen(x.display);
         char* square = static_cast<char*>(std::malloc(l + 3));
         if (!square) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
@@ -722,6 +740,47 @@ FIRE_COLD inline Value intOpFailed(const char* op, Value a, Value b) {
 
 struct VPair { Value a, b; };
 
+/// Calls a conversion function of a unit (`To`: into the reference unit, `From`: back); false when it threw (the unwinding flag is set) or gave no number.
+FIRE_COLD inline bool unitCallConv(uint32_t u, bool to, double v, double& out) {
+    Value r = (to ? g_unitTo : g_unitFrom)[g_ud[u].conv](Float((Real)v));
+    if (g_unwind.active) return false;
+    if (r.kind == K_Int) { out = (double)r.i; return true; }
+    if (r.kind == K_Float) { out = (double)r.f; return true; }
+    char text[160];
+    std::snprintf(text, sizeof text, "The conversion of '%s' must give a number, not a value of type '%s'.", g_ud[u].name, coerceKindName(r.kind));
+    fireError("ArgumentException", text);
+    return false;
+}
+/// Unit.Convert: a number in `from` converted into `to` (the same dimension) - by the factor for units that are only one, else through the reference units:
+/// to(value) * scale + offset is the base value, and back (the factor and the shift without rounding error, a result next to 0 is 0). False: a
+/// conversion function threw.
+FIRE_COLD inline bool unitConvert(double v, uint32_t from, uint32_t to, double& out) {
+    if (from == to) { out = v; return true; }
+    if (unitLinear(from) && unitLinear(to)) { out = v * unitFactor(from, to); return true; }
+    if (!unitCompatible(from, to)) { unitConflict(from, to); return false; }
+    struct Entry { uint32_t from, to; double factor, shift; };
+    static thread_local Entry cache[16] = {};
+    Entry& e = cache[(from * 31u + to) & 15u];
+    if (!(e.from == from && e.to == to && e.factor != 0)) {
+        double shift = (g_ud[from].offset - g_ud[to].offset) / g_ud[to].scale;
+        e = {from, to, unitNiceFactor(g_ud[from].scale / g_ud[to].scale), shift == 0 ? 0 : unitNiceFactor(shift)};
+    }
+    double x = v;
+    if (g_ud[from].conv >= 0 && !unitCallConv(from, true, v, x)) return false;
+    double scaled = x * e.factor, y = scaled + e.shift;
+    if (std::fabs(y) <= 1e-12 * std::fmax(std::fabs(scaled), std::fabs(e.shift))) y = 0;   // (32F is 0C, not 5.7E-14C)
+    if (g_ud[to].conv >= 0) return unitCallConv(to, false, y, out);
+    out = y;
+    return true;
+}
+/// Unit.ToBase: the number in the base unit (`20C` is 293.15) - for `x:unitless`.
+FIRE_COLD inline bool unitToBase(double v, uint32_t u, double& out) {
+    double x = v;
+    if (g_ud[u].conv >= 0 && !unitCallConv(u, true, v, x)) return false;
+    out = x * g_ud[u].scale + g_ud[u].offset;
+    return true;
+}
+
 /// Value.AlignUnits: operands of the same dimension but a different scale (`500mm + 2m`) are converted implicitly - two ints stay ints
 /// (the finer unit is the target while the converted value does not overflow, else the coarser one and the fraction is cut off), a float
 /// operand makes the right one a float in the unit of the left.
@@ -729,6 +788,13 @@ FIRE_COLD inline VPair alignUnits(Value a, Value b) {
     uint32_t ua = a.unit, ub = b.unit;
     if (unitEq(ua, ub)) return {a, b};
     if (!unitCompatible(ua, ub)) { unitConflict(ua, ub); return {Undef(), Undef()}; }   // (thrown: the callers give undefined)
+    if (!unitLinear(ua) || !unitLinear(ub)) {
+        // an offset or conversion functions: the right operand goes into the unit of the left one (`20C + 9F`)
+        double converted;
+        if (!unitConvert(b.kind == K_Int ? (double)b.i : (double)b.f, ub, ua, converted)) return {Undef(), Undef()};
+        b = a.kind == K_Int && b.kind == K_Int ? Int((int64_t)std::nearbyint(converted), ua) : Float((Real)converted, ua);
+        return {a, b};
+    }
     if (a.kind == K_Int && b.kind == K_Int) {
         bool aIsFine = g_ud[ua].scale <= g_ud[ub].scale;
         Value& fine = aIsFine ? a : b;
@@ -862,11 +928,17 @@ inline Value coerceUnit(Value v, uint32_t target) {
     if (unitEq(v.unit, target)) return v;
     // `a:unitless`, and `a:unit` of another dimension: the number in the base unit (the dimension is taken out), labelled with the target unit
     if (v.kind != K_Undefined && ((unitIsUnitless(target) && !unitIsUnitless(v.unit)) || !unitCompatible(v.unit, target))) {
-        double inBase = (v.kind == K_Int ? (double)v.i : (double)v.f) * g_ud[v.unit].scale;
+        double inBase;
+        if (!unitToBase(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, inBase)) return Undef();
         if (v.kind == K_Int && std::fabs(inBase) < 9.0e15 && inBase == std::floor(inBase)) return Int((int64_t)inBase, target);
         return Float((Real)inBase, target);
     }
     if (v.kind == K_Undefined) return Undef(target);
+    if (!unitLinear(v.unit) || !unitLinear(target)) {
+        double converted;
+        if (!unitConvert(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, target, converted)) return Undef();
+        return v.kind == K_Int ? Int((int64_t)std::nearbyint(converted), target) : Float((Real)converted, target);
+    }
     double factor = unitFactor(v.unit, target);
     if (v.kind == K_Int) return Int((int64_t)std::nearbyint((double)v.i * factor), target);
     if (v.kind == K_Float) return Float((Real)((double)v.f * factor), target);
@@ -1399,9 +1471,16 @@ inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat,
     if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
     if (FIRE_UNLIKELY(!unitCompatible(v.unit, unit))) { unitMismatch(v, expectedText); return v; }
     if (dimensionOnly) return v;
-    double factor = unitFactor(v.unit, unit);
-    if (v.kind == K_Float) return Float((Real)((double)v.f * factor), unit);
-    double converted = std::nearbyint((double)v.i * factor);
+    double converted;
+    if (!unitLinear(v.unit) || !unitLinear(unit)) {
+        if (!unitConvert(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, unit, converted)) return v;
+        if (v.kind == K_Float) return Float((Real)converted, unit);
+        converted = std::nearbyint(converted);
+    } else {
+        double factor = unitFactor(v.unit, unit);
+        if (v.kind == K_Float) return Float((Real)((double)v.f * factor), unit);
+        converted = std::nearbyint((double)v.i * factor);
+    }
     if (FIRE_UNLIKELY(std::fabs(converted) >= 9.2e18)) {
 #ifndef FIRE_LIBRARY
         fireError("OverflowException", "A whole number does not fit any more after the conversion into the unit of its declaration.");
@@ -2090,7 +2169,7 @@ inline bool unitSqrt(uint32_t u, uint32_t* out) {
     int32_t dims[FIRE_NDIMS];
     for (int i = 0; i < FIRE_NDIMS; i++) { if (x.dims[i] % 2 != 0) return false; dims[i] = x.dims[i] / 2; }
     char* display = nullptr;
-    if (x.display) {
+    if (x.display && unitLinear(u)) {
         size_t l = std::strlen(x.display);
         bool simple = l > 2 && std::strcmp(x.display + l - 2, "^2") == 0;
         for (size_t i = 0; simple && i + 2 < l; i++) if (x.display[i] == '/' || x.display[i] == '*' || x.display[i] == '^') simple = false;
@@ -2138,7 +2217,9 @@ inline Value mathCall(int64_t method, Value x, Value y) {
                 std::snprintf(text, sizeof text, "Math.Atan2 expects two values of the same dimension, not '%s' and '%s'.", g_ud[x.unit].name, g_ud[y.unit].name);
                 return fireError("ArgumentException", text);
             }
-            return Float((Real)std::atan2(v * unitFactor(x.unit, y.unit), (double)toR(y)));
+            double yv;
+            if (!unitConvert(v, x.unit, y.unit, yv)) return Undef();
+            return Float((Real)std::atan2(yv, (double)toR(y)));
         }
     }
     if (!unitIsUnitless(x.unit)) {

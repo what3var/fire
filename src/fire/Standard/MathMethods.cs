@@ -118,7 +118,7 @@ namespace fire.Standard
                     if (!unit.IsCompatibleWith(otherUnit))
                         throw new InvalidOperationException($"Math.Atan2 expects two values of the same dimension, not '{unit}' and '{otherUnit}'.");
                     double xv = other.Kind == ValueKind.Int ? other.AsInt() : other.AsFloat();
-                    double yv = v * unit.ConversionFactorTo(otherUnit);
+                    double yv = unit.Convert(v, otherUnit);
                     return Value.MakeFloat(Math.Atan2(yv, xv));
                 }
             }
