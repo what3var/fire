@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Documents;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -59,11 +60,13 @@ namespace fire.Editor
                 return null;
             }
             text.PointerMoved += (_, e) => text.Cursor = UrlAt(e) != null ? new Cursor(StandardCursorType.Hand) : null;
-            text.PointerPressed += (_, e) =>
+            // In the tunnel phase: SelectableTextBlock takes the press itself (it starts a selection and marks the event handled), so a handler on the
+            // bubbling event never saw a click on a link.
+            text.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
             {
                 if (!e.GetCurrentPoint(text).Properties.IsLeftButtonPressed) return;
-                if (UrlAt(e) is { } url) { LinkClicked?.Invoke(url, e.KeyModifiers); e.Handled = true; }
-            };
+                if (UrlAt(e) is { } url) { e.Handled = true; LinkClicked?.Invoke(url, e.KeyModifiers); }
+            }, RoutingStrategies.Tunnel);
             return text;
         }
 
@@ -259,7 +262,7 @@ namespace fire.Editor
                     return position + 1;
                 case MdLineBreak:
                     target.Add(new LineBreak());
-                    return position + 1;
+                    return position + Environment.NewLine.Length;   // (a LineBreak is Environment.NewLine in the text of the layout: two characters on Windows)
             }
             return position;
         }

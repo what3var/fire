@@ -9,6 +9,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 
 namespace fire.Editor
@@ -204,7 +205,7 @@ namespace fire.Editor
             RecomputeFences();
             Editor.TextArea.TextView.Redraw();
             _highlightTimer.Stop(); _highlightTimer.Start();
-            if (PreviewVisible) { _previewTimer.Stop(); _previewTimer.Start(); }
+            if (PreviewVisible && !_loading) { _previewTimer.Stop(); _previewTimer.Start(); }   // (loading renders the page itself)
         }
 
         // -----------------------------------------------------------
@@ -315,8 +316,22 @@ namespace fire.Editor
         public bool ScrollToAnchor(string? anchor)
         {
             if (string.IsNullOrEmpty(anchor)) return false;
-            if (!_renderer.Anchors.TryGetValue(Uri.UnescapeDataString(anchor).ToLowerInvariant(), out var block)) return false;
-            Dispatcher.UIThread.Post(() => block.BringIntoView(), DispatcherPriority.Loaded);
+            string key = Uri.UnescapeDataString(anchor).ToLowerInvariant();
+            if (!_renderer.Anchors.ContainsKey(key)) return false;
+            // The heading is looked up again on every attempt: right after loading, the preview is rendered once more (the page and its headings are
+            // replaced), and the position of a heading is known only when it is in the visual tree and laid out. Holding on to the block of the first
+            // page (BringIntoView on it) is why the jump was lost.
+            int attempts = 0;
+            void Jump()
+            {
+                Preview.UpdateLayout();
+                if (_renderer.Anchors.TryGetValue(key, out var block) && Preview.Content is Visual page && block.IsAttachedToVisualTree()
+                    && block.TranslatePoint(new Point(0, 0), page) is { } position)
+                    Preview.Offset = new Vector(Preview.Offset.X, Math.Max(0, position.Y - 6));
+                else if (++attempts < 50)
+                    DispatcherTimer.RunOnce(Jump, TimeSpan.FromMilliseconds(20));
+            }
+            Dispatcher.UIThread.Post(Jump, DispatcherPriority.Background);
             return true;
         }
 
