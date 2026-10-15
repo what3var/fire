@@ -72,7 +72,7 @@ namespace fire.Native
             [OpCode.StoreLocalPop] = new[] { 2, 2 }, [OpCode.StoreGlobalPop] = new[] { 2 },
             [OpCode.JumpIfNotLt] = new[] { 2 }, [OpCode.JumpIfNotLtEq] = new[] { 2 }, [OpCode.JumpIfNotGt] = new[] { 2 },
             [OpCode.JumpIfNotGtEq] = new[] { 2 }, [OpCode.JumpIfNotEq] = new[] { 2 }, [OpCode.JumpIfNotNotEq] = new[] { 2 },
-            [OpCode.GuardLocal] = new[] { 2, 1, 2, 2 }, [OpCode.GuardLocalType] = new[] { 2, 2, 2 }, [OpCode.SetTypeArgs] = new[] { 2, 1 }, [OpCode.TakeCallTypeArgs] = Array.Empty<int>(),
+            [OpCode.GuardLocal] = new[] { 2, 1, 2, 2 }, [OpCode.GuardLocalType] = new[] { 2, 2, 2 }, [OpCode.SetTypeArgs] = new[] { 2, 1 }, [OpCode.TakeCallTypeArgs] = Array.Empty<int>(), [OpCode.GuardTop] = new[] { 1, 2 }, [OpCode.GuardTopType] = new[] { 2, 2 },
             [OpCode.ArithLocalConstPop] = new[] { 2, 2, 2, 1 }, [OpCode.ArithGlobalConstPop] = new[] { 2, 2, 1 },
             [OpCode.SetTimeout] = Array.Empty<int>(),
             [OpCode.AddressOfIndex] = Array.Empty<int>(), [OpCode.NewJagged] = new[] { 1 }, [OpCode.OwnValue] = Array.Empty<int>(), [OpCode.MakeArrayLiteralParts] = new[] { 2, 2, 2 }, [OpCode.Delete] = Array.Empty<int>(), [OpCode.HoistValue] = Array.Empty<int>(), [OpCode.TakeToScope] = new[] { 2 }, [OpCode.TakeToObject] = Array.Empty<int>(), [OpCode.TakeToArray] = Array.Empty<int>(), [OpCode.TakeCheck] = Array.Empty<int>(), [OpCode.RequireRefParam] = new[] { 2, 2 },

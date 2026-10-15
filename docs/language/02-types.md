@@ -74,6 +74,8 @@ declares it; `IEnumerable` also takes arrays, buffers and strings), and a **type
 arguments of its `new` (`T value` of a `Box<int>` holds only ints, of a `Box<float>` a float - a whole number becomes one), a call of a generic
 method those that were found for it. Without type arguments (the raw form `new Box()`) `T` is checked by its `where` conditions (`T inside` with
 `where T is of Animal` holds an `Animal`, `where T is in "m"` a length) and not at all without them; `any` and `class` are not checked.
+A **local variable** keeps the promise of its type too: `int x = someAny` with a string in it is an `ArgumentException`
+(`Variable 'x' is an int, not String.`), checked only where the type checker cannot tell beforehand.
 
 ```fire
 class Point { int x = 1 }

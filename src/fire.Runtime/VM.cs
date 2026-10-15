@@ -4235,6 +4235,8 @@ namespace fire.Runtime
                 case OpCode.GuardLocal: OpGuardLocal(); break;
                 case OpCode.SetTypeArgs: OpSetTypeArgs(); break;
                 case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; break;
+                case OpCode.GuardTop: OpGuardTop(); break;
+                case OpCode.GuardTopType: OpGuardTopType(); break;
                 case OpCode.GuardLocalType: OpGuardLocalType(); break;
 
                 case OpCode.RequireRefParam:
@@ -6034,6 +6036,39 @@ namespace fire.Runtime
             ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
+        /// <summary>GuardTop: a value going into a local declared int/float/bool (the type checker could not prove it) holds that kind or undefined.</summary>
+        private void OpGuardTop()
+        {
+            byte required = (byte)(ReadByte() + 1);
+            int whatIdx = ReadU16();
+            ref var top = ref _stack[_sp - 1];
+            if (DeclaredKind.Fits(top, required)) return;
+            var checkedValue = top;
+            if (GuardDeclared(ref checkedValue, required, _constants[whatIdx].AsString())) top = checkedValue;
+        }
+
+        /// <summary>GuardTopType: a value going into a local declared with a class, an interface or a type parameter (DeclaredType).</summary>
+        private void OpGuardTopType()
+        {
+            string requiredType = _constants[ReadU16()].AsString();
+            int whatIdx = ReadU16();
+            ref var top = ref _stack[_sp - 1];
+            var owner = _currentThis as ObjectInstance;
+            var callTypeArgs = CallScopeTypeArgs();
+            if (DeclaredType.Fits(top, requiredType, owner, callTypeArgs)) return;
+            var checkedValue = top;
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs)) { top = checkedValue; return; }
+            ThrowArgumentError(DeclaredType.Mismatch(top, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
+        }
+
+        /// <summary>The type arguments of the call of the generic method that runs (kept in the scope of the call; blocks inside it are its children).</summary>
+        private string[]? CallScopeTypeArgs()
+        {
+            var s = _currentScope;
+            while (s.Parent != null && !s.Parent.IsGlobal) s = s.Parent;
+            return s.TypeArgs;
+        }
+
         /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldType(ref Value value, string? requiredType, string fieldName, ObjectInstance? owner)
         {
@@ -6067,7 +6102,7 @@ namespace fire.Runtime
                     if (at == t.Length - 1)
                     {
                         // a type parameter of the generic method that runs: the type arguments of its call (in the scope the call created)
-                        if (callTypeArgs == null) { var s = _currentScope; while (s.Parent != null && !s.Parent.IsGlobal) s = s.Parent; callTypeArgs = s.TypeArgs ?? Array.Empty<string>(); }
+                        callTypeArgs ??= CallScopeTypeArgs() ?? Array.Empty<string>();
                         args[i] = k < callTypeArgs.Length ? callTypeArgs[k] : "";
                     }
                     else args[i] = DeclaredType.TypeArgOf(_currentThis as ObjectInstance, t.Substring(at + 1), k) ?? "";

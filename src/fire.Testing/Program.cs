@@ -14691,6 +14691,57 @@ else
             print(M.Max(cm5, 3cm))
             try { print(M.Max(1, s)) } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Typen: lokale Variablen zur Laufzeit geprueft, Typparameter durchgereicht (auch this.feld), Spezialisierung von Klassenmethoden und ueber den Dispatcher", """
+            class Animal { string name = "animal" }
+            class Dog : Animal { }
+            class Box<T> {
+                T value
+                undefined Put(T v) { T kept = v; any other = "x"; try { T w = other } catch (ArgumentException e) { print(e.message) } value = kept }
+                T Twice(T v) { return v + v }
+            }
+            class IntBox : Box<int> { }
+            class U {
+                static Box<V> Nested<V>(V v, int n) { Box<V> last = new Box<V>(); for (int i = 0; i < n; i++) { var b = new Box<V>(); b.Put(v); last = b } return last }
+                static Box<V> Outer<V>(V v) { return U.Nested(v, 2) }
+                static V Max<V>(V a, V b) { if (a > b) return a; return b }
+            }
+            class H<T> {
+                T item
+                Box<T> Wrap() { return U.Nested(this.item, 2) }
+                Box<T> WrapImplicit() { return U.Nested(item, 2) }
+            }
+            any s = "a"
+            any five = 5
+            try { int x = s; print(x) } catch (ArgumentException e) { print(e.message) }
+            int y = 1
+            try { y = s } catch (ArgumentException e) { print(e.message) }
+            float f = five
+            print(f is of float)
+            Animal a = new Animal()
+            try { Dog d = a } catch (ArgumentException e) { print(e.message) }
+            Animal a2 = new Dog()
+            Dog d2 = a2
+            print(d2.name)
+            int withUnit = 5mm
+            withUnit = 3cm
+            print(withUnit)
+            var bi = new Box<int>()
+            bi.Put(3)
+            try { U.Outer(2.5).Put(s) } catch (ArgumentException e) { print(e.message) }
+            var h = new H<string>()
+            h.item = "z"
+            try { h.Wrap().Put(five) } catch (ArgumentException e) { print(e.message) }
+            try { h.WrapImplicit().Put(five) } catch (ArgumentException e) { print(e.message) }
+            var ib = new IntBox()
+            var fb = new Box<float>()
+            any viaAny = bi
+            int total = 0
+            float ft = 0.0
+            for (int i = 0; i < 1000; i++) { total = total + bi.Twice(i % 10) + ib.Twice(3) + viaAny.Twice(1); ft = ft + fb.Twice(0.5) }
+            print(total + " " + ft)
+            print(new Box<string>().Twice("ab") + " " + U.Max(2, 3.5) + " " + U.Max(4, 3.5))
+            try { viaAny.Twice(s) } catch (ArgumentException e) { print(e.message) }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))

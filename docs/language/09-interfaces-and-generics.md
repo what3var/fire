@@ -134,8 +134,9 @@ print(Util.Pick("a", "b", false))   // b - the type checker knows the result is 
 ```
 
 The type arguments found for a call are passed to it, so its parameters are checked like those of a generic class (`Util.Pick(1, text, true)`
-with an `any text = "x"` is an `ArgumentException`). An `int` and a `float` together give a `float` (`Pick(2, 3.5, true)`). In native code a call
-with `int`, `float` or `bool` type arguments runs a copy of the method made for them, with typed arithmetic.
+with an `any text = "x"` is an `ArgumentException`). An `int` and a `float` together give a `float` (`Pick(2, 3.5, true)`), and the `2` is a
+`2.0` already at the call. In native code a call with `int`, `float` or `bool` type arguments runs a copy of the method made for them, with
+typed arithmetic - for generic methods and for the methods of a `Box<int>` or `Box<float>` alike.
 
 ## Generic types of the standard library
 

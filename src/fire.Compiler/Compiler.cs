@@ -490,6 +490,7 @@ namespace fire.Compiler
         {
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
+            s_localGuards = resolveResult.LocalGuards;
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
@@ -2047,6 +2048,24 @@ namespace fire.Compiler
         /// <summary>The values whose unit is checked at runtime (ResolveResult.UnitChecks) of the program being compiled.</summary>
         [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
+        [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
+
+        /// <summary>A value going into a local whose declaration the type checker could not prove: checked on the stack (GuardTop/GuardTopType).</summary>
+        private void EmitLocalGuard(TypeRef type, string what)
+        {
+            if (DeclaredKind.Of(type) is var kind and not 0)
+            {
+                _chunk.EmitOp(OpCode.GuardTop);
+                _chunk.EmitByte((byte)((kind & 0x7F) - 1));   // (no unit demand: a local takes the unit of its value)
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(what)));
+            }
+            else if (DeclaredTypeOf(type, _enclosingClass) is { } spec)
+            {
+                _chunk.EmitOp(OpCode.GuardTopType);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(spec)));
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(what)));
+            }
+        }
         /// <summary>The type parameters of the generic method being compiled (`R Select&lt;R&gt;(...)`), null for any other code.</summary>
         private IReadOnlyList<TypeParam>? _methodTypeParams;
 
@@ -2069,6 +2088,7 @@ namespace fire.Compiler
             {
                 CompileExprCore(expr);
                 if (s_unitChecks != null && s_unitChecks.TryGetValue(expr, out var demand)) EmitCheckUnitIfNeeded(this, demand);
+                if (s_localGuards != null && s_localGuards.TryGetValue(expr, out var guard)) EmitLocalGuard(guard.Type, guard.What);
             }
             catch (Exception ex) when ((ex is NotSupportedException || ex is InvalidOperationException) && ex is not CompilerException)
             {

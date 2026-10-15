@@ -87,6 +87,9 @@ namespace fire.Compiler
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<Expr, string> _unitChecks;
         private readonly Dictionary<Expr, string[]> _methodTypeArgs;
+        private readonly Dictionary<Expr, (TypeRef Type, string What)> _localGuards;
+        /// <summary>The declared types of the local variables (by scope, like _scopes): a value whose type does not prove the declaration is checked at runtime.</summary>
+        private readonly List<Dictionary<string, TypeRef>> _localTypes = new();
         private readonly Dictionary<int, bool> _strictBySource = new();
         private readonly TypeCheckMode _defaultMode;
         private readonly int _firstUserSource;
@@ -105,8 +108,9 @@ namespace fire.Compiler
         private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
         private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks,
-            Dictionary<Expr, string[]> methodTypeArgs)
+            Dictionary<Expr, string[]> methodTypeArgs, Dictionary<Expr, (TypeRef Type, string What)> localGuards)
         {
+            _localGuards = localGuards;
             _unitChecks = unitChecks;
             _methodTypeArgs = methodTypeArgs;
             _classes = classes;
@@ -118,7 +122,7 @@ namespace fire.Compiler
         /// <paramref name="defaultMode"/> is the project's or the command line's setting; a `#lax` / `#strict` in a file takes its place for that file.</summary>
         public static IReadOnlyList<Diagnostic> Check(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource)
         {
-            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks, resolved.MethodTypeArgs);
+            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks, resolved.MethodTypeArgs, resolved.LocalGuards);
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
@@ -429,15 +433,55 @@ namespace fire.Compiler
             _ => StaticType.Dynamic,
         };
 
-        /// <summary>The type of `this` in the class being checked (its type parameters are `any` there).</summary>
+        /// <summary>The type of `this` in the class being checked (its type parameters are `any` there - an `any` that is passed on as the type argument
+        /// of the object to a generic method, `$k@Class`; not inside a lambda).</summary>
         private StaticType ThisClass() =>
             // `class extends array/string/int` becomes the class `$array`/`$string`/`$int`: `this` there is a value of that base type
             _class!.Name.StartsWith('$') ? (_class.Name == "$array" ? StaticType.ArrayOf(StaticType.Dynamic) : FromName(_class.Name.Substring(1)))
-            : StaticType.ClassOf(_class.Name);
+            : _class.TypeParams is { Count: > 0 } typeParams && !_inLambda
+                ? StaticType.ClassOf(_class.Name, typeParams.Select((_, k) => StaticType.Dynamic with { TypeParam = $"${k}@{_class.Name}" }).ToList())
+                : StaticType.ClassOf(_class.Name);
 
         private void Push() => _scopes.Add(new Dictionary<string, StaticType>());
-        private void Pop() => _scopes.RemoveAt(_scopes.Count - 1);
-        private void Declare(string name, StaticType type) => _scopes[^1][name] = type;
+        private void Pop() { _scopes.RemoveAt(_scopes.Count - 1); if (_localTypes.Count > _scopes.Count) _localTypes.RemoveRange(_scopes.Count, _localTypes.Count - _scopes.Count); }
+
+        /// <summary>A local variable declared with int/float/bool, a class, an interface or a type parameter.</summary>
+        private void DeclareLocalType(string name, TypeRef type)
+        {
+            while (_localTypes.Count < _scopes.Count) _localTypes.Add(new Dictionary<string, TypeRef>());
+            _localTypes[_scopes.Count - 1][name] = type;
+        }
+
+        /// <summary>The declaration of a local variable, if it was declared with a type that is checked (null otherwise, or when an inner scope shadows it).</summary>
+        private TypeRef? LocalType(string name)
+        {
+            for (int i = _scopes.Count - 1; i >= 0; i--)
+                if (_scopes[i].ContainsKey(name)) return i < _localTypes.Count && _localTypes[i].TryGetValue(name, out var type) ? type : null;
+            return null;
+        }
+
+        /// <summary>A value going into a local declared `target` that its static type does not prove (an `any`, a downcast, a type parameter): checked
+        /// at runtime (ResolveResult.LocalGuards).</summary>
+        private void GuardLocalValue(Expr valueExpr, StaticType value, StaticType target, TypeRef type, string name)
+        {
+            // (a conflict the type checker reports - a warning in lax mode - is left as it is: the program runs on, as lax promises)
+            if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
+            bool needed = target.Kind switch
+            {
+                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
+                StaticKind.Bool => value.Kind != StaticKind.Bool,
+                StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
+                StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
+                _ => false,
+            };
+            if (needed) _localGuards[valueExpr] = (type, $"Variable '{name}'");
+        }
+        private void Declare(string name, StaticType type)
+        {
+            _scopes[^1][name] = type;
+            if (_localTypes.Count == _scopes.Count) _localTypes[^1].Remove(name);   // (a typed local again sets its declaration: DeclareLocalType)
+        }
 
         private StaticType Lookup(string name)
         {
@@ -631,8 +675,10 @@ namespace fire.Compiler
                 {
                     target = WithInitializerUnit(target, v.Type, v.ArrayRanks.Count, init);
                     CheckAssignable(init, target, v.Line, $"'{v.Name}'", valueExpr: v.Initializer);
+                    if (v.ArrayRanks.Count == 0 && v.Type != null) GuardLocalValue(v.Initializer, init, target, v.Type, v.Name);
                 }
                 Declare(v.Name, target);
+                if (v.ArrayRanks.Count == 0 && v.Type is { ArrayRank: 0, PointerDepth: 0 } localType) DeclareLocalType(v.Name, localType);
             }
             else
             {
@@ -932,6 +978,7 @@ namespace fire.Compiler
             var value = Infer(a.Value, target);
             string what = a.Target switch { IdentifierExpr id => $"'{id.Name}'", MemberExpr m => $"'{m.Name}'", IndexExpr => "an element", _ => "the target" };
             CheckAssignable(value, target, a.Line, what, valueExpr: a.Value);
+            if (a.Target is IdentifierExpr local && LocalType(local.Name) is { } localType) GuardLocalValue(a.Value, value, target, localType, local.Name);
             return target.IsDynamic ? value : target;
         }
 
@@ -1135,6 +1182,11 @@ namespace fire.Compiler
             {
                 // what was found is given to the call at run time (ObjectInstance-like: the generic method checks its parameters against it)
                 _methodTypeArgs[c] = method!.TypeParams!.Select(p => map!.TryGetValue(p.Name, out var found) ? TypeArgText(found) : "").ToArray();
+                // a whole number for a type parameter found to be a float becomes a float at the call (`Max(2, 3.5)`), not only in the method
+                for (int i = 0; i < c.Args.Count && i < method.Params.Count; i++)
+                    if (method.Params[i] is { ByRef: false, Type: { TypeArgs: null, ArrayRank: 0 } bare } p && p.ArrayRanks.Count == 0 && open.Contains(bare.BaseName)
+                        && map!.TryGetValue(bare.BaseName, out var found) && found.Kind == StaticKind.Float && args[i].Kind == StaticKind.Int)
+                        _unitChecks.TryAdd(c.Args[i], "#any");
                 map = WithOpen(map!, open);
             }
             if (lambda != null) return CallLambda(lambda, args, c, name);
