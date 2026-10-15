@@ -1,10 +1,27 @@
 #import "windows"
 #import "scene3d"
+#import "time"
 // A scene holds objects, lights and cameras (lengths have units: 1m, 20cm, 3mm; angles: 45deg).
 // The camera draws what it sees into a framebuffer, the window shows the framebuffer.
-var fb = new Framebuffer(480, 320)
-var win = new Window(fb, "Scene3D")
+
+class MainWin : Window
+{
+	public bool closing = false;
+    construct(Framebuffer buffer, string caption) : base(buffer, caption)
+    {
+    	AutoResize = true
+    	VSync = false
+    }
+}
+
+
+var fb = new Framebuffer(640, 480)
+var win = new MainWin(fb, "Scene3D")
 var scene = new Scene()
+var renderer = new Renderer(fb)
+
+win.RegisterCloseRequest(func () on win => {this.closing = true});
+
 
 var floor = new Object(Template.Plane, 0m, 0m, 0m, 8m, 0m, 8m)
 floor.Texture = Texture.Checker(64, 8, S3D.Rgb(235, 235, 235), S3D.Rgb(90, 100, 120))
@@ -71,8 +88,26 @@ cam.SetPosition(2.5m, 2.2m, 4.5m)
 cam.LookAt(0m, 0.4m, 0m)
 scene.Add(cam)
 
-while (win.Tick()) {
+var fpsCount = 0
+var fpsValue = 0
+var whiteBrush = new SolidBrush(15)
+var blackBrush = new SolidBrush(0)
+var lastSecond = DateTime.Now.Second
+
+while (win.Tick() && !win.closing) {
     box.Rotate(0deg, 1deg, 0deg)
-    cone.Rotate(0deg, -2deg, 0deg)
+    //cone.Rotate(0deg, -2deg, 0deg)
     cam.Render()
+    renderer.DrawText(0,0,$"FPS: {fpsValue}",whiteBrush,blackBrush,Fonts.Console(),8)
+    
+    fpsCount++;
+    
+    var sec = DateTime.Now.Second;
+    
+    if (lastSecond != sec)
+    {
+    	lastSecond = sec
+    	fpsValue = fpsCount;
+    	fpsCount = 0;
+    }
 }

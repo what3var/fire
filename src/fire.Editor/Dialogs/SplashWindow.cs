@@ -41,7 +41,7 @@ namespace fire.Editor
 
             var bar = new ProgressBar { IsIndeterminate = true, Height = 3, MinHeight = 3, Foreground = EditorTheme.Magenta, Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Bottom };
             var footer = new DockPanel { Margin = new Thickness(20, 0, 20, 14) };
-            if (versionText.Length > 0) { var v = new TextBlock { Text = versionText, Foreground = EditorTheme.TextDim, FontSize = 12 }; DockPanel.SetDock(v, Avalonia.Controls.Dock.Right); top.Children.Add(v); }
+            if (versionText.Length > 0) { var v = new TextBlock { Text = versionText, Foreground = EditorTheme.TextDim, FontSize = 12, Padding = new Thickness(20, 14, 20, 0) }; DockPanel.SetDock(v, Avalonia.Controls.Dock.Right); top.Children.Add(v); }
             footer.Children.Add(_status);
 
             var grid = new Grid { RowDefinitions = new RowDefinitions("*,Auto,Auto") };

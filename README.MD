@@ -1,3 +1,6 @@
+
+![Banner](https://github.com/what3var/fire/blob/master/logosources/banner.png?raw=true)
+
 ## Making things cross
 
 This project started with the intention of creating a device control suite, tied to a batch or scripting language. As I wasn't able to find a language really cool and appropriate, i started Vibe Coding my own.
@@ -32,7 +35,8 @@ Or just download it, compile it and have a look.
 
 ## Screenshots
 
-![an old test script](https://github.com/what3var/fire/blob/master/screenshots/2.png?raw=true)
+![samples](https://github.com/what3var/fire/blob/master/screenshots/2.png?raw=true)
 ![fxml designer](https://github.com/what3var/fire/blob/master/screenshots/3.png?raw=true)
-![md editor](https://github.com/what3var/fire/blob/master/screenshots/4.png?raw=true)
+![md viewer/editor](https://github.com/what3var/fire/blob/master/screenshots/4.png?raw=true)
 ![raster editor](https://github.com/what3var/fire/blob/master/screenshots/5.png?raw=true)
+![scene3d package](https://github.com/what3var/fire/blob/master/screenshots/5.png?raw=true)

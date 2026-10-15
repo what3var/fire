@@ -61,6 +61,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+[Dirs]
+Name: "{app}\Packages"; Permissions: users-modify
+
 [Files]
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
