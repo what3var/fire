@@ -173,7 +173,7 @@ namespace fire.Runtime
         /// target tree itself).</summary>
         private static ObjectInstance PlainDeepCopy(ObjectInstance node, IOwner owner)
         {
-            var copy = new ObjectInstance(node.ClassName, owner, node.RtClass);
+            var copy = new ObjectInstance(node.ClassName, owner, node.RtClass) { TypeArgs = node.TypeArgs };
             foreach (var (name, val) in node.Fields)
             {
                 if (val.Kind == ValueKind.Class)

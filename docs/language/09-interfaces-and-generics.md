@@ -102,8 +102,22 @@ print(k is of Kennel)
 - `where T is in "mm"` - `T` is a unit of the same dimension as `mm`.
 - `where T is of float : is in "mm"` - both; `where T is of Dog, is of Cat` - one of them.
 
-The conditions are checked at `new`. At run time fire does not create a separate class per type argument: `T` is a placeholder that the
-type checker uses, and a `Box<int>` and a `Box<string>` are the same class at run time.
+The conditions are checked at `new`. At run time fire does not create a separate class per type argument - a `Box<int>` and a `Box<string>` are
+the same class - but every object keeps its type arguments, and what is stored in a `T` is checked against them:
+
+```fire
+class Box<T> {
+    T item
+    undefined Put(T item) { this.item = item }
+}
+var b = new Box<int>()
+any text = "x"
+try { b.Put(text) } catch (ArgumentException e) { print(e.message) }   // Parameter 'item' is a T (int), not String.
+var f = new Box<float>()
+f.Put(3)                                                                // stored as 3.0
+```
+
+`new Box<T>()` inside generic code passes the type argument on, and a class like `class IntBox : Box<int>` fixes it for its objects.
 
 ## Generic methods
 
@@ -118,6 +132,10 @@ class Util {
 }
 print(Util.Pick("a", "b", false))   // b - the type checker knows the result is a string
 ```
+
+The type arguments found for a call are passed to it, so its parameters are checked like those of a generic class (`Util.Pick(1, text, true)`
+with an `any text = "x"` is an `ArgumentException`). An `int` and a `float` together give a `float` (`Pick(2, 3.5, true)`). In native code a call
+with `int`, `float` or `bool` type arguments runs a copy of the method made for them, with typed arithmetic.
 
 ## Generic types of the standard library
 

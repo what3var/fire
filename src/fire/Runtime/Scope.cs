@@ -41,6 +41,9 @@ namespace fire.Runtime
         /// the start and may call a method that reads or writes a global declared further down. It is `undefined` until then; what is written
         /// early is kept here until the declaration (which then sets the value of its initializer, like the native code).</summary>
         public bool EarlyAccess { get; set; }
+
+        /// <summary>The scope of a call of a generic method: the type arguments the call was given (SetTypeArgs with `forCall`); null otherwise.</summary>
+        public string[]? TypeArgs { get; set; }
         private Dictionary<int, System.Runtime.CompilerServices.StrongBox<Value>>? _early;
         private OwnedSet _owned;
         // Arguments that a call received as the result of another call (`f(g())`, SPEC 2.1): they belong to the call and die last, after everything the called function created itself

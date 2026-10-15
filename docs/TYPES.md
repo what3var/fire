@@ -92,7 +92,18 @@ numbers (VM: `GuardLocalClass` at the end of the prologue, `FieldInfo.RequiredCl
 prologue and in `sf_`). Interfaces and type parameters with `where` are checked roughly, by the same guard: the declaration is encoded as
 alternatives of conditions (`DeclaredType`: `is of` a class, interface or basic type, `is in` a unit) - an interface by the classes that declare
 it (`IEnumerable` also takes arrays, buffers and strings), `T` by its `where` (a single `is of` a class also gives the native type of an object of
-it). Type arguments do not exist at run time, so `T` without `where`, type parameters of methods, `any` and `class` stay unchecked. Their type "object of the class or undefined" reaches the
+it). The type arguments are kept at run time: an object keeps those of its `new` (`ObjectInstance.TypeArgs`, natively a pointer `targs` in the
+object head to an interned list of `TArg`s; `new Box<int>()` costs one pointer, `class IntBox : Box<int>` gives them through
+`RuntimeClass.BaseTypeArgs`, `new Box<T>()` inside generic code takes them from the running code), and a call of a generic method gets those the
+type checker found (`SetTypeArgs` before the call, `TakeCallTypeArgs` in the method: `Scope.TypeArgs`, natively `ctargs`). A `T` whose type argument
+is known is checked exactly (`Box<int>`: only an int - a whole number for a `float` is converted; `Cage<Dog>` with `where T is of Animal`: only a
+`Dog`); without one (`new Box()`, the raw form) by its `where` alone, and `T` without `where` not at all. `any` and `class` stay unchecked.
+**Hybrid generics (native):** a call of a generic method whose type arguments are constant and include `int`, `float` or `bool` (`Max(i % 7, 3)`)
+calls a copy of the method made for them, in which those parameters are numbers of that kind without a unit - typed operations instead of generic
+ones; the call site tests the arguments when their types do not already say so and calls the generic method otherwise (`5cm` through `any`). One
+copy per method and type arguments, object types share the generic one. 30M calls of `Max`/`Clamp`/`Sum3` with ints and floats: 0.96 s -> 0.09 s.
+A type parameter found to be `int` becomes `float` when a later argument is a float (`Max(2, 3.5)`).
+Their type "object of the class or undefined" reaches the
 fields and methods directly, too - the object is tested to be one (`kind == K_Class`), and `undefined` takes the helper, which reports it. A
 comparison with `undefined` of a number, a bool or an object of a known class is a test of the kind (unless a class overloads `==`). A linked
 list walked through typed parameters and fields (`Step(Body first, float dt)`, `b.pos.x`, `b = b.next`) runs a third fewer instructions.
@@ -106,7 +117,12 @@ instructions of a loop is the same to the instruction (62.0M each), and so is a 
 (13.0M) - the C++ compiler already keeps the fields of a `Value` that do not escape in registers and drops the stores of `kind` and `unit`.
 The unit stays static in the type either way.
 
-Not yet: typed opcodes in the VM.
+Typed opcodes in the VM were measured and left out, too: an instruction of the VM costs about 20 ns on the test machine whatever it does
+(`s = t` - load, hoist, store - takes 65 ns, `s = s + t` 120 ns), so the test of the kinds in `Add`/`Lt`/... is a small part of it; what
+costs is the dispatch of each instruction and the copying of `Value`s on the stack. Two cheap things were done instead: `HoistValue` (every
+assignment) and the guards of the prologue (`GuardLocal`, `GuardLocalType`) go through the fast `Step` instead of `Execute`, and the main loop
+(`RunLoopCore`, entered once) is compiled fully optimised straight away (about 4 % on the benchmarks). What would really help the VM is fewer
+instructions (more fused ones, or registers instead of the stack) - a step of its own.
 
 ## Decisions
 

@@ -141,7 +141,7 @@ static class TypeTests
         Check("Generics: List<T> und eigene generische Klassen, Typargumente in Deklarationen, Substitution, foreach ueber IEnumerable<T>", Run("""
             List<int> xs = new List<int>()
             xs.Add(1)
-            xs.Add("zwei")
+            try { xs.Add("zwei") } catch (ArgumentException ex) { print(ex.message) }
             bool wrong = xs[0]
             foreach (x in xs) { bool b = x }
             List<string> names = new List<string>()
@@ -155,7 +155,7 @@ static class TypeTests
             }
             var bi = new Box<int>(4)
             bool bb = bi.Get()
-            var bad = new Box<int>("x")
+            try { var bad = new Box<int>("x") } catch (ArgumentException ex) { print(ex.message) }
             List<List<int>> nested = new List<List<int>>()
             nested.Add(xs)
             bool deep = nested[0][0]
@@ -167,7 +167,7 @@ static class TypeTests
             foreach (f in new Bag()) { bool fb = f }
             IEnumerable<int> e = xs
             print(xs.count)
-            """) == "TC002 TC001 TC001 TC001 TC001 TC002 TC001 TC001|1");
+            """) == "TC002 TC001 TC001 TC001 TC001 TC002 TC001 TC001|Parameter 'value' is a T (int), not String.\nParameter 'item' is a T (int), not String.\n1");
         Check("Generics: falsche Anzahl Typargumente (E4061), Typargumente an einer nicht generischen Klasse (E4045)",
             Run("List<int, int> a = new List()") == "|ERROR E4061" && Run("class A { }\nA<int> a = new A()") == "|ERROR E4045");
         Check("eine Einheit : any verlangt keine bestimmte Einheit", Run("any_unit_ok()\nint x : any = 3m\nx = 5s\nprint(x)".Replace("any_unit_ok()\n", "")) == "|5s");

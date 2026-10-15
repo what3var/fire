@@ -85,6 +85,10 @@ namespace fire.Bytecode
         /// <summary>The interfaces this class names in `class X : Base, IFoo` (for `value is of IFoo`; inherited ones come via the base-class chain).</summary>
         public List<string> Interfaces { get; set; } = new();
 
+        /// <summary>The type arguments this class gives its base class (`class IntBox : Box&lt;int&gt;`, `class MyList&lt;U&gt; : List&lt;U&gt;`), as
+        /// DeclaredType texts - `$k` for the k-th type parameter of this class; null when the base is not generic (DeclaredType.TypeArgOf).</summary>
+        public string[]? BaseTypeArgs { get; set; }
+
         /// <summary>Class of the reflection library (`Reflect`, `Type`, `Member`, `Selector`): for the access check the caller BEFORE it counts.</summary>
         public bool IsReflectionHelper { get; set; }
 

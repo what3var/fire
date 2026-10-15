@@ -55,6 +55,10 @@ namespace fire.Compiler
         /// <summary>Values whose unit the type checker could not prove for the declaration they go to (a number declared without a unit is unitless): the
         /// compiler checks them at runtime (OpCode.CheckUnit with the demand). Filled by TypeChecker.</summary>
         public Dictionary<Expr, string> UnitChecks { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>The type arguments the type checker found for a call of a generic method (`Box.Of(5)`: `int`), as DeclaredType texts ("" for one that
+        /// is not known): the compiler gives them to the call (SetTypeArgs), the native generator can specialise the method for them. Filled by TypeChecker.</summary>
+        public Dictionary<Expr, string[]> MethodTypeArgs { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }

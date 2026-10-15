@@ -64,6 +64,12 @@ namespace fire.Native
             public readonly List<(int Target, int[] Sources)> Hoists = new();
             /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.hpp).</summary>
             public bool NeedsArgList;
+            /// <summary>A generic method: it takes the type arguments of its call (TakeCallTypeArgs) into `ctargs`.</summary>
+            public bool HasCallTArgs;
+            /// <summary>A copy of a generic method for constant type arguments (the hybrid of generics): their SetTypeArgs text, and the parameters
+            /// (slot, kind) that are an int/float/bool type parameter - the call site makes sure they hold that kind without a unit.</summary>
+            public string? SpecTArgs;
+            public List<(int Slot, byte Kind)>? SpecParams;
             public string Code = "";
             // Per generation of the chunk (see GenerateChunk): the catch regions, the finally bookkeeping and the decoded code.
             public Dictionary<int, Region> Regions = new();
@@ -79,7 +85,7 @@ namespace fire.Native
             public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
             public string Signature => Kind == FuncKind.Main ? "static void fire_main()"
                 : Kind == FuncKind.FireBody ? $"static void {Name}(const Value* args)"
-                : $"static Value {Name}(" + string.Join(", ", (HasSelf ? new[] { "Value self" } : Kind == FuncKind.Lambda ? new[] { "Value lam" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"Value P{i}"))) + ")";
+                : $"{(HasCallTArgs ? "[[maybe_unused]] " : "")}static Value {Name}(" + string.Join(", ", (HasSelf ? new[] { "Value self" } : Kind == FuncKind.Lambda ? new[] { "Value lam" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"Value P{i}"))) + ")";
             /// <summary>Lambdas are called through a pointer with a uniform signature.</summary>
             public string ThunkSignature => $"static Value {Name}_t(Value lam, const Value* a)";
         }
@@ -102,6 +108,8 @@ namespace fire.Native
         private readonly HashSet<int> _globals = new();
         private readonly Dictionary<FunctionProto, Func> _funcByProto = new(ReferenceEqualityComparer.Instance);
         private readonly List<Func> _funcs = new();
+        /// <summary>The specialised copies of generic methods, by method and type arguments (see Specialize).</summary>
+        private readonly Dictionary<(FunctionProto, string), Func> _specFuncs = new();
         private readonly Dictionary<string, ClassInfo> _classes = new();
         private readonly List<ClassInfo> _classList = new();
         private readonly SortedSet<(string Name, int Argc)> _dispatchers = new();
@@ -109,6 +117,14 @@ namespace fire.Native
         private readonly SortedSet<string> _operators = new();
         /// <summary>Class and interface names tested with `is of`: each gets a function `isof_...`.</summary>
         private readonly SortedSet<string> _isOfTypes = new();
+        /// <summary>Type arguments (DeclaredType texts: `int`, `Dog`, `in:cm`) by id: each is a TArg `ta_N` with its test `tah_N`.</summary>
+        private readonly Dictionary<string, int> _targIds = new();
+        /// <summary>Constant lists of type arguments (`new Box&lt;int&gt;()`), by their SetTypeArgs text: each is an array `tl_N`.</summary>
+        private readonly Dictionary<string, int> _targListIds = new();
+        /// <summary>The functions `targOf_C_k` (the type argument of the k-th type parameter of class C for an object, through its base classes).</summary>
+        private readonly SortedSet<(string Cls, int Index)> _targOfs = new();
+        /// <summary>The type arguments of the next NewObject (a SetTypeArgs right before it): a C++ expression of TArgs.</summary>
+        private string? _pendingNewTArgs;
         /// <summary>The member chains of selector lambdas (`c => c.radius`), each a static array.</summary>
         private readonly Dictionary<string[], string> _selectorPaths = new(new SelectorPathComparer());
         private sealed class SelectorPathComparer : IEqualityComparer<string[]>
@@ -226,6 +242,51 @@ namespace fire.Native
             return "a lambda or a function of the script";
         }
 
+        /// <summary>The hybrid of generics: a call of a generic method whose type arguments are constant (`Max(3, 4)`: `int`) goes to a copy of it in
+        /// which the parameters of an int/float/bool type parameter are numbers of that kind without a unit - typed operations instead of generic
+        /// ones. The call site tests the arguments (`Condition`, null when their types already say so) and calls the generic method otherwise.</summary>
+        private (Func Target, string? Condition) Specialize(Func f, Instr ins, Func generic, int firstArg, int argc, System.Func<int, string> slot, System.Func<int, int> slotType)
+        {
+            if (generic.Proto is not { } proto || CallTArgsText(f, ins) is not { } text || text.Contains('$')) return (generic, null);
+            var parts = text.Split('|');
+            var specParams = new List<(int Slot, byte Kind)>();
+            foreach (var c in OpInfo.Decode(proto.Chunk.Code))
+            {
+                if (c.Op != OpCode.GuardLocalType) continue;
+                var spec = DeclaredType.Parse(proto.Chunk.Constants[c.A[1]].AsString());
+                if (spec.TypeParamIndex < 0 || spec.TypeParamClass!.Length > 0 || spec.TypeParamIndex >= parts.Length) continue;
+                byte kind = parts[spec.TypeParamIndex] switch { "int" => KindInt, "float" => KindFloat, "bool" => KindBool, _ => KindUnknown };
+                if (kind == KindUnknown) continue;
+                if (c.A[0] >= argc) return (generic, null);   // (a default value: its kind is not known here)
+                specParams.Add((c.A[0], kind));
+            }
+            if (specParams.Count == 0) return (generic, null);
+            if (!_specFuncs.TryGetValue((proto, text), out var spec2))
+            {
+                spec2 = new Func { Proto = proto, Chunk = proto.Chunk, Kind = generic.Kind, Index = _funcs.Count, SpecTArgs = text, SpecParams = specParams };
+                _funcs.Add(spec2);
+                _specFuncs[(proto, text)] = spec2;
+                _version++;
+            }
+            var conditions = new List<string>();
+            foreach (var (param, kind) in specParams)
+            {
+                string arg = slot(firstArg + param);
+                if (slotType(firstArg + param) == TypeOf(kind, 0)) continue;
+                string kindName = kind == KindInt ? "K_Int" : kind == KindFloat ? "K_Float" : "K_Bool";
+                conditions.Add(kind == KindBool ? $"{arg}.kind == K_Bool" : $"{arg}.kind == {kindName} && {arg}.unit == 0");
+            }
+            return (spec2, conditions.Count == 0 ? null : string.Join(" && ", conditions));
+        }
+
+        /// <summary>The text of the SetTypeArgs (for a call) right before a call instruction (a CopyArgs may stand between them), or null.</summary>
+        private static string? CallTArgsText(Func f, Instr ins)
+        {
+            int i = f.IndexOf[ins.Addr] - 1;
+            if (i >= 0 && f.Decoded[i].Op == OpCode.CopyArgs) i--;
+            return i >= 0 && f.Decoded[i] is { Op: OpCode.SetTypeArgs } set && set.A[1] != 0 ? f.Chunk.Constants[set.A[0]].AsString() : null;
+        }
+
         private Func GetFunc(FunctionProto proto, FuncKind kind, int captureCount = 0)
         {
             if (_funcByProto.TryGetValue(proto, out var existing))
@@ -336,7 +397,7 @@ namespace fire.Native
             }
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
                 + (kind != 0 ? FieldKindCheck(name, kind) + " " : "")
-                + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'") + " " : "");
+                + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "");
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
@@ -430,27 +491,141 @@ namespace fire.Native
         /// <summary>The check of a declaration with a class, an interface or a constrained type parameter (a parameter, a field; DeclaredType, `spec` its
         /// encoded form): `undefined` or a value that fits one alternative passes (and a destroyed object: every use of it reports that), anything else
         /// is an ArgumentException.</summary>
-        private string ClassGuard(string value, string spec, string what)
+        private string ClassGuard(string value, string spec, string what, string ownerObj = "nullptr", string? callTArgs = null)
         {
             var parsed = DeclaredType.Parse(spec);
-            string Holds(DeclaredType.Condition c)
+            string altCheck = "";
+            if (parsed.Alternatives.Length > 0)
             {
-                if (c.IsUnit) return $"(({value}.kind == K_Int || {value}.kind == K_Float) && unitCompatible(unitOf({value}), {UnitId(c.Unit)}))";
-                switch (c.Name)
-                {
-                    case "int": return $"{value}.kind == K_Int";
-                    case "float": return $"{value}.kind == K_Float";
-                    case "bool": return $"{value}.kind == K_Bool";
-                    case "char": return $"{value}.kind == K_Char";
-                    case "string": return $"{value}.kind == K_String";
-                    case "class": case "Exception": return $"{value}.kind == K_Class";
-                }
-                _isOfTypes.Add(c.Name);
-                string enumerable = GenericClassNames.PlainName(c.Name) == "IEnumerable" ? $"{value}.kind == K_Array || {value}.kind == K_Buffer || {value}.kind == K_String || " : "";
-                return $"({enumerable}isof_{Mangle(c.Name)}({value}))";
+                string fits = string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(c => HoldsExpr(value, c))) + ")"));
+                altCheck = $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && !({fits}) && ({value}.kind != K_Class || leafAlive({value})))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
             }
-            string fits = string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(Holds)) + ")"));
-            return $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && !({fits}) && ({value}.kind != K_Class || leafAlive({value})))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
+            if (parsed.TypeParamIndex < 0) return altCheck;
+            // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
+            int k = parsed.TypeParamIndex;
+            string? typeArg = parsed.TypeParamClass!.Length > 0
+                ? (ownerObj != "nullptr" ? TArgOfExpr(parsed.TypeParamClass, k, ownerObj) : null)
+                : (callTArgs != null ? $"({callTArgs} ? {callTArgs}[{k}] : nullptr)" : null);
+            if (typeArg == null) return altCheck;
+            string param = parsed.Display.Split(' ')[0];
+            return $"{{ const TArg* tga = {typeArg}; if (tga) {{ if (FIRE_UNLIKELY(!fitsTArg({value}, tga))) guardTArgFailed({value}, {CString(param)}, tga, {CString(what)}); }}"
+                + (altCheck.Length > 0 ? $" else {{ {altCheck} }}" : "") + " }";
+        }
+
+        /// <summary>The C++ test of one condition of a declaration (or of a type argument) on `value`.</summary>
+        private string HoldsExpr(string value, DeclaredType.Condition c)
+        {
+            if (c.IsUnit) return $"(({value}.kind == K_Int || {value}.kind == K_Float) && unitCompatible(unitOf({value}), {UnitId(c.Unit)}))";
+            switch (c.Name)
+            {
+                case "int": return $"{value}.kind == K_Int";
+                case "float": return $"{value}.kind == K_Float";
+                case "bool": return $"{value}.kind == K_Bool";
+                case "char": return $"{value}.kind == K_Char";
+                case "string": return $"{value}.kind == K_String";
+                case "class": case "Exception": return $"{value}.kind == K_Class";
+            }
+            _isOfTypes.Add(c.Name);
+            string enumerable = GenericClassNames.PlainName(c.Name) == "IEnumerable" ? $"{value}.kind == K_Array || {value}.kind == K_Buffer || {value}.kind == K_String || " : "";
+            return $"({enumerable}isof_{Mangle(c.Name)}({value}))";
+        }
+
+        /// <summary>The TArg of a type argument text (`&amp;ta_N`; nullptr for "": not known).</summary>
+        private string TArgRef(string text)
+        {
+            if (text.Length == 0) return "nullptr";
+            if (!_targIds.TryGetValue(text, out int id))
+            {
+                _targIds[text] = id = _targIds.Count;
+                HoldsExpr("v", DeclaredType.ConditionOf(text));   // (registers the `isof_` it needs)
+            }
+            return "&ta_" + id;
+        }
+
+        /// <summary>The type argument of the k-th type parameter of class `cls` for the object `ownerObj` (an Obj*, may be null): `targOf_C_k`.</summary>
+        private string TArgOfExpr(string cls, int k, string ownerObj)
+        {
+            _targOfs.Add((cls, k));
+            return $"targOf_{Mangle(cls)}_{k}({ownerObj})";
+        }
+
+        /// <summary>The object of the running method as an Obj* (null outside of a method or for an extension method's receiver that is no object).</summary>
+        private string SelfObj(Func f) => f.HasSelf ? "(self.kind == K_Class ? objAt(self) : nullptr)" : "nullptr";
+
+        /// <summary>The C++ expression (TArgs) of the type arguments of a SetTypeArgs text: a constant list, or one put together at run time when it
+        /// names a type parameter of the running code (`$k@Class` of the object, `$k@` of the call).</summary>
+        private string TArgsExpr(Func f, string text)
+        {
+            var parts = text.Split('|');
+            if (!text.Contains('$'))
+            {
+                if (!_targListIds.TryGetValue(text, out int id))
+                {
+                    foreach (var part in parts) TArgRef(part);
+                    _targListIds[text] = id = _targListIds.Count;
+                }
+                return "tl_" + id;
+            }
+            string Part(string t)
+            {
+                if (!t.StartsWith('$')) return TArgRef(t);
+                int at = t.IndexOf('@');
+                int k = int.Parse(t.AsSpan(1, at - 1), CultureInfo.InvariantCulture);
+                if (at == t.Length - 1) return f.HasCallTArgs ? $"(ctargs ? ctargs[{k}] : nullptr)" : "nullptr";
+                return f.HasSelf ? TArgOfExpr(t.Substring(at + 1), k, SelfObj(f)) : "nullptr";
+            }
+            return "internTArgs({" + string.Join(", ", parts.Select(Part)) + "})";
+        }
+
+        /// <summary>The type arguments' tables: a TArg per text, the constant lists and the `targOf_` functions (declared before the helpers that check fields).</summary>
+        private string TArgTables()
+        {
+            // the targOf_ functions first: their constant type arguments are registered as they are made
+            var targOfCode = new StringBuilder();
+            foreach (var (cls, k) in _targOfs)
+            {
+                var cases = new List<(int Id, string Expr)>();
+                foreach (var ci in _classList)
+                {
+                    string[]? args = null;   // (null: the class's own type arguments; "$j" is its j-th)
+                    var rc = ci.Rc;
+                    while (rc != null && rc.Name != cls)
+                    {
+                        var given = rc.BaseTypeArgs ?? Array.Empty<string>();
+                        var outer = args;
+                        args = given.Select(t => !t.StartsWith('$') ? t
+                            : outer == null ? t
+                            : int.Parse(t.AsSpan(1), CultureInfo.InvariantCulture) is var j && j < outer.Length ? outer[j] : "").ToArray();
+                        rc = rc.Base;
+                    }
+                    if (rc == null) continue;
+                    string token = args == null ? "$" + k : k < args.Length ? args[k] : "";
+                    string expr = token.Length == 0 ? "nullptr"
+                        : token.StartsWith('$') ? $"(o->targs ? o->targs[{token.Substring(1)}] : nullptr)"
+                        : TArgRef(token);
+                    cases.Add((ci.Id, expr));
+                }
+                targOfCode.AppendLine($"[[maybe_unused]] static const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
+                targOfCode.AppendLine("    if (!o) return nullptr;");
+                targOfCode.AppendLine("    switch (o->cls) {");
+                foreach (var group in cases.GroupBy(c => c.Expr))
+                    targOfCode.AppendLine("        " + string.Concat(group.Select(c => $"case {c.Id}: ")) + $"return {group.Key};");
+                targOfCode.AppendLine("        default: return nullptr;");
+                targOfCode.AppendLine("    }");
+                targOfCode.AppendLine("}");
+            }
+            var sb = new StringBuilder();
+            foreach (var (text, id) in _targIds.OrderBy(kv => kv.Value))
+            {
+                var condition = DeclaredType.ConditionOf(text);
+                string display = condition.IsUnit ? "in " + condition.Name : GenericClassNames.PlainName(text);
+                sb.AppendLine($"static bool tah_{id}(Value v) {{ return {HoldsExpr("v", condition)}; }}");
+                sb.AppendLine($"static const TArg ta_{id} = {{{CString(display)}, tah_{id}, {(text == "float" ? "true" : "false")}}};");
+            }
+            foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
+                sb.AppendLine($"static const TArg* const tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
+            sb.Append(targOfCode);
+            return sb.ToString();
         }
 
         /// <summary>The class a declaration (DeclaredType, encoded) certainly holds an object of (or undefined): a single `is of` a class of the program.</summary>
@@ -463,7 +638,7 @@ namespace fire.Native
 
         /// <summary>Does a value of this static type pass the check of a declaration (DeclaredType, encoded) as it is?</summary>
         private bool FitsClassType(int type, string spec) =>
-            type == TypeUndefined || BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name);
+            type == TypeUndefined || DeclaredType.Parse(spec).TypeParamIndex < 0 && BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name);
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
         private static string ReturnKey(Func f) => "ret:" + f.Name;
@@ -825,11 +1000,15 @@ namespace fire.Native
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
             }
+            // the field helpers are made first: their checks register the `is of` tests and type arguments they use
+            var fieldHelperCode = _fieldNames.Select(FieldHelpers).ToList();
             // the checks of fields declared with a class (sf_) test `is of` - declared before the helpers that use them
             foreach (var name in _fieldNames)
                 foreach (var cls in _classList)
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType) _isOfTypes.UnionWith(IsOfNames(requiredType));
+            string targTables = TArgTables();
             foreach (var typeName in _isOfTypes) sb.AppendLine($"[[maybe_unused]] static bool isof_{Mangle(typeName)}(Value v);");
+            sb.Append(targTables);
             foreach (var name in _fieldNames)
             {
                 string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
@@ -846,7 +1025,7 @@ namespace fire.Native
             sb.AppendLine("[[maybe_unused]] static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
             sb.AppendLine();
 
-            foreach (var name in _fieldNames) sb.AppendLine(FieldHelpers(name));
+            foreach (var code in fieldHelperCode) sb.AppendLine(code);
             foreach (var (name, argc) in _dispatchers) sb.AppendLine(Dispatcher(name, argc));
             if (_usesTakeEnumerate) sb.Append(EnumerateItemsFunction());
             foreach (var method in _operators)
@@ -1289,7 +1468,7 @@ namespace fire.Native
                 if (!indexByClass.ContainsKey(cls.Id)) continue;
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
-                    + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'") + " " : "");
+                    + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "");
                 if (check.Length > 0) unitChecks.Append($"        case {cls.Id}: {check}break;\n");
             }
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
@@ -1344,7 +1523,7 @@ namespace fire.Native
                     if (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0)
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
-                        unit += ClassGuard("x", requiredType, $"Field '{name}'") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
+                        unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
                     continue;
@@ -1695,6 +1874,8 @@ namespace fire.Native
             for (int i = 0; i < code.Count; i++) indexOfAddr[code[i].Addr] = i;
             f.Decoded = code;
             f.IndexOf = indexOfAddr;
+            f.HasCallTArgs = code.Any(c => c.Op == OpCode.TakeCallTypeArgs);
+            _pendingNewTArgs = null;
             f.Regions = new Dictionary<int, Region>();
             f.Root = new Out();
             // which scopes need a list is found again in every round (pass 1 below sees every instruction before pass 2 emits): a scope that needed one
@@ -2789,14 +2970,18 @@ namespace fire.Native
                     if (rc.FindMethodWithAccess(method, argc) is { } staticFound)
                         AccessCheck(staticFound.DeclaringClass!, staticFound.Access, $"Static method '{method}' of '{staticFound.DeclaringClass!.Name}' is {DescribeAccess(staticFound.Access)} and cannot be called from here.");
                     var target = GetFunc(proto, FuncKind.Static);
+                    var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
                     if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
+                    string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
-                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}({(CallArgs(d - argc, argc, mask, proto.RefMask) + dargs).TrimStart(',', ' ')});{(dpre.Length > 0 ? " }" : "")}");
+                    string staticArgs = (CallArgs(d - argc, argc, mask, proto.RefMask) + dargs).TrimStart(',', ' ');
+                    string staticCall = specCondition != null ? $"{specTest}{staticArgs}) : {target.Name}({staticArgs})" : $"{callee.Name}({staticArgs})";
+                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {staticCall};{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
-                    AdoptResult(d - argc, ReturnType(target));
+                    AdoptResult(d - argc, specCondition == null ? ReturnType(callee) : JoinTypes(ReturnType(callee), ReturnType(target)));
                     d = d - argc + 1; return Next();
                 }
                 case OpCode.Return:
@@ -2898,7 +3083,9 @@ namespace fire.Native
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
                     var (dpre, dargs) = DefaultArgs(ctor, argc, "o", "&" + OwnerList());
-                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs}); {S(slot)} = o; }}");
+                    string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
+                    _pendingNewTArgs = null;
+                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs}); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -2976,15 +3163,19 @@ namespace fire.Native
                     {
                         // an object of a known class whose method no derived class overrides: the method itself, not the dispatcher (a destroyed object throws, like there)
                         var target = GetFunc(directProto, FuncKind.Method);
+                        var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
                         long mask = ArgMask();
+                        string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                         ArgsBefore(d - argc, argc, mask);
                         var (dpre, dargs) = DefaultArgs(directProto, argc, S(slot), DefaultsList(directProto, argc));
                         // (a receiver that may be undefined: the MissingMemberException of the dispatcher, which has nothing for undefined)
                         string notObject = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({S(slot)}.kind != K_Class)) {S(slot)} = missingMethod({S(slot)}, {CString(method)}, {argc}); else " : "";
-                        E($"{{ {dpre}{notObject}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)}); else {S(slot)} = {target.Name}({S(slot)}{CallArgs(d - argc, argc, mask, directProto.RefMask)}{dargs}); }}");
+                        string methodArgs = $"{S(slot)}{CallArgs(d - argc, argc, mask, directProto.RefMask)}{dargs}";
+                        string methodCall = specCondition != null ? $"{specTest}{methodArgs}) : {target.Name}({methodArgs})" : $"{callee.Name}({methodArgs})";
+                        E($"{{ {dpre}{notObject}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)}); else {S(slot)} = {methodCall}; }}");
                         ArgsAfter(argc, mask, S(slot));
                         Check();
-                        AdoptResult(slot, ReturnType(target));
+                        AdoptResult(slot, specCondition == null ? ReturnType(callee) : JoinTypes(ReturnType(callee), ReturnType(target)));
                         d = slot + 1; return Next();
                     }
                     _dispatchers.Add((method, argc));
@@ -3135,12 +3326,33 @@ namespace fire.Native
                     _kindsKept = true;
                     return Next();
                 }
+                case OpCode.SetTypeArgs:
+                {
+                    // the type arguments of the next `new` (the object keeps them) or of the next call of a generic method (it takes them: TakeCallTypeArgs)
+                    string typeArgs = TArgsExpr(f, Str(ins.A[0]));
+                    if (ins.A[1] != 0) E($"g_callTArgs = {typeArgs};");
+                    else _pendingNewTArgs = typeArgs;
+                    _kindsKept = true;
+                    return Next();
+                }
+                case OpCode.TakeCallTypeArgs:
+                    // (a specialised copy knows its type arguments; the caller set them for the generic method all the same)
+                    E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "static_cast<TArgs>(g_callTArgs)")}; g_callTArgs = nullptr; (void)ctargs;");
+                    _kindsKept = true;
+                    return Next();
                 case OpCode.GuardLocalType:
                 {
                     // the end of the prologue: the parameter holds undefined or what its declaration says (DeclaredType) - with a class, an object of it
                     string v = Var(st, 0, ins.A[0], locals);
                     string spec = Str(ins.A[1]);
-                    E(ClassGuard(v, spec, Str(ins.A[2])));
+                    if (f.SpecParams?.FirstOrDefault(p => p.Slot == ins.A[0]) is { Kind: not 0 } specParam)
+                    {
+                        // a specialised copy: the call site made sure the argument is a number of that kind without a unit (or a bool)
+                        JoinVarType(VarKey(f, v), TypeOf(specParam.Kind, 0));
+                        _kindsKept = true;
+                        return Next();
+                    }
+                    E(ClassGuard(v, spec, Str(ins.A[2]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
                     Check();
                     JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | NullableBit : TypeUnknown);
                     _kindsKept = true;

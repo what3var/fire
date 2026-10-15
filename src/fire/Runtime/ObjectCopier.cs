@@ -66,7 +66,7 @@ namespace fire.Runtime
         {
             if (map.TryGetValue(node, out var existing)) return existing;
 
-            var copy = new ObjectInstance(node.ClassName, copyOwner, node.RtClass) { IsTakingCopy = true };
+            var copy = new ObjectInstance(node.ClassName, copyOwner, node.RtClass) { IsTakingCopy = true, TypeArgs = node.TypeArgs };
             map[node] = copy;
 
             // Read under the tree lock (since ActivateThreadSharing, node can

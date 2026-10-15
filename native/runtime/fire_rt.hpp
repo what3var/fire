@@ -28,6 +28,7 @@
 #endif
 #endif
 #include FIRE_PLATFORM_HEADER
+#include <initializer_list>
 
 // Fire threads (`fire { }`): real threads that take turns under one global lock (the GIL); the generator defines FIRE_THREADS when the
 // program uses them. The state that belongs to one thread of execution (unwinding, handlers, the temporary pool, the global scope list)
@@ -163,6 +164,7 @@ struct Zombies { Owned* head; int32_t depth; };
     X(int32_t, g_scopeCount, 0) \
     X(uint32_t, g_callDepth, 0)         /* the number of fire functions that are running on this thread (only kept when the program uses `try x.Take...`) */ \
     X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
+    X(const void*, g_callTArgs, nullptr)     /* the type arguments for the next call of a generic method (TArgs) */ \
     X(Zombies, g_zombies, (Zombies{nullptr, 0}))          /* destroyed objects whose memory is freed at the end of the batch */ \
     X(BridgeError, g_ioError, (BridgeError{0, {0}}))      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, (BridgeError{0, {0}}))  /* the device bridge */ \
@@ -199,6 +201,7 @@ inline ThreadLocals& tl() {
 #define g_scopeLists (::fire::tl().g_scopeLists)
 #define g_scopeCount (::fire::tl().g_scopeCount)
 #define g_reflCaller (::fire::tl().g_reflCaller)
+#define g_callTArgs (::fire::tl().g_callTArgs)
 #define g_zombies (::fire::tl().g_zombies)
 #define g_ioError (::fire::tl().g_ioError)
 #define g_deviceError (::fire::tl().g_deviceError)
@@ -1139,10 +1142,17 @@ inline bool truthy(Value v) {
 // Differences to the VM: a reference to a destroyed *object* is not detected (the VM keeps destroyed objects readable); a destroyed
 // array or buffer is (see the handles above).
 // ---------------------------------------------------------------------------------------------------------------------
+/// A type argument (`int`, `Dog`, `in cm`) of an object (`new Box<int>()`) or of a call of a generic method: what a declaration with that type
+/// parameter takes (generated once per text, see DeclaredType of the VM).
+struct TArg { const char* display; bool (*holds)(Value); bool isFloat; };
+/// The type arguments of an object or a call, one per type parameter (nullptr: not known); interned, never freed.
+using TArgs = const TArg* const*;
+
 struct alignas(alignof(Value)) Obj : Owned {
     uint32_t cls;      // class id (assigned by the generator)
     uint32_t nfields;
     OwnList owned;     // what this object owns
+    TArgs targs;       // the type arguments it was created with (nullptr: none known)
     Value* fields() { return reinterpret_cast<Value*>(this + 1); }
 };
 
@@ -1197,6 +1207,7 @@ inline Value newObject(uint32_t cls, uint32_t fieldCount, OwnList* owner) {
     o->owned.parent = nullptr;
     o->owned.holder = o;
     o->nfields = fieldCount;
+    o->targs = nullptr;
     Value* f = o->fields();
     for (uint32_t i = 0; i < fieldCount; i++) f[i] = Undef();
     link(owner, o);
@@ -2289,6 +2300,41 @@ FIRE_COLD inline void guardClassFailed(Value v, const char* cls, const char* wha
     bool vowel = std::strchr("AEIOUaeiou", cls[0]) != nullptr;
     std::snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
     fireError("ArgumentException", text);
+}
+
+/// A declaration with a type parameter (`T value`) whose type argument is known was given something else: "is a T (int), not String."
+FIRE_COLD inline void guardTArgFailed(Value v, const char* param, const TArg* ta, const char* what) {
+    char display[160];
+    std::snprintf(display, sizeof display, "%s (%s)", param, ta->display);
+    guardClassFailed(v, display, what);
+}
+
+/// A declaration with a type parameter: the value fits its type argument (a whole number for a `float` becomes one); false: it does not.
+inline bool fitsTArg(Value& v, const TArg* ta) {
+    if (v.kind == K_Undefined || ta->holds(v) || (v.kind == K_Class && !leafAlive(v))) return true;
+    if (ta->isFloat && v.kind == K_Int) { v = Float(static_cast<Real>(v.i), v.unit); return true; }
+    return false;
+}
+
+/// The type arguments of a `new` or a call that names a type parameter of the running code (`new Box<T>()`): the same list for the same arguments.
+inline TArgs internTArgs(std::initializer_list<const TArg*> items) {
+    struct Entry { Entry* next; uint32_t n; const TArg* a[1]; };
+    static Entry* s_head = nullptr;
+    uint32_t n = static_cast<uint32_t>(items.size());
+    for (Entry* e = s_head; e; e = e->next) {
+        if (e->n != n) continue;
+        uint32_t i = 0;
+        for (const TArg* t : items) { if (e->a[i] != t) break; i++; }
+        if (i == n) return e->a;
+    }
+    Entry* e = static_cast<Entry*>(std::malloc(sizeof(Entry) + (n > 0 ? n - 1 : 0) * sizeof(const TArg*)));
+    if (FIRE_UNLIKELY(!e)) allocFailed();
+    e->n = n;
+    uint32_t i = 0;
+    for (const TArg* t : items) e->a[i++] = t;
+    e->next = s_head;
+    s_head = e;
+    return e->a;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -3394,6 +3440,7 @@ inline Value flatCopy(Value v, OwnList* owner) {
             Obj* src = asObj(v);
             Value c = newObject(src->cls, src->nfields, owner);
             Obj* dst = asObj(c);
+            dst->targs = src->targs;
             for (uint32_t i = 0; i < src->nfields; i++) { dst->fields()[i] = src->fields()[i]; retain(dst->fields()[i]); }
             return c;
         }
@@ -3533,6 +3580,7 @@ struct DeepCopier {
             target = &asObj(holderCopy)->owned;
         }
         Value c = newObject(o->cls, o->nfields, target);
+        asObj(c)->targs = o->targs;
         if (taking) asObj(c)->flags |= 16;   // a copy for a thread: its destructor does not run when the thread ends
         *objects.find(o) = c;   // replaces the "found" marker
         return c;

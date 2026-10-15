@@ -14634,6 +14634,63 @@ else
             print(len.value)
             try { len.value = 3kg } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Typargumente reifiziert: pro Objekt (new Box<int>, Basisklasse, Box<T> im generischen Code) und pro Aufruf einer generischen Methode, int/float-Spezialisierung", """
+            class Animal { string name = "animal" }
+            class Dog : Animal { }
+            class Box<T> {
+                T value
+                undefined Put(T v) { value = v }
+                T Get() { return value }
+            }
+            class IntBox : Box<int> { }
+            class Pair<A, B> {
+                Box<A> first
+                Box<B> second
+                construct() { first = new Box<A>(); second = new Box<B>() }
+            }
+            class Cage<T> where T is of Animal {
+                T inside
+                undefined Put(T a) { inside = a; try a.TakeTo(this) }
+            }
+            class M {
+                static Box<V> Of<V>(V v) { var b = new Box<V>(); b.Put(v); return b }
+                static V Max<V>(V a, V b) { if (a > b) return a; return b }
+                static V Sum3<V>(V a, V b, V c) { return a + b + c }
+            }
+            any s = "text"
+            any n = 7
+            var bi = new Box<int>()
+            bi.Put(5)
+            try { bi.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var bf = new Box<float>()
+            bf.Put(3)
+            any got = bf.Get()
+            print(got is of float)
+            var ib = new IntBox()
+            try { ib.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var p = new Pair<int, string>()
+            p.second.Put("two")
+            try { p.second.Put(n) } catch (ArgumentException e) { print(e.message) }
+            var raw = new Box()
+            raw.Put("anything")
+            raw.Put(1)
+            print(raw.Get())
+            var cd = new Cage<Dog>()
+            try { cd.Put(new Animal()) } catch (ArgumentException e) { print(e.message) }
+            var copied = copy bi
+            try { copied.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var b = M.Of(5)
+            try { b.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var c = M.Of("hi")
+            try { c.Put(n) } catch (ArgumentException e) { print(e.message) }
+            int total = 0
+            for (int i = 0; i < 1000; i++) { total = total + M.Max(i % 7, 3) + M.Sum3(i % 3, 1, 2) }
+            print(total)
+            print(M.Max(0.5, 0.25) + " " + M.Max("a", "b") + " " + M.Max(2, 3.5))
+            any cm5 = 5cm
+            print(M.Max(cm5, 3cm))
+            try { print(M.Max(1, s)) } catch (ArgumentException e) { print(e.message) }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))
