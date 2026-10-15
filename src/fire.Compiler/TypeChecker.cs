@@ -24,8 +24,9 @@ namespace fire.Compiler
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
-        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false)
+        IReadOnlyList<StaticType>? Args = null, Unit? Unit = null, bool UnitIsDimension = false, string? TypeParam = null)
     {
+        // (TypeParam: an `any` that is a type parameter of the running code - `$k@` of the method, `$k@Class` of the class - passed on as a type argument)
         /// <summary>The same type with the unit `unit` (null: not known); `dimensionOnly`: a declaration `: any m` that takes every unit of that dimension.</summary>
         public StaticType WithUnit(Unit? unit, bool dimensionOnly = false) => this with { Unit = unit, UnitIsDimension = dimensionOnly };
         public bool IsNumber => Kind is StaticKind.Int or StaticKind.Float;
@@ -85,12 +86,16 @@ namespace fire.Compiler
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<Expr, string> _unitChecks;
+        private readonly Dictionary<Expr, string[]> _methodTypeArgs;
         private readonly Dictionary<int, bool> _strictBySource = new();
         private readonly TypeCheckMode _defaultMode;
         private readonly int _firstUserSource;
         private readonly List<Diagnostic> _diagnostics = new();
         private readonly List<Dictionary<string, StaticType>> _scopes = new();
         private ClassDecl? _class;
+        /// <summary>The type parameters of the method being checked (their uses are passed on as type arguments: `$k@`); not inside a lambda.</summary>
+        private IReadOnlyList<TypeParam>? _bodyTypeParams;
+        private bool _inLambda;
         /// <summary>The type of `this` in a `class extends string/array/...` (null: the class being checked decides).</summary>
         private StaticType? _thisType;
         private StaticType? _returnType;
@@ -99,9 +104,11 @@ namespace fire.Compiler
         private List<StaticType>? _collectedReturns;
         private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
-        private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks)
+        private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks,
+            Dictionary<Expr, string[]> methodTypeArgs)
         {
             _unitChecks = unitChecks;
+            _methodTypeArgs = methodTypeArgs;
             _classes = classes;
             _defaultMode = defaultMode;
             _firstUserSource = firstUserSource;
@@ -111,7 +118,7 @@ namespace fire.Compiler
         /// <paramref name="defaultMode"/> is the project's or the command line's setting; a `#lax` / `#strict` in a file takes its place for that file.</summary>
         public static IReadOnlyList<Diagnostic> Check(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource)
         {
-            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks);
+            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks, resolved.MethodTypeArgs);
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
@@ -379,7 +386,21 @@ namespace fire.Compiler
                 case "any": return StaticType.Dynamic;
             }
             string plain = PlainName(name);
-            return _classes.ContainsKey(plain) || _interfaces.ContainsKey(plain) ? StaticType.ClassOf(plain) : StaticType.Dynamic;
+            if (_classes.ContainsKey(plain) || _interfaces.ContainsKey(plain)) return StaticType.ClassOf(plain);
+            return TypeParamRef(name) is { } typeParam ? StaticType.Dynamic with { TypeParam = typeParam } : StaticType.Dynamic;
+        }
+
+        /// <summary>A type parameter of the running method (`$k@`) or class (`$k@Class`): what a call of a generic method passes on for it (null: none, or in a lambda).</summary>
+        private string? TypeParamRef(string name)
+        {
+            if (_inLambda) return null;
+            if (_bodyTypeParams != null)
+                for (int k = 0; k < _bodyTypeParams.Count; k++)
+                    if (_bodyTypeParams[k].Name == name) return $"${k}@";
+            if (_class?.TypeParams is { } classParams)
+                for (int k = 0; k < classParams.Count; k++)
+                    if (classParams[k].Name == name) return $"${k}@{_class.Name}";
+            return null;
         }
 
         private StaticType DeclaredOrDynamic(TypeRef? type, int arrayRanks = 0, IReadOnlyDictionary<string, StaticType>? map = null) => Declared(type, arrayRanks, map) ?? StaticType.Dynamic;
@@ -665,7 +686,10 @@ namespace fire.Compiler
                             if (untyped && !isOperator) ReportNoReturnType(m.Name, m.Line);
                             var previousCollected = _collectedReturns;
                             _collectedReturns = untyped && SuggestReturnTypes ? new List<StaticType>() : null;
+                            var previousTypeParams = _bodyTypeParams;
+                            _bodyTypeParams = m.TypeParams;
                             CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType));
+                            _bodyTypeParams = previousTypeParams;
                             if (_collectedReturns != null) Console.Error.WriteLine($"SUGGEST\t{ownerName}\t{m.Name}\t{m.Params.Count}\t{SuggestedType(_collectedReturns)}");
                             _collectedReturns = previousCollected;
                             break;
@@ -990,6 +1014,15 @@ namespace fire.Compiler
         /// a parameter that has neither is `any` and said so (TC004). Its type has its parameters and, when all its returns agree, the type it returns.</summary>
         private StaticType InferLambda(LambdaExpr lam, StaticType? expected)
         {
+            // (a lambda runs in its own scope: a type parameter of the method around it is not passed on from there)
+            bool previous = _inLambda;
+            _inLambda = true;
+            try { return InferLambdaCore(lam, expected); }
+            finally { _inLambda = previous; }
+        }
+
+        private StaticType InferLambdaCore(LambdaExpr lam, StaticType? expected)
+        {
             var context = expected is { Kind: StaticKind.Lambda, Params: { } ps } && ps.Count == lam.Params.Count ? ps : null;
             var expectedReturn = expected is { Kind: StaticKind.Lambda, Return: { Kind: not StaticKind.Undefined } r } ? r : null;
             var parameterTypes = new List<StaticType>();
@@ -1085,6 +1118,10 @@ namespace fire.Compiler
                 {
                     var param = method.Params[i];
                     expected = Declared(param.Type, param.ArrayRanks.Count, open == null ? map : WithOpen(map!, open));
+                    // a type parameter found to be an int so far may still become a float (`Max(2, 3.5)`): the argument is not held to int
+                    if (open != null && param.Type is { TypeArgs: null } bare && open.Contains(bare.BaseName) && param.ArrayRanks.Count + bare.ArrayRank == 0
+                        && map!.TryGetValue(bare.BaseName, out var soFar) && soFar.Kind == StaticKind.Int)
+                        expected = null;
                     // a lambda whose result is a type parameter still to be found: its own result counts
                     if (open != null && expected is { Kind: StaticKind.Lambda } && param.Type?.LambdaSignature?.ReturnTypeName is { } r && open.Contains(r) && !map!.ContainsKey(r))
                         expected = expected with { Return = null };
@@ -1094,7 +1131,12 @@ namespace fire.Compiler
                 args.Add(arg);
                 if (open != null && i < method!.Params.Count) Bind(method.Params[i].Type, method.Params[i].ArrayRanks.Count, arg, map!, open);
             }
-            if (open != null) map = WithOpen(map!, open);
+            if (open != null)
+            {
+                // what was found is given to the call at run time (ObjectInstance-like: the generic method checks its parameters against it)
+                _methodTypeArgs[c] = method!.TypeParams!.Select(p => map!.TryGetValue(p.Name, out var found) ? TypeArgText(found) : "").ToArray();
+                map = WithOpen(map!, open);
+            }
             if (lambda != null) return CallLambda(lambda, args, c, name);
             if (method == null)
             {
@@ -1104,6 +1146,15 @@ namespace fire.Compiler
             CheckArguments(method.Params, args, c.Args, method.Name, map);
             return DeclaredOrDynamic(method.ReturnType, 0, map);
         }
+
+        /// <summary>A type as a run-time type argument (DeclaredType text): a basic type, a class or an interface; "" for anything else.</summary>
+        private static string TypeArgText(StaticType type) => type.Kind switch
+        {
+            StaticKind.Int => "int", StaticKind.Float => "float", StaticKind.Bool => "bool", StaticKind.Char => "char", StaticKind.String => "string",
+            StaticKind.Class when type.Class != null => type.Class,
+            StaticKind.Dynamic when type.TypeParam != null => type.TypeParam,
+            _ => "",
+        };
 
         /// <summary>The map with every type parameter that was not found as `any`.</summary>
         private static Dictionary<string, StaticType> WithOpen(Dictionary<string, StaticType> map, HashSet<string> open)
@@ -1126,7 +1177,9 @@ namespace fire.Compiler
             }
             if (open.Contains(type.BaseName) && type.TypeArgs == null)
             {
-                if (arg.Kind != StaticKind.Undefined) map.TryAdd(type.BaseName, arg);
+                // the first argument decides; an int becomes a float when a float follows (like the arithmetic of the two)
+                if (arg.Kind == StaticKind.Float && map.TryGetValue(type.BaseName, out var found) && found.Kind == StaticKind.Int) map[type.BaseName] = arg;
+                else if (arg.Kind != StaticKind.Undefined) map.TryAdd(type.BaseName, arg);
                 return;
             }
             if (type.BaseName == "lambda" && type.LambdaSignature is { IsSelector: false } signature && arg.Kind == StaticKind.Lambda)

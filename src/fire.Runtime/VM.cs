@@ -2419,6 +2419,7 @@ namespace fire.Runtime
             {
                 var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
                 if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
+                TakeTypeArgs(created);
                 EnterCall(cachedCtor, argCount, dropBelow: false, newThis: created, constructed: created, copyMask: copyMask);
                 return;
             }
@@ -2446,6 +2447,7 @@ namespace fire.Runtime
                 StoreSite(site, new SiteCache(rc, ctorProto, 0));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
             BeginConstruction(instance, ctorProto, args, copyMask);
             return;
@@ -2475,6 +2477,7 @@ namespace fire.Runtime
 
             var instance = new ObjectInstance(rc.Name, owner, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
             BeginConstruction(instance, ctorProto, args, copyMask);
             return;
@@ -2637,7 +2640,7 @@ namespace fire.Runtime
                 && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
                 && cachedObj.AccessGuard == null
                 && DeclaredKind.Fits(_stack[_sp - 1], fieldEntry.RequiredKind)
-                && DeclaredType.Fits(_stack[_sp - 1], fieldEntry.RequiredType))
+                && DeclaredType.Fits(_stack[_sp - 1], fieldEntry.RequiredType, cachedObj))
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
@@ -2710,7 +2713,7 @@ namespace fire.Runtime
                 byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
                 if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
                 string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
-                if (!GuardFieldType(value, requiredType, fieldName)) return false;
+                if (!GuardFieldType(ref value, requiredType, fieldName, obj)) return false;
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
@@ -2776,7 +2779,7 @@ namespace fire.Runtime
                 && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
                 && fastThis.ThreadLock == null
                 && DeclaredKind.Fits(_stack[_sp - 1], thisEntry.RequiredKind)
-                && DeclaredType.Fits(_stack[_sp - 1], thisEntry.RequiredType))
+                && DeclaredType.Fits(_stack[_sp - 1], thisEntry.RequiredType, fastThis))
             {
                 fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
                 return;
@@ -2813,7 +2816,7 @@ namespace fire.Runtime
             byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
             if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
             string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
-            if (!GuardFieldType(value, requiredType, fieldName)) return;
+            if (!GuardFieldType(ref value, requiredType, fieldName, oi)) return;
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
@@ -3300,7 +3303,7 @@ namespace fire.Runtime
                 if (requiredUnitName != null && !AdaptFieldUnit(ref setValue, requiredUnitName)) return;
             }
             if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
-            if (!GuardFieldType(setValue, setOwner.FindFieldRequiredType(setFieldName), setFieldName)) return;
+            if (!GuardFieldType(ref setValue, setOwner.FindFieldRequiredType(setFieldName), setFieldName, null)) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -4106,7 +4109,7 @@ namespace fire.Runtime
 
                     if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
                     if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
-                    if (!GuardFieldType(initValue, initOwner.FindFieldRequiredType(initFieldName), initFieldName)) break;
+                    if (!GuardFieldType(ref initValue, initOwner.FindFieldRequiredType(initFieldName), initFieldName, null)) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -4230,6 +4233,8 @@ namespace fire.Runtime
                     break;
 
                 case OpCode.GuardLocal: OpGuardLocal(); break;
+                case OpCode.SetTypeArgs: OpSetTypeArgs(); break;
+                case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; break;
                 case OpCode.GuardLocalType: OpGuardLocalType(); break;
 
                 case OpCode.RequireRefParam:
@@ -5526,6 +5531,7 @@ namespace fire.Runtime
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
+            TakeTypeArgs(instance);
             args = FillDefaultArgs(ctorProto, args, instance);
 
             var savedChunk = _currentChunk;
@@ -6019,17 +6025,67 @@ namespace fire.Runtime
             int slot = ReadU16();
             string requiredType = _constants[ReadU16()].AsString();
             int whatIdx = ReadU16();
-            var guarded = _currentScope.GetSlot(slot);
-            if (!DeclaredType.Fits(guarded, requiredType))
-                ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString()));
+            ref var guarded = ref _currentScope.SlotRef(slot);
+            var owner = _currentThis as ObjectInstance;   // (a `T` of the class: the type argument of the object of the method)
+            var callTypeArgs = _currentScope.TypeArgs;    // (a `U` of the method: the type argument of the call - the prologue runs in its scope)
+            if (DeclaredType.Fits(guarded, requiredType, owner, callTypeArgs)) return;
+            var checkedValue = guarded;
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs)) { guarded = checkedValue; return; }
+            ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
         /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
-        private bool GuardFieldType(in Value value, string? requiredType, string fieldName)
+        private bool GuardFieldType(ref Value value, string? requiredType, string fieldName, ObjectInstance? owner)
         {
-            if (DeclaredType.Fits(value, requiredType)) return true;
-            ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'"));
+            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner)) return true;
+            ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'", owner));
             return false;
+        }
+
+        /// <summary>The type arguments for the next object (SetTypeArgs; NewObject/NewObjectOwned take them).</summary>
+        private string[]? _pendingTypeArgs;
+        private readonly Dictionary<string, string[]> _typeArgTemplates = new();
+
+        /// <summary>SetTypeArgs: the type arguments of the next `new` - `$k@Class` is the k-th type parameter of `Class` of the object of the method.</summary>
+        private void OpSetTypeArgs()
+        {
+            string text = _constants[ReadU16()].AsString();
+            bool forCall = ReadByte() != 0;
+            if (!_typeArgTemplates.TryGetValue(text, out var template)) _typeArgTemplates[text] = template = text.Split('|');
+            string[] args;
+            if (!text.Contains('$')) args = template;   // (the same array for every object: it is never changed)
+            else
+            {
+                args = new string[template.Length];
+                string[]? callTypeArgs = null;
+                for (int i = 0; i < template.Length; i++)
+                {
+                    string t = template[i];
+                    if (!t.StartsWith('$')) { args[i] = t; continue; }
+                    int at = t.IndexOf('@');
+                    int k = int.Parse(t.AsSpan(1, at - 1));
+                    if (at == t.Length - 1)
+                    {
+                        // a type parameter of the generic method that runs: the type arguments of its call (in the scope the call created)
+                        if (callTypeArgs == null) { var s = _currentScope; while (s.Parent != null && !s.Parent.IsGlobal) s = s.Parent; callTypeArgs = s.TypeArgs ?? Array.Empty<string>(); }
+                        args[i] = k < callTypeArgs.Length ? callTypeArgs[k] : "";
+                    }
+                    else args[i] = DeclaredType.TypeArgOf(_currentThis as ObjectInstance, t.Substring(at + 1), k) ?? "";
+                }
+            }
+            if (forCall) _pendingCallTypeArgs = args;
+            else _pendingTypeArgs = args;
+        }
+
+        /// <summary>The type arguments for the next call of a generic method (SetTypeArgs with `forCall`; TakeCallTypeArgs, the first instruction of the method, gives them to the scope of the call).</summary>
+        private string[]? _pendingCallTypeArgs;
+
+        /// <summary>A new object takes the type arguments of its `new` (SetTypeArgs right before it), if there are any.</summary>
+        private void TakeTypeArgs(ObjectInstance instance)
+        {
+            if (_pendingTypeArgs == null) return;
+            instance.TypeArgs = _pendingTypeArgs;
+            _pendingTypeArgs = null;
         }
 
         /// <summary>The slow route of a declaration int/float/bool (DeclaredKind): a number declared without a unit is converted into no unit (or a

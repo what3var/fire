@@ -151,6 +151,10 @@ namespace fire.Runtime
         /// for the deliberate simplification of this stage).</summary>
         public ActorMailbox? Mailbox { get; set; }
 
+        /// <summary>The type arguments of `new Box&lt;int&gt;()` (DeclaredType texts, "" for one that is not known at run time); null for an object of a class
+        /// that is not generic, or created without them (`new List()`). A declaration `T value` in the class is checked against them.</summary>
+        public string[]? TypeArgs { get; set; }
+
         public ObjectInstance(string className, IOwner initialOwner, RuntimeClass? rtClass = null)
         {
             ClassName = className;

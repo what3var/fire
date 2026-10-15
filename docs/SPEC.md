@@ -44,8 +44,10 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
 - A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
   way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); likewise an interface (`IEnumerable` also takes arrays, buffers and strings) and a
-  type parameter of the class with `where` conditions (checked against them: `is of`, `is in`). A type parameter without `where` or of a method, `any`
-  and `class` are not checked (type arguments do not exist at run time).
+  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found -
+  `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float, `Parameter 'v' is a T (int), not String.`). Without a known
+  type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
+  `any` and `class` are not checked.
 
 ```
 var x = 1;              // int, unitless

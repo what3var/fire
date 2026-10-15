@@ -335,6 +335,10 @@ namespace fire.Compiler
             private readonly HashSet<string> _typeParamNames = new();
             /// <summary>The interfaces of the program (CompileClasses): a declaration with one is checked like one with a class.</summary>
             public readonly HashSet<string> InterfaceNames = new();
+            /// <summary>The enums of the program: a type argument that names one is an `int`.</summary>
+            public readonly HashSet<string> EnumNames = new();
+            /// <summary>The declarations of the classes (by their name, generic ones with the `N suffix): the `where` of a type parameter.</summary>
+            public readonly Dictionary<string, ClassDecl> ClassDecls = new();
             /// <summary>A name some class or method uses as a type parameter (`T`): a declaration of that type is not checked at run time.</summary>
             public bool IsTypeParam(string name) => _typeParamNames.Contains(name);
 
@@ -343,6 +347,7 @@ namespace fire.Compiler
                 var table = new RefParamTable();
                 foreach (var cls in classes)
                 {
+                    table.ClassDecls[cls.Name] = cls;
                     foreach (var tp in cls.TypeParams ?? Array.Empty<TypeParam>()) table._typeParamNames.Add(tp.Name);
                     foreach (var md in cls.Members.OfType<MethodDecl>())
                         foreach (var tp in md.TypeParams ?? Array.Empty<TypeParam>()) table._typeParamNames.Add(tp.Name);
@@ -422,11 +427,48 @@ namespace fire.Compiler
             if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null) return null;
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
             string Resolve(string n) => (type with { BaseName = n, TypeArgs = null, TypeArgCount = 0 }).ResolveBaseName(Known);
-            if (owner?.Decl?.TypeParams?.FirstOrDefault(tp => tp.Name == type.BaseName) is { } typeParam)
-                return typeParam.ConstraintGroups.Count == 0 ? null : DeclaredType.OfTypeParam(typeParam, Resolve);
+            if (_methodTypeParams?.ToList().FindIndex(tp => tp.Name == type.BaseName) is var m and >= 0)
+                return DeclaredType.OfTypeParam(_methodTypeParams![m!.Value], m.Value, "", Resolve);   // (the type arguments of the call: Scope.TypeArgs)
+            if (owner?.Decl?.TypeParams is { } ownParams && ownParams.ToList().FindIndex(tp => tp.Name == type.BaseName) is var k and >= 0)
+                return DeclaredType.OfTypeParam(ownParams[k], k, owner.Name, Resolve);
             if (_refParams.IsTypeParam(type.BaseName)) return null;
             string name = type.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(type, args.Count, Known) : type.ResolveBaseName(Known);
             return Known(name) ? DeclaredType.OfName(name) : null;
+        }
+
+        /// <summary>A type argument as the run time keeps it (DeclaredType text): `int`, a class or an interface, `in:cm` for a unit (when the type parameter
+        /// `index` of `target` has an `is in`), `$k@Class` for the k-th type parameter of the class `owner` (taken from `this`), "" for what is not known
+        /// at run time (a type parameter of a method, `any`, an array, a lambda).</summary>
+        private string TypeArgText(TypeRef tr, RuntimeClass? owner, ClassDecl? target, int index)
+        {
+            if (tr.LambdaSignature != null || tr.ArrayRank > 0 || tr.PointerDepth > 0 || tr.IsInferred || _knownClassNames == null) return "";
+            if (_methodTypeParams?.ToList().FindIndex(tp => tp.Name == tr.BaseName) is var m and >= 0) return $"${m}@";
+            if (owner?.Decl?.TypeParams is { } ownParams && ownParams.ToList().FindIndex(tp => tp.Name == tr.BaseName) is var k and >= 0) return $"${k}@{owner.Name}";
+            if (_refParams.IsTypeParam(tr.BaseName)) return "";
+            switch (tr.BaseName)
+            {
+                case "int": case "float": case "bool": case "char": case "string": return tr.BaseName;
+                case "any": case "class": return "";
+            }
+            if (_refParams.EnumNames.Contains(tr.BaseName)) return "int";
+            bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
+            string name = tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, Known) : tr.ResolveBaseName(Known);
+            if (Known(name)) return name;
+            if (target?.TypeParams is { } tps && index < tps.Count && tps[index].ConstraintGroups.Any(g => g.Constraints.Any(c => c.Kind == TypeConstraintKind.IsIn)))
+                return "in:" + tr.BaseName;
+            return "";
+        }
+
+        /// <summary>`new Box<...>(...)`: the type arguments for the object (SetTypeArgs, right before NewObject/NewObjectOwned); nothing when none is known.</summary>
+        private void EmitTypeArgs(NewExpr ne)
+        {
+            if (ne.ClassRef.TypeArgs is not { Count: > 0 } typeArgs) return;
+            _refParams.ClassDecls.TryGetValue(ResolveNewClassName(ne), out var target);
+            var texts = typeArgs.Select((t, i) => TypeArgText(t, _enclosingClass, target, i)).ToList();
+            if (texts.All(t => t.Length == 0)) return;
+            _chunk.EmitOp(OpCode.SetTypeArgs);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", texts))));
+            _chunk.EmitByte(0);
         }
 
         private string ResolveTypeRef(TypeRef tr) =>
@@ -447,6 +489,7 @@ namespace fire.Compiler
             IReadOnlyList<Stmt> program, ResolveResult resolveResult, NativeRegistry natives)
         {
             s_unitChecks = resolveResult.UnitChecks;
+            s_methodTypeArgs = resolveResult.MethodTypeArgs;
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
@@ -624,6 +667,8 @@ namespace fire.Compiler
             // method call by name), the resolver has already checked fulfilment.
             var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
             _refParams.InterfaceNames.UnionWith(interfaceNames);
+            _refParams.EnumNames.UnionWith(program.OfType<EnumDecl>().Select(e => e.Name));
+            var baseRefOf = new Dictionary<RuntimeClass, TypeRef>();
             foreach (var rc in classes.Values)
             {
                 foreach (var baseRef in rc.Decl.BaseRefs ?? Array.Empty<TypeRef>())
@@ -634,6 +679,7 @@ namespace fire.Compiler
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
                     if (n == "Exception" && !classes.ContainsKey(n)) break; // no RuntimeClass available (a program without the prelude) -> Base stays null
                     rc.Base = classes[n];
+                    baseRefOf[rc] = baseRef;
                     break;
                 }
             }
@@ -663,6 +709,11 @@ namespace fire.Compiler
             // INSIDE methods) needs it after all WHILE this
             // method is still running, not only afterwards.
             _knownClassNames = new HashSet<string>(classes.Keys);
+
+            // the type arguments a class gives its generic base class (`class IntBox : Box<int>`): `$k` for its own k-th type parameter
+            foreach (var (rc, baseRef) in baseRefOf)
+                if (baseRef.TypeArgs is { Count: > 0 } baseArgs)
+                    rc.BaseTypeArgs = baseArgs.Select((t, i) => TypeArgText(t, rc, rc.Base!.Decl, i) is var text && text.StartsWith('$') ? text.Substring(0, text.IndexOf('@')) : text).ToArray();
 
             foreach (var rc in classes.Values)
                 CompileClassBody(rc);
@@ -761,7 +812,7 @@ namespace fire.Compiler
                         }
 
                         case MethodDecl md:
-                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand));
+                            rc.AddMethod(md.Name, CompileMethodProto(rc, md.Params, md.Body, md.Access, md.IsStatic, md.ReturnType?.UnitDemand, md.TypeParams));
                             break;
 
                         case ConstructorDecl ctor:
@@ -997,7 +1048,7 @@ namespace fire.Compiler
             // interface or a type parameter of the class with `where` conditions (DeclaredType).
             for (int i = 0; i < parms.Count; i++)
             {
-                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredTypeOf(parms[i].Type, inner._enclosingClass) is not { } cls) continue;
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || inner.DeclaredTypeOf(parms[i].Type, inner._enclosingClass) is not { } cls) continue;
                 inner._chunk.EmitOp(OpCode.GuardLocalType);
                 inner._chunk.EmitU16((ushort)i);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(cls)));
@@ -1142,9 +1193,11 @@ namespace fire.Compiler
             _chunk.EmitU16(protoIdx);
         }
 
-        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null)
+        private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null,
+            IReadOnlyList<TypeParam>? typeParams = null)
         {
             var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
             // SPEC "Static members": a static method has no
@@ -1155,6 +1208,7 @@ namespace fire.Compiler
             // completeness, no check of its own needed at this point).
             for (int i = 0; i < parms.Count; i++)
                 inner._chunk.MarkLocalName(0, i, parms[i].Name);
+            if (typeParams is { Count: > 0 }) inner._chunk.EmitOp(OpCode.TakeCallTypeArgs);
             EmitLambdaParamChecks(inner, parms);
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
@@ -1992,6 +2046,18 @@ namespace fire.Compiler
         /// (see CompileStmt).</summary>
         /// <summary>The values whose unit is checked at runtime (ResolveResult.UnitChecks) of the program being compiled.</summary>
         [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
+        [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
+        /// <summary>The type parameters of the generic method being compiled (`R Select&lt;R&gt;(...)`), null for any other code.</summary>
+        private IReadOnlyList<TypeParam>? _methodTypeParams;
+
+        /// <summary>A call of a generic method whose type arguments the type checker found: they go to the call (SetTypeArgs, right before it).</summary>
+        private void EmitCallTypeArgs(CallExpr call)
+        {
+            if (s_methodTypeArgs == null || !s_methodTypeArgs.TryGetValue(call, out var texts) || texts.All(t => t.Length == 0)) return;
+            _chunk.EmitOp(OpCode.SetTypeArgs);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", texts))));
+            _chunk.EmitByte(1);
+        }
 
         /// <summary>The unit a method with a unit at its return type (`float:m Len()`) or the getter of a property with a unit (`float X : m { get ... }`)
         /// converts its return values into, otherwise null.</summary>
@@ -2112,6 +2178,7 @@ namespace fire.Compiler
                 case NewExpr ne:
                 {
                     ulong newCopyMask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
+                    EmitTypeArgs(ne);
                     EmitCopyArgsPrefix(newCopyMask);
                     _chunk.EmitOp(OpCode.NewObject);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
@@ -2479,6 +2546,7 @@ namespace fire.Compiler
             if (value is NewExpr ne)
             {
                 ulong mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
+                EmitTypeArgs(ne);
                 EmitCopyArgsPrefix(mask);
                 _chunk.EmitOp(OpCode.NewObjectOwned);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
@@ -2536,7 +2604,9 @@ namespace fire.Compiler
                 {
                     // SPEC "Static members" - bare name instead of
                     // 'ClassName.Method(...)'.
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
+                    ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count));
+                    EmitCallTypeArgs(call);
+                    EmitCopyArgsPrefix(callCopyMask);
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(callSm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
@@ -2561,7 +2631,9 @@ namespace fire.Compiler
                     // VM.CallMethod: args popped first, only then 'target')
                     // - so push 'this' BEFORE the arguments.
                     _chunk.EmitOp(OpCode.LoadThis);
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count)));
+                    ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count));
+                    EmitCallTypeArgs(call);
+                    EmitCopyArgsPrefix(callCopyMask);
                     _chunk.EmitOp(OpCode.CallMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
                     _chunk.EmitByte((byte)call.Args.Count);
@@ -2601,7 +2673,9 @@ namespace fire.Compiler
                 // ResolvedRef.StaticMember, resolved by the resolver).
                 if (_refs.TryGetValue(me, out var calleeMemberRef) && calleeMemberRef is ResolvedRef.StaticMember sm)
                 {
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
+                    ulong memberCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
+                    EmitCallTypeArgs(call);
+                    EmitCopyArgsPrefix(memberCopyMask);
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -2621,7 +2695,11 @@ namespace fire.Compiler
                         throw new NotSupportedException(
                             "'base.Method(...)' outside of a class with a base class - the resolver should have caught this.");
 
-                    EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
+                    ulong staticCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
+
+                    EmitCallTypeArgs(call);
+
+                    EmitCopyArgsPrefix(staticCopyMask);
 
                     _chunk.EmitOp(OpCode.CallBaseMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_enclosingClass.Base.Name)));
@@ -2641,7 +2719,9 @@ namespace fire.Compiler
                 }
 
                 CompileExpr(me.Target);
-                EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count)));
+                ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
+                EmitCallTypeArgs(call);
+                EmitCopyArgsPrefix(callCopyMask);
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
