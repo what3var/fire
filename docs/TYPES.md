@@ -106,7 +106,12 @@ instructions of a loop is the same to the instruction (62.0M each), and so is a 
 (13.0M) - the C++ compiler already keeps the fields of a `Value` that do not escape in registers and drops the stores of `kind` and `unit`.
 The unit stays static in the type either way.
 
-Not yet: typed opcodes in the VM.
+Typed opcodes in the VM were measured and left out, too: an instruction of the VM costs about 20 ns on the test machine whatever it does
+(`s = t` - load, hoist, store - takes 65 ns, `s = s + t` 120 ns), so the test of the kinds in `Add`/`Lt`/... is a small part of it; what
+costs is the dispatch of each instruction and the copying of `Value`s on the stack. Two cheap things were done instead: `HoistValue` (every
+assignment) and the guards of the prologue (`GuardLocal`, `GuardLocalType`) go through the fast `Step` instead of `Execute`, and the main loop
+(`RunLoopCore`, entered once) is compiled fully optimised straight away (about 4 % on the benchmarks). What would really help the VM is fewer
+instructions (more fused ones, or registers instead of the stack) - a step of its own.
 
 ## Decisions
 

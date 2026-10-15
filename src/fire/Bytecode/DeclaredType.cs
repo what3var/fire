@@ -38,13 +38,26 @@ namespace fire.Bytecode
             return display + DisplayEnd + alternatives;
         }
 
-        public static Spec Parse(string text) => s_parsed.GetOrAdd(text, t =>
+        // the last text parsed on this thread: a guard runs with the same constant over and over (no hashing of the string then)
+        [ThreadStatic] private static string? t_lastText;
+        [ThreadStatic] private static Spec? t_lastSpec;
+
+        public static Spec Parse(string text)
+        {
+            if (ReferenceEquals(text, t_lastText)) return t_lastSpec!;
+            var spec = s_parsed.GetOrAdd(text, ParseText);
+            t_lastText = text;
+            t_lastSpec = spec;
+            return spec;
+        }
+
+        private static Spec ParseText(string t)
         {
             int end = t.IndexOf(DisplayEnd);
             var alternatives = t.Substring(end + 1).Split('|').Select(alt => alt.Split('&').Select(c =>
                 c.StartsWith("in:", StringComparison.Ordinal) ? new Condition(true, c.Substring(3), Unit.Parse(c.Substring(3))) : new Condition(false, c, null)).ToArray()).ToArray();
             return new Spec(t.Substring(0, end), alternatives);
-        });
+        }
 
         /// <summary>Does the value fit the declaration (null: nothing is declared)?</summary>
         public static bool Fits(in Value value, string? required)

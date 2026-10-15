@@ -894,6 +894,7 @@ namespace fire.Runtime
             }
         }
 
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveOptimization)] // the loop of the whole program: entered once, so compile it fully optimised straight away (not tier 0 and on-stack replacement)
         private void RunLoopCore()
         {
             while (true)
@@ -1566,6 +1567,13 @@ namespace fire.Runtime
         {
             switch (op)
             {
+                // (every assignment of a value and every call with declared parameters: not through Execute, whose frame is expensive to set up)
+                case OpCode.HoistValue:
+                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) HoistValue(_stack[_sp - 1]);
+                    return;
+                case OpCode.GuardLocal: OpGuardLocal(); return;
+                case OpCode.GuardLocalType: OpGuardLocalType(); return;
+
                 case OpCode.LoadConst:
                     Push(_constants[ReadU16()]);
                     return;
@@ -4185,7 +4193,7 @@ namespace fire.Runtime
                 }
 
                 case OpCode.HoistValue:
-                    HoistValue(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind is ValueKind.Class or ValueKind.Array or ValueKind.Buffer) HoistValue(_stack[_sp - 1]);
                     break;
 
                 case OpCode.TakeToScope:
@@ -4221,34 +4229,8 @@ namespace fire.Runtime
                     DeleteValue(Pop());
                     break;
 
-                case OpCode.GuardLocal:
-                {
-                    // the end of the prologue: a parameter declared int/float/bool holds that kind or undefined (DeclaredKind)
-                    int slot = ReadU16();
-                    byte tag = ReadByte();
-                    byte required = (byte)((tag & 0x7F) + 1 | tag & DeclaredKind.UnitlessBit);
-                    int whatIdx = ReadU16();
-                    ReadU16();   // (the unit it has now: for the native generator)
-                    ref var guarded = ref _currentScope.SlotRef(slot);
-                    if (!DeclaredKind.Fits(guarded, required))
-                    {
-                        var checkedValue = guarded;
-                        if (GuardDeclared(ref checkedValue, required, _constants[whatIdx].AsString())) guarded = checkedValue;
-                    }
-                    break;
-                }
-
-                case OpCode.GuardLocalType:
-                {
-                    // the end of the prologue: a parameter declared with a class, an interface or a constrained type parameter holds undefined or what that says (DeclaredType)
-                    int slot = ReadU16();
-                    string requiredType = _constants[ReadU16()].AsString();
-                    int whatIdx = ReadU16();
-                    var guarded = _currentScope.GetSlot(slot);
-                    if (!DeclaredType.Fits(guarded, requiredType))
-                        ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString()));
-                    break;
-                }
+                case OpCode.GuardLocal: OpGuardLocal(); break;
+                case OpCode.GuardLocalType: OpGuardLocalType(); break;
 
                 case OpCode.RequireRefParam:
                 {
@@ -6015,6 +5997,32 @@ namespace fire.Runtime
         /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
             DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+
+        /// <summary>GuardLocal: the end of the prologue - a parameter declared int/float/bool holds that kind or undefined (DeclaredKind).</summary>
+        private void OpGuardLocal()
+        {
+            int slot = ReadU16();
+            byte tag = ReadByte();
+            byte required = (byte)((tag & 0x7F) + 1 | tag & DeclaredKind.UnitlessBit);
+            int whatIdx = ReadU16();
+            ReadU16();   // (the unit it has now: for the native generator)
+            ref var guarded = ref _currentScope.SlotRef(slot);
+            if (DeclaredKind.Fits(guarded, required)) return;
+            var checkedValue = guarded;
+            if (GuardDeclared(ref checkedValue, required, _constants[whatIdx].AsString())) guarded = checkedValue;
+        }
+
+        /// <summary>GuardLocalType: the end of the prologue - a parameter declared with a class, an interface or a constrained type parameter holds
+        /// undefined or what that says (DeclaredType).</summary>
+        private void OpGuardLocalType()
+        {
+            int slot = ReadU16();
+            string requiredType = _constants[ReadU16()].AsString();
+            int whatIdx = ReadU16();
+            var guarded = _currentScope.GetSlot(slot);
+            if (!DeclaredType.Fits(guarded, requiredType))
+                ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString()));
+        }
 
         /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldType(in Value value, string? requiredType, string fieldName)
