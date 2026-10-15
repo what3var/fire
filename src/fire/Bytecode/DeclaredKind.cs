@@ -1,5 +1,4 @@
 using fire.Ast;
-using fire.Runtime;
 using fire.Values;
 
 namespace fire.Bytecode
@@ -52,25 +51,6 @@ namespace fire.Bytecode
         /// <summary>A number that has to be unitless but carries a unit (the caller converts it: AdaptToUnit "unitless").</summary>
         public static bool NeedsUnitless(in Value value, byte required) =>
             IsUnitless(required) && value.Kind is ValueKind.Int or ValueKind.Float && value.Unit is { } unit && !ReferenceEquals(unit, Unit.Unitless);
-
-        /// <summary>A declaration with a class (`Point p`, FieldInfo.RequiredClass): `undefined` or an object of that class or of one derived from it.</summary>
-        public static bool FitsClass(in Value value, string? required)
-        {
-            if (required == null || value.Kind == ValueKind.Undefined) return true;
-            if (value.Kind != ValueKind.Class || value.AsObjectRef() is not ObjectInstance obj) return false;
-            if (required == "Exception" || obj.RtClass == null) return true;   // (like `is of Exception`; a dead object: every use of it reports that)
-            for (var rc = obj.RtClass; rc != null; rc = rc.Base)
-                if (ReferenceEquals(rc.Name, required) || rc.Name == required) return true;
-            return false;
-        }
-
-        /// <summary>The message of the ArgumentException for a value that does not fit a declaration with a class.</summary>
-        public static string ClassMismatch(in Value value, string required, string what)
-        {
-            string have = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj ? obj.ClassName : value.Kind.ToString();
-            string article = "AEIOUaeiou".Contains(required[0]) ? "an" : "a";
-            return $"{what} is {article} {required}, not {have}.";
-        }
 
         /// <summary>Checks the kind and converts a whole number for a float in place; null when the value fits now, else the message of the ArgumentException.</summary>
         public static string? Accept(ref Value value, byte required, string what)

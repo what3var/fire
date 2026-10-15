@@ -2629,7 +2629,7 @@ namespace fire.Runtime
                 && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
                 && cachedObj.AccessGuard == null
                 && DeclaredKind.Fits(_stack[_sp - 1], fieldEntry.RequiredKind)
-                && DeclaredKind.FitsClass(_stack[_sp - 1], fieldEntry.RequiredClass))
+                && DeclaredType.Fits(_stack[_sp - 1], fieldEntry.RequiredType))
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
@@ -2701,11 +2701,11 @@ namespace fire.Runtime
                 }
                 byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
                 if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
-                string? requiredClass = obj.RtClass?.FindFieldRequiredClass(fieldName);
-                if (!GuardFieldClass(value, requiredClass, fieldName)) return false;
+                string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
+                if (!GuardFieldType(value, requiredType, fieldName)) return false;
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
-                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredClass: requiredClass));
+                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
                 obj.SetFieldLocked(fieldName, value);
                 Push(value);
                 return true;
@@ -2768,7 +2768,7 @@ namespace fire.Runtime
                 && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
                 && fastThis.ThreadLock == null
                 && DeclaredKind.Fits(_stack[_sp - 1], thisEntry.RequiredKind)
-                && DeclaredKind.FitsClass(_stack[_sp - 1], thisEntry.RequiredClass))
+                && DeclaredType.Fits(_stack[_sp - 1], thisEntry.RequiredType))
             {
                 fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
                 return;
@@ -2804,12 +2804,12 @@ namespace fire.Runtime
             }
             byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
             if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
-            string? requiredClass = oi.RtClass?.FindFieldRequiredClass(fieldName);
-            if (!GuardFieldClass(value, requiredClass, fieldName)) return;
+            string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
+            if (!GuardFieldType(value, requiredType, fieldName)) return;
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
-                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind, requiredClass: requiredClass));
+                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind, requiredType: requiredType));
             oi.SetFieldLocked(fieldName, value);
             return;
         }
@@ -3292,7 +3292,7 @@ namespace fire.Runtime
                 if (requiredUnitName != null && !AdaptFieldUnit(ref setValue, requiredUnitName)) return;
             }
             if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
-            if (!GuardFieldClass(setValue, setOwner.FindFieldRequiredClass(setFieldName), setFieldName)) return;
+            if (!GuardFieldType(setValue, setOwner.FindFieldRequiredType(setFieldName), setFieldName)) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -4098,7 +4098,7 @@ namespace fire.Runtime
 
                     if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
                     if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
-                    if (!GuardFieldClass(initValue, initOwner.FindFieldRequiredClass(initFieldName), initFieldName)) break;
+                    if (!GuardFieldType(initValue, initOwner.FindFieldRequiredType(initFieldName), initFieldName)) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -4238,15 +4238,15 @@ namespace fire.Runtime
                     break;
                 }
 
-                case OpCode.GuardLocalClass:
+                case OpCode.GuardLocalType:
                 {
-                    // the end of the prologue: a parameter declared with a class holds undefined or an object of it (DeclaredKind.FitsClass)
+                    // the end of the prologue: a parameter declared with a class, an interface or a constrained type parameter holds undefined or what that says (DeclaredType)
                     int slot = ReadU16();
-                    string requiredClass = _constants[ReadU16()].AsString();
+                    string requiredType = _constants[ReadU16()].AsString();
                     int whatIdx = ReadU16();
                     var guarded = _currentScope.GetSlot(slot);
-                    if (!DeclaredKind.FitsClass(guarded, requiredClass))
-                        ThrowArgumentError(DeclaredKind.ClassMismatch(guarded, requiredClass, _constants[whatIdx].AsString()));
+                    if (!DeclaredType.Fits(guarded, requiredType))
+                        ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString()));
                     break;
                 }
 
@@ -6016,11 +6016,11 @@ namespace fire.Runtime
         private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
             DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
 
-        /// <summary>A field declared with a class takes `undefined` or an object of it (DeclaredKind.FitsClass); false: an ArgumentException is thrown.</summary>
-        private bool GuardFieldClass(in Value value, string? requiredClass, string fieldName)
+        /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
+        private bool GuardFieldType(in Value value, string? requiredType, string fieldName)
         {
-            if (DeclaredKind.FitsClass(value, requiredClass)) return true;
-            ThrowArgumentError(DeclaredKind.ClassMismatch(value, requiredClass!, $"Field '{fieldName}'"));
+            if (DeclaredType.Fits(value, requiredType)) return true;
+            ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'"));
             return false;
         }
 

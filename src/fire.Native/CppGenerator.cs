@@ -326,8 +326,8 @@ namespace fire.Native
             if (DirectFieldIndex(rc, name) is not int index) return null;
             string? unit = rc.FindFieldRequiredUnit(name);
             byte kind = rc.FindFieldRequiredKind(name);
-            string? requiredClass = rc.FindFieldRequiredClass(name);
-            if (requiredClass != null && FitsClassType(valueType, requiredClass)) requiredClass = null;
+            string? requiredType = rc.FindFieldRequiredType(name);
+            if (requiredType != null && FitsClassType(valueType, requiredType)) requiredType = null;
             // a value whose type already is what the declaration demands needs no check (a number of the declared kind in its unit, or a bool)
             if (kind != 0 && !IsNullable(valueType) && KindOfType(valueType) == KindOfDeclared(kind) && valueType != TypeNone)
             {
@@ -336,7 +336,7 @@ namespace fire.Native
             }
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
                 + (kind != 0 ? FieldKindCheck(name, kind) + " " : "")
-                + (requiredClass != null ? ClassGuard("x", requiredClass, $"Field '{name}'") + " " : "");
+                + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'") + " " : "");
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
@@ -410,8 +410,8 @@ namespace fire.Native
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
                 if (declared == 0)
                 {
-                    // a field declared with a class: an object of it or undefined (its setter checks every assignment, DeclaredKind.FitsClass)
-                    if (cls.Rc.FindFieldRequiredClass(name) is not { } required || !_program.Program.Classes.TryGetValue(required, out var requiredRc)) return TypeUnknown;
+                    // a field declared with a class: an object of it or undefined (its setter checks every assignment, DeclaredType)
+                    if (cls.Rc.FindFieldRequiredType(name) is not { } required || DeclaredClass(required) is not { } requiredRc) return TypeUnknown;
                     int objType = ObjType(requiredRc) | NullableBit;
                     if (result is { } known && known != objType) return TypeUnknown;
                     result = objType;
@@ -427,17 +427,43 @@ namespace fire.Native
             return result ?? TypeUnknown;
         }
 
-        /// <summary>The check of a declaration with a class (a parameter, a field; DeclaredKind.FitsClass): `undefined` or `is of` the class passes (and a
-        /// destroyed object: every use of it reports that), anything else is an ArgumentException.</summary>
-        private string ClassGuard(string value, string cls, string what)
+        /// <summary>The check of a declaration with a class, an interface or a constrained type parameter (a parameter, a field; DeclaredType, `spec` its
+        /// encoded form): `undefined` or a value that fits one alternative passes (and a destroyed object: every use of it reports that), anything else
+        /// is an ArgumentException.</summary>
+        private string ClassGuard(string value, string spec, string what)
         {
-            _isOfTypes.Add(cls);
-            return $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && !isof_{Mangle(cls)}({value}) && ({value}.kind != K_Class || leafAlive({value})))) guardClassFailed({value}, {CString(cls)}, {CString(what)});";
+            var parsed = DeclaredType.Parse(spec);
+            string Holds(DeclaredType.Condition c)
+            {
+                if (c.IsUnit) return $"(({value}.kind == K_Int || {value}.kind == K_Float) && unitCompatible(unitOf({value}), {UnitId(c.Unit)}))";
+                switch (c.Name)
+                {
+                    case "int": return $"{value}.kind == K_Int";
+                    case "float": return $"{value}.kind == K_Float";
+                    case "bool": return $"{value}.kind == K_Bool";
+                    case "char": return $"{value}.kind == K_Char";
+                    case "string": return $"{value}.kind == K_String";
+                    case "class": case "Exception": return $"{value}.kind == K_Class";
+                }
+                _isOfTypes.Add(c.Name);
+                string enumerable = GenericClassNames.PlainName(c.Name) == "IEnumerable" ? $"{value}.kind == K_Array || {value}.kind == K_Buffer || {value}.kind == K_String || " : "";
+                return $"({enumerable}isof_{Mangle(c.Name)}({value}))";
+            }
+            string fits = string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(Holds)) + ")"));
+            return $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && !({fits}) && ({value}.kind != K_Class || leafAlive({value})))) guardClassFailed({value}, {CString(parsed.Display)}, {CString(what)});";
         }
 
-        /// <summary>Does a value of this static type pass the check of a declaration with class `cls` as it is?</summary>
-        private bool FitsClassType(int type, string cls) =>
-            type == TypeUndefined || BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && ClassIs(ObjClass(type), cls);
+        /// <summary>The class a declaration (DeclaredType, encoded) certainly holds an object of (or undefined): a single `is of` a class of the program.</summary>
+        private RuntimeClass? DeclaredClass(string spec) =>
+            DeclaredType.Parse(spec).SingleName is { } name && _program.Program.Classes.TryGetValue(name, out var rc) ? rc : null;
+
+        /// <summary>The names a declaration tests with `is of` (each gets an `isof_` function).</summary>
+        private static IEnumerable<string> IsOfNames(string spec) =>
+            DeclaredType.Parse(spec).Alternatives.SelectMany(a => a).Where(c => !c.IsUnit && c.Name is not ("int" or "float" or "bool" or "char" or "string" or "class" or "Exception")).Select(c => c.Name);
+
+        /// <summary>Does a value of this static type pass the check of a declaration (DeclaredType, encoded) as it is?</summary>
+        private bool FitsClassType(int type, string spec) =>
+            type == TypeUndefined || BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && DeclaredClass(spec) is { } rc && ClassIs(ObjClass(type), rc.Name);
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
         private static string ReturnKey(Func f) => "ret:" + f.Name;
@@ -802,7 +828,7 @@ namespace fire.Native
             // the checks of fields declared with a class (sf_) test `is of` - declared before the helpers that use them
             foreach (var name in _fieldNames)
                 foreach (var cls in _classList)
-                    if (cls.Rc.FindFieldRequiredClass(name) is { } requiredClass) _isOfTypes.Add(requiredClass);
+                    if (cls.Rc.FindFieldRequiredType(name) is { } requiredType) _isOfTypes.UnionWith(IsOfNames(requiredType));
             foreach (var typeName in _isOfTypes) sb.AppendLine($"[[maybe_unused]] static bool isof_{Mangle(typeName)}(Value v);");
             foreach (var name in _fieldNames)
             {
@@ -1263,7 +1289,7 @@ namespace fire.Native
                 if (!indexByClass.ContainsKey(cls.Id)) continue;
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
-                    + (cls.Rc.FindFieldRequiredClass(name) is { } requiredClass ? ClassGuard("x", requiredClass, $"Field '{name}'") + " " : "");
+                    + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'") + " " : "");
                 if (check.Length > 0) unitChecks.Append($"        case {cls.Id}: {check}break;\n");
             }
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
@@ -1317,8 +1343,8 @@ namespace fire.Native
                         : "";
                     if (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0)
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
-                    if (cls.Rc.FindFieldRequiredClass(name) is { } requiredClass)
-                        unit += ClassGuard("x", requiredClass, $"Field '{name}'") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
+                    if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
+                        unit += ClassGuard("x", requiredType, $"Field '{name}'") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
                     continue;
@@ -1684,7 +1710,7 @@ namespace fire.Native
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
             // has its type from the GuardLocal of the prologue.
-            f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalClass).ToDictionary(c => c.A[0], c => c.Addr);
+            f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalType).ToDictionary(c => c.A[0], c => c.Addr);
             for (int i = 0; i < f.ParamLike; i++)
             {
                 MarkVarRef(VarKey(f, $"P{i}"));
@@ -3041,7 +3067,7 @@ namespace fire.Native
                         E($"{S(d - 1)} = {GuardKindCall(S(d - 1), staticKind, $"Field '{Str(ins.A[1])}'")};");
                         Check();
                     }
-                    if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredClass(Str(ins.A[1])) is { } staticClass && !FitsClassType(Ty(d - 1), staticClass))
+                    if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredType(Str(ins.A[1])) is { } staticClass && !FitsClassType(Ty(d - 1), staticClass))
                     {
                         E(ClassGuard(S(d - 1), staticClass, $"Field '{Str(ins.A[1])}'"));
                         Check();
@@ -3109,14 +3135,14 @@ namespace fire.Native
                     _kindsKept = true;
                     return Next();
                 }
-                case OpCode.GuardLocalClass:
+                case OpCode.GuardLocalType:
                 {
-                    // the end of the prologue: the parameter holds undefined or an object of the declared class (or of one derived from it)
+                    // the end of the prologue: the parameter holds undefined or what its declaration says (DeclaredType) - with a class, an object of it
                     string v = Var(st, 0, ins.A[0], locals);
-                    string cls = Str(ins.A[1]);
-                    E(ClassGuard(v, cls, Str(ins.A[2])));
+                    string spec = Str(ins.A[1]);
+                    E(ClassGuard(v, spec, Str(ins.A[2])));
                     Check();
-                    JoinVarType(VarKey(f, v), _program.Program.Classes.TryGetValue(cls, out var guardedRc) ? ObjType(guardedRc) | NullableBit : TypeUnknown);
+                    JoinVarType(VarKey(f, v), DeclaredClass(spec) is { } guardedRc ? ObjType(guardedRc) | NullableBit : TypeUnknown);
                     _kindsKept = true;
                     return Next();
                 }

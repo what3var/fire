@@ -43,7 +43,9 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   unit and without an initializer (or with a plain number as initializer) is converted into `unitless` (another dimension: `UnitMismatchException`); a
   declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
 - A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
-  way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); interfaces, type parameters, `any` and `class` are not checked.
+  way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); likewise an interface (`IEnumerable` also takes arrays, buffers and strings) and a
+  type parameter of the class with `where` conditions (checked against them: `is of`, `is in`). A type parameter without `where` or of a method, `any`
+  and `class` are not checked (type arguments do not exist at run time).
 
 ```
 var x = 1;              // int, unitless

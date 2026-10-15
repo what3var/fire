@@ -207,8 +207,9 @@ namespace fire.Bytecode
         // becomes a float for a `float`), anything else is an ArgumentException (DeclaredKind). The unit has been checked before (CheckUnit):
         // `unitIdx` names the unit demand the parameter then certainly has (0xFFFF: none known) - for the native generator.
         GuardLocal,          // u16 slot, u8 TypeTag, u16 whatIdx, u16 unitIdx : the local (depth 0) is checked/converted in place
-        // Likewise for a parameter declared with a class (`Point p`): `undefined` or `is of` the class, anything else is an ArgumentException.
-        GuardLocalClass,     // u16 slot, u16 classNameIdx, u16 whatIdx : the local (depth 0) is checked
+        // Likewise for a parameter declared with a class, an interface or a constrained type parameter (`Point p`, `IShape s`, `T v`): `undefined`
+        // or what the declaration says (DeclaredType), anything else is an ArgumentException.
+        GuardLocalType,      // u16 slot, u16 specIdx, u16 whatIdx : the local (depth 0) is checked
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

@@ -69,8 +69,10 @@ b.size = undefined        // allowed
 ```
 
 The same holds for a **class**: a parameter or field declared `Point p` holds `undefined` or an object of `Point` or of a class derived from it;
-anything else is an `ArgumentException` (`Parameter 'p' is a Point, not String.`). An interface, a type parameter (`T`), `any` and `class` are not
-checked.
+anything else is an `ArgumentException` (`Parameter 'p' is a Point, not String.`). An **interface** is checked the same way (the class of the object
+declares it; `IEnumerable` also takes arrays, buffers and strings), and a **type parameter with `where`** by its conditions
+(`T inside` with `where T is of Animal` holds an `Animal`, `where T is in "m"` a length) - at run time the type argument itself is not known, so
+`T` without `where` (and a type parameter of a method) is not checked, nor are `any` and `class`.
 
 ```fire
 class Point { int x = 1 }

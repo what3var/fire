@@ -2283,7 +2283,7 @@ inline void castFailed(Value v, const char* typeName) {
     fireError("ArgumentException", text);
 }
 
-/// A parameter or field declared with a class was given something else (DeclaredKind.ClassMismatch of the VM): an ArgumentException.
+/// A parameter or field declared with a class was given something else (DeclaredType.Mismatch of the VM): an ArgumentException.
 FIRE_COLD inline void guardClassFailed(Value v, const char* cls, const char* what) {
     char text[300];
     bool vowel = std::strchr("AEIOUaeiou", cls[0]) != nullptr;

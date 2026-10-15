@@ -333,6 +333,8 @@ namespace fire.Compiler
             private readonly HashSet<string> _lambdaFieldNames = new();
             private readonly Dictionary<string, int> _fieldWidths = new();
             private readonly HashSet<string> _typeParamNames = new();
+            /// <summary>The interfaces of the program (CompileClasses): a declaration with one is checked like one with a class.</summary>
+            public readonly HashSet<string> InterfaceNames = new();
             /// <summary>A name some class or method uses as a type parameter (`T`): a declaration of that type is not checked at run time.</summary>
             public bool IsTypeParam(string name) => _typeParamNames.Contains(name);
 
@@ -412,14 +414,19 @@ namespace fire.Compiler
         /// parser EXACTLY at the place where `tr` was parsed - the
         /// compiler needs no "current class"/"active
         /// usings" state of its own for that any more.</summary>
-        /// <summary>The class a declaration `C x` (a parameter, a field) names: its value is `undefined` or `is of C`, checked at run time like `x!C`
-        /// (GuardLocalClass, FieldInfo.RequiredClass); null for a number, a string, an interface, a type parameter, an array, a lambda, `any`...</summary>
-        private string? DeclaredClassOf(TypeRef? type)
+        /// <summary>What a declaration `C x` (a parameter, a field) with a class, an interface or a type parameter of `owner` that has `where` conditions
+        /// promises, checked at run time (GuardLocalType, FieldInfo.RequiredType, DeclaredType); null for a number, a string, an unconstrained type
+        /// parameter (or one of a method), an array, a lambda, `any`...</summary>
+        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner)
         {
-            if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null
-                || _refParams.IsTypeParam(type.BaseName)) return null;
-            string name = ResolveTypeRef(type);
-            return _knownClassNames.Contains(name) ? name : null;
+            if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null) return null;
+            bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
+            string Resolve(string n) => (type with { BaseName = n, TypeArgs = null, TypeArgCount = 0 }).ResolveBaseName(Known);
+            if (owner?.Decl?.TypeParams?.FirstOrDefault(tp => tp.Name == type.BaseName) is { } typeParam)
+                return typeParam.ConstraintGroups.Count == 0 ? null : DeclaredType.OfTypeParam(typeParam, Resolve);
+            if (_refParams.IsTypeParam(type.BaseName)) return null;
+            string name = type.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(type, args.Count, Known) : type.ResolveBaseName(Known);
+            return Known(name) ? DeclaredType.OfName(name) : null;
         }
 
         private string ResolveTypeRef(TypeRef tr) =>
@@ -616,6 +623,7 @@ namespace fire.Compiler
             // need no runtime representation of their own (purely dynamic
             // method call by name), the resolver has already checked fulfilment.
             var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
+            _refParams.InterfaceNames.UnionWith(interfaceNames);
             foreach (var rc in classes.Values)
             {
                 foreach (var baseRef in rc.Decl.BaseRefs ?? Array.Empty<TypeRef>())
@@ -727,7 +735,7 @@ namespace fire.Compiler
                                 AccessModifier = fd.Access,
                                 RequiredUnit = fd.Type?.UnitDemand,
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
-                                RequiredClass = fd.ArrayRanks.Count == 0 ? DeclaredClassOf(fd.Type) : null,
+                                RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 IsStatic = fd.IsStatic,
                             };
                             // SPEC "Static members": static fields end up
@@ -985,11 +993,12 @@ namespace fire.Compiler
                 inner._chunk.EmitU16(unit == null ? (ushort)0xFFFF : inner._chunk.AddConstant(Value.MakeString(unit)));
             }
 
-            // A parameter declared with a class (`Point p`) holds `undefined` or an object of that class or of a class derived from it.
+            // A parameter declared with a class (`Point p`) holds `undefined` or an object of that class or of a class derived from it; likewise with an
+            // interface or a type parameter of the class with `where` conditions (DeclaredType).
             for (int i = 0; i < parms.Count; i++)
             {
-                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredClassOf(parms[i].Type) is not { } cls) continue;
-                inner._chunk.EmitOp(OpCode.GuardLocalClass);
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredTypeOf(parms[i].Type, inner._enclosingClass) is not { } cls) continue;
+                inner._chunk.EmitOp(OpCode.GuardLocalType);
                 inner._chunk.EmitU16((ushort)i);
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(cls)));
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString($"Parameter '{parms[i].Name}'")));

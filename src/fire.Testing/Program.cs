@@ -14593,6 +14593,47 @@ else
             try { print(u.x) } catch (ArgumentException e) { print(e.message) }
             try { u.x = 3 } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Parameter und Felder mit Interface oder Typparameter (where): grob geprueft - is of, is in, IEnumerable nimmt Arrays", """
+            interface IShape { float Area() }
+            class Sq : IShape {
+                float s
+                construct(float s) { this.s = s }
+                float Area() { return s * s }
+            }
+            class Blob { float Area() { return 1.0 } }
+            class Animal { string name = "animal" }
+            class Dog : Animal { }
+            class Cage<T> where T is of Animal {
+                T inside
+                undefined Put(T a) { inside = a; try a.TakeTo(this) }
+            }
+            class Len<T> where T is in "m" {
+                T value
+            }
+            class Shapes {
+                static float Total(IShape a, IShape b) { return a.Area() + b.Area() }
+                static int Count(IEnumerable<int> xs) { int n = 0; foreach (x in xs) { n++ } return n }
+            }
+            print(Shapes.Total(new Sq(2.0), new Sq(3.0)))
+            any blob = new Blob()
+            try { print(Shapes.Total(new Sq(1.0), blob)) } catch (ArgumentException e) { print(e.message) }
+            print(Shapes.Count([1, 2, 3]))
+            var l = new List<int>()
+            l.Add(5)
+            print(Shapes.Count(l))
+            any notList = 5
+            try { Shapes.Count(notList) } catch (ArgumentException e) { print(e.message) }
+            var c = new Cage<Dog>()
+            c.Put(new Dog())
+            print(c.inside.name)
+            any str = "cat"
+            try { c.Put(str) } catch (ArgumentException e) { print(e.message) }
+            try { c.inside = str } catch (ArgumentException e) { print(e.message) }
+            var len = new Len<cm>()
+            len.value = 5cm
+            print(len.value)
+            try { len.value = 3kg } catch (ArgumentException e) { print(e.message) }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))

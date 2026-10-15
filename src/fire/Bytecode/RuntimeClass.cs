@@ -32,8 +32,9 @@ namespace fire.Bytecode
         /// <summary>The kind a field declared `int`/`float`/`bool` holds (DeclaredKind: TypeTag + 1, 0: none) - every assignment is checked.</summary>
         public byte RequiredKind { get; set; }
 
-        /// <summary>The class a field declared `C name` holds (or `undefined`): every assignment is checked (DeclaredKind.FitsClass); null: none.</summary>
-        public string? RequiredClass { get; set; }
+        /// <summary>What a field declared with a class, an interface or a constrained type parameter holds (or `undefined`): every assignment is checked
+        /// (DeclaredType, its encoded form); null: none.</summary>
+        public string? RequiredType { get; set; }
 
         public AccessModifier AccessModifier { get; set; }
 
@@ -152,12 +153,12 @@ namespace fire.Bytecode
             return null;
         }
 
-        /// <summary>Like FindFieldRequiredUnit, for the class (FieldInfo.RequiredClass, null: none).</summary>
-        public string? FindFieldRequiredClass(string name)
+        /// <summary>Like FindFieldRequiredUnit, for the declared class or interface (FieldInfo.RequiredType, null: none).</summary>
+        public string? FindFieldRequiredType(string name)
         {
             for (var rc = this; rc != null; rc = rc.Base)
                 if (rc.OwnFieldInfo.TryGetValue(name, out var field))
-                    return field.RequiredClass;
+                    return field.RequiredType;
             return null;
         }
 

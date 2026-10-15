@@ -30,13 +30,13 @@ namespace fire.Bytecode
 
         /// <summary>A field assignment: the kind the field demands (DeclaredKind, 0: none) - a value that does not fit as it is takes the slow route.</summary>
         public readonly byte RequiredKind;
-        /// <summary>A field assignment: the class the field demands (DeclaredKind.FitsClass, null: none).</summary>
-        public readonly string? RequiredClass;
+        /// <summary>A field assignment: the class, interface or constrained type parameter the field demands (DeclaredType, null: none).</summary>
+        public readonly string? RequiredType;
 
-        public SiteCache(RuntimeClass? @class, FunctionProto? proto, int fieldIndex, NativeForwarder? forwarder = null, int forwarderFieldIndex = -1, byte requiredKind = 0, string? requiredClass = null)
+        public SiteCache(RuntimeClass? @class, FunctionProto? proto, int fieldIndex, NativeForwarder? forwarder = null, int forwarderFieldIndex = -1, byte requiredKind = 0, string? requiredType = null)
         {
             RequiredKind = requiredKind;
-            RequiredClass = requiredClass;
+            RequiredType = requiredType;
             Class = @class;
             Proto = proto;
             FieldIndex = fieldIndex;
