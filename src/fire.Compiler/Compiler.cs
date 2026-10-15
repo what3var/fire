@@ -707,6 +707,7 @@ namespace fire.Compiler
                             {
                                 AccessModifier = fd.Access,
                                 RequiredUnit = fd.Type?.UnitDemand,
+                                RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 IsStatic = fd.IsStatic,
                             };
                             // SPEC "Static members": static fields end up
@@ -949,6 +950,19 @@ namespace fire.Compiler
                 EmitCheckUnitIfNeeded(inner, unit);
                 inner.EmitStoreVariable(new ResolvedRef.Local(0, i, null, parms[i].ByRef));
                 inner._chunk.EmitOp(OpCode.Pop);
+            }
+
+            // A parameter declared int/float/bool holds that kind or `undefined` (DeclaredKind) - checked last, after its width and unit.
+            for (int i = 0; i < parms.Count; i++)
+            {
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredKind.Of(parms[i].Type, parms[i].DefaultValue) is not (var kind and not 0)) continue;
+                // the unit the parameter certainly has afterwards: the checked one, none (the guard converts into no unit), or open (`: any`)
+                string? unit = parms[i].Type?.UnitDemand ?? (DeclaredKind.IsUnitless(kind) ? "unitless" : null);
+                inner._chunk.EmitOp(OpCode.GuardLocal);
+                inner._chunk.EmitU16((ushort)i);
+                inner._chunk.EmitByte((byte)((kind & 0x7F) - 1 | kind & DeclaredKind.UnitlessBit));
+                inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString($"Parameter '{parms[i].Name}'")));
+                inner._chunk.EmitU16(unit == null ? (ushort)0xFFFF : inner._chunk.AddConstant(Value.MakeString(unit)));
             }
         }
 

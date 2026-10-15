@@ -45,6 +45,31 @@ print(v)
 - A **field and a property always have a type** (`var` is for local variables). A **parameter** without a type is `any` (reported as `TC004`), a **method**
   without a return type returns `any` (`TC005`). A method that returns nothing is declared `undefined`.
 
+### `int`, `float` and `bool` are a promise
+
+A parameter or a field declared `int`, `float` or `bool` holds a value of that kind - or `undefined` (like a nullable type in C#: a field without an
+initializer is `undefined` until it is assigned). This is checked at run time too, wherever the value comes from (dynamic code, a callback, reflection):
+
+- a whole number given to a `float` becomes a float (`3` is `3.0`),
+- anything else is an `ArgumentException` (`Parameter 'a' is a float, not String.`, `Field 'n' is an int, not Float.`),
+- a number declared without a unit (and without an initializer, or with a plain number like `= 0.0`) is unitless: a value with a unit of no dimension
+  is converted, one with a dimension is a `UnitMismatchException`. A declaration with a unit (`float:m`) converts into it, `: any` takes every unit, and
+  one whose initializer has a unit (`float len = 1cm`) takes that unit (see [Units](05-units.md)).
+
+```fire
+class Box {
+    float size
+    construct(float s) { this.size = s }
+}
+Box b = new Box(3)        // 3 becomes 3.0
+print(b.size)
+any text = "big"
+try { b.size = text } catch (ArgumentException e) { print(e.message) }   // Field 'size' is a float, not String.
+b.size = undefined        // allowed
+```
+
+The native compiler relies on this promise: with it the arithmetic on such parameters and fields is plain C++ on the number.
+
 ## The type checker: lax and strict
 
 The checker runs after every compile and in the editor while you type. Its findings have codes:

@@ -38,6 +38,10 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
 - `bool`, `char`, `string` are value types (copied on assignment) and carry no unit.
 - `int`, `float`, `undefined` additionally carry a **unit** (see section 3). If it is missing, the default is `unitless`.
 - `class` references an object instance (reference type, subject to the ownership model, see section 2).
+- A **parameter or field declared `int`, `float` or `bool`** holds a value of that kind or `undefined`, checked at run time on every assignment and call
+  (also from dynamic code): a whole number for a `float` is converted to a float, another kind is an `ArgumentException`, and a number declared without a
+  unit and without an initializer (or with a plain number as initializer) is converted into `unitless` (another dimension: `UnitMismatchException`); a
+  declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
 
 ```
 var x = 1;              // int, unitless

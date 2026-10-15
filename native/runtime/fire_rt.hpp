@@ -475,6 +475,9 @@ inline double unitFactor(uint32_t from, uint32_t to) {
     return factor;
 }
 
+/// unitFactor between two units the generator knows (their ids are fixed): looked up once.
+template <uint32_t From, uint32_t To> inline double unitFactorConst() { static const double factor = unitFactor(From, To); return factor; }
+
 /// Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; `mm * mm` is `mm^2`.
 inline uint32_t unitMul(uint32_t a, uint32_t b) {
     if (unitIsUnitless(b)) return a;
@@ -1066,21 +1069,21 @@ inline int compare(Value a, Value b) {
 inline bool lt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f < b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) < 0;   // (NaN sorts below everything, like the VM)
     }
     return compare(a, b) < 0;
 }
 inline bool le(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i <= b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f <= b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) <= 0;   // (NaN sorts below everything, like the VM)
     }
     return compare(a, b) <= 0;   // (-1 or 0; a failed comparison gives 2)
 }
 inline bool gt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i > b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f > b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) > 0;   // (NaN sorts below everything, like the VM)
     }
     int c = compare(a, b);
     return c > 0 && c != 2;
@@ -1088,7 +1091,7 @@ inline bool gt(Value a, Value b) {
 inline bool ge(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i >= b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f >= b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) >= 0;   // (NaN sorts below everything, like the VM)
     }
     int c = compare(a, b);
     return c >= 0 && c != 2;
@@ -1461,6 +1464,26 @@ inline void unitMismatch(Value v, Value expectedText);
 /// CheckUnit (Value.AdaptToUnit): a declaration with a unit takes `v` - a value of the same dimension is converted into `unit`, `undefined` takes it; with
 /// `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float. Another dimension is an UnitMismatchException, a whole number that does not fit any
 /// more after the conversion an OverflowException. Values without a unit (strings, objects) are left alone.
+/// A parameter or field declared int/float/bool (DeclaredKind): a value of that kind or undefined; a whole number for a float becomes one, anything
+/// else is an ArgumentException (the generated code then looks at the unwinding flag). `unitless`: declared without a unit - a number with one is
+/// converted like adaptUnit(v, unitless) first (another dimension is a UnitMismatchException).
+inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
+inline Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
+    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0)) return v;
+    if (v.kind == K_Undefined) return v;
+    if (unitless && (v.kind == K_Int || v.kind == K_Float) && v.unit != 0) {
+        v = adaptUnit(v, 0, false, false, unitlessText);
+        if (!unitEq(v.unit, 0)) return Undef();   // (thrown)
+        v.unit = 0;
+    }
+    if (v.kind == kind) return v;
+    if (kind == K_Float && v.kind == K_Int) return Float((Real)v.i, v.unit);
+    char text[200];
+    std::snprintf(text, sizeof text, "%s is %s, not %s.", what, kind == K_Int ? "an int" : kind == K_Float ? "a float" : "a bool", coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    return Undef();
+}
+
 /// A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays.
 inline Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v; }
 

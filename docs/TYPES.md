@@ -58,6 +58,31 @@ not have (`e.Message` on an `Exception`) is `TC008`, a call with a number of arg
 
 Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
 
+Step 3 (backend use), first part: the native generator (`src/fire.Native/CppGenerator.cs`) proves types from the bytecode itself, with the same fixpoint as
+the ownership analysis (`VarRef`): every stack slot carries a static type (an `int`, `float` or `bool` without a bit width, and the static unit of a number),
+joined where paths meet; every variable (local, global, parameter) joins the types of everything stored into it, and a variable written through a pointer,
+a parameter or a value of unknown type is unknown. Instructions that are not taught about types forget the types of the slots they write, so an
+unknown instruction can never make the generator believe a wrong type. Globals are trusted only in the main program (a method can run before their declaration).
+With the types known the C++ is the operation itself: `+ - * / %` (ints wrap; `/` and `%` by 0 throw), the comparisons and the conditional jumps (no
+`truthy`), `-x`, `!b`, `x++`/`x += k`, no ownership bookkeeping for numbers (`HoistValue`, `adopt` after a call). Units: `+ - %` and the comparisons
+of two numbers of the same unit keep it, `* /` with a number without a unit keep the other one, a float plus a number of another unit of the same dimension
+is converted by the factor of `alignUnits` (looked up once per pair), `:`/`::` and the unit check of a declaration disappear where the unit is already
+the right one. The return type of a method is the join of its `return` values; a call of a known method (static, base, initializer) or a dispatcher call
+whose candidates all return the same type gives it. In a loop like `for (int i ...) { sum += i % 7 }` the generated code is plain C++ on the
+`Value` fields (30M iterations: 0.19 s -> 0.027 s; `float:m len = len + 0.5mm`: 0.67 s -> 0.071 s).
+
+Step 2 (the guard): a parameter or field declared `int`/`float`/`bool` holds that kind or `undefined` (nullable), checked at run time (`DeclaredKind`):
+the parameters at the end of the prologue of a method (`GuardLocal`), the fields in their setter (VM: the slow route and one compare in the inline
+cache; native: `sf_`), static fields on every assignment. A whole number for a `float` becomes a float, another kind is an `ArgumentException`, a number
+declared without a unit and without an initializer (or with a number literal as initializer) is converted into `unitless` (another dimension:
+`UnitMismatchException`; an initializer with a unit gives the declaration that unit, checked where it is assigned as before, so its unit is not static). With that the generator types parameters and fields
+too: the type "kind or undefined" runs the C++ operation behind a test of the kind (`a.kind == K_Float ? Float(a.f * b.f) : mul(a, b)`; the generic
+function throws for `undefined`). The result of a call of a function whose `return`s were not seen yet is "nothing yet" (it joins to the other side),
+and which scopes need an ownership list is found again in every round, so a type that becomes known later still makes the code lean.
+
+Not yet: direct calls on a receiver of a proven class; fields by index without the `gf_` switch; unboxed C++ locals (`int64_t`/`double` instead of
+`Value`); typed opcodes in the VM.
+
 ## Decisions
 
 * **TypeChecking mode `lax` | `strict`.** Project-wide (project setting), per file (`#lax` / `#strict`), or by compiler switch. `lax`: an incompatible assignment, argument or return between two

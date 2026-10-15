@@ -67,6 +67,9 @@ namespace fire.Native
             public readonly HashSet<int> FinReturn = new();                      // finally blocks that a `return` can run through
             public readonly Dictionary<int, SortedSet<int>> FinJumps = new();    // finally block -> the jump targets that `break`/`continue` leave through it
             public List<Instr> Decoded = new();
+            /// <summary>Parameters checked by GuardLocal at the end of the prologue: slot -> address of the check. Before it a parameter holds what the caller
+            /// passed (its loads are untyped, its stores do not count); from there on the declared kind or undefined.</summary>
+            public Dictionary<int, int> GuardAddr = new();
             public Dictionary<int, int> IndexOf = new();
             public Flow?[] Entry = Array.Empty<Flow?>();
             public Out Root = new();
@@ -268,6 +271,113 @@ namespace fire.Native
         }
 
         private bool VarRef(string key) => _varRef.TryGetValue(key, out bool r) && r;
+
+        // Static types of values: what a stack slot or a variable certainly holds - an int, a float or a bool without a bit width, and the unit
+        // of the number (its UnitId, 0: none), packed as `kind | unit << 8`; with NullableBit it may also be `undefined` (a parameter or field
+        // declared int/float/bool, DeclaredKind); TypeUndefined is `undefined` only; TypeUnknown (0) is everything else.
+        private const byte KindInt = 1, KindFloat = 2, KindBool = 3, KindUnknown = 0;
+        // TypeNone: nothing yet - the result of a call of a function none of whose `return`s was seen yet (in the last round: one that never returns,
+        // the code after the call does not run); it joins to the other side, and whatever is computed from it is TypeNone, too.
+        private const int TypeUnknown = 0, NullableBit = 0x10, TypeUndefined = NullableBit, TypeNone = 0x20;
+        private static int TypeOf(byte kind, int unit) => kind == KindUnknown ? TypeUnknown : kind | (kind == KindBool ? 0 : unit) << 8;
+        /// <summary>The kind of a value that is certainly no `undefined` (KindUnknown for a nullable type).</summary>
+        private static byte KindOfType(int type) => (type & (NullableBit | TypeNone)) != 0 ? KindUnknown : (byte)(type & 0x0F);
+        /// <summary>The kind of a value of the type when it is not `undefined`.</summary>
+        private static byte BaseKindOfType(int type) => (byte)(type & 0x0F);
+        private static bool IsNullable(int type) => (type & NullableBit) != 0;
+        private static int UnitOfType(int type) => type >> 8;
+        /// <summary>Where two types meet: the same type, a type and `undefined` (nullable), else unknown.</summary>
+        private static int JoinTypes(int a, int b)
+        {
+            if (a == b) return a;
+            if (a == TypeNone) return b;
+            if (b == TypeNone) return a;
+            if (a == TypeUnknown || b == TypeUnknown) return TypeUnknown;
+            if (a == TypeUndefined) return b | NullableBit;
+            if (b == TypeUndefined) return a | NullableBit;
+            return (a | NullableBit) == (b | NullableBit) ? a | NullableBit : TypeUnknown;
+        }
+        private Unit UnitById(int id) => id == 0 ? Unit.Unitless : _units[id];
+
+        // The static types of variables, found like VarRef: every store joins the type of its value; a variable that is stored with two types,
+        // an unknown value or through a pointer is TypeUnknown (absent: nothing stored yet). A change makes the generator run another round, so
+        // the code of the last round sees the final types.
+        private readonly Dictionary<string, int> _varType = new();
+        private void JoinVarType(string key, int type)
+        {
+            if (type == TypeNone) return;   // (nothing yet)
+            int joined = _varType.TryGetValue(key, out int old) ? JoinTypes(old, type) : type;
+            if (_varType.ContainsKey(key) && joined == old) return;
+            _varType[key] = joined;
+            _version++;
+        }
+
+        /// <summary>The unit a demand (TypeRef.UnitDemand, a leading `#` for a float) certainly leaves a number in; -1 when it leaves the unit open
+        /// (`any`, `any m`).</summary>
+        private int DemandedUnitId(string demand)
+        {
+            string unit = demand.TrimStart('#');
+            if (unit == "any" || unit.StartsWith("any ", StringComparison.Ordinal)) return -1;
+            return UnitId(DemandUnit(unit));
+        }
+
+        /// <summary>Fields whose address is taken (`&obj.f`): what is written through the pointer is not checked.</summary>
+        private readonly HashSet<string> _fieldAddressTaken = new();
+
+        /// <summary>The static type of `obj.name`: every class of the program that has the field declares it int/float/bool with an exact unit (its setter
+        /// checks every assignment, DeclaredKind) - the kind or undefined; TypeUnknown for a property, a field whose address is taken, or anything else.</summary>
+        private int FieldType(string name)
+        {
+            if (HasProperty(name) || _fieldAddressTaken.Contains(name) || name is "Length" or "length" or "littleEndian") return TypeUnknown;
+            int? result = null;
+            foreach (var cls in _classList)
+            {
+                if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
+                byte declared = cls.Rc.FindFieldRequiredKind(name);
+                if (declared == 0) return TypeUnknown;
+                byte kind = KindOfDeclared(declared);
+                int unit = kind == KindBool ? 0 : cls.Rc.FindFieldRequiredUnit(name) is { } demand ? DemandedUnitId(demand) : DeclaredKind.IsUnitless(declared) ? 0 : -1;
+                if (unit < 0) return TypeUnknown;
+                int type = TypeOf(kind, unit) | NullableBit;
+                if (result is { } r && r != type) return TypeUnknown;
+                result = type;
+            }
+            return result ?? TypeUnknown;
+        }
+
+        /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
+        private static string ReturnKey(Func f) => "ret:" + f.Name;
+        private int ReturnType(Func f) => f.Kind == FuncKind.Ctor ? TypeUnknown : _varType.TryGetValue(ReturnKey(f), out int type) ? type : TypeNone;
+
+        /// <summary>The static type of what a dispatcher call `x.name(...)` gives: known when every method of that name and arity in the classes of the
+        /// program returns the same type and nothing else can be called (no extension, built-in or ownership method, no actors); TypeUnknown otherwise.
+        /// A receiver that has no such method throws, and the code after the call does not run then.</summary>
+        private int DispatchResultType(string name, int argc)
+        {
+            if (_usesActors || ExtensionMethods(name, argc).Any() || BuiltinMethods(name, argc).Any() || OwnMethodId(name, argc) != null
+                || name == "GetEnumerator" && argc == 0) return TypeUnknown;
+            int? result = null;
+            foreach (var cls in _classList)
+            {
+                if (cls.Rc.FindMethodWithAccess(name, argc).Proto is not { IsStatic: false } method) continue;
+                if (!_funcByProto.TryGetValue(method, out var target)) return TypeUnknown;
+                int type = ReturnType(target);
+                if (type == TypeUnknown) return TypeUnknown;
+                result = result is { } r ? JoinTypes(r, type) : type;
+                if (result == TypeUnknown) return TypeUnknown;
+            }
+            return result ?? TypeUnknown;
+        }
+
+        /// <summary>The type a constant gives a stack slot (constants carry no bit width in the generated code).</summary>
+        private int TypeOfConstant(Value c) => c.Kind switch
+        {
+            ValueKind.Int => TypeOf(KindInt, UnitId(c.Unit)),
+            ValueKind.Float => TypeOf(KindFloat, UnitId(c.Unit)),
+            ValueKind.Bool => TypeOf(KindBool, 0),
+            ValueKind.Undefined => TypeUndefined,
+            _ => TypeUnknown,
+        };
 
         private void MarkVarRef(string key)
         {
@@ -1047,10 +1157,15 @@ namespace fire.Native
                 indexCode = "    uint32_t idx = 0;\n    switch (o->cls) {\n" + cases + $"        default: missingField(v, {CString(name)}); FIELD_MISSING_RETURN\n    }}";
             }
             // a field declared with a unit (`int len : mm`) checks every assignment
+            // and a field declared int/float/bool takes that kind or undefined (DeclaredKind)
             var unitChecks = new StringBuilder();
             foreach (var cls in _classList)
-                if (indexByClass.ContainsKey(cls.Id) && cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit)
-                    unitChecks.Append($"        case {cls.Id}: x = {AdaptUnitCall("x", requiredUnit)}; break;\n");
+            {
+                if (!indexByClass.ContainsKey(cls.Id)) continue;
+                string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
+                    + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "");
+                if (check.Length > 0) unitChecks.Append($"        case {cls.Id}: {check}break;\n");
+            }
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
             // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
@@ -1059,6 +1174,13 @@ namespace fire.Native
                  + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ missingField(v, {CString(name)}); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{voidIndex}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
                  + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&o->fields()[idx]);\n}}\n";
         }
+
+        /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
+        private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
+        private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch { TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", _ => "K_Bool" };
+        private string GuardKindCall(string value, byte declared, string what) =>
+            $"guardKind({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
+        private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch { TypeTag.Int => KindInt, TypeTag.Float => KindFloat, _ => KindBool };
 
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
         /// of the caller (the getter's result belongs to it).</summary>
@@ -1093,6 +1215,8 @@ namespace fire.Native
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
+                    if (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0)
+                        unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
                     continue;
@@ -1292,6 +1416,8 @@ namespace fire.Native
             public List<(int Id, int Declared)> Scopes = new();
             /// <summary>Bit k: stack slot k may hold a string/array/buffer (slots beyond 63 are assumed to).</summary>
             public ulong Refs;
+            /// <summary>The static type of each stack slot (see TypeOf; slots beyond 63 are unknown).</summary>
+            public int[] Types = new int[64];
             /// <summary>The `try` statements that are active here, outermost first.</summary>
             public List<HEntry> Handlers = new();
             /// <summary>The catch lambda this code belongs to (null: the function itself).</summary>
@@ -1299,7 +1425,14 @@ namespace fire.Native
             /// <summary>The `finally` blocks that this code is inside of (their entry addresses), outermost first.</summary>
             public List<int> Fins = new();
 
-            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+            public Flow Clone() => new() { Depth = Depth, Scopes = new List<(int, int)>(Scopes), Refs = Refs, Types = (int[])Types.Clone(), Handlers = new List<HEntry>(Handlers), Region = Region, Fins = new List<int>(Fins) };
+
+            /// <summary>Forgets the types of the slots from <paramref name="from"/> on.</summary>
+            public void ClearTypes(int from)
+            {
+                from = Math.Max(from, 0);
+                if (from < Types.Length) Array.Clear(Types, from, Types.Length - from);
+            }
 
             public bool SameShape(Flow o) => Depth == o.Depth && ReferenceEquals(Region, o.Region) && Scopes.SequenceEqual(o.Scopes)
                 && Handlers.SequenceEqual(o.Handlers) && Fins.SequenceEqual(o.Fins);
@@ -1436,6 +1569,9 @@ namespace fire.Native
             f.IndexOf = indexOfAddr;
             f.Regions = new Dictionary<int, Region>();
             f.Root = new Out();
+            // which scopes need a list is found again in every round (pass 1 below sees every instruction before pass 2 emits): a scope that needed one
+            // only for a value whose type was not known yet loses it once the type is known
+            f.NeedsList.Clear();
             var finAddrs = chunk.Handlers.Where(t => t.FinallyAddr != null).Select(t => t.FinallyAddr!.Value).ToHashSet();
 
             var entry = new Flow?[code.Count];
@@ -1443,15 +1579,21 @@ namespace fire.Native
             var start = new Flow();
             start.Scopes.Add(f.IsTop ? (GlobalScope, f.Kind == FuncKind.FireBody ? f.Proto!.ParamCount : 0) : (FunctionScope, f.ParamLike));
             entry[0] = start;
-            // Parameters can be anything: assume they may be references (a call-site analysis could narrow this).
-            for (int i = 0; i < f.ParamLike; i++) MarkVarRef(VarKey(f, $"P{i}"));
+            // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
+            // has its type from the GuardLocal of the prologue.
+            f.GuardAddr = code.Where(c => c.Op == OpCode.GuardLocal).ToDictionary(c => c.A[0], c => c.Addr);
+            for (int i = 0; i < f.ParamLike; i++)
+            {
+                MarkVarRef(VarKey(f, $"P{i}"));
+                if (!f.GuardAddr.ContainsKey(i)) JoinVarType(VarKey(f, $"P{i}"), TypeUnknown);
+            }
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) f.NeedsList.Add(GlobalScope);   // thrown exceptions, TakeGlobal and TakeUpwards need the list of the global scope
 
             var targets = new HashSet<int>();
             var work = new Stack<int>();
             work.Push(0);
             var locals = new SortedSet<string>(StringComparer.Ordinal);
-            for (int i = 0; i < f.ThreadArgs; i++) { locals.Add($"T{f.GlobalSlotCount + i}"); f.ThreadVars.Add(f.GlobalSlotCount + i); MarkVarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")); }
+            for (int i = 0; i < f.ThreadArgs; i++) { locals.Add($"T{f.GlobalSlotCount + i}"); f.ThreadVars.Add(f.GlobalSlotCount + i); MarkVarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")); JoinVarType(VarKey(f, $"T{f.GlobalSlotCount + i}"), TypeUnknown); }
 
             void Propagate(int addr, Flow state, int from)
             {
@@ -1463,6 +1605,14 @@ namespace fire.Native
                 if (!existing.SameShape(state))
                     throw new NativeNotSupportedException($"inconsistent stack/scope state at {addr} ({name}), reached from {from}");
                 if ((existing.Refs | state.Refs) != existing.Refs) { existing.Refs |= state.Refs; work.Push(target); }
+                // a slot keeps its kind only if every way here agrees
+                bool typesChanged = false;
+                for (int k = 0; k < existing.Types.Length; k++)
+                {
+                    int joined = JoinTypes(existing.Types[k], state.Types[k]);
+                    if (joined != existing.Types[k]) { existing.Types[k] = joined; typesChanged = true; }
+                }
+                if (typesChanged) work.Push(target);
             }
 
             // Pass 1: propagate states (and find out which scopes can own objects); pass 2: emit with the states found.
@@ -1808,7 +1958,29 @@ namespace fire.Native
         }
 
         /// <summary>Applies the effect of one instruction to <paramref name="st"/>; with a builder it also emits the C++.</summary>
+        /// <summary>Set by the instructions that keep the kinds of the stack slots up to date (StepCore); after any other one the slots it may have written
+        /// lose their kinds - an instruction that is not taught about kinds can never make the generator believe a wrong one.</summary>
+        private bool _kindsKept;
+
         private StepResult Step(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
+        {
+            int before = st.Depth;
+            _kindsKept = false;
+            // an operand that has no value yet (TypeNone) gives a result without one
+            bool fromNone = false;
+            for (int k = Math.Max(0, before - 3); k < Math.Min(before, 64); k++) fromNone |= st.Types[k] == TypeNone;
+            var result = StepCore(f, chunk, ins, st, sb, locals);
+            if (!_kindsKept)
+            {
+                int from = st.Depth > before ? before : st.Depth - 1;
+                st.ClearTypes(from);
+                if (fromNone) for (int k = Math.Max(0, from); k < Math.Min(st.Depth, 64); k++) st.Types[k] = TypeNone;
+            }
+            if (result.Extra != null) foreach (var (_, edge) in result.Extra) edge.ClearTypes(0);
+            return result;
+        }
+
+        private StepResult StepCore(Func f, Chunk chunk, Instr ins, Flow st, StringBuilder? sb, ISet<string> locals)
         {
             int d = st.Depth;
             string fn = f.Name;
@@ -1907,8 +2079,39 @@ namespace fire.Native
                 if (k >= 64) return;
                 if (value) st.Refs |= 1UL << k; else st.Refs &= ~(1UL << k);
             }
-            // After a call: whatever came back belongs to the innermost scope now.
-            void AdoptResult(int slot) { E($"adopt({S(slot)}, &{OwnerList()});"); SetR(slot, true); }
+            // The static types of the stack slots (Flow.Types): their kind (or KindUnknown) and the unit of a number.
+            int Ty(int k) => k < 0 || k >= 64 ? TypeUnknown : st.Types[k];
+            byte K(int k) => KindOfType(Ty(k));
+            int U(int k) => UnitOfType(Ty(k));
+            void SetT(int k, int type) { if (k >= 0 && k < 64) st.Types[k] = type; }
+            bool IsNum(byte kind) => kind is KindInt or KindFloat;
+            // A number of known kind (or undefined, see the guards of TypedArith) as a C++ Real / double.
+            byte BK(int k) => BaseKindOfType(Ty(k));
+            string Num(int k) => BK(k) == KindFloat ? $"{S(k)}.f" : $"(Real){S(k)}.i";
+            string Dbl(int k) => BK(k) == KindFloat ? $"(double){S(k)}.f" : $"(double){S(k)}.i";
+            // A parameter in the prologue before its GuardLocal still holds what the caller passed.
+            bool RawParam(string variable) => variable[0] == 'P' && f.GuardAddr.TryGetValue(int.Parse(variable.AsSpan(1)), out int guardAt) && ins.Addr < guardAt;
+            // What a load of a variable certainly gives. A global is only trusted in the main program: another function can run before its declaration.
+            int LoadType(string variable)
+            {
+                if (variable[0] == 'G' && f.Kind != FuncKind.Main) return TypeUnknown;
+                return _varType.TryGetValue(VarKey(f, variable), out int type) ? type : TypeUnknown;
+            }
+            // Two different static units that convert by a factor (alignUnits, unitFactor): the C++ expression of the factor from `from` to `to`.
+            string? LinearFactor(int from, int to)
+            {
+                Unit a = UnitById(from), b = UnitById(to);
+                if (from == 0 || to == 0 || !a.IsLinear || !b.IsLinear || !a.IsCompatibleWith(b)) return null;
+                return $"unitFactorConst<{from}, {to}>()";
+            }
+            // After a call: whatever came back belongs to the innermost scope now - unless it is certainly a number or a bool (the static return type).
+            void AdoptResult(int slot, int type = TypeUnknown)
+            {
+                if (type != TypeUnknown) { SetR(slot, false); SetT(slot, type); _kindsKept = true; return; }
+                E($"adopt({S(slot)}, &{OwnerList()});"); SetR(slot, true);
+            }
+            // The list for the default values of a call that leaves out arguments (only then the scope needs one).
+            string DefaultsList(FunctionProto proto, int argc) => argc < proto.ParamCount ? "&" + OwnerList() : "";
             // Stores into a variable: count what it now holds, let go of what it held.
             void StoreVar(string variable, int slot)
             {
@@ -1941,16 +2144,18 @@ namespace fire.Native
                     var c = chunk.Constants[ins.A[0]];
                     E($"{S(d)} = {Constant(c)};");
                     SetR(d, c.Kind == ValueKind.String);
+                    SetT(d, TypeOfConstant(c)); _kindsKept = true;
                     d++; return Next();
                 }
                 case OpCode.Pop:
-                    Need(1); d--; return Next();
+                    Need(1); d--; _kindsKept = true; return Next();
                 case OpCode.Dup:
-                    Need(1); E($"{S(d)} = {S(d - 1)};"); SetR(d, R(d - 1)); d++; return Next();
+                    Need(1); E($"{S(d)} = {S(d - 1)};"); SetR(d, R(d - 1)); SetT(d, Ty(d - 1)); _kindsKept = true; d++; return Next();
                 case OpCode.Swap:
                 {
                     Need(2); E($"{{ Value t = {S(d - 1)}; {S(d - 1)} = {S(d - 2)}; {S(d - 2)} = t; }}");
                     bool a = R(d - 1), b = R(d - 2); SetR(d - 1, b); SetR(d - 2, a);
+                    int ta = Ty(d - 1), tb = Ty(d - 2); SetT(d - 1, tb); SetT(d - 2, ta); _kindsKept = true;
                     return Next();
                 }
 
@@ -1968,7 +2173,9 @@ namespace fire.Native
                     string key = VarKey(f, v);
                     if (R(d - 1)) { MarkVarRef(key); E($"{v} = {S(d - 1)}; retain({v});"); }
                     else E($"{v} = {S(d - 1)};");
+                    JoinVarType(key, Ty(d - 1));
                     st.Scopes[^1] = (id, declared + 1);
+                    _kindsKept = true;
                     d--; return Next();
                 }
                 case OpCode.LoadLocal:
@@ -1976,21 +2183,35 @@ namespace fire.Native
                     string v = Var(st, ins.A[0], ins.A[1], locals);
                     E($"{S(d)} = {v};");
                     SetR(d, VarRef(VarKey(f, v)));
+                    SetT(d, RawParam(v) ? TypeUnknown : LoadType(v)); _kindsKept = true;
                     d++; return Next();
                 }
                 case OpCode.StoreLocal:
-                    Need(1); StoreVar(Var(st, ins.A[0], ins.A[1], locals), d - 1); return Next();
                 case OpCode.StoreLocalPop:
-                    Need(1); StoreVar(Var(st, ins.A[0], ins.A[1], locals), d - 1); d--; return Next();
+                {
+                    Need(1);
+                    string v = Var(st, ins.A[0], ins.A[1], locals);
+                    StoreVar(v, d - 1);
+                    if (!RawParam(v)) JoinVarType(VarKey(f, v), Ty(d - 1));
+                    _kindsKept = true;
+                    if (ins.Op == OpCode.StoreLocalPop) d--;
+                    return Next();
+                }
                 case OpCode.LoadGlobal:
                 {
                     string gv = GlobalVar(ins.A[0], locals);
-                    E($"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); d++; return Next();
+                    E($"{S(d)} = {gv};"); SetR(d, VarRef(VarKey(f, gv))); SetT(d, LoadType(gv)); _kindsKept = true; d++; return Next();
                 }
                 case OpCode.StoreGlobal:
-                    Need(1); StoreVar(GlobalVar(ins.A[0], locals), d - 1); return Next();
                 case OpCode.StoreGlobalPop:
-                    Need(1); StoreVar(GlobalVar(ins.A[0], locals), d - 1); d--; return Next();
+                {
+                    Need(1);
+                    string gv = GlobalVar(ins.A[0], locals);
+                    StoreVar(gv, d - 1);
+                    JoinVarType(VarKey(f, gv), Ty(d - 1)); _kindsKept = true;
+                    if (ins.Op == OpCode.StoreGlobalPop) d--;
+                    return Next();
+                }
                 case OpCode.ArithLocalConstPop:
                 case OpCode.ArithGlobalConstPop:
                 {
@@ -2005,6 +2226,30 @@ namespace fire.Native
                     bool stepMode = (mode & 2) != 0;
                     string key = VarKey(f, v);
                     if (constant.Kind == ValueKind.String) MarkVarRef(key);
+                    _kindsKept = true;   // (the stack is untouched)
+                    int varType = LoadType(v), constType = TypeOfConstant(constant);
+                    byte varKind = KindOfType(varType), constKind = KindOfType(constType);
+                    int varUnit = UnitOfType(varType);
+                    // `x++` (step mode) counts in the unit of the variable (stepOf)
+                    int constUnit = stepMode && varUnit != 0 ? varUnit : UnitOfType(constType);
+                    if (IsNum(varKind) && IsNum(constKind) && varUnit == constUnit)
+                    {
+                        string op = subtract ? "-" : "+";
+                        string sec = SectionFor(v);
+                        string unitArg = varUnit == 0 ? "" : $", {varUnit}";
+                        string kc = Constant(constant);
+                        bool ints = varKind == KindInt && constKind == KindInt;
+                        if (ints)
+                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Int((int64_t)((uint64_t){v}.i {op} (uint64_t){kc}.i){unitArg});{(sec.Length > 0 ? " }" : "")}");
+                        else
+                        {
+                            string x = varKind == KindFloat ? $"{v}.f" : $"(Real){v}.i", y = constKind == KindFloat ? $"{kc}.f" : $"(Real){kc}.i";
+                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Float({x} {op} {y}{unitArg});{(sec.Length > 0 ? " }" : "")}");
+                        }
+                        JoinVarType(key, TypeOf(ints ? KindInt : KindFloat, varUnit));
+                        return Next();
+                    }
+                    JoinVarType(key, TypeUnknown);
                     string k = Constant(constant);
                     if (stepMode) k = $"stepOf({v}, {k})";
                     if (!subtract && VarRef(key))
@@ -2024,6 +2269,7 @@ namespace fire.Native
                 case OpCode.Add:
                 {
                     Need(2);
+                    if (TypedArith("+")) return Next();
                     if (ins.Op == OpCode.StepAdd) E($"{S(d - 1)} = stepOf({S(d - 2)}, {S(d - 1)});");
                     if (UseOperator("operator+"))
                     {
@@ -2043,12 +2289,14 @@ namespace fire.Native
                 case OpCode.Power: return Binary("power", "operator^");
                 case OpCode.StepSub:
                 case OpCode.Sub:
+                    Need(2);
+                    if (TypedArith("-")) return Next();
                     if (ins.Op == OpCode.StepSub) { Need(2); E($"{S(d - 1)} = stepOf({S(d - 2)}, {S(d - 1)});"); }
                     return Binary("sub", "operator-");
 
-                case OpCode.Mul: return Binary("mul", "operator*");
-                case OpCode.Div: return Binary("divide", "operator/");
-                case OpCode.Mod: return Binary("modulo", "operator%");
+                case OpCode.Mul: Need(2); return TypedArith("*") ? Next() : Binary("mul", "operator*");
+                case OpCode.Div: Need(2); return TypedArith("/") ? Next() : Binary("divide", "operator/");
+                case OpCode.Mod: Need(2); return TypedArith("%") ? Next() : Binary("modulo", "operator%");
                 case OpCode.BitAnd: return Binary("bitAnd", "operator&");
                 case OpCode.BitOr: return Binary("bitOr", "operator|");
                 case OpCode.BitXor: return Binary("bitXor", "operator#");
@@ -2060,14 +2308,39 @@ namespace fire.Native
                     E($"{{ Value t = {S(d - 3)}; {S(d - 3)} = {S(d - 2)}; {S(d - 2)} = t; }}");
                     bool lower = R(d - 3), middle = R(d - 2);
                     SetR(d - 3, middle); SetR(d - 2, lower);
+                    int tl = Ty(d - 3), tm = Ty(d - 2); SetT(d - 3, tm); SetT(d - 2, tl); _kindsKept = true;
                     return Next();
                 }
                 case OpCode.CoerceUnit:
-                    Need(1); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, {UnitId(chunk.Units[ins.A[0]])});"); return Next();
+                {
+                    Need(1);
+                    int target = UnitId(chunk.Units[ins.A[0]]);
+                    byte kind = K(d - 1);
+                    int from = U(d - 1);
+                    if (IsNum(kind) && from == target) { _kindsKept = true; return Next(); }   // already in that unit
+                    E($"{S(d - 1)} = coerceUnit({S(d - 1)}, {target});");
+                    // a float stays a float; an int converted within its dimension stays an int (into the base unit it may become a float)
+                    Unit fromUnit = UnitById(from), toUnit = UnitById(target);
+                    bool sameDimension = fromUnit.IsCompatibleWith(toUnit) && !(target == 0 && from != 0);
+                    if (kind == KindFloat || kind == KindInt && sameDimension) { SetT(d - 1, TypeOf(kind, target)); _kindsKept = true; }
+                    return Next();
+                }
                 case OpCode.RelabelUnitDynamic:
                     Need(2); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
                 case OpCode.RelabelUnit:
-                    Need(1); E($"{S(d - 1)} = relabelUnit({S(d - 1)}, {UnitId(chunk.Units[ins.A[0]])});"); return Next();
+                {
+                    Need(1);
+                    int target = UnitId(chunk.Units[ins.A[0]]);
+                    if (IsNum(K(d - 1)))
+                    {
+                        // the same number with another unit
+                        E($"{S(d - 1)}.unit = {target};");
+                        SetT(d - 1, TypeOf(K(d - 1), target)); _kindsKept = true;
+                        return Next();
+                    }
+                    E($"{S(d - 1)} = relabelUnit({S(d - 1)}, {target});");
+                    return Next();
+                }
                 case OpCode.CoerceUnitDynamic:
                     Need(2); E($"{S(d - 1)} = coerceUnit({S(d - 1)}, unitOf({S(d - 2)}));"); return Next();
                 case OpCode.CoerceType:
@@ -2124,22 +2397,29 @@ namespace fire.Native
                 }
                 case OpCode.IsFrom:
                     Need(2); E($"{S(d - 2)} = Bool(isFrom({S(d - 2)}, {S(d - 1)}, {(ins.A[0] != 0 ? "true" : "false")}));"); d--; SetR(d - 1, false); return Next();
-                case OpCode.Neg: return Unary("negate");
-                case OpCode.LogicalNot: return Unary("lnot");
+                case OpCode.Neg:
+                    Need(1);
+                    if (K(d - 1) == KindInt) { E($"{S(d - 1)} = Int((int64_t)(0 - (uint64_t){S(d - 1)}.i){(U(d - 1) == 0 ? "" : $", {U(d - 1)}")});"); _kindsKept = true; return Next(); }
+                    if (K(d - 1) == KindFloat) { E($"{S(d - 1)} = Float(-{S(d - 1)}.f{(U(d - 1) == 0 ? "" : $", {U(d - 1)}")});"); _kindsKept = true; return Next(); }
+                    return Unary("negate");
+                case OpCode.LogicalNot:
+                    Need(1);
+                    if (K(d - 1) == KindBool) { E($"{S(d - 1)} = Bool({S(d - 1)}.i == 0);"); _kindsKept = true; return Next(); }
+                    return Unary("lnot");
                 case OpCode.BitNot: return Unary("bitNot");
 
-                case OpCode.Eq: return Compare("opEq", false, "operator==");
-                case OpCode.NotEq: return Compare("opEq", true, "operator!=");
-                case OpCode.Lt: return Compare("lt", false, "operator<");
-                case OpCode.LtEq: return Compare("le", false, "operator<=");
-                case OpCode.Gt: return Compare("gt", false, "operator>");
-                case OpCode.GtEq: return Compare("ge", false, "operator>=");
+                case OpCode.Eq: Need(2); return TypedCompare("==") ? Next() : Compare("opEq", false, "operator==");
+                case OpCode.NotEq: Need(2); return TypedCompare("!=") ? Next() : Compare("opEq", true, "operator!=");
+                case OpCode.Lt: Need(2); return TypedCompare("<") ? Next() : Compare("lt", false, "operator<");
+                case OpCode.LtEq: Need(2); return TypedCompare("<=") ? Next() : Compare("le", false, "operator<=");
+                case OpCode.Gt: Need(2); return TypedCompare(">") ? Next() : Compare("gt", false, "operator>");
+                case OpCode.GtEq: Need(2); return TypedCompare(">=") ? Next() : Compare("ge", false, "operator>=");
 
                 case OpCode.Jump:
                 {
                     int target = ins.A[0];
                     var targetRegion = RegionAt(st.Region, target);
-                    if (ReferenceEquals(targetRegion, st.Region)) { E($"goto L{target};"); return new StepResult(false, target); }
+                    if (ReferenceEquals(targetRegion, st.Region)) { E($"goto L{target};"); _kindsKept = true; return new StepResult(false, target); }
                     // a jump out of a catch block: the catch lambda ends, and the function that owns the `try` continues at the target
                     for (var r = st.Region; r != targetRegion; r = r!.Outer) r!.ExitLabels.Add(target);
                     // the operand slots of the catch code travel in registers of the unwinding state: the frames that unwind first overwrite the
@@ -2154,20 +2434,29 @@ namespace fire.Native
                     return new StepResult(false, null, new List<(int, Flow)> { (target, exitState) });
                 }
                 case OpCode.JumpIfFalse:
-                    Need(1); JumpOnCondition(S(d - 1), false, ins.A[0]); d--; st.Depth = d;
+                    Need(1);
+                    if (K(d - 1) == KindBool) E($"if (!{S(d - 1)}.i) goto L{ins.A[0]};");
+                    else JumpOnCondition(S(d - 1), false, ins.A[0]);
+                    d--; st.Depth = d; _kindsKept = true;
                     return new StepResult(true, ins.A[0]);
                 case OpCode.JumpIfFalsePeek:
-                    Need(1); JumpOnCondition(S(d - 1), false, ins.A[0]);
+                    Need(1);
+                    if (K(d - 1) == KindBool) E($"if (!{S(d - 1)}.i) goto L{ins.A[0]};");
+                    else JumpOnCondition(S(d - 1), false, ins.A[0]);
+                    _kindsKept = true;
                     return new StepResult(true, ins.A[0]);
                 case OpCode.JumpIfTruePeek:
-                    Need(1); JumpOnCondition(S(d - 1), true, ins.A[0]);
+                    Need(1);
+                    if (K(d - 1) == KindBool) E($"if ({S(d - 1)}.i) goto L{ins.A[0]};");
+                    else JumpOnCondition(S(d - 1), true, ins.A[0]);
+                    _kindsKept = true;
                     return new StepResult(true, ins.A[0]);
-                case OpCode.JumpIfNotLt: return JumpIfNot("lt", false, "operator<");
-                case OpCode.JumpIfNotLtEq: return JumpIfNot("le", false, "operator<=");
-                case OpCode.JumpIfNotGt: return JumpIfNot("gt", false, "operator>");
-                case OpCode.JumpIfNotGtEq: return JumpIfNot("ge", false, "operator>=");
-                case OpCode.JumpIfNotEq: return JumpIfNot("opEq", false, "operator==");
-                case OpCode.JumpIfNotNotEq: return JumpIfNot("opEq", true, "operator!=");
+                case OpCode.JumpIfNotLt: return TypedJumpIfNot("<") ?? JumpIfNot("lt", false, "operator<");
+                case OpCode.JumpIfNotLtEq: return TypedJumpIfNot("<=") ?? JumpIfNot("le", false, "operator<=");
+                case OpCode.JumpIfNotGt: return TypedJumpIfNot(">") ?? JumpIfNot("gt", false, "operator>");
+                case OpCode.JumpIfNotGtEq: return TypedJumpIfNot(">=") ?? JumpIfNot("ge", false, "operator>=");
+                case OpCode.JumpIfNotEq: return TypedJumpIfNot("==") ?? JumpIfNot("opEq", false, "operator==");
+                case OpCode.JumpIfNotNotEq: return TypedJumpIfNot("!=") ?? JumpIfNot("opEq", true, "operator!=");
 
                 case OpCode.EnterScope:
                 {
@@ -2183,7 +2472,7 @@ namespace fire.Native
                         E($"{ListName(ins.Addr)}.mark = poolMark();");
                         if (_usesTakeUpwards) E($"{ListName(ins.Addr)}.parent = &{ListName(parentId)};");
                     }
-                    st.Scopes.Add((ins.Addr, 0)); return Next();
+                    st.Scopes.Add((ins.Addr, 0)); _kindsKept = true; return Next();
                 }
                 case OpCode.ExitScope:
                 {
@@ -2198,6 +2487,7 @@ namespace fire.Native
                         ReleaseScopeVariables(id, reset: true);
                     }
                     st.Scopes.RemoveAt(st.Scopes.Count - 1);
+                    _kindsKept = true;
                     return Next();
                 }
 
@@ -2367,11 +2657,11 @@ namespace fire.Native
                     if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", "&" + OwnerList());
+                    var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
                     E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}({(CallArgs(d - argc, argc, mask, proto.RefMask) + dargs).TrimStart(',', ' ')});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
-                    AdoptResult(d - argc);
+                    AdoptResult(d - argc, ReturnType(target));
                     d = d - argc + 1; return Next();
                 }
                 case OpCode.Return:
@@ -2379,6 +2669,7 @@ namespace fire.Native
                     Need(1);
                     if (f.IsTop) throw new NativeNotSupportedException("return in top-level code");
                     bool isCtor = f.Kind == FuncKind.Ctor;
+                    if (!isCtor) JoinVarType(ReturnKey(f), Ty(d - 1));
                     bool anything = st.Scopes.Any(sc => f.NeedsList.Contains(sc.Id) || ScopeVariables(f, sc.Id, locals).Any(v => VarRef(VarKey(f, v))));
                     bool tryActive = st.Region != null || st.Handlers.Count > 0;
                     if (!isCtor && !tryActive && !R(d - 1) && !anything) { E($"return {S(d - 1)};"); return new StepResult(false, null); }
@@ -2412,7 +2703,9 @@ namespace fire.Native
                     _fieldNames.Add(field);
                     if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});"); Check(); }   // (a destroyed object throws)
-                    SetR(d - 1, true);
+                    int fieldType = FieldType(field);
+                    if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); _kindsKept = true; }
+                    else SetR(d - 1, true);
                     return Next();
                 }
                 case OpCode.SetField:
@@ -2493,7 +2786,7 @@ namespace fire.Native
                     int slot = d - argc - 1;
                     E($"{S(slot)} = {target.Name}({S(slot)}{Args(d - argc, argc)});");
                     Check();
-                    AdoptResult(slot);
+                    AdoptResult(slot, ReturnType(target));
                     d = slot + 1; return Next();
                 }
                 case OpCode.CallMethod:
@@ -2501,10 +2794,10 @@ namespace fire.Native
                     int argc = ins.A[1];
                     Need(argc + 1);
                     string method = Str(ins.A[0]);
-                    string owner = OwnerList();
                     int slot = d - argc - 1;
                     if (OwnMethodId(method, argc) is { } ownMethodId && !AnyClassHasMethod(method, argc))
                     {
+                        string owner = OwnerList();
                         // the built-in ownership methods of objects, arrays and buffers (a class that declares one itself takes precedence)
                         if (ownMethodId == "OM_TakeUpwards" && !_usesTakeUpwards) { _usesTakeUpwards = true; _usesGlobalOwn = true; _version++; }
                         if (ownMethodId == "OM_TakeGlobal" && !_usesGlobalOwn) { _usesGlobalOwn = true; _version++; }
@@ -2532,7 +2825,8 @@ namespace fire.Native
                     }
                     _dispatchers.Add((method, argc));
                     if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3)) _refCallSites.Add((method, argc));
-                    string extra = DispatchTail(method, argc, "&" + owner, CallerId(f));
+                    int resultType = DispatchResultType(method, argc);
+                    string extra = DispatchTail(method, argc, DispatchNeedsList(method, argc) ? "&" + OwnerList() : "", CallerId(f));
                     long dmask = ArgMask();
                     if (_usesReflection && ReflectionMethodNames.Contains(method)) E(ReflectionCallerAssign(f).TrimEnd());
                     ArgsBefore(d - argc, argc, dmask);
@@ -2549,7 +2843,7 @@ namespace fire.Native
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
                     ArgsAfter(argc, dmask, S(slot));
                     Check();
-                    AdoptResult(slot);
+                    AdoptResult(slot, resultType);
                     d = slot + 1; return Next();
                 }
                 case OpCode.CallBaseMethod:
@@ -2564,11 +2858,11 @@ namespace fire.Native
                     var target = GetFunc(proto, FuncKind.Method);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(proto, argc, "self", "&" + OwnerList());
+                    var (dpre, dargs) = DefaultArgs(proto, argc, "self", DefaultsList(proto, argc));
                     E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, mask, proto.RefMask)}{dargs});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
-                    AdoptResult(d - argc);
+                    AdoptResult(d - argc, ReturnType(target));
                     d = d - argc + 1; return Next();
                 }
                 case OpCode.GetStaticField:
@@ -2604,6 +2898,11 @@ namespace fire.Native
                     if (ins.Op == OpCode.SetStaticField && FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } setAccess)
                         AccessCheck(setAccess.DeclaringClass, setAccess.Access, $"Static field '{Str(ins.A[1])}' of '{setAccess.DeclaringClass.Name}' is {DescribeAccess(setAccess.Access)} and cannot be accessed from here.");
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
+                    if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredKind(Str(ins.A[1])) is { } staticKind and not 0)
+                    {
+                        E($"{S(d - 1)} = {GuardKindCall(S(d - 1), staticKind, $"Field '{Str(ins.A[1])}'")};");
+                        Check();
+                    }
                     StoreVar($"SF{index}", d - 1);
                     return Next();
                 }
@@ -2654,12 +2953,26 @@ namespace fire.Native
                     AdoptResult(slot);
                     d = slot + 1; return Next();
                 }
+                case OpCode.GuardLocal:
+                {
+                    // the end of the prologue: the parameter holds its declared kind or undefined, in the unit that was checked before it
+                    string v = Var(st, 0, ins.A[0], locals);
+                    byte declared = (byte)((ins.A[1] & 0x7F) + 1 | ins.A[1] & DeclaredKind.UnitlessBit);
+                    E($"{v} = {GuardKindCall(v, declared, Str(ins.A[2]))};");
+                    Check();
+                    int unit = ins.A[3] == 0xFFFF ? -1 : DemandedUnitId(Str(ins.A[3]));
+                    byte kind = KindOfDeclared(declared);
+                    JoinVarType(VarKey(f, v), kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : unit < 0 ? TypeUnknown : TypeOf(kind, unit) | NullableBit);
+                    _kindsKept = true;
+                    return Next();
+                }
                 case OpCode.CheckLambdaSignature:
                     Need(1); E($"checkLambda({S(d - 1)}, {ins.A[0]});"); Check(); return Next();   // (a mismatch throws an ArgumentException)
                 case OpCode.CheckUnit:
                 {
                     Need(1);
                     string unitText = Str(ins.A[0]);
+                    if (IsNum(K(d - 1)) && TypedAdaptUnit(unitText)) return Next();
                     E($"{S(d - 1)} = {AdaptUnitCall(S(d - 1), unitText)};");
                     Check();
                     return Next();
@@ -2720,6 +3033,8 @@ namespace fire.Native
                 case OpCode.HoistValue:
                 {
                     Need(1);
+                    _kindsKept = true;
+                    if (Ty(d - 1) != TypeUnknown) return Next();   // a number or a bool belongs to no scope
                     string target = ListName(st.Scopes[0].Id);
                     f.NeedsList.Add(st.Scopes[0].Id);
                     for (int i = 1; i < st.Scopes.Count; i++)
@@ -2823,6 +3138,7 @@ namespace fire.Native
                 {
                     string v = Var(st, ins.A[0], ins.A[1], locals);
                     MarkVarRef(VarKey(f, v));   // what is written through the pointer is counted by the variable
+                    JoinVarType(VarKey(f, v), TypeUnknown);
                     E($"{S(d)} = PtrV(&{v});");
                     SetR(d, false); d++; return Next();
                 }
@@ -2830,6 +3146,7 @@ namespace fire.Native
                 {
                     string gv = GlobalVar(ins.A[0], locals);
                     MarkVarRef(VarKey(f, gv));
+                    JoinVarType(VarKey(f, gv), TypeUnknown);
                     E($"{S(d)} = PtrV(&{gv});");
                     SetR(d, false); d++; return Next();
                 }
@@ -2838,6 +3155,7 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
+                    if (_fieldAddressTaken.Add(field)) _version++;   // (what is written through the pointer is not checked: the field has no static type)
                     E($"{S(d - 1)} = fp_{Mangle(field)}({S(d - 1)});");
                     SetR(d - 1, false);
                     return Next();
@@ -3100,6 +3418,137 @@ namespace fire.Native
                     E($"if (!({fnName}({S(d - 2)}, {S(d - 1)}))) {{ if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)}; goto L{ins.A[0]}; }}");
                 else E($"if (!({(negate ? "!" : "")}{fnName}({S(d - 2)}, {S(d - 1)}))) goto L{ins.A[0]};");
                 d -= 2; st.Depth = d;
+                return new StepResult(true, ins.A[0]);
+            }
+
+            // `a op b` on two numbers of known kind and unit (no bit width): the C++ operation itself, with the semantics of add/sub/mul/divide/modulo
+            // and their unit algebra (ints wrap; an int division by 0 throws, by -1 negates; `%` by -1 is 0; `+ - %` keep the common unit, `* /` with
+            // a number without a unit keep the other unit; a float plus a number of another unit of the same dimension converts the right one by the
+            // factor of alignUnits). An operand that may be undefined (a parameter or field, DeclaredKind) is tested at run time: when it is undefined
+            // the generic function runs (and throws). Leaves the result in S(d - 2) and pops one slot; false: not known well enough, the generic code is used.
+            bool TypedArith(string op)
+            {
+                byte ka = BK(d - 2), kb = BK(d - 1);
+                if (!IsNum(ka) || !IsNum(kb)) return false;
+                int ua = U(d - 2), ub = U(d - 1);
+                string a = S(d - 2), b = S(d - 1);
+                string guard = KindGuard(d - 2, d - 1);
+                string generic = op switch { "+" => "add", "-" => "sub", "*" => "mul", "/" => "divide", _ => "modulo" };
+                // the fast expression, run only when the guard holds (the generic function otherwise)
+                void Emit(string fast)
+                {
+                    if (guard.Length == 0) { E($"{a} = {fast};"); return; }
+                    E($"{a} = FIRE_LIKELY({guard}) ? {fast} : {generic}({a}, {b});");
+                    CheckIf($"{a}.kind == K_Undefined");
+                }
+                bool ints = ka == KindInt && kb == KindInt;
+                int unit;
+                switch (op)
+                {
+                    case "+" or "-" or "%" when ua == ub: unit = ua; break;
+                    case "+" or "-" when !ints && LinearFactor(ub, ua) is { } factor:
+                        // alignUnits: the right operand goes into the unit of the left one as a float
+                        Emit($"Float({Num(d - 2)} {op} (Real)({Dbl(d - 1)} * {factor}), {ua})");
+                        d--;
+                        SetR(d - 1, false); SetT(d - 1, TypeOf(KindFloat, ua)); _kindsKept = true;
+                        return true;
+                    case "*" when ua == 0 || ub == 0: unit = ua == 0 ? ub : ua; break;
+                    case "/" when ub == 0: unit = ua; break;
+                    default: return false;
+                }
+                string unitArg = unit == 0 ? "" : $", {unit}";
+                if (ints)
+                {
+                    switch (op)
+                    {
+                        case "/": E($"{a} = divide({a}, {b});"); CheckIf($"{a}.kind == K_Undefined"); break;   // (undefined throws there, too)
+                        case "%":
+                            E($"{a} = FIRE_LIKELY({(guard.Length > 0 ? guard + " && " : "")}{b}.i > 0) ? Int({a}.i % {b}.i{unitArg}) : modulo({a}, {b});");
+                            CheckIf($"{a}.kind == K_Undefined");
+                            break;
+                        default: Emit($"Int((int64_t)((uint64_t){a}.i {op} (uint64_t){b}.i){unitArg})"); break;
+                    }
+                }
+                else if (op == "%") Emit($"Float(std::fmod({Num(d - 2)}, {Num(d - 1)}){unitArg})");
+                else Emit($"Float({Num(d - 2)} {op} {Num(d - 1)}{unitArg})");
+                d--;
+                SetR(d - 1, false); SetT(d - 1, TypeOf(ints ? KindInt : KindFloat, unit)); _kindsKept = true;
+                return true;
+            }
+            // The run-time test that the operands that may be undefined are not ("" when none may be).
+            string KindGuard(params int[] slots) => string.Join(" && ", slots.Where(k => IsNullable(Ty(k)))
+                .Select(k => $"{S(k)}.kind == {(BK(k) switch { KindInt => "K_Int", KindFloat => "K_Float", _ => "K_Bool" })}"));
+            // The C++ condition of `a op b` for two slots of known kind (numbers of the same unit, or two bools for == and !=), null when the kinds
+            // are not known. With a float they compare like compareNumeric (NaN sorts below everything, like double.CompareTo in the VM). An operand
+            // that may be undefined is tested; when it is, the generic comparison decides (`==` is false, `<` throws). `mayThrow`: the generic one can throw.
+            string? TypedCondition(string op, int ia, int ib, out bool mayThrow)
+            {
+                mayThrow = false;
+                byte ka = BK(ia), kb = BK(ib);
+                string a = S(ia), b = S(ib);
+                string? fast;
+                if (ka == KindBool && kb == KindBool) fast = op is "==" or "!=" ? $"{a}.i {op} {b}.i" : null;
+                else if (!IsNum(ka) || !IsNum(kb) || U(ia) != U(ib)) fast = null;
+                else if (ka == KindInt && kb == KindInt) fast = $"{a}.i {op} {b}.i";
+                else if (op is "==" or "!=") fast = $"{Num(ia)} {op} {Num(ib)}";
+                else fast = $"compareNumeric({a}, {b}) {op} 0";
+                if (fast == null) return null;
+                string guard = KindGuard(ia, ib);
+                if (guard.Length == 0) return fast;
+                mayThrow = op is not ("==" or "!=");
+                string generic = op switch { "<" => "lt", "<=" => "le", ">" => "gt", ">=" => "ge", "==" => "opEq", _ => "!opEq" };
+                return $"(FIRE_LIKELY({guard}) ? ({fast}) : {generic}({a}, {b}))";
+            }
+            bool TypedCompare(string op)
+            {
+                string? cond = TypedCondition(op, d - 2, d - 1, out bool mayThrow);
+                if (cond == null) return false;
+                E($"{S(d - 2)} = Bool({cond});");
+                if (mayThrow) CheckIf($"{S(d - 2)}.i == 0");   // (a comparison that threw is false)
+                d--;
+                SetR(d - 1, false); SetT(d - 1, TypeOf(KindBool, 0)); _kindsKept = true;
+                return true;
+            }
+            // CheckUnit (adaptUnit) on a number of known kind and unit: nothing to do when it already has the unit of the declaration (a float
+            // declaration makes an int a float); a conversion within the dimension keeps the generic call, but the result is known.
+            bool TypedAdaptUnit(string demand)
+            {
+                bool toFloat = demand.StartsWith('#');
+                string unitText = demand.TrimStart('#');
+                byte kind = K(d - 1);
+                int from = U(d - 1);
+                byte resultKind = toFloat ? KindFloat : kind;
+                string toFloatCode = toFloat && kind == KindInt ? $"{S(d - 1)} = Float((Real){S(d - 1)}.i{(from == 0 ? "" : $", {from}")});" : "";
+                int resultUnit;
+                if (unitText == "any") resultUnit = from;
+                else
+                {
+                    bool dimensionOnly = unitText.StartsWith("any ", StringComparison.Ordinal);
+                    Unit demanded = DemandUnit(unitText);
+                    int target = UnitId(demanded);
+                    if (!UnitById(from).IsCompatibleWith(demanded)) return false;   // an UnitMismatchException
+                    if (dimensionOnly || from == target) resultUnit = from;
+                    else
+                    {
+                        E($"{S(d - 1)} = {AdaptUnitCall(S(d - 1), demand)};");
+                        Check();
+                        SetT(d - 1, TypeOf(resultKind, target)); _kindsKept = true;
+                        return true;
+                    }
+                }
+                if (toFloatCode.Length > 0) E(toFloatCode);
+                SetT(d - 1, TypeOf(resultKind, resultUnit)); _kindsKept = true;
+                return true;
+            }
+            StepResult? TypedJumpIfNot(string op)
+            {
+                Need(2);
+                string? cond = TypedCondition(op, d - 2, d - 1, out bool mayThrow);
+                if (cond == null) return null;
+                if (mayThrow && _usesExceptions && sb != null)
+                    E($"if (!({cond})) {{ if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)}; goto L{ins.A[0]}; }}");
+                else E($"if (!({cond})) goto L{ins.A[0]};");
+                d -= 2; st.Depth = d; _kindsKept = true;
                 return new StepResult(true, ins.A[0]);
             }
         }
