@@ -2283,6 +2283,14 @@ inline void castFailed(Value v, const char* typeName) {
     fireError("ArgumentException", text);
 }
 
+/// A parameter or field declared with a class was given something else (DeclaredKind.ClassMismatch of the VM): an ArgumentException.
+FIRE_COLD inline void guardClassFailed(Value v, const char* cls, const char* what) {
+    char text[300];
+    bool vowel = std::strchr("AEIOUaeiou", cls[0]) != nullptr;
+    std::snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
+    fireError("ArgumentException", text);
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Exceptions (SPEC 7): throw, try/catch/finally and resume.
 //
@@ -2523,8 +2531,20 @@ FIRE_COLD inline Value missingField(Value v, const char* name) {
     if (v.kind == K_Class) std::snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'get_%s' property either).", name, className(asObj(v)->cls), name);
     else if (v.kind == K_String) std::snprintf(text, sizeof text, "Strings have no field '%s' (only 'Length').", name);
     else if (v.kind == K_Array) std::snprintf(text, sizeof text, "Arrays have no field '%s' (only 'Length').", name);
-    else std::snprintf(text, sizeof text, "Field '%s' not found on a value of type %s.", name, valueKindText(v));
+    else {
+        // (not an object at all: an ArgumentException, like the VM)
+        if (v.kind == K_Buffer) std::snprintf(text, sizeof text, "Byte buffers have no field '%s' (only 'Length', 'littleEndian').", name);
+        else std::snprintf(text, sizeof text, "Field access on a value of type %s which is not an object.", valueKindText(v));
+        return fireError("ArgumentException", text);
+    }
     return fireError("MissingMemberException", text);
+}
+
+/// An assignment to a field of something that is not an object: an ArgumentException (the text of the VM).
+FIRE_COLD inline void notObjectAssign(Value v) {
+    char text[200];
+    std::snprintf(text, sizeof text, "Field assignment on a value of type %s which is not an object.", valueKindText(v));
+    fireError("ArgumentException", text);
 }
 
 #ifdef FIRE_REFLECTION

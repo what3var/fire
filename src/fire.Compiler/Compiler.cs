@@ -332,10 +332,19 @@ namespace fire.Compiler
             private readonly HashSet<string> _methodNames = new();
             private readonly HashSet<string> _lambdaFieldNames = new();
             private readonly Dictionary<string, int> _fieldWidths = new();
+            private readonly HashSet<string> _typeParamNames = new();
+            /// <summary>A name some class or method uses as a type parameter (`T`): a declaration of that type is not checked at run time.</summary>
+            public bool IsTypeParam(string name) => _typeParamNames.Contains(name);
 
             public static RefParamTable Build(IEnumerable<ClassDecl> classes)
             {
                 var table = new RefParamTable();
+                foreach (var cls in classes)
+                {
+                    foreach (var tp in cls.TypeParams ?? Array.Empty<TypeParam>()) table._typeParamNames.Add(tp.Name);
+                    foreach (var md in cls.Members.OfType<MethodDecl>())
+                        foreach (var tp in md.TypeParams ?? Array.Empty<TypeParam>()) table._typeParamNames.Add(tp.Name);
+                }
                 // ALL methods take part (also those without `ref`), so that a contradiction between classes becomes apparent
                 foreach (var cls in classes)
                     foreach (var member in cls.Members)
@@ -403,6 +412,16 @@ namespace fire.Compiler
         /// parser EXACTLY at the place where `tr` was parsed - the
         /// compiler needs no "current class"/"active
         /// usings" state of its own for that any more.</summary>
+        /// <summary>The class a declaration `C x` (a parameter, a field) names: its value is `undefined` or `is of C`, checked at run time like `x!C`
+        /// (GuardLocalClass, FieldInfo.RequiredClass); null for a number, a string, an interface, a type parameter, an array, a lambda, `any`...</summary>
+        private string? DeclaredClassOf(TypeRef? type)
+        {
+            if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null
+                || _refParams.IsTypeParam(type.BaseName)) return null;
+            string name = ResolveTypeRef(type);
+            return _knownClassNames.Contains(name) ? name : null;
+        }
+
         private string ResolveTypeRef(TypeRef tr) =>
             _knownClassNames == null ? tr.BaseName
             : tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, _knownClassNames.Contains)
@@ -708,6 +727,7 @@ namespace fire.Compiler
                                 AccessModifier = fd.Access,
                                 RequiredUnit = fd.Type?.UnitDemand,
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
+                                RequiredClass = fd.ArrayRanks.Count == 0 ? DeclaredClassOf(fd.Type) : null,
                                 IsStatic = fd.IsStatic,
                             };
                             // SPEC "Static members": static fields end up
@@ -963,6 +983,16 @@ namespace fire.Compiler
                 inner._chunk.EmitByte((byte)((kind & 0x7F) - 1 | kind & DeclaredKind.UnitlessBit));
                 inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString($"Parameter '{parms[i].Name}'")));
                 inner._chunk.EmitU16(unit == null ? (ushort)0xFFFF : inner._chunk.AddConstant(Value.MakeString(unit)));
+            }
+
+            // A parameter declared with a class (`Point p`) holds `undefined` or an object of that class or of a class derived from it.
+            for (int i = 0; i < parms.Count; i++)
+            {
+                if (parms[i].ByRef || parms[i].ArrayRanks.Count > 0 || DeclaredClassOf(parms[i].Type) is not { } cls) continue;
+                inner._chunk.EmitOp(OpCode.GuardLocalClass);
+                inner._chunk.EmitU16((ushort)i);
+                inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString(cls)));
+                inner._chunk.EmitU16(inner._chunk.AddConstant(Value.MakeString($"Parameter '{parms[i].Name}'")));
             }
         }
 

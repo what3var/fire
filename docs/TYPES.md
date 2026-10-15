@@ -87,8 +87,18 @@ derived class overrides is called directly instead of through the dispatcher (a 
 is written through the setter, which tells them - one compare per write, every other object is written by the index. Properties, members with an
 access check, ownership methods and programs with threads or actors keep the helpers.
 
-Not yet: object types for parameters and fields (they would need the guard of step 2 for classes: `is of` on every assignment); unboxed C++ locals
-(`int64_t`/`double` instead of `Value`); typed opcodes in the VM.
+Parameters and fields declared with a class (`Point p`, `Node next`) are a promise, too: `undefined` or `is of` the class, checked like the
+numbers (VM: `GuardLocalClass` at the end of the prologue, `FieldInfo.RequiredClass` in the setter and the inline cache; native: `isof_` in the
+prologue and in `sf_`; interfaces, type parameters, `any` and `class` are not checked). Their type "object of the class or undefined" reaches the
+fields and methods directly, too - the object is tested to be one (`kind == K_Class`), and `undefined` takes the helper, which reports it. A
+comparison with `undefined` of a number, a bool or an object of a known class is a test of the kind (unless a class overloads `==`). A linked
+list walked through typed parameters and fields (`Step(Body first, float dt)`, `b.pos.x`, `b = b.next`) runs a third fewer instructions.
+Field access on something that is not an object (`undefined.x`, `5.x = 1`) is an `ArgumentException` in the native code as in the VM.
+A scope that owns nothing (nothing in it creates an object or a temporary string) keeps no bookkeeping: hoisting a value out of it is
+dropped, and so is its list (`leave` in every loop iteration) and that of the function when only the hoist needed it. In the linked list above the
+instructions go from 685M to 418M (-39%).
+
+Not yet: unboxed C++ locals (`int64_t`/`double` instead of `Value`); typed opcodes in the VM.
 
 ## Decisions
 

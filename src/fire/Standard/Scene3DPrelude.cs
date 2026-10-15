@@ -620,7 +620,7 @@ namespace fire.Standard
                 }
 
                 // Queues the object for the frame (the camera draws everything in one go afterwards).
-                undefined Draw(int frame, Camera camera) {
+                undefined Draw(int frame, float camera[]) {
                     if (!this.Visible) { return }
                     this.Build()
                     if (this.mesh == 0) { return }

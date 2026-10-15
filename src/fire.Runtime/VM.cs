@@ -2628,7 +2628,8 @@ namespace fire.Runtime
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
                 && cachedObj.AccessGuard == null
-                && DeclaredKind.Fits(_stack[_sp - 1], fieldEntry.RequiredKind))
+                && DeclaredKind.Fits(_stack[_sp - 1], fieldEntry.RequiredKind)
+                && DeclaredKind.FitsClass(_stack[_sp - 1], fieldEntry.RequiredClass))
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
@@ -2700,9 +2701,11 @@ namespace fire.Runtime
                 }
                 byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
                 if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
+                string? requiredClass = obj.RtClass?.FindFieldRequiredClass(fieldName);
+                if (!GuardFieldClass(value, requiredClass, fieldName)) return false;
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
-                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind));
+                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredClass: requiredClass));
                 obj.SetFieldLocked(fieldName, value);
                 Push(value);
                 return true;
@@ -2764,7 +2767,8 @@ namespace fire.Runtime
                 && LookupSite(site) is { } thisEntry
                 && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
                 && fastThis.ThreadLock == null
-                && DeclaredKind.Fits(_stack[_sp - 1], thisEntry.RequiredKind))
+                && DeclaredKind.Fits(_stack[_sp - 1], thisEntry.RequiredKind)
+                && DeclaredKind.FitsClass(_stack[_sp - 1], thisEntry.RequiredClass))
             {
                 fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
                 return;
@@ -2800,10 +2804,12 @@ namespace fire.Runtime
             }
             byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
             if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
+            string? requiredClass = oi.RtClass?.FindFieldRequiredClass(fieldName);
+            if (!GuardFieldClass(value, requiredClass, fieldName)) return;
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
-                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind));
+                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind, requiredClass: requiredClass));
             oi.SetFieldLocked(fieldName, value);
             return;
         }
@@ -3286,6 +3292,7 @@ namespace fire.Runtime
                 if (requiredUnitName != null && !AdaptFieldUnit(ref setValue, requiredUnitName)) return;
             }
             if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
+            if (!GuardFieldClass(setValue, setOwner.FindFieldRequiredClass(setFieldName), setFieldName)) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -4091,6 +4098,7 @@ namespace fire.Runtime
 
                     if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
                     if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
+                    if (!GuardFieldClass(initValue, initOwner.FindFieldRequiredClass(initFieldName), initFieldName)) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -4227,6 +4235,18 @@ namespace fire.Runtime
                         var checkedValue = guarded;
                         if (GuardDeclared(ref checkedValue, required, _constants[whatIdx].AsString())) guarded = checkedValue;
                     }
+                    break;
+                }
+
+                case OpCode.GuardLocalClass:
+                {
+                    // the end of the prologue: a parameter declared with a class holds undefined or an object of it (DeclaredKind.FitsClass)
+                    int slot = ReadU16();
+                    string requiredClass = _constants[ReadU16()].AsString();
+                    int whatIdx = ReadU16();
+                    var guarded = _currentScope.GetSlot(slot);
+                    if (!DeclaredKind.FitsClass(guarded, requiredClass))
+                        ThrowArgumentError(DeclaredKind.ClassMismatch(guarded, requiredClass, _constants[whatIdx].AsString()));
                     break;
                 }
 
@@ -5995,6 +6015,14 @@ namespace fire.Runtime
         /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
             DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+
+        /// <summary>A field declared with a class takes `undefined` or an object of it (DeclaredKind.FitsClass); false: an ArgumentException is thrown.</summary>
+        private bool GuardFieldClass(in Value value, string? requiredClass, string fieldName)
+        {
+            if (DeclaredKind.FitsClass(value, requiredClass)) return true;
+            ThrowArgumentError(DeclaredKind.ClassMismatch(value, requiredClass!, $"Field '{fieldName}'"));
+            return false;
+        }
 
         /// <summary>The slow route of a declaration int/float/bool (DeclaredKind): a number declared without a unit is converted into no unit (or a
         /// UnitMismatchException), then the kind is checked (or an ArgumentException). false: an exception is thrown.</summary>

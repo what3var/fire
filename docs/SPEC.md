@@ -42,6 +42,8 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   (also from dynamic code): a whole number for a `float` is converted to a float, another kind is an `ArgumentException`, and a number declared without a
   unit and without an initializer (or with a plain number as initializer) is converted into `unitless` (another dimension: `UnitMismatchException`); a
   declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
+- A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
+  way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); interfaces, type parameters, `any` and `class` are not checked.
 
 ```
 var x = 1;              // int, unitless

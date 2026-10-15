@@ -68,7 +68,24 @@ try { b.size = text } catch (ArgumentException e) { print(e.message) }   // Fiel
 b.size = undefined        // allowed
 ```
 
-The native compiler relies on this promise: with it the arithmetic on such parameters and fields is plain C++ on the number.
+The same holds for a **class**: a parameter or field declared `Point p` holds `undefined` or an object of `Point` or of a class derived from it;
+anything else is an `ArgumentException` (`Parameter 'p' is a Point, not String.`). An interface, a type parameter (`T`), `any` and `class` are not
+checked.
+
+```fire
+class Point { int x = 1 }
+class Other { int x = 2 }
+class Show {
+    static string Of(Point p) { return p == undefined ? "nothing" : "x = " + p.x }
+}
+print(Show.Of(new Point()))
+print(Show.Of(undefined))
+any o = new Other()
+try { Show.Of(o) } catch (ArgumentException e) { print(e.message) }   // Parameter 'p' is a Point, not Other.
+```
+
+The native compiler relies on this promise: with it the arithmetic on such parameters and fields is plain C++ on the number, and the fields and
+methods of a parameter or field of a class are reached directly (by index, without asking the class at run time).
 
 ## The type checker: lax and strict
 

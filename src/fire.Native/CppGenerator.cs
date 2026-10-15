@@ -59,6 +59,9 @@ namespace fire.Native
             public int ParamLike => ParamCount + CaptureCount;
             /// <summary>Scopes of this function that can own objects or reference values (they get an OwnList).</summary>
             public readonly HashSet<int> NeedsList = new();
+            /// <summary>The HoistValue instructions seen in pass 1: the scope they hoist into and the scopes they hoist from - the target needs a list
+            /// only when one of the sources has one for something else (see HoistValue).</summary>
+            public readonly List<(int Target, int[] Sources)> Hoists = new();
             /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.hpp).</summary>
             public bool NeedsArgList;
             public string Code = "";
@@ -318,11 +321,13 @@ namespace fire.Native
 
         /// <summary>`obj.name = value` on an object of a known class: the checks of the field's declaration (unit, kind) and the store by index, like sf_
         /// (a destroyed object throws first); null when the field helpers are needed.</summary>
-        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType)
+        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, bool nullable = false)
         {
             if (DirectFieldIndex(rc, name) is not int index) return null;
             string? unit = rc.FindFieldRequiredUnit(name);
             byte kind = rc.FindFieldRequiredKind(name);
+            string? requiredClass = rc.FindFieldRequiredClass(name);
+            if (requiredClass != null && FitsClassType(valueType, requiredClass)) requiredClass = null;
             // a value whose type already is what the declaration demands needs no check (a number of the declared kind in its unit, or a bool)
             if (kind != 0 && !IsNullable(valueType) && KindOfType(valueType) == KindOfDeclared(kind) && valueType != TypeNone)
             {
@@ -330,11 +335,14 @@ namespace fire.Native
                 if (KindOfDeclared(kind) == KindBool || demanded >= 0 && UnitOfType(valueType) == demanded) { unit = null; kind = 0; }
             }
             string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
-                + (kind != 0 ? FieldKindCheck(name, kind) + " " : "");
+                + (kind != 0 ? FieldKindCheck(name, kind) + " " : "")
+                + (requiredClass != null ? ClassGuard("x", requiredClass, $"Field '{name}'") + " " : "");
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
             string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
-            return $"{{ Value x = {value}; if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); {probed}else {{ {checks}{store} }} }}";
+            // (a receiver that may be undefined: the setter reports that)
+            string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) sf_{Mangle(name)}({obj}, x); else " : "";
+            return $"{{ Value x = {value}; {notObject}if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); {probed}else {{ {checks}{store} }} }}";
         }
 
         /// <summary>The one method `name(argc)` every object an `rc` can be runs (no derived class overrides it); null when there is none, several, an
@@ -400,7 +408,15 @@ namespace fire.Native
             {
                 if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
                 byte declared = cls.Rc.FindFieldRequiredKind(name);
-                if (declared == 0) return TypeUnknown;
+                if (declared == 0)
+                {
+                    // a field declared with a class: an object of it or undefined (its setter checks every assignment, DeclaredKind.FitsClass)
+                    if (cls.Rc.FindFieldRequiredClass(name) is not { } required || !_program.Program.Classes.TryGetValue(required, out var requiredRc)) return TypeUnknown;
+                    int objType = ObjType(requiredRc) | NullableBit;
+                    if (result is { } known && known != objType) return TypeUnknown;
+                    result = objType;
+                    continue;
+                }
                 byte kind = KindOfDeclared(declared);
                 int unit = kind == KindBool ? 0 : cls.Rc.FindFieldRequiredUnit(name) is { } demand ? DemandedUnitId(demand) : DeclaredKind.IsUnitless(declared) ? 0 : -1;
                 if (unit < 0) return TypeUnknown;
@@ -410,6 +426,18 @@ namespace fire.Native
             }
             return result ?? TypeUnknown;
         }
+
+        /// <summary>The check of a declaration with a class (a parameter, a field; DeclaredKind.FitsClass): `undefined` or `is of` the class passes (and a
+        /// destroyed object: every use of it reports that), anything else is an ArgumentException.</summary>
+        private string ClassGuard(string value, string cls, string what)
+        {
+            _isOfTypes.Add(cls);
+            return $"if (FIRE_UNLIKELY({value}.kind != K_Undefined && !isof_{Mangle(cls)}({value}) && ({value}.kind != K_Class || leafAlive({value})))) guardClassFailed({value}, {CString(cls)}, {CString(what)});";
+        }
+
+        /// <summary>Does a value of this static type pass the check of a declaration with class `cls` as it is?</summary>
+        private bool FitsClassType(int type, string cls) =>
+            type == TypeUndefined || BaseKindOfType(type) == KindObj && (type & TypeNone) == 0 && ClassIs(ObjClass(type), cls);
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
         private static string ReturnKey(Func f) => "ret:" + f.Name;
@@ -771,6 +799,11 @@ namespace fire.Native
                 sb.AppendLine("    }");
                 sb.AppendLine("}");
             }
+            // the checks of fields declared with a class (sf_) test `is of` - declared before the helpers that use them
+            foreach (var name in _fieldNames)
+                foreach (var cls in _classList)
+                    if (cls.Rc.FindFieldRequiredClass(name) is { } requiredClass) _isOfTypes.Add(requiredClass);
+            foreach (var typeName in _isOfTypes) sb.AppendLine($"[[maybe_unused]] static bool isof_{Mangle(typeName)}(Value v);");
             foreach (var name in _fieldNames)
             {
                 string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
@@ -809,7 +842,7 @@ namespace fire.Native
             foreach (var typeName in _isOfTypes)
             {
                 var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
-                sb.AppendLine($"static bool isof_{Mangle(typeName)}(Value v) {{");
+                sb.AppendLine($"[[maybe_unused]] static bool isof_{Mangle(typeName)}(Value v) {{");
                 if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
                 sb.AppendLine("    if (v.kind != K_Class) return false;");
                 sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
@@ -1204,7 +1237,7 @@ namespace fire.Native
             {
                 // no object of the program has such a field: only a built-in member (or dead code) can get here
                 sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    return missingField(v, {CString(name)});\n}}");
-                sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)v; (void)x; fatal(\"Field '{name}' cannot be assigned.\"); }}");
+                sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)x; if (v.kind != K_Class) {{ notObjectAssign(v); return; }} fatal(\"Field '{name}' cannot be assigned.\"); }}");
                 sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
                 return sb.ToString();
             }
@@ -1229,7 +1262,8 @@ namespace fire.Native
             {
                 if (!indexByClass.ContainsKey(cls.Id)) continue;
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
-                    + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "");
+                    + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
+                    + (cls.Rc.FindFieldRequiredClass(name) is { } requiredClass ? ClassGuard("x", requiredClass, $"Field '{name}'") + " " : "");
                 if (check.Length > 0) unitChecks.Append($"        case {cls.Id}: {check}break;\n");
             }
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
@@ -1237,7 +1271,7 @@ namespace fire.Native
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return o->fields()[idx];\n}}\n"
-                 + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ missingField(v, {CString(name)}); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{voidIndex}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
+                 + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{voidIndex}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
                  + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&o->fields()[idx]);\n}}\n";
         }
 
@@ -1283,6 +1317,8 @@ namespace fire.Native
                         : "";
                     if (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0)
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
+                    if (cls.Rc.FindFieldRequiredClass(name) is { } requiredClass)
+                        unit += ClassGuard("x", requiredClass, $"Field '{name}'") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
                     continue;
@@ -1304,8 +1340,8 @@ namespace fire.Native
             var sb = new StringBuilder();
             string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
             string unusedLp = (HasProperty(name) ? "(void)list; " : "") + (RestrictedField(name) ? "(void)caller; " : "");
-            sb.AppendLine($"static inline Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
-            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
             sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
             return sb.ToString();
         }
@@ -1638,6 +1674,7 @@ namespace fire.Native
             // which scopes need a list is found again in every round (pass 1 below sees every instruction before pass 2 emits): a scope that needed one
             // only for a value whose type was not known yet loses it once the type is known
             f.NeedsList.Clear();
+            f.Hoists.Clear();
             var finAddrs = chunk.Handlers.Where(t => t.FinallyAddr != null).Select(t => t.FinallyAddr!.Value).ToHashSet();
 
             var entry = new Flow?[code.Count];
@@ -1647,7 +1684,7 @@ namespace fire.Native
             entry[0] = start;
             // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
             // has its type from the GuardLocal of the prologue.
-            f.GuardAddr = code.Where(c => c.Op == OpCode.GuardLocal).ToDictionary(c => c.A[0], c => c.Addr);
+            f.GuardAddr = code.Where(c => c.Op is OpCode.GuardLocal or OpCode.GuardLocalClass).ToDictionary(c => c.A[0], c => c.Addr);
             for (int i = 0; i < f.ParamLike; i++)
             {
                 MarkVarRef(VarKey(f, $"P{i}"));
@@ -1706,6 +1743,9 @@ namespace fire.Native
                 if (f.FinSignature == signature) break;
                 for (int i = 0; i < code.Count; i++) if (entry[i] != null) work.Push(i);
             }
+            // a hoist needs the list of its target only when a scope it hoists from can own something
+            foreach (var (target, sources) in f.Hoists)
+                if (sources.Any(f.NeedsList.Contains)) f.NeedsList.Add(target);
 
             for (int i = 0; i < code.Count; i++)
             {
@@ -2148,6 +2188,8 @@ namespace fire.Native
             // The static types of the stack slots (Flow.Types): their kind (or KindUnknown) and the unit of a number.
             int Ty(int k) => k < 0 || k >= 64 ? TypeUnknown : st.Types[k];
             byte K(int k) => KindOfType(Ty(k));
+            // An object of a known class, or undefined when the type is nullable (a parameter or field declared with the class).
+            bool ObjSlot(int k) => BaseKindOfType(Ty(k)) == KindObj && (Ty(k) & TypeNone) == 0;
             int U(int k) => UnitOfType(Ty(k));
             void SetT(int k, int type) { if (k >= 0 && k < 64) st.Types[k] = type; }
             bool IsNum(byte kind) => kind is KindInt or KindFloat;
@@ -2770,10 +2812,11 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (K(d - 1) == KindObj && DirectFieldIndex(ObjClass(Ty(d - 1)), field) is int fieldIndex)
+                    if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field) is int fieldIndex)
                     {
-                        // an object of a known class: the field by its index (a destroyed object throws, like gf_)
-                        E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objAt({S(d - 1)})->fields()[{fieldIndex}] : destroyedError({S(d - 1)});");
+                        // an object of a known class: the field by its index (a destroyed object throws, like gf_; undefined goes to gf_, which reports it)
+                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? objAt({S(d - 1)})->fields()[{fieldIndex}] : gf_{Mangle(field)}({S(d - 1)});");
+                        else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objAt({S(d - 1)})->fields()[{fieldIndex}] : destroyedError({S(d - 1)});");
                         Check();
                     }
                     else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
@@ -2788,7 +2831,7 @@ namespace fire.Native
                     Need(2);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (K(d - 2) == KindObj && DirectSetField(ObjClass(Ty(d - 2)), field, S(d - 2), S(d - 1), Ty(d - 1)) is { } direct) E(direct);
+                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, S(d - 2), S(d - 1), Ty(d - 1), IsNullable(Ty(d - 2))) is { } direct) E(direct);
                     else E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
@@ -2902,7 +2945,7 @@ namespace fire.Native
                         d = slot + 1; return Next();
                     }
                     bool passesAddresses = Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3);
-                    if (K(slot) == KindObj && !passesAddresses && !(_usesReflection && ReflectionMethodNames.Contains(method))
+                    if (ObjSlot(slot) && !passesAddresses && !(_usesReflection && ReflectionMethodNames.Contains(method))
                         && DirectMethod(ObjClass(Ty(slot)), method, argc) is { } directProto)
                     {
                         // an object of a known class whose method no derived class overrides: the method itself, not the dispatcher (a destroyed object throws, like there)
@@ -2910,7 +2953,9 @@ namespace fire.Native
                         long mask = ArgMask();
                         ArgsBefore(d - argc, argc, mask);
                         var (dpre, dargs) = DefaultArgs(directProto, argc, S(slot), DefaultsList(directProto, argc));
-                        E($"{{ {dpre}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)}); else {S(slot)} = {target.Name}({S(slot)}{CallArgs(d - argc, argc, mask, directProto.RefMask)}{dargs}); }}");
+                        // (a receiver that may be undefined: the MissingMemberException of the dispatcher, which has nothing for undefined)
+                        string notObject = IsNullable(Ty(slot)) ? $"if (FIRE_UNLIKELY({S(slot)}.kind != K_Class)) {S(slot)} = missingMethod({S(slot)}, {CString(method)}, {argc}); else " : "";
+                        E($"{{ {dpre}{notObject}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)}); else {S(slot)} = {target.Name}({S(slot)}{CallArgs(d - argc, argc, mask, directProto.RefMask)}{dargs}); }}");
                         ArgsAfter(argc, mask, S(slot));
                         Check();
                         AdoptResult(slot, ReturnType(target));
@@ -2996,6 +3041,11 @@ namespace fire.Native
                         E($"{S(d - 1)} = {GuardKindCall(S(d - 1), staticKind, $"Field '{Str(ins.A[1])}'")};");
                         Check();
                     }
+                    if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredClass(Str(ins.A[1])) is { } staticClass && !FitsClassType(Ty(d - 1), staticClass))
+                    {
+                        E(ClassGuard(S(d - 1), staticClass, $"Field '{Str(ins.A[1])}'"));
+                        Check();
+                    }
                     StoreVar($"SF{index}", d - 1);
                     return Next();
                 }
@@ -3056,6 +3106,17 @@ namespace fire.Native
                     int unit = ins.A[3] == 0xFFFF ? -1 : DemandedUnitId(Str(ins.A[3]));
                     byte kind = KindOfDeclared(declared);
                     JoinVarType(VarKey(f, v), kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : unit < 0 ? TypeUnknown : TypeOf(kind, unit) | NullableBit);
+                    _kindsKept = true;
+                    return Next();
+                }
+                case OpCode.GuardLocalClass:
+                {
+                    // the end of the prologue: the parameter holds undefined or an object of the declared class (or of one derived from it)
+                    string v = Var(st, 0, ins.A[0], locals);
+                    string cls = Str(ins.A[1]);
+                    E(ClassGuard(v, cls, Str(ins.A[2])));
+                    Check();
+                    JoinVarType(VarKey(f, v), _program.Program.Classes.TryGetValue(cls, out var guardedRc) ? ObjType(guardedRc) | NullableBit : TypeUnknown);
                     _kindsKept = true;
                     return Next();
                 }
@@ -3129,12 +3190,12 @@ namespace fire.Native
                     _kindsKept = true;
                     if (IsPlainType(Ty(d - 1))) return Next();   // a number or a bool belongs to no scope
                     string target = ListName(st.Scopes[0].Id);
-                    f.NeedsList.Add(st.Scopes[0].Id);
+                    // only a scope that has a list for something else can own the value (a scope without one owns nothing: nothing links into it);
+                    // pass 1 has seen every instruction when pass 2 emits, so a loop body that creates nothing keeps no bookkeeping for the hoist
+                    if (sb == null) f.Hoists.Add((st.Scopes[0].Id, st.Scopes.Skip(1).Select(sc => sc.Id).ToArray()));
                     for (int i = 1; i < st.Scopes.Count; i++)
-                    {
-                        f.NeedsList.Add(st.Scopes[i].Id);
-                        E($"hoistFrom({S(d - 1)}, &{ListName(st.Scopes[i].Id)}, &{target});");
-                    }
+                        if (f.NeedsList.Contains(st.Scopes[i].Id))
+                            E($"hoistFrom({S(d - 1)}, &{ListName(st.Scopes[i].Id)}, &{target});");
                     return Next();
                 }
                 case OpCode.TakeToScope:
@@ -3579,6 +3640,11 @@ namespace fire.Native
                 mayThrow = false;
                 byte ka = BK(ia), kb = BK(ib);
                 string a = S(ia), b = S(ib);
+                // `x == undefined` where x is a number, a bool or an object of a known class: its kind decides (unless a class overloads the operator)
+                if (op is "==" or "!=" && (Ty(ia) == TypeUndefined) != (Ty(ib) == TypeUndefined)
+                    && (Ty(ia) == TypeUndefined ? Ty(ib) : Ty(ia)) is var other && (other & TypeNone) == 0 && BaseKindOfType(other) != KindUnknown
+                    && !_classList.Any(c => c.Rc.FindMethodWithAccess("operator" + op, 1).Proto != null))
+                    return $"{(Ty(ia) == TypeUndefined ? b : a)}.kind {op} K_Undefined";
                 string? fast;
                 if (ka == KindBool && kb == KindBool) fast = op is "==" or "!=" ? $"{a}.i {op} {b}.i" : null;
                 else if (!IsNum(ka) || !IsNum(kb) || U(ia) != U(ib)) fast = null;

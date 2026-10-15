@@ -14535,6 +14535,64 @@ else
             c.plain = 3
             print(c.plain)
             """),
+        ("Parameter und Felder mit Klassentyp: undefined oder ein Objekt der Klasse (Guard), direkte Felder auch bei undefined-faehigen Objekten", """
+            class Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+                int Sum() { return x + y }
+            }
+            class Point3 : Point {
+                int z = 7
+                construct(int x, int y) : base(x, y) { }
+            }
+            class Other { int x = 99 }
+            class Node {
+                int value
+                Node next
+                construct(int v) { value = v }
+            }
+            class Holder { static Point origin }
+            class M {
+                static int Dist(Point a, Point b) { return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) }
+                static int SumOf(Point p) { return p.Sum() }
+                static string Describe(Point p) {
+                    if (p == undefined) return "nothing"
+                    return "(" + p.x + ", " + p.y + ")"
+                }
+                static int Walk(Node start, int times) {
+                    int sum = 0
+                    for (int i = 0; i < times; i++) {
+                        Node k = start
+                        while (k != undefined) { sum += k.value; k = k.next }
+                    }
+                    return sum
+                }
+            }
+            Point a = new Point(1, 2)
+            Point3 b = new Point3(4, 6)
+            print(M.Dist(a, b) + " " + M.SumOf(b) + " " + M.Describe(undefined) + " " + M.Describe(b))
+            any o = new Other()
+            try { print(M.Dist(a, o)) } catch (ArgumentException e) { print(e.message) }
+            any s = "text"
+            try { M.SumOf(s) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.SumOf(undefined)) } catch (Exception e) { print("caught: " + e.message) }
+            try { print(M.Dist(undefined, a)) } catch (Exception e) { print("caught: " + e.message) }
+            Node head = new Node(1)
+            head.next = new Node(2)
+            head.next.next = new Node(3)
+            print(M.Walk(head, 10))
+            try { head.next = o } catch (ArgumentException e) { print(e.message) }
+            print(head.next.value)
+            head.next.next = undefined
+            print(M.Walk(head, 1) + " " + (head.next.next == undefined))
+            Holder.origin = a
+            try { Holder.origin = o } catch (ArgumentException e) { print(e.message) }
+            print(Holder.origin.y)
+            any u = undefined
+            try { print(u.x) } catch (ArgumentException e) { print(e.message) }
+            try { u.x = 3 } catch (ArgumentException e) { print(e.message) }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))
@@ -16248,7 +16306,7 @@ else
             class Animal { }
             class Dog : Animal { }
             class Sq : Shape { }
-            class Holder { Animal pet; Holder inner
+            class Holder { Animal pet; Holder2 inner
                 construct() { this.pet = new Dog(); this.inner = new Holder2() } }
             class Holder2 { Animal pet
                 construct() { this.pet = new Animal() } }
