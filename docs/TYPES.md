@@ -71,9 +71,17 @@ the right one. The return type of a method is the join of its `return` values; a
 whose candidates all return the same type gives it. In a loop like `for (int i ...) { sum += i % 7 }` the generated code is plain C++ on the
 `Value` fields (30M iterations: 0.19 s -> 0.027 s; `float:m len = len + 0.5mm`: 0.67 s -> 0.071 s).
 
-Not yet: parameters and fields are not proven (a declaration is no promise at run time: a `float` parameter takes a string from dynamic code, a
-`float x` field without initializer is `undefined` until it is assigned) - that needs the guard of step 2; direct calls on a receiver of a proven class;
-fields by index without the `gf_` switch; unboxed C++ locals (`int64_t`/`double` instead of `Value`); typed opcodes in the VM.
+Step 2 (the guard): a parameter or field declared `int`/`float`/`bool` holds that kind or `undefined` (nullable), checked at run time (`DeclaredKind`):
+the parameters at the end of the prologue of a method (`GuardLocal`), the fields in their setter (VM: the slow route and one compare in the inline
+cache; native: `sf_`), static fields on every assignment. A whole number for a `float` becomes a float, another kind is an `ArgumentException`, a number
+declared without a unit and without an initializer (or with a number literal as initializer) is converted into `unitless` (another dimension:
+`UnitMismatchException`; an initializer with a unit gives the declaration that unit, checked where it is assigned as before, so its unit is not static). With that the generator types parameters and fields
+too: the type "kind or undefined" runs the C++ operation behind a test of the kind (`a.kind == K_Float ? Float(a.f * b.f) : mul(a, b)`; the generic
+function throws for `undefined`). The result of a call of a function whose `return`s were not seen yet is "nothing yet" (it joins to the other side),
+and which scopes need an ownership list is found again in every round, so a type that becomes known later still makes the code lean.
+
+Not yet: direct calls on a receiver of a proven class; fields by index without the `gf_` switch; unboxed C++ locals (`int64_t`/`double` instead of
+`Value`); typed opcodes in the VM.
 
 ## Decisions
 

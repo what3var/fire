@@ -67,6 +67,9 @@ namespace fire.Native
             public readonly HashSet<int> FinReturn = new();                      // finally blocks that a `return` can run through
             public readonly Dictionary<int, SortedSet<int>> FinJumps = new();    // finally block -> the jump targets that `break`/`continue` leave through it
             public List<Instr> Decoded = new();
+            /// <summary>Parameters checked by GuardLocal at the end of the prologue: slot -> address of the check. Before it a parameter holds what the caller
+            /// passed (its loads are untyped, its stores do not count); from there on the declared kind or undefined.</summary>
+            public Dictionary<int, int> GuardAddr = new();
             public Dictionary<int, int> IndexOf = new();
             public Flow?[] Entry = Array.Empty<Flow?>();
             public Out Root = new();
@@ -270,12 +273,30 @@ namespace fire.Native
         private bool VarRef(string key) => _varRef.TryGetValue(key, out bool r) && r;
 
         // Static types of values: what a stack slot or a variable certainly holds - an int, a float or a bool without a bit width, and the unit
-        // of the number (its UnitId, 0: none), packed as `kind | unit << 8`; TypeUnknown (0) is everything else.
+        // of the number (its UnitId, 0: none), packed as `kind | unit << 8`; with NullableBit it may also be `undefined` (a parameter or field
+        // declared int/float/bool, DeclaredKind); TypeUndefined is `undefined` only; TypeUnknown (0) is everything else.
         private const byte KindInt = 1, KindFloat = 2, KindBool = 3, KindUnknown = 0;
-        private const int TypeUnknown = 0;
+        // TypeNone: nothing yet - the result of a call of a function none of whose `return`s was seen yet (in the last round: one that never returns,
+        // the code after the call does not run); it joins to the other side, and whatever is computed from it is TypeNone, too.
+        private const int TypeUnknown = 0, NullableBit = 0x10, TypeUndefined = NullableBit, TypeNone = 0x20;
         private static int TypeOf(byte kind, int unit) => kind == KindUnknown ? TypeUnknown : kind | (kind == KindBool ? 0 : unit) << 8;
-        private static byte KindOfType(int type) => (byte)(type & 0xFF);
+        /// <summary>The kind of a value that is certainly no `undefined` (KindUnknown for a nullable type).</summary>
+        private static byte KindOfType(int type) => (type & (NullableBit | TypeNone)) != 0 ? KindUnknown : (byte)(type & 0x0F);
+        /// <summary>The kind of a value of the type when it is not `undefined`.</summary>
+        private static byte BaseKindOfType(int type) => (byte)(type & 0x0F);
+        private static bool IsNullable(int type) => (type & NullableBit) != 0;
         private static int UnitOfType(int type) => type >> 8;
+        /// <summary>Where two types meet: the same type, a type and `undefined` (nullable), else unknown.</summary>
+        private static int JoinTypes(int a, int b)
+        {
+            if (a == b) return a;
+            if (a == TypeNone) return b;
+            if (b == TypeNone) return a;
+            if (a == TypeUnknown || b == TypeUnknown) return TypeUnknown;
+            if (a == TypeUndefined) return b | NullableBit;
+            if (b == TypeUndefined) return a | NullableBit;
+            return (a | NullableBit) == (b | NullableBit) ? a | NullableBit : TypeUnknown;
+        }
         private Unit UnitById(int id) => id == 0 ? Unit.Unitless : _units[id];
 
         // The static types of variables, found like VarRef: every store joins the type of its value; a variable that is stored with two types,
@@ -284,14 +305,49 @@ namespace fire.Native
         private readonly Dictionary<string, int> _varType = new();
         private void JoinVarType(string key, int type)
         {
-            if (_varType.TryGetValue(key, out int old) && (old == type || old == TypeUnknown)) return;
-            _varType[key] = _varType.ContainsKey(key) ? TypeUnknown : type;
+            if (type == TypeNone) return;   // (nothing yet)
+            int joined = _varType.TryGetValue(key, out int old) ? JoinTypes(old, type) : type;
+            if (_varType.ContainsKey(key) && joined == old) return;
+            _varType[key] = joined;
             _version++;
+        }
+
+        /// <summary>The unit a demand (TypeRef.UnitDemand, a leading `#` for a float) certainly leaves a number in; -1 when it leaves the unit open
+        /// (`any`, `any m`).</summary>
+        private int DemandedUnitId(string demand)
+        {
+            string unit = demand.TrimStart('#');
+            if (unit == "any" || unit.StartsWith("any ", StringComparison.Ordinal)) return -1;
+            return UnitId(DemandUnit(unit));
+        }
+
+        /// <summary>Fields whose address is taken (`&obj.f`): what is written through the pointer is not checked.</summary>
+        private readonly HashSet<string> _fieldAddressTaken = new();
+
+        /// <summary>The static type of `obj.name`: every class of the program that has the field declares it int/float/bool with an exact unit (its setter
+        /// checks every assignment, DeclaredKind) - the kind or undefined; TypeUnknown for a property, a field whose address is taken, or anything else.</summary>
+        private int FieldType(string name)
+        {
+            if (HasProperty(name) || _fieldAddressTaken.Contains(name) || name is "Length" or "length" or "littleEndian") return TypeUnknown;
+            int? result = null;
+            foreach (var cls in _classList)
+            {
+                if (!cls.Rc.FieldIndex.ContainsKey(name)) continue;
+                byte declared = cls.Rc.FindFieldRequiredKind(name);
+                if (declared == 0) return TypeUnknown;
+                byte kind = KindOfDeclared(declared);
+                int unit = kind == KindBool ? 0 : cls.Rc.FindFieldRequiredUnit(name) is { } demand ? DemandedUnitId(demand) : DeclaredKind.IsUnitless(declared) ? 0 : -1;
+                if (unit < 0) return TypeUnknown;
+                int type = TypeOf(kind, unit) | NullableBit;
+                if (result is { } r && r != type) return TypeUnknown;
+                result = type;
+            }
+            return result ?? TypeUnknown;
         }
 
         /// <summary>The static return type of a generated function (joined by its `return` instructions; constructors return the object).</summary>
         private static string ReturnKey(Func f) => "ret:" + f.Name;
-        private int ReturnType(Func f) => f.Kind != FuncKind.Ctor && _varType.TryGetValue(ReturnKey(f), out int type) ? type : TypeUnknown;
+        private int ReturnType(Func f) => f.Kind == FuncKind.Ctor ? TypeUnknown : _varType.TryGetValue(ReturnKey(f), out int type) ? type : TypeNone;
 
         /// <summary>The static type of what a dispatcher call `x.name(...)` gives: known when every method of that name and arity in the classes of the
         /// program returns the same type and nothing else can be called (no extension, built-in or ownership method, no actors); TypeUnknown otherwise.
@@ -306,8 +362,9 @@ namespace fire.Native
                 if (cls.Rc.FindMethodWithAccess(name, argc).Proto is not { IsStatic: false } method) continue;
                 if (!_funcByProto.TryGetValue(method, out var target)) return TypeUnknown;
                 int type = ReturnType(target);
-                if (type == TypeUnknown || result is { } r && r != type) return TypeUnknown;
-                result = type;
+                if (type == TypeUnknown) return TypeUnknown;
+                result = result is { } r ? JoinTypes(r, type) : type;
+                if (result == TypeUnknown) return TypeUnknown;
             }
             return result ?? TypeUnknown;
         }
@@ -318,6 +375,7 @@ namespace fire.Native
             ValueKind.Int => TypeOf(KindInt, UnitId(c.Unit)),
             ValueKind.Float => TypeOf(KindFloat, UnitId(c.Unit)),
             ValueKind.Bool => TypeOf(KindBool, 0),
+            ValueKind.Undefined => TypeUndefined,
             _ => TypeUnknown,
         };
 
@@ -1099,10 +1157,15 @@ namespace fire.Native
                 indexCode = "    uint32_t idx = 0;\n    switch (o->cls) {\n" + cases + $"        default: missingField(v, {CString(name)}); FIELD_MISSING_RETURN\n    }}";
             }
             // a field declared with a unit (`int len : mm`) checks every assignment
+            // and a field declared int/float/bool takes that kind or undefined (DeclaredKind)
             var unitChecks = new StringBuilder();
             foreach (var cls in _classList)
-                if (indexByClass.ContainsKey(cls.Id) && cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit)
-                    unitChecks.Append($"        case {cls.Id}: x = {AdaptUnitCall("x", requiredUnit)}; break;\n");
+            {
+                if (!indexByClass.ContainsKey(cls.Id)) continue;
+                string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
+                    + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "");
+                if (check.Length > 0) unitChecks.Append($"        case {cls.Id}: {check}break;\n");
+            }
             string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
             // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
@@ -1111,6 +1174,13 @@ namespace fire.Native
                  + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ missingField(v, {CString(name)}); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{voidIndex}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
                  + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&o->fields()[idx]);\n}}\n";
         }
+
+        /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
+        private string FieldKindCheck(string name, byte kind) => $"x = {GuardKindCall("x", kind, $"Field '{name}'")};";
+        private static string KindConstant(byte declaredKind) => DeclaredKind.TagOf(declaredKind) switch { TypeTag.Int => "K_Int", TypeTag.Float => "K_Float", _ => "K_Bool" };
+        private string GuardKindCall(string value, byte declared, string what) =>
+            $"guardKind({value}, {KindConstant(declared)}, {(DeclaredKind.IsUnitless(declared) ? "true" : "false")}, {CString(what)}, {Constant(Value.MakeString(Unit.DemandDisplay("unitless")))})";
+        private static byte KindOfDeclared(byte declared) => DeclaredKind.TagOf(declared) switch { TypeTag.Int => KindInt, TypeTag.Float => KindFloat, _ => KindBool };
 
         /// <summary>Does some class of the program declare a property of this name (`get_name`/`set_name`)? Then reading and writing it takes the scope list
         /// of the caller (the getter's result belongs to it).</summary>
@@ -1145,6 +1215,8 @@ namespace fire.Native
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
+                    if (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0)
+                        unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
                     ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
                     continue;
@@ -1497,6 +1569,9 @@ namespace fire.Native
             f.IndexOf = indexOfAddr;
             f.Regions = new Dictionary<int, Region>();
             f.Root = new Out();
+            // which scopes need a list is found again in every round (pass 1 below sees every instruction before pass 2 emits): a scope that needed one
+            // only for a value whose type was not known yet loses it once the type is known
+            f.NeedsList.Clear();
             var finAddrs = chunk.Handlers.Where(t => t.FinallyAddr != null).Select(t => t.FinallyAddr!.Value).ToHashSet();
 
             var entry = new Flow?[code.Count];
@@ -1504,8 +1579,14 @@ namespace fire.Native
             var start = new Flow();
             start.Scopes.Add(f.IsTop ? (GlobalScope, f.Kind == FuncKind.FireBody ? f.Proto!.ParamCount : 0) : (FunctionScope, f.ParamLike));
             entry[0] = start;
-            // Parameters can be anything: assume they may be references (a call-site analysis could narrow this).
-            for (int i = 0; i < f.ParamLike; i++) { MarkVarRef(VarKey(f, $"P{i}")); JoinVarType(VarKey(f, $"P{i}"), TypeUnknown); }
+            // Parameters can be anything: assume they may be references (a call-site analysis could narrow this). A parameter declared int/float/bool
+            // has its type from the GuardLocal of the prologue.
+            f.GuardAddr = code.Where(c => c.Op == OpCode.GuardLocal).ToDictionary(c => c.A[0], c => c.Addr);
+            for (int i = 0; i < f.ParamLike; i++)
+            {
+                MarkVarRef(VarKey(f, $"P{i}"));
+                if (!f.GuardAddr.ContainsKey(i)) JoinVarType(VarKey(f, $"P{i}"), TypeUnknown);
+            }
             if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) f.NeedsList.Add(GlobalScope);   // thrown exceptions, TakeGlobal and TakeUpwards need the list of the global scope
 
             var targets = new HashSet<int>();
@@ -1527,7 +1608,10 @@ namespace fire.Native
                 // a slot keeps its kind only if every way here agrees
                 bool typesChanged = false;
                 for (int k = 0; k < existing.Types.Length; k++)
-                    if (existing.Types[k] != state.Types[k] && existing.Types[k] != TypeUnknown) { existing.Types[k] = TypeUnknown; typesChanged = true; }
+                {
+                    int joined = JoinTypes(existing.Types[k], state.Types[k]);
+                    if (joined != existing.Types[k]) { existing.Types[k] = joined; typesChanged = true; }
+                }
                 if (typesChanged) work.Push(target);
             }
 
@@ -1882,8 +1966,16 @@ namespace fire.Native
         {
             int before = st.Depth;
             _kindsKept = false;
+            // an operand that has no value yet (TypeNone) gives a result without one
+            bool fromNone = false;
+            for (int k = Math.Max(0, before - 3); k < Math.Min(before, 64); k++) fromNone |= st.Types[k] == TypeNone;
             var result = StepCore(f, chunk, ins, st, sb, locals);
-            if (!_kindsKept) st.ClearTypes(st.Depth > before ? before : st.Depth - 1);
+            if (!_kindsKept)
+            {
+                int from = st.Depth > before ? before : st.Depth - 1;
+                st.ClearTypes(from);
+                if (fromNone) for (int k = Math.Max(0, from); k < Math.Min(st.Depth, 64); k++) st.Types[k] = TypeNone;
+            }
             if (result.Extra != null) foreach (var (_, edge) in result.Extra) edge.ClearTypes(0);
             return result;
         }
@@ -1993,9 +2085,12 @@ namespace fire.Native
             int U(int k) => UnitOfType(Ty(k));
             void SetT(int k, int type) { if (k >= 0 && k < 64) st.Types[k] = type; }
             bool IsNum(byte kind) => kind is KindInt or KindFloat;
-            // A number of known kind as a C++ Real / double.
-            string Num(int k) => K(k) == KindFloat ? $"{S(k)}.f" : $"(Real){S(k)}.i";
-            string Dbl(int k) => K(k) == KindFloat ? $"(double){S(k)}.f" : $"(double){S(k)}.i";
+            // A number of known kind (or undefined, see the guards of TypedArith) as a C++ Real / double.
+            byte BK(int k) => BaseKindOfType(Ty(k));
+            string Num(int k) => BK(k) == KindFloat ? $"{S(k)}.f" : $"(Real){S(k)}.i";
+            string Dbl(int k) => BK(k) == KindFloat ? $"(double){S(k)}.f" : $"(double){S(k)}.i";
+            // A parameter in the prologue before its GuardLocal still holds what the caller passed.
+            bool RawParam(string variable) => variable[0] == 'P' && f.GuardAddr.TryGetValue(int.Parse(variable.AsSpan(1)), out int guardAt) && ins.Addr < guardAt;
             // What a load of a variable certainly gives. A global is only trusted in the main program: another function can run before its declaration.
             int LoadType(string variable)
             {
@@ -2088,7 +2183,7 @@ namespace fire.Native
                     string v = Var(st, ins.A[0], ins.A[1], locals);
                     E($"{S(d)} = {v};");
                     SetR(d, VarRef(VarKey(f, v)));
-                    SetT(d, LoadType(v)); _kindsKept = true;
+                    SetT(d, RawParam(v) ? TypeUnknown : LoadType(v)); _kindsKept = true;
                     d++; return Next();
                 }
                 case OpCode.StoreLocal:
@@ -2097,7 +2192,8 @@ namespace fire.Native
                     Need(1);
                     string v = Var(st, ins.A[0], ins.A[1], locals);
                     StoreVar(v, d - 1);
-                    JoinVarType(VarKey(f, v), Ty(d - 1)); _kindsKept = true;
+                    if (!RawParam(v)) JoinVarType(VarKey(f, v), Ty(d - 1));
+                    _kindsKept = true;
                     if (ins.Op == OpCode.StoreLocalPop) d--;
                     return Next();
                 }
@@ -2607,7 +2703,9 @@ namespace fire.Native
                     _fieldNames.Add(field);
                     if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});"); Check(); }   // (a destroyed object throws)
-                    SetR(d - 1, true);
+                    int fieldType = FieldType(field);
+                    if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); _kindsKept = true; }
+                    else SetR(d - 1, true);
                     return Next();
                 }
                 case OpCode.SetField:
@@ -2800,6 +2898,11 @@ namespace fire.Native
                     if (ins.Op == OpCode.SetStaticField && FindClass(Str(ins.A[0])).FindFieldAccess(Str(ins.A[1])) is { } setAccess)
                         AccessCheck(setAccess.DeclaringClass, setAccess.Access, $"Static field '{Str(ins.A[1])}' of '{setAccess.DeclaringClass.Name}' is {DescribeAccess(setAccess.Access)} and cannot be accessed from here.");
                     int index = StaticFieldIndex(Str(ins.A[0]), Str(ins.A[1]));
+                    if (FindClass(Str(ins.A[0])).FindStaticFieldOwner(Str(ins.A[1]))?.FindFieldRequiredKind(Str(ins.A[1])) is { } staticKind and not 0)
+                    {
+                        E($"{S(d - 1)} = {GuardKindCall(S(d - 1), staticKind, $"Field '{Str(ins.A[1])}'")};");
+                        Check();
+                    }
                     StoreVar($"SF{index}", d - 1);
                     return Next();
                 }
@@ -2849,6 +2952,19 @@ namespace fire.Native
                     Check();
                     AdoptResult(slot);
                     d = slot + 1; return Next();
+                }
+                case OpCode.GuardLocal:
+                {
+                    // the end of the prologue: the parameter holds its declared kind or undefined, in the unit that was checked before it
+                    string v = Var(st, 0, ins.A[0], locals);
+                    byte declared = (byte)((ins.A[1] & 0x7F) + 1 | ins.A[1] & DeclaredKind.UnitlessBit);
+                    E($"{v} = {GuardKindCall(v, declared, Str(ins.A[2]))};");
+                    Check();
+                    int unit = ins.A[3] == 0xFFFF ? -1 : DemandedUnitId(Str(ins.A[3]));
+                    byte kind = KindOfDeclared(declared);
+                    JoinVarType(VarKey(f, v), kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : unit < 0 ? TypeUnknown : TypeOf(kind, unit) | NullableBit);
+                    _kindsKept = true;
+                    return Next();
                 }
                 case OpCode.CheckLambdaSignature:
                     Need(1); E($"checkLambda({S(d - 1)}, {ins.A[0]});"); Check(); return Next();   // (a mismatch throws an ArgumentException)
@@ -3039,6 +3155,7 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
+                    if (_fieldAddressTaken.Add(field)) _version++;   // (what is written through the pointer is not checked: the field has no static type)
                     E($"{S(d - 1)} = fp_{Mangle(field)}({S(d - 1)});");
                     SetR(d - 1, false);
                     return Next();
@@ -3307,13 +3424,23 @@ namespace fire.Native
             // `a op b` on two numbers of known kind and unit (no bit width): the C++ operation itself, with the semantics of add/sub/mul/divide/modulo
             // and their unit algebra (ints wrap; an int division by 0 throws, by -1 negates; `%` by -1 is 0; `+ - %` keep the common unit, `* /` with
             // a number without a unit keep the other unit; a float plus a number of another unit of the same dimension converts the right one by the
-            // factor of alignUnits). Leaves the result in S(d - 2) and pops one slot; false: not known well enough, the generic code is used.
+            // factor of alignUnits). An operand that may be undefined (a parameter or field, DeclaredKind) is tested at run time: when it is undefined
+            // the generic function runs (and throws). Leaves the result in S(d - 2) and pops one slot; false: not known well enough, the generic code is used.
             bool TypedArith(string op)
             {
-                byte ka = K(d - 2), kb = K(d - 1);
+                byte ka = BK(d - 2), kb = BK(d - 1);
                 if (!IsNum(ka) || !IsNum(kb)) return false;
                 int ua = U(d - 2), ub = U(d - 1);
                 string a = S(d - 2), b = S(d - 1);
+                string guard = KindGuard(d - 2, d - 1);
+                string generic = op switch { "+" => "add", "-" => "sub", "*" => "mul", "/" => "divide", _ => "modulo" };
+                // the fast expression, run only when the guard holds (the generic function otherwise)
+                void Emit(string fast)
+                {
+                    if (guard.Length == 0) { E($"{a} = {fast};"); return; }
+                    E($"{a} = FIRE_LIKELY({guard}) ? {fast} : {generic}({a}, {b});");
+                    CheckIf($"{a}.kind == K_Undefined");
+                }
                 bool ints = ka == KindInt && kb == KindInt;
                 int unit;
                 switch (op)
@@ -3321,7 +3448,7 @@ namespace fire.Native
                     case "+" or "-" or "%" when ua == ub: unit = ua; break;
                     case "+" or "-" when !ints && LinearFactor(ub, ua) is { } factor:
                         // alignUnits: the right operand goes into the unit of the left one as a float
-                        E($"{a} = Float({Num(d - 2)} {op} (Real)({Dbl(d - 1)} * {factor}), {ua});");
+                        Emit($"Float({Num(d - 2)} {op} (Real)({Dbl(d - 1)} * {factor}), {ua})");
                         d--;
                         SetR(d - 1, false); SetT(d - 1, TypeOf(KindFloat, ua)); _kindsKept = true;
                         return true;
@@ -3334,37 +3461,50 @@ namespace fire.Native
                 {
                     switch (op)
                     {
-                        case "/": E($"{a} = divide({a}, {b});"); CheckIf($"{a}.kind == K_Undefined"); break;
+                        case "/": E($"{a} = divide({a}, {b});"); CheckIf($"{a}.kind == K_Undefined"); break;   // (undefined throws there, too)
                         case "%":
-                            E($"{a} = FIRE_LIKELY({b}.i > 0) ? Int({a}.i % {b}.i{unitArg}) : modulo({a}, {b});");
+                            E($"{a} = FIRE_LIKELY({(guard.Length > 0 ? guard + " && " : "")}{b}.i > 0) ? Int({a}.i % {b}.i{unitArg}) : modulo({a}, {b});");
                             CheckIf($"{a}.kind == K_Undefined");
                             break;
-                        default: E($"{a} = Int((int64_t)((uint64_t){a}.i {op} (uint64_t){b}.i){unitArg});"); break;
+                        default: Emit($"Int((int64_t)((uint64_t){a}.i {op} (uint64_t){b}.i){unitArg})"); break;
                     }
                 }
-                else if (op == "%") E($"{a} = Float(std::fmod({Num(d - 2)}, {Num(d - 1)}){unitArg});");
-                else E($"{a} = Float({Num(d - 2)} {op} {Num(d - 1)}{unitArg});");
+                else if (op == "%") Emit($"Float(std::fmod({Num(d - 2)}, {Num(d - 1)}){unitArg})");
+                else Emit($"Float({Num(d - 2)} {op} {Num(d - 1)}{unitArg})");
                 d--;
                 SetR(d - 1, false); SetT(d - 1, TypeOf(ints ? KindInt : KindFloat, unit)); _kindsKept = true;
                 return true;
             }
+            // The run-time test that the operands that may be undefined are not ("" when none may be).
+            string KindGuard(params int[] slots) => string.Join(" && ", slots.Where(k => IsNullable(Ty(k)))
+                .Select(k => $"{S(k)}.kind == {(BK(k) switch { KindInt => "K_Int", KindFloat => "K_Float", _ => "K_Bool" })}"));
             // The C++ condition of `a op b` for two slots of known kind (numbers of the same unit, or two bools for == and !=), null when the kinds
-            // are not known. With a float they compare like compareNumeric (NaN sorts below everything, like double.CompareTo in the VM).
-            string? TypedCondition(string op, int ia, int ib)
+            // are not known. With a float they compare like compareNumeric (NaN sorts below everything, like double.CompareTo in the VM). An operand
+            // that may be undefined is tested; when it is, the generic comparison decides (`==` is false, `<` throws). `mayThrow`: the generic one can throw.
+            string? TypedCondition(string op, int ia, int ib, out bool mayThrow)
             {
-                byte ka = K(ia), kb = K(ib);
+                mayThrow = false;
+                byte ka = BK(ia), kb = BK(ib);
                 string a = S(ia), b = S(ib);
-                if (ka == KindBool && kb == KindBool) return op is "==" or "!=" ? $"{a}.i {op} {b}.i" : null;
-                if (!IsNum(ka) || !IsNum(kb) || U(ia) != U(ib)) return null;
-                if (ka == KindInt && kb == KindInt) return $"{a}.i {op} {b}.i";
-                if (op is "==" or "!=") return $"{Num(ia)} {op} {Num(ib)}";
-                return $"compareNumeric({a}, {b}) {op} 0";
+                string? fast;
+                if (ka == KindBool && kb == KindBool) fast = op is "==" or "!=" ? $"{a}.i {op} {b}.i" : null;
+                else if (!IsNum(ka) || !IsNum(kb) || U(ia) != U(ib)) fast = null;
+                else if (ka == KindInt && kb == KindInt) fast = $"{a}.i {op} {b}.i";
+                else if (op is "==" or "!=") fast = $"{Num(ia)} {op} {Num(ib)}";
+                else fast = $"compareNumeric({a}, {b}) {op} 0";
+                if (fast == null) return null;
+                string guard = KindGuard(ia, ib);
+                if (guard.Length == 0) return fast;
+                mayThrow = op is not ("==" or "!=");
+                string generic = op switch { "<" => "lt", "<=" => "le", ">" => "gt", ">=" => "ge", "==" => "opEq", _ => "!opEq" };
+                return $"(FIRE_LIKELY({guard}) ? ({fast}) : {generic}({a}, {b}))";
             }
             bool TypedCompare(string op)
             {
-                string? cond = TypedCondition(op, d - 2, d - 1);
+                string? cond = TypedCondition(op, d - 2, d - 1, out bool mayThrow);
                 if (cond == null) return false;
                 E($"{S(d - 2)} = Bool({cond});");
+                if (mayThrow) CheckIf($"{S(d - 2)}.i == 0");   // (a comparison that threw is false)
                 d--;
                 SetR(d - 1, false); SetT(d - 1, TypeOf(KindBool, 0)); _kindsKept = true;
                 return true;
@@ -3403,9 +3543,11 @@ namespace fire.Native
             StepResult? TypedJumpIfNot(string op)
             {
                 Need(2);
-                string? cond = TypedCondition(op, d - 2, d - 1);
+                string? cond = TypedCondition(op, d - 2, d - 1, out bool mayThrow);
                 if (cond == null) return null;
-                E($"if (!({cond})) goto L{ins.A[0]};");
+                if (mayThrow && _usesExceptions && sb != null)
+                    E($"if (!({cond})) {{ if (FIRE_UNLIKELY(g_unwind.active)) goto {ExitLabel(f, st, locals)}; goto L{ins.A[0]}; }}");
+                else E($"if (!({cond})) goto L{ins.A[0]};");
                 d -= 2; st.Depth = d; _kindsKept = true;
                 return new StepResult(true, ins.A[0]);
             }

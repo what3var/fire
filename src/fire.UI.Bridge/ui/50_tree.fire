@@ -182,7 +182,7 @@ namespace UI {
         }
 
         // The box with plus (collapsed) or minus (expanded).
-        undefined DrawBox(Root root, int x, int y, bool open, int color) {
+        undefined DrawBox(Root root, int x, int y, bool open, any color) {   // (a brush of the theme: its Color makes the pen)
             var pen = new Pen(color.Color)
             root.renderer.DrawRect(x, y, 9, 9, pen)
             root.renderer.DrawLine(x + 2, y + 4, x + 6, y + 4, pen)

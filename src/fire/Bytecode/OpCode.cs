@@ -203,6 +203,10 @@ namespace fire.Bytecode
         // `x!int[8]`, `x!byte`, `x!float[32]`: the number cut to a bit width (int: two's complement, `byte` unsigned 0..255; float: rounded to float32)
         ConvertWidth,        // u8 bits, u8 flags    : pop v; push it converted (flags: 1 = float, 2 = unsigned)
         RebindLambda,        //                      : pop target, pop lambda; push a new lambda with `target` as `this` (`a on obj`)
+        // The end of the prologue of a method: a parameter declared `int`/`float`/`bool` holds a value of that kind or `undefined` (a whole number
+        // becomes a float for a `float`), anything else is an ArgumentException (DeclaredKind). The unit has been checked before (CheckUnit):
+        // `unitIdx` names the unit demand the parameter then certainly has (0xFFFF: none known) - for the native generator.
+        GuardLocal,          // u16 slot, u8 TypeTag, u16 whatIdx, u16 unitIdx : the local (depth 0) is checked/converted in place
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

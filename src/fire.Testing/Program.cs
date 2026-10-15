@@ -1597,18 +1597,18 @@ Console.WriteLine("=== Bytecode-Test: Einheiten bei Multiplikation/Division mit 
 
 string unitPropertySample = """
 class Circle {
-    float radius
+    float radius : any
 
-    construct(float radius) {
+    construct(float radius : any) {
         this.radius = radius
     }
 
-    float Diameter {
+    float Diameter : any {
         get { return this.radius * 2 }
         set { this.radius = value / 2 }
     }
 
-    float Area {
+    float Area : any {
         get { return this.radius * this.radius * 3 }
     }
 }
@@ -14401,6 +14401,65 @@ else
             unit Kelvin: K
             unit Celsius: C { coerce K => value + 273.15 }
             unit Fahrenheit: F { coerce C => (value - 32) / 1.8 }
+            """),
+        ("Deklarierte Typen als Zusage: Parameter und Felder int/float/bool nehmen ihre Art oder undefined (int wird float), sonst ArgumentException; ohne Einheit deklariert heisst einheitenlos", """
+            class P { float x
+              int n
+              bool b
+              construct(float a, int k) { this.x = a
+                this.n = k }
+              float Len() { return this.x * 2 } }
+            P p = new P(3, 4)
+            print(p.x + " " + p.n + " " + p.b + " " + p.Len())
+            any s = "text"
+            try { p.n = s } catch (ArgumentException e) { print(e.message) }
+            try { p.n = 2.5 } catch (ArgumentException e) { print(e.message) }
+            p.x = 7
+            print(p.x / 2)
+            p.x = undefined
+            print(p.x)
+            try { P q = new P(s, 1) } catch (ArgumentException e) { print(e.message) }
+            try { P q2 = new P(1, 1.5) } catch (ArgumentException e) { print(e.message) }
+            P r = new P(undefined, undefined)
+            print(r.x + " " + r.n)
+            class H { static int Twice(int a) { return a * 2 }
+              static float F = 1 }
+            print(H.Twice(21))
+            try { print(H.Twice(s)) } catch (ArgumentException e) { print(e.message) }
+            any t = true
+            try { H.F = t } catch (ArgumentException e) { print(e.message) }
+            H.F = 3
+            print(H.F / 2)
+            var lam = (int v) => v + 1
+            print(lam(1))
+            try { print(lam("a")) } catch (ArgumentException e) { print(e.message) }
+            any meter = 5m
+            try { P q3 = new P(meter, 1) } catch (UnitMismatchException e) { print(e.message) }
+            try { p.x = meter } catch (UnitMismatchException e) { print(e.message) }
+            class U { float:m len = 0m
+              float : any free = 0m
+              static float Scale(float:cm v) { return v / 1cm } }
+            U u = new U()
+            u.len = 250cm
+            u.free = 3s
+            print(u.len + " " + u.free + " " + U.Scale(2m))
+            p.x = 1
+            float acc = 0.0
+            for (int i = 0; i < 5; i++) { acc += p.Len() * 0.5
+              p.x = p.x + 1 }
+            print(acc)
+            """),
+        ("Globale vor ihrer Deklaration (statischer Initialisierer): undefined, Schreiben gilt bis zur Deklaration", """
+            int g2 = 4
+            class H { static int Get() { return g2 }
+              static undefined Set(int v) { g2 = v }
+              static any s = H.Get()
+              static any t = H.Twice()
+              static int Twice() { H.Set(7)
+                return H.Get() * 2 } }
+            print(H.s)
+            print(H.t)
+            print(H.Get())
             """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))

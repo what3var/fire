@@ -29,6 +29,9 @@ namespace fire.Bytecode
     {
         public string? RequiredUnit { get; set; }
 
+        /// <summary>The kind a field declared `int`/`float`/`bool` holds (DeclaredKind: TypeTag + 1, 0: none) - every assignment is checked.</summary>
+        public byte RequiredKind { get; set; }
+
         public AccessModifier AccessModifier { get; set; }
 
         /// <summary>SPEC "Static members" - `true` for a `static`
@@ -144,6 +147,15 @@ namespace fire.Bytecode
                 if (rc.OwnFieldInfo.TryGetValue(name, out var field))
                     return field.RequiredUnit;
             return null;
+        }
+
+        /// <summary>Like FindFieldRequiredUnit, for the kind (FieldInfo.RequiredKind, 0: none).</summary>
+        public byte FindFieldRequiredKind(string name)
+        {
+            for (var rc = this; rc != null; rc = rc.Base)
+                if (rc.OwnFieldInfo.TryGetValue(name, out var field))
+                    return field.RequiredKind;
+            return 0;
         }
 
         /// <summary>Like FindMethod, but for fields: searches along the

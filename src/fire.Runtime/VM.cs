@@ -723,6 +723,7 @@ namespace fire.Runtime
         {
             _currentChunk = chunk;
             _globalScope = globalScope;
+            globalScope.EarlyAccess = true;   // (a global used before its declaration: see Scope.EarlyAccess)
             _natives = natives;
             _classes = classes ?? new Dictionary<string, RuntimeClass>();
             _externs = externs ?? new ExternRegistry();
@@ -2626,7 +2627,8 @@ namespace fire.Runtime
                 && LookupSite(site) is { } fieldEntry
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
-                && cachedObj.AccessGuard == null)
+                && cachedObj.AccessGuard == null
+                && DeclaredKind.Fits(_stack[_sp - 1], fieldEntry.RequiredKind))
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
@@ -2696,9 +2698,11 @@ namespace fire.Runtime
                     hasUnitRule = true; // every assignment must check the unit - do not cache
                     if (!AdaptFieldUnit(ref value, requiredUnitName)) return false;
                 }
+                byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
+                if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
-                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex));
+                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind));
                 obj.SetFieldLocked(fieldName, value);
                 Push(value);
                 return true;
@@ -2759,7 +2763,8 @@ namespace fire.Runtime
             if (_currentThis is ObjectInstance fastThis
                 && LookupSite(site) is { } thisEntry
                 && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
-                && fastThis.ThreadLock == null)
+                && fastThis.ThreadLock == null
+                && DeclaredKind.Fits(_stack[_sp - 1], thisEntry.RequiredKind))
             {
                 fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
                 return;
@@ -2793,10 +2798,12 @@ namespace fire.Runtime
                     if (!AdaptFieldUnit(ref value, requiredUnitName)) return;
                 }
             }
+            byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
+            if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
-                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex));
+                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind));
             oi.SetFieldLocked(fieldName, value);
             return;
         }
@@ -3278,6 +3285,7 @@ namespace fire.Runtime
                 string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
                 if (requiredUnitName != null && !AdaptFieldUnit(ref setValue, requiredUnitName)) return;
             }
+            if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -4082,6 +4090,7 @@ namespace fire.Runtime
                         throw new InvalidOperationException($"'{initClassName}' has no static field '{initFieldName}'.");
 
                     if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
+                    if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -4203,6 +4212,23 @@ namespace fire.Runtime
                 case OpCode.Delete:
                     DeleteValue(Pop());
                     break;
+
+                case OpCode.GuardLocal:
+                {
+                    // the end of the prologue: a parameter declared int/float/bool holds that kind or undefined (DeclaredKind)
+                    int slot = ReadU16();
+                    byte tag = ReadByte();
+                    byte required = (byte)((tag & 0x7F) + 1 | tag & DeclaredKind.UnitlessBit);
+                    int whatIdx = ReadU16();
+                    ReadU16();   // (the unit it has now: for the native generator)
+                    ref var guarded = ref _currentScope.SlotRef(slot);
+                    if (!DeclaredKind.Fits(guarded, required))
+                    {
+                        var checkedValue = guarded;
+                        if (GuardDeclared(ref checkedValue, required, _constants[whatIdx].AsString())) guarded = checkedValue;
+                    }
+                    break;
+                }
 
                 case OpCode.RequireRefParam:
                 {
@@ -5965,6 +5991,20 @@ namespace fire.Runtime
         /// <summary>`if (n)` with a number: a condition must be a bool (a catchable ArgumentException, the type checker reports it already where it knows the type).</summary>
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private void ThrowConditionError(Value condition) => ThrowArgumentError($"A condition must be a bool, not {condition.Kind}.");
+
+        /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
+        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
+            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+
+        /// <summary>The slow route of a declaration int/float/bool (DeclaredKind): a number declared without a unit is converted into no unit (or a
+        /// UnitMismatchException), then the kind is checked (or an ArgumentException). false: an exception is thrown.</summary>
+        private bool GuardDeclared(ref Value value, byte required, string what)
+        {
+            if (DeclaredKind.NeedsUnitless(value, required) && !AdaptFieldUnit(ref value, "unitless")) return false;
+            if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
+            ThrowArgumentError(message);
+            return false;
+        }
 
         private void ThrowArgumentError(string message)
         {
