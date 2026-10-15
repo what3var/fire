@@ -13,11 +13,11 @@ namespace fire.Resolving
         /// "Unit declarations") if the declaration had an explicit
         /// `: unit` - `null` otherwise (any value permitted, as before).
         /// ByRef: a `ref` parameter - the slot holds a pointer to the caller's variable, reading and writing go through it.</summary>
-        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null, bool ByRef = false) : ResolvedRef;
+        public sealed record Local(int Depth, int Slot, string? RequiredUnit = null, bool ByRef = false, int Width = 0) : ResolvedRef;
 
         /// <summary>Global variable (top-level declaration). Slot = index in the
         /// global scope. RequiredUnit: as with Local.</summary>
-        public sealed record Global(int Slot, string? RequiredUnit = null) : ResolvedRef;
+        public sealed record Global(int Slot, string? RequiredUnit = null, int Width = 0) : ResolvedRef;
 
         /// <summary>Registered for a <see cref="fire.Ast.LambdaExpr"/> that uses outer local variables (lambda captures,
         /// SPEC 4.2): `Variables` are synthetic identifiers, resolved in the ENCLOSING scope - the compiler loads their values when

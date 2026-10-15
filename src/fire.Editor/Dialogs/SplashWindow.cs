@@ -16,32 +16,32 @@ namespace fire.Editor
 
         public SplashWindow()
         {
-            Width = 560;
-            Height = 300;
+            Width = 640;
+            Height = 384;
             CanResize = false;
             WindowDecorations = Avalonia.Controls.WindowDecorations.None;
             ShowInTaskbar = false;
             Topmost = true;
             WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            Background = EditorTheme.DarkSurface;
+            Background = new ImageBrush(new Bitmap(AssetLoader.Open(new Uri("avares://spark/Assets/splash.png"))));
             Title = "spark";
 
-            Control logo;
-            try { logo = new Image { Source = new Bitmap(AssetLoader.Open(new Uri("avares://spark/Assets/Logo-64.png"))), Width = 96, Height = 96 }; }
-            catch (Exception) { logo = TemplateIcon.Create("script", 96); }
+            //Control logo;
+            //try { logo = new Image { Source = new Bitmap(AssetLoader.Open(new Uri("avares://spark/Assets/Logo-64.png"))), Width = 96, Height = 96 }; }
+            //catch (Exception) { logo = TemplateIcon.Create("script", 96); }
 
             var version = typeof(SplashWindow).Assembly.GetName().Version;
-            string versionText = version == null ? "" : $"Version 2610";
+            string versionText = version == null ? "" : $"alpha-2610";
 
-            var title = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 0, 0, 0) };
-            title.Children.Add(new TextBlock { Text = "spark", FontSize = 52, FontWeight = FontWeight.SemiBold, Foreground = EditorTheme.Magenta });
-            title.Children.Add(new TextBlock { Text = "the editor of the fire language", FontSize = 15, Foreground = EditorTheme.Text });
+            //var title = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 0, 0, 0) };
+            //title.Children.Add(new TextBlock { Text = "spark", FontSize = 52, FontWeight = FontWeight.SemiBold, Foreground = EditorTheme.Magenta });
+            //title.Children.Add(new TextBlock { Text = "the editor of the fire language", FontSize = 15, Foreground = EditorTheme.Text });
 
-            var top = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Children = { logo, title } };
+            var top = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top};
 
             var bar = new ProgressBar { IsIndeterminate = true, Height = 3, MinHeight = 3, Foreground = EditorTheme.Magenta, Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Bottom };
             var footer = new DockPanel { Margin = new Thickness(20, 0, 20, 14) };
-            if (versionText.Length > 0) { var v = new TextBlock { Text = versionText, Foreground = EditorTheme.TextDim, FontSize = 12 }; DockPanel.SetDock(v, Avalonia.Controls.Dock.Right); footer.Children.Add(v); }
+            if (versionText.Length > 0) { var v = new TextBlock { Text = versionText, Foreground = EditorTheme.TextDim, FontSize = 12 }; DockPanel.SetDock(v, Avalonia.Controls.Dock.Right); top.Children.Add(v); }
             footer.Children.Add(_status);
 
             var grid = new Grid { RowDefinitions = new RowDefinitions("*,Auto,Auto") };

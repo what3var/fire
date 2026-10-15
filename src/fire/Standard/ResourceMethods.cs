@@ -31,13 +31,13 @@ namespace fire.Standard
             class Resource {
                 int id
 
-                construct(id) { this.id = id }
+                construct(int id) { this.id = id }
 
                 // the path as it was written in the source
                 string Name() { return __ResourceCall(3, this.id) }
                 int Length() { return __ResourceCall(1, this.id) }
                 // the content as a byte buffer
-                Bytes() { return __ResourceCall(2, this.id) }
+                byte[] Bytes() { return __ResourceCall(2, this.id) }
                 // the content as text (UTF-8)
                 string Text() { return __ResourceCall(4, this.id) }
             }

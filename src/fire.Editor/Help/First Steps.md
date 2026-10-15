@@ -119,7 +119,7 @@ class Animal {
         this.name = name
     }
 
-    Speak() {
+    undefined Speak() {
         print(this.name + " makes a sound")
     }
 }
@@ -127,7 +127,7 @@ class Animal {
 class Dog : Animal {
     construct(string name) : base(name) { }
 
-    Speak() {
+    undefined Speak() {
         print(this.name + " barks")
     }
 }
@@ -215,7 +215,7 @@ print("got " + part.name)               // prints: scratch destroyed, got gear (
 class Holder {
     Part part
 
-    Keep(Part p) {
+    undefined Keep(Part p) {
         p.TakeTo(this)          // the holder owns p from now on
         this.part = p
     }
@@ -353,7 +353,7 @@ actor Logger {
 
     construct() { this.count = 0 }
 
-    log(string text) {
+    undefined log(string text) {
         this.count++
         print("log: " + text)
     }

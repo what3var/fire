@@ -67,7 +67,7 @@ namespace fire.Editor
         /// variable from method call ...) - also breaks cycles.</summary>
         private const int MaxDepth = 8;
 
-        private static readonly HashSet<string> PrimitiveTypeNames = new() { "bool", "int", "float", "char", "string", "byte" };
+        private static readonly HashSet<string> PrimitiveTypeNames = new() { "bool", "int", "float", "char", "string", "byte", "any" };
 
         // -----------------------------------------------------------
         // Enclosing function

@@ -150,13 +150,19 @@ namespace fire.Ast
 
     public enum BinaryOp { Add, Sub, Mul, Div, Mod, Eq, NotEq, Lt, LtEq, Gt, GtEq, And, Or, BitAnd, BitOr, BitXor, ShiftLeft, ShiftRight, Power }
     public sealed record BinaryExpr(int Line, BinaryOp Op, Expr Left, Expr Right) : Expr(Line);
+    /// <summary>`lambda on target`: a new lambda with the same body whose `this` is `target` (the old one stays as it is).</summary>
+    public sealed record RebindExpr(int Line, Expr Lambda, Expr Target) : Expr(Line);
+    /// <summary>`Condition ? Then : Else` - only one of the two branches is evaluated.</summary>
+    public sealed record ConditionalExpr(int Line, Expr Condition, Expr Then, Expr Else) : Expr(Line);
 
     // ---------------------------------------------------------------
     // Coercion (postfix): ':' -> unit, '!' -> type.
     // TargetUnitName/TargetTypeKeyword == null means "derive automatically from context".
     // ---------------------------------------------------------------
     public sealed record UnitCoerceExpr(int Line, Expr Operand, string? TargetUnitName, bool Relabel = false) : Expr(Line);   // Relabel: `a::unit` (the number stays, only the unit changes)
-    public sealed record TypeCoerceExpr(int Line, Expr Operand, TokenType? TargetTypeKeyword) : Expr(Line);
+    /// <summary>`x!type`: `TargetTypeKeyword` int/float/bool/char/string (or null: the type from the context), `Width` a bit width (`!int[8]`, `!byte` = 8 and
+    /// `Unsigned`, `!float[32]`; 0 = none), `TargetClass` a class or interface (`x!Dog`: the same value, checked like `is of`).</summary>
+    public sealed record TypeCoerceExpr(int Line, Expr Operand, TokenType? TargetTypeKeyword, int Width = 0, bool Unsigned = false, TypeRef? TargetClass = null) : Expr(Line);
 
     // ---------------------------------------------------------------
     // Check operators: is in / is of / is from / is under

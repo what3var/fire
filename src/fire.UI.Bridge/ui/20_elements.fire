@@ -95,13 +95,13 @@ namespace UI {
         // ---- Text and fonts ----
 
         // The element around this one for inheriting the font: its parent, for a floating element (a menu) the one that opened it.
-        Outer() {
+        UI.Element Outer() {
             if (this.parent != undefined) { return this.parent }
             return this.owner
         }
 
         // The name of the font of this element: its own `font`, else that of the nearest element around it that has one, else `theme.font`.
-        string FontName(root) {
+        string FontName(Root root) {
             var e = this
             while (e != undefined) {
                 if (e.font != "") { return e.font }
@@ -111,7 +111,7 @@ namespace UI {
         }
 
         // The size of the letters in pixels, in the same way.
-        int FontPixels(root) {
+        int FontPixels(Root root) {
             var e = this
             while (e != undefined) {
                 if (e.fontSize > 0) { return e.fontSize }
@@ -121,11 +121,11 @@ namespace UI {
         }
 
         // The width of `text` in the font of this element, and the height of a line of text.
-        int TextWidth(root, string text) { return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.FontPixels(root)) }
-        int TextHeight(root) { return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.FontPixels(root)) }
+        int TextWidth(Root root, string text) { return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.FontPixels(root)) }
+        int TextHeight(Root root) { return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.FontPixels(root)) }
 
         // Draws `text` in the font of this element with its upper left corner at (x, y) (brush `brush` for the letters).
-        DrawString(root, int x, int y, string text, Brush brush) {
+        undefined DrawString(Root root, int x, int y, string text, Brush brush) {
             root.renderer.DrawText(x, y, text, brush, undefined, root.FontFor(this.FontName(root)), this.FontPixels(root))
         }
 
@@ -133,20 +133,20 @@ namespace UI {
         string StyleKey() { return "Element" }
 
         // The element (or a descendant) with this name, otherwise undefined.
-        FindName(string name) {
+        UI.Element FindName(string name) {
             if (this.name == name) { return this }
             return undefined
         }
 
         // A part of the template of this element (or the element itself for "").
-        FindPart(string part) {
+        UI.Element FindPart(string part) {
             if (part == "") { return this }
             if (this.templateRoot != undefined) { return this.templateRoot.FindName(part) }
             return this.FindName(part)
         }
 
         // The first style for `key` from this element upwards (lastly the resources of the root), otherwise undefined.
-        FindStyle(string key) {
+        UI.Style FindStyle(string key) {
             var e = this
             while (e != undefined) {
                 if (e.resources != undefined) {
@@ -160,7 +160,7 @@ namespace UI {
         }
 
         // The resource for `key` from this element upwards (lastly that of the root), otherwise undefined. Before the first layout there are only those of the ancestors.
-        FindResource(string key) {
+        any FindResource(string key) {
             var e = this
             while (e != undefined) {
                 if (e.resources != undefined && e.resources.Has(key)) { return e.resources.Get(key) }
@@ -171,13 +171,13 @@ namespace UI {
         }
 
         // Creates the resources of this element if it has none yet, and returns them.
-        Resources() {
+        UI.ResourceDictionary Resources() {
             if (this.resources == undefined) { this.resources = new ResourceDictionary() }
             return this.resources
         }
 
         // Register a trigger of the style with this element.
-        AddTrigger(trigger) {
+        undefined AddTrigger(Trigger trigger) {
             if (this.styleStates == undefined) { this.styleStates = new List() }
             var state = new TriggerState(trigger)
             state.TakeTo(this)
@@ -185,7 +185,7 @@ namespace UI {
         }
 
         // Connects a property of this element with that of another object (see Binding).
-        Bind(string property, source, string sourceProperty, bool twoWay = false, converter = undefined, bool once = false) {
+        UI.Binding Bind(string property, any source, string sourceProperty, bool twoWay = false, Converter converter = undefined, bool once = false) {
             if (this.bindings == undefined) { this.bindings = new List() }
             var binding = new Binding(this, property, source, sourceProperty, twoWay, converter, once)
             binding.TakeTo(this)
@@ -193,7 +193,7 @@ namespace UI {
             return binding
         }
 
-        ClearStyle() {
+        undefined ClearStyle() {
             if (this.styleStates == undefined) { return }
             for (var i = 0; i < this.styleStates.count; i = i + 1) {
                 var state = this.styleStates[i]
@@ -204,7 +204,7 @@ namespace UI {
         }
 
         // Builds the parts from the template.
-        BuildTemplate() {
+        undefined BuildTemplate() {
             var make = this.template.factory
             var tree = make(this)
             tree.TakeTo(this)
@@ -224,26 +224,26 @@ namespace UI {
 
         // The element has changed: its area will be repainted at the next update (changes to the fields of the element report themselves; for changes
         // IN an object it uses - a brush, a list, a geometry - you call this yourself).
-        Invalidate() {
+        undefined Invalidate() {
             var r = this.host
             if (r != undefined) { r.InvalidateRect(this.ax, this.ay, this.actualWidth, this.actualHeight) }
         }
 
         // Before every arranging and painting (Root.Update): apply the style (the first time), build the template, reconcile bindings, check triggers, and poll the descendants.
         // Changes that arise in the process report themselves to the interface like any other.
-        Poll(root) {
+        undefined Poll(Root root) {
             this.Prepare(root)
             if (this.templateRoot != undefined) { this.templateRoot.Poll(root) }
         }
 
         // Must the element (at screen position ax, ay) be painted - does it lie in the area that is currently being repainted? Sets ax and ay while doing so.
-        bool NeedsDraw(root, int ax, int ay) {
+        bool NeedsDraw(Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
             return root.Needs(ax, ay, this.actualWidth, this.actualHeight)
         }
 
-        Prepare(root) {
+        undefined Prepare(Root root) {
             this.host = root
             root.Watch(this)
             if (!this.styled) {
@@ -285,12 +285,12 @@ namespace UI {
         bool Focusable() { return false }
 
         // The content (without margin): sets cw/ch. aw/ah: at most this much space (-1: unbounded). An element without content wants nothing.
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             this.cw = 0
             this.ch = 0
         }
 
-        Measure(root, int aw, int ah) {
+        undefined Measure(Root root, int aw, int ah) {
             if (!this.visible) {
                 this.dw = 0
                 this.dh = 0
@@ -321,10 +321,10 @@ namespace UI {
         }
 
         // Arranges the children (their space is w x h). An element without children does nothing.
-        ArrangeCore(root, int w, int h) { }
+        undefined ArrangeCore(Root root, int w, int h) { }
 
         // The space in the container is (px, py, pw, ph), margin included.
-        Arrange(root, int px, int py, int pw, int ph) {
+        undefined Arrange(Root root, int px, int py, int pw, int ph) {
             if (!this.visible) {
                 if (this.actualWidth != 0 || this.actualHeight != 0) { root.layoutMoved = true }
                 this.actualWidth = 0
@@ -362,7 +362,7 @@ namespace UI {
         }
 
         // With a template its tree determines the size, otherwise the content of the element itself.
-        MeasureContent(root, int iw, int ih) {
+        undefined MeasureContent(Root root, int iw, int ih) {
             var t = this.templateRoot
             if (t == undefined) {
                 this.MeasureCore(root, iw, ih)
@@ -373,7 +373,7 @@ namespace UI {
             this.ch = t.dh
         }
 
-        ArrangeContent(root, int w, int h) {
+        undefined ArrangeContent(Root root, int w, int h) {
             var t = this.templateRoot
             if (t == undefined) {
                 this.ArrangeCore(root, w, h)
@@ -383,7 +383,7 @@ namespace UI {
         }
 
         // Draws the template; false if there is none (then the control draws itself).
-        bool DrawTemplate(root, int ax, int ay) {
+        bool DrawTemplate(Root root, int ax, int ay) {
             var t = this.templateRoot
             this.ax = ax
             this.ay = ay
@@ -392,20 +392,20 @@ namespace UI {
             return true
         }
 
-        Draw(root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             this.ax = ax
             this.ay = ay
         }
 
         // The element (or a descendant) under the screen position (px, py), otherwise undefined.
-        HitTest(int px, int py) {
+        UI.Element HitTest(int px, int py) {
             if (!this.visible) { return undefined }
             if (px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight) { return this }
             return undefined
         }
 
         // Collects all focusable elements in drawing order (for Tab).
-        Collect(list) {
+        undefined Collect(List list) {
             if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
         }
 
@@ -414,23 +414,23 @@ namespace UI {
         }
 
         // The mouse wheel: dy > 0 means up. Returns true if the element consumed it (otherwise the root asks the container).
-        bool MouseWheel(root, int dx, int dy) { return false }
+        bool MouseWheel(Root root, int dx, int dy) { return false }
 
         // For a floating element: a click outside. It closes (and consumes the click if it hit its owner `owner`).
-        bool PopupOutside(root, int px, int py) {
+        bool PopupOutside(Root root, int px, int py) {
             var consumed = this.owner != undefined && this.owner.Contains(px, py)
             root.ClosePopup(this)
             return consumed
         }
 
         // The pointer moves over the element (without a pressed mouse button on it).
-        Hover(root, int px, int py) { }
+        undefined Hover(Root root, int px, int py) { }
 
-        MouseDown(root, int button, int px, int py) { }
-        MouseUp(root, int button, int px, int py) { }
-        MouseMove(root, int px, int py) { }
-        KeyDown(root, int key, int mod) { }
-        TextInput(root, string text) { }
+        undefined MouseDown(Root root, int button, int px, int py) { }
+        undefined MouseUp(Root root, int button, int px, int py) { }
+        undefined MouseMove(Root root, int px, int py) { }
+        undefined KeyDown(Root root, int key, int mod) { }
+        undefined TextInput(Root root, string text) { }
 
         // Does the element want this arrow/navigation key itself (for example a text field Left/Right, a list Up/Down)? Otherwise the root uses it to move the focus to the next element in the direction
         // (keyboard, joystick operation). A list releases the key at its edge so that you can get out of it.
@@ -440,7 +440,7 @@ namespace UI {
         // in the direction of the finger and returns true if the element has taken over the swipe.
         bool CanPan() { return false }
         bool Dragging() { return false }
-        bool PanBy(root, int dx, int dy) { return false }
+        bool PanBy(Root root, int dx, int dy) { return false }
     }
 
     // Container with children. This panel arranges them at their x/y (like a Canvas) and can draw background and frame; the other containers
@@ -457,7 +457,7 @@ namespace UI {
         }
 
         // The child belongs to this panel from now on (it lives as long as this one).
-        Add(child) {
+        undefined Add(Element child) {
             child.TakeTo(this)
             child.parent = this
             this.children.Add(child)
@@ -465,7 +465,7 @@ namespace UI {
         }
 
         // Takes the child out of the panel (it is not destroyed, but still belongs to the panel).
-        Remove(child) {
+        undefined Remove(Element child) {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 if (this.children[i] == child) {
                     this.children.RemoveAt(i)
@@ -477,7 +477,7 @@ namespace UI {
         }
 
         // Destroy all children.
-        Clear() {
+        undefined Clear() {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 child.parent = undefined
@@ -487,13 +487,13 @@ namespace UI {
             this.Invalidate()
         }
 
-        Poll(root) {
+        undefined Poll(Root root) {
             base.Poll(root)
             for (var i = 0; i < this.children.count; i = i + 1) { this.children[i].Poll(root) }
         }
 
         // Canvas arrangement: every child wants to be as big as it is; the size of the panel is that of the children, as far as it has no fixed one.
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 0
             for (var i = 0; i < this.children.count; i = i + 1) {
@@ -507,14 +507,14 @@ namespace UI {
             this.ch = h
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 child.Arrange(root, child.x, child.y, child.dw, child.dh)
             }
         }
 
-        Draw(root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 if (this.filled) {
@@ -531,14 +531,14 @@ namespace UI {
             this.DrawChildren(root, ax, ay)
         }
 
-        DrawChildren(root, int ax, int ay) {
+        undefined DrawChildren(Root root, int ax, int ay) {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 if (child.visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
             }
         }
 
-        HitTest(int px, int py) {
+        UI.Element HitTest(int px, int py) {
             if (!this.visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var i = this.children.count - 1
@@ -550,7 +550,7 @@ namespace UI {
             return this
         }
 
-        Collect(list) {
+        undefined Collect(List list) {
             if (!this.visible || !this.enabled) { return }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 this.children[i].Collect(list)
@@ -559,7 +559,7 @@ namespace UI {
 
         string StyleKey() { return "Panel" }
 
-        FindName(string name) {
+        UI.Element FindName(string name) {
             if (this.name == name) { return this }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var found = this.children[i].FindName(name)
@@ -595,7 +595,7 @@ namespace UI {
             this.filled = false
         }
 
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             var pad2 = this.padding * 2
             var iw = aw
             var ih = ah
@@ -627,7 +627,7 @@ namespace UI {
             }
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             var pos = this.padding
             var iw = w - this.padding * 2
             var ih = h - this.padding * 2
@@ -664,12 +664,12 @@ namespace UI {
         }
 
         // A child with the side it lies on: `dock.AddDocked(element, UI.Dock.Top)`.
-        AddDocked(child, int side) {
+        undefined AddDocked(Element child, int side) {
             child.dock = side
             this.Add(child)
         }
 
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             // From the inside out: what lies left/right takes width, what lies top/bottom takes height; the rest remains for the other children.
             var usedW = 0
             var usedH = 0
@@ -708,7 +708,7 @@ namespace UI {
             return last
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             var left = 0
             var top = 0
             var right = w
@@ -750,7 +750,7 @@ namespace UI {
             this.filled = false
         }
 
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             var lineLen = 0
             var lineThick = 0
             var total = 0
@@ -791,7 +791,7 @@ namespace UI {
             }
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             var limit = w
             if (this.vertical) { limit = h }
             var lineLen = 0
@@ -826,7 +826,7 @@ namespace UI {
         }
 
         // The children first..last-1 lie in a row (column) that begins at `offset` and is `thick` thick.
-        ArrangeLine(root, int first, int last, int offset, int thick) {
+        undefined ArrangeLine(Root root, int first, int last, int offset, int thick) {
             var pos = 0
             for (var i = first; i < last; i = i + 1) {
                 var child = this.children[i]
@@ -890,10 +890,10 @@ namespace UI {
             this.columns = new List()
         }
 
-        SetRows(string spec) { this.Fill(this.rows, spec) }
-        SetColumns(string spec) { this.Fill(this.columns, spec) }
+        undefined SetRows(string spec) { this.Fill(this.rows, spec) }
+        undefined SetColumns(string spec) { this.Fill(this.columns, spec) }
 
-        Fill(list, string spec) {
+        undefined Fill(List list, string spec) {
             list.Clear()
             var parts = spec.Split(",")
             for (var i = 0; i < parts.length; i = i + 1) {
@@ -903,18 +903,18 @@ namespace UI {
             }
         }
 
-        AddRow(track) {
+        undefined AddRow(Track track) {
             track.TakeTo(this)
             this.rows.Add(track)
         }
 
-        AddColumn(track) {
+        undefined AddColumn(Track track) {
             track.TakeTo(this)
             this.columns.Add(track)
         }
 
         // Put a child into a cell.
-        AddAt(child, int row, int column, int rowSpan = 1, int columnSpan = 1) {
+        undefined AddAt(Element child, int row, int column, int rowSpan = 1, int columnSpan = 1) {
             child.gridRow = row
             child.gridColumn = column
             child.gridRowSpan = rowSpan
@@ -923,27 +923,27 @@ namespace UI {
         }
 
         // The tracks (without specification: one star track) whose sizes are not yet fixed.
-        List Tracks(list) {
+        List Tracks(List list) {
             if (list.count == 0) { list.Add(new Track(2, 1)) }
             return list
         }
 
         // The sum of the sizes of the tracks start..start+span-1
-        int SpanSize(list, int start, int span) {
+        int SpanSize(List list, int start, int span) {
             var total = 0
             for (var i = start; i < start + span && i < list.count; i = i + 1) { total = total + list[i].size }
             return total
         }
 
         // The track `index` (clamped to the bounds of the grid)
-        int Fit(list, int index) {
+        int Fit(List list, int index) {
             if (index < 0) { return 0 }
             if (index >= list.count) { return list.count - 1 }
             return index
         }
 
         // Distributes `avail` (or, for -1, as much as the content wants) to the star tracks.
-        ResolveStars(list, int avail, int used) {
+        undefined ResolveStars(List list, int avail, int used) {
             var weights = 0
             for (var i = 0; i < list.count; i = i + 1) {
                 if (list[i].mode == 2) { weights = weights + list[i].value }
@@ -963,7 +963,7 @@ namespace UI {
             }
         }
 
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
             this.ResolveAxis(root, rows, cols, ah, false)
@@ -991,7 +991,7 @@ namespace UI {
 
         // Determines the sizes of the tracks of one axis: first fixed ones, then those from the content (Auto), then the stars.
         // along: the tracks of this axis, other: those of the other axis; avail: the space in this axis; isColumn: along are the columns.
-        ResolveAxis(root, along, other, int avail, bool isColumn) {
+        undefined ResolveAxis(Root root, any along, any other, int avail, bool isColumn) {
             var used = 0
             for (var i = 0; i < along.count; i = i + 1) {
                 var t = along[i]
@@ -1064,7 +1064,7 @@ namespace UI {
         }
 
         // The size of the child's cell in the other axis, as far as already known (fixed tracks), otherwise -1.
-        int CellSizeOther(other, child, bool isColumnAxis) {
+        int CellSizeOther(any other, Element child, bool isColumnAxis) {
             var begin = 0
             var span = 1
             if (isColumnAxis) {
@@ -1082,7 +1082,7 @@ namespace UI {
             return total
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             var rows = this.Tracks(this.rows)
             var cols = this.Tracks(this.columns)
             // with the final size: redistribute the stars
@@ -1106,7 +1106,7 @@ namespace UI {
         }
 
         // Redistributes the space to the stars of the axis (the other tracks keep their size).
-        Restar(list, int avail) {
+        undefined Restar(List list, int avail) {
             var used = 0
             var stars = 0
             for (var i = 0; i < list.count; i = i + 1) {
@@ -1127,7 +1127,7 @@ namespace UI {
         }
 
         // The child belongs to the Border from now on.
-        SetChild(element) {
+        undefined SetChild(Element element) {
             if (this.child != undefined) { this.child.parent = undefined }
             this.child = element
             element.TakeTo(this)
@@ -1135,12 +1135,12 @@ namespace UI {
             this.Invalidate()
         }
 
-        Poll(root) {
+        undefined Poll(Root root) {
             base.Poll(root)
             if (this.child != undefined) { this.child.Poll(root) }
         }
 
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             var inset = this.thickness * 2
             var padW = this.padding.left + this.padding.right + inset
             var padH = this.padding.top + this.padding.bottom + inset
@@ -1159,7 +1159,7 @@ namespace UI {
             this.ch = h + padH
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             if (this.child == undefined) { return }
             var l = this.padding.left + this.thickness
             var t = this.padding.top + this.thickness
@@ -1168,7 +1168,7 @@ namespace UI {
             this.child.Arrange(root, l, t, iw, ih)
         }
 
-        Draw(root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
                 if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
@@ -1181,7 +1181,7 @@ namespace UI {
             if (this.child != undefined && this.child.visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
         }
 
-        HitTest(int px, int py) {
+        UI.Element HitTest(int px, int py) {
             if (!this.visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             if (this.child != undefined) {
@@ -1191,14 +1191,14 @@ namespace UI {
             return this
         }
 
-        Collect(list) {
+        undefined Collect(List list) {
             if (!this.visible || !this.enabled) { return }
             if (this.child != undefined) { this.child.Collect(list) }
         }
 
         string StyleKey() { return "Border" }
 
-        FindName(string name) {
+        UI.Element FindName(string name) {
             if (this.name == name) { return this }
             if (this.child != undefined) { return this.child.FindName(name) }
             return undefined

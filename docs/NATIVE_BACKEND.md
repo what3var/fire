@@ -21,7 +21,7 @@ C++-Compiler zusammen mit der Runtime sieht und optimiert. Dafür sprechen:
   Compiler eingebettet, der Rest bleibt ein Aufruf - genau so, wie man es erwartet.
 
 Ein portables Binärformat braucht nur noch der **Interpreter** - und den braucht man nur, wenn Skripte auf dem Gerät *zur Laufzeit*
-nachgeladen werden sollen (ohne neu zu flashen). Das ist ein eigener, späterer Schritt (siehe `PORTING.md`); die
+nachgeladen werden sollen (ohne neu zu flashen). Das ist ein eigener, späterer Schritt; die
 AOT-Übersetzung hängt nicht davon ab.
 
 ## Architektur
@@ -428,6 +428,14 @@ Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines`
 Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Argumente, Bibliotheken, Include-Ordner), `custom` (`command` mit `{cpp}`, `{dir}`, `{out}`, `{args}`, `{libs}`) und
 `files` (schreibt nur die Quellen; `layout: "idf-component"` legt dazu eine `CMakeLists.txt` an, `buildCommand` läuft danach im Ordner, z.B. `idf.py build`). Eingebaut: `gcc`, `clang`, `msvc`,
 `files`, `esp-idf`. Die Zeilen mit `//` und Kommas am Ende sind erlaubt.
+
+**Größe des Programms.** Ein Programm wird beim Linken gestrippt (gcc/clang: `-s`, macOS `-Wl,-x`): Symbole und Debug-Informationen machen ohne Strippen etwa die Hälfte der Datei aus
+(MinGW: 945 KB → 468 KB). `"strip": false` in der Toolchain lässt sie stehen (zum Debuggen); eine Bibliothek für die VM wird nie gestrippt. `"optimization": "size"` wählt das kleine
+Profil: gcc/clang `-Os -ffunction-sections -fdata-sections` und beim Linken `--gc-sections` (macOS `-dead_strip`), msvc `/O1 /Gy /Gw` und `/OPT:REF /OPT:ICF` (Beispiel 3D-Szene unter Linux:
+464 KB → 404 KB gestrippt → 285 KB mit `size`). Der Generator selbst übersetzt schon nur, was vom Programm aus erreichbar ist (Funktionen werden erst beim ersten Aufruf nach Name und
+Argumentzahl angelegt, Klassen erst beim `new`), und der C++-Compiler wirft nicht erreichte `static`-Funktionen weg; im Beispiel führt eine Messung (gcov) nur etwa 9 % der erzeugten
+Zeilen nie aus, darunter Fehlerpfade. Ein weiterer Durchlauf über die Methoden des Preludes würde deshalb kaum etwas sparen und brächte Risiko (Dispatch nach Name, Reflection,
+Callbacks) – er ist nicht eingebaut. Der Editor kennt beides im Dialog „Native Build Settings“ (Toolchain: Optimization, Strip symbols).
 
 ### Bauen: `build` zeigt auf nativ
 

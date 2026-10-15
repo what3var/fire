@@ -28,6 +28,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { Proje
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
@@ -1013,7 +1015,7 @@ Console.WriteLine("=== Bytecode-Test: resume (fortsetzbare Exceptions) ===");
 
 string resumeSample = """
 class MyError {
-    message
+    string message
     construct(msg) { this.message = msg }
 }
 
@@ -1057,7 +1059,7 @@ Console.WriteLine("=== Bytecode-Test: nie fortgesetzte Exception (normaler catch
 
 string noResumeSample = """
 class MyError {
-    message
+    string message
     construct(msg) { this.message = msg }
 }
 
@@ -1595,18 +1597,18 @@ Console.WriteLine("=== Bytecode-Test: Einheiten bei Multiplikation/Division mit 
 
 string unitPropertySample = """
 class Circle {
-    float radius
+    float radius : any
 
-    construct(float radius) {
+    construct(float radius : any) {
         this.radius = radius
     }
 
-    float Diameter {
+    float Diameter : any {
         get { return this.radius * 2 }
         set { this.radius = value / 2 }
     }
 
-    float Area {
+    float Area : any {
         get { return this.radius * this.radius * 3 }
     }
 }
@@ -1813,7 +1815,7 @@ Console.WriteLine("=== Bytecode-Test: Extension-Klasse für unbekannte Klasse (m
 
 string extendUnknownSample = """
 class extends DoesNotExist {
-    var x
+    any x
 }
 """;
 
@@ -5434,7 +5436,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("eigener Stream (Basisklasse IO.Stream)", """
         class Upper : IO.Stream {
-            var inner
+            any inner
             construct(inner) { this.inner = inner }
             bool CanWrite { get { return true } }
             int Write(buffer, offset, count) {
@@ -5989,13 +5991,13 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         try { print("".First()) } catch (IndexOutOfBoundsException e) { print("leer " + e.index) }
         """, "a", "leer 1");
 
-    // An extension of string only applies to string - an int does not know `Foo` (not a script error, but a VM error).
+    // An extension of string only applies to string - an int does not know `Foo` (a MissingMemberException).
     CheckExt("Erweiterung gilt nur fuer ihren Typ", """
         class extends string { int Foo() { return 1 } }
         print("s".Foo())
         int i = 5
         print(i.Foo())
-        """, "AUSNAHME: 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.");
+        """, "1", "UNBEHANDELT: Unhandled exception of type 'MissingMemberException': 'Foo' (0 argument(s)) is not a known built-in method on a value of type Int.");
 
     CheckExt("char-Methoden des Prelude", """
         char c = 'a'
@@ -6023,9 +6025,9 @@ Console.WriteLine("=== Basistyp-Erweiterungen (class extends string/char/int/...
         catch (IndexOutOfBoundsException e) { print("Index " + e.index + " Laenge " + e.length) }
         """, "ell", "HELLO", "True", "Index 9 Laenge 5");
 
-    CheckExt("native Funktion: falsches Argument wird gemeldet", $$"""
-        print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x"))
-        """, "AUSNAHME: __StringCall(id, text, ...) expects the string as the second argument.");
+    CheckExt("native Funktion: falsches Argument wird gemeldet (als abfangbare ArgumentException)", $$"""
+        try { print({{fire.Standard.StringMethods.NativeName}}(1, 5, "x")) } catch (ArgumentException e) { print("caught: " + e.message) }
+        """, "caught: __StringCall(id, text, ...) expects the string as the second argument.");
 
     CheckExtError("Feld in Basistyp-Erweiterung", "class extends string { int count }", "may only contain methods");
     CheckExtError("Property in Basistyp-Erweiterung", "class extends string { int Size { get { return 1 } } }", "property 'Size' is not allowed");
@@ -6304,7 +6306,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         """, new[] { "4", "4", "undefined", "14", "12", "99", "77" });
 
     // --- Value: equality and arithmetic (compact layout, fast paths)
-    CheckPerf("Gleichheit: Art, Einheit und Breite", """
+    CheckPerf("Gleichheit: Zahlen nach Wert (int/float, Einheiten umgerechnet)", """
         print(1 == 1)
         print(1 == 1.0)
         print(5mm == 5)
@@ -6314,7 +6316,32 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(1.5 == 1.5)
         print(undefined == undefined)
         print(1 != 2)
-        """, new[] { "True", "False", "True", "True", "True", "True", "True", "True", "True" });
+        print(1m == 100cm)
+        print(1m == 1cm)
+        """, new[] { "True", "True", "True", "True", "True", "True", "True", "True", "True", "True", "False" });
+
+    CheckPerf("Falsche Operanden sind abfangbare ArgumentExceptions (kein Absturz der VM)", """
+        class Probe {
+            static undefined Try(string what, any lambda f) {
+                try { print(what + " " + f()) } catch (ArgumentException e) { print(what + " caught") }
+            }
+        }
+        any u = undefined
+        any s = "a"
+        any n = 5
+        Probe.Try("mul", () => u * 2)
+        Probe.Try("neg", () => -s)
+        Probe.Try("not", () => !n)
+        Probe.Try("lt", () => s < 1)
+        Probe.Try("inc", () => { any x = undefined; x++; return x })
+        Probe.Try("idx", () => { any x = 5; return x[0] })
+        Probe.Try("cond", () => { if (n) { return 1 } return 0 })
+        Probe.Try("conv", () => "42"!int)
+        any g = undefined
+        try { g++ } catch (ArgumentException e) { print("global caught") }
+        print("end")
+        """, new[] { "mul caught", "neg caught", "not caught", "lt caught", "inc caught", "idx caught", "cond caught", "conv caught", "global caught", "end" },
+        new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
     CheckPerf("Arithmetik: int, float, gemischt, Einheiten", """
         print(7 + 3)
@@ -6336,15 +6363,15 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(1.5 < 1.6)
         """, new[] { "10", "-3", "42", "3", "3", "3.5", "3.5", "3.75", "-1", "7mm", "6mm", "3mm", "True", "True", "False", "True", "True" });
 
-    CheckPerf("Division und Modulo durch 0 bleiben Fehler", """
+    CheckPerf("Division und Modulo durch 0 sind eine fangbare Ausnahme", """
         var zero = 0
         try { print(5 % zero) } catch (Exception e) { print("mod") }
         print("weiter")
-        """, new[] { "AUSNAHME: Attempted to divide by zero." });
+        """, new[] { "mod", "weiter" });
 
     CheckPerf("Einheiten-Konflikt bleibt ein Fehler", """
         print(1mm + 2)
-        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'unitless'." });
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'unitless'." });
 
     // --- Stack and scope slots grow
     CheckPerf("tiefe Rekursion (Stack und Frames wachsen)", """
@@ -7514,6 +7541,20 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         var msvcCmd = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["msvc"], winTarget!, "p.cpp", sfDir, "p.exe", gui: true).Arguments;
         SfCheck(gccCmd.Contains("-mwindows") && !gccConsole.Contains("-mwindows"), "nativer Build (gcc): #noconsole setzt -mwindows, sonst nicht");
         SfCheck(msvcCmd.Contains("/SUBSYSTEM:WINDOWS") && msvcCmd.Contains("/ENTRY:mainCRTStartup"), "nativer Build (msvc): #noconsole setzt /SUBSYSTEM:WINDOWS");
+        // size: executables are stripped by default; "size" is -Os with section garbage collection; strip:false keeps the symbols (debugging); libraries stay as they are
+        {
+            var gccBase = fire.Native.ToolchainDef.BuiltIn["gcc"];
+            string plain = fire.Compiler.NativeBuilder.CompilerCommand(gccBase, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string small = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Extends = "gcc", Kind = "gcc", Optimization = "size" }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string debug = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Kind = "gcc", Strip = false }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            string lib = fire.Compiler.NativeBuilder.CompilerCommand(gccBase, winTarget!, "p.cpp", sfDir, "p.dll", sharedLibrary: true).Arguments;
+            string msvcSmall = fire.Compiler.NativeBuilder.CompilerCommand(new fire.Native.ToolchainDef { Kind = "msvc", Optimization = "size" }, winTarget!, "p.cpp", sfDir, "p.exe").Arguments;
+            SfCheck(plain.Split(' ').Contains("-s") && plain.Contains("-O2") && !plain.Contains("gc-sections"), "nativer Build (gcc): ein Programm wird gestrippt (-s), -O2 bleibt");
+            SfCheck(small.Contains("-Os") && small.Contains("-ffunction-sections") && small.Contains("--gc-sections") && !small.Contains("-O2"), "nativer Build (gcc): Optimization size = -Os mit gc-sections");
+            SfCheck(!debug.Split(' ').Contains("-s"), "nativer Build (gcc): strip=false laesst die Symbole stehen");
+            SfCheck(!lib.Split(' ').Contains("-s") && !lib.Contains("gc-sections"), "nativer Build (gcc): eine Bibliothek wird nicht gestrippt");
+            SfCheck(msvcSmall.Contains("/O1") && msvcSmall.Contains("/OPT:REF"), "nativer Build (msvc): Optimization size = /O1 und /OPT:REF");
+        }
         // the native build carries version info and icon to the executable
         var nativeInfo = fire.Compiler.NativeBuilder.GenerateLinked(new[] { "#name \"Demo\"\n#author \"ACME\"\n#version \"1.2.3.4\"\n#icon \"x.ico\"\nprint(\"x\")" }, TargetProfile.Host);
         SfCheck(nativeInfo.VersionInfo != null && nativeInfo.VersionInfo.ProductVersion.ToString() == "1.2.3.4" && nativeInfo.IconPath == "x.ico", "nativer Build: Versionsinfo und Icon der Direktiven kommen beim Build an");
@@ -9222,6 +9263,48 @@ string[] uiDrawExpected = Array.Empty<string>();
         return lines;
     }
 
+    // ---- debugger: the variables have their names (globals, inner blocks, foreach), the field initialisers their line ----
+    {
+        string dbgScript = """
+            class Rod {
+                int length = Rod.Calc()
+                static int Calc() { __dbgSnap(); return 4 }
+            }
+            var first = 1
+            var r = new Rod()
+            {
+                var inner = 7
+                foreach (k in [5]) {
+                    __dbgSnap()
+                }
+            }
+            """;
+        var snaps = new List<string>();
+        foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
+        {
+            snaps.Clear();
+            var natives = new NativeRegistry();
+            natives.Register("__dbgSnap", args =>
+            {
+                var vm = VM.CurrentThreadVm!;
+                string locals = string.Join(",", vm.DebugScopeChain().SelectMany(l => l.Variables).Select(v => v.Name + "=" + v.Value));
+                string globals = string.Join(",", vm.DebugGlobals().Select(v => v.Name + "=" + v.Value));
+                snaps.Add($"[{locals}] [{globals}] line {vm.CurrentLine}");
+                return Value.MakeUndefined();
+            });
+            natives.RegisterBaseTypeNatives();
+            var dbgProgram = Parser.ParseMultiple(new[] { fire.Standard.Prelude.Source, dbgScript }.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory())).ToList());
+            var dbgResolved = Resolver.Resolve(dbgProgram, natives.Names);
+            var dbgCompiled = Compiler.Compile(dbgProgram, dbgResolved, natives);
+            var dbgVm = new VM(dbgCompiled.TopLevel, new Scope(null, isGlobal: true), natives, dbgCompiled.Classes, isMainThreadVm: true, executionMode: mode);
+            dbgVm.Run();
+            var expected = new[] { "[] [first=1] line 3", "[k=5,inner=7] [first=1,r=<object Rod>] line 10" };
+            bool ok = snaps.SequenceEqual(expected);
+            Console.WriteLine(ok ? $"OK: Debugger: Variablen mit Namen (global, innere Bloecke, foreach) [{mode}]" : $"FEHLER: Debugger: Variablen mit Namen [{mode}]\n  erwartet: {string.Join(" | ", expected)}\n  erhalten: {string.Join(" | ", snaps)}");
+            if (!ok) uiFailures++;
+        }
+    }
+
     uiDrawExpected = RunUi(uiDrawScript, VmExecutionMode.Release).ToArray();
 
     void CheckUi(string title, string script, string[] expected)
@@ -10554,10 +10637,10 @@ string[] uiDrawExpected = Array.Empty<string>();
 
         string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
         CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
-            script.Contains("class SettingsBase {") && script.Contains("Save(sender) { }") && script.Contains("new Framebuffer(200, 100)")
+            script.Contains("class SettingsBase {") && script.Contains("undefined Save(any sender) { }") && script.Contains("new Framebuffer(200, 100)")
             && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
-            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(container)") && !viewScript.Contains("Run()"));
+            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
 
         // the generated classes against the library: a window (events through the fake window) and a view (bindings)
         string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
@@ -10670,14 +10753,14 @@ string[] uiDrawExpected = Array.Empty<string>();
                   </Panel>
                 </View>
                 """);
-            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property liest nur", $$"""
+            CheckUi("Markup: Bindings auf Properties (get/set) - Setter loest aus, TwoWay schreibt ueber den Setter, berechnete Property folgt ihren Quellen", $$"""
                 #include "{{P("Prop.fxml")}}"
                 class Model {
                     int _v = 1
                     string _l = "a"
-                    Volume { get { return this._v } set { this._v = value } }
-                    Label { get { return this._l } set { this._l = value + "!" } }
-                    Summary { get { return this._l + this._v } }
+                    any Volume { get { return this._v } set { this._v = value } }
+                    string Label { get { return this._l } set { this._l = value + "!" } }
+                    string Summary { get { return this._l + this._v } }
                 }
                 var d = new Prop1Base()
                 var m = new Model()
@@ -10687,9 +10770,115 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print(d.vol.text)
                 d.ed.text = "x"
                 print(m.Label + " " + d.ed.text)
+                print(d.sum.text)
                 m.Label = "y"
                 print(d.ed.text + " " + d.sum.text)
-                """, new[] { "1 a a1", "7", "x! x", "y! a1" });
+                """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
+
+            // IntelliSense of the markup editor: `|` is the caret
+            List<string> Suggest(string withCaret)
+            {
+                int caret = withCaret.IndexOf('|');
+                var result = fire.UI.Markup.MarkupCompletion.Suggest(withCaret.Remove(caret, 1), caret);
+                return result.Items.Select(x => x.Label).ToList();
+            }
+            bool Has(List<string> list, params string[] names) => names.All(list.Contains);
+            var sRoot = Suggest("<|");
+            CheckMarkup("Markup-IntelliSense: im leeren Dokument Window und View", sRoot.SequenceEqual(new[] { "Window", "View" }), string.Join(",", sRoot));
+            var sChildren = Suggest("<Window class=\"A\">\n  <St|");
+            CheckMarkup("Markup-IntelliSense: Elemente im Fenster, gefiltert nach dem Getippten", sChildren.Count > 0 && sChildren.All(x => x.Contains("St", StringComparison.OrdinalIgnoreCase)) && Has(sChildren, "Stack", "StackPanel"), string.Join(",", sChildren));
+            var sParts = Suggest("<Window class=\"A\"><ListView><|");
+            CheckMarkup("Markup-IntelliSense: in einer Liste nur ihre Teile", sParts.SequenceEqual(new[] { "Column", "Item" }), string.Join(",", sParts));
+            var sRes = Suggest("<Window class=\"A\"><Resources><|");
+            CheckMarkup("Markup-IntelliSense: in Resources die Ressourcen", Has(sRes, "Converter", "Style", "ControlTemplate", "DataTemplate", "CollectionView") && sRes.Count == 5, string.Join(",", sRes));
+            var sClose = Suggest("<Window class=\"A\"><Stack><Label/></|");
+            CheckMarkup("Markup-IntelliSense: </ schliesst das offene Element", sClose.SequenceEqual(new[] { "Stack>" }), string.Join(",", sClose));
+            var sAttr = Suggest("<Window class=\"A\"><Button text=\"x\" |");
+            CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "name", "onClick", "margin", "Grid.Row") && !sAttr.Contains("text"), string.Join(",", sAttr));
+            var sRootAttr = Suggest("<Window |");
+            CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "class", "namespace", "namespace:prefix", "title"), string.Join(",", sRootAttr));
+            var sEnum = Suggest("<Window class=\"A\"><Label halign=\"|");
+            CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
+            var sBool = Suggest("<Window class=\"A\"><Label visible=\"f|");
+            CheckMarkup("Markup-IntelliSense: true/false, gefiltert", sBool.SequenceEqual(new[] { "false" }), string.Join(",", sBool));
+            var sStyle = Suggest("<Window class=\"A\"><Resources><Style key=\"Primary\" target=\"Button\"/><Style key=\"Big\" target=\"Label\"/></Resources><Button style=\"|");
+            CheckMarkup("Markup-IntelliSense: Schluessel der Styles", sStyle.SequenceEqual(new[] { "Primary", "Big" }), string.Join(",", sStyle));
+            var sSetter = Suggest("<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"back|");
+            CheckMarkup("Markup-IntelliSense: Setter-Eigenschaften des Style-Ziels", sSetter.SequenceEqual(new[] { "background" }), string.Join(",", sSetter));
+            var sSetterValue = Suggest("<Window class=\"A\"><Resources><Style target=\"Label\"><Setter property=\"halign\" value=\"|");
+            CheckMarkup("Markup-IntelliSense: Setter-Wert nach der Eigenschaft", Has(sSetterValue, "Left", "Center"), string.Join(",", sSetterValue));
+            var sExt = Suggest("<Window class=\"A\"><Label text=\"{B|");
+            CheckMarkup("Markup-IntelliSense: Markup-Erweiterungen, was mit dem Getippten anfaengt zuerst", sExt.SequenceEqual(new[] { "Binding", "TemplateBinding" }), string.Join(",", sExt));
+            var sConv = Suggest("<Window class=\"A\"><Resources><Converter key=\"Upper\" type=\"U\"/></Resources><Label text=\"{Binding Name, Converter=|");
+            CheckMarkup("Markup-IntelliSense: Converter einer Bindung (eigene und eingebaute)", Has(sConv, "Upper", "Not", "IsEmpty"), string.Join(",", sConv));
+            var sMode = Suggest("<Window class=\"A\"><TextBox text=\"{Binding Name, |");
+            CheckMarkup("Markup-IntelliSense: Optionen einer Bindung", Has(sMode, "Mode=", "Converter=", "ElementName="), string.Join(",", sMode));
+            var sNs = Suggest("<Window class=\"A\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"|");
+            CheckMarkup("Markup-IntelliSense: Namespace-Praefixe bei Typnamen", sNs.SequenceEqual(new[] { "local:", "m:" }), string.Join(",", sNs));
+            var sHandler = Suggest("<Window class=\"A\"><Button onClick=\"Save\"/><Button onClick=\"|");
+            CheckMarkup("Markup-IntelliSense: vorhandene Handler-Namen", sHandler.SequenceEqual(new[] { "Save" }), string.Join(",", sHandler));
+            var sComment = Suggest("<Window class=\"A\"><!-- <|");
+            CheckMarkup("Markup-IntelliSense: in einem Kommentar nichts", sComment.Count == 0, string.Join(",", sComment));
+            var sAttrItem = fire.UI.Markup.MarkupCompletion.Suggest("<Window class=\"A\"><Button ", 27).Items.First(x => x.Label == "onClick");
+            CheckMarkup("Markup-IntelliSense: ein Attribut wird mit =\"\" eingefuegt, der Cursor kommt zwischen die Anfuehrungszeichen", sAttrItem.Text == "onClick=\"\"" && sAttrItem.CaretBack == 1);
+
+            // namespaces of the markup and object values
+            string nsScript = Generate("<Window class=\"N\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"m:Upper\"/><Converter key=\"L\" type=\"local:Lower\"/></Resources>"
+                + "<Label background=\"[SolidBrush #FF0000]\" text=\"{Binding Name, Converter=U}\"/><Label color=\"{Enum m:Colors.Red}\"/></Window>");
+            CheckMarkup("Markup: Namespaces - #using, namespace-Block, Praefixe werden qualifiziert, Objektwerte",
+                nsScript.Contains("#using App.Models") && nsScript.Contains("namespace App {") && nsScript.Contains("App.Models.Upper fxConv_U") && nsScript.Contains("App.Lower fxConv_L")
+                && nsScript.Contains("new SolidBrush(UI.Color.Rgb(255, 0, 0))") && !nsScript.Contains("new SolidBrush(new SolidBrush") && nsScript.Contains("App.Models.Colors.Red"), nsScript);
+            ExpectGenerateError("unbekanntes Namespace-Praefix", "<Window class=\"A\"><Label color=\"{Enum x:Colors.Red}\"/></Window>", "Unknown namespace prefix 'x'");
+            ExpectGenerateError("Objektwert: Argument ohne Anfuehrungszeichen", "<Window class=\"A\"><Label background=\"[SolidBrush red]\"/></Window>", "is no argument value");
+            ExpectGenerateError("Objektwert: offener Text", "<Window class=\"A\"><Label background=\"[X 'a]\"/></Window>", "is not closed");
+            CheckMarkup("Markup: Objektwert - Texte in '' (zwei stehen fuer eines), verschachtelte Objekte, Zahlen mit Einheit",
+                Generate("<Window class=\"A\"><ListBox itemsSource=\"[Names 'it''s', &quot;b&quot;, [Pair 1, 2.5mm], true]\"/></Window>") is var objScript
+                && objScript.Contains("new Names(\"it's\", \"b\", new Pair(1, 2.5mm), true)"), objScript);
+            CheckMarkup("Markup: local: ohne namespace ist der Name selbst; ohne Namespace kein namespace-Block",
+                Generate("<Window class=\"A\"><Resources><Converter key=\"U\" type=\"local:Up\"/></Resources></Window>") is var localScript
+                && localScript.Contains("Up fxConv_U") && !localScript.Contains("namespace ") && !localScript.Contains("#using"), localScript);
+            File.WriteAllText(P("Ns.fxml"), """
+                <View class="NsView" namespace="Shop" namespace:m="Shop.Models" namespace:x="Shop.Extra" width="200" height="100">
+                  <Resources>
+                    <Converter key="Up" type="Upper"/>
+                    <Converter key="Ex" type="x:Shout"/>
+                  </Resources>
+                  <Stack name="box">
+                    <Label name="title" text="{Binding Name, Converter=Up}" background="[SolidBrush #102030]"/>
+                    <Label name="other" text="{Binding Name, Converter=Ex}"/>
+                    <ListBox name="names" itemsSource="[Names 'Ada', 'it''s']"/>
+                  </Stack>
+                </View>
+                """);
+            CheckUi("Markup: Namespaces - eigener Namespace, gebundene Namespaces, unqualifizierte Typnamen, Objektwerte", uiHead + $$"""
+                namespace Shop.Models {
+                    class Upper : UI.Converter { any Convert(any value) { return value.ToUpper() } }
+                    class Names : List { construct(string a, string b) { this.Add(a)
+                        this.Add(b) } }
+                }
+                namespace Shop.Extra {
+                    class Shout : UI.Converter { any Convert(any value) { return "x" + value } }
+                }
+                class Item { string Name = "fire" }
+                #include "{{P("Ns.fxml")}}"
+                class MyView : NsViewBase { }
+                var v = new MyView()
+                v.Attach(ui.content)
+                v.SetDataContext(new Item())
+                print(v.title.text + " " + v.other.text + " " + (v.title.background is of SolidBrush))
+                print(v.names.itemsSource.count + " " + v.names.itemsSource[1])
+                """, new[] { "FIRE xfire True", "2 it's" });
+            File.WriteAllText(P("Amb.fxml"), """
+                <View class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
+                  <Resources><Converter key="Up" type="Upper"/></Resources>
+                  <Label text="{Binding Name, Converter=Up}"/>
+                </View>
+                """);
+            CheckUi("Markup: Namespaces - ein Name in zwei gebundenen Namespaces muss qualifiziert werden", $$"""
+                namespace Amb.A { class Upper : UI.Converter { } }
+                namespace Amb.B { class Upper : UI.Converter { } }
+                #include "{{P("Amb.fxml")}}"
+                """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (20)" });
 
             File.WriteAllText(P("Rich.fxml"), """
                 <Window class="Rich" title="Rich" width="480" height="320">
@@ -11074,7 +11263,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         try { win.Tick() } catch (e) { print("aeusserer catch") }
         print("weiter " + (1 + 2))
         try { throw new Exception("m") } catch (e) { print("catch " + e.message) }
-        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "weiter 3", "catch m" });
+        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "weiter 3", "catch m" });
 
     CheckCb("Ein try/catch im Callback selbst faengt", cbHead + """
         var caught = 0
@@ -11102,7 +11291,7 @@ string[] uiDrawExpected = Array.Empty<string>();
             }
         }
         T.Step(win)
-        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': boom", "nach Tick", "finally" });
+        """, new[] { "CB: Unhandled exception of type 'Exception': boom", "nach Tick", "finally" });
 
     // Performance mode checks nothing: an access outside the array is a raw C# exception. The state of the VM must be right afterwards.
     CheckCb("Rohe C#-Ausnahme im Callback (Performance): Zustand wiederhergestellt, Programm laeuft weiter", cbHead + """
@@ -11152,7 +11341,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         __Keep(func () => { throw new Exception("kaputt") })
         __RunKeptOnOtherThread()
         print("weiter")
-        """, new[] { "CB: Unbehandelte Exception vom Typ 'Exception': kaputt", "weiter" });
+        """, new[] { "CB: Unhandled exception of type 'Exception': kaputt", "weiter" });
 
     Console.WriteLine(cbFailures == 0 ? "Alle Callback-Pruefungen bestanden." : $"FEHLER: {cbFailures} Callback-Pruefung(en) fehlgeschlagen.");
 }
@@ -11383,7 +11572,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         fire { g.v = 2 }
         for (var i = 0; i < 100000; i = i + 1) { }
         throw new Exception("kaputt")
-        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'Exception': kaputt" });
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'Exception': kaputt" });
 
     CheckGl("terminate in einem Thread beendet ein Hauptprogramm, das nur `sync globals` ausfuehrt", """
         fire { terminate(1) }
@@ -13088,7 +13277,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         class Item { string n
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
-        class Holder { var kept
+        class Holder { any kept
           construct() { }
           // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
           Adopt(x) { return try x.TakeTo(this) }
@@ -13103,7 +13292,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(h.AdoptNew(mine))
         print(h.AdoptNew(new Item("tmp")))
         // children of a list: the items go to the list
-        class Bag { var list
+        class Bag { any list
           construct() { this.list = new List() } }
         var items = new List()
         var a = new Item("la")
@@ -13159,7 +13348,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
         class Box { Item slot
-          items = [new Item("x0")]
+          any items = [new Item("x0")]
           Put(x) { x.TakeTo(this); print("put " + x.n) }
           destruct() { print("~box") } }
         class T {
@@ -13183,7 +13372,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         {
           var inner = new Item("inner")
           var out = new Item("out")
-          var x
+          var x = undefined
           x = take out
           box.items[0] = take inner
         }
@@ -13198,7 +13387,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckScChecked("Ein Array besitzt, was return und Takes mitnehmen", """
         class Item { string n
-          var arr
+          any arr
           construct(string n) { this.n = n }
           destruct() { print("~" + this.n) } }
         class F {
@@ -13404,7 +13593,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
             static Odd(int n) { if (n == 0) { return false } return T.Even(n - 1) }
             static MakeAdder(int n) { var k = n * 2; return x => x + k }
             static Sum(int n) { var local = [n]; if (n == 0) { return 0 } return local[0] + T.Sum(n - 1) }
-            static Locals() { var a; var b; var c = 3; return "" + a + "," + b + "," + c }
+            static Locals() { var a = undefined; var b = undefined; var c = 3; return "" + a + "," + b + "," + c }
         }
         print(T.Fib(15))
         print(T.Even(10) + " " + T.Odd(10))
@@ -13531,7 +13720,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     CheckSc("Zuweisung an eine aeussere Variable schiebt den Besitz bis in die Funktions-Scope (nicht aus der Funktion hinaus)", scHead + """
         class T {
             static Run() {
-                var keep
+                var keep = undefined
                 for (var i = 0; i < 3; i = i + 1) {
                     var a = new D("a" + i)
                     var b = new D("b" + i)
@@ -13622,7 +13811,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         """, new[] { "2500mm", "2500mm", "1500mm", "True", "True", "500mm", "550cm", "833mm" });
 
     CheckSc("Einheiten: ++ und -- zaehlen in der Einheit der Variablen (5cm++ ist 6cm), auch bei Feldern und Elementen", """
-        class P { static py = 0cm }
+        class P { static any py = 0cm }
         var i = 5.0cm
         i--
         print(i)
@@ -13686,7 +13875,21 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckSc("Einheiten: verschiedene Dimensionen bleiben ein Fehler", """
         print(5mm + 2kg)
-        """, new[] { "UNBEHANDELT: Unbehandelte Exception vom Typ 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'kg'." });
+        """, new[] { "UNBEHANDELT: Unhandled exception of type 'UnitMismatchException': Incompatible units: 'mm' cannot be converted to 'kg'." });
+
+    CheckSc("Einheiten: ':' erzwingt immer - eine andere Dimension bekommt die Zahl in der Basiseinheit (7:s, 5mm:kg), undefined nimmt jede Einheit an", """
+        var k = 7
+        print(k:s)
+        print(5mm:kg)
+        print(2km:m)
+        var u = undefined
+        print(u:s)
+        """, new[] { "7s", "0.005kg", "2000m", "undefined:s" });
+
+    CheckSc("foreach ueber einen string liefert seine Zeichen; ein Lambda mit falscher Parameterzahl ist eine fangbare ArgumentException", """
+        foreach (c in "ab") { print(c) }
+        try { lambda<int> f = (any x, any y) => x } catch (ArgumentException e) { print("caught: " + e.message) }
+        """, new[] { "a", "b", "caught: The lambda has 2 parameter(s), its declaration says 1." });
 
     Console.WriteLine(scFailures == 0 ? "Alle Scope-Pruefungen bestanden." : $"FEHLER: {scFailures} Scope-Pruefung(en) fehlgeschlagen.");
 }
@@ -13746,6 +13949,48 @@ static int CountOccurrences(string haystack, string needle)
             mdFailures++;
             Console.WriteLine($"FEHLER: {helpFile} nicht gefunden: {helpPath}");
         }
+    }
+
+    // The language reference (docs/language, copied to Help\Language): every link stays in the folder and points to an existing page and heading;
+    // its contents page gives the entries of Help > The fire Language.
+    string languageDir = Path.Combine(Path.GetDirectoryName(GetTestDataDir())!, "..", "..", "docs", "language");
+    if (Directory.Exists(languageDir))
+    {
+        HashSet<string> AnchorsOf(string file)
+        {
+            var set = new HashSet<string>();
+            foreach (var block in fire.Editor.MarkdownParser.Parse(File.ReadAllText(file)))
+                if (block is fire.Editor.MdHeading h) fire.Editor.MdAnchors.Unique(fire.Editor.MarkdownParser.PlainText(h.Content), set);
+            return set;
+        }
+        var broken = new List<string>();
+        foreach (var page in Directory.GetFiles(languageDir, "*.md").OrderBy(f => f))
+        {
+            string text = File.ReadAllText(page);
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(text, @"\]\(([^)\s]*)\)"))
+            {
+                string target = m.Groups[1].Value;
+                if (target.Contains("://")) continue;
+                int hash = target.IndexOf('#');
+                string file = hash < 0 ? target : target.Substring(0, hash), anchorName = hash < 0 ? "" : target.Substring(hash + 1);
+                string targetPath = file.Length == 0 ? page : Path.Combine(languageDir, file);
+                if (file.Contains('/') || file.Contains('\\') || !File.Exists(targetPath)) { broken.Add($"{Path.GetFileName(page)} -> {target}"); continue; }
+                if (anchorName.Length > 0 && !AnchorsOf(targetPath).Contains(anchorName)) broken.Add($"{Path.GetFileName(page)} -> {target}");
+            }
+        }
+        CheckMd("Sprachdoku: alle Links zeigen auf vorhandene Seiten und Ueberschriften im selben Ordner", string.Join(", ", broken), "");
+        var (topics, more) = fire.Editor.LanguageHelp.Contents(File.ReadAllText(Path.Combine(languageDir, "README.md")));
+        CheckMd("Sprachdoku: das Inhaltsverzeichnis liefert die Themenseiten fuers Hilfemenue",
+            $"{topics.Count} {topics[0].Title}={topics[0].File} {topics[^1].File}", "19 1. Basics=01-basics.md 19-standard-library.md");
+        CheckMd("Sprachdoku: weitere Seiten (Roadmap) nach den Themen", string.Join(",", more.Select(p => p.Title + "=" + p.File)), "Roadmap=roadmap.md");
+        var unlisted = Directory.GetFiles(languageDir, "*.md").Select(Path.GetFileName)
+            .Where(f => f != "README.md" && !topics.Concat(more).Any(t => t.File == f)).ToList();
+        CheckMd("Sprachdoku: jede Seite steht im Inhaltsverzeichnis", string.Join(",", unlisted), "");
+    }
+    else
+    {
+        mdFailures++;
+        Console.WriteLine($"FEHLER: docs/language nicht gefunden: {languageDir}");
     }
 
     Console.WriteLine(mdFailures == 0 ? "Alle Markdown-Pruefungen bestanden." : $"FEHLER: {mdFailures} Markdown-Pruefung(en) fehlgeschlagen.");
@@ -13946,6 +14191,7 @@ static int CountOccurrences(string haystack, string needle)
 ProjectTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
+TypeTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -13991,6 +14237,514 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("Laufzeitfehler: Operanden falschen Typs, Bedingungen, Index und Einheitenkonflikte sind abfangbar (gleiche Texte)", """
+            try { print(undefined * 2) } catch (ArgumentException e) { print("1 " + e.message) }
+            try { print(-"a") } catch (ArgumentException e) { print("2 " + e.message) }
+            try { var x = 5; if (x) { print("y") } } catch (ArgumentException e) { print("3 " + e.message) }
+            try { print(!5) } catch (ArgumentException e) { print("4 " + e.message) }
+            try { print("a" - 1) } catch (ArgumentException e) { print("5 " + e.message) }
+            try { print(true + 1) } catch (ArgumentException e) { print("6 " + e.message) }
+            try { print(2 ^ "x") } catch (ArgumentException e) { print("7 " + e.message) }
+            try { var u = undefined; u++ } catch (ArgumentException e) { print("8 " + e.message) }
+            try { var n = 5; print(n[0]) } catch (ArgumentException e) { print("9 " + e.message) }
+            try { print(1 < "a") } catch (ArgumentException e) { print("10 " + e.message) }
+            try { print(~2.5) } catch (ArgumentException e) { print("11 " + e.message) }
+            try { print(true && 5) } catch (ArgumentException e) { print("12 " + e.message) }
+            print("end")
+            int loops = 0
+            while (loops < 3) { loops++; try { var q = undefined; q = q * 2 } catch (ArgumentException e) { print("loop " + loops) } }
+            try { var w2 = 1; while (w2) { w2 = 0 } } catch (ArgumentException e) { print(e.message) }
+            try { var s = "abc"; s[0] = 'x' } catch (ArgumentException e) { print(e.message) }
+            try { print(1m + 1s) } catch (UnitMismatchException e) { print(e.message + " | " + e.expectedUnit + " | " + e.actualUnit) }
+            try { print(2m < 3kg) } catch (UnitMismatchException e) { print(e.message) }
+            print("end")
+            try { print(2m ^ 2s) } catch (UnitMismatchException e) { print(e.message) }
+            try { var big = 3m; if (big > 2kg) { print("no") } } catch (UnitMismatchException e) { print("gt " + e.message) }
+            try { print(1m >= 1s) } catch (UnitMismatchException e) { print("ge " + e.message) }
+            print(1m < 200cm)
+            """),
+        ("Eigene Einheiten: prefixed unit, coerce (Faktor, to, from), Ketten, Name als Einheit, Deklarationen", """
+            print(5V + 300mV)
+            print(2kV:V + " " + 1.0m:in + " " + 3ft:in + " " + 1.0mi:km)
+            float d : in = 30cm
+            print(d + " " + (10in + 1ft) + " " + (12in == 1ft) + " " + 1l:ml + " " + 2Inch)
+            float speed : kn = 10m / 1s
+            print(speed)
+            try { var bad = 3m; float v : V = bad } catch (UnitMismatchException e) { print(e.message) }
+            print(1MV:kV + " " + (5in is in m) + " " + 1W:mW)
+            prefixed unit Volt: V;
+            unit Inch: in
+            {
+                coerce from m => value / 0.0254
+                coerce to m => value * 0.0254
+            }
+            unit Foot: ft { coerce in => 12 }
+            unit Mile: mi { coerce ft => 5280 }
+            prefixed unit Liter: l { coerce m^3 => 0.001 }
+            unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
+            prefixed unit Watt: W { coerce kg*m^2/s^3 => 1 }
+            """),
+        ("Eigene Einheiten mit Offset und Umrechnungsfunktionen (auch eine, die wirft)", """
+            print(100.0C:F)
+            print(32.0F:C + " " + 0.0C:K + " " + (20C + 9F) + " " + (20.0C + 50.0F) + " " + (100C > 200F))
+            float t : C = 300K
+            print(t)
+            print(30.0dBm:W + " " + 1.0W:dBm + " " + (20.0dBm + 1.0mW) + " " + 30.0mpg:lhkm)
+            float v : dBm = 2mW
+            print(v + " " + 20C * 2 + " " + 20.0C * 2s + " " + 20.0C:unitless)
+            print(2.0dBx:mW)
+            try { print(9.0dBx:mW) } catch (ArgumentException e) { print("caught: " + e.message) }
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Fahrenheit: F { coerce C => (value - 32) * 5 / 9 }
+            prefixed unit Watt: W
+            unit DecibelMilliwatt: dBm
+            {
+                coerce to mW => 10 ^ (value / 10)
+                coerce from mW => 10 * Math.Log10(value)
+            }
+            unit MilesPerGallon: mpg
+            {
+                coerce to km/l => value * 1.609344 / 3.785411784
+                coerce from km/l => value / 1.609344 * 3.785411784
+            }
+            unit LitersPerHundredKm: lhkm { coerce to km/l => 100 / value
+                                           coerce from km/l => 100 / value }
+            class Bad { static float Boom(float x) { if (x > 5) { throw new ArgumentException("too big") }
+                                                     return x } }
+            unit Test: dBx { coerce to mW => Bad.Boom(value)
+                             coerce from mW => value }
+            """),
+        ("Typ-Analyse nativ: Ganzzahl-Ueberlauf, / und % durch -1 und 0, NaN-Vergleiche, gemischte int/float, Variablen mit wechselndem Typ", """
+            int big = 9223372036854775807
+            big = big + 1
+            int m = -9223372036854775807 - 1
+            print(big + " " + m / -1 + " " + m % -1 + " " + -7 % 3 + " " + 7 % -3 + " " + -7 / 2)
+            float nan = 0.0 / 0.0
+            print((nan < 1.0) + " " + (nan < 1) + " " + (1 < nan) + " " + (nan == nan) + " " + (nan != nan) + " " + (nan >= 1) + " " + (nan <= nan) + " " + (1 == 1.0))
+            bool t = true
+            bool u = false
+            print((t == u) + " " + (t != u) + " " + !t)
+            var x = 5
+            for (int i = 0; i < 3; i++) { x = x * 2 }
+            any y = 1
+            y = y + 0.5
+            any z = 3
+            for (int k = 0; k < 3; k++) { if (k == 1) { z = "s" } else { z = z + 1 } }
+            float f = 1
+            f += 2
+            int q = 10
+            q -= 3
+            q += 1
+            print(x + " " + y + " " + z + " " + f + " " + q + " " + -q + " " + -f + " " + 7 / 2.0 + " " + 7.5 % 2)
+            print((2 <= 2.0) + " " + (3 > 2.5) + " " + (3 >= 3.5))
+            int cnt = 0
+            while (cnt < 5 && !(cnt == 3)) { cnt++ }
+            print(cnt)
+            try {
+                int zero = 0
+                print(5 / zero)
+            } catch (Exception e) { print(e.message) }
+            try {
+                int zero2 = 0
+                print(5 % zero2)
+            } catch (Exception e) { print(e.message) }
+            float sum = 0
+            for (int j = 1; j <= 4; j++) { sum = sum + 1.0 / j }
+            print(sum)
+            print(Shape.Total(3) + " " + new Sq(2).Area() + " " + new Ci(1).Area() + " " + new Sq(3).Name())
+            class Shape { static float Total(int n) { float s = 0
+                                                      for (int i = 0; i < n; i++) { s += i * 0.5 }
+                                                      return s }
+                          float Area() { return 0.0 }
+                          string Name() { return "shape" } }
+            class Sq : Shape { float a = 0.0
+                                     construct(float x) { this.a = x }
+                                     float Area() { return this.a * this.a }
+                                     int Name() { return 4 } }
+            class Ci : Shape { float r = 0.0
+                                     construct(float x) { this.r = x }
+                                     float Area() { return 3.0 * this.r * this.r } }
+            """),
+        ("Typ-Analyse nativ: Zahlen mit Einheiten (gleiche Einheit, Faktor, Skalar, Umrechnung, Deklarationen, Offset-Einheiten)", """
+            float:m len = 0m
+            for (int i = 0; i < 10; i++) { len = len + 0.5m }
+            int:mm a = 5mm
+            a++
+            a += 3mm
+            print(len + " " + a + " " + (a + 2cm) + " " + (len + 30cm) + " " + (30cm + len))
+            float:cm c = len
+            print(c + " " + len * 2 + " " + 2 * len + " " + len / 4 + " " + len * len + " " + len / 2m + " " + -len + " " + -a)
+            print((len < 6m) + " " + (len < 600cm) + " " + (len == 5m) + " " + (len == 500cm) + " " + len % 2m + " " + a % 4mm)
+            print(len:cm + " " + len::s + " " + a:unitless + " " + 5:mm)
+            int:mm b = 1m
+            float g = 3
+            float:km k = 1500m
+            float : any m dist = 250cm
+            print(b + " " + g + " " + k + " " + dist)
+            float:m s = 0m
+            for (int j = 0; j < 5; j++) { s += 0.25m * 2 }
+            float:m x1 = 1m
+            float:m y1 = 2m
+            print(s + " " + (x1 < y1 && y1 > x1) + " " + (x1 + y1 > 2.5m))
+            float:C t = 20C
+            for (int n = 0; n < 3; n++) { t = t + 1C }
+            float:F tf = t
+            float:K tk = t
+            int:C ic = 20C
+            ic++
+            print(t + " " + t:F + " " + tf + " " + (t + 9F) + " " + (t < 25C) + " " + (t == 23C) + " " + tk + " " + ic + " " + ic:K)
+            float:m d = 1m
+            for (int r = 0; r < 4; r++) { d = d * 2 }
+            float:s tm = 2s
+            print(d + " " + (d + 10cm) + " " + d / 2 + " " + d / tm)
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Fahrenheit: F { coerce C => (value - 32) / 1.8 }
+            """),
+        ("Deklarierte Typen als Zusage: Parameter und Felder int/float/bool nehmen ihre Art oder undefined (int wird float), sonst ArgumentException; ohne Einheit deklariert heisst einheitenlos", """
+            class P { float x
+              int n
+              bool b
+              construct(float a, int k) { this.x = a
+                this.n = k }
+              float Len() { return this.x * 2 } }
+            P p = new P(3, 4)
+            print(p.x + " " + p.n + " " + p.b + " " + p.Len())
+            any s = "text"
+            try { p.n = s } catch (ArgumentException e) { print(e.message) }
+            try { p.n = 2.5 } catch (ArgumentException e) { print(e.message) }
+            p.x = 7
+            print(p.x / 2)
+            p.x = undefined
+            print(p.x)
+            try { P q = new P(s, 1) } catch (ArgumentException e) { print(e.message) }
+            try { P q2 = new P(1, 1.5) } catch (ArgumentException e) { print(e.message) }
+            P r = new P(undefined, undefined)
+            print(r.x + " " + r.n)
+            class H { static int Twice(int a) { return a * 2 }
+              static float F = 1 }
+            print(H.Twice(21))
+            try { print(H.Twice(s)) } catch (ArgumentException e) { print(e.message) }
+            any t = true
+            try { H.F = t } catch (ArgumentException e) { print(e.message) }
+            H.F = 3
+            print(H.F / 2)
+            var lam = (int v) => v + 1
+            print(lam(1))
+            try { print(lam("a")) } catch (ArgumentException e) { print(e.message) }
+            any meter = 5m
+            try { P q3 = new P(meter, 1) } catch (UnitMismatchException e) { print(e.message) }
+            try { p.x = meter } catch (UnitMismatchException e) { print(e.message) }
+            class U { float:m len = 0m
+              float : any free = 0m
+              static float Scale(float:cm v) { return v / 1cm } }
+            U u = new U()
+            u.len = 250cm
+            u.free = 3s
+            print(u.len + " " + u.free + " " + U.Scale(2m))
+            p.x = 1
+            float acc = 0.0
+            for (int i = 0; i < 5; i++) { acc += p.Len() * 0.5
+              p.x = p.x + 1 }
+            print(acc)
+            """),
+        ("Globale vor ihrer Deklaration (statischer Initialisierer): undefined, Schreiben gilt bis zur Deklaration", """
+            int g2 = 4
+            class H { static int Get() { return g2 }
+              static undefined Set(int v) { g2 = v }
+              static any s = H.Get()
+              static any t = H.Twice()
+              static int Twice() { H.Set(7)
+                return H.Get() * 2 } }
+            print(H.s)
+            print(H.t)
+            print(H.Get())
+            """),
+        ("Objekte bekannter Klasse: direkte Aufrufe (ohne Override), Felder per Index (auch geerbt), zerstoerte Objekte werfen weiter", """
+            class Animal { string name
+              int legs = 4
+              construct(string n) { this.name = n }
+              string Speak() { return "..." }
+              string Describe(string prefix = ">") { return prefix + this.name + " " + this.Speak() + " " + this.legs }
+              int Legs() { return this.legs } }
+            class Dog : Animal { construct(string n) : base(n) { }
+              string Speak() { return "Woof" } }
+            class Bird : Animal { construct(string n) : base(n) { this.legs = 2 } }
+            Animal a = new Animal("generic")
+            Dog d = new Dog("Rex")
+            Bird b = new Bird("Tweety")
+            print(a.Describe())
+            print(d.Describe("* "))
+            print(b.Describe())
+            print(a.Legs() + d.Legs() + b.Legs())
+            var x = new Dog("Max")
+            print(x.Speak() + " " + x.name + " " + x.legs)
+            x.legs = 3
+            print(x.Legs())
+            class Box { int v = 1
+              int Get() { return this.v }
+              undefined Set(int n) { this.v = n } }
+            Box bx = new Box()
+            bx.Set(41)
+            print(bx.Get() + 1)
+            try { bx.v = "s" } catch (ArgumentException e) { print(e.message) }
+            class Counter { int count = 0
+              undefined Tick() { this.count = this.count + 1 } }
+            Counter c = new Counter()
+            for (int i = 0; i < 1000; i++) { c.Tick() }
+            print(c.count)
+            class Holder { Box inner
+              construct() { this.inner = new Box() } }
+            Holder h = new Holder()
+            h.inner.Set(7)
+            print(h.inner.Get())
+            class Temp { int t = 5 }
+            Temp tmp = new Temp()
+            delete tmp
+            try { print(tmp.t) } catch (Exception e) { print("destroyed: " + e.message) }
+            try { tmp.t = 3 } catch (Exception e) { print("destroyed2: " + e.message) }
+            class Keep { Box b
+              undefined Fill() { { Box local = new Box()
+                  this.b = local }
+                print(this.b.Get()) } }
+            Keep k = new Keep()
+            try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
+            """),
+        ("Auto-Properties mit Initialwert; Probes auf Feldern bleiben (nur ein beobachtetes Objekt nimmt den Setter, die anderen schreiben per Index)", """
+            class Counter {
+                int Count { get; set; } = 5
+                string Label { get; } = "c" + 1
+                float:m Len { get; set; } = 2m
+                static int Total { get; set; } = 100
+                int plain = 1
+            }
+            var c = new Counter()
+            print(c.Count + " " + c.Label + " " + c.Len + " " + Counter.Total)
+            c.Count++
+            c.Len = 30cm
+            print(c.Count + " " + c.Len)
+            var h = probe c.plain changed { print("plain: " + old + " -> " + value) }
+            var h2 = probe c.Count changed { print("Count: " + old + " -> " + value) }
+            c.plain = 2
+            c.Count = 9
+            var d = new Counter()
+            d.plain = 7
+            print(d.plain)
+            silence c
+            c.plain = 3
+            print(c.plain)
+            """),
+        ("Parameter und Felder mit Klassentyp: undefined oder ein Objekt der Klasse (Guard), direkte Felder auch bei undefined-faehigen Objekten", """
+            class Point {
+                int x
+                int y
+                construct(int x, int y) { this.x = x; this.y = y }
+                int Sum() { return x + y }
+            }
+            class Point3 : Point {
+                int z = 7
+                construct(int x, int y) : base(x, y) { }
+            }
+            class Other { int x = 99 }
+            class Node {
+                int value
+                Node next
+                construct(int v) { value = v }
+            }
+            class Holder { static Point origin }
+            class M {
+                static int Dist(Point a, Point b) { return (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) }
+                static int SumOf(Point p) { return p.Sum() }
+                static string Describe(Point p) {
+                    if (p == undefined) return "nothing"
+                    return "(" + p.x + ", " + p.y + ")"
+                }
+                static int Walk(Node start, int times) {
+                    int sum = 0
+                    for (int i = 0; i < times; i++) {
+                        Node k = start
+                        while (k != undefined) { sum += k.value; k = k.next }
+                    }
+                    return sum
+                }
+            }
+            Point a = new Point(1, 2)
+            Point3 b = new Point3(4, 6)
+            print(M.Dist(a, b) + " " + M.SumOf(b) + " " + M.Describe(undefined) + " " + M.Describe(b))
+            any o = new Other()
+            try { print(M.Dist(a, o)) } catch (ArgumentException e) { print(e.message) }
+            any s = "text"
+            try { M.SumOf(s) } catch (ArgumentException e) { print(e.message) }
+            try { print(M.SumOf(undefined)) } catch (Exception e) { print("caught: " + e.message) }
+            try { print(M.Dist(undefined, a)) } catch (Exception e) { print("caught: " + e.message) }
+            Node head = new Node(1)
+            head.next = new Node(2)
+            head.next.next = new Node(3)
+            print(M.Walk(head, 10))
+            try { head.next = o } catch (ArgumentException e) { print(e.message) }
+            print(head.next.value)
+            head.next.next = undefined
+            print(M.Walk(head, 1) + " " + (head.next.next == undefined))
+            Holder.origin = a
+            try { Holder.origin = o } catch (ArgumentException e) { print(e.message) }
+            print(Holder.origin.y)
+            any u = undefined
+            try { print(u.x) } catch (ArgumentException e) { print(e.message) }
+            try { u.x = 3 } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Parameter und Felder mit Interface oder Typparameter (where): grob geprueft - is of, is in, IEnumerable nimmt Arrays", """
+            interface IShape { float Area() }
+            class Sq : IShape {
+                float s
+                construct(float s) { this.s = s }
+                float Area() { return s * s }
+            }
+            class Blob { float Area() { return 1.0 } }
+            class Animal { string name = "animal" }
+            class Dog : Animal { }
+            class Cage<T> where T is of Animal {
+                T inside
+                undefined Put(T a) { inside = a; try a.TakeTo(this) }
+            }
+            class Len<T> where T is in "m" {
+                T value
+            }
+            class Shapes {
+                static float Total(IShape a, IShape b) { return a.Area() + b.Area() }
+                static int Count(IEnumerable<int> xs) { int n = 0; foreach (x in xs) { n++ } return n }
+            }
+            print(Shapes.Total(new Sq(2.0), new Sq(3.0)))
+            any blob = new Blob()
+            try { print(Shapes.Total(new Sq(1.0), blob)) } catch (ArgumentException e) { print(e.message) }
+            print(Shapes.Count([1, 2, 3]))
+            var l = new List<int>()
+            l.Add(5)
+            print(Shapes.Count(l))
+            any notList = 5
+            try { Shapes.Count(notList) } catch (ArgumentException e) { print(e.message) }
+            var c = new Cage<Dog>()
+            c.Put(new Dog())
+            print(c.inside.name)
+            any str = "cat"
+            try { c.Put(str) } catch (ArgumentException e) { print(e.message) }
+            try { c.inside = str } catch (ArgumentException e) { print(e.message) }
+            var len = new Len<cm>()
+            len.value = 5cm
+            print(len.value)
+            try { len.value = 3kg } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
+            print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
+            print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))
+            print(Math.Round(2.5) + " " + Math.Round(-2.5) + " " + Math.Floor(2.7m) + " " + Math.Ceiling(2.1) + " " + Math.Round(7) + " " + Math.Sign(-4))
+            print(Math.Sin(0) + " " + Math.Cos(0) + " " + Math.Atan2(1m, 1m) * 4 + " " + Math.Log(Math.E) + " " + Math.Log10(1000) + " " + Math.Exp(0))
+            try { Math.Sqrt(2m) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sin(1m) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sqrt("x") } catch (ArgumentException e) { print(e.message) }
+            print("42".ToInt() + 1)
+            print(" -17 ".ToInt() + " " + "0xFF".ToInt() + " " + "0b101".ToInt() + " " + "1_000".ToInt() + " " + "-9223372036854775808".ToInt())
+            print("2.5".ToFloat() * 2 + " " + "1e3".ToFloat() + " " + ".5".ToFloat() + " " + "-2.5E-2".ToFloat())
+            print("abc".TryToInt() + " " + "2.5".TryToInt() + " " + "x".TryToFloat() + " " + "9223372036854775808".TryToInt())
+            try { "12a".ToInt() } catch (ArgumentException e) { print(e.message) }
+            try { "".ToFloat() } catch (ArgumentException e) { print(e.message) }
+            print("apple".CompareTo("banana") + " " + "b".CompareTo("a") + " " + "x".CompareTo("x") + " " + "ab".CompareTo("abc"))
+            print(("abc" < "abd") + " " + ("Z" < "a") + " " + ("b" >= "b"))
+            print(", ".Join([1, 2.5, 'c', "d"]))
+            var names = new List<string>()
+            names.Add("Ada")
+            names.Add("Grace")
+            print(" & ".Join(names) + "|" + "-".Join([]) + "|")
+            var sb = new StringBuilder()
+            for (int i = 0; i < 5; i++) { sb.Append(i) }
+            sb.AppendLine("!")
+            sb.Append(2.5m)
+            print(sb.ToString())
+            print(sb.Length)
+            sb.Clear()
+            print(sb.Length + sb.ToString())
+            """),
+        ("Sprache: ?:, do-while, break N, case-Listen, Ziffern-Trenner, Lambda-Felder, on, Enum-Namen, m/s, Bitbreiten", """
+            int a = 5
+            print(a > 3 ? "big" : "small")
+            print((a > 3 ? 2m : 3m) + 1cm)
+            int i = 0
+            do { i++; if (i == 2) continue; print("do " + i) } while (i < 4)
+            for (int x = 0; x < 3; x++) { for (int y = 0; y < 3; y++) { if (y == 1) continue 2; if (x == 2) break 2; print(x + "," + y) } }
+            int w = 0
+            while (true) { foreach (k in [1, 2, 3]) { w += k; if (k == 2) { break 2 } } }
+            print(w)
+            foreach (n in [5, 9, -3]) { switch (n) { case 5, 6: print("five-six"); case < 0, > 100: print("out"); case default: print("other") } }
+            print(1_000_000)
+            class Button { lambda onClick; construct(lambda f) { this.onClick = f } undefined Click() { this.onClick(); onClick() } }
+            var b = new Button(() => print("clicked"))
+            b.Click()
+            b.onClick()
+            class Counter { int n = 0; string label; construct(string l) { label = l } }
+            var c1 = new Counter("one")
+            var c2 = new Counter("two")
+            var inc = func () on c1 => { n++; print(label + " " + n) }
+            inc()
+            var inc2 = inc on c2
+            inc2()
+            inc()
+            try { var bad = 5 on c1 } catch (ArgumentException e) { print(e.message) }
+            enum Color { Red, Green = 5, Blue }
+            print(Color.Name(Color.Green) + " " + Color.Name(6) + " " + Color.Name(42) + " " + Color.Parse("Blue") + " " + Color.IsDefined(1))
+            try { print(Color.Parse("Pink")) } catch (ArgumentException e) { print(e.message) }
+            float speed : m/s = 36km / 1h
+            print(speed)
+            float acc : m/s^2 = 9.81m / 1s / 1s
+            print(acc)
+            int[8] small = 300
+            print(small)
+            small = 200
+            small++
+            print(small)
+            byte bt = 300
+            print(bt)
+            class Reg { int[8] v = 0; undefined Set(int x) { v = x } }
+            var r = new Reg()
+            r.Set(511)
+            print(r.v)
+            class Calc { static int Narrow(int[16] x) { return x } }
+            print(Calc.Narrow(70000))
+            float[32] f = 0.1
+            print(f)
+            """),
+        ("! wandelt nach char und Bitbreiten und castet Objekte", """
+            interface IAnimal { string Name() }
+            class Dog : IAnimal {
+                string Name() { return "Rex" }
+                string Bark() { return "Woof" }
+            }
+            class Cat : IAnimal { string Name() { return "Tom" } }
+            IAnimal a = new Dog()
+            print(a!Dog.Bark())
+            IAnimal c = new Cat()
+            try { print(c!Dog.Bark()) } catch (ArgumentException e) { print(e.message) }
+            IAnimal u = undefined
+            print(u!Dog)
+            print(65!char)
+            print('b'!int)
+            print(66.4!char)
+            print(300!int[8])
+            print(200!int[8])
+            print(300!byte)
+            print((-1)!byte)
+            print(70000!int[16])
+            print(5000000000!int[32])
+            print(0.1!float[32])
+            try { print("42"!int) } catch (ArgumentException e) { print("caught") }
+            try { print(5!Dog) } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("':' erzwingt Einheiten, foreach ueber string, ArgumentException", """
+            var k = 7
+            print(k:s)
+            print(5mm:kg)
+            foreach (c in "ab") { print(c) }
+            try { lambda<int> f = (any x, any y) => x } catch (ArgumentException e) { print("caught: " + e.message) }
+            """),
         ("Ganzzahl-Arithmetik und Bit-Operationen", """
             print(7 / 2)
             print(-7 / 2)
@@ -15593,7 +16347,7 @@ else
             class Animal { }
             class Dog : Animal { }
             class Sq : Shape { }
-            class Holder { Animal pet; Holder inner
+            class Holder { Animal pet; Holder2 inner
                 construct() { this.pet = new Dog(); this.inner = new Holder2() } }
             class Holder2 { Animal pet
                 construct() { this.pet = new Animal() } }
@@ -15976,6 +16730,16 @@ else
     // Fire threads (THREADING_DESIGN): only programs whose output does not depend on how the threads interleave
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
+        ("Ganzzahl-Division und Modulo durch 0 sind eine fangbare DivideByZeroException, Float-Division gibt Infinity/NaN", """
+            int z = 0
+            try { print(7 / z) } catch (DivideByZeroException e) { print("div: " + e.message) }
+            try { print(7 % z) } catch (DivideByZeroException e) { print("mod: " + e.message) }
+            try { print(7m / z) } catch (DivideByZeroException e) { print("unit div") }
+            float f = 0.0
+            print(1.0 / f)
+            print(-1.0 / f)
+            print(7 / 2)
+            """),
         ("Threads: leave im Hauptprogramm wartet auf Fire-Threads, dann werden die Globals zerstoert", """
             class Item {
                 int n
@@ -16268,7 +17032,7 @@ else
             }
             class Inv {
                 int gold
-                var items
+                any items
                 Item best
                 construct() { this.gold = 0; this.items = [1, 2]; this.best = new Item(1) }
             }
@@ -16706,9 +17470,134 @@ else
             IO.Directory.Delete(dir, true)
             print(IO.Directory.Exists(dir))
             """),
+        ("Aufruffehler: falsche Argumentzahl (Methode, Konstruktor, Lambda) als ArgumentException, unbekannte Methode/Feld als MissingMemberException", """
+            #lax
+            class P {
+                int x
+                construct(int x) { this.x = x }
+                int M(int a, int b = 2) { return a + b }
+            }
+            class Q { undefined Run(any p) { p.Nope(1) } }
+            any p = new P(1)
+            try { p.M() } catch (ArgumentException e) { print("arg: " + e.message) }
+            try { p.M(1, 2, 3) } catch (ArgumentException e) { print("arg3: " + e.message) }
+            try { p.Nope() } catch (MissingMemberException e) { print("missing: " + e.message) }
+            try { print(p.y) } catch (MissingMemberException e) { print("field: " + e.message) }
+            any f = (any a, any b) => a + b
+            try { f(1) } catch (ArgumentException e) { print("lambda: " + e.message) }
+            try { any q = new P() } catch (ArgumentException e) { print("ctor: " + e.message) }
+            any s = "abc"
+            try { print(s.Foo) } catch (MissingMemberException e) { print("str: " + e.message) }
+            try { new Q().Run(p) } catch (Exception e) { print("nested: " + e.message) }
+            print(p.M(5))
+            """),
+        ("Probes auf berechnete Properties: der Getter wird bei einer Aenderung seiner Quellen neu ausgewertet (auch ueber andere Getter und Methoden), changing ist ein Fehler", """
+            class Person {
+                string first = "Ada"
+                string last = "Lovelace"
+                int age = 36
+                string Name { get { return first + " " + this.last } }
+                string Summary { get { return this.Name + " (" + this.Describe() + ")" } }
+                string Describe() { return "" + age }
+                int Age { get { return this.age } set { this.age = value } }
+            }
+            var p = new Person()
+            probe p.Summary changed { print("summary: " + old + " -> " + value) }
+            probe p.Name changed (o, n) => print("name: " + o + " -> " + n)
+            p.first = "Augusta"
+            p.last = "Lovelace"
+            p.Age = 37
+            p.age = 37
+            try { probe p.Name changing (o, n) => true } catch (ArgumentException e) { print("err: " + e.message) }
+            try { probe p.Nope changed (v) => 1 } catch (MissingMemberException e) { print("missing: " + e.message) }
+            silence p.Summary
+            p.first = "Ada"
+            print(p.Name)
+            """),
+        ("Probes auf berechnete Properties: wirft der Getter beim Registrieren, ist das abfangbar und es bleibt keine Probe zurueck (probe und Reflect.Probe)", """
+            #import "reflection"
+            class Rod {
+                int length = 2
+                int Inv { get { return 10 / (this.length - 2) } }
+            }
+            var r = new Rod()
+            try { var h = probe r.Inv changed (any o, any n) => { print("inv " + n) } } catch (e) { print("probe: " + e.message) }
+            try { Reflect.Probe(r, "Inv", "changed", (any o, any n) => { print("reflect " + n) }) } catch (e) { print("reflect: " + e.message) }
+            r.length = 7
+            var h2 = probe r.Inv changed (any o, any n) => { print("inv " + n) }
+            r.length = 12
+            try { r.length = 2 } catch (e) { print("write: " + e.message) }
+            print("end " + r.length)
+            """),
+        ("Einheiten: Deklarationen rechnen in ihre Einheit um (Variablen, Felder, Parameter, any m, Rueckgabe am Typ, Einheit aus der Initialisierung), Overflow, unitless-Pruefung zur Laufzeit", """
+            int i0 = 5mm
+            i0 = 3cm
+            print(i0)
+            float f0 = 3
+            print(f0 / 2)
+            class R { static float : mm Half(float:m x) { return x / 2 } }
+            print(R.Half(3m))
+            int a : mm = 2m
+            print(a)
+            a = 3cm
+            print(a)
+            try { a = 2kg } catch (UnitMismatchException e) { print("mismatch: " + e.message) }
+            float b : km = 1500m
+            print(b)
+            class Box { float w : mm
+                construct() { this.w = 1cm }
+                undefined Set(float v : mm) { this.w = v; print(v) }
+                float Len : m { get { return this.w } set { this.w = value } }
+            }
+            var bx = new Box()
+            print(bx.w)
+            bx.Set(2cm)
+            bx.w = 0.5m
+            print(bx.w)
+            print(bx.Len)
+            bx.Len = 3cm
+            print(bx.w)
+            float len : any m = 3km
+            print(len)
+            try { float bad : any m = 3s } catch (UnitMismatchException e) { print("dim: " + e.message) }
+            try { int big : nm = 900000000000km } catch (OverflowException e) { print("overflow") }
+            int g : cm = 2cm
+            print(g)
+            class P { any v
+                construct(any v) { this.v = v }
+                int Get() { return this.v }
+            }
+            var p = new P(5mm)
+            var q = new P(7)
+            int ok = q.v
+            print(ok)
+            int n = p.v
+            print(n)
+            int u = 5
+            try { u = p.v } catch (UnitMismatchException e) { print("caught: " + e.message) }
+            try { int g2 = p.Get() } catch (UnitMismatchException e) { print("caught2: " + e.message) }
+            """),
     }).ToArray();
 
     // Graphics (bridges/fire_bridge_graphics.hpp)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Vergleiche: == mit Einheiten und int/float, Zeichen mit <, Fehler als ArgumentException", """
+            print(1m == 100cm)
+            print(1m == 1cm)
+            print(1000mm != 1m)
+            print(1 == 1.0)
+            print(2.5 == 2)
+            var a = 1m
+            var b = 100cm
+            if (a == b) { print("same length") }
+            print('a' < 'b')
+            print('z' <= 'a')
+            print("abc" == "abc")
+            try { print("a" < "b") } catch (ArgumentException e) { print("caught: " + e.message) }
+            try { print("42"!int) } catch (ArgumentException e) { print("caught: " + e.message) }
+            """),
+    }).ToArray();
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Besitz: ein `new` als Argument gehoert dem aufgerufenen Scope (list.Add(new X()) behaelt es per try TakeTo)", """
@@ -17120,7 +18009,7 @@ else
             class Item { string n
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
-            class Holder { var kept
+            class Holder { any kept
               construct() { }
               // x is the result of a call passed straight on: it belongs to this method's scope, so the Holder may take it
               Adopt(x) { return try x.TakeTo(this) }
@@ -17135,7 +18024,7 @@ else
             print(h.AdoptNew(mine))
             print(h.AdoptNew(new Item("tmp")))
             // children of a list: the items go to the list
-            class Bag { var list
+            class Bag { any list
               construct() { this.list = new List() } }
             var items = new List()
             var a = new Item("la")
@@ -17194,7 +18083,7 @@ else
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class Box { Item slot
-              items = [new Item("x0")]
+              any items = [new Item("x0")]
               Put(x) { x.TakeTo(this); print("put " + x.n) }
               destruct() { print("~box") } }
             class T {
@@ -17218,7 +18107,7 @@ else
             {
               var inner = new Item("inner")
               var out = new Item("out")
-              var x
+              var x = undefined
               x = take out
               box.items[0] = take inner
             }
@@ -17247,7 +18136,7 @@ else
                 print("filled")
               }
             }
-            var h
+            var h = undefined
             {
               var it = new Item("i1")
               h = new Holder(take it)
@@ -17289,7 +18178,7 @@ else
             """),
         ("Besitz: Takes.Locals ueber den Methoden-Verteiler", """
             class Item { string n
-              var child
+              any child
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class Fake { TakeTo(a, b) { print("fake") } }
@@ -17312,7 +18201,7 @@ else
             """),
         ("Besitz: Ein Array besitzt, was return und Takes mitnehmen", """
             class Item { string n
-              var arr
+              any arr
               construct(string n) { this.n = n }
               destruct() { print("~" + this.n) } }
             class F {
@@ -19434,13 +20323,13 @@ else
                 string abiVm;
                 try { abiVm = vmOutput(abiScript); } catch (Exception ex) { abiVm = ex.Message; }
                 string abiFail;
-                try { vmOutput("#import \"pkabi\"\nPkAbi.Fail(7)"); abiFail = ""; } catch (Exception ex) { abiFail = ex.Message; }
+                try { abiFail = vmOutput("#import \"pkabi\"\ntry { PkAbi.Fail(7) } catch (IndexOutOfBoundsException e) { print(\"caught: \" + e.message) }"); } catch (Exception ex) { abiFail = ex.Message; }
                 CheckNat("Paket: Zahlen, Text (UTF-16), Arrays und Byte-Puffer gehen ueber die C-ABI hin und zurueck",
                     abiVm == "HELLO W\u00f6RLD\n6.5\n2 3 0 255\n", abiVm);
                 string fillVm;
                 try { fillVm = vmOutput("#import \"pkabi\"\nvar big = new byte[1000000]\nprint(PkAbi.Fill(big, 7))\nprint(big[0] + \" \" + big[500000] + \" \" + big[999999])\nvar small = new byte[4]\nPkAbi.Fill(small, 9)\nprint(small[3])"); } catch (Exception ex) { fillVm = ex.Message; }
                 CheckNat("Paket: ein Byte-Puffer geht ohne Kopie an die Native (in place beschrieben, auch ein grosser wie ein Framebuffer)", fillVm == "1000000\n7 7 7\n9\n", fillVm);
-                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) meldet die VM mit seinem Text", abiFail.Contains("Array index 7 out of range"), abiFail);
+                CheckNat("Paket: ein Fehler der Native (hier IndexOutOfBounds) wird eine abfangbare Ausnahme seiner Klasse mit seinem Text", abiFail.StartsWith("caught: ") && abiFail.Contains("Array index 7 out of range"), abiFail);
 
                 // per platform: sources of the target are added; the VM uses those of this machine
                 string whichFpk = fire.Package.Manager.Fpk.Forge(MakeForge("pkwhich", "1.0.0", "pkwhich", "class PkWhich { static Which() { return __pk_which() } }", "namespace fire { }\n", m =>

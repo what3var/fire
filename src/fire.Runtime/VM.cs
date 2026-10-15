@@ -14,6 +14,21 @@ namespace fire.Runtime
     /// where the call took place. ConstructedInstance is only set for NewObject/
     /// NewObjectOwned: there RETURN should not push the (discarded)
     /// return value of the constructor, but the newly created instance.</summary>
+    /// <summary>An error found inside an instruction that the script can catch (a call with the wrong number of arguments: `ArgumentException`, a member that
+    /// does not exist: `MissingMemberException`). Thrown where it is found, turned into the script exception by the execution loop (VM.RaiseScriptError).</summary>
+    public sealed class ScriptErrorException : InvalidOperationException
+    {
+        public string ClassName { get; }
+        /// <summary>An exception object that already exists (thrown by a conversion function of a unit): it is thrown as it is.</summary>
+        public ObjectInstance? Instance { get; }
+        public ScriptErrorException(string className, string message) : base(message) { ClassName = className; }
+        public ScriptErrorException(ObjectInstance instance) : base(instance.Fields.TryGetValue("message", out var m) ? m.ToString() : instance.ClassName)
+        {
+            ClassName = instance.ClassName;
+            Instance = instance;
+        }
+    }
+
     internal readonly struct CallFrame
     {
         public readonly Chunk ReturnChunk;
@@ -277,6 +292,32 @@ namespace fire.Runtime
 
         public static VM? CurrentThreadVm => _currentThreadVm;
 
+        // A unit with conversion functions (`coerce to W => ...`) converts by calling them on the VM of the calling thread.
+        static VM()
+        {
+            Unit.ConverterCall = (className, method, value) =>
+                (_currentThreadVm ?? throw new InvalidOperationException("A unit with conversion functions can only be converted while the program runs."))
+                    .CallUnitConverter(className, method, value);
+        }
+
+        /// <summary>Calls a conversion function of a unit (`coerce to`/`coerce from`) nested on this VM, like a getter or setter: in the middle of the
+        /// instruction that converts, with the globals of the program. An exception in it is thrown where the conversion happened.</summary>
+        private double CallUnitConverter(string className, string method, double value)
+        {
+            if (!_classes.TryGetValue(className, out var rc) || rc.FindMethodWithAccess(method, 1).Proto is not { } proto)
+                throw new InvalidOperationException($"The conversion function '{className}.{method}' of a unit is missing.");
+            string symbol = className.StartsWith("__unit_", StringComparison.Ordinal) ? className.Substring(7) : className;
+            var error = CallInline(new LambdaValue(proto, null), new[] { Value.MakeFloat(value) }, out var result);
+            if (error != null) throw new ScriptErrorException(error);
+            if (_stopExecutionRequested) return double.NaN;   // (`leave`/`terminate` in the conversion: the program ends right after the instruction)
+            return result.Kind switch
+            {
+                ValueKind.Int => result.AsInt(),
+                ValueKind.Float => result.AsFloat(),
+                _ => throw new InvalidOperationException($"The conversion of '{symbol}' must give a number, not a value of type '{result.Kind}'."),
+            };
+        }
+
         /// <summary>Marks EXACTLY one VM instance in the whole program as "the"
         /// main-thread instance - basis for `catch threads(...)`/`catch
         /// terminate(v)` (docs/THREADING_DESIGN.md 6.2/6.3), which according to the design
@@ -299,8 +340,7 @@ namespace fire.Runtime
 
         /// <summary>A script `throw` for which no matching `catch` was found in THIS VM instance -
         /// set instead of thrown (see ThrowException, last branch): deliberately NO C# exception any more
-        /// beyond the Run() call site (see docs/PORTING.md,
-        /// section "VM-internal control flow") - in a C++ version
+        /// beyond the Run() call site (VM-internal control flow uses no exceptions) - in a C++ version
         /// without exceptions (usual on embedded targets) there would be no
         /// equivalent for it anyway. Run() returns quite normally in this case
         /// (see CheckShutdownSignals/_stopExecutionRequested);
@@ -552,7 +592,11 @@ namespace fire.Runtime
         {
             var broker = _ownerBroker!;
             broker.Lock.Enter();
-            try { _globalScope.DefineSlot(value); }
+            try
+            {
+                int slot = _globalScope.DefineSlot(value);
+                if (ExecutionMode != VmExecutionMode.Performance && _currentChunk.DeclaredNameAt(_ip - 1) is { } name) _globalScope.SetDebugName(slot, name);
+            }
             finally { broker.Lock.Exit(); }
         }
 
@@ -679,6 +723,7 @@ namespace fire.Runtime
         {
             _currentChunk = chunk;
             _globalScope = globalScope;
+            globalScope.EarlyAccess = true;   // (a global used before its declaration: see Scope.EarlyAccess)
             _natives = natives;
             _classes = classes ?? new Dictionary<string, RuntimeClass>();
             _externs = externs ?? new ExternRegistry();
@@ -711,7 +756,7 @@ namespace fire.Runtime
         // counter `s_signalEpoch`, every VM remembers the last seen state (`_seenEpoch`) - only on a
         // deviation does the actual check run (CheckShutdownSignals).
         //
-        // ENDING is deliberately not a C# exception (docs/PORTING.md, "VM-internal control flow": in a C++ version
+        // ENDING is deliberately not a C# exception (VM-internal control flow uses no exceptions: in a C++ version
         // without exceptions there would be no equivalent for it), but a pure state switch like the jump into a
         // `catch`: StopExecution() sets chunk/ip to a chunk consisting only of `Halt` - Run() reads
         // this `Halt` next and returns, without any instruction having to query a stop flag.
@@ -840,7 +885,17 @@ namespace fire.Runtime
         private void RunLoop()
         {
             _ip = 0;
+            // (the try is outside the hot loop: an error inside an instruction leaves it, becomes a script exception and the loop goes on)
+            while (true)
+            {
+                try { RunLoopCore(); return; }
+                catch (ScriptErrorException error) { RaiseScriptError(error); }
+                catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); }
+            }
+        }
 
+        private void RunLoopCore()
+        {
             while (true)
             {
                 var op = (OpCode)ReadByte();
@@ -1062,8 +1117,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(actor.ClassName);
             var proto = rc.FindMethod(message.MethodName, message.Args.Length)
-                ?? throw new InvalidOperationException(
-                    DescribeMethodNotFound(rc, message.MethodName, message.Args.Length));
+                ?? throw MethodNotFound(rc, message.MethodName, message.Args.Length);
             CheckArity(proto, message.Args.Length);
             var args = FillDefaultArgs(proto, message.Args, actor);
 
@@ -1353,6 +1407,31 @@ namespace fire.Runtime
         /// separately. Names reliable only for parameters of the top-
         /// level (see Chunk.DebugLocalNames comment), everything else
         /// as "(local N)".</summary>
+        /// <summary>Gives the slot just made by `DeclareLocal` (the instruction before `_ip`) the name of its variable, for the debugger.</summary>
+        private void NameDeclaredSlot(int slot)
+        {
+            if (_currentChunk.DeclaredNameAt(_ip - 1) is { } name) _currentScope.SetDebugName(slot, name);
+        }
+
+        /// <summary>`value!type`: a conversion that `!` cannot do (only int and float convert into each other) is a catchable `ArgumentException`.</summary>
+        private static Value CoerceWidthChecked(Value value, int bits, bool toFloat, bool unsigned)
+        {
+            try { return value.ConvertWidth(bits, toFloat, unsigned); }
+            catch (InvalidOperationException ex) when (ex is not ScriptErrorException)
+            {
+                throw new ScriptErrorException("ArgumentException", ex.Message);
+            }
+        }
+
+        private static Value CoerceTypeChecked(Value value, ValueKind kind)
+        {
+            try { return value.CoerceType(kind); }
+            catch (InvalidOperationException ex) when (ex is not ScriptErrorException)
+            {
+                throw new ScriptErrorException("ArgumentException", ex.Message);
+            }
+        }
+
         public IReadOnlyList<ScopeLevel> DebugScopeChain()
         {
             var result = new List<ScopeLevel>();
@@ -1364,9 +1443,8 @@ namespace fire.Runtime
                 var vars = new List<(string, Value)>();
                 for (int slot = 0; slot < scope.SlotCount; slot++)
                 {
-                    string name = isFunctionTopLevel && _currentChunk.DebugLocalNames.TryGetValue((0, slot), out var n)
-                        ? n
-                        : $"(local {slot})";
+                    string name = scope.DebugNameOf(slot)
+                        ?? (isFunctionTopLevel && _currentChunk.DebugLocalNames.TryGetValue((0, slot), out var n) ? n : $"(local {slot})");
                     vars.Add((name, scope.GetSlot(slot)));
                 }
                 result.Add(new ScopeLevel(depth, isFunctionTopLevel, vars));
@@ -1384,7 +1462,7 @@ namespace fire.Runtime
         public IEnumerable<(string Name, Value Value)> DebugGlobals()
         {
             for (int slot = 0; slot < _globalScope.SlotCount; slot++)
-                yield return ($"(global {slot})", _globalScope.GetSlot(slot));
+                yield return (_globalScope.DebugNameOf(slot) ?? $"(global {slot})", _globalScope.GetSlot(slot));
         }
 
         /// <summary>Executes instructions until the call stack has fallen below
@@ -1406,6 +1484,16 @@ namespace fire.Runtime
         }
 
         private void RunNestedLoop(int targetFrameDepth)
+        {
+            while (true)
+            {
+                try { RunNestedLoopCore(targetFrameDepth); return; }
+                catch (ScriptErrorException error) { RaiseScriptError(error); if (_stopExecutionRequested) return; }
+                catch (InvalidOperationException error) when (IsCatchableRuntimeError(error)) { RaiseScriptError(new ScriptErrorException("ArgumentException", error.Message)); if (_stopExecutionRequested) return; }
+            }
+        }
+
+        private void RunNestedLoopCore(int targetFrameDepth)
         {
             while (_frames.Count >= targetFrameDepth)
             {
@@ -1527,7 +1615,10 @@ namespace fire.Runtime
 
                 case OpCode.DeclareLocal:
                     if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) { DeclareOwnerGlobal(Pop()); return; }
-                    _currentScope.DefineSlot(Pop());
+                    {
+                        int declared = _currentScope.DefineSlot(Pop());
+                        if (ExecutionMode != VmExecutionMode.Performance) NameDeclaredSlot(declared);
+                    }
                     return;
 
                 // Binary operators: the left operand lies at _sp-2, the right at _sp-1; the result
@@ -1547,20 +1638,20 @@ namespace fire.Runtime
                     break;
                 case OpCode.Mul:
                     if (Value.TryMultiplyInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Multiply(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Multiply); return; }
                     break;
                 case OpCode.Div:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.Divide(_stack[_sp - 2], _stack[_sp - 1])); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Divide); return; }
                     break;
                 case OpCode.Mod:
                     if (Value.TryModuloInPlace(ref _stack[_sp - 2], in _stack[_sp - 1])) { _sp--; return; }
                     if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoGuarded(Value.Modulo); return; }
                     break;
                 case OpCode.Eq:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); return; }
                     break;
                 case OpCode.NotEq:
-                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]))); return; }
+                    if (_stack[_sp - 2].Kind != ValueKind.Class) { ReplaceTwoWith(Value.MakeBool(!Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]))); return; }
                     break;
                 case OpCode.Lt:
                     if (Value.TryCompareInPlace(ref _stack[_sp - 2], in _stack[_sp - 1], 0)) { _sp--; return; }
@@ -1684,10 +1775,12 @@ namespace fire.Runtime
                     return;
 
                 case OpCode.Neg:
-                    _stack[_sp - 1] = Value.Negate(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind is ValueKind.Int or ValueKind.Float) _stack[_sp - 1] = Value.Negate(_stack[_sp - 1]);
+                    else ReplaceOneGuarded(Value.Negate);
                     return;
                 case OpCode.LogicalNot:
-                    _stack[_sp - 1] = Value.LogicalNot(_stack[_sp - 1]);
+                    if (_stack[_sp - 1].Kind == ValueKind.Bool) _stack[_sp - 1] = Value.LogicalNot(_stack[_sp - 1]);
+                    else ReplaceOneGuarded(Value.LogicalNot);
                     return;
 
                 case OpCode.Jump:
@@ -1703,13 +1796,16 @@ namespace fire.Runtime
                 case OpCode.JumpIfFalse:
                 {
                     int addr = ReadU16();
-                    if (!Pop().AsBool()) _ip = addr;
+                    var condition = Pop();
+                    if (condition.Kind != ValueKind.Bool) { ThrowConditionError(condition); return; }
+                    if (!condition.AsBool()) _ip = addr;
                     return;
                 }
 
                 case OpCode.JumpIfFalsePeek:
                 {
                     int addr = ReadU16();
+                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); return; }
                     if (!_stack[_sp - 1].AsBool()) _ip = addr;
                     return;
                 }
@@ -1717,6 +1813,7 @@ namespace fire.Runtime
                 case OpCode.JumpIfTruePeek:
                 {
                     int addr = ReadU16();
+                    if (_stack[_sp - 1].Kind != ValueKind.Bool) { ThrowConditionError(_stack[_sp - 1]); return; }
                     if (_stack[_sp - 1].AsBool()) _ip = addr;
                     return;
                 }
@@ -1766,7 +1863,10 @@ namespace fire.Runtime
                     if (!Value.TryCompareFast(in _stack[_sp - 2], in _stack[_sp - 1], kind, out result))
                     {
                         // Fast path does not apply (different unit/kind, object with operator overloading ...): the ordinary comparison
+                        int ipAfter = _ip;
+                        var chunkBefore = _currentChunk;
                         ExecuteCompareSlow(kind switch { 0 => OpCode.Lt, 1 => OpCode.LtEq, 2 => OpCode.Gt, _ => OpCode.GtEq });
+                        if (_ip != ipAfter || !ReferenceEquals(_currentChunk, chunkBefore)) return;   // it threw (`1m < 1s`): the handler already continues
                         result = _stack[--_sp].AsBool();
                     }
                     else _sp -= 2;
@@ -1781,7 +1881,7 @@ namespace fire.Runtime
                     bool equal;
                     if (_stack[_sp - 2].Kind != ValueKind.Class)
                     {
-                        equal = Value.ValuesEqual(_stack[_sp - 2], _stack[_sp - 1]);
+                        equal = Value.OperatorEquals(_stack[_sp - 2], _stack[_sp - 1]);
                         _sp -= 2;
                     }
                     else
@@ -2325,7 +2425,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
             {
@@ -2356,7 +2456,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
             {
@@ -2384,7 +2484,7 @@ namespace fire.Runtime
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             args = FillDefaultArgs(ctorProto, args, _currentThis);
 
             // The same instance continues to be constructed - 'this' stays
@@ -2444,7 +2544,7 @@ namespace fire.Runtime
                     Push(Value.MakeInt(target.AsString().Length));
                     return true;
                 }
-                throw new InvalidOperationException($"Strings have no field '{fieldName}' (only 'Length').");
+                throw new ScriptErrorException("MissingMemberException", $"Strings have no field '{fieldName}' (only 'Length').");
             }
 
             if (target.Kind == ValueKind.Array)
@@ -2455,7 +2555,7 @@ namespace fire.Runtime
                     Push(Value.MakeInt(target.AsArray().Length));
                     return true;
                 }
-                throw new InvalidOperationException($"Arrays have no field '{fieldName}' (only 'Length').");
+                throw new ScriptErrorException("MissingMemberException", $"Arrays have no field '{fieldName}' (only 'Length').");
             }
 
             if (target.Kind == ValueKind.Buffer)
@@ -2476,7 +2576,7 @@ namespace fire.Runtime
                     $"Byte buffers have no field '{fieldName}' (only 'Length', 'littleEndian').");
             }
 
-            var obj = RequireObjectInstance(target, "Feldzugriff");
+            var obj = RequireObjectInstance(target, "Field access");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
             if (obj.TryGetFieldLocked(fieldName, out var val))
             {
@@ -2510,7 +2610,7 @@ namespace fire.Runtime
                 return result != null;
             }
 
-            throw new InvalidOperationException(
+            throw new ScriptErrorException("MissingMemberException",
                 $"Field '{fieldName}' does not exist on an instance of '{obj.ClassName}' " +
                 $"(and there is no 'get_{fieldName}' property either).");
         }
@@ -2527,7 +2627,9 @@ namespace fire.Runtime
                 && LookupSite(site) is { } fieldEntry
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, fieldEntry.Class)
-                && cachedObj.AccessGuard == null)
+                && cachedObj.AccessGuard == null
+                && DeclaredKind.Fits(_stack[_sp - 1], fieldEntry.RequiredKind)
+                && DeclaredType.Fits(_stack[_sp - 1], fieldEntry.RequiredType))
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
@@ -2572,7 +2674,7 @@ namespace fire.Runtime
         {
         {
             var value = Pop();
-            var obj = RequireObjectInstance(Pop(), "Feldzuweisung");
+            var obj = RequireObjectInstance(Pop(), "Field assignment");
             if (IsDeadObject(obj)) { ThrowDestroyedObject(obj); return false; }
 
             if (obj.HasFieldLocked(fieldName))
@@ -2589,29 +2691,21 @@ namespace fire.Runtime
                         return false;
                     }
 
-                    // SPEC "Unit declarations" - field access is
-                    // fundamentally dynamic (the actual class
-                    // is only known here, at runtime), therefore
-                    // unlike with local/global variables NO
-                    // compile-time check is possible (see Compiler.
-                    // CompileClassBody comment) - the check itself
-                    // is however identical in content to OpCode.CheckUnit.
-                    string? requiredUnitName = obj.RtClass.FindFieldRequiredUnit(fieldName);
-                    if (requiredUnitName != null)
-                    {
-                        hasUnitRule = true; // every assignment must check the unit - do not cache
-                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                        var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                        if (!actualUnit.Equals(requiredUnit))
-                        {
-                            ThrowUnitMismatch(requiredUnitName, actualUnit);
-                            return false;
-                        }
-                    }
                 }
+                // SPEC "Unit declarations": a field with a unit converts what is assigned to it (like OpCode.CheckUnit) - in every mode, as it is part
+                // of what the value means
+                if (obj.RtClass?.FindFieldRequiredUnit(fieldName) is { } requiredUnitName)
+                {
+                    hasUnitRule = true; // every assignment must check the unit - do not cache
+                    if (!AdaptFieldUnit(ref value, requiredUnitName)) return false;
+                }
+                byte requiredKind = obj.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
+                if (!GuardFieldKind(ref value, requiredKind, fieldName)) return false;
+                string? requiredType = obj.RtClass?.FindFieldRequiredType(fieldName);
+                if (!GuardFieldType(value, requiredType, fieldName)) return false;
                 if (site >= 0 && !hasUnitRule && obj.RtClass != null && obj.AccessGuard == null
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
-                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex));
+                    StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
                 obj.SetFieldLocked(fieldName, value);
                 Push(value);
                 return true;
@@ -2672,7 +2766,9 @@ namespace fire.Runtime
             if (_currentThis is ObjectInstance fastThis
                 && LookupSite(site) is { } thisEntry
                 && ReferenceEquals(fastThis.RtClass, thisEntry.Class)
-                && fastThis.ThreadLock == null)
+                && fastThis.ThreadLock == null
+                && DeclaredKind.Fits(_stack[_sp - 1], thisEntry.RequiredKind)
+                && DeclaredType.Fits(_stack[_sp - 1], thisEntry.RequiredType))
             {
                 fastThis.Fields.SetAt(thisEntry.FieldIndex, _stack[--_sp]);
                 return;
@@ -2697,25 +2793,23 @@ namespace fire.Runtime
             // would let the first, declared
             // value pass completely unchecked without this check here.
             bool hasUnitRule = false;
-            if (ExecutionMode != VmExecutionMode.Performance && oi.RtClass != null)
+            if (oi.RtClass != null)   // (converting into the unit of the field is part of what the value means: in every mode)
             {
                 string? requiredUnitName = oi.RtClass.FindFieldRequiredUnit(fieldName);
                 if (requiredUnitName != null)
                 {
                     hasUnitRule = true; // every assignment must check the unit - do not cache
-                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                    var actualUnit = value.Unit ?? Values.Unit.Unitless;
-                    if (!actualUnit.Equals(requiredUnit))
-                    {
-                        ThrowUnitMismatch(requiredUnitName, actualUnit);
-                        return;
-                    }
+                    if (!AdaptFieldUnit(ref value, requiredUnitName)) return;
                 }
             }
+            byte requiredKind = oi.RtClass?.FindFieldRequiredKind(fieldName) ?? 0;
+            if (!GuardFieldKind(ref value, requiredKind, fieldName)) return;
+            string? requiredType = oi.RtClass?.FindFieldRequiredType(fieldName);
+            if (!GuardFieldType(value, requiredType, fieldName)) return;
 
             if (!hasUnitRule && oi.RtClass != null && oi.ThreadLock == null
                 && oi.RtClass.FieldIndex.TryGetValue(fieldName, out int thisIndex))
-                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex));
+                StoreSite(site, new SiteCache(oi.RtClass, null, thisIndex, requiredKind: requiredKind, requiredType: requiredType));
             oi.SetFieldLocked(fieldName, value);
             return;
         }
@@ -2783,11 +2877,17 @@ namespace fire.Runtime
                 // ListEnumerator of the prelude over it (the same class that `List`
                 // uses; it only reads `items[index]`/`count`). Without a prelude (pure
                 // core programs) it stays with the error below.
+                // `foreach (c in text)` likewise: the enumerator indexes the string, `text[i]` is a char.
                 if (methodName == "GetEnumerator" && args.Length == 0
-                    && target.Kind is ValueKind.Array or ValueKind.Buffer
+                    && target.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String
                     && _classes.TryGetValue("ListEnumerator", out var enumeratorClass))
                 {
-                    long itemCount = target.Kind == ValueKind.Array ? target.AsArray().Length : target.AsBuffer().Length;
+                    long itemCount = target.Kind switch
+                    {
+                        ValueKind.Array => target.AsArray().Length,
+                        ValueKind.Buffer => target.AsBuffer().Length,
+                        _ => target.AsString().Length,
+                    };
                     var enumerator = ConstructNested(enumeratorClass, new[] { target, Value.MakeInt(itemCount) });
                     Push(Value.MakeClassRef(enumerator));
                     return;
@@ -2836,7 +2936,7 @@ namespace fire.Runtime
                     Push(builtinResult);
                     return;
                 }
-                throw new InvalidOperationException(
+                throw new ScriptErrorException("MissingMemberException",
                     $"'{methodName}' ({args.Length} argument(s)) is not a known built-in method " +
                     $"on a value of type {target.Kind}.");
             }
@@ -2876,7 +2976,7 @@ namespace fire.Runtime
                     Push(ownershipValue);
                     return;
                 }
-                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                throw MethodNotFound(rc, methodName, args.Length);
             }
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcCall!, accessCall))
             {
@@ -3060,7 +3160,7 @@ namespace fire.Runtime
             var rc = ResolveClass(baseClassName);
             var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
             if (proto == null)
-                throw new InvalidOperationException(DescribeMethodNotFound(rc, methodName, args.Length));
+                throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
             {
                 ThrowAccessDenied(
@@ -3189,17 +3289,10 @@ namespace fire.Runtime
                 // SPEC "Unit declarations" - identical in content
                 // to SetField, see there.
                 string? requiredUnitName = setOwner.FindFieldRequiredUnit(setFieldName);
-                if (requiredUnitName != null)
-                {
-                    var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                    var actualUnit = setValue.Unit ?? Values.Unit.Unitless;
-                    if (!actualUnit.Equals(requiredUnit))
-                    {
-                        ThrowUnitMismatch(requiredUnitName, actualUnit);
-                        return;
-                    }
-                }
+                if (requiredUnitName != null && !AdaptFieldUnit(ref setValue, requiredUnitName)) return;
             }
+            if (!GuardFieldKind(ref setValue, setOwner.FindFieldRequiredKind(setFieldName), setFieldName)) return;
+            if (!GuardFieldType(setValue, setOwner.FindFieldRequiredType(setFieldName), setFieldName)) return;
 
             var staticWriteBroker = _threadBroker ?? _ownerBroker;
             if (staticWriteBroker == null)
@@ -3258,7 +3351,7 @@ namespace fire.Runtime
             var callRc = ResolveClass(callClassName);
             var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
             if (callProto == null)
-                throw new InvalidOperationException(DescribeMethodNotFound(callRc, callMethodName, callArgs.Length));
+                throw MethodNotFound(callRc, callMethodName, callArgs.Length);
             if (!callProto.IsStatic)
                 throw new InvalidOperationException(
                     $"'{callMethodName}' on '{callClassName}' is not a static method - " +
@@ -3644,7 +3737,11 @@ namespace fire.Runtime
 
                 case OpCode.DeclareLocal:
                     if (_ownerBroker != null && ReferenceEquals(_currentScope, _globalScope)) DeclareOwnerGlobal(Pop());
-                    else _currentScope.DefineSlot(Pop());
+                    else
+                    {
+                        int declared = _currentScope.DefineSlot(Pop());
+                        if (ExecutionMode != VmExecutionMode.Performance) NameDeclaredSlot(declared);
+                    }
                     break;
 
                 case OpCode.StepAdd:
@@ -3681,15 +3778,15 @@ namespace fire.Runtime
                 }
 
 
-                case OpCode.Neg: Push(Value.Negate(Pop())); break;
-                case OpCode.LogicalNot: Push(Value.LogicalNot(Pop())); break;
-                case OpCode.BitNot: Push(Value.BitNot(Pop())); break;
+                case OpCode.Neg: ReplaceOneGuarded(Value.Negate); break;
+                case OpCode.LogicalNot: ReplaceOneGuarded(Value.LogicalNot); break;
+                case OpCode.BitNot: ReplaceOneGuarded(Value.BitNot); break;
 
                 case OpCode.Eq:
-                    BinaryNumericOrOperator((a, b) => Value.MakeBool(Value.ValuesEqual(a, b)), "operator==");
+                    BinaryNumericOrOperator((a, b) => Value.MakeBool(Value.OperatorEquals(a, b)), "operator==");
                     break;
                 case OpCode.NotEq:
-                    BinaryNumericOrOperator((a, b) => Value.MakeBool(!Value.ValuesEqual(a, b)), "operator!=");
+                    BinaryNumericOrOperator((a, b) => Value.MakeBool(!Value.OperatorEquals(a, b)), "operator!=");
                     break;
                 case OpCode.Lt:
                     BinaryNumericOrOperator((a, b) => Value.MakeBool(Value.Compare(a, b) < 0), "operator<");
@@ -3723,6 +3820,38 @@ namespace fire.Runtime
                     Push(Pop().RelabelUnit(unit));
                     break;
                 }
+                case OpCode.CastTo:
+                {
+                    string typeName = _constants[ReadU16()].AsString();
+                    var v = Peek();
+                    if (v.Kind != ValueKind.Undefined && !IsOfType(v, typeName))
+                    {
+                        string have = v.Kind == ValueKind.Class ? ((ObjectInstance)v.AsObjectRef()).ClassName : v.Kind.ToString();
+                        ThrowArgumentError($"Cannot convert a value of type '{have}' to '{typeName}'.");
+                    }
+                    break;
+                }
+                case OpCode.RebindLambda:
+                {
+                    var onTarget = Pop();
+                    var lambdaValue = Pop();
+                    if (lambdaValue.Kind != ValueKind.Lambda)
+                    {
+                        ThrowArgumentError("'on' binds a lambda to an object; the value before 'on' is not a lambda.");
+                        break;
+                    }
+                    Push(Value.MakeLambda(((LambdaValue)lambdaValue.AsLambda()).WithOnTarget(BoxValueForOnTarget(onTarget))));
+                    break;
+                }
+                case OpCode.ConvertWidth:
+                {
+                    int bits = ReadByte();
+                    int flags = ReadByte();
+                    // implicit (an assignment to a declared width): only a number of the declared kind is cut
+                    if ((flags & 4) != 0 && Peek().Kind != ((flags & 1) != 0 ? ValueKind.Float : ValueKind.Int)) break;
+                    Push(CoerceWidthChecked(Pop(), bits, (flags & 1) != 0, (flags & 2) != 0));
+                    break;
+                }
                 case OpCode.CoerceUnitDynamic:
                 {
                     var candidate = Pop();
@@ -3734,14 +3863,14 @@ namespace fire.Runtime
                 case OpCode.CoerceType:
                 {
                     var tag = (TypeTag)ReadByte();
-                    Push(Pop().CoerceType(TagToKind(tag)));
+                    Push(CoerceTypeChecked(Pop(), TagToKind(tag)));
                     break;
                 }
                 case OpCode.CoerceTypeDynamic:
                 {
                     var candidate = Pop();
                     var anchor = Peek();
-                    Push(candidate.CoerceType(anchor.Kind));
+                    Push(CoerceTypeChecked(candidate, anchor.Kind));
                     break;
                 }
 
@@ -3752,18 +3881,22 @@ namespace fire.Runtime
                 case OpCode.JumpIfFalse:
                 {
                     int addr = ReadU16();
-                    if (!Pop().AsBool()) _ip = addr;
+                    var condition = Pop();
+                    if (condition.Kind != ValueKind.Bool) { ThrowConditionError(condition); break; }
+                    if (!condition.AsBool()) _ip = addr;
                     break;
                 }
                 case OpCode.JumpIfFalsePeek:
                 {
                     int addr = ReadU16();
+                    if (Peek().Kind != ValueKind.Bool) { ThrowConditionError(Peek()); break; }
                     if (!Peek().AsBool()) _ip = addr;
                     break;
                 }
                 case OpCode.JumpIfTruePeek:
                 {
                     int addr = ReadU16();
+                    if (Peek().Kind != ValueKind.Bool) { ThrowConditionError(Peek()); break; }
                     if (Peek().AsBool()) _ip = addr;
                     break;
                 }
@@ -3963,20 +4096,9 @@ namespace fire.Runtime
                     if (initOwner == null)
                         throw new InvalidOperationException($"'{initClassName}' has no static field '{initFieldName}'.");
 
-                    if (ExecutionMode != VmExecutionMode.Performance)
-                    {
-                        string? requiredUnitName = initOwner.FindFieldRequiredUnit(initFieldName);
-                        if (requiredUnitName != null)
-                        {
-                            var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                            var actualUnit = initValue.Unit ?? Values.Unit.Unitless;
-                            if (!actualUnit.Equals(requiredUnit))
-                            {
-                                ThrowUnitMismatch(requiredUnitName, actualUnit);
-                                break;
-                            }
-                        }
-                    }
+                    if (initOwner.FindFieldRequiredUnit(initFieldName) is { } requiredUnitName && !AdaptFieldUnit(ref initValue, requiredUnitName)) break;
+                    if (!GuardFieldKind(ref initValue, initOwner.FindFieldRequiredKind(initFieldName), initFieldName)) break;
+                    if (!GuardFieldType(initValue, initOwner.FindFieldRequiredType(initFieldName), initFieldName)) break;
 
                     initOwner.StaticFieldValues[initFieldName] = initValue;
                     break;
@@ -4098,6 +4220,35 @@ namespace fire.Runtime
                 case OpCode.Delete:
                     DeleteValue(Pop());
                     break;
+
+                case OpCode.GuardLocal:
+                {
+                    // the end of the prologue: a parameter declared int/float/bool holds that kind or undefined (DeclaredKind)
+                    int slot = ReadU16();
+                    byte tag = ReadByte();
+                    byte required = (byte)((tag & 0x7F) + 1 | tag & DeclaredKind.UnitlessBit);
+                    int whatIdx = ReadU16();
+                    ReadU16();   // (the unit it has now: for the native generator)
+                    ref var guarded = ref _currentScope.SlotRef(slot);
+                    if (!DeclaredKind.Fits(guarded, required))
+                    {
+                        var checkedValue = guarded;
+                        if (GuardDeclared(ref checkedValue, required, _constants[whatIdx].AsString())) guarded = checkedValue;
+                    }
+                    break;
+                }
+
+                case OpCode.GuardLocalType:
+                {
+                    // the end of the prologue: a parameter declared with a class, an interface or a constrained type parameter holds undefined or what that says (DeclaredType)
+                    int slot = ReadU16();
+                    string requiredType = _constants[ReadU16()].AsString();
+                    int whatIdx = ReadU16();
+                    var guarded = _currentScope.GetSlot(slot);
+                    if (!DeclaredType.Fits(guarded, requiredType))
+                        ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString()));
+                    break;
+                }
 
                 case OpCode.RequireRefParam:
                 {
@@ -4332,40 +4483,26 @@ namespace fire.Runtime
                     // TypeRef.LambdaSignature, Compiler.EmitCheckLambdaSignature).
                     int expectedParamCount = ReadByte();
                     var v = Peek();
+                    // a mismatch is a catchable ArgumentException (the value stays on the stack, as the handler unwinds it)
                     if (v.Kind != ValueKind.Lambda)
-                        throw new InvalidOperationException(
-                            $"Expected a lambda value (type 'lambda'), got: {v.Kind}.");
-                    var lambdaVal = (LambdaValue)v.AsLambda();
-                    if (lambdaVal.Proto.ParamCount != expectedParamCount)
-                        throw new InvalidOperationException(
-                            $"Lambda signature does not match: expected {expectedParamCount} parameters, " +
-                            $"the lambda has {lambdaVal.Proto.ParamCount}.");
+                        ThrowArgumentError($"Expected a lambda with {expectedParamCount} parameter(s), got a value that is no lambda.");
+                    else if (((LambdaValue)v.AsLambda()).Proto.ParamCount is var actualCount && actualCount != expectedParamCount)
+                        ThrowArgumentError($"The lambda has {actualCount} parameter(s), its declaration says {expectedParamCount}.");
                     break;
                 }
 
                 case OpCode.CheckUnit:
                 {
-                    // Like CheckLambdaSignature: checks only Peek() (NOT Pop()),
-                    // the value is still used normally right afterwards
-                    // (see OpCode.CheckUnit documentation/Compiler.EmitCheckUnitIfNeeded).
-                    // Unlike with CheckLambdaSignature (raw C# error), a
-                    // mismatch here throws a REAL script exception, catchable via try/catch
-                    // (see ThrowUnitMismatch) - explicitly wanted by the
-                    // user per SPEC "Unit declarations".
-                    // Skipped in performance mode - like every other
-                    // "extra safety instead of speed" check in
-                    // this VM (access modifiers, array/buffer bounds).
+                    // SPEC "Unit declarations": the value on top of the stack goes into a declaration with a unit - it is converted into that unit
+                    // (the same dimension), another dimension is a catchable UnitMismatchException, a whole number that overflows an OverflowException.
+                    // (Converting is part of what the value means, so it happens in every execution mode.)
                     string requiredUnitName = _constants[ReadU16()].AsString();
-                    if (ExecutionMode != VmExecutionMode.Performance)
+                    ref var adapted = ref _stack[_sp - 1];
+                    var actualUnit = adapted.Unit ?? Values.Unit.Unitless;
+                    switch (Value.AdaptToUnit(ref adapted, requiredUnitName))
                     {
-                        var checkedValue = Peek();
-                        var requiredUnit = Values.Unit.Parse(requiredUnitName);
-                        var actualUnit = checkedValue.Unit ?? Values.Unit.Unitless;
-                        if (!actualUnit.Equals(requiredUnit))
-                        {
-                            ThrowUnitMismatch(requiredUnitName, actualUnit);
-                            break;
-                        }
+                        case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), actualUnit); break;
+                        case Value.UnitAdaptation.Overflow: ThrowOverflow($"{adapted} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); break;
                     }
                     break;
                 }
@@ -5192,8 +5329,12 @@ namespace fire.Runtime
         /// happens on the thread of this VM (`VM.CurrentThreadVm`). Returns null if the lambda ended normally (or the program
         /// was ended), otherwise the unhandled exception of the lambda - which does NOT interrupt the caller: like for any callback
         /// the host reports it, the program keeps running.</summary>
-        public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args)
+        public ObjectInstance? CallLambdaInline(LambdaValue lambda, Value[] args) => CallInline(lambda, args, out _);
+
+        /// <summary>CallLambdaInline with the result of the lambda (undefined when it threw or the program ended).</summary>
+        private ObjectInstance? CallInline(LambdaValue lambda, Value[] args, out Value result)
         {
+            result = Value.MakeUndefined();
             CheckArity(lambda.Proto, args.Length);
             args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 
@@ -5243,7 +5384,7 @@ namespace fire.Runtime
             _callbackError = null;
             if (error != null) return error;
 
-            PopNestedResult(); // the (unused) return value of the lambda
+            if (!_stopExecutionRequested) result = Pop();
             return null;
         }
 
@@ -5400,7 +5541,7 @@ namespace fire.Runtime
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
             var ctorProto = rc.FindConstructor(args.Length)
-                ?? throw new InvalidOperationException(DescribeConstructorNotFound(rc, args.Length));
+                ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             args = FillDefaultArgs(ctorProto, args, instance);
@@ -5607,6 +5748,26 @@ namespace fire.Runtime
         /// OpCode.CheckUnit (local/global variables, parameters) and
         /// SetField/SetFieldOnThis (fields, see there for the reason
         /// why this is checked there instead of at compile time).</summary>
+        /// <summary>A field with a unit takes `value` (converted into its unit, see Value.AdaptToUnit); false when that threw a script exception.</summary>
+        private bool AdaptFieldUnit(ref Value value, string requiredUnitName)
+        {
+            var actualUnit = value.Unit ?? Values.Unit.Unitless;
+            switch (Value.AdaptToUnit(ref value, requiredUnitName))
+            {
+                case Value.UnitAdaptation.Mismatch: ThrowUnitMismatch(Values.Unit.DemandDisplay(requiredUnitName), actualUnit); return false;
+                case Value.UnitAdaptation.Overflow: ThrowOverflow($"{value} does not fit into a whole number in '{Values.Unit.DemandDisplay(requiredUnitName)}'."); return false;
+                default: return true;
+            }
+        }
+
+        /// <summary>A whole number that does not fit (a conversion into a finer unit that a declaration demands): a catchable `OverflowException`.</summary>
+        private void ThrowOverflow(string message)
+        {
+            if (!_classes.ContainsKey("OverflowException")) throw new OverflowException(message);
+            var instance = ConstructNested(ResolveClass("OverflowException"), new[] { Value.MakeString(message) });
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
         private void ThrowUnitMismatch(string requiredUnitName, Values.Unit actualUnit)
         {
             var rc = ResolveClass("UnitMismatchException");
@@ -5805,9 +5966,22 @@ namespace fire.Runtime
             }
             try { Push(op(a, b)); }
             catch (UnitMismatchException ex) { Push(Value.MakeUndefined()); ThrowUnitConflict(ex); }
+            catch (DivideByZeroException) { Push(Value.MakeUndefined()); ThrowDivideByZero(); }
+            catch (InvalidOperationException ex) when (ex is not ScriptErrorException) { Push(Value.MakeUndefined()); ThrowArgumentError(ex.Message); }
         }
 
         /// <summary>Replaces the two topmost values by `f(left, right)`; units that cannot be put together are a script exception (`UnitMismatchException`): catchable, and an unhandled one stops at this instruction with the result `undefined` on the stack.</summary>
+        /// <summary>A unary operator on the top of the stack (`-x`, `!x`, `~x`): an operand of the wrong type (`-"a"`, `!5`) is a catchable ArgumentException.</summary>
+        private void ReplaceOneGuarded(Func<Value, Value> f)
+        {
+            try { _stack[_sp - 1] = f(_stack[_sp - 1]); }
+            catch (InvalidOperationException ex) when (ex is not ScriptErrorException)
+            {
+                _stack[_sp - 1] = Value.MakeUndefined();
+                ThrowArgumentError(ex.Message);
+            }
+        }
+
         private void ReplaceTwoGuarded(Func<Value, Value, Value> f)
         {
             try { ReplaceTwoWith(f(_stack[_sp - 2], _stack[_sp - 1])); }
@@ -5817,6 +5991,64 @@ namespace fire.Runtime
                 _stack[_sp - 1] = Value.MakeUndefined();
                 ThrowUnitConflict(ex);
             }
+            catch (DivideByZeroException)
+            {
+                _sp--;
+                _stack[_sp - 1] = Value.MakeUndefined();
+                ThrowDivideByZero();
+            }
+            catch (InvalidOperationException ex) when (ex is not ScriptErrorException)
+            {
+                // an operation on values it does not take (`'a' < "b"`, `true + 1`): a catchable ArgumentException instead of an internal error
+                _sp--;
+                _stack[_sp - 1] = Value.MakeUndefined();
+                ThrowArgumentError(ex.Message);
+            }
+        }
+
+        /// <summary>A value that does not fit what a declaration demands of it (a lambda with another number of parameters): a catchable `ArgumentException`
+        /// (without the prelude class an internal error, as before).</summary>
+        /// <summary>`if (n)` with a number: a condition must be a bool (a catchable ArgumentException, the type checker reports it already where it knows the type).</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private void ThrowConditionError(Value condition) => ThrowArgumentError($"A condition must be a bool, not {condition.Kind}.");
+
+        /// <summary>A field declared int/float/bool takes a value of that kind or undefined (DeclaredKind); false: an ArgumentException is thrown.</summary>
+        private bool GuardFieldKind(ref Value value, byte requiredKind, string fieldName) =>
+            DeclaredKind.Fits(value, requiredKind) || GuardDeclared(ref value, requiredKind, $"Field '{fieldName}'");
+
+        /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
+        private bool GuardFieldType(in Value value, string? requiredType, string fieldName)
+        {
+            if (DeclaredType.Fits(value, requiredType)) return true;
+            ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'"));
+            return false;
+        }
+
+        /// <summary>The slow route of a declaration int/float/bool (DeclaredKind): a number declared without a unit is converted into no unit (or a
+        /// UnitMismatchException), then the kind is checked (or an ArgumentException). false: an exception is thrown.</summary>
+        private bool GuardDeclared(ref Value value, byte required, string what)
+        {
+            if (DeclaredKind.NeedsUnitless(value, required) && !AdaptFieldUnit(ref value, "unitless")) return false;
+            if (DeclaredKind.Accept(ref value, required, what) is not { } message) return true;
+            ThrowArgumentError(message);
+            return false;
+        }
+
+        private void ThrowArgumentError(string message)
+        {
+            _arithFault = true;   // `x++`/`x += c` on a local (ArithSlow): the variable stays as it is
+            if (!_classes.ContainsKey("ArgumentException")) throw new InvalidOperationException(message);
+            var instance = ConstructNested(ResolveClass("ArgumentException"), new[] { Value.MakeString(message) });
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
+        /// <summary>An integer division or modulo by zero is a catchable script exception (`DivideByZeroException`); floats follow IEEE (infinity, NaN).</summary>
+        private void ThrowDivideByZero()
+        {
+            _arithFault = true;
+            var rc = ResolveClass("DivideByZeroException");
+            var instance = ConstructNested(rc, new[] { Value.MakeString("Division by zero.") });
+            ThrowException(Value.MakeClassRef(instance));
         }
 
         /// <summary>Set when ThrowUnitConflict raised an exception (read by the statement forms of `x++`/`x += c`, which must not store a result then).</summary>
@@ -5847,7 +6079,7 @@ namespace fire.Runtime
         {
             if (argCount == proto.ParamCount) return;
             if (argCount < proto.ParamCount && RuntimeClass.AllTrailingHaveDefaults(proto, argCount)) return;
-            throw new InvalidOperationException(
+            throw new ScriptErrorException("ArgumentException",
                 $"Wrong number of arguments: expected {proto.ParamCount}" +
                 (argCount < proto.ParamCount ? " (the missing parameters have no default value)" : "") +
                 $", got {argCount}.");
@@ -5920,6 +6152,30 @@ namespace fire.Runtime
         /// "method exists, but no overload with this argument count"
         /// (and in the second case also lists the argument counts
         /// actually present, across the whole base-class chain).</summary>
+        /// <summary>A call that finds no method: an `ArgumentException` when the method exists with other numbers of arguments, otherwise a `MissingMemberException`.</summary>
+        private static ScriptErrorException MethodNotFound(RuntimeClass rc, string methodName, int argCount)
+        {
+            bool exists = false;
+            for (var c = rc; c != null && !exists; c = c.Base) exists = c.Methods.ContainsKey(methodName);
+            return new ScriptErrorException(exists ? "ArgumentException" : "MissingMemberException", DescribeMethodNotFound(rc, methodName, argCount));
+        }
+
+        /// <summary>Turns an error found inside an instruction (see ScriptErrorException) into a script exception that `try`/`catch` can catch; without the
+        /// prelude class it stays an internal error.</summary>
+        /// <summary>An error of the program that the VM reports as a .NET `InvalidOperationException` (an index on an `int`, `delete 5`, a value where a `ref`
+        /// argument needs a variable, ...): it becomes a catchable `ArgumentException` at the instruction that failed instead of ending the host. Only when the
+        /// program has the class (the prelude) and the VM is not stopping anyway.</summary>
+        private bool IsCatchableRuntimeError(InvalidOperationException error) =>
+            error is not ScriptErrorException && !_stopExecutionRequested && _classes.ContainsKey("ArgumentException");
+
+        private void RaiseScriptError(ScriptErrorException error)
+        {
+            if (error.Instance != null) { ThrowException(Value.MakeClassRef(error.Instance)); return; }
+            if (!_classes.ContainsKey(error.ClassName)) throw new InvalidOperationException(error.Message, error);
+            var instance = ConstructNested(ResolveClass(error.ClassName), new[] { Value.MakeString(error.Message) });
+            ThrowException(Value.MakeClassRef(instance));
+        }
+
         private static string DescribeMethodNotFound(RuntimeClass rc, string methodName, int argCount)
         {
             var arities = new List<int>();

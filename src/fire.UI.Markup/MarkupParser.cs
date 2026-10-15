@@ -9,9 +9,56 @@ namespace fire.UI.Markup
     /// line (a design view can show them next to the picture); the document is usable (for a preview) as far as it could be read.</summary>
     public static class MarkupParser
     {
+        /// <summary>The XML namespace of the attributes `namespace:prefix="..."` on the root element (declared by the parser, the markup does not have to).</summary>
+        public const string NamespacePrefixUri = "urn:fire:namespace";
+
+        // the namespaces of the markup that is read right now (ReadValue and the converters qualify names with them)
+        [ThreadStatic] private static NamespaceScope? s_scope;
+
+        private sealed class NamespaceScope
+        {
+            public string? Own;
+            public Dictionary<string, string> Bound = new();
+        }
+
+        // the first start tag of the document (after the XML declaration, comments and a doctype)
+        private static readonly Regex RootTag = new(@"<(?![?!/])[A-Za-z_][\w.\-]*", RegexOptions.Compiled);
+
+        /// <summary>`namespace:prefix="..."` needs the prefix `namespace` declared for XML: the parser declares it on the root element (unless the markup does).</summary>
+        private static string DeclareNamespacePrefix(string text)
+        {
+            if (text.Contains("xmlns:namespace", StringComparison.Ordinal) || !text.Contains("namespace:", StringComparison.Ordinal)) return text;
+            var match = RootTag.Match(text);
+            return match.Success ? text.Insert(match.Index + match.Length, $" xmlns:namespace=\"{NamespacePrefixUri}\"") : text;
+        }
+
+        /// <summary>A type name of the markup as fire code: `local:Name` is the name in the namespace of the markup, `prefix:Name` the name in the namespace bound to
+        /// the prefix; a name without prefix stays as it is (fire looks it up in the bound namespaces, see the `#using` of the generated script). null (and a
+        /// diagnostic) for an unknown prefix.</summary>
+        public static string? QualifyName(string name, int line, List<MarkupDiagnostic> errors)
+        {
+            int colon = name.IndexOf(':');
+            if (colon < 0) return name;
+            string prefix = name.Substring(0, colon), rest = name.Substring(colon + 1);
+            var scope = s_scope;
+            if (prefix == "local") return scope?.Own == null ? rest : scope.Own + "." + rest;
+            if (scope != null && scope.Bound.TryGetValue(prefix, out var ns)) return ns + "." + rest;
+            errors.Add(new MarkupDiagnostic(line, $"Unknown namespace prefix '{prefix}' (bind it on the root element: namespace:{prefix}=\"Name.Space\"; 'local' is the namespace of the markup)."));
+            return null;
+        }
+
         public static MarkupDocument Parse(string text)
         {
             var errors = new List<MarkupDiagnostic>();
+            var scope = new NamespaceScope();
+            var previous = s_scope;
+            s_scope = scope;
+            try { return Parse(DeclareNamespacePrefix(text), errors, scope); }
+            finally { s_scope = previous; }
+        }
+
+        private static MarkupDocument Parse(string text, List<MarkupDiagnostic> errors, NamespaceScope scope)
+        {
             XDocument xml;
             try
             {
@@ -36,15 +83,33 @@ namespace fire.UI.Markup
             {
                 string name = attribute.Name.LocalName;
                 int line = Line(attribute);
+                if (attribute.Name.NamespaceName == NamespacePrefixUri)
+                {
+                    // namespace:prefix="Name.Space": binds another namespace
+                    string bound = attribute.Value.Trim();
+                    if (name == "local") errors.Add(new MarkupDiagnostic(line, "The prefix 'local' is the namespace of the markup itself (namespace=\"...\"); bind another one under another prefix."));
+                    else if (!MarkupSchema.IsDottedName(bound)) errors.Add(new MarkupDiagnostic(line, $"'{bound}' is not a valid namespace name."));
+                    else scope.Bound[name] = bound;
+                    continue;
+                }
+                if (attribute.Name.NamespaceName.Length > 0)
+                {
+                    errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{attribute.Name.LocalName}' of '{root.Name.LocalName}' in the XML namespace '{attribute.Name.NamespaceName}'."));
+                    continue;
+                }
                 switch (name.ToLowerInvariant())
                 {
+                    case "namespace":
+                        if (!MarkupSchema.IsDottedName(attribute.Value.Trim())) errors.Add(new MarkupDiagnostic(line, $"'{attribute.Value}' is not a valid namespace name."));
+                        else scope.Own = attribute.Value.Trim();
+                        break;
                     case "class": className = attribute.Value; break;
                     case "base": baseName = attribute.Value; break;
                     case "title" when kind == MarkupRootKind.Window: title = attribute.Value; break;
                     case "width": width = ReadSize(attribute, width, errors); break;
                     case "height": height = ReadSize(attribute, height, errors); break;
                     default:
-                        errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{name}' of '{root.Name.LocalName}' (known: class, base, {(kind == MarkupRootKind.Window ? "title, " : "")}width, height)."));
+                        errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{name}' of '{root.Name.LocalName}' (known: class, base, namespace, namespace:prefix, {(kind == MarkupRootKind.Window ? "title, " : "")}width, height)."));
                         break;
                 }
             }
@@ -69,7 +134,9 @@ namespace fire.UI.Markup
                 Title = title ?? className,
                 Width = width,
                 Height = height,
+                Namespace = scope.Own,
             };
+            foreach (var (prefix, ns) in scope.Bound) document.Namespaces[prefix] = ns;
 
             foreach (var child in root.Elements())
             {
@@ -112,9 +179,9 @@ namespace fire.UI.Markup
                     continue;
                 }
                 if (!MarkupSchema.IsIdentifier(key)) errors.Add(new MarkupDiagnostic(Line(item), $"'{key}' is not a valid converter key."));
-                else if (!MarkupSchema.IsDottedName(type)) errors.Add(new MarkupDiagnostic(Line(item), $"'{type}' is not a valid class name."));
+                else if (!IsTypeName(type)) errors.Add(new MarkupDiagnostic(Line(item), $"'{type}' is not a valid class name."));
                 else if (document.Converters.Any(c => c.Key == key)) errors.Add(new MarkupDiagnostic(Line(item), $"The converter '{key}' is declared twice."));
-                else document.Converters.Add(new ConverterDeclaration(key, type, Line(item)));
+                else if (QualifyName(type, Line(item), errors) is { } qualified) document.Converters.Add(new ConverterDeclaration(key, qualified, Line(item)));
             }
         }
 
@@ -372,6 +439,7 @@ namespace fire.UI.Markup
         {
             string text = raw.Trim();
             if (raw.StartsWith("{}", StringComparison.Ordinal)) return new LiteralValue(raw.Substring(2));
+            if (ObjectStart.IsMatch(text) && text.EndsWith(']')) return ReadObject(text, line, errors);
             if (!(text.StartsWith('{') && text.EndsWith('}'))) return new LiteralValue(raw);
 
             string inner = text.Substring(1, text.Length - 2).Trim();
@@ -383,12 +451,12 @@ namespace fire.UI.Markup
             {
                 case "enum":
                 case "static":
-                    if (!MarkupSchema.IsDottedName(rest))
+                    if (!IsTypeName(rest) || !rest.Contains('.'))
                     {
                         errors.Add(new MarkupDiagnostic(line, $"'{{{keyword} ...}}' needs a name like Type.Member, not '{rest}'."));
                         return null;
                     }
-                    return new ExpressionValue(rest);
+                    return QualifyName(rest, line, errors) is { } member ? new ExpressionValue(member) : null;
                 case "expr":
                     if (rest.Length == 0)
                     {
@@ -409,6 +477,110 @@ namespace fire.UI.Markup
                     errors.Add(new MarkupDiagnostic(line, $"Unknown markup extension '{{{keyword} ...}}' (known: Binding, TemplateBinding, Enum, Static, Expr; use '{{}}' in front of a text that starts with a brace)."));
                     return null;
             }
+        }
+
+        // `[Type ...]`: an object value starts with a (possibly prefixed, dotted) type name
+        private static readonly Regex ObjectStart = new(@"^\[\s*([A-Za-z_][A-Za-z0-9_]*:)?[A-Za-z_][A-Za-z0-9_.]*(\s|\])", RegexOptions.Compiled);
+        private static readonly Regex TypeNamePattern = new(@"^([A-Za-z_][A-Za-z0-9_]*:)?[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
+        private static readonly Regex NumberArgument = new(@"^-?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?[A-Za-z]*$", RegexOptions.Compiled);
+
+        /// <summary>A (dotted) type name, possibly with a namespace prefix (`models:Person`, `local:Ui.Theme`).</summary>
+        public static bool IsTypeName(string text) => TypeNamePattern.IsMatch(text);
+
+        /// <summary>The classes of the libraries that the design view can make (it runs no code of the program).</summary>
+        private static bool IsLibraryClass(string name) => name.StartsWith("UI.", StringComparison.Ordinal) || name is "SolidBrush" or "Pen" or "Font" or "Fonts";
+
+        /// <summary>`[Type Arg1, Arg2]`: a new instance. The arguments are numbers (with a unit: `5mm`), texts in '' (or ""; two quotes stand for one), `#RRGGBB`
+        /// (a colour number), `true`/`false`/`undefined`, `{Enum ...}`/`{Static ...}`/`{Expr ...}` and objects again.</summary>
+        private static MarkupValue? ReadObject(string text, int line, List<MarkupDiagnostic> errors)
+        {
+            string inner = text.Substring(1, text.Length - 2).Trim();
+            int end = 0;
+            while (end < inner.Length && !char.IsWhiteSpace(inner[end])) end++;
+            string type = inner.Substring(0, end);
+            if (!IsTypeName(type))
+            {
+                errors.Add(new MarkupDiagnostic(line, $"'[{type} ...]' needs a class name, not '{type}'."));
+                return null;
+            }
+            string? qualified = QualifyName(type, line, errors);
+            if (qualified == null) return null;
+
+            var arguments = SplitArguments(inner.Substring(end), line, errors);
+            if (arguments == null) return null;
+            var codes = new List<string>();
+            bool safe = IsLibraryClass(qualified);
+            foreach (var argument in arguments)
+            {
+                string a = argument.Trim();
+                if (a.Length == 0)
+                {
+                    errors.Add(new MarkupDiagnostic(line, $"An argument of '[{type} ...]' is empty."));
+                    return null;
+                }
+                if (a.Length >= 2 && (a[0] == '\'' || a[0] == '"') && a[^1] == a[0])
+                {
+                    string q = a[0].ToString();
+                    codes.Add(FireUiGenerator.Quote(a.Substring(1, a.Length - 2).Replace(q + q, q)));
+                }
+                else if (NumberArgument.IsMatch(a) || a is "true" or "false" or "undefined") codes.Add(a);
+                else if (a.StartsWith('#') && FireUiGenerator.TryParseColor(a, out int r, out int g, out int b)) codes.Add($"UI.Color.Rgb({r}, {g}, {b})");
+                else if (a.StartsWith('[') || a.StartsWith('{'))
+                {
+                    var value = ReadValue(a, line, errors);
+                    switch (value)
+                    {
+                        case ObjectValue nested: codes.Add(nested.Code); safe &= nested.PreviewSafe; break;
+                        case ExpressionValue expression: codes.Add(expression.Code); safe = false; break;
+                        case null: return null;
+                        default:
+                            errors.Add(new MarkupDiagnostic(line, $"'{a}' cannot be an argument of '[{type} ...]' (a binding is no value)."));
+                            return null;
+                    }
+                }
+                else
+                {
+                    errors.Add(new MarkupDiagnostic(line, $"'{a}' is no argument value: write a text in quotes ('{a}'), a number, true/false, #RRGGBB, [Type ...] or {{Static Type.Member}}."));
+                    return null;
+                }
+            }
+            return new ObjectValue(qualified, $"new {qualified}({string.Join(", ", codes)})", safe);
+        }
+
+        /// <summary>The arguments of an object value, split at the commas that are not inside quotes, brackets or braces. null (and a diagnostic) when they do not close.</summary>
+        private static List<string>? SplitArguments(string text, int line, List<MarkupDiagnostic> errors)
+        {
+            var result = new List<string>();
+            if (text.Trim().Length == 0) return result;
+            var current = new System.Text.StringBuilder();
+            int depth = 0;
+            char quote = '\0';
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (quote != '\0')
+                {
+                    current.Append(c);
+                    if (c == quote)
+                    {
+                        if (i + 1 < text.Length && text[i + 1] == quote) { current.Append(text[++i]); continue; }
+                        quote = '\0';
+                    }
+                    continue;
+                }
+                if (c is '\'' or '"') quote = c;
+                else if (c is '[' or '{') depth++;
+                else if (c is ']' or '}') depth--;
+                else if (c == ',' && depth == 0) { result.Add(current.ToString()); current.Clear(); continue; }
+                current.Append(c);
+            }
+            if (quote != '\0' || depth != 0)
+            {
+                errors.Add(new MarkupDiagnostic(line, quote != '\0' ? "A text in an object value is not closed (a quote is missing)." : "The brackets of an object value do not match."));
+                return null;
+            }
+            result.Add(current.ToString());
+            return result;
         }
 
         private static MarkupValue? ReadBinding(string arguments, int line, List<MarkupDiagnostic> errors)
@@ -517,8 +689,8 @@ namespace fire.UI.Markup
                 if (property == null) return;
                 if (property.Kind == PropertyKind.Collection && value is LiteralValue)
                     document.Diagnostics.Add(new MarkupDiagnostic(line, $"'{property.Name}' is a list: give {{Binding ...}} or {{Expr ...}}."));
-                if (property.Kind == PropertyKind.Code && value is not ExpressionValue)
-                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"'{property.Name}' is code: give {{Expr ...}}."));
+                if (property.Kind == PropertyKind.Code && value is not (ExpressionValue or ObjectValue))
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"'{property.Name}' is code: give {{Expr ...}} or [Type ...]."));
             }
             foreach (var element in document.AllElements().Concat(document.TemplateElements()).Concat(document.DataTemplateElements()))
             {

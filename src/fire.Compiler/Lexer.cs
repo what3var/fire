@@ -37,6 +37,7 @@ namespace fire.Compiler
             ["if"] = TokenType.If,
             ["else"] = TokenType.Else,
             ["while"] = TokenType.While,
+            ["do"] = TokenType.Do,
             ["for"] = TokenType.For,
             ["foreach"] = TokenType.Foreach,
             ["in"] = TokenType.In,
@@ -245,24 +246,24 @@ namespace fire.Compiler
             if (Peek() == '0' && (PeekNext() is 'b' or 'B') && IsBinaryDigit(PeekAt(2)))
                 return ReadRadixNumber(line, col, newlineBefore, start, radix: 2, IsBinaryDigit);
 
-            while (!IsAtEnd && char.IsDigit(Peek())) Advance();
+            SkipDigits(char.IsDigit);
 
             bool isFloat = false;
             if (!IsAtEnd && Peek() == '.' && char.IsDigit(PeekNext()))
             {
                 isFloat = true;
                 Advance(); // '.'
-                while (!IsAtEnd && char.IsDigit(Peek())) Advance();
+                SkipDigits(char.IsDigit);
             }
 
-            string numberText = _source.Substring(start, _pos - start);
+            string numberText = _source.Substring(start, _pos - start).Replace("_", "");
 
             // Unit suffix: letters/µ directly following, without whitespace in between.
             int unitStart = _pos;
             while (!IsAtEnd && IsUnitSuffixChar(Peek())) Advance();
             string unitSuffix = _source.Substring(unitStart, _pos - unitStart);
 
-            string lexeme = numberText + unitSuffix;
+            string lexeme = _source.Substring(start, _pos - start);
 
             if (isFloat)
             {
@@ -274,6 +275,13 @@ namespace fire.Compiler
                 long value = long.Parse(numberText, CultureInfo.InvariantCulture);
                 return new Token(TokenType.IntLiteral, lexeme, line, col, unitSuffix, value, newlineBefore);
             }
+        }
+
+        /// <summary>Digits of a number literal; a `_` between two digits is a separator (`1_000_000`, `0xFF_FF`).</summary>
+        private void SkipDigits(Func<char, bool> isDigit)
+        {
+            while (!IsAtEnd && (isDigit(Peek()) || (Peek() == '_' && _pos > 0 && isDigit(_source[_pos - 1]) && isDigit(PeekNext()))))
+                Advance();
         }
 
         private static bool IsHexDigit(char c) =>
@@ -293,20 +301,19 @@ namespace fire.Compiler
         {
             Advance(); Advance(); // '0x'/'0X'/'0b'/'0B'
             int digitsStart = _pos;
-            while (!IsAtEnd && isDigit(Peek())) Advance();
+            SkipDigits(isDigit);
 
             if (_pos == digitsStart)
                 throw new LexException(
                     $"Expected at least one valid digit after '{_source.Substring(start, _pos - start)}'", line, col);
 
-            string digits = _source.Substring(digitsStart, _pos - digitsStart);
+            string digits = _source.Substring(digitsStart, _pos - digitsStart).Replace("_", "");
             long value = Convert.ToInt64(digits, radix);
 
-            string numberText = _source.Substring(start, _pos - start);
             int unitStart = _pos;
             while (!IsAtEnd && IsUnitSuffixChar(Peek())) Advance();
             string unitSuffix = _source.Substring(unitStart, _pos - unitStart);
-            string lexeme = numberText + unitSuffix;
+            string lexeme = _source.Substring(start, _pos - start);
 
             return new Token(TokenType.IntLiteral, lexeme, line, col, unitSuffix, value, newlineBefore);
         }
@@ -598,6 +605,9 @@ namespace fire.Compiler
                 case '/':
                     if (Match('=')) return Tok(TokenType.SlashAssign, "/=", line, col, newlineBefore);
                     return Tok(TokenType.Slash, "/", line, col, newlineBefore);
+
+                case '?':
+                    return Tok(TokenType.Question, "?", line, col, newlineBefore);
 
                 case ':':
                     return Tok(TokenType.Colon, ":", line, col, newlineBefore);

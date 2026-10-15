@@ -298,6 +298,11 @@ configuration of the native build, a toolchain that is missing).
 | `E4055` | '…' was already captured in this 'fire' |
 | `E4056` | Class '…' has no static member '…' |
 | `E4057` | '….…' is an instance member - it needs an object, not the class name |
+| `E4059` | Field '…' of class '…' needs a type: a field is not declared with 'var' (use the type it holds, or 'any' if every type is allowed) |
+| `E4060` | Property '…' of class '…' needs a type (use the type it holds, or 'any' if every type is allowed) |
+| `E4061` | '…' is generic with … type parameter(s), not … |
+| `E4062` | '…' is ambiguous: … (more than one '#using' brings it); write the full name |
+| `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
 
 ### E5xxx - Bytecode compiler
 
@@ -343,5 +348,21 @@ configuration of the native build, a toolchain that is missing).
 | `E7001` | The native generator cannot translate this program |
 | `E7002` | The C++ compiler of the native build reported errors |
 | `E7003` | The configuration of the native build cannot be used |
+
+### TCxxx - Type checker (docs/TYPES.md)
+
+A warning in lax mode, an error in strict mode (`--types`, the project setting `typeChecking`, `#lax` / `#strict` in a file); the code is the same.
+
+| Code | Message |
+|---|---|
+| `TC001` | Cannot assign a value of type '…' to '…' of type '…' (assignment, initializer, field) / A condition must be a 'bool', not '…' (`if`, `while`, `for`) |
+| `TC002` | Cannot assign a value of type '…' to parameter '…' of '…' of type '…' (an argument that does not fit) |
+| `TC003` | Cannot assign a value of type '…' to the return value of type '…' |
+| `TC004` | Parameter '…' of '…' has no type and is assumed to be 'any'. Please add a type (use 'any' if every type is allowed). |
+| `TC005` | Method '…' has no return type and is assumed to return 'any'. Please add one (use 'undefined' if it returns nothing). |
+| `TC006` | A value in '…' does not fit '…' in '…' / '…' and '…' cannot be combined with '…' (another dimension) (units of another dimension, a unit where none is declared, or none where one is) |
+| `TC007` | A whole number in '…' converted into '…' may lose its fraction (a warning also in strict mode) |
+| `TC008` | '…' has no field, property or method '…' / '…' has no method '…' (a member that a fully known class does not have) |
+| `TC009` | An assignment as a condition - did you mean '=='? (`if (a = b)`; `if ((a = b))` says the assignment is meant; a warning also in strict mode) |
 
 `…` stands for a part of the message that varies (a name, a number).

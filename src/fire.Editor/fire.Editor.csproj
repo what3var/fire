@@ -44,9 +44,13 @@
   <ItemGroup>
     <!-- The help pages behind the "?" menu (Help folder): copied to Help\ next to the executable and opened from there (see MainWindow.OpenHelp). -->
     <None Include="Help\**\*.md" CopyToOutputDirectory="PreserveNewest" />
+    <!-- The language reference (docs/language): copied to Help\Language\, its contents page fills Help > The fire Language (see MainWindow.BuildLanguageHelpMenu). -->
+    <None Include="..\..\docs\language\*.md" Link="Help\Language\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <AvaloniaResource Include="Assets\icons\*.png" />
+    <None Remove="Assets\splash.png" />
     <None Remove="fileicons.res" />
     <AvaloniaResource Include="Assets\Logo-64.png" />
+    <AvaloniaResource Include="Assets\splash.png" />
   </ItemGroup>
 
   <PropertyGroup>

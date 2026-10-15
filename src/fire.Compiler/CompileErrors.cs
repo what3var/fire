@@ -16,6 +16,7 @@ namespace fire.Compiler
         {
             ResolverException r => r.Errors.Select(e => e.Message).ToList(),
             CompilerException c => c.Errors.Select(e => e.Message).ToList(),
+            TypeCheckException t => t.Errors.Select(e => e.Message + (e.Line > 0 ? $" ({e.Line})" : "")).ToList(),
             _ => new[] { ex.Message },
         };
 

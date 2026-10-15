@@ -29,9 +29,9 @@ namespace UI {
         // Further roots (windows) that this one processes along with it (see Attach)
         List attached
         // A lambda without parameters that every cycle of this root calls at the end (the markup classes use it for OnTick)
-        var onTick
+        lambda onTick
         // A lambda (width, height) that is called after the interface has been brought to a new window size (see autoResize)
-        var onResize
+        lambda<int, int> onResize
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
@@ -44,7 +44,7 @@ namespace UI {
         bool layoutMoved = false
         // while arranging and drawing: write accesses to the fields of the elements are then no changes
         bool painting = false
-        var watcher
+        lambda<any, any, any, any> watcher
 
         // Touchscreen: the finger that guides the pointer (-1: none; a second finger next to it is ignored), where it touched down, where it was last, whether it is currently swiping (and which element is then moved)
         int touchFinger = -1
@@ -107,7 +107,7 @@ namespace UI {
         }
 
         // The font with this name (Fonts.Get; the console font if there is none), looked up once and then kept.
-        FontFor(string name) {
+        Font FontFor(string name) {
             if (name == "") { return undefined }
             for (var i = 0; i < this.fontNames.count; i = i + 1) {
                 if (this.fontNames[i] == name) { return this.fontObjects[i] }
@@ -120,21 +120,21 @@ namespace UI {
         }
 
         // An element or the theme has changed.
-        Touched(o) {
+        undefined Touched(any o) {
             if (this.painting) { return }
             this.dirty = true
             if (o is of Element) { o.Invalidate() } else { this.fullRedraw = true }
         }
 
         // Observes the fields of the element (once).
-        Watch(element) {
+        undefined Watch(Element element) {
             if (element.watched) { return }
             element.watched = true
             Reflect.ProbeAll(element, "changed", this.watcher)
         }
 
         // The area (x, y, w, h) must be repainted.
-        InvalidateRect(int x, int y, int w, int h) {
+        undefined InvalidateRect(int x, int y, int w, int h) {
             this.dirty = true
             var x1 = x + w + 1
             var y1 = y + h + 1
@@ -155,7 +155,7 @@ namespace UI {
         }
 
         // Everything must be repainted (for example after changing a brush that elements use).
-        Invalidate() {
+        undefined Invalidate() {
             this.dirty = true
             this.fullRedraw = true
         }
@@ -168,17 +168,17 @@ namespace UI {
         }
 
         // Adds an element (or panel) to the top level; it belongs to this root from now on.
-        Add(element) { this.content.Add(element) }
+        undefined Add(Element element) { this.content.Add(element) }
 
         // Arranges the entire interface and draws it anew completely.
-        Draw() {
+        undefined Draw() {
             this.fullRedraw = true
             this.dirty = true
             this.Update()
         }
 
         // Polls the elements (bindings, triggers, styles, lists); everything that changes in the process reports itself via Touched.
-        Poll() {
+        undefined Poll() {
             this.content.Poll(this)
             for (var i = 0; i < this.popups.count; i = i + 1) { this.popups[i].Poll(this) }
         }
@@ -220,7 +220,7 @@ namespace UI {
         }
 
         // Arranges the floating elements (a new or moved one is repainted).
-        LayoutPopups() {
+        undefined LayoutPopups() {
             for (var i = 0; i < this.popups.count; i = i + 1) {
                 var popup = this.popups[i]
                 popup.Measure(this, -1, -1)
@@ -235,7 +235,7 @@ namespace UI {
             }
         }
 
-        Paint() {
+        undefined Paint() {
             this.renderer.ResetClip()
             if (this.fullRedraw) {
                 this.renderer.FillRect(0, 0, this.width, this.height, this.theme.back)
@@ -262,7 +262,7 @@ namespace UI {
 
         // Restricts drawing to the rectangle (intersected with the current one); PopClip restores the previous one. The elements call both
         // in pairs (for example a ScrollViewer around its children).
-        PushClip(int x, int y, int w, int h) {
+        undefined PushClip(int x, int y, int w, int h) {
             var r = new Rect(x, y, w, h)
             if (this.clips.count > 0) { r.IntersectWith(this.clips[this.clips.count - 1]) }
             r.TakeTo(this)
@@ -270,7 +270,7 @@ namespace UI {
             this.renderer.SetClip(r.x, r.y, r.w, r.h)
         }
 
-        PopClip() {
+        undefined PopClip() {
             var last = this.clips.count - 1
             if (last < 0) { return }
             delete this.clips[last]
@@ -284,7 +284,7 @@ namespace UI {
 
         // Shows an element floating at the screen position (x, y) above everything; it belongs to the root from now on. `transient`: destroy
         // on closing (menus). `owner`: the element that opened it (a click on it only closes, does not reopen right away).
-        ShowPopup(popup, int x, int y, bool transient = true, owner = undefined) {
+        undefined ShowPopup(Element popup, int x, int y, bool transient = true, Element owner = undefined) {
             popup.TakeTo(this)
             popup.x = x
             popup.y = y
@@ -295,14 +295,14 @@ namespace UI {
             this.dirty = true
         }
 
-        bool IsPopup(popup) {
+        bool IsPopup(Element popup) {
             for (var i = 0; i < this.popups.count; i = i + 1) {
                 if (this.popups[i] == popup) { return true }
             }
             return false
         }
 
-        ClosePopup(popup) {
+        undefined ClosePopup(Element popup) {
             for (var i = 0; i < this.popups.count; i = i + 1) {
                 if (this.popups[i] == popup) {
                     this.popups.RemoveAt(i)
@@ -317,19 +317,19 @@ namespace UI {
         }
 
         // Closes all floating elements (a click next to them, Escape, a chosen menu row).
-        CloseAllPopups() {
+        undefined CloseAllPopups() {
             while (this.popups.count > 0) { this.ClosePopup(this.popups[this.popups.count - 1]) }
         }
 
         // Shows a menu (list of MenuItem) with its top left corner at (x, y); a chosen row or a click next to it closes it.
-        ShowMenu(items, int x, int y, owner = undefined) {
+        UI.MenuPopup ShowMenu(List items, int x, int y, Element owner = undefined) {
             var menu = new MenuPopup(items)
             this.ShowPopup(menu, x, y, true, owner)
             return menu
         }
 
         // The element under the mouse pointer: first the floating elements (the topmost first), then the interface.
-        Hit(int px, int py) {
+        UI.Element Hit(int px, int py) {
             var i = this.popups.count - 1
             while (i >= 0) {
                 var hit = this.popups[i].HitTest(px, py)
@@ -373,7 +373,7 @@ namespace UI {
 
         // Attaches a further root (a further window): Tick and Run process it along with it until its window is closed. The window that runs here determines the end
         // of Run; closing an attached window only removes it. The other root (and what owns it) must live as long as its window.
-        Attach(other) {
+        undefined Attach(Root other) {
             for (var i = 0; i < this.attached.count; i = i + 1) {
                 if (this.attached[i] == other) { return }
             }
@@ -383,7 +383,7 @@ namespace UI {
         }
 
         // Takes the attached root out again (its window stays open, but nobody processes it any more).
-        Detach(other) {
+        undefined Detach(Root other) {
             for (var i = 0; i < this.attached.count; i = i + 1) {
                 if (this.attached[i] == other) {
                     this.attached.RemoveAt(i)
@@ -393,7 +393,7 @@ namespace UI {
         }
 
         // Distributes an event of the window (structure see Window.NextEvent) to the element below it or the one with focus.
-        Dispatch(e) {
+        undefined Dispatch(any e) {
             var type = e[0]
             if (type == 8) { this.MouseDown(e[1], e[2], e[3]) }
             else if (type == 11) { this.MouseUp(e[1], e[2], e[3]) }
@@ -412,12 +412,12 @@ namespace UI {
         }
 
         // Runs until the window is closed. With `other` (a root) it is attached beforehand: `ui.Run(second)` processes both windows.
-        Run(other = undefined) {
+        undefined Run(Root other = undefined) {
             if (other != undefined) { this.Attach(other) }
             while (this.Tick()) { }
         }
 
-        SetFocus(element) {
+        undefined SetFocus(Element element) {
             var old = this.focusElement
             if (old != undefined) { old.focused = false }
             this.focusElement = element
@@ -428,7 +428,7 @@ namespace UI {
         }
 
         // Makes sure that the element can be seen in every ScrollViewer it lies in (the focus moves by Tab, arrow keys or joystick).
-        Reveal(element) {
+        undefined Reveal(Element element) {
             // (x, y) is the position of the element in the coordinate system of `e`, which changes from the inside out (without the screen position: that is only current after the next drawing)
             var x = 0
             var y = 0
@@ -454,7 +454,7 @@ namespace UI {
         }
 
         // Arrow key: the focus moves to the next focusable element in this direction. If there is none, the ScrollViewer around the element (or under the pointer) is scrolled instead.
-        FocusMove(int key) {
+        undefined FocusMove(int key) {
             var list = new List()
             this.content.Collect(list)
             var current = this.focusElement
@@ -517,7 +517,7 @@ namespace UI {
         }
 
         // Scrolls (like the mouse wheel) the next ScrollViewer or the list above/around `element` in the direction of the arrow key.
-        ScrollFrom(element, int key) {
+        undefined ScrollFrom(Element element, int key) {
             var dx = 0
             var dy = 0
             if (key == UI.Keys.Up()) { dy = 1 }
@@ -535,7 +535,7 @@ namespace UI {
         // ---- Touchscreen ----
 
         // A finger touches down: like a pressed left mouse button at this place. If it moves no further than `touchSlop`, lifting is a click; if it drags over a list or a ScrollViewer, it becomes a swipe.
-        TouchDown(int finger, int px, int py) {
+        undefined TouchDown(int finger, int px, int py) {
             if (this.touchFinger >= 0) { return }
             this.touchFinger = finger
             this.touchX0 = px
@@ -548,7 +548,7 @@ namespace UI {
             this.MouseDown(1, px, py)
         }
 
-        TouchMove(int finger, int px, int py) {
+        undefined TouchMove(int finger, int px, int py) {
             if (finger != this.touchFinger) { return }
             if (!this.touchPanning) {
                 var dx = px - this.touchX0
@@ -578,7 +578,7 @@ namespace UI {
         }
 
         // The element that takes over a swipe: from the pressed element upwards the first that can be moved - unless a handle is currently being dragged (scroll bar).
-        FindPanner() {
+        UI.Element FindPanner() {
             var e = this.pressedElement
             if (e == undefined) { e = this.Hit(this.touchX0, this.touchY0) }
             while (e != undefined) {
@@ -589,7 +589,7 @@ namespace UI {
             return undefined
         }
 
-        TouchUp(int finger, int px, int py) {
+        undefined TouchUp(int finger, int px, int py) {
             if (finger != this.touchFinger) { return }
             this.touchFinger = -1
             if (this.touchPanning) {
@@ -609,7 +609,7 @@ namespace UI {
         // ---- Joystick ----
 
         // An axis moves (-1 to 1): the left stick becomes a direction, with a dead zone in the middle.
-        JoyAxis(int axis, v) {
+        undefined JoyAxis(int axis, any v) {
             if (axis == this.joyAxisX) { this.joyStickX = this.StickDirection(v, this.joyStickX) }
             else if (axis == this.joyAxisY) { this.joyStickY = this.StickDirection(v, this.joyStickY) }
             else { return }
@@ -617,7 +617,7 @@ namespace UI {
         }
 
         // -1, 0 or 1: deflected from 0.6 on, back to the middle only below 0.3 (in between it stays as it was).
-        int StickDirection(v, int old) {
+        int StickDirection(any v, int old) {
             if (v > 0.6) { return 1 }
             if (v < -0.6) { return -1 }
             if (v > -0.3 && v < 0.3) { return 0 }
@@ -625,7 +625,7 @@ namespace UI {
         }
 
         // The D-pad (hat) has a bit mask: 1 up, 2 right, 4 down, 8 left.
-        JoyHat(int mask) {
+        undefined JoyHat(int mask) {
             this.joyHatY = 0
             this.joyHatX = 0
             if (mask % 2 == 1) { this.joyHatY = -1 }
@@ -636,7 +636,7 @@ namespace UI {
         }
 
         // From D-pad and stick the arrow key that is currently held (the D-pad first, vertical before horizontal): on a change it is pressed.
-        JoyDirectionChanged() {
+        undefined JoyDirectionChanged() {
             var x = this.joyHatX
             if (x == 0) { x = this.joyStickX }
             var y = this.joyHatY
@@ -653,14 +653,14 @@ namespace UI {
         }
 
         // Every cycle: a held direction repeats.
-        JoyRepeat() {
+        undefined JoyRepeat() {
             if (this.joyKey == 0) { return }
             this.joyHold = this.joyHold + 1
             if (this.joyHold >= this.joyRepeatDelay && (this.joyHold - this.joyRepeatDelay) % this.joyRepeatInterval == 0) { this.KeyDown(this.joyKey, 0) }
         }
 
         // A joystick button was pressed.
-        JoyButton(int button) {
+        undefined JoyButton(int button) {
             if (button == this.joyButtonActivate) { this.KeyDown(UI.Keys.Enter(), 0) }
             else if (button == this.joyButtonCancel) { this.KeyDown(UI.Keys.Escape(), 0) }
             else if (button == this.joyButtonPrevious) { this.FocusStep(true) }
@@ -668,7 +668,7 @@ namespace UI {
         }
 
         // A joystick was unplugged: release held directions.
-        JoyReset() {
+        undefined JoyReset() {
             this.joyStickX = 0
             this.joyStickY = 0
             this.joyHatX = 0
@@ -678,7 +678,7 @@ namespace UI {
         }
 
         // Tab: the focus moves to the next (with Shift: to the previous) focusable element.
-        FocusStep(bool backwards) {
+        undefined FocusStep(bool backwards) {
             var list = new List()
             this.content.Collect(list)
             if (list.count == 0) { return }
@@ -696,7 +696,7 @@ namespace UI {
             this.SetFocus(list[index])
         }
 
-        MouseWheel(int dx, int dy, int px, int py) {
+        undefined MouseWheel(int dx, int dy, int px, int py) {
             this.mouseX = px
             this.mouseY = py
             var e = this.Hit(px, py)
@@ -706,7 +706,7 @@ namespace UI {
             }
         }
 
-        MouseDown(int button, int px, int py) {
+        undefined MouseDown(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
             // a click next to the floating elements: the topmost says whether it closes and whether the click is thereby consumed
@@ -749,7 +749,7 @@ namespace UI {
             return false
         }
 
-        MouseUp(int button, int px, int py) {
+        undefined MouseUp(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
             var target = this.pressedElement
@@ -757,7 +757,7 @@ namespace UI {
             if (target != undefined) { target.MouseUp(this, button, px, py) }
         }
 
-        MouseMove(int px, int py) {
+        undefined MouseMove(int px, int py) {
             this.mouseX = px
             this.mouseY = py
             var hit = this.Hit(px, py)
@@ -772,7 +772,7 @@ namespace UI {
             else if (hit != undefined) { hit.Hover(this, px, py) }
         }
 
-        KeyDown(int key, int mod) {
+        undefined KeyDown(int key, int mod) {
             if (key == UI.Keys.Tab()) {
                 // the shift keys are bits 1 and 2 of mod
                 this.FocusStep(mod % 4 != 0)
@@ -795,7 +795,7 @@ namespace UI {
             if (target != undefined && target.enabled) { target.KeyDown(this, key, mod) }
         }
 
-        TextInput(string text) {
+        undefined TextInput(string text) {
             var target = this.focusElement
             if (target != undefined && target.enabled) { target.TextInput(this, text) }
         }

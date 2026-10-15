@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MemoryPack;
 
 namespace fire.Ast
@@ -39,13 +40,25 @@ namespace fire.Ast
     /// EMPTY brackets distinguish this from the bit width (`int[8]`, always with a
     /// number). `ArrayRank` counts these bracket pairs (0 = no array).
     ///
+    /// TypeArgs: the type arguments of a generic class or interface (`List&lt;int&gt; values`, `Map&lt;string, List&lt;int&gt;&gt;`); null without
+    /// `&lt;...&gt;` - a generic class written without them is its raw form (every type argument `any`). They are a matter of the type checker only:
+    /// at runtime `List&lt;int&gt;` is a `List` (no specialisation, SPEC "Generic classes"). TypeArgCount is their number.
+    ///
     /// LambdaSignature: set if this TypeRef is a lambda type
     /// (`BaseName == "lambda"`) - `[ReturnType] lambda[&lt;Param1,...,ParamN&gt;]`,
     /// see LambdaSignature docs and SPEC "Lambda types with signature".
     /// </summary>
     [MemoryPackable]
-    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0)
+    public sealed partial record TypeRef(string BaseName, int? BitWidth, int PointerDepth, LambdaSignature? LambdaSignature = null, IReadOnlyList<string>? Namespaces = null, string? Unit = null, int ArrayRank = 0, int TypeArgCount = 0, IReadOnlyList<TypeRef>? TypeArgs = null, bool Unsigned = false)
     {
+        /// <summary>The declared width as the operand of an implicit OpCode.ConvertWidth (0: nothing to cut): the bits | 0x100 for a float | 0x200 for
+        /// `byte` (unsigned). `int[8]`, `int[16]`, `int[32]`, `byte` and `float[32]` cut a value on every assignment (SPEC 8.2); 64 bits, arrays, pointers
+        /// and other types have nothing to cut.</summary>
+        public int WidthCode => PointerDepth > 0 || ArrayRank > 0 || BitWidth is not { } bits ? 0
+            : BaseName == "int" && bits is 8 or 16 or 32 ? bits | (Unsigned ? 0x200 : 0)
+            : BaseName == "float" && bits == 32 ? bits | 0x100
+            : 0;
+
         /// <summary>Sentinel for `BaseName` when a declaration uses `var`
         /// together with an EXPLICIT unit, but WITHOUT an explicit type
         /// (`var a : mm`) - the actual type remains, as with
@@ -64,6 +77,13 @@ namespace fire.Ast
         /// (see InferredMarker docs).</summary>
         [MemoryPackIgnore]
         public bool IsInferred => BaseName == InferredMarker;
+
+        /// <summary>The unit a declaration demands (`: mm`); null when it demands none. `: any` says explicitly that every unit is accepted (checked where the value is used), which demands nothing.</summary>
+        [MemoryPack.MemoryPackIgnore] public string? RequiredUnit => Unit is null or "any" ? null : Unit;
+
+        /// <summary>What a declaration demands of the unit of a value (Value.AdaptToUnit): its RequiredUnit, with a leading `#` when the declared type is
+        /// `float` (a whole number is taken as a float before it is converted: `float b : km = 1500m` is 1.5km); null when nothing is demanded.</summary>
+        [MemoryPack.MemoryPackIgnore] public string? UnitDemand => RequiredUnit is { } required && fire.Values.Unit.DemandText(required) is var unit ? (BaseName == "float" ? "#" + unit : unit) : null;
 
         [MemoryPackIgnore]
         public bool IsPointer => PointerDepth > 0;
@@ -100,6 +120,22 @@ namespace fire.Ast
             return BaseName;
         }
 
+        /// <summary>The fully qualified names `BaseName` stands for when it is AMBIGUOUS: not known as written, not in `ownNamespace` (the namespace of the
+        /// code that writes it, which wins as the first candidate), but in more than one of the `#using` namespaces - then there is no first match, the name
+        /// must be written in full. Empty when the name is not ambiguous.</summary>
+        public IReadOnlyList<string> AmbiguousCandidates(Func<string, bool> isKnown, string? ownNamespace)
+        {
+            if (Namespaces == null || Namespaces.Count < 2 || isKnown(BaseName)) return Array.Empty<string>();
+            if (ownNamespace != null && Namespaces[0] == ownNamespace && isKnown(ownNamespace + "." + BaseName)) return Array.Empty<string>();
+            var matches = new List<string>();
+            foreach (var ns in Namespaces)
+            {
+                string candidate = ns + "." + BaseName;
+                if (isKnown(candidate) && !matches.Contains(candidate)) matches.Add(candidate);
+            }
+            return matches.Count > 1 ? matches : Array.Empty<string>();
+        }
+
         public override string ToString()
         {
             if (LambdaSignature != null)
@@ -111,6 +147,7 @@ namespace fire.Ast
                 return ret + "lambda" + ps;
             }
             string s = BitWidth != null ? $"{BaseName}[{BitWidth}]" : BaseName;
+            if (TypeArgs is { Count: > 0 }) s += "<" + string.Join(", ", TypeArgs) + ">";
             return s + new string('*', PointerDepth);
         }
     }

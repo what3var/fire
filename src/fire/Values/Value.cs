@@ -173,8 +173,8 @@ namespace fire.Values
         // Coercion
         // ---------------------------------------------------------------
 
-        /// <summary>Converts an Int/Float/Undefined value into another (compatible)
-        /// unit. Throws UnitMismatchException on incompatible dimension.</summary>
+        /// <summary>Converts an Int/Float/Undefined value into another unit: of the same dimension by its factor, of another one the number
+        /// in the base unit gets the target unit (SPEC 3.1: `:` always coerces).</summary>
         public Value CoerceUnit(Unit targetUnit)
         {
             if (Kind != ValueKind.Int && Kind != ValueKind.Float && Kind != ValueKind.Undefined)
@@ -184,14 +184,20 @@ namespace fire.Values
             if (currentUnit.Equals(targetUnit))
                 return this;
 
-            // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact
-            if (targetUnit.IsUnitless && !currentUnit.IsUnitless && Kind != ValueKind.Undefined)
+            // `a:unitless` takes the dimension out: the number in the base unit (12mm becomes 0.012, 2km 2000); an int stays an int when that is exact.
+            // `a:unit` of another dimension never fails either: the number in the base unit gets the target unit (`5mm:kg` is 0.005kg, `7:s` is 7s).
+            if (Kind != ValueKind.Undefined && (targetUnit.IsUnitless && !currentUnit.IsUnitless || !currentUnit.IsCompatibleWith(targetUnit)))
             {
-                double inBase = (Kind == ValueKind.Int ? _intValue : _floatValue) * currentUnit.Scale;
+                double inBase = currentUnit.ToBase(Kind == ValueKind.Int ? _intValue : _floatValue);
                 if (Kind == ValueKind.Int && Math.Abs(inBase) < 9.0e15 && inBase == Math.Floor(inBase)) return MakeInt((long)inBase, targetUnit);
                 return MakeFloat(inBase, targetUnit);
             }
 
+            if (Kind == ValueKind.Undefined) return MakeUndefined(targetUnit);
+            if (!currentUnit.IsLinear || !targetUnit.IsLinear)   // an offset or conversion functions (`20C:F`)
+                return Kind == ValueKind.Int
+                    ? MakeInt((long)Math.Round(currentUnit.Convert(_intValue, targetUnit)), targetUnit)
+                    : MakeFloat(currentUnit.Convert(_floatValue, targetUnit), targetUnit);
             double factor = currentUnit.ConversionFactorTo(targetUnit);
 
             return Kind switch
@@ -201,6 +207,55 @@ namespace fire.Values
                 ValueKind.Undefined => MakeUndefined(targetUnit),
                 _ => throw new InvalidOperationException("unreachable"),
             };
+        }
+
+        /// <summary>What a unit declaration does with a value (SPEC "Unit declarations").</summary>
+        public enum UnitAdaptation { Ok, Mismatch, Overflow }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Unit> DemandUnits = new();
+
+        /// <summary>A unit declaration takes `value` (see TypeRef.UnitDemand; a leading `#`: the declaration is a float): `demand` is a unit (`mm`, `unitless`) - a value of the same dimension is converted into it, `undefined`
+        /// takes it - or `any m` - every unit of the dimension of `m`, nothing is converted. Another dimension is a `Mismatch`, a whole number that does not
+        /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone.</summary>
+        public static UnitAdaptation AdaptToUnit(ref Value value, string demand)
+        {
+            if (value.Kind is not (ValueKind.Int or ValueKind.Float or ValueKind.Undefined)) return UnitAdaptation.Ok;
+            if (demand.StartsWith('#'))
+            {
+                // the declaration is a float: a whole number becomes one (`float f = 3` holds 3.0)
+                demand = demand.Substring(1);
+                if (value.Kind == ValueKind.Int) value = MakeFloat(value._intValue, value.Unit);
+            }
+            if (demand == "any") return UnitAdaptation.Ok;   // (`#any`: only the int becomes a float, every unit stays)
+            bool dimensionOnly = demand.StartsWith("any ", StringComparison.Ordinal);
+            var target = DemandUnits.GetOrAdd(dimensionOnly ? demand.Substring(4) : demand, Values.Unit.Parse);
+            var actual = value.Unit ?? Values.Unit.Unitless;
+            if (actual.Equals(target)) return UnitAdaptation.Ok;
+            if (value.Kind == ValueKind.Undefined)
+            {
+                if (!dimensionOnly) value = MakeUndefined(target);
+                return UnitAdaptation.Ok;
+            }
+            if (!actual.IsCompatibleWith(target)) return UnitAdaptation.Mismatch;
+            if (dimensionOnly) return UnitAdaptation.Ok;
+            if (!actual.IsLinear || !target.IsLinear)
+            {
+                double result = actual.Convert(value.Kind == ValueKind.Float ? value._floatValue : value._intValue, target);
+                if (value.Kind == ValueKind.Float) { value = MakeFloat(result, target, value.Width); return UnitAdaptation.Ok; }
+                if (Math.Abs(Math.Round(result)) >= 9.2e18) return UnitAdaptation.Overflow;
+                value = MakeInt((long)Math.Round(result), target, value.Width);
+                return UnitAdaptation.Ok;
+            }
+            double factor = actual.ConversionFactorTo(target);
+            if (value.Kind == ValueKind.Float)
+            {
+                value = MakeFloat(value._floatValue * factor, target, value.Width);
+                return UnitAdaptation.Ok;
+            }
+            double converted = Math.Round(value._intValue * factor);
+            if (Math.Abs(converted) >= 9.2e18) return UnitAdaptation.Overflow;
+            value = MakeInt((long)converted, target, value.Width);
+            return UnitAdaptation.Ok;
         }
 
         /// <summary>`a::unit`: the same number with another unit, nothing is calculated (12mm::unitless is 12, 12mm::m is 12m).</summary>
@@ -231,6 +286,17 @@ namespace fire.Values
                     return MakeInt(0, Unit);
                 case (ValueKind.Undefined, ValueKind.Float):
                     return MakeFloat(0, Unit);
+                // characters: the number of the 16-bit code unit (`65!char` is 'A', `'A'!int` is 65); a number outside 0..65535 wraps like a 16-bit cast
+                case (ValueKind.Int, ValueKind.Char):
+                    return MakeChar(unchecked((char)_intValue));
+                case (ValueKind.Float, ValueKind.Char):
+                    return MakeChar(unchecked((char)(long)Math.Round(_floatValue)));
+                case (ValueKind.Char, ValueKind.Int):
+                    return MakeInt(_intValue);
+                case (ValueKind.Char, ValueKind.Float):
+                    return MakeFloat(_intValue);
+                case (ValueKind.Undefined, ValueKind.Char):
+                    return MakeChar('\0');
                 default:
                     throw new InvalidOperationException(
                         $"Cannot coerce type {Kind} to {targetKind}.");
@@ -388,7 +454,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits % b._bits, a._ref);
+                    return new Value(ValueKind.Int, b._bits == -1 ? 0 : a._bits % b._bits, a._ref);   // (long.MinValue % -1 overflows in .NET)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() % b.ToDouble())), a._ref);
             }
 
@@ -397,7 +463,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() % b.ToDouble(), a.Unit);
-            return MakeInt(a._intValue % b._intValue, a.Unit);
+            return MakeInt(b._intValue == -1 ? 0 : a._intValue % b._intValue, a.Unit);
         }
 
         public static Value Divide(Value a, Value b)
@@ -406,7 +472,7 @@ namespace fire.Values
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
                 if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
-                    return new Value(ValueKind.Int, a._bits / b._bits, a._ref);
+                    return new Value(ValueKind.Int, b._bits == -1 ? unchecked(-a._bits) : a._bits / b._bits, a._ref);   // (long.MinValue / -1 wraps, like the native code)
                 return new Value(ValueKind.Float, BitConverter.DoubleToInt64Bits(Fl(a.ToDouble() / b.ToDouble())), a._ref);
             }
 
@@ -415,7 +481,7 @@ namespace fire.Values
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() / b.ToDouble(), resultUnit);
-            return MakeInt(a._intValue / b._intValue, resultUnit);
+            return MakeInt(b._intValue == -1 ? unchecked(-a._intValue) : a._intValue / b._intValue, resultUnit);
         }
 
         public static Value Multiply(Value a, Value b)
@@ -533,6 +599,19 @@ namespace fire.Values
         /// storage always stays long/double (full width); TruncateTo applies
         /// only the value range/precision enforced by the target width
         /// and marks the result with the new Width.</summary>
+        /// <summary>`x!int[8]`, `x!byte`, `x!float[32]` (OpCode.ConvertWidth): the value as a number of that kind (like `!int`/`!float`, also from a char)
+        /// cut to the width - an int in two's complement (`300!int[8]` is 44, `200!int[8]` is -56), `unsigned` keeps 0..2^bits-1 (`byte`: `300!byte` is 44,
+        /// `-1!byte` is 255); a float is rounded to float32 (64 leaves it).</summary>
+        public Value ConvertWidth(int bits, bool toFloat, bool unsigned)
+        {
+            var number = CoerceType(toFloat ? ValueKind.Float : ValueKind.Int);
+            if (toFloat) return bits == 32 ? MakeFloat((float)number._floatValue, number.Unit, NumericWidth.W32) : MakeFloat(number._floatValue, number.Unit);
+            if (bits >= 64) return MakeInt(number._intValue, number.Unit);
+            long mask = (1L << bits) - 1, raw = number._intValue & mask;
+            if (!unsigned && (raw & (1L << (bits - 1))) != 0) raw -= 1L << bits;
+            return MakeInt(raw, number.Unit, (NumericWidth)bits);
+        }
+
         public Value TruncateTo(NumericWidth width)
         {
             if (Kind == ValueKind.Int)
@@ -596,12 +675,30 @@ namespace fire.Values
         /// (e.g. Bool vs Int simply yields false, no error).</summary>
         public static bool ValuesEqual(Value a, Value b) => a.Equals(b);
 
+        /// <summary>The operators `==`/`!=`: numbers compare by value - an `int` and a `float` alike (`1 == 1.0`), and units of the same dimension are converted
+        /// like for `<` (`1m == 100cm`); a number with a unit of another dimension (or a unitless one) is compared as written (`5cm == 5`, the type checker
+        /// reports it, TC006). Everything else as <see cref="ValuesEqual"/>.</summary>
+        public static bool OperatorEquals(Value a, Value b)
+        {
+            if (a.Kind is not (ValueKind.Int or ValueKind.Float) || b.Kind is not (ValueKind.Int or ValueKind.Float)) return a.Equals(b);
+            if (!ReferenceEquals(a._ref, b._ref))
+            {
+                var ua = a.Unit ?? Values.Unit.Unitless;
+                var ub = b.Unit ?? Values.Unit.Unitless;
+                if (!ua.Equals(ub) && ua.IsCompatibleWith(ub)) AlignUnits(ref a, ref b);
+            }
+            if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int) return a._intValue == b._intValue;
+            return a.ToDouble() == b.ToDouble();
+        }
+
         /// <summary>For '&lt;'/'&lt;='/'&gt;'/'&gt;=' - only for numeric values with
         /// matching unit (like Add/Subtract).</summary>
         public static int Compare(Value a, Value b)
         {
             if (BothNumericSameUnit(a, b))
                 return a.ToDouble().CompareTo(b.ToDouble());
+            if (a.Kind == ValueKind.Char && b.Kind == ValueKind.Char) return a.AsChar().CompareTo(b.AsChar());   // characters by their code
+            if (a.Kind == ValueKind.String && b.Kind == ValueKind.String) return Math.Sign(string.CompareOrdinal(a.AsString(), b.AsString()));   // texts by their codes
 
             RequireNumeric(a); RequireNumeric(b);
             AlignUnits(ref a, ref b);
@@ -636,6 +733,14 @@ namespace fire.Values
             if (ua.Equals(ub)) return;
             if (!ua.IsCompatibleWith(ub)) throw new UnitMismatchException(ua, ub);
 
+            if (!ua.IsLinear || !ub.IsLinear)
+            {
+                // an offset or conversion functions: the right operand goes into the unit of the left one (`20C + 9F`)
+                double converted = ub.Convert(b.Kind == ValueKind.Int ? b._intValue : b._floatValue, ua);
+                b = a.Kind == ValueKind.Int && b.Kind == ValueKind.Int ? MakeInt((long)Math.Round(converted), ua) : MakeFloat(converted, ua);
+                return;
+            }
+
             if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
             {
                 // fine = the unit with the smaller scale (more of them per length), coarse = the other one
@@ -648,18 +753,26 @@ namespace fire.Values
                 double up = coarse._intValue * uCoarse.ConversionFactorTo(uFine);
                 if (up >= -9.2e18 && up <= 9.2e18)
                 {
-                    coarse = MakeInt((long)up, uFine);                       // 2m -> 2000mm
+                    coarse = MakeInt((long)SnapWhole(up), uFine);            // 2m -> 2000mm
                 }
                 else
                 {
                     double down = fine._intValue * uFine.ConversionFactorTo(uCoarse);
-                    fine = MakeInt((long)down, uCoarse);                     // 500mm -> 0m (fraction cut off)
+                    fine = MakeInt((long)SnapWhole(down), uCoarse);          // 500mm -> 0m (fraction cut off)
                 }
                 return;
             }
 
             double factor = ub.ConversionFactorTo(ua);
             b = b.Kind == ValueKind.Int ? MakeFloat(b._intValue * factor, ua) : MakeFloat(b._floatValue * factor, ua);
+        }
+
+        /// <summary>A converted whole number: a value a rounding error away from a whole number is that number (1ft is 11.999999999999998in by the
+        /// factors), any other fraction is cut off.</summary>
+        internal static double SnapWhole(double x)
+        {
+            double r = Math.Round(x);
+            return Math.Abs(x - r) <= 1e-9 * Math.Max(1.0, Math.Abs(x)) ? r : Math.Truncate(x);
         }
 
         private static void RequireSameUnit(Value a, Value b)

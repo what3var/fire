@@ -36,6 +36,12 @@ namespace fire.Runtime
         // loop iteration, and List<T> brings an extra object and version counter per instance.
         private Value[]? _slots;
         private int _slotCount;
+
+        /// <summary>The global scope of a program: a global can be used before its declaration has run - a static field initializer runs at
+        /// the start and may call a method that reads or writes a global declared further down. It is `undefined` until then; what is written
+        /// early is kept here until the declaration (which then sets the value of its initializer, like the native code).</summary>
+        public bool EarlyAccess { get; set; }
+        private Dictionary<int, System.Runtime.CompilerServices.StrongBox<Value>>? _early;
         private OwnedSet _owned;
         // Arguments that a call received as the result of another call (`f(g())`, SPEC 2.1): they belong to the call and die last, after everything the called function created itself
         private OwnedSet _args;
@@ -88,7 +94,20 @@ namespace fire.Runtime
         {
             _parent = parent;
             _pooled = true;
+            _debugNames = null;
         }
+
+        // the names of the slots, for the debugger only (the VM sets them when it is not in performance mode); null: none known
+        private string?[]? _debugNames;
+
+        public void SetDebugName(int slot, string name)
+        {
+            if (_debugNames == null || _debugNames.Length <= slot) Array.Resize(ref _debugNames, Math.Max(slot + 1, 8));
+            _debugNames[slot] = name;
+        }
+
+        /// <summary>The name of a slot as the program declared it (null when the VM did not record it).</summary>
+        public string? DebugNameOf(int slot) => _debugNames != null && slot < _debugNames.Length ? _debugNames[slot] : null;
 
         /// <summary>Like <see cref="Reinit"/> for a call: ensures a slot array with at least `capacity` places (the existing one is
         /// reused if it suffices) and occupies the first `paramCount` slots - the caller copies the parameters directly into it
@@ -97,6 +116,7 @@ namespace fire.Runtime
         {
             _parent = parent;
             _pooled = true;
+            _debugNames = null;
             if (_slots == null || _slots.Length < capacity) _slots = new Value[capacity];
             _slotCount = paramCount;
         }
@@ -135,7 +155,17 @@ namespace fire.Runtime
                 slots = _slots;
             }
             slots[_slotCount] = initialValue;
+            _early?.Remove(_slotCount);
             return _slotCount++;
+        }
+
+        /// <summary>A slot of the global scope that is not declared yet (see EarlyAccess).</summary>
+        private ref Value EarlySlot(int index)
+        {
+            if (!EarlyAccess || index < 0) ThrowBadSlot(index);
+            _early ??= new Dictionary<int, System.Runtime.CompilerServices.StrongBox<Value>>();
+            if (!_early.TryGetValue(index, out var box)) _early[index] = box = new System.Runtime.CompilerServices.StrongBox<Value>(Value.MakeUndefined());
+            return ref box.Value;
         }
 
         /// <summary>GetSlot/SetSlot are called only with an index that
@@ -147,7 +177,7 @@ namespace fire.Runtime
         /// before.</summary>
         public Value GetSlot(int index)
         {
-            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            if ((uint)index >= (uint)_slotCount) return EarlySlot(index);
             return _slots![index];
         }
 
@@ -155,13 +185,13 @@ namespace fire.Runtime
         /// stack, without intermediate copies). Same range check as GetSlot.</summary>
         public ref Value SlotRef(int index)
         {
-            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            if ((uint)index >= (uint)_slotCount) return ref EarlySlot(index);
             return ref _slots![index];
         }
 
         public void SetSlot(int index, Value value)
         {
-            if ((uint)index >= (uint)_slotCount) ThrowBadSlot(index);
+            if ((uint)index >= (uint)_slotCount) { EarlySlot(index) = value; return; }
             _slots![index] = value;
         }
 

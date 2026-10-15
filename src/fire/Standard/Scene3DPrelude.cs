@@ -33,13 +33,13 @@ namespace fire.Standard
 
             // Units: lengths in meters, angles in radians (the units of the language convert, a number without a unit is refused).
             class S3D {
-                static float Length(v) {
+                static float Length(any v) {
                     if (!(v is in m)) { throw new Scene3DException("A length needs a unit of length (m, cm, mm, ...), got: " + v) }
                     var f = v * 1.0
                     return (f:m) / 1m
                 }
 
-                static float Angle(v) {
+                static float Angle(any v) {
                     if (v is in deg) {
                         var d = v * 1.0
                         return ((d:deg) / 1deg) * 0.017453292519943295
@@ -51,8 +51,8 @@ namespace fire.Standard
                     throw new Scene3DException("An angle needs a unit (deg or rad), got: " + v)
                 }
 
-                static Meters(float m) { return m * 1m }
-                static Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
+                static float:m Meters(float m) { return m * 1m }
+                static float:deg Degrees(float radians) { return (radians * 57.29577951308232) * 1deg }
 
                 // The colour 0xAABBGGRR as three fractions.
                 static float Red(int c) { return (c & 255) / 255.0 }
@@ -75,21 +75,21 @@ namespace fire.Standard
                 }
 
                 // `v`, `vt` and `f` lines (polygons are cut into triangles); the normals are computed. The unit of the coordinates is the meter.
-                static FromObj(string text) {
+                static Model FromObj(string text) {
                     var h = __S3DMeshFromObj(text)
                     if (h == 0) { throw new Scene3DException("The text holds no triangles (a Wavefront OBJ file with v and f lines is expected).") }
                     return new Model(h)
                 }
 
                 // Positions: x, y, z per vertex (meters); uvs: u, v per vertex (or an empty array); indices: three per triangle, counter clockwise seen from outside.
-                static FromArrays(positions, uvs, indices) {
+                static Model FromArrays(float positions[], float uvs[], int indices[]) {
                     var h = __S3DMeshNew(positions, uvs, indices)
                     if (h == 0) { throw new Scene3DException("The arrays do not make a mesh (3 numbers per vertex, 2 per texture coordinate, 3 indices per triangle, indices below the number of vertices).") }
                     return new Model(h)
                 }
 
                 // A box, sphere, cylinder, cone, plane or quad of the size 1m (a plane is 1m x 1m lying down, a quad 1m x 1m standing, facing +Z); `detail` is the number of segments around a round shape.
-                static FromTemplate(int template, int detail = 24) {
+                static Model FromTemplate(int template, int detail = 24) {
                     var h = __S3DMeshTemplate(template, detail)
                     if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
                     return new Model(h)
@@ -115,9 +115,9 @@ namespace fire.Standard
                     this.Emissive = emissive
                 }
 
-                static Matte() { return new Material(0.0, 32.0) }
-                static Plastic() { return new Material(0.4, 32.0) }
-                static Metal() { return new Material(0.9, 96.0) }
+                static Material Matte() { return new Material(0.0, 32.0) }
+                static Material Plastic() { return new Material(0.4, 32.0) }
+                static Material Metal() { return new Material(0.9, 96.0) }
             }
 
             // A picture to put on objects (RGBA). It belongs to a scene (scene.Add(texture, "key")) or is assigned to an object directly.
@@ -140,7 +140,7 @@ namespace fire.Standard
                     if (this.handle == 0) { throw new Scene3DException("The framebuffer cannot be a texture (it has to be in the colour mode Rgba).") }
                 }
 
-                construct(int width, int height, bytes) {
+                construct(int width, int height, byte bytes[]) {
                     this.hasBump = false
                     this.BumpStrength = 1.0
                     this.handle = __S3DTexNew(width, height, bytes)
@@ -163,7 +163,7 @@ namespace fire.Standard
                 }
 
                 // A checker board of cells x cells squares (the colours are 0xAABBGGRR) in a picture of size x size pixels.
-                static Checker(int size = 64, int cells = 8, int colorA = 4294967295, int colorB = 4282400832) {
+                static Texture Checker(int size = 64, int cells = 8, int colorA = 4294967295, int colorB = 4282400832) {
                     var h = __S3DTexChecker(size, cells, colorA, colorB)
                     if (h == 0) { throw new Scene3DException("A checker board needs 1 <= cells <= size <= 4096.") }
                     var t = new Texture(h, size, size, true)
@@ -174,19 +174,19 @@ namespace fire.Standard
                 int Height { get { return this.height } }
 
                 // A bump map made from the brightness of the texture itself: bright is high, dark is low (a little smoothed).
-                AddBumpmap() {
+                undefined AddBumpmap() {
                     if (!__S3DTexBumpAuto(this.handle)) { throw new Scene3DException("The texture cannot get a bump map.") }
                     this.hasBump = true
                 }
 
                 // A bump map from a picture (a framebuffer in the colour mode Rgba): its brightness is the height. A picture of another size is scaled to the texture.
-                AddBumpmap(Framebuffer source) {
+                undefined AddBumpmap(Framebuffer source) {
                     if (!__S3DTexBump(this.handle, source.Width(), source.Height(), 4, source.ReadBytes())) { throw new Scene3DException("The picture cannot be a bump map (it has to be in the colour mode Rgba).") }
                     this.hasBump = true
                 }
 
                 // A bump map from bytes: width * height heights (0..255), or width * height * 4 bytes (R, G, B, A) whose brightness is the height.
-                AddBumpmap(int width, int height, bytes) {
+                undefined AddBumpmap(int width, int height, byte bytes[]) {
                     var channels = 1
                     if (bytes.length == width * height * 4) { channels = 4 }
                     else if (bytes.length != width * height) { throw new Scene3DException("A bump map needs width * height bytes (heights) or width * height * 4 bytes (R, G, B, A).") }
@@ -195,7 +195,7 @@ namespace fire.Standard
                 }
 
                 // Takes the bump map away again.
-                RemoveBumpmap() {
+                undefined RemoveBumpmap() {
                     __S3DTexBumpClear(this.handle)
                     this.hasBump = false
                 }
@@ -236,16 +236,16 @@ namespace fire.Standard
                     this.range = 10.0
                 }
 
-                static Ambient(int color = 4294967295, float intensity = 0.3) { return new Light(0, color, intensity) }
+                static Light Ambient(int color = 4294967295, float intensity = 0.3) { return new Light(0, color, intensity) }
 
                 // Rays that travel in the direction (dx, dy, dz) (a vector without a unit).
-                static Directional(float dx, float dy, float dz, int color = 4294967295, float intensity = 1.0) {
+                static Light Directional(float dx, float dy, float dz, int color = 4294967295, float intensity = 1.0) {
                     var l = new Light(1, color, intensity)
                     l.Direction(dx, dy, dz)
                     return l
                 }
 
-                static Point(x, y, z, int color = 4294967295, float intensity = 1.0) {
+                static Light Point(float x : any m, float y : any m, float z : any m, int color = 4294967295, float intensity = 1.0) {
                     var l = new Light(2, color, intensity)
                     l.X = x
                     l.Y = y
@@ -253,20 +253,20 @@ namespace fire.Standard
                     return l
                 }
 
-                Direction(float dx, float dy, float dz) {
+                undefined Direction(float dx, float dy, float dz) {
                     this.dx = dx
                     this.dy = dy
                     this.dz = dz
                 }
 
-                X { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
-                Y { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
-                Z { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
+                float X : m { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
+                float Y : m { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
+                float Z : m { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
                 // The distance at which a point light has half of its strength.
-                Range { get { return this.range * 1m } set { this.range = S3D.Length(value) } }
+                float Range : m { get { return this.range * 1m } set { this.range = S3D.Length(value) } }
 
                 // The numbers the renderer takes: kind, r, g, b, intensity, position (3), direction (3), range, casts shadows, layers.
-                Parameters() {
+                float[] Parameters() {
                     var shadows = 0.0
                     if (this.CastShadows && this.Kind != 0) { shadows = 1.0 }
                     return [this.Kind * 1.0, S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), this.Intensity, this.x, this.y, this.z, this.dx, this.dy, this.dz, this.range, shadows, this.Layers * 1.0]
@@ -334,7 +334,7 @@ namespace fire.Standard
                 }
 
                 // An object from a model (or from the text of a Wavefront OBJ file): at the origin, in the size of the model.
-                construct(modelData) {
+                construct(any modelData) {
                     this.Init()
                     var model = modelData
                     if (modelData is of string) { model = Model.FromObj(modelData) }
@@ -344,7 +344,7 @@ namespace fire.Standard
                 }
 
                 // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
-                construct(int template, x, y, z, width, height, depth, int detail = 24) {
+                construct(int template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {
                     this.Init()
                     var h = __S3DMeshTemplate(template, detail)
                     if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
@@ -362,7 +362,7 @@ namespace fire.Standard
                     if (this.mesh > 0) { __S3DMeshFree(this.mesh) }
                 }
 
-                Init() {
+                undefined Init() {
                     this.px = 0.0
                     this.py = 0.0
                     this.pz = 0.0
@@ -394,7 +394,7 @@ namespace fire.Standard
                     this.dirty = false
                 }
 
-                UseMesh(int handle) {
+                undefined UseMesh(int handle) {
                     this.mesh = handle
                     var b = __S3DMeshBounds(handle)
                     this.minX = b[0]
@@ -406,43 +406,43 @@ namespace fire.Standard
                 }
 
                 // ---- position, rotation, anchor ----
-                X { get { return this.px * 1m } set { this.px = S3D.Length(value) } }
-                Y { get { return this.py * 1m } set { this.py = S3D.Length(value) } }
-                Z { get { return this.pz * 1m } set { this.pz = S3D.Length(value) } }
-                RotationX { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
-                RotationY { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
-                RotationZ { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
+                float X : m { get { return this.px * 1m } set { this.px = S3D.Length(value) } }
+                float Y : m { get { return this.py * 1m } set { this.py = S3D.Length(value) } }
+                float Z : m { get { return this.pz * 1m } set { this.pz = S3D.Length(value) } }
+                float RotationX : any { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
+                float RotationY : any { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
+                float RotationZ : any { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
 
                 // Where the position takes hold of the object, as a fraction of its width, height and depth (default 0.5: the centre).
-                AnchorX { get { return this.ax } set { this.ax = value } }
-                AnchorY { get { return this.ay } set { this.ay = value } }
-                AnchorZ { get { return this.az } set { this.az = value } }
+                float AnchorX { get { return this.ax } set { this.ax = value } }
+                float AnchorY { get { return this.ay } set { this.ay = value } }
+                float AnchorZ { get { return this.az } set { this.az = value } }
 
-                SetPosition(x, y, z) {
+                undefined SetPosition(float x : any m, float y : any m, float z : any m) {
                     this.X = x
                     this.Y = y
                     this.Z = z
                 }
 
-                SetAnchor(float x, float y, float z) {
+                undefined SetAnchor(float x, float y, float z) {
                     this.ax = x
                     this.ay = y
                     this.az = z
                 }
 
-                SetRotation(x, y, z) {
+                undefined SetRotation(float x : any, float y : any, float z : any) {
                     this.RotationX = x
                     this.RotationY = y
                     this.RotationZ = z
                 }
 
-                Move(dx, dy, dz) {
+                undefined Move(float dx : any m, float dy : any m, float dz : any m) {
                     this.px = this.px + S3D.Length(dx)
                     this.py = this.py + S3D.Length(dy)
                     this.pz = this.pz + S3D.Length(dz)
                 }
 
-                Rotate(x, y, z) {
+                undefined Rotate(float x : any, float y : any, float z : any) {
                     this.rx = this.rx + S3D.Angle(x)
                     this.ry = this.ry + S3D.Angle(y)
                     this.rz = this.rz + S3D.Angle(z)
@@ -450,11 +450,11 @@ namespace fire.Standard
 
                 // ---- size: the outer dimensions (what is set becomes the scale of the axis) ----
                 // (the size of the mesh itself, before it is scaled)
-                MeshWidth() { return this.maxX - this.minX }
-                MeshHeight() { return this.maxY - this.minY }
-                MeshDepth() { return this.maxZ - this.minZ }
+                float MeshWidth() { return this.maxX - this.minX }
+                float MeshHeight() { return this.maxY - this.minY }
+                float MeshDepth() { return this.maxZ - this.minZ }
 
-                Width {
+                float Width : m {
                     get { return (this.sx * this.MeshWidth()) * 1m }
                     set {
                         var w = this.MeshWidth()
@@ -462,7 +462,7 @@ namespace fire.Standard
                         this.sx = S3D.Length(value) / w
                     }
                 }
-                Height {
+                float Height : m {
                     get { return (this.sy * this.MeshHeight()) * 1m }
                     set {
                         var h = this.MeshHeight()
@@ -470,7 +470,7 @@ namespace fire.Standard
                         this.sy = S3D.Length(value) / h
                     }
                 }
-                Depth {
+                float Depth : m {
                     get { return (this.sz * this.MeshDepth()) * 1m }
                     set {
                         var d = this.MeshDepth()
@@ -479,19 +479,19 @@ namespace fire.Standard
                     }
                 }
 
-                SetSize(width, height, depth) {
+                undefined SetSize(float width : any m, float height : any m, float depth : any m) {
                     this.Width = width
                     this.Height = height
                     this.Depth = depth
                 }
 
                 // The scale factors themselves (1 = the size of the mesh).
-                ScaleX { get { return this.sx } set { this.sx = value } }
-                ScaleY { get { return this.sy } set { this.sy = value } }
-                ScaleZ { get { return this.sz } set { this.sz = value } }
+                float ScaleX { get { return this.sx } set { this.sx = value } }
+                float ScaleY { get { return this.sy } set { this.sy = value } }
+                float ScaleZ { get { return this.sz } set { this.sz = value } }
 
                 // ---- look ----
-                Texture {
+                Texture Texture {
                     get { return this.texture }
                     set {
                         if (value != undefined) { try value.TakeTo(this) }
@@ -499,7 +499,7 @@ namespace fire.Standard
                     }
                 }
 
-                Material {
+                Material Material {
                     get { return this.material }
                     set {
                         if (value != undefined) { try value.TakeTo(this) }
@@ -508,12 +508,12 @@ namespace fire.Standard
                 }
 
                 // The part of the object one copy of the texture covers (default: the whole object once); a smaller size repeats the texture.
-                TextureWidth { get { return this.tw * 1m } set { this.tw = S3D.Length(value) } }
-                TextureHeight { get { return this.th * 1m } set { this.th = S3D.Length(value) } }
+                float TextureWidth : m { get { return this.tw * 1m } set { this.tw = S3D.Length(value) } }
+                float TextureHeight : m { get { return this.th * 1m } set { this.th = S3D.Length(value) } }
                 // Where the texture starts on the object, and its rotation.
-                TextureX { get { return this.tx * 1m } set { this.tx = S3D.Length(value) } }
-                TextureY { get { return this.ty * 1m } set { this.ty = S3D.Length(value) } }
-                TextureRotation { get { return S3D.Degrees(this.trot) } set { this.trot = S3D.Angle(value) } }
+                float TextureX : m { get { return this.tx * 1m } set { this.tx = S3D.Length(value) } }
+                float TextureY : m { get { return this.ty * 1m } set { this.ty = S3D.Length(value) } }
+                float TextureRotation : any { get { return S3D.Degrees(this.trot) } set { this.trot = S3D.Angle(value) } }
 
                 int Triangles {
                     get {
@@ -524,7 +524,7 @@ namespace fire.Standard
                 }
 
                 // ---- triangles of an empty object (coordinates in meters, counter clockwise seen from outside) ----
-                AddTriangle(x1, y1, z1, x2, y2, z2, x3, y3, z3) {
+                undefined AddTriangle(float x1 : any m, float y1 : any m, float z1 : any m, float x2 : any m, float y2 : any m, float z2 : any m, float x3 : any m, float y3 : any m, float z3 : any m) {
                     if (this.posList == undefined) { throw new Scene3DException("Only an empty object takes triangles.") }
                     var n = this.posList.count / 3
                     this.posList.Add(S3D.Length(x1))
@@ -549,7 +549,7 @@ namespace fire.Standard
                 }
 
                 // Makes the mesh of an empty object from its triangles.
-                Build() {
+                undefined Build() {
                     if (!this.dirty) { return }
                     this.dirty = false
                     if (this.mesh > 0) { __S3DMeshFree(this.mesh) }
@@ -566,7 +566,7 @@ namespace fire.Standard
 
                 // The numbers the renderer takes for this object: position, rotation, scale, pivot, colour, specular, shininess, smooth, two sided, emissive (3), texture, repeats (2), rotation, offset (2),
                 // opacity, alpha cutoff, lit, casts shadows, receives shadows, layers, bump strength, billboard.
-                Parameters() {
+                float[] Parameters() {
                     var pivotX = this.minX + this.ax * (this.maxX - this.minX)
                     var pivotY = this.minY + this.ay * (this.maxY - this.minY)
                     var pivotZ = this.minZ + this.az * (this.maxZ - this.minZ)
@@ -620,7 +620,7 @@ namespace fire.Standard
                 }
 
                 // Queues the object for the frame (the camera draws everything in one go afterwards).
-                Draw(int frame, camera) {
+                undefined Draw(int frame, float camera[]) {
                     if (!this.Visible) { return }
                     this.Build()
                     if (this.mesh == 0) { return }
@@ -636,7 +636,7 @@ namespace fire.Standard
             class Camera {
                 Framebuffer framebuffer
                 int frame
-                pixels
+                byte pixels[]
                 int frameWidth
                 int frameHeight
                 Scene scene
@@ -675,15 +675,15 @@ namespace fire.Standard
                     if (this.frame > 0) { __S3DFrameFree(this.frame) }
                 }
 
-                Framebuffer { get { return this.framebuffer } }
-                X { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
-                Y { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
-                Z { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
-                RotationX { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
-                RotationY { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
-                RotationZ { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
+                Framebuffer Framebuffer { get { return this.framebuffer } }
+                float X : m { get { return this.x * 1m } set { this.x = S3D.Length(value) } }
+                float Y : m { get { return this.y * 1m } set { this.y = S3D.Length(value) } }
+                float Z : m { get { return this.z * 1m } set { this.z = S3D.Length(value) } }
+                float RotationX : any { get { return S3D.Degrees(this.rx) } set { this.rx = S3D.Angle(value) } }
+                float RotationY : any { get { return S3D.Degrees(this.ry) } set { this.ry = S3D.Angle(value) } }
+                float RotationZ : any { get { return S3D.Degrees(this.rz) } set { this.rz = S3D.Angle(value) } }
                 // The vertical angle of view (default 60deg).
-                FieldOfView {
+                float FieldOfView : any {
                     get { return S3D.Degrees(this.fov) }
                     set {
                         var a = S3D.Angle(value)
@@ -692,17 +692,17 @@ namespace fire.Standard
                     }
                 }
                 // What is nearer than Near or farther than Far is not drawn.
-                Near { get { return this.nearPlane * 1m } set { this.nearPlane = S3D.Length(value) } }
-                Far { get { return this.farPlane * 1m } set { this.farPlane = S3D.Length(value) } }
+                float Near : m { get { return this.nearPlane * 1m } set { this.nearPlane = S3D.Length(value) } }
+                float Far : m { get { return this.farPlane * 1m } set { this.farPlane = S3D.Length(value) } }
 
-                SetPosition(x, y, z) {
+                undefined SetPosition(float x : any m, float y : any m, float z : any m) {
                     this.X = x
                     this.Y = y
                     this.Z = z
                 }
 
                 // Turns the camera (pitch and yaw, no roll) towards a point.
-                LookAt(x, y, z) {
+                undefined LookAt(float x : any m, float y : any m, float z : any m) {
                     var a = __S3DLookAt(this.x, this.y, this.z, S3D.Length(x), S3D.Length(y), S3D.Length(z))
                     this.rx = a[0]
                     this.ry = a[1]
@@ -710,7 +710,7 @@ namespace fire.Standard
                 }
 
                 // Draws what the camera sees into its framebuffer.
-                Render() {
+                undefined Render() {
                     if (this.scene == undefined) { throw new Scene3DException("The camera is not in a scene: scene.Add(camera).") }
                     var w = this.framebuffer.Width()
                     var h = this.framebuffer.Height()
@@ -764,7 +764,7 @@ namespace fire.Standard
                 }
 
                 // Adds an object, camera, light or texture (to Objects, Cameras, Lights or Textures); with a key the item can be fetched with Get(key). Returns the item.
-                Add(item, string key = "") {
+                any Add(any item, string key = "") {
                     if (!(item is of Object || item is of Camera || item is of Light || item is of Texture)) {
                         throw new Scene3DException("A scene takes objects, cameras, lights and textures.")
                     }
@@ -792,7 +792,7 @@ namespace fire.Standard
                 }
 
                 // The item with the key (undefined if there is none).
-                Get(string key) {
+                any Get(string key) {
                     for (var i = 0; i < this.keyNames.count; i++) {
                         if (this.keyNames[i] == key) { return this.keyItems[i] }
                     }
@@ -800,7 +800,7 @@ namespace fire.Standard
                 }
 
                 // Takes an item out of the scene again.
-                Remove(item) {
+                undefined Remove(any item) {
                     if (item is of Object) { this.RemoveFrom(this.Objects, item) }
                     else if (item is of Camera) { this.RemoveFrom(this.Cameras, item); item.scene = undefined }
                     else if (item is of Light) { this.RemoveFrom(this.Lights, item) }
@@ -814,7 +814,7 @@ namespace fire.Standard
                     }
                 }
 
-                RemoveFrom(list, item) {
+                undefined RemoveFrom(List list, any item) {
                     for (var i = 0; i < list.count; i++) {
                         if (list[i] == item) {
                             list.RemoveAt(i)
@@ -824,7 +824,7 @@ namespace fire.Standard
                 }
 
                 // The numbers the renderer takes for the lights (the ambient light of the scene first; lights that are off are left out).
-                LightParameters() {
+                float[] LightParameters() {
                     var active = 0
                     for (var i = 0; i < this.Lights.count; i++) { if (this.Lights[i].Enabled) { active++ } }
                     var all = new float[(active + 1) * 14]
@@ -841,7 +841,7 @@ namespace fire.Standard
                 }
 
                 // The settings of the renderer: shadows on (1) or off (0), the size of a shadow map, the number of threads.
-                Settings() {
+                float[] Settings() {
                     var shadows = 0.0
                     if (this.Shadows) { shadows = 1.0 }
                     return [shadows, this.ShadowResolution * 1.0, this.Threads * 1.0]

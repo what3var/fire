@@ -23,6 +23,9 @@ namespace fire.Runtime
         /// <summary>The files embedded by `new Resource("path")` (docs/RESOURCES.md); the id of a resource is its index. Set by the linker after compiling.</summary>
         public List<ResourceEntry> Resources { get; set; } = new();
 
+        /// <summary>The units the program declares (`unit Inch: in { ... }`); the VM makes them known before it runs the program (Unit.UseCustomUnits).</summary>
+        public List<fire.Values.CustomUnit> CustomUnits { get; set; } = new();
+
         /// <summary>MUST be called ONCE after every deserialisation,
         /// before the program is executed (see SPEC "Program
         /// serialisation") - unlike e.g. BinaryFormatter, MemoryPack does NOT track

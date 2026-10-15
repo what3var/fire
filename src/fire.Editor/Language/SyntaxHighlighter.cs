@@ -55,7 +55,7 @@ namespace fire.Editor
         private static readonly HashSet<TokenType> Keywords = new()
         {
             TokenType.Var, TokenType.Func, TokenType.Class, TokenType.Construct, TokenType.Destruct,
-            TokenType.Return, TokenType.If, TokenType.Else, TokenType.While, TokenType.For,
+            TokenType.Return, TokenType.If, TokenType.Else, TokenType.While, TokenType.Do, TokenType.For,
             TokenType.Foreach, TokenType.In, TokenType.On, TokenType.New, TokenType.Base, TokenType.This,
             TokenType.Try, TokenType.Catch, TokenType.Finally, TokenType.Throw,
             TokenType.Is, TokenType.Of, TokenType.From, TokenType.Under,
@@ -125,8 +125,9 @@ namespace fire.Editor
             int[] lineStarts = ComputeLineStarts(source);
             int lastEnd = 0;
 
-            foreach (var tok in tokens)
+            for (int index = 0; index < tokens.Count; index++)
             {
+                var tok = tokens[index];
                 if (tok.Type == TokenType.Eof) break;
 
                 int start = ToOffset(lineStarts, tok.Line, tok.Column);
@@ -135,7 +136,7 @@ namespace fire.Editor
 
                 ScanCommentsInGap(source, lastEnd, start, spans);
 
-                var category = CategoryOf(tok.Type);
+                var category = IsContextKeyword(tokens, index) ? HighlightCategory.Keyword : CategoryOf(tok.Type);
                 if (category != HighlightCategory.Default)
                     spans.Add(new HighlightSpan(start, length, category));
 
@@ -144,6 +145,22 @@ namespace fire.Editor
 
             ScanCommentsInGap(source, lastEnd, source.Length, spans);
             return spans;
+        }
+
+        /// <summary>The words of a unit declaration (`prefixed unit Volt: V`, `coerce m => 0.0254`) - identifiers anywhere else.</summary>
+        private static bool IsContextKeyword(List<Token> tokens, int i)
+        {
+            var t = tokens[i];
+            if (t.Type != TokenType.Identifier) return false;
+            Token At(int k) => k < tokens.Count ? tokens[k] : tokens[^1];
+            return t.Lexeme switch
+            {
+                "prefixed" or "unprefixed" => At(i + 1).Lexeme == "unit" && At(i + 3).Type == TokenType.Colon,
+                "unit" => At(i + 2).Type == TokenType.Colon && (i == 0 || t.NewlineBefore || tokens[i - 1].Lexeme is "prefixed" or "unprefixed" or ";" or "}"),
+                "coerce" => (t.NewlineBefore || i > 0 && tokens[i - 1].Type == TokenType.LBrace) && At(i + 1).Type != TokenType.Assign,
+                "to" => i > 0 && tokens[i - 1].Lexeme == "coerce",
+                _ => false,
+            };
         }
 
         private static HighlightCategory CategoryOf(TokenType type)

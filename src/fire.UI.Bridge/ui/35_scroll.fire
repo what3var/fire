@@ -15,16 +15,16 @@ namespace UI {
         int grab = 0
         bool hover = false
         // the element that shows the bar: it is repainted when something about the bar changes
-        var owner
+        Element owner
 
         construct(bool horizontal = false) { this.horizontal = horizontal }
 
-        Changed() {
+        undefined Changed() {
             var o = this.owner
             if (o != undefined) { o.Invalidate() }
         }
 
-        SetHover(bool value) {
+        undefined SetHover(bool value) {
             if (this.hover == value) { return }
             this.hover = value
             this.Changed()
@@ -34,14 +34,14 @@ namespace UI {
 
         bool Needed() { return this.extent > this.viewport }
 
-        Set(int value) {
+        undefined Set(int value) {
             var next = UI.M.Clamp(value, 0, this.Max())
             if (next == this.offset) { return }
             this.offset = next
             this.Changed()
         }
 
-        By(int delta) { this.Set(this.offset + delta) }
+        undefined By(int delta) { this.Set(this.offset + delta) }
 
         // Length and start of the thumb in a bar of length `track`
         int ThumbLength(int track) {
@@ -58,7 +58,7 @@ namespace UI {
         }
 
         // Draws the bar into the rectangle (x, y, length `track` in the running direction, `size` across).
-        Draw(root, int x, int y, int track) {
+        undefined Draw(Root root, int x, int y, int track) {
             var theme = root.theme
             var start = this.ThumbStart(track)
             var length = this.ThumbLength(track)
@@ -74,7 +74,7 @@ namespace UI {
         }
 
         // A click at the position `pos` (running direction, from the start of the bar): at the thumb dragging begins, next to it a page is scrolled.
-        Press(int pos, int track) {
+        undefined Press(int pos, int track) {
             var start = this.ThumbStart(track)
             var length = this.ThumbLength(track)
             if (pos >= start && pos < start + length) {
@@ -89,14 +89,14 @@ namespace UI {
         }
 
         // The pointer moves to the position `pos` while dragging.
-        Drag(int pos, int track) {
+        undefined Drag(int pos, int track) {
             if (!this.dragging) { return }
             var room = track - this.ThumbLength(track)
             if (room <= 0) { return }
             this.Set((pos - this.grab) * this.Max() / room)
         }
 
-        Release() {
+        undefined Release() {
             if (this.dragging) {
                 this.dragging = false
                 this.Changed()
@@ -126,7 +126,7 @@ namespace UI {
             this.hbar.owner = this
         }
 
-        Poll(root) {
+        undefined Poll(Root root) {
             base.Poll(root)
             if (this.content != undefined) { this.content.Poll(root) }
         }
@@ -134,7 +134,7 @@ namespace UI {
         string StyleKey() { return "ScrollViewer" }
 
         // The child belongs to the ScrollViewer from now on.
-        SetContent(element) {
+        undefined SetContent(Element element) {
             if (this.content != undefined) { this.content.parent = undefined }
             this.content = element
             element.TakeTo(this)
@@ -142,7 +142,7 @@ namespace UI {
             this.Invalidate()
         }
 
-        MeasureCore(root, int aw, int ah) {
+        undefined MeasureCore(Root root, int aw, int ah) {
             var c = this.content
             if (c == undefined) {
                 this.cw = 0
@@ -186,7 +186,7 @@ namespace UI {
             return 0
         }
 
-        ArrangeCore(root, int w, int h) {
+        undefined ArrangeCore(Root root, int w, int h) {
             var c = this.content
             if (c == undefined) { return }
             this.viewW = UI.M.Max(0, w - this.ShownBar(this.showV))
@@ -201,7 +201,7 @@ namespace UI {
             c.Arrange(root, -this.hbar.offset, -this.vbar.offset, UI.M.Max(c.dw, this.viewW), UI.M.Max(c.dh, this.viewH))
         }
 
-        Draw(root, int ax, int ay) {
+        undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.content
@@ -217,7 +217,7 @@ namespace UI {
         }
 
         // In the section the child, on the bars the ScrollViewer itself.
-        HitTest(int px, int py) {
+        UI.Element HitTest(int px, int py) {
             if (!this.visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var c = this.content
@@ -228,18 +228,18 @@ namespace UI {
             return this
         }
 
-        Collect(list) {
+        undefined Collect(List list) {
             if (!this.visible || !this.enabled) { return }
             if (this.content != undefined) { this.content.Collect(list) }
         }
 
-        FindName(string name) {
+        UI.Element FindName(string name) {
             if (this.name == name) { return this }
             if (this.content != undefined) { return this.content.FindName(name) }
             return undefined
         }
 
-        bool MouseWheel(root, int dx, int dy) {
+        bool MouseWheel(Root root, int dx, int dy) {
             var step = this.TextHeight(root) * 3
             if (dx != 0 && this.showH) {
                 this.hbar.By(-dx * step)
@@ -260,31 +260,31 @@ namespace UI {
 
         bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
 
-        bool PanBy(root, int dx, int dy) {
+        bool PanBy(Root root, int dx, int dy) {
             if (!this.showV && !this.showH) { return false }
             if (this.showH) { this.hbar.By(-dx) }
             if (this.showV) { this.vbar.By(-dy) }
             return true
         }
 
-        MouseDown(root, int button, int px, int py) {
+        undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
             if (this.showV && px >= this.ax + this.viewW && py < this.ay + this.viewH) { this.vbar.Press(py - this.ay, this.viewH) }
             else if (this.showH && py >= this.ay + this.viewH && px < this.ax + this.viewW) { this.hbar.Press(px - this.ax, this.viewW) }
         }
 
-        MouseMove(root, int px, int py) {
+        undefined MouseMove(Root root, int px, int py) {
             if (this.vbar.dragging) { this.vbar.Drag(py - this.ay, this.viewH) }
             if (this.hbar.dragging) { this.hbar.Drag(px - this.ax, this.viewW) }
         }
 
-        MouseUp(root, int button, int px, int py) {
+        undefined MouseUp(Root root, int button, int px, int py) {
             this.vbar.Release()
             this.hbar.Release()
         }
 
         // Moves the section so that the rectangle (x, y, w, h) of the content (in content coordinates) is visible.
-        ScrollIntoView(int x, int y, int w, int h) {
+        undefined ScrollIntoView(int x, int y, int w, int h) {
             if (y < this.vbar.offset) { this.vbar.Set(y) }
             else if (y + h > this.vbar.offset + this.viewH) { this.vbar.Set(y + h - this.viewH) }
             if (x < this.hbar.offset) { this.hbar.Set(x) }

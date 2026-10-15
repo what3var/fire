@@ -191,7 +191,8 @@ namespace fire.Compiler
             var args = new StringBuilder();
             if (kind == "msvc")
             {
-                args.Append($"/std:{toolchain.Std ?? "c++17"} {toolchain.Optimization ?? "/O2"} ");
+                bool smallMsvc = IsSizeProfile(toolchain.Optimization);
+                args.Append($"/std:{toolchain.Std ?? "c++17"} {(smallMsvc ? "/O1 /Gy /Gw" : toolchain.Optimization ?? "/O2")} ");
                 if (sharedLibrary) args.Append("/LD ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
                 foreach (string a in target.Native.CompileArgs) args.Append(a).Append(' ');
@@ -200,12 +201,14 @@ namespace fire.Compiler
                 args.Append($"/Fe:\"{exe}\" /Fo:\"{Path.Combine(includeDir, "fire_program.obj")}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
                 bool windowsGui = gui && !sharedLibrary && target.Name == "windows";
-                if (libDirs.Count > 0 || windowsGui) args.Append(" /link").Append(string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")));
+                if (smallMsvc && !sharedLibrary) args.Append(" /link /OPT:REF /OPT:ICF" + string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")) + (windowsGui ? " /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup" : ""));
+                else if (libDirs.Count > 0 || windowsGui) args.Append(" /link").Append(string.Concat(libDirs.Select(d => $" /LIBPATH:\"{d}\"")));
                 if (windowsGui) args.Append(" /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup");   // no console window; the program still starts at main
             }
             else
             {
-                args.Append($"-std={toolchain.Std ?? "c++17"} {toolchain.Optimization ?? "-O2"} ");
+                bool small = IsSizeProfile(toolchain.Optimization);
+                args.Append($"-std={toolchain.Std ?? "c++17"} {(small ? "-Os -ffunction-sections -fdata-sections" : toolchain.Optimization ?? "-O2")} ");
                 // a library for the VM carries its C++ runtime (MinGW: no libgcc/libstdc++ DLLs next to it), so that it also runs on a machine without the toolchain
                 if (sharedLibrary) args.Append(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
@@ -216,10 +219,20 @@ namespace fire.Compiler
                 args.Append($"-o \"{exe}\"");
                 foreach (string d in libDirs) args.Append($" -L\"{d}\"");
                 foreach (string l in libs) args.Append(' ').Append(l);
+                // a program without symbols and debug information is about half the size; "size" lets the linker drop what nothing uses
+                if (!sharedLibrary && kind != "emscripten")
+                {
+                    bool apple = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+                    if (small) args.Append(apple ? " -Wl,-dead_strip" : " -Wl,--gc-sections");
+                    if (toolchain.Strip != false) args.Append(apple ? " -Wl,-x" : " -s");
+                }
             }
             string exeName = ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler;
             return (exeName, args.ToString());
         }
+
+        /// <summary>Whether the optimisation setting asks for the small-program profile ("size", or -Os).</summary>
+        private static bool IsSizeProfile(string? optimization) => optimization is not null && (optimization.Equals("size", StringComparison.OrdinalIgnoreCase) || optimization == "-Os");
 
         private static (bool Ok, string Text) RunCommand(string command, string workDir)
         {

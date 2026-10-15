@@ -38,6 +38,10 @@ namespace fire.Ast
     /// program (the compiler emits `SetAutoSync 0` at the very start for this); must be a top-level statement.</summary>
     public sealed record NoSyncDirective(int Source, int Line) : Stmt(Source, Line);
 
+    /// <summary>`#lax` / `#strict` (docs/TYPES.md): the type checking mode of the file this stands in (`Strict` false = lax: a type conflict is a warning, true = strict: an error). Read by the
+    /// type checker only; it takes the place of the project's setting for the statements of its file that follow.</summary>
+    public sealed record TypeCheckDirective(int Source, int Line, bool Strict) : Stmt(Source, Line);
+
     /// <summary>`#timeout value` (e.g. `#timeout 10s`, `#timeout 500ms`, `#timeout 2000`): the wait time that wait functions without their own duration
     /// use (`Device.WaitFor`/`WaitForString`; 30 seconds without the directive). `value`: a time value (`10s`), a `TimeSpan` is not possible here (the
     /// directive is evaluated at the very start of the program) or a number in milliseconds - as with `Sleep`. The compiler emits for this at the very start
@@ -69,6 +73,15 @@ namespace fire.Ast
 
     public sealed record IfStmt(int Source, int Line, Expr Condition, Stmt Then, Stmt? Else) : Stmt(Source, Line);
     public sealed record WhileStmt(int Source, int Line, Expr Condition, Stmt Body) : Stmt(Source, Line);
+    /// <summary>`do Body while (Condition)`: the body runs at least once.</summary>
+    public sealed record DoWhileStmt(int Source, int Line, Stmt Body, Expr Condition) : Stmt(Source, Line);
+
+    /// <summary>`coerce m => 0.0254` (Factor: 1 unit = factor m), `coerce to m => value * 0.0254`, `coerce from m => value / 0.0254`.</summary>
+    public enum CoerceDirection { Factor, From, To }
+    public sealed record UnitCoerce(int Line, CoerceDirection Direction, string TargetUnit, Expr Conversion);
+    /// <summary>`[prefixed] unit Name : symbol [{ coerce ... }]` (SPEC "Own units"): read before everything else (Parser.DefineUnits), not part of
+    /// the program the resolver sees.</summary>
+    public sealed record UnitDeclStmt(int Source, int Line, string Name, string Symbol, bool Prefixed, IReadOnlyList<UnitCoerce> Coerces) : Stmt(Source, Line);
 
     public sealed record ForStmt(
         int Source, int Line, Stmt? Init, Expr? Condition, Expr? Increment, Stmt Body) : Stmt(Source, Line);
@@ -91,8 +104,10 @@ namespace fire.Ast
     /// arises only for a `break` OUTSIDE a switch case (e.g.
     /// directly in a loop, even one that is itself inside a switch
     /// case).</summary>
-    public sealed record BreakStmt(int Source, int Line) : Stmt(Source, Line);
-    public sealed record ContinueStmt(int Source, int Line) : Stmt(Source, Line);
+    /// <summary>`break` / `break 2`: Levels = how many enclosing loops are left.</summary>
+    public sealed record BreakStmt(int Source, int Line, int Levels = 1) : Stmt(Source, Line);
+    /// <summary>`continue` / `continue 2`: continues the loop Levels loops out (the inner ones are left).</summary>
+    public sealed record ContinueStmt(int Source, int Line, int Levels = 1) : Stmt(Source, Line);
 
     /// <summary>A single `taking` capture in a `fire` statement
     /// (see Ast.FireStmt docs) - `VarName` is the name under which the value is

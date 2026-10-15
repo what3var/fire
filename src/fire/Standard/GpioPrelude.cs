@@ -59,7 +59,7 @@ namespace fire.Standard
 
                 class Errors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __GpioLastError()
                         var message = __GpioLastErrorMessage()
                         if (code == 3) { throw new NotFoundException(message) }
@@ -76,7 +76,7 @@ namespace fire.Standard
                 }
 
                 class Clock {
-                    static int Millis(limit) {
+                    static int Millis(any limit) {
                         if (limit == undefined) { return -1 }
                         var span = TimeSpan.Of(limit)
                         var ms = span.Ticks / 10000
@@ -93,7 +93,7 @@ namespace fire.Standard
                     static bool Available() { return __GpioSupported() == 1 }
 
                     // The names of the chips: "sim" first, then the real ones ("gpiochip0", ... on Linux, "gpio" on an ESP32).
-                    static Chips() {
+                    static List Chips() {
                         var all = __GpioChips()
                         if (all == undefined) { Gpio.Errors.Throw() }
                         var list = new List()
@@ -117,7 +117,7 @@ namespace fire.Standard
                     string chip
                     int line
                     int direction
-                    var onEdge
+                    lambda<any, any> onEdge
 
                     // The line `line` of the default chip (Board.DefaultChip()).
                     construct(int line) {
@@ -128,7 +128,7 @@ namespace fire.Standard
                         this.Open(chip, line)
                     }
 
-                    Open(string chip, int line) {
+                    undefined Open(string chip, int line) {
                         this.handle = -1
                         this.closed = false
                         this.chip = chip
@@ -146,12 +146,12 @@ namespace fire.Standard
                     bool IsInput { get { return this.direction == 0 } }
                     bool IsOutput { get { return this.direction == 1 } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new GpioException("The pin is closed.", 2) }
                     }
 
                     // Sets the line up as an input: `pull` is Gpio.Pull.None/Up/Down, `edge` which changes are reported (Gpio.Edge.None/Rising/Falling/Both). Returns the pin.
-                    Input(int pull = 0, int edge = 0) {
+                    Gpio.Pin Input(int pull = 0, int edge = 0) {
                         this.Check()
                         if (!__GpioConfigure(this.handle, 0, pull, edge, 0)) { Gpio.Errors.Throw() }
                         this.direction = 0
@@ -159,7 +159,7 @@ namespace fire.Standard
                     }
 
                     // Sets the line up as an output that starts at `initial` (true: high). Returns the pin.
-                    Output(bool initial = false) {
+                    Gpio.Pin Output(bool initial = false) {
                         this.Check()
                         var v = 0
                         if (initial) { v = 1 }
@@ -182,7 +182,7 @@ namespace fire.Standard
                         return 0
                     }
 
-                    Write(bool value) {
+                    undefined Write(bool value) {
                         this.Check()
                         var v = 0
                         if (value) { v = 1 }
@@ -213,7 +213,7 @@ namespace fire.Standard
                     }
 
                     // Waits for the next edge up to the time limit (a TimeSpan, a time value like 500ms or milliseconds; undefined: for ever): the edge, or Gpio.Edge.None when the time ran out.
-                    int WaitEdge(timeout = undefined) {
+                    int WaitEdge(any timeout = undefined) {
                         var limit = Gpio.Clock.Millis(timeout)
                         var deadline = -1
                         if (limit >= 0) { deadline = Gpio.Clock.Now() + limit * 10000 }
@@ -247,7 +247,7 @@ namespace fire.Standard
                     }
 
                     // Gives the line back.
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __GpioClose(this.handle) }
@@ -260,23 +260,23 @@ namespace fire.Standard
                     static int Lines() { return 32 }
 
                     // Connects two lines: what one drives, the other sees.
-                    static Wire(int a, int b) {
+                    static undefined Wire(int a, int b) {
                         if (!__GpioSimWire(a, b)) { Gpio.Errors.Throw() }
                     }
 
-                    static Unwire(int a, int b) {
+                    static undefined Unwire(int a, int b) {
                         if (!__GpioSimUnwire(a, b)) { Gpio.Errors.Throw() }
                     }
 
                     // Drives a line from outside (a button, a sensor): true high, false low. A pin that is an output fights with it (low wins).
-                    static Drive(int line, bool level) {
+                    static undefined Drive(int line, bool level) {
                         var v = 0
                         if (level) { v = 1 }
                         if (!__GpioSimDrive(line, v)) { Gpio.Errors.Throw() }
                     }
 
                     // Lets go of a line that was driven from outside.
-                    static Release(int line) {
+                    static undefined Release(int line) {
                         if (!__GpioSimDrive(line, -1)) { Gpio.Errors.Throw() }
                     }
 
@@ -288,7 +288,7 @@ namespace fire.Standard
                     }
 
                     // Removes all wires and drives (the open pins stay open).
-                    static Reset() { __GpioSimReset() }
+                    static undefined Reset() { __GpioSimReset() }
                 }
             }
             """;

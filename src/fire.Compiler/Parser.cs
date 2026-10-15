@@ -176,6 +176,23 @@ namespace fire.Compiler
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
         {
             var combined = new List<Stmt>();
+            // The units the sources declare come first (`5in` in one file may use the `unit Inch: in` of another, or of a line further down)
+            var tokenLists = new List<Token>[sources.Count];
+            var unitDecls = new List<(UnitDeclStmt Decl, string? File)>();
+            for (int i = 0; i < sources.Count; i++)
+            {
+                var src = sources[i];
+                try
+                {
+                    tokenLists[i] = new Lexer(src.Source).Tokenize();
+                    foreach (var decl in FindUnitDecls(tokenLists[i], i)) unitDecls.Add((decl, src.Name));
+                }
+                catch (ParseException ex) when (src.Name != null && ex.FileName == null)
+                {
+                    throw new ParseException(ex.RawMessage, ex.Line, ex.Column, src.Name);
+                }
+            }
+            DefineUnits(unitDecls);
             //var byStmt = new Dictionary<Stmt, int>(ReferenceEqualityComparer.Instance);
             for (int i = 0; i < sources.Count; i++)
             {
@@ -183,7 +200,7 @@ namespace fire.Compiler
                 List<Stmt> stmts;
                 try
                 {
-                    var tokens = new Lexer(src.Source).Tokenize();
+                    var tokens = tokenLists[i];
                     var parser = new Parser(tokens);
                     parser._usingNamespaces = src.Usings;
                     parser._sourceIndex = i;
@@ -196,14 +213,212 @@ namespace fire.Compiler
                 }
                 //foreach (var stmt in stmts)
                 //    byStmt[stmt] = i;
-                combined.AddRange(stmts);
+                combined.AddRange(stmts.Where(stmt => stmt is not UnitDeclStmt));   // (read already, see DefineUnits)
             }
+            combined.AddRange(UnitConverterClasses(unitDecls.Select(u => u.Decl)));
             //sourceIndexByStmt = byStmt;
             // Disambiguation BEFORE the extensions: `class extends Box` means
             // (like every reference without type arguments) the non-generic
             // class, see GenericClassNames.
+            // The hidden enum helper classes (see EnumHelperClass) throw an ArgumentException - a program without the prelude has none, so it does
+            // without them (`Color.Name(c)` is then an unknown member).
+            if (!combined.Any(s => s is ClassDecl { Name: "ArgumentException" }))
+                combined.RemoveAll(s => s is ClassDecl cd && cd.Name.StartsWith("__enum_", StringComparison.Ordinal));
             return MergeClassExtensions(DisambiguateGenericClasses(LetOwnExceptionReplacePrelude(FlattenNamespaceWrappers(combined), sources)));
         }
+
+        /// <summary>The `unit` declarations at the top level of a source (outside of every brace).</summary>
+        private static List<UnitDeclStmt> FindUnitDecls(List<Token> tokens, int sourceIndex)
+        {
+            var found = new List<UnitDeclStmt>();
+            int depth = 0;
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var t = tokens[i];
+                if (t.Type == TokenType.LBrace) depth++;
+                else if (t.Type == TokenType.RBrace) depth--;
+                else if (depth == 0 && t.Type == TokenType.Identifier && t.Lexeme is "unit" or "prefixed" or "unprefixed"
+                         && (i == 0 || t.NewlineBefore || tokens[i - 1].Type is TokenType.Semicolon or TokenType.RBrace))
+                {
+                    var parser = new Parser(tokens) { _pos = i, _sourceIndex = sourceIndex };
+                    if (!parser.IsUnitDeclStart()) continue;
+                    found.Add((UnitDeclStmt)parser.ParseUnitDecl());
+                    i = parser._pos - 1;
+                }
+            }
+            return found;
+        }
+
+        /// <summary>Makes the declared units known (Unit.UseCustomUnits) - in an order in which each one comes after the units its `coerce` names.
+        /// A unit without `coerce` is a dimension of its own; with `coerce` it has the dimension of the unit it names and a factor: 1 symbol = factor
+        /// target. A conversion must be a factor (`value * k`, `value / k`, with numbers, `Math.PI` and `Math.E`); several must agree.</summary>
+        private static void DefineUnits(List<(UnitDeclStmt Decl, string? File)> decls)
+        {
+            Unit.UseCustomUnits(null);
+            if (decls.Count == 0) return;
+            ParseException Fail(UnitDeclStmt d, string? file, string message, int? line = null) => new(message, line ?? d.Line, 0, file);
+
+            var words = new Dictionary<string, UnitDeclStmt>();
+            foreach (var (d, file) in decls)
+            {
+                foreach (var word in d.Name == d.Symbol ? new[] { d.Symbol } : new[] { d.Symbol, d.Name })
+                {
+                    if (Unit.BuiltInMeaning(word) is { } builtIn)
+                        throw Fail(d, file, $"'{word}' is already a unit of fire{(builtIn == word ? "" : $" ({builtIn})")} - choose another name or symbol for '{d.Name}'");
+                    if (words.TryGetValue(word, out var other))
+                        throw Fail(d, file, $"The unit '{word}' is declared twice (first in line {other.Line})");
+                    words[word] = d;
+                }
+            }
+
+            // a factor of a unit text (`in`, `kV`, `m/in^2`) that is a declared unit, by its declaration
+            UnitDeclStmt? DeclaredFactor(string factor)
+            {
+                if (words.TryGetValue(factor, out var exact)) return exact;
+                if (factor.Length >= 2 && words.TryGetValue(factor.Substring(1), out var prefixed) && prefixed.Prefixed && prefixed.Symbol == factor.Substring(1)
+                    && Unit.BuiltInMeaning(factor) == null) return prefixed;
+                return null;
+            }
+            IEnumerable<UnitDeclStmt> Needs(UnitDeclStmt d) =>
+                d.Coerces.SelectMany(c => c.TargetUnit.Split('/', '*', '^')).Select(DeclaredFactor).Where(x => x != null)!;
+
+            var defined = new List<CustomUnit>();
+            var pending = decls.ToList();
+            while (pending.Count > 0)
+            {
+                var ready = pending.FirstOrDefault(p => Needs(p.Decl).All(n => defined.Any(u => u.Symbol == n.Symbol)));
+                if (ready.Decl == null)
+                {
+                    var (d, file) = pending[0];
+                    throw Fail(d, file, $"The unit '{d.Symbol}' is defined by units that are defined by it ({string.Join(", ", pending.Select(p => p.Decl.Symbol))}) - one of them needs a 'coerce' to a unit outside of the circle, or none");
+                }
+                pending.Remove(ready);
+                defined.Add(DefineUnit(ready.Decl, ready.File, Fail));
+                Unit.UseCustomUnits(defined);
+            }
+        }
+
+        /// <summary>The name of the hidden class with the conversion functions of a unit (`coerce to`/`coerce from` that are not a factor and offset).</summary>
+        public static string UnitConverterClassName(string symbol) => "__unit_" + symbol;
+
+        /// <summary>a * value + b, computed while compiling; null when the conversion cannot be computed then (it calls a method, uses a variable, ...)
+        /// or is not of that form (`10 ^ (value / 10)`).</summary>
+        private static (double A, double B)? AffineOf(Expr conversion)
+        {
+            try
+            {
+                if (!MentionsValue(conversion)) return (EvalConversion(conversion, 0), 0);   // a number k: 1 symbol = k target
+                // the slope from a distant point (exact division by 1024, little cancellation): (value - 32) * 5 / 9 gives 5/9 to the last digit
+                double at0 = EvalConversion(conversion, 0), at2 = EvalConversion(conversion, 2), at10 = EvalConversion(conversion, 10), atFar = EvalConversion(conversion, 1024);
+                double a = Unit.NiceFactor((atFar - at0) / 1024), b = at0 == 0 ? 0 : Unit.NiceFactor(at0), size = Math.Max(1.0, Math.Max(Math.Abs(a), Math.Abs(b)));
+                if (double.IsNaN(a) || double.IsInfinity(a) || double.IsNaN(b) || double.IsInfinity(b)) return null;
+                if (Math.Abs(at2 - (2 * a + b)) > 1e-9 * size || Math.Abs(at10 - (10 * a + b)) > 1e-9 * size * 10) return null;
+                return (a, b);
+            }
+            catch (InvalidOperationException) { return null; }
+        }
+
+        /// <summary>A unit from its declaration. `coerce X => ...` is a factor and an offset (a * value + b, computed while compiling: 1 symbol = a X, 0
+        /// symbol = b X); `coerce to X => ...` and `coerce from X => ...` take any expression - when both together are a factor and an offset the unit
+        /// is one, otherwise they become the static methods To and From of a hidden class (Parser.UnitConverterClasses) that convert at run time.</summary>
+        private static CustomUnit DefineUnit(UnitDeclStmt d, string? file, Func<UnitDeclStmt, string?, string, int?, ParseException> fail)
+        {
+            if (d.Coerces.Count == 0)
+                return new CustomUnit(d.Name, d.Symbol, d.Prefixed, new Dictionary<string, int> { [d.Symbol] = 1 }, 1.0);
+            var ic = System.Globalization.CultureInfo.InvariantCulture;
+            Dictionary<string, int>? dims = null;
+            double scale = 0, offset = 0;
+            CoerceDirection? functions = null;
+            UnitCoerce? to = null, from = null;
+            foreach (var c in d.Coerces)
+            {
+                var target = Unit.Parse(c.TargetUnit);
+                if (target.IsUnitless) throw fail(d, file, $"'coerce' needs a unit to convert from or to, not '{c.TargetUnit}'", c.Line);
+                if (target.Dimensions.ContainsKey(d.Symbol)) throw fail(d, file, $"The unit '{d.Symbol}' cannot be converted into itself", c.Line);
+                if (target.Converter != null) throw fail(d, file, $"'{c.TargetUnit}' is converted by functions - convert '{d.Symbol}' into its reference unit instead", c.Line);
+                if (c.Direction == CoerceDirection.To) to = c;
+                if (c.Direction == CoerceDirection.From) from = c;
+                var affine = AffineOf(c.Conversion);
+                if (affine == null)
+                {
+                    if (c.Direction == CoerceDirection.Factor)
+                        throw fail(d, file, $"'coerce {c.TargetUnit} => ...' is a factor and an offset computed while compiling (numbers, 'value', + - * / ^, Math.PI, Math.E) - any other conversion is written 'coerce to {c.TargetUnit} => ...' and 'coerce from {c.TargetUnit} => ...'", c.Line);
+                    functions = c.Direction;
+                    continue;
+                }
+                var (a, b) = affine.Value;
+                if (a == 0) throw fail(d, file, $"The conversion of '{d.Symbol}' gives the same value for every value", c.Line);
+                // To / Factor: v symbol = a*v + b target;  From: x target = a*x + b symbol, so v symbol = (v - b) / a target
+                double s1 = c.Direction == CoerceDirection.From ? 1.0 / a : a, o1 = c.Direction == CoerceDirection.From ? -b / a : b;
+                double thisScale = Unit.NiceFactor(s1 * target.Scale), thisOffset = o1 * target.Scale + target.Offset;
+                thisOffset = thisOffset == 0 ? 0 : Unit.NiceFactor(thisOffset);
+                if (dims == null) { dims = new Dictionary<string, int>(target.Dimensions); scale = thisScale; offset = thisOffset; continue; }
+                if (!new Dictionary<string, int>(target.Dimensions).OrderBy(k => k.Key).SequenceEqual(dims.OrderBy(k => k.Key)))
+                    throw fail(d, file, $"The conversions of '{d.Symbol}' name units of different dimensions", c.Line);
+                if (Math.Abs(thisScale - scale) > 1e-9 * scale || Math.Abs(thisOffset - offset) > 1e-9 * Math.Max(1.0, Math.Abs(offset)))
+                    throw fail(d, file, $"The conversions of '{d.Symbol}' do not agree (1{d.Symbol} is {((scale + offset - target.Offset) / target.Scale).ToString("G10", ic)}{c.TargetUnit} by the first one, {(s1 + o1).ToString("G10", ic)}{c.TargetUnit} by this one)", c.Line);
+            }
+
+            if (functions != null)
+            {
+                // conversion functions: exactly one `coerce to` and one `coerce from`, into the same unit
+                if (to == null || from == null)
+                    throw fail(d, file, $"A conversion that is not a factor and an offset needs both directions: 'coerce to {(to ?? from)!.TargetUnit} => ...' and 'coerce from {(to ?? from)!.TargetUnit} => ...'", (to ?? from)!.Line);
+                if (d.Coerces.Count != 2)
+                    throw fail(d, file, $"A unit with conversion functions has exactly one 'coerce to' and one 'coerce from'", d.Coerces[2].Line);
+                var reference = Unit.Parse(to.TargetUnit);
+                if (!reference.Equals(Unit.Parse(from.TargetUnit)))
+                    throw fail(d, file, $"'coerce to' and 'coerce from' of '{d.Symbol}' must name the same unit ('{to.TargetUnit}', '{from.TargetUnit}')", from.Line);
+                if (d.Prefixed) throw fail(d, file, $"A unit with conversion functions takes no prefixes - declare '{d.Symbol}' without 'prefixed'", d.Line);
+                return new CustomUnit(d.Name, d.Symbol, false, new Dictionary<string, int>(reference.Dimensions), reference.Scale, reference.Offset, UnitConverterClassName(d.Symbol));
+            }
+            if (d.Prefixed && offset != 0) throw fail(d, file, $"A unit with an offset takes no prefixes - declare '{d.Symbol}' without 'prefixed'", d.Line);
+            return new CustomUnit(d.Name, d.Symbol, d.Prefixed, dims!, scale, offset);
+        }
+
+        /// <summary>The hidden classes with the conversion functions of the units that have them: `class __unit_dB { static float To(float value) { return
+        /// ... } static float From(float value) { return ... } }` - compiled like any class (VM and native), called by the conversions at run time.</summary>
+        private static IEnumerable<Stmt> UnitConverterClasses(IEnumerable<UnitDeclStmt> decls)
+        {
+            foreach (var d in decls)
+            {
+                if (Unit.CustomUnits.FirstOrDefault(u => u.Symbol == d.Symbol) is not { Converter: { } className }) continue;
+                var floatType = new TypeRef("float", null, 0);
+                MethodDecl Method(string name, UnitCoerce c) => new(d.Source, c.Line, floatType, name,
+                    new[] { new LambdaParam("value", floatType, Array.Empty<Expr?>()) },
+                    new Stmt.BlockStmt(d.Source, c.Line, new Stmt[] { new ReturnStmt(d.Source, c.Line, c.Conversion) }), IsStatic: true);
+                yield return new ClassDecl(d.Source, d.Line, className, null, new Stmt[]
+                {
+                    Method("To", d.Coerces.First(c => c.Direction == CoerceDirection.To)),
+                    Method("From", d.Coerces.First(c => c.Direction == CoerceDirection.From)),
+                });
+            }
+        }
+
+        private static bool MentionsValue(Expr e) => e switch
+        {
+            IdentifierExpr { Name: "value" } => true,
+            BinaryExpr b => MentionsValue(b.Left) || MentionsValue(b.Right),
+            UnaryExpr u => MentionsValue(u.Operand),
+            _ => false,
+        };
+
+        /// <summary>A conversion of a `coerce`, computed while compiling: numbers without a unit, `value`, `+ - * / ^`, a minus sign, `Math.PI`, `Math.E`.</summary>
+        private static double EvalConversion(Expr e, double value) => e switch
+        {
+            LiteralExpr { Value: var v } when v.Kind == ValueKind.Int && (v.Unit == null || v.Unit.IsUnitless) => v.AsInt(),
+            LiteralExpr { Value: var v } when v.Kind == ValueKind.Float && (v.Unit == null || v.Unit.IsUnitless) => v.AsFloat(),
+            IdentifierExpr { Name: "value" } => value,
+            MemberExpr { Target: IdentifierExpr { Name: "Math" }, Name: "PI" } => Math.PI,
+            MemberExpr { Target: IdentifierExpr { Name: "Math" }, Name: "E" } => Math.E,
+            UnaryExpr { Op: UnaryOp.Negate } u => -EvalConversion(u.Operand, value),
+            BinaryExpr { Op: BinaryOp.Add } b => EvalConversion(b.Left, value) + EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Sub } b => EvalConversion(b.Left, value) - EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Mul } b => EvalConversion(b.Left, value) * EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Div } b => EvalConversion(b.Left, value) / EvalConversion(b.Right, value),
+            BinaryExpr { Op: BinaryOp.Power } b => Math.Pow(EvalConversion(b.Left, value), EvalConversion(b.Right, value)),
+            _ => throw new InvalidOperationException("A conversion of 'coerce' is computed while compiling: it may use numbers without a unit, 'value', + - * / ^, Math.PI and Math.E"),
+        };
 
         /// <summary>The prelude declares the base class `Exception` (SPEC 7.1). Programs written before that declare their own - it replaces the one of the
         /// prelude instead of being a second definition. Two declarations in the program itself remain an error (the resolver reports it).</summary>
@@ -379,6 +594,7 @@ namespace fire.Compiler
             var statements = new List<Stmt>();
             while (!Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 // 'catch threads(...)'/'catch terminate(...)' are GLOBAL
                 // declarations (see ParseGlobalHandlerDecl), no
                 // normal statements - recognised only here at top-level,
@@ -387,10 +603,115 @@ namespace fire.Compiler
                 if (TryParseWarn()) continue;
                 if (Check(TokenType.Catch) && NextLooksLikeGlobalHandler())
                     statements.Add(ParseGlobalHandlerDecl());
+                else if (IsUnitDeclStart())
+                    statements.Add(ParseUnitDecl());
                 else
                     statements.Add(ParseStatement());
             }
+            foreach (var ed in _enumDecls) statements.AddRange(EnumHelperClass(ed));
             return statements;
+        }
+
+        /// <summary>The enums of this source: each gets a hidden class with `Name(value)`, `Parse(text)` and `IsDefined(value)` (see EnumHelperClass).</summary>
+        private readonly List<EnumDecl> _enumDecls = new();
+
+        /// <summary>The assignments written in their own parentheses (`(a = b)`): as a condition they are meant, see TypeChecker.CheckCondition.</summary>
+        public static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Expr, object?> ParenthesizedAssignments = new();
+
+        /// <summary>The name of the hidden helper class of an enum (`Color.Name(c)` is `__enum_Color.Name(c)`, see Resolver).</summary>
+        public static string EnumHelperClassName(string enumName) => "__enum_" + enumName.Replace('.', '_');
+
+        /// <summary>`enum Color { Red, Green }` gets `class __enum_Color` with static methods that know the names: `Name(int)` (the name of a value, the
+        /// number as text if no member has it), `Parse(string)` (the value of a name; an `ArgumentException` for an unknown name) and `IsDefined(int)`.
+        /// The values are computed as in the resolver (an int literal or the predecessor + 1); a faulty member is reported there.</summary>
+        private List<Stmt> EnumHelperClass(EnumDecl ed)
+        {
+            var name = new System.Text.StringBuilder();
+            var parse = new System.Text.StringBuilder();
+            var defined = new System.Text.StringBuilder();
+            var seen = new HashSet<long>();
+            long next = 0;
+            foreach (var m in ed.Members)
+            {
+                long value = m.ValueExpr is LiteralExpr { Value.Kind: ValueKind.Int } lit ? lit.Value.AsInt() : next;
+                next = value + 1;
+                if (seen.Add(value))
+                {
+                    name.Append($"if (v == {value}) {{ return \"{m.Name}\" }} ");
+                    defined.Append($"if (v == {value}) {{ return true }} ");
+                }
+                parse.Append($"if (s == \"{m.Name}\") {{ return {value} }} ");
+            }
+            string source =
+                $"class {EnumHelperClassName(ed.Name)} {{\n" +
+                $"    static string Name(int v) {{ {name}return \"\" + v }}\n" +
+                $"    static int Parse(string s) {{ {parse}throw new ArgumentException(\"'\" + s + \"' is not a member of '{ed.Name}'.\") }}\n" +
+                $"    static bool IsDefined(int v) {{ {defined}return false }}\n" +
+                "}";
+            var parser = new Parser(new Lexer(source).Tokenize()) { _sourceIndex = _sourceIndex, _fileName = _fileName };
+            return parser.ParseProgram();
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // Own units (SPEC "Own units"): `prefixed unit Volt: V`, `unit Inch: in { coerce m => 0.0254 }`
+        // -------------------------------------------------------------------------------------------------------------
+
+        /// <summary>A word (an identifier or a keyword such as `in`) - the name or symbol of a unit may be one.</summary>
+        private static bool IsWord(Token t) =>
+            t.Type is not (TokenType.IntLiteral or TokenType.FloatLiteral or TokenType.StringLiteral or TokenType.Eof) && t.Lexeme.Length > 0
+            && (char.IsLetter(t.Lexeme[0]) || t.Lexeme[0] == '_') && t.Lexeme.All(c => char.IsLetterOrDigit(c) || c == '_');
+
+        /// <summary>A keyword that a unit of the program uses as its symbol (`unit Inch: in`): at a unit position it is the unit.</summary>
+        private bool IsCustomUnitWordAt(int offset) =>
+            PeekAt(offset) is { Type: not TokenType.Identifier } t && IsWord(t) && Unit.IsCustomUnitWord(t.Lexeme);
+
+        /// <summary>`unit Name : symbol` or `prefixed`/`unprefixed unit Name : symbol` starts here.</summary>
+        private bool IsUnitDeclStart()
+        {
+            int i = 0;
+            if (Check(TokenType.Identifier) && Peek().Lexeme is "prefixed" or "unprefixed") i = 1;
+            return PeekAt(i) is { Type: TokenType.Identifier, Lexeme: "unit" } && IsWord(PeekAt(i + 1)) && PeekAt(i + 2).Type == TokenType.Colon
+                && (i == 0 || PeekAt(1).Line == Peek().Line);
+        }
+
+        /// <summary>`[prefixed|unprefixed] unit Name : symbol [{ coerce [from|to] unit => expression ... }]`. The symbol is what follows a number
+        /// (`5in`) and what is printed; `prefixed` allows the SI prefixes in front of it (`mV`, `kV`). Without `coerce` the unit is a dimension of its
+        /// own; `coerce m => 0.0254` says 1 symbol = 0.0254m, `coerce to m => value * 0.0254` and `coerce from m => value / 0.0254` say the same as
+        /// conversions (Parser.DefineUnits computes the factor).</summary>
+        private Stmt ParseUnitDecl()
+        {
+            int line = Peek().Line;
+            bool prefixed = false;
+            if (Peek().Lexeme is "prefixed" or "unprefixed") prefixed = Advance().Lexeme == "prefixed";
+            Advance();   // unit
+            var nameTok = Advance();
+            Expect(TokenType.Colon, "Expected ':' and the symbol of the unit after its name");
+            var symbolTok = Peek();
+            if (!IsWord(symbolTok) || symbolTok.Lexeme.Any(c => !char.IsLetter(c)) || symbolTok.Line != nameTok.Line)
+                throw Error("Expected the symbol of the unit after ':' - letters only ('in', 'V', 'Pa'), it stands directly after a number (5in)", symbolTok);
+            Advance();
+            var coerces = new List<UnitCoerce>();
+            if (Check(TokenType.LBrace))
+            {
+                Advance();
+                while (!Check(TokenType.RBrace))
+                {
+                    if (Match(TokenType.Semicolon)) continue;
+                    if (!(Check(TokenType.Identifier) && Peek().Lexeme == "coerce"))
+                        throw Error("Expected 'coerce' in the body of a unit ('coerce m => 0.0254', 'coerce to m => value * 0.0254', 'coerce from m => value / 0.0254')", Peek());
+                    int coerceLine = Advance().Line;
+                    var direction = CoerceDirection.Factor;
+                    if (Match(TokenType.From)) direction = CoerceDirection.From;
+                    else if (Check(TokenType.Identifier) && Peek().Lexeme == "to" && PeekAt(1).Type != TokenType.Arrow) { Advance(); direction = CoerceDirection.To; }
+                    if (!IsWord(Peek())) throw Error("Expected the unit to convert from or to after 'coerce'", Peek());
+                    string target = Advance().Lexeme + ParseCombinedUnitTail();
+                    Expect(TokenType.Arrow, "Expected '=>' after the unit of 'coerce'");
+                    coerces.Add(new UnitCoerce(coerceLine, direction, target, ParseExpression()));
+                }
+                Expect(TokenType.RBrace, "Expected '}' after the conversions of the unit");
+            }
+            Match(TokenType.Semicolon);
+            return new UnitDeclStmt(_sourceIndex, line, nameTok.Lexeme, symbolTok.Lexeme, prefixed, coerces);
         }
 
         /// <summary>After 'catch' follows either 'terminate' (real keyword)
@@ -441,6 +762,7 @@ namespace fire.Compiler
             // `delete x`: context-dependent like `probe`/`silence` - only if a name/`this` follows directly (on the same line)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "delete" && PeekAt(1) is { NewlineBefore: false, Type: TokenType.Identifier or TokenType.This or TokenType.Star })
                 return ParseDelete();
+            if (IsUnitDeclStart()) throw Error("A unit is declared at the top level of a file, not inside a block, a class or a namespace", Peek());
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
@@ -451,6 +773,7 @@ namespace fire.Compiler
             if (NextLooksLikeTypeThenName()) return ParseBareTypedDecl();
             if (Check(TokenType.If)) return ParseIf();
             if (Check(TokenType.While)) return ParseWhile();
+            if (Check(TokenType.Do)) return ParseDoWhile();
             if (Check(TokenType.For)) return ParseFor();
             if (Check(TokenType.Foreach)) return ParseForeach();
             if (Check(TokenType.Return)) return ParseReturn();
@@ -474,14 +797,16 @@ namespace fire.Compiler
             if (Check(TokenType.Break))
             {
                 int breakLine = Advance().Line;
+                int levels = ParseLoopLevels("break");
                 ExpectStatementTerminator();
-                return new BreakStmt(_sourceIndex ,breakLine);
+                return new BreakStmt(_sourceIndex, breakLine, levels);
             }
             if (Check(TokenType.Continue))
             {
                 int continueLine = Advance().Line;
+                int levels = ParseLoopLevels("continue");
                 ExpectStatementTerminator();
-                return new ContinueStmt(_sourceIndex, continueLine);
+                return new ContinueStmt(_sourceIndex, continueLine, levels);
             }
             if (Check(TokenType.Leave))
             {
@@ -513,6 +838,7 @@ namespace fire.Compiler
             var statements = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 if (Check(TokenType.Catch))
                 {
                     statements.Add(ParseImplicitCatchTail());
@@ -542,6 +868,7 @@ namespace fire.Compiler
             var restStatements = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 if (Check(TokenType.Catch))
                 {
                     // Weitere nackte catch-Ketten direkt hintereinander -> ebenfalls einsammeln.
@@ -672,7 +999,52 @@ namespace fire.Compiler
         /// accepts every identifier as an atomic, freely invented unit,
         /// see the documentation there) - a possible check "is mm really
         /// known yet" would be moot anyway.</summary>
-        private string ParseUnitName() => Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
+        /// <summary>The unit of a declaration after ':' - `mm`, `any` (every unit) or `any m` (every unit of the dimension of `m`, nothing converted).</summary>
+        private string ParseUnitName()
+        {
+            string name = IsCustomUnitWordAt(0) ? Advance().Lexeme : Expect(TokenType.Identifier, "Expected a unit name after ':'").Lexeme;
+            if (name == "any" && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)) && Peek().Line == Previous().Line) name += " " + Advance().Lexeme + ParseCombinedUnitTail();
+            else name += ParseCombinedUnitTail();
+            return name;
+        }
+
+        /// <summary>The rest of a combined unit in a declaration (`m/s`, `kg*m/s^2`, `m^2`): factors joined by `*` or `/`, each with an optional `^power`,
+        /// on the same line. "" for a single unit.</summary>
+        private string ParseCombinedUnitTail()
+        {
+            var sb = new System.Text.StringBuilder();
+            while (true)
+            {
+                if (LineContinues() && Check(TokenType.Caret) && PeekAt(1).Type == TokenType.IntLiteral)
+                {
+                    Advance();
+                    sb.Append('^').Append(Convert.ToInt64(Advance().LiteralValue));
+                    continue;
+                }
+                if (LineContinues() && (Check(TokenType.Slash) || Check(TokenType.Star)) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)) && !PeekAt(1).NewlineBefore)
+                {
+                    sb.Append(Advance().Lexeme).Append(Advance().Lexeme);
+                    continue;
+                }
+                return sb.ToString();
+            }
+        }
+
+        /// <summary>The unit written at a number type (`float:m Len()`, `float:any m Width()`): a ':' followed by the unit and then the name of the declaration
+        /// (or `[]`); anything else is left alone.</summary>
+        private string? ParseUnitAtType()
+        {
+            if (!Check(TokenType.Colon) || PeekAt(1).Type != TokenType.Identifier && !IsCustomUnitWordAt(1)) return null;
+            bool NameAt(int offset) => PeekAt(offset).Type == TokenType.Identifier || PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket;
+            if (PeekAt(1).Lexeme == "any" && (PeekAt(2).Type == TokenType.Identifier || IsCustomUnitWordAt(2)) && NameAt(3))
+            {
+                Advance(); Advance();
+                return "any " + Advance().Lexeme;
+            }
+            if (!NameAt(2)) return null;
+            Advance();
+            return Advance().Lexeme;
+        }
 
         /// <summary>"Bare" declaration without `var` (C-like): `Type name[ranks]
         /// [: unit] [= init]`. Semantically identical to `var name : Type`
@@ -778,7 +1150,7 @@ namespace fire.Compiler
                     throw Error("'byte' already has a fixed width of 8 bits - no additional '[...]' may follow", Peek());
                 int bytePointerDepth = 0;
                 while (Match(TokenType.Star)) bytePointerDepth++;
-                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+                return new TypeRef("int", 8, bytePointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray), Unsigned: true);
             }
 
             // `[8]` = bit width; empty brackets `[]` belong to the array return type (see below).
@@ -791,10 +1163,78 @@ namespace fire.Compiler
                 Expect(TokenType.RBracket, "Expected ']' after the bit width");
             }
 
+            // `List<int>`, `Map<string, List<int>>`: the type arguments of a generic class/interface (only after a class name)
+            List<TypeRef>? typeArgs = null;
+            if (width == null && !TypeKeywords.Contains(Previous().Type) && Check(TokenType.Lt) && TypeArgListEnd(0) > 0)
+                typeArgs = ParseTypeArgRefs();
+
+            // `float:m Len()`, `int : mm count`: the unit at the type (a number type only; a name has to follow the unit)
+            string? unit = baseName is "int" or "float" ? ParseUnitAtType() : null;
+
             int pointerDepth = 0;
             while (Match(TokenType.Star)) pointerDepth++;
 
-            return new TypeRef(baseName, width, pointerDepth, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray));
+            return new TypeRef(baseName, width, pointerDepth, Unit: unit, Namespaces: namespaces, ArrayRank: ParseArrayTypeSuffix(allowArray),
+                TypeArgCount: typeArgs?.Count ?? 0, TypeArgs: typeArgs);
+        }
+
+        /// <summary>`&lt;T1, ..., Tn&gt;` with full type references (nested ones included).</summary>
+        private List<TypeRef> ParseTypeArgRefs()
+        {
+            Expect(TokenType.Lt, "Expected '<'");
+            var args = new List<TypeRef>();
+            do args.Add(ParseTypeRef(allowArray: true));
+            while (Match(TokenType.Comma));
+            Expect(TokenType.Gt, "Expected '>' after the type arguments");
+            return args;
+        }
+
+        /// <summary>The name a type argument has for the `where` check of `new Name&lt;Arg&gt;` (its outer name: `Box` of `Box&lt;int&gt;`, `byte` stays `byte`).</summary>
+        private static string TypeArgName(TypeRef arg) => arg.BaseName == "int" && arg.BitWidth == 8 ? "byte" : arg.BaseName;
+
+        /// <summary>Whether a type argument list `&lt;...&gt;` starts at the token <paramref name="offset"/> ahead: type names (keywords, dotted
+        /// identifiers, `lambda`), commas, nested lists and empty brackets up to the matching `&gt;`. Returns the offset just behind it, -1 when it is none
+        /// (`a &lt; b` of an expression).</summary>
+        private int TypeArgListEnd(int offset)
+        {
+            if (PeekAt(offset).Type != TokenType.Lt) return -1;
+            int depth = 0;
+            bool expectName = true;
+            for (int i = offset; i < offset + 256; i++)
+            {
+                var token = PeekAt(i);
+                switch (token.Type)
+                {
+                    case TokenType.Lt:
+                        if (i > offset && expectName) return -1;           // (a nested list follows a name)
+                        depth++;
+                        expectName = true;
+                        break;
+                    case TokenType.Gt:
+                        if (expectName) return -1;
+                        if (--depth == 0) return i + 1;
+                        break;
+                    case TokenType.Comma:
+                        if (expectName) return -1;
+                        expectName = true;
+                        break;
+                    case TokenType.Dot:
+                        if (expectName || PeekAt(i + 1).Type != TokenType.Identifier) return -1;
+                        expectName = true;
+                        break;
+                    case TokenType.LBracket:
+                        if (expectName || PeekAt(i + 1).Type != TokenType.RBracket) return -1;
+                        i++;
+                        break;
+                    case TokenType.Identifier when !expectName && token.Lexeme == "lambda":   // `int lambda<...>`: a return type before `lambda`
+                        break;
+                    default:
+                        if (!(token.Type == TokenType.Identifier || TypeKeywords.Contains(token.Type)) || !expectName) return -1;
+                        expectName = false;
+                        break;
+                }
+            }
+            return -1;
         }
 
         /// <summary>Does `[` `]` (empty brackets) come next? That is an array type
@@ -835,6 +1275,7 @@ namespace fire.Compiler
                     do
                     {
                         paramTypes.Add(ParseTypeAnnotationName());
+                        SkipOptionalNestedTypeArgs();   // (`lambda<List<int>>`: the parameter is a List)
                     } while (Match(TokenType.Comma));
                 }
                 Expect(TokenType.Gt, "Expected '>' after the lambda parameter types");
@@ -897,11 +1338,40 @@ namespace fire.Compiler
             int offset = 1;
             while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
                 offset += 2;
+            // `List<int> values`: the type arguments of a generic class
+            if (PeekAt(offset).Type == TokenType.Lt)
+            {
+                int end = TypeArgListEnd(offset);
+                if (end < 0) return false;
+                offset = end;
+            }
             // `Dog[] Name`: empty brackets behind the type name (array return type) - like two identifiers
             // in a row, `Name[] Name` occurs in no valid expression.
             while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
                 offset += 2;
             return PeekAt(offset).Type == TokenType.Identifier;
+        }
+
+        /// <summary>A type (keyword or name chain, optional empty brackets) directly followed by `operator`.</summary>
+        private bool TypeThenOperatorAhead()
+        {
+            int offset;
+            if (TypeKeywords.Contains(Peek().Type)) offset = 1;
+            else if (Check(TokenType.Identifier))
+            {
+                offset = 1;
+                while (PeekAt(offset).Type == TokenType.Dot && PeekAt(offset + 1).Type == TokenType.Identifier)
+                    offset += 2;
+                if (PeekAt(offset).Type == TokenType.Lt)
+                {
+                    offset = TypeArgListEnd(offset);
+                    if (offset < 0) return false;
+                }
+            }
+            else return false;
+            while (PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket)
+                offset += 2;
+            return PeekAt(offset).Type == TokenType.Operator;
         }
 
         private Stmt ParseIf()
@@ -916,6 +1386,36 @@ namespace fire.Compiler
             if (Match(TokenType.Else))
                 elseBranch = ParseStatement();
             return new IfStmt(_sourceIndex, line, cond, thenBranch, elseBranch);
+        }
+
+        /// <summary>`break 2` / `continue 2`: the number of loops (on the same line, without a unit); 1 without a number.</summary>
+        private int ParseLoopLevels(string keyword)
+        {
+            if (!(LineContinues() && Check(TokenType.IntLiteral))) return 1;
+            var tok = Advance();
+            long n = Convert.ToInt64(tok.LiteralValue);
+            if (n < 1 || n > 64 || tok.UnitSuffix is { Length: > 0 })
+                throw Error($"The number after '{keyword}' counts the loops to leave: 1, 2, 3, ...", tok);
+            return (int)n;
+        }
+
+        /// <summary>`do statement while (condition)` - a `;` or a line break may follow.</summary>
+        private Stmt ParseDoWhile()
+        {
+            int line = Peek().Line;
+            Expect(TokenType.Do, "Expected 'do'");
+            // `do x++ while (x < 5)`: a single statement may end directly before the `while`
+            bool savedDoBody = _inDoBody;
+            _inDoBody = true;
+            Stmt body;
+            try { body = ParseStatement(); }
+            finally { _inDoBody = savedDoBody; }
+            Expect(TokenType.While, "Expected 'while' after the body of 'do'");
+            Expect(TokenType.LParen, "Expected '(' after 'while'");
+            var cond = ParseExpression();
+            Expect(TokenType.RParen, "Expected ')' after the while condition");
+            ExpectStatementTerminator();
+            return new DoWhileStmt(_sourceIndex, line, body, cond);
         }
 
         private Stmt ParseWhile()
@@ -1047,6 +1547,13 @@ namespace fire.Compiler
                 return new NoShadowDirective(_sourceIndex, line);
             }
 
+            if (Check(TokenType.Identifier) && Peek().Lexeme is "lax" or "strict")
+            {
+                bool strict = Advance().Lexeme == "strict";
+                ExpectStatementTerminator();
+                return new TypeCheckDirective(_sourceIndex, line, strict);
+            }
+
             if (Check(TokenType.Identifier) && Peek().Lexeme == "nosync")
             {
                 Advance();
@@ -1066,7 +1573,7 @@ namespace fire.Compiler
             // Preprocessing.Preprocessor.ProcessInner/ProcessedSource) - a
             // '#using' line is already recognised there and removed from the text,
             // the parser never sees it any more. No case for it needed here any more.
-            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value')", Peek());
+            throw Error($"Unknown preprocessor directive '#{Peek().Lexeme}' (known: '#extern \"libName\"', '#noshadow', '#nosync', '#timeout value', '#lax', '#strict')", Peek());
         }
 
         private Stmt ParseUnsafeStmt()
@@ -1109,6 +1616,7 @@ namespace fire.Compiler
             };
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
                 if (Check(TokenType.Catch))
                 {
                     statements.Add(ParseImplicitCatchTail());
@@ -1166,24 +1674,30 @@ namespace fire.Compiler
                     continue;
                 }
 
-                BinaryOp op = BinaryOp.Eq;
-                if (Check(TokenType.Lt) || Check(TokenType.LtEq) || Check(TokenType.Gt) ||
-                    Check(TokenType.GtEq) || Check(TokenType.Eq) || Check(TokenType.NotEq))
+                // `case 5, 6:` / `case < 0, > 100:` - several conditions, one of them must hold
+                Expr? condition = null;
+                do
                 {
-                    var opTok = Advance();
-                    op = opTok.Type switch
+                    BinaryOp op = BinaryOp.Eq;
+                    if (Check(TokenType.Lt) || Check(TokenType.LtEq) || Check(TokenType.Gt) ||
+                        Check(TokenType.GtEq) || Check(TokenType.Eq) || Check(TokenType.NotEq))
                     {
-                        TokenType.Lt => BinaryOp.Lt,
-                        TokenType.LtEq => BinaryOp.LtEq,
-                        TokenType.Gt => BinaryOp.Gt,
-                        TokenType.GtEq => BinaryOp.GtEq,
-                        TokenType.Eq => BinaryOp.Eq,
-                        _ => BinaryOp.NotEq,
-                    };
-                }
-                var valueExpr = ParseSwitchCaseValue();
+                        var opTok = Advance();
+                        op = opTok.Type switch
+                        {
+                            TokenType.Lt => BinaryOp.Lt,
+                            TokenType.LtEq => BinaryOp.LtEq,
+                            TokenType.Gt => BinaryOp.Gt,
+                            TokenType.GtEq => BinaryOp.GtEq,
+                            TokenType.Eq => BinaryOp.Eq,
+                            _ => BinaryOp.NotEq,
+                        };
+                    }
+                    var valueExpr = ParseSwitchCaseValue();
+                    var test = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
+                    condition = condition == null ? test : new BinaryExpr(line, BinaryOp.Or, condition, test);
+                } while (Match(TokenType.Comma));
                 Expect(TokenType.Colon, "Expected ':' after the case condition");
-                var condition = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
                 cases.Add((condition, ParseSwitchCaseBody()));
             }
             Expect(TokenType.RBrace, "Expected '}' at the end of the switch");
@@ -1239,8 +1753,11 @@ namespace fire.Compiler
             var body = new List<Stmt>();
             while (!Check(TokenType.RBrace) && !Check(TokenType.Case) && !Check(TokenType.Eof))
             {
-                if (Match(TokenType.Break))
+                if (Match(TokenType.Semicolon)) continue;   // `{ ... }; next` - a `;` after a block is an empty separator
+                // `break` ends the case; `break 2` leaves loops (it is a statement of its own)
+                if (Check(TokenType.Break) && !(PeekAt(1).Type == TokenType.IntLiteral && !PeekAt(1).NewlineBefore))
                 {
+                    Advance();
                     ExpectStatementTerminator();
                     break;
                 }
@@ -1515,8 +2032,8 @@ namespace fire.Compiler
                     string baseName = ParseDottedName("base class/interface names");
                     // `class Home : Command<IDevice>`: the type arguments are (as everywhere) not evaluated, only their COUNT chooses the generic
                     // class or the generic interface of this name (see GenericClassNames.ResolveNewTarget).
-                    int typeArgCount = ParseOptionalTypeParamNames().Count;
-                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: typeArgCount));
+                    var baseTypeArgs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
+                    baseRefs.Add(new TypeRef(baseName, null, 0, Namespaces: namespaces, TypeArgCount: baseTypeArgs?.Count ?? 0, TypeArgs: baseTypeArgs));
                 } while (Match(TokenType.Comma));
             }
 
@@ -1856,7 +2373,9 @@ namespace fire.Compiler
             }
 
             Expect(TokenType.RBrace, "Expected '}' after the enum members");
-            return new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
+            var decl = new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
+            _enumDecls.Add(decl);
+            return decl;
         }
 
         /// <summary>`Type Name { get { ... } set { ... } }` - see
@@ -1923,6 +2442,17 @@ namespace fire.Compiler
             if (getter == null && !getterIsAuto && setter == null && !setterIsAuto)
                 throw Error($"Property '{name}' needs at least 'get' or 'set'", Peek());
 
+            // `int Count { get; set; } = 5`: the initial value of an auto-property goes to its backing field (like the initializer of a field)
+            Expr? initializer = null;
+            if (Check(TokenType.Assign))
+            {
+                if (!getterIsAuto && !setterIsAuto)
+                    throw Error($"Only an auto-property ('get;' or 'set;') can have an initial value - '{name}' has no backing field", Peek());
+                Advance();
+                initializer = ParseExpression();
+                ExpectStatementTerminator();
+            }
+
             var result = new List<Stmt>();
 
             if (getterIsAuto || setterIsAuto)
@@ -1946,7 +2476,7 @@ namespace fire.Compiler
                 // never directly from outside ('this._AutoName' stays
                 // still normally allowed INSIDE the class).
                 string backingName = "_Auto" + name;
-                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false,
+                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, initializer, IsReadonly: false,
                     Access: AccessModifier.Private, IsStatic: isStatic));
 
                 // Static: backing field via 'ClassName.field' instead of
@@ -2042,7 +2572,13 @@ namespace fire.Compiler
             if (Check(TokenType.Destruct))
                 return new List<Stmt> { ParseDestructor() };
             if (Check(TokenType.Operator))
-                return new List<Stmt> { ParseOperatorMember(line) };
+                return new List<Stmt> { ParseOperatorMember(line, null) };
+            // `bool operator==(...)`: an operator with a declared return type
+            if (TypeThenOperatorAhead())
+            {
+                var operatorType = ParseTypeRef(allowArray: true);
+                return new List<Stmt> { ParseOperatorMember(line, operatorType) };
+            }
 
             // 'static' on fields/methods/properties (SPEC "Static
             // members") - ONE shared storage location per class instead of
@@ -2095,6 +2631,14 @@ namespace fire.Compiler
             if (methodTypeParamNames.Count > 0)
                 throw Error("A generic type parameter head '<...>' must be followed by a parameter list '(...)'", Peek());
 
+            // `float Width : mm { get ... set ... }`: a property with a unit (a unit name, or `any`/`any m`, then the body)
+            if (type != null && Check(TokenType.Colon) && PeekAt(1).Type == TokenType.Identifier
+                && (PeekAt(2).Type == TokenType.LBrace || PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && PeekAt(3).Type == TokenType.LBrace))
+            {
+                Advance(); // ':'
+                type = type with { Unit = ParseUnitName() };
+            }
+
             if (Check(TokenType.LBrace))
             {
                 if (isReadonly)
@@ -2145,7 +2689,7 @@ namespace fire.Compiler
         /// object with a matching method - an overload only for the
         /// RIGHT operand (like C#'s `operator+` with swapped operand
         /// types, or Python's `__radd__`) is deliberately NOT supported.</summary>
-        private Stmt ParseOperatorMember(int line)
+        private Stmt ParseOperatorMember(int line, TypeRef? returnType)
         {
             Expect(TokenType.Operator, "Expected 'operator'");
             string symbol = ParseOperatorSymbol();
@@ -2166,7 +2710,7 @@ namespace fire.Compiler
                 throw Error($"'operator{symbol}' needs exactly 1 parameter (the right operand - 'this' is the left one)", Peek());
 
             var body = ParseBlock();
-            return new MethodDecl(_sourceIndex, line, null, internalName, parms, body, null);
+            return new MethodDecl(_sourceIndex, line, returnType, internalName, parms, body, null);
         }
 
         /// <summary>Reads a single, overloadable operator symbol directly
@@ -2329,7 +2873,7 @@ namespace fire.Compiler
 
         private Expr ParseAssignment()
         {
-            var left = ParseOr();
+            var left = ParseConditional();
             if (LineContinues() && Check(TokenType.Assign))
             {
                 Advance();
@@ -2351,6 +2895,23 @@ namespace fire.Compiler
                 return new AssignExpr(opTok.Line, left, new BinaryExpr(opTok.Line, op, left, value));
             }
             return left;
+        }
+
+        /// <summary>`cond ? a : b` (right-associative: `a ? b : c ? d : e`). In the middle branch a `:` ends the branch instead of being a unit
+        /// conversion - write `(x:m)` there.</summary>
+        private Expr ParseConditional()
+        {
+            var condition = ParseOr();
+            if (!(LineContinues() && Check(TokenType.Question))) return condition;
+            int line = Advance().Line;
+            var savedSuppress = _suppressColonPostfixAtDepth;
+            _suppressColonPostfixAtDepth = _bracketDepth;
+            Expr then;
+            try { then = ParseConditional(); }
+            finally { _suppressColonPostfixAtDepth = savedSuppress; }
+            Expect(TokenType.Colon, "Expected ':' in 'condition ? a : b'");
+            var otherwise = ParseConditional();
+            return new ConditionalExpr(line, condition, then, otherwise);
         }
 
         private static BinaryOp? CompoundOperator(TokenType t) => t switch
@@ -2477,7 +3038,7 @@ namespace fire.Compiler
                     int line = Advance().Line;
                     if (Match(TokenType.In))
                     {
-                        string unitName = Expect(TokenType.Identifier, "Expected a unit name after 'is in'").Lexeme;
+                        string unitName = IsCustomUnitWordAt(0) ? Advance().Lexeme : Expect(TokenType.Identifier, "Expected a unit name after 'is in'").Lexeme;
                         left = new IsInExpr(line, left, unitName);
                     }
                     else if (Match(TokenType.Of))
@@ -2692,7 +3253,7 @@ namespace fire.Compiler
                     // `a::unit`: only the unit changes, the number stays (`a:unit` converts); `a::` takes the unit from the context like `a:`
                     int line = Advance().Line;
                     Advance();
-                    string? relabelUnit = LineContinues() && Check(TokenType.Identifier) ? Advance().Lexeme : null;
+                    string? relabelUnit = LineContinues() && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)) ? Advance().Lexeme : null;
                     expr = new UnitCoerceExpr(line, expr, relabelUnit, Relabel: true);
                 }
                 else if (Check(TokenType.Colon) && _suppressColonPostfixAtDepth != _bracketDepth)
@@ -2702,15 +3263,41 @@ namespace fire.Compiler
                     // line - otherwise exactly the original bug: an
                     // identifier that actually belongs to the next line/statement
                     // would wrongly be swallowed here along with it.
-                    string? unitName = LineContinues() && Check(TokenType.Identifier)
+                    string? unitName = LineContinues() && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0))
                         ? Advance().Lexeme : null;
                     expr = new UnitCoerceExpr(line, expr, unitName);
+                }
+                else if (Check(TokenType.On))
+                {
+                    // `handler on other`: the lambda with another `this`
+                    int line = Advance().Line;
+                    expr = new RebindExpr(line, expr, ParsePostfix());
                 }
                 else if (Check(TokenType.Bang))
                 {
                     int line = Advance().Line;
+                    // `x!Dog` / `x!IShape`: a class or interface (one name, `#using` applies; `(x!Dog).Bark()` or `x!Dog.Bark()` calls on the result)
+                    if (LineContinues() && Check(TokenType.Identifier))
+                    {
+                        string className = Advance().Lexeme;
+                        expr = new TypeCoerceExpr(line, expr, null, TargetClass: new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()));
+                        continue;
+                    }
                     TokenType? typeKw = LineContinues() && TypeKeywords.Contains(Peek().Type)
                         ? Advance().Type : null;
+                    if (typeKw == TokenType.KwByte) { expr = new TypeCoerceExpr(line, expr, TokenType.KwInt, Width: 8, Unsigned: true); continue; }
+                    // `x!int[8]`, `x!float[32]`: a bit width directly after the type
+                    if (typeKw is TokenType.KwInt or TokenType.KwFloat && Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.IntLiteral && PeekAt(2).Type == TokenType.RBracket)
+                    {
+                        Advance();
+                        var widthTok = Advance();
+                        Advance();
+                        int width = Convert.ToInt32(widthTok.LiteralValue);
+                        bool ok = typeKw == TokenType.KwInt ? width is 8 or 16 or 32 or 64 : width is 32 or 64;
+                        if (!ok) throw Error(typeKw == TokenType.KwInt ? "A bit width after '!int' is 8, 16, 32 or 64" : "A bit width after '!float' is 32 or 64", widthTok);
+                        expr = new TypeCoerceExpr(line, expr, typeKw, Width: width);
+                        continue;
+                    }
                     expr = new TypeCoerceExpr(line, expr, typeKw);
                 }
                 else
@@ -2921,9 +3508,10 @@ namespace fire.Compiler
                     // argument list '(...)' MUST follow anyway (never a comparison),
                     // ParseOptionalTypeParamNames() fits here 1:1 (the same
                     // '<name, name>' grammar as with the declaration).
-                    var typeArgs = ParseOptionalTypeParamNames();
+                    var typeArgRefs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
+                    var typeArgs = typeArgRefs?.Select(TypeArgName).ToList() ?? new List<string>();
                     var args = ParseArgList();
-                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()), args, typeArgs);
+                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces(), TypeArgCount: typeArgs.Count, TypeArgs: typeArgRefs), args, typeArgs);
                 }
 
                 case TokenType.Throw:
@@ -2947,6 +3535,8 @@ namespace fire.Compiler
                     Advance();
                     var inner = ParseExpression();
                     Expect(TokenType.RParen, "Expected ')' after the parenthesized expression");
+                    // `if ((a = b))`: the extra parentheses say the assignment is meant (no TC009, see TypeChecker.CheckCondition)
+                    if (inner is AssignExpr) ParenthesizedAssignments.AddOrUpdate(inner, null);
                     return inner;
                 }
 
@@ -3178,9 +3768,12 @@ namespace fire.Compiler
         /// there must be a ';' or a line break. End of block ('}') and end of file
         /// also count as a valid termination (e.g. for single-line blocks like
         /// `{ return x }`).</summary>
+        private bool _inDoBody;
+
         private void ExpectStatementTerminator()
         {
             if (Match(TokenType.Semicolon)) return;
+            if (_inDoBody && Check(TokenType.While)) return;
             if (Peek().NewlineBefore) return;
             if (Check(TokenType.RBrace) || Check(TokenType.Eof)) return;
             throw Error("Expected ';' or a line break between statements", Peek());

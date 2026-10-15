@@ -455,7 +455,7 @@ namespace fire.Terminal.Bridge
                 // an image with a palette (PNG with palette, GIF, BMP up to 8 bit) becomes a palette framebuffer with the palette of the file, everything else
                 // RGBA; ColorMode.Rgba / ColorMode.Palette forces a mode (an RGBA image is then mapped onto the default palette).
                 // Error: ImageException.
-                static Framebuffer FromImage(data, int mode = -1) {
+                static Framebuffer FromImage(byte data[], int mode = -1) {
                     var fb = new Framebuffer(0, 0, -2)
                     fb.id = __GRPHFbLoadImage(data, mode)
                     if (fb.id < 0) {
@@ -465,7 +465,7 @@ namespace fire.Terminal.Bridge
                 }
 
                 // An image from an embedded resource (`Framebuffer.FromResource(new Resource("images/logo.png"))`): the file is inside the program.
-                static Framebuffer FromResource(resource, int mode = -1) {
+                static Framebuffer FromResource(any resource, int mode = -1) {
                     return Framebuffer.FromImage(resource.Bytes(), mode)
                 }
 
@@ -480,7 +480,7 @@ namespace fire.Terminal.Bridge
 
                 // Raw pixels from a byte buffer, row by row from top to bottom: ColorMode.Rgba width*height*4 bytes (R, G, B, A per pixel),
                 // ColorMode.Palette width*height bytes (one index per pixel) and optionally a palette (768 bytes RGB or 1024 bytes RGBA).
-                static Framebuffer FromPixels(int width, int height, pixels, int mode = 0, palette = undefined) {
+                static Framebuffer FromPixels(int width, int height, any pixels, int mode = 0, any palette = undefined) {
                     var fb = new Framebuffer(0, 0, -2)
                     fb.id = __GRPHFbFromPixels(width, height, pixels, mode, palette)
                     if (fb.id < 0) {
@@ -501,9 +501,9 @@ namespace fire.Terminal.Bridge
                 // Raw data: RGBA 4 bytes per pixel (R, G, B, A), palette 1 byte per pixel (the index); ByteCount() is the size.
                 int ByteCount() { return __GRPHFbByteCount(this.id) }
                 int ReadByte(int offset) { return __GRPHFbReadByte(this.id, offset) }
-                WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
-                ReadBytes() { return __GRPHFbReadBytes(this.id) }
-                WriteBytes(data) {
+                undefined WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
+                byte[] ReadBytes() { return __GRPHFbReadBytes(this.id) }
+                undefined WriteBytes(byte data[]) {
                     if (!__GRPHFbWriteBytes(this.id, data)) {
                         throw new GraphicsException(__GRPHFbLastError())
                     }
@@ -518,15 +518,15 @@ namespace fire.Terminal.Bridge
                     }
                     return color
                 }
-                SetPaletteColor(int index, int color) {
+                undefined SetPaletteColor(int index, int color) {
                     if (!__GRPHFbSetPaletteColor(this.id, index, color)) {
                         throw new GraphicsException(__GRPHFbLastError())
                     }
                 }
-                SetPaletteRgb(int index, int r, int g, int b) { this.SetPaletteColor(index, r + g * 256 + b * 65536 + 255 * 16777216) }
+                undefined SetPaletteRgb(int index, int r, int g, int b) { this.SetPaletteColor(index, r + g * 256 + b * 65536 + 255 * 16777216) }
                 // 768 bytes (R, G, B per entry) or, with withAlpha, 1024 bytes (R, G, B, A)
-                ReadPalette(bool withAlpha = false) { return __GRPHFbReadPalette(this.id, withAlpha) }
-                WritePalette(data) {
+                any ReadPalette(bool withAlpha = false) { return __GRPHFbReadPalette(this.id, withAlpha) }
+                undefined WritePalette(int data[]) {
                     if (!__GRPHFbWritePalette(this.id, data)) {
                         throw new GraphicsException(__GRPHFbLastError())
                     }
@@ -569,9 +569,9 @@ namespace fire.Terminal.Bridge
             class ToolPath {
                 int kind          // PathKind
                 bool closed       // true: the last point is connected to the first
-                points            // flat array [x0, y0, x1, y1, ...]
+                float points[]    // flat array [x0, y0, x1, y1, ...]
 
-                construct(int kind, bool closed, points) {
+                construct(int kind, bool closed, float points[]) {
                     this.kind = kind
                     this.closed = closed
                     this.points = points
@@ -606,7 +606,7 @@ namespace fire.Terminal.Bridge
 
                 // Returns a List of ToolPath (empty if no place is wide enough for the line width). The mask: a framebuffer whose set pixels
                 // (palette: index not 0, RGBA: visible and not black) are milled out - usually from Framebuffer.ToMask.
-                Slice(Framebuffer mask) {
+                List Slice(Framebuffer mask) {
                     if (this.overlap < 0 || this.overlap > 0.95) {
                         throw new GraphicsException("The overlap must be between 0 and 0.95.")
                     }
@@ -721,7 +721,7 @@ namespace fire.Terminal.Bridge
                 }
 
                 // Frees a font that was made with Fonts.FromBytes or Fonts.Add (the built-in fonts stay); later use of it is an error.
-                Release() {
+                undefined Release() {
                     if (this.id > 0) {
                         __GRPHFntDestroy(this.id)
                     }
@@ -736,7 +736,7 @@ namespace fire.Terminal.Bridge
             class Fonts {
                 // Reads a TrueType font from an embedded file and makes it findable by name (see above); `alias` is an additional name. Error: GraphicsException if the data is no TrueType font
                 // (outlines in the "glyf" format; OpenType fonts with PostScript outlines are not supported).
-                static Font Add(resource, string alias = "") {
+                static Font Add(any resource, string alias = "") {
                     var name = alias
                     if (name == "") { name = resource.Name() }
                     var id = __GRPHFntAdd(resource.Bytes(), name)
@@ -747,7 +747,7 @@ namespace fire.Terminal.Bridge
                 }
 
                 // Reads a TrueType font from the bytes of a file; it has no name to look it up by.
-                static Font FromBytes(data) {
+                static Font FromBytes(byte data[]) {
                     var id = __GRPHFntLoad(data)
                     if (id < 0) {
                         throw new GraphicsException("The data is not a TrueType font.")
@@ -798,21 +798,21 @@ namespace fire.Terminal.Bridge
 
                 // Restricts drawing (fills, shapes, text, blit) to the rectangle (x, y, w, h) of the framebuffer; ResetClip lifts it (the whole framebuffer again).
                 // It does not apply to Clear/ClearTo.
-                SetClip(int x, int y, int w, int h) { __GRPHRndSetClip(this.id, x, y, w, h) }
-                ResetClip() { __GRPHRndResetClip(this.id) }
+                undefined SetClip(int x, int y, int w, int h) { __GRPHRndSetClip(this.id, x, y, w, h) }
+                undefined ResetClip() { __GRPHRndResetClip(this.id) }
 
                 // ---- Terminal ----
-                Print(string text) { __GRPHRndPrint(this.id, text) }
-                Locate(int row, int column) { __GRPHRndLocate(this.id, row, column) }
+                undefined Print(string text) { __GRPHRndPrint(this.id, text) }
+                undefined Locate(int row, int column) { __GRPHRndLocate(this.id, row, column) }
                 // Clears the whole framebuffer with the background colour of SetColor and sets the cursor to (0, 0)
-                Clear() { __GRPHRndClear(this.id) }
+                undefined Clear() { __GRPHRndClear(this.id) }
                 // Sets the whole framebuffer to a colour (without blending, also with alpha)
-                ClearTo(int color) { __GRPHRndClearTo(this.id, color) }
-                SetColor(int foreground, int background) { __GRPHRndSetColor(this.id, foreground, background) }
+                undefined ClearTo(int color) { __GRPHRndClearTo(this.id, color) }
+                undefined SetColor(int foreground, int background) { __GRPHRndSetColor(this.id, foreground, background) }
 
                 // ---- Pixel ----
                 // A pixel in the colour (a number as with the brush; blended if it is semi-transparent and AlphaBlending is on)
-                SetPixel(int x, int y, int color) { __GRPHRndSetPixel(this.id, x, y, color) }
+                undefined SetPixel(int x, int y, int color) { __GRPHRndSetPixel(this.id, x, y, color) }
                 // The colour of the pixel as a SIGNED 32-bit number (opaque colours are negative)
                 int GetPixel(int x, int y) { return __GRPHRndGetPixel(this.id, x, y) }
                 // The palette index of the pixel (RGBA framebuffer: the entry that comes closest to its colour)
@@ -822,7 +822,7 @@ namespace fire.Terminal.Bridge
 
                 // Text at pixel coordinates: the character pixels with `foreground`, with `background` the whole cell (the line of text with a TrueType font) beneath (without: only the character pixels).
                 // `font` (a Font, see Fonts.Get; without or the console font: the font of the renderer) and `size` (the height of the letters in pixels, 0 = 14; the two bitmap fonts ignore it) choose the font.
-                DrawText(int x, int y, string text, Brush foreground, Brush background = undefined, font = undefined, int size = 0) {
+                undefined DrawText(int x, int y, string text, Brush foreground, Brush background = undefined, any font = undefined, int size = 0) {
                     var back = 0
                     if (background != undefined) { back = background.id }
                     var fontId = 0
@@ -835,7 +835,7 @@ namespace fire.Terminal.Bridge
                 }
 
                 // Width of `text` in pixels in the font (what DrawText would take); the console font is monospaced.
-                int TextWidth(string text, font = undefined, int size = 0) {
+                int TextWidth(string text, any font = undefined, int size = 0) {
                     var fontId = 0
                     if (font != undefined) { fontId = font.id }
                     if (fontId == 0) {
@@ -845,7 +845,7 @@ namespace fire.Terminal.Bridge
                 }
 
                 // Height of a line of text in pixels in the font.
-                int TextHeight(font = undefined, int size = 0) {
+                int TextHeight(any font = undefined, int size = 0) {
                     var fontId = 0
                     if (font != undefined) { fontId = font.id }
                     if (fontId == 0) {
@@ -855,7 +855,7 @@ namespace fire.Terminal.Bridge
                 }
 
                 // Pixels from the top of a line of text to its baseline in the font (the console font: the height of a cell).
-                int TextAscent(font = undefined, int size = 0) {
+                int TextAscent(any font = undefined, int size = 0) {
                     var fontId = 0
                     if (font != undefined) { fontId = font.id }
                     if (fontId == 0) {
@@ -865,42 +865,42 @@ namespace fire.Terminal.Bridge
                 }
 
                 // ---- Fills (brush) ----
-                FillRect(int x, int y, int w, int h, Brush brush) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
+                undefined FillRect(int x, int y, int w, int h, Brush brush) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
                 // Fills the whole framebuffer (blended if AlphaBlending is on; ClearTo sets without blending)
-                Fill(Brush brush) { __GRPHRndFill(this.id, brush.id) }
+                undefined Fill(Brush brush) { __GRPHRndFill(this.id, brush.id) }
                 // Circle around (cx, cy) with radius r, ellipse with the semi-axes rx (horizontal) and ry (vertical), including the edge
-                FillCircle(int cx, int cy, int r, Brush brush) { __GRPHRndFillCircle(this.id, cx, cy, r, brush.id) }
-                FillEllipse(int cx, int cy, int rx, int ry, Brush brush) { __GRPHRndFillEllipse(this.id, cx, cy, rx, ry, brush.id) }
-                FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Brush brush) { __GRPHRndFillTriangle(this.id, x0, y0, x1, y1, x2, y2, brush.id) }
+                undefined FillCircle(int cx, int cy, int r, Brush brush) { __GRPHRndFillCircle(this.id, cx, cy, r, brush.id) }
+                undefined FillEllipse(int cx, int cy, int rx, int ry, Brush brush) { __GRPHRndFillEllipse(this.id, cx, cy, rx, ry, brush.id) }
+                undefined FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Brush brush) { __GRPHRndFillTriangle(this.id, x0, y0, x1, y1, x2, y2, brush.id) }
                 // points: an array [x0, y0, x1, y1, ...]; filled by the even-odd rule (overlapping parts stay empty)
-                FillPolygon(points, Brush brush) { __GRPHRndFillPolygon(this.id, points, brush.id) }
+                undefined FillPolygon(float points[], Brush brush) { __GRPHRndFillPolygon(this.id, points, brush.id) }
                 // Fills the connected area with the colour of the pixel (x, y). With `border`, FloodFill instead fills up to pixels of that colour (like PAINT in QBasic).
-                FloodFill(int x, int y, Brush brush) { __GRPHRndFloodFill(this.id, x, y, brush.id) }
-                FloodFillBorder(int x, int y, Brush brush, int border) { __GRPHRndFloodFillBorder(this.id, x, y, brush.id, border) }
+                undefined FloodFill(int x, int y, Brush brush) { __GRPHRndFloodFill(this.id, x, y, brush.id) }
+                undefined FloodFillBorder(int x, int y, Brush brush, int border) { __GRPHRndFloodFillBorder(this.id, x, y, brush.id, border) }
 
                 // ---- Zeichnen (Stift) ----
-                DrawPoint(int x, int y, Pen pen) { __GRPHRndDrawPoint(this.id, x, y, pen.id) }
-                DrawLine(int x0, int y0, int x1, int y1, Pen pen) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id) }
+                undefined DrawPoint(int x, int y, Pen pen) { __GRPHRndDrawPoint(this.id, x, y, pen.id) }
+                undefined DrawLine(int x0, int y0, int x1, int y1, Pen pen) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id) }
                 // A path through the points [x0, y0, x1, y1, ...]; closed connects the last to the first
-                DrawPath(points, Pen pen, bool closed = false) { __GRPHRndDrawPath(this.id, points, pen.id, closed) }
+                undefined DrawPath(float points[], Pen pen, bool closed = false) { __GRPHRndDrawPath(this.id, points, pen.id, closed) }
                 // Outlines: paths made from the pixels of the shape
-                DrawRect(int x, int y, int w, int h, Pen pen) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id) }
-                DrawCircle(int cx, int cy, int r, Pen pen) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id) }
-                DrawEllipse(int cx, int cy, int rx, int ry, Pen pen) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id) }
-                DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Pen pen) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id) }
-                DrawPolygon(points, Pen pen, bool closed = true) { __GRPHRndDrawPolygon(this.id, points, pen.id, closed) }
+                undefined DrawRect(int x, int y, int w, int h, Pen pen) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id) }
+                undefined DrawCircle(int cx, int cy, int r, Pen pen) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id) }
+                undefined DrawEllipse(int cx, int cy, int rx, int ry, Pen pen) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id) }
+                undefined DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Pen pen) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id) }
+                undefined DrawPolygon(float points[], Pen pen, bool closed = true) { __GRPHRndDrawPolygon(this.id, points, pen.id, closed) }
 
                 // ---- Kopieren ----
                 // Copies another framebuffer (e.g. a loaded image) here, also between the colour modes (see BlitMode; Blend only blends with AlphaBlending). Blit: the whole image
                 // with its top left corner at (x, y); BlitRegion: the section (sx, sy, sw, sh) to (dx, dy); BlitScaled: additionally brought to the size dw x dh (nearest neighbour;
                 // a NEGATIVE width/height mirrors). `key`: for a palette image the transparent index (-1 = its TransparentIndex).
-                Blit(Framebuffer source, int x, int y, int mode = 0, int key = -1) {
+                undefined Blit(Framebuffer source, int x, int y, int mode = 0, int key = -1) {
                     __GRPHRndBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), x, y, source.Width(), source.Height(), mode, key)
                 }
-                BlitRegion(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int mode = 0, int key = -1) {
+                undefined BlitRegion(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int mode = 0, int key = -1) {
                     __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, sw, sh, mode, key)
                 }
-                BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
+                undefined BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
                     __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, dw, dh, mode, key)
                 }
             }

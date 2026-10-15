@@ -26,7 +26,7 @@ namespace fire.Standard
         /// `string` and `char` (`class extends string { ... }`, SPEC 5.5.1/8.12), which are generated from the
         /// method tables in <see cref="StringMethods"/>/<see cref="CharMethods"/>,
         /// so that the method IDs in the fire text do not have to be maintained by hand.</summary>
-        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource;
+        public static readonly string Source = CoreSource + StringMethods.PreludeSource + CharMethods.PreludeSource + ResourceMethods.PreludeSource + MathMethods.PreludeSource;
 
         private const string CoreSource = """
             /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);
@@ -67,6 +67,26 @@ namespace fire.Standard
                 }
             }
 
+            // An integer division or modulo by zero (floats give infinity or NaN instead).
+            class DivideByZeroException : Exception {
+                construct(string message) { this.message = message }
+            }
+
+            // A value that does not fit what its declaration demands: a lambda with another number of parameters than its `lambda<...>` type
+            class ArgumentException : Exception {
+                construct(string message) { this.message = message }
+            }
+
+            // A field, property or method that the value does not have (`obj.Nope()`, `p.Mesage`)
+            class MissingMemberException : Exception {
+                construct(string message) { this.message = message }
+            }
+
+            // A whole number that does not fit any more (converted into the finer unit of a declaration: `int a : nm = 9000000000km`)
+            class OverflowException : Exception {
+                construct(string message) { this.message = message }
+            }
+
             class UnitMismatchException : Exception {
                 string expectedUnit
                 string actualUnit
@@ -85,12 +105,12 @@ namespace fire.Standard
             //   Device.Default.DoCommand(home)
             /// <summary>A command as an object that is executed without a context.</summary>
             interface ICommand {
-                Execute()
+                any Execute()
             }
 
             /// <summary>A command as an object that is executed with a context - e.g. `ICommand<IDevice>` is run by `Device.DoCommand` with the device as its context.</summary>
             interface ICommand<T> {
-                Execute(T context)
+                any Execute(T context)
             }
 
             /// <summary>A command object without a context. The lambda in `Command` is its body; derive from the class and override `Execute` if you need more.</summary>
@@ -105,7 +125,7 @@ namespace fire.Standard
 
                 /// <summary>Calls the lambda `Command`; without a lambda nothing happens.</summary>
                 /// <returns>The result of the lambda, or `undefined`.</returns>
-                Execute() {
+                any Execute() {
                     var body = this.Command
                     if (body == undefined) {
                         return undefined
@@ -127,7 +147,7 @@ namespace fire.Standard
                 /// <summary>Calls the lambda `Command` with the context; without a lambda nothing happens.</summary>
                 /// <param name="context">What the command works on, e.g. the device.</param>
                 /// <returns>The result of the lambda, or `undefined`.</returns>
-                Execute(T context) {
+                any Execute(T context) {
                     var body = this.Command
                     if (body == undefined) {
                         return undefined
@@ -136,60 +156,63 @@ namespace fire.Standard
                 }
             }
 
-            interface IEnumerator {
+            // `IEnumerable<T>` / `IEnumerator<T>`: `foreach` over a class that implements `IEnumerable<int>` takes `int`s; written without
+            // a type argument (`class Bag : IEnumerable`) the elements are `any`
+            interface IEnumerator<T> {
                 bool MoveNext()
-                class GetCurrent()
+                T GetCurrent()
             }
 
-            interface IEnumerable {
-                IEnumerator GetEnumerator()
+            interface IEnumerable<T> {
+                IEnumerator<T> GetEnumerator()
             }
 
             class ListEnumerator : IEnumerator {
-                class items
+                any items
                 int count
                 int index
 
-                construct(class items, int count) {
+                construct(any items, int count) {
                     this.items = items
                     this.count = count
                     this.index = -1
                 }
 
-                MoveNext() {
+                bool MoveNext() {
                     this.index = this.index + 1
                     return this.index < this.count
                 }
 
-                GetCurrent() {
+                any GetCurrent() {
                     return this.items[this.index]
                 }
             }
 
             // The enumerator of a List: reads through the list, so it stays valid when the list grows (its backing array is replaced).
-            class ListIter : IEnumerator {
-                class list
+            class ListIter<T> : IEnumerator<T> {
+                any list
                 int count
                 int index
 
-                construct(class list, int count) {
+                construct(any list, int count) {
                     this.list = list
                     this.count = count
                     this.index = -1
                 }
 
-                MoveNext() {
+                bool MoveNext() {
                     this.index = this.index + 1
                     return this.index < this.count
                 }
 
-                GetCurrent() {
+                T GetCurrent() {
                     return this.list.items[this.index]
                 }
             }
 
-            class List : IEnumerable {
-                class items
+            // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
+            class List<T> : IEnumerable<T> {
+                any items
                 int count
 
                 construct() {
@@ -206,7 +229,7 @@ namespace fire.Standard
                 // Add() calls can keep growing quite normally, without
                 // being bound to the exact size of the array originally
                 // passed in.
-                construct(class initial) {
+                construct(any initial) {
                     this.items = new class[8]
                     this.count = 0
                     for (var i = 0; i < initial.length; i = i + 1) {
@@ -214,7 +237,7 @@ namespace fire.Standard
                     }
                 }
 
-                Add(class value) {
+                undefined Add(T value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -224,18 +247,18 @@ namespace fire.Standard
                     this.count = this.count + 1
                 }
 
-                operator[](int index) {
+                T operator[](int index) {
                     return this.items[index]
                 }
 
-                operator[](int index, class value) {
+                undefined operator[](int index, T value) {
                     if (value is of class)
                         try value.TakeTo(this)
                     this.items[index] = value
                 }
 
                 // removes the element at `index` (the ones behind it move up); the element itself is not destroyed
-                RemoveAt(int index) {
+                undefined RemoveAt(int index) {
                     var i = index
                     while (i < this.count - 1) {
                         this.items[i] = this.items[i + 1]
@@ -246,7 +269,7 @@ namespace fire.Standard
                 }
 
                 // puts `value` in at `index`; the elements from there on move down
-                Insert(int index, class value) {
+                undefined Insert(int index, T value) {
                     if (this.count >= this.items.length) {
                         this.Grow()
                     }
@@ -262,7 +285,7 @@ namespace fire.Standard
                 }
 
                 // the index of `value` (the same object), -1 if it is not in the list
-                int IndexOf(class value) {
+                int IndexOf(T value) {
                     var i = 0
                     while (i < this.count) {
                         if (this.items[i] == value) {
@@ -274,7 +297,7 @@ namespace fire.Standard
                 }
 
                 // removes `value` (the first one); false if it is not in the list
-                bool Remove(class value) {
+                bool Remove(T value) {
                     var at = this.IndexOf(value)
                     if (at < 0) {
                         return false
@@ -284,7 +307,7 @@ namespace fire.Standard
                 }
 
                 // empties the list (the elements are not destroyed)
-                Clear() {
+                undefined Clear() {
                     var i = 0
                     while (i < this.count) {
                         this.items[i] = undefined
@@ -293,7 +316,7 @@ namespace fire.Standard
                     this.count = 0
                 }
 
-                Grow() {
+                undefined Grow() {
                     var newItems = new class[this.items.length * 2]
                     var i = 0
                     while (i < this.count) {
@@ -307,8 +330,8 @@ namespace fire.Standard
                     delete old
                 }
 
-                GetEnumerator() {
-                    return new ListIter(this, this.count)
+                ListIter<T> GetEnumerator() {
+                    return new ListIter<T>(this, this.count)
                 }
             }
             """;

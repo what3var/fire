@@ -62,7 +62,7 @@ namespace fire.Standard
 
                 class Errors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __I2cLastError()
                         var message = __I2cLastErrorMessage()
                         if (code == 3) { throw new NotFoundException(message) }
@@ -86,7 +86,7 @@ namespace fire.Standard
                     static bool Available() { return __I2cSupported() == 1 }
 
                     // The names of the buses: "sim" first, then the real ones ("i2c-1", ... on Linux, "i2c-0" on an ESP32).
-                    static Buses() {
+                    static List Buses() {
                         var all = __I2cBuses()
                         if (all == undefined) { I2c.Errors.Throw() }
                         var list = new List()
@@ -103,7 +103,7 @@ namespace fire.Standard
                     int speed
 
                     // `bus`: a number (1 is "i2c-1"), a name ("i2c-1", "sim") or the text of a number; `speed` in Hz (the ESP32 uses it; Linux leaves it to the device tree).
-                    construct(bus, int speed = 100000) {
+                    construct(any bus, int speed = 100000) {
                         this.handle = -1
                         this.closed = false
                         this.speed = speed
@@ -127,38 +127,38 @@ namespace fire.Standard
                         }
                     }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new I2cException("The bus is closed.", 2) }
                     }
 
                     // Writes `count` bytes of the buffer (all of it from `offset` on without a count) to the device.
-                    Write(int address, buffer, int offset = 0, int count = -1) {
+                    undefined Write(int address, byte buffer[], int offset = 0, int count = -1) {
                         this.Check()
                         if (count < 0) { count = buffer.length - offset }
                         if (__I2cWrite(this.handle, address, buffer, offset, count) < 0) { I2c.Errors.Throw() }
                     }
 
-                    WriteByte(int address, int value) {
+                    undefined WriteByte(int address, int value) {
                         var b = new byte[1]
                         b[0] = value & 255
                         this.Write(address, b)
                     }
 
                     // Reads `count` bytes from the device into the buffer.
-                    ReadInto(int address, buffer, int offset, int count) {
+                    undefined ReadInto(int address, byte buffer[], int offset, int count) {
                         this.Check()
                         if (__I2cRead(this.handle, address, buffer, offset, count) < 0) { I2c.Errors.Throw() }
                     }
 
                     // Reads `count` bytes from the device.
-                    Read(int address, int count) {
+                    byte[] Read(int address, int count) {
                         var data = new byte[count]
                         this.ReadInto(address, data, 0, count)
                         return data
                     }
 
                     // Writes `outCount` bytes (without: all), then reads `inCount` bytes with a repeated start in between (no other master can step in); returns the bytes read.
-                    WriteRead(int address, buffer, int inCount, int outCount = -1) {
+                    byte[] WriteRead(int address, byte buffer[], int inCount, int outCount = -1) {
                         this.Check()
                         if (outCount < 0) { outCount = buffer.length }
                         var data = new byte[inCount]
@@ -175,13 +175,13 @@ namespace fire.Standard
                     }
 
                     // `count` bytes from the register on (the device counts the register up).
-                    ReadRegisters(int address, int register, int count) {
+                    byte[] ReadRegisters(int address, int register, int count) {
                         var r = new byte[1]
                         r[0] = register & 255
                         return this.WriteRead(address, r, count)
                     }
 
-                    WriteRegister(int address, int register, int value) {
+                    undefined WriteRegister(int address, int register, int value) {
                         var b = new byte[2]
                         b[0] = register & 255
                         b[1] = value & 255
@@ -189,7 +189,7 @@ namespace fire.Standard
                     }
 
                     // Writes the bytes into the registers from `register` on.
-                    WriteRegisters(int address, int register, data) {
+                    undefined WriteRegisters(int address, int register, byte data[]) {
                         var b = new byte[data.length + 1]
                         b[0] = register & 255
                         for (var i = 0; i < data.length; i++) { b[i + 1] = data[i] }
@@ -205,7 +205,7 @@ namespace fire.Standard
                     }
 
                     // The addresses (a list of numbers) that answer: 0x08 .. 0x77 are the addresses of devices, the rest is reserved.
-                    Scan() {
+                    List Scan() {
                         var found = new List()
                         for (var a = 8; a < 120; a++) {
                             if (this.Probe(a)) { found.Add(a) }
@@ -213,7 +213,7 @@ namespace fire.Standard
                         return found
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __I2cClose(this.handle) }
@@ -223,16 +223,16 @@ namespace fire.Standard
                 // The simulated bus "sim" from the outside: the devices on it (for tests, and to try a program without the hardware).
                 class Sim {
                     // Puts a device with 256 registers (all 0) at the address; an existing one is replaced.
-                    static Add(int address) {
+                    static undefined Add(int address) {
                         if (!__I2cSimAdd(address)) { I2c.Errors.Throw() }
                     }
 
-                    static Remove(int address) {
+                    static undefined Remove(int address) {
                         if (!__I2cSimRemove(address)) { I2c.Errors.Throw() }
                     }
 
                     // Sets a register of a device (what a sensor measures).
-                    static SetRegister(int address, int register, int value) {
+                    static undefined SetRegister(int address, int register, int value) {
                         if (!__I2cSimSetRegister(address, register, value)) { I2c.Errors.Throw() }
                     }
 
@@ -244,7 +244,7 @@ namespace fire.Standard
                     }
 
                     // Takes all devices off the bus.
-                    static Reset() { __I2cSimReset() }
+                    static undefined Reset() { __I2cSimReset() }
                 }
             }
             """;

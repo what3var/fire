@@ -138,7 +138,7 @@ namespace fire.Runtime
                     int nl = text.IndexOf('\n');
                     string cls = nl < 0 ? text : text.Substring(0, nl), message = nl < 0 ? "" : text.Substring(nl + 1);
                     if (VM.CurrentThreadVm is { } vm) return vm.NativeFail(cls, message);
-                    throw new InvalidOperationException($"{cls}: {message}");
+                    throw new ScriptErrorException(cls, message);   // the VM throws it as an exception of the program (its class, when the program has it)
                 }
                 if (rc != 0) throw new InvalidOperationException($"{name}: {Marshal.PtrToStringUTF8(error)}");
                 return FromNative(result);

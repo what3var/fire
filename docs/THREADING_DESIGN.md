@@ -1,10 +1,8 @@
-# ScriptLang – Multithreading-Design (Referenzdokument, Stand vor Implementierung)
+# fire – Multithreading-Design
 
-Dieses Dokument hält das Ergebnis der Design-Diskussion fest, bevor die
-Umsetzung beginnt. Es ist bewusst als eigenständige Referenz gehalten (nicht
-Teil von SPEC.md/BYTECODE.md), da sich das Threading-Modell noch in der
-Entwurfsphase befindet und bis zur ersten Implementierung vermutlich noch
-Detailanpassungen erfährt.
+Das Threading-Modell von fire (`fire`, `taking`/`sync`, Actors, `leave`/`terminate`, Globals und Sektionen) mit den Gründen für die
+Entscheidungen. Es ist in der VM und im nativen Backend umgesetzt; die Sprachreferenz beschreibt die Benutzung
+(`docs/language/15-threads-and-actors.md`), dieses Dokument die Semantik im Detail.
 
 ## 0. Grundphilosophie
 
@@ -237,7 +235,7 @@ fire {
   beim `leave`/`terminate` selbst - mit einem einzigen Vergleich eines globalen
   Signalzählers (siehe VM.PollSignals). Das Beenden ist keine C#-Exception,
   sondern Zustandsumschaltung (Sprung auf einen `Halt`-Chunk), damit es sich nach
-  C++ ohne Exceptions übertragen lässt (docs/PORTING.md). Eine Exception aus
+  C++ ohne Exceptions übertragen lässt. Eine Exception aus
   einem anderen Thread in einen laufenden Thread zu werfen ist ohnehin nicht möglich.
 - **Muss nirgendwo zugestellt werden** - kein `catch threads(...)` nötig,
   kein Fehler. Ein `leave` ist ein gewollter, sauberer Ausstieg; das
@@ -347,9 +345,10 @@ keinen Snapshot und keine Kopie mehr:
   genauso überschrieben wie Objekte.
 - **Methodenaufrufe** eines Fire-Threads auf ein Objekt des geteilten Bereichs laufen als Ganzes in einer Sektion (auch deren Lesen-Ändern-
   Schreiben ist damit atomar). Statische Methoden und Methoden von Objekten, die dem Thread selbst gehören, nicht.
-  **Ausnahme `Sleep`:** schläft der Thread innerhalb einer solchen Methode, gibt er seine Sektion für die Dauer des Schlafs frei und nimmt sie danach
+  **Ausnahme Warten:** schläft oder wartet der Thread innerhalb einer solchen Methode (`Sleep`, die Wartefunktionen der Geräte wie `WaitFor`/
+  `WaitForString`, die Netz-Wartefunktionen, die über `Sleep` pollen), gibt er seine Sektion für die Dauer des Wartens frei und nimmt sie danach
   wieder (sonst würde ein Thread, der in einer Methode pollt - z.B. `TryAccept` -, das Hauptprogramm aushungern, das Sektionen nur beim Warten
-  vergibt). Atomar ist die Methode also nur bis zum nächsten `Sleep`.
+  vergibt). Atomar ist die Methode also nur bis zum nächsten Warten.
 - **`sync globals`** ist ein Ausdruck (liefert die Anzahl der bearbeiteten Einträge) und gilt im Hauptprogramm; in einem Fire-Thread liefert es 0.
   Wer es nie aufruft, lässt die Threads an ihrer ersten Änderung warten - das ist der Vertrag. Am **Programmende** (auch nach `leave`/`terminate`)
   bedient das Hauptprogramm die Warteschlange, solange Threads leben, und zerstört erst danach seine Globals; endet es, bevor ein Thread

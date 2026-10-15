@@ -38,6 +38,14 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
 - `bool`, `char`, `string` are value types (copied on assignment) and carry no unit.
 - `int`, `float`, `undefined` additionally carry a **unit** (see section 3). If it is missing, the default is `unitless`.
 - `class` references an object instance (reference type, subject to the ownership model, see section 2).
+- A **parameter or field declared `int`, `float` or `bool`** holds a value of that kind or `undefined`, checked at run time on every assignment and call
+  (also from dynamic code): a whole number for a `float` is converted to a float, another kind is an `ArgumentException`, and a number declared without a
+  unit and without an initializer (or with a plain number as initializer) is converted into `unitless` (another dimension: `UnitMismatchException`); a
+  declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
+- A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
+  way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); likewise an interface (`IEnumerable` also takes arrays, buffers and strings) and a
+  type parameter of the class with `where` conditions (checked against them: `is of`, `is in`). A type parameter without `where` or of a method, `any`
+  and `class` are not checked (type arguments do not exist at run time).
 
 ```
 var x = 1;              // int, unitless
@@ -271,12 +279,14 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - Directly on a number literal without a separator: `5mm`, `2mm`, `1km`.
 - `:` operator for **unit** annotation/coercion on a value: `undefined : km`.
   - `value:` (without an argument) → the unit is derived automatically from the context of the operation (see 3.4).
-  - `value:unit` → the unit is explicitly forced/converted to `unit`.
+  - `value:unit` → the unit is explicitly forced/converted to `unit`. `:` never fails: a value of the same dimension is converted (`2km:m` is `2000m`), one of another dimension (or a unitless one) gets its number in the base unit with the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`).
   - To `unitless` the **dimension is calculated out**: the number in the base unit, `12mm:unitless` is `0.012` (an int stays an int when the result is whole: `2km:unitless` is `2000`).
 - `::` operator (**relabel**): `value::unit` gives the same number the other unit and calculates nothing - `12mm::unitless` is `12`, `12mm::m` is `12m`. The unit after `::` is always written out.
 - `!` operator for **type** coercion: `value!`, `value!int`.
   - `value!` (without an argument) → the type is derived from the context.
   - `value!type` → the type is explicitly forced.
+  - Targets: `int`, `float`, `bool`, `string`, `char` (from/to the character code; a float is rounded), a bit width `int[8|16|32|64]` (signed two's complement), `byte` (unsigned 8 bits), `float[32|64]` (`float[32]` rounds to single precision).
+  - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged.
 - `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`.
 
 ### 3.1.1 `!` depends on the context by position (prefix vs. suffix)
@@ -285,6 +295,26 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 - **Suffix** `expression!`, `expression!type` → type coercion (see above).
 - Since both positions are syntactically unambiguous (prefix in front of a unary operand, suffix after an already parsed expression), a single lexer token (`Bang`) is enough; the disambiguation is done in the parser by grammar position.
 - **`~expression`** (prefix only) → bitwise inversion.
+
+**Type checking.** A conflict between two *known* types - assigning a string to an `int`, an argument that does not fit a typed parameter - is reported by the type checker (docs/TYPES.md): a warning in
+`lax` mode (the default), an error in `strict` mode (`--types strict`, the project setting `typeChecking`, `#strict` / `#lax` at the top of a file). `int` goes to `float` implicitly, everything goes to
+`string`, `undefined` goes to everything, an object goes to the class it derives from. The type of a variable never changes. `var x = expr` has the type of its initializer (a value, a variable, a
+return value, `undefined!Type`); `var x` without an initializer is an error (declare it with a type: `int x`). Untyped values are `dynamic` and never reported.
+
+**`any`** is the type that accepts every value (also in strict mode); use it where every type is really allowed - everywhere else a declaration says what it holds. **`class`** holds object
+instances only (not an `int`, a `string`, an array or a lambda); `undefined` goes to every type (it is the typed null). **A field and a property always have a type** (`int count`, `lambda<int> onTick`,
+`any value`): `var` is for local variables, because their type comes from the initializer (error `E4059`/`E4060`). A parameter without a type is taken as `any` and said so (`TC004`: a warning in lax
+mode, an error in strict mode). **A method says what it returns** (`int Area()`, `Shape[] Parts()`, `undefined Draw()`): a method without a return type is taken as returning `any` and said so
+(`TC005`, a warning in lax mode, an error in strict mode; constructors, destructors and operators need none). A method that returns nothing is declared `undefined`; one that sometimes returns a
+value and sometimes nothing declares the type of the value, because `undefined` fits every type (a bare `return` is `return undefined`) - `any` is for methods that return values of different
+types. Operators can say it too (`bool operator==(any o)`). A declaration can say that it accepts values of every unit with `: any` (`float width : any`), or of every unit of one dimension with `: any m` (see 3.5); a declaration without a unit takes the unit of its initializer (`int a = 5mm` is in mm), without one it is unitless; only `var` takes any unit.
+A `lambda` type counts the parameters of the lambda it takes (`lambda` = none, `lambda<int, int>` = two); an optional callback is therefore declared `any`, because `undefined` is not a lambda.
+**Lambdas are typed**: a lambda takes the types of its parameters and of its result from the target it goes to - the typed parameter, field or variable
+(`int lambda<int, int> add = (x, y) => x + y`: `x` and `y` are `int`, the result must be an `int`); without such a target (`var f = ...`, an `any` parameter) the types
+written at its own parameters count (`var f = (int k, string s) => k`), and a parameter without one is `any` and said so (`TC004`). A lambda with another number of
+parameters than its target, a parameter type that does not take the target's argument, a wrong result (`TC003`) and a call with the wrong number of arguments (`TC002`)
+are reported. **Arrays** have the type of their elements (`int[]`, from the declaration, `new int[n]` or a literal `[1, 2]`): an element, `foreach` over the array and
+`a.length` are typed; `s[i]` of a string is a `char`, `obj[i]` is what the `operator[]` of the class returns. A **generic method** (`T Id<T>(T x)`) takes its type parameters from the arguments (`Util.Id("a")` is a `string`); the queries of `#import "linq"` are typed this way (`Query<T>`). Using a member that a known class does not have is `TC008`.
 
 The **type** of a variable is given BEFORE the name (`int x`, `float y = 2.5`, `Foo f`); `var x` derives it from the value. A `:` after the variable name (`var x : mm`), on the other hand, only fixes the **unit** (see "unit declarations") – `var x : int` as a type declaration no longer exists.
 
@@ -316,6 +346,7 @@ Prefixes (decimal, implicitly coerced):
 |--------|-------|--------|
 | f      | femto | 1e-15  |
 | p      | pico  | 1e-12  |
+| n      | nano  | 1e-9   |
 | µ      | micro | 1e-6   |
 | m      | milli | 1e-3   |
 | c      | centi | 1e-2   |
@@ -335,11 +366,74 @@ Time units that do not accept prefixes but are dimension-compatible with `s`, wi
 
 Any other, unrecognized suffix string on a literal is treated as an **atomic unit** (compatible only with itself), e.g. `5apples`.
 
+### 3.3.1 Own units
+
+A program declares units of its own at the top level of a file (not in a block, a class or a namespace); they are known in all files of the program and above
+their declaration, too:
+
+```
+prefixed unit Volt: V                       // a new dimension V, with prefixes: mV, kV, MV, ...
+unit Inch: in { coerce m => 0.0254 }        // 1in = 0.0254m: the dimension of m, no prefixes
+unit Foot: ft { coerce to in => value * 12 }
+unit Mile: mi
+{
+    coerce from m => value / 1609.344       // the same as `coerce m => 1609.344`
+}
+unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
+```
+
+- `unit Name : symbol`: the **symbol** stands after a number (`5in`) and is printed; it is written with letters only and may be a keyword (`in`). The **name** may be used
+  wherever a unit is written, too (`2Inch` is `2in`). `prefixed` allows the prefixes of 3.3 in front of the symbol (not in front of the name), `unprefixed` (the default) does not.
+- Without a body the unit is a **dimension of its own** (like an atomic unit, but with prefixes if `prefixed`).
+- `coerce target => k` says 1 symbol = k target: the unit gets the dimension of `target` (any unit, also a combined one `m/s`, `kg*m^2/s^3`, or another own unit) and the factor
+  k. `coerce to target => expression` converts a value of the unit into `target`, `coerce from target => expression` a value of `target` into the unit (`value` is the value) -
+  the compiler computes the factor from it. A body may hold several conversions; they must agree.
+- `coerce target => expression` (without `to`/`from`) is a **factor and an offset**, computed while compiling (numbers without a unit, `value`, `+ - * / ^`,
+  `Math.PI`, `Math.E`; 1 symbol = a target, 0 symbol = b target for `a * value + b`): `unit Celsius: C { coerce K => value + 273.15 }`,
+  `unit Fahrenheit: F { coerce C => (value - 32) * 5 / 9 }`. Anything else is an error there.
+- `coerce to target => expression` and `coerce from target => expression` take any expression (`value` is the number, as a `float`). When they are a factor
+  and an offset, the unit is one; otherwise they are **conversion functions**: both directions are needed (into the same unit, which itself has no
+  conversion functions), they become the static methods `To` and `From` of a hidden class and are called at run time (VM and native) - in the VM
+  nested on the VM that converts, like a getter or setter (with the globals of the program). An exception in them is thrown where the conversion
+  happens (the same exception object).
+- A unit with an offset or conversion functions takes no prefixes. Converting it into another unit of the same dimension goes through the base unit
+  (`to(value) * scale + offset` and back); adding, subtracting and comparing convert the right operand into the unit of the left one. Multiplied or
+  divided by another unit it counts as its reference unit (the offset and the functions do not take part: `20C * 2s` is `40K*s`), by a number it
+  keeps its unit.
+- A symbol or name that is already a unit of fire (`m`, `min`, `km`, `Gs` = giga-second) is an error, so is a unit declared twice and units that are only defined by each other.
+- An own unit behaves exactly like a built-in one: conversion with `:`, declarations (`float d : in = 30cm`), `is in`, arithmetic, comparison (`12in == 1ft`), VM and native code.
+
 ### 3.4 Dimension arithmetic
 
 - Multiplication/division combines dimension vectors additively/subtractively via the exponents (`mm * mm → m²` dimension with scaling factor 1e-6, `m / s → m·s⁻¹`).
 - Two units are compatible (can be added/compared) if their dimension vectors match; the conversion is done via the ratio of their scaling factors to the base unit.
 - Multiplication/division with a unitless operand returns EXACTLY the unit of the other operand (`20mm / 2 → 10mm`, not some newly constructed, unnamed unit) - otherwise the display would swallow the scaling factor (see the `mm` example). The same named unit times itself (`radius * radius`) likewise gets a synthesized display name (`mm^2`). For all other composite cases (e.g. chained `a*a*a`, or genuinely mixed units with a scaling factor ≠ 1.0) the output shows the factor explicitly (`m^3(×1e-09)`) instead of silently ignoring it - a deliberate, simple limit instead of a complete "synthesize pretty unit names for arbitrary combinations" system.
+
+### 3.5 Unit declarations
+
+A unit after the name of a declaration (`int len : mm`, `float t : s`, a parameter `float v : mm`, a field, a property `float Width : m { get ... set ... }`) or at
+its type (`float:m len`, the return type of a method `float:m Length()`, `float : mm` with spaces is the same) fixes the unit of everything stored there - the calculation
+in it always happens in that dimension **and** factor:
+
+- A value of the **same dimension is converted** into the declared unit when it is stored: `int a : mm = 2m` holds `2000mm`, `bx.Set(2cm)` with `float v : mm` gets `20mm`.
+  A method with a unit at its return type and the getter of a property with a unit convert their result the same way. If the converted number does not fit an `int`, that is an `OverflowException` (the factor is never raised for
+  a declared unit). A whole number converted into a coarser unit may lose its fraction (`int r : m = 5mm` is `0m`) - the compiler warns about that (`TC007`, a warning also in strict mode).
+- A value of **another dimension** (or a unitless number) is a `UnitMismatchException`; where the compiler knows both units it reports it already (`TC006`, a warning in lax mode,
+  an error in strict mode). `:` and `::` coerce explicitly when that is really meant (`7:mm`, `x::mm`).
+- **Without a unit** a variable or field takes the unit of its **initializer** for good: `int a = 5mm` is in mm from then on (`a = 3cm` holds `30mm`, `a = 2kg` is `TC006`).
+  Without an initializer, with a unitless one (`int n = 5`) and for parameters, properties and return values a declaration without a unit is **unitless**: `n = 5mm` is reported
+  (`TC006`) and refused at run time. When the compiler cannot see the unit of the initializer (a value of type `any`), the unit stays free. `var` without a unit is always
+  free: `var x = 5mm` and later `x = 3s` are allowed.
+- A `float` declaration holds a float: `float f = 3` holds `3.0` (`f / 2` is `1.5`), the same for parameters and return values.
+- `: any` takes every unit unchanged, `: any m` takes every unit of the dimension of `m` (`3km`, `20cm`, ...) without converting it - the code then asks `is in` or converts itself.
+
+```
+float len : any m = 3km        // stays 3km
+int d : mm = 1.5m              // 1500mm
+int e = 5mm                    // in mm from now on: e = 2cm holds 20mm
+float t : s = 2kg              // TC006, UnitMismatchException at run time
+float:m Width() { ... }         // returns meters (a value in cm is converted)
+```
 
 ## 4. Scopes & lambdas
 
@@ -351,7 +445,8 @@ Any other, unrecognized suffix string on a literal is treated as an **atomic uni
 ### 4.2 Lambdas
 
 - During name lookup a lambda sees **its own scope, the global scope and copies of the outer local values that its body uses** (captures, see 4.2.1) – no closure over scopes in between.
-- `on obj` binds an object as the `this` context, either at definition (`func (X) on obj => { ... }`) or afterwards on assignment (`var b = a on obj2;`, creates a new lambda value with a different `this`, `a` remains unchanged).
+- `on obj` binds an object as the `this` context, at definition (`func (X) on obj => { ... }`). `a on obj2` rebinds an existing lambda value: a NEW lambda with the same body, captures and default values and `obj2` as `this` (`a` stays as it is; a value that is not a lambda is an `ArgumentException`).
+- `obj.name(args)`: when no class declares a method `name` but a field or property `name` that can hold a lambda (`lambda`, `any` or untyped), the lambda in it is called (also `name(args)` inside the class).
 - Member variables of the bound `this` object are visible unqualified in the lambda body: for a lambda with `on target` (`func (x) on win => { n = n + x; Hello() }`) unknown names are members of the target - reading, writing, `++` and method calls act as if `this.` were in front (the class is only known at run time, an unknown name there is a run-time error). Local variables, parameters and captures take precedence. A lambda without `on` knows no members (an unknown name is a compile error).
 - Ownership of the lambda value follows section 2.1 (field assignment → object owner, otherwise scope owner) – independent of the `on` binding.
 - For a type annotation that expects a lambda value (field, parameter, return type, `var`), the type name **`lambda`** is available, optionally with a signature: `[ReturnType] lambda[<ParamType1,...,ParamTypeN>]`. Deliberately **not** `func` (that introduces a lambda *expression*, `func (x) => ...`, and as a type name it would collide with that expression syntax). See 4.3 for details.
@@ -709,6 +804,14 @@ and stack output. Only "generic NEXT TO non-generic" is allowed;
 two generic classes of the same name remain a duplicate definition (even
 with a different number of type parameters).
 
+**Type arguments in declarations and the raw form.** A generic class (or interface) can be named with its type arguments wherever a type stands: `List<int> xs`,
+`Box<Dog> b`, `List<List<int>> rows`, `IEnumerable<float> GetValues()`, `class Bag : IEnumerable<float>`. The type checker (docs/TYPES.md) then replaces the type parameters
+by them: `xs.Add("x")` is a conflict, `xs[0]` is an `int`, `foreach (x in xs)` gives `int`s - also over every class that implements `IEnumerable<T>` (otherwise over what
+the `GetCurrent()` of its enumerator returns). `List<int>` and `List<string>` do not go into each other. Without type arguments a generic class is its **raw form**:
+`new List()` and `List xs` take values of every type (every type argument is `any`), and a raw form fits every instance of the class. The number of type arguments must be
+the number of type parameters (`E4061`), a class that is not generic takes none (`E4045`). `List<T>`, `IEnumerable<T>` and `IEnumerator<T>` of the standard library are
+generic in this way.
+
 **Important limitation**: Since this language is dynamically typed,
 **no real type substitution** takes place (unlike C#, where the
 compiler generates specialized code per instantiation) – the check
@@ -770,7 +873,7 @@ itself the `break` would have to be inside a loop construct of its own nested in
 
 `x++`/`x--` count in the unit of the variable: `5cm` becomes `6cm` (they are `x = x + 1<unit>`, not `x + 1` with a unitless 1, which would be a unit mismatch).
 
-An operation with units that do not fit (`5cm + 1`, `1m < 2kg`) throws a `UnitMismatchException` that `try`/`catch` can catch; an unhandled one stops the program at that statement (in the editor a dialog offers to go on after it, with the result `undefined`).
+An operation with units that do not fit (`5cm + 1`, `1m < 2kg`) throws a `UnitMismatchException` that `try`/`catch` can catch (a conversion into a declared unit that does not fit an `int` throws an `OverflowException`); an unhandled one stops the program at that statement (in the editor a dialog offers to go on after it, with the result `undefined`).
 
 ### 5.10 `break`/`continue` in loops
 
@@ -871,7 +974,7 @@ method infrastructure therefore works automatically.
 ### 7.1 Base class
 
 There is a built-in base class `Exception` (a class of the prelude, with a `message`) from which all exception classes inherit. The errors of the runtime (`IndexOutOfBoundsException`, `DestroyedException`,
-`AccessDeniedException`, `UnitMismatchException`, `ReflectionException`) derive from it as well. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
+`AccessDeniedException`, `UnitMismatchException`, `OverflowException`, `ArgumentException`, `MissingMemberException`, `ReflectionException`) derive from it as well. A call with a number of arguments that no method, constructor or lambda takes is an `ArgumentException`; a method or field that the value does not have (`obj.Nope()`, `p.Mesage`) is a `MissingMemberException` - both can be caught (and the type checker reports them already where it knows the class: `TC002`, `TC008`). Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
 simply has an empty message:
 
 ```
@@ -1211,7 +1314,7 @@ Registers several related native functions at once, all
 under the same name prefix - the name actually registered for each
 entry is `prefix + suffix`. A pure convenience/naming scheme for
 self-contained API groups (e.g. a graphics/console bridge, see
-`ScriptLang.Terminal.Bridge`, docs/CONSOLE.md) - equivalent to several
+`fire.Terminal.Bridge`, docs/CONSOLE.md) - equivalent to several
 individual `Register(...)` calls, and additionally returns the list of the
 names created.
 
@@ -1314,9 +1417,13 @@ sbyte/short/int), for `float` correspondingly via float (32 bits) or
 IEEE754 binary16 (16 bits, `System.Half`) or a documented,
 simple 8-bit minifloat (no widespread standard format exists, see
 the comment at `NumericWidth`). The mechanism (`Value.Width` +
-`Value.TruncateTo`) is implemented; the *automatic* application on every
-assignment (the resolver would have to keep track of the declared type of every slot
-for that) is not wired up yet – next stage.
+`Value.TruncateTo`) is applied on every assignment: the resolver keeps the
+declared width of every variable and parameter, the compiler that of every field name
+(when all classes that declare it agree), and emits an implicit `ConvertWidth`
+before the store. Implicit means: only a number of the declared kind is cut
+(`int[8]` cuts an `int`, `float[32]` rounds a `float`); every other value is
+stored as it is. `byte` keeps `0`...`255` (unsigned), `int[N]` wraps in two's
+complement; `float[16]`/`float[8]` are not cut yet.
 
 #### 8.2.1 Program-wide float precision (`#floatwidth`)
 
@@ -1493,7 +1600,7 @@ class List : IEnumerable {
   prelude for that (without the prelude it remains an error).
 - `IEnumerable`/`IEnumerator`/`List`/`ListEnumerator` as well as
   `IndexOutOfBoundsException` are part of the **prelude**
-  (`Standard/Prelude.cs`) – deliberately written in ScriptLang itself instead of
+  (`Standard/Prelude.cs`) – deliberately written in fire itself instead of
   natively in C#, since the language has long had enough substance for it (classes,
   arrays, interfaces), and it is automatically prepended to every program
   (`Parser.ParseWithPrelude`). `List` internally uses a fixed-size array
@@ -1527,12 +1634,8 @@ in other methods of the same class, not in derived classes, not
 from outside) – this allows fields to be expressed that are set once per instance and are then
 immutable (like C#'s `readonly`).
 
-**Known limit**: the check is purely static and only refers to
-the lexically recognizable case `this.field = ...`. An assignment via a
-dynamic target (`obj.field = ...`, where `obj` is an arbitrary expression)
-is NOT detected, since the language has no static type system that would know at
-compile time which class `obj` is an instance of – a real
-run-time safeguard for that is a possible later stage.
+**Known limit**: the check is static and only refers to the lexically recognizable case `this.field = ...`. An assignment via another
+target (`obj.field = ...`) is not detected yet, neither by the compiler nor at run time (see the roadmap of the language reference).
 
 ### 8.7 `enum`
 
@@ -1611,6 +1714,9 @@ class Person {
 }
 ```
 
+An auto-property can have an initial value like a field: `int Count { get; set; } = 5` (it initializes the backing field; a property
+with explicit accessors only has none).
+
 `get;`/`set;` (without a body of their own, with `;` instead of `{ ... }`) are a
 short form that automatically creates a **backing field** together with a trivial getter/
 setter - pure parser sugar, desugared completely to exactly the form
@@ -1642,12 +1748,6 @@ is a clear run-time error (no silent field creation - that
 would otherwise permanently shadow the property with a field of the same name).
 Reading a write-only property is likewise a clear
 error.
-
-**No auto-properties**: unlike C#'s `{ get; set; }` short form (without a
-body, with an implicit backing field), a real body must ALWAYS
-be given here - a field alone already covers the "simple case without logic of its own",
-an automatically generated backing-field variant would bring
-little additional value for it.
 
 ### 8.9 Format strings (`$"..."`)
 
@@ -1721,7 +1821,7 @@ A `byte` buffer is a run-time type of its own (`Values.ByteBuffer`,
 IO (serial, network, files).
 
 `byte` as a **scalar type** (e.g. `byte b = 5`), on the other hand, is NOT an
-`ValueKind` of its own, but pure parser sugar for `int[8]` (an
+`ValueKind` of its own, but parser sugar for an unsigned `int[8]` (`0`...`255`; an
 explicit bit width directly after `byte` is therefore an error, it would be
 redundant) - a single element of a buffer (`buf[i]`) is thus
 simply a perfectly normal `int` value with this width, no
@@ -2061,7 +2161,11 @@ silence cfg.*            // all probes of the object (likewise: silence cfg)
 - **When:** `changing` runs **before** the write; if a handler returns `false`, nothing is written (the assignment expression still evaluates to the assigned value), the remaining ones no longer run. `changed` runs **after** the
   write and only if the value has really changed (comparison like `==`, objects by reference). Several probes run in the order of their registration.
 - **What is observed:** write accesses to the member (`=`, `++`, `+=`, via reflection) - for properties before/after the call of the setter (old value = result of the getter, if there is one); if the setter itself writes fields, their
-  probes fire as well. **Not** observed: changes *inside* an object (`obj.list.Add(...)`, array elements), a computed property whose source changes (probe the field for that), and write accesses from `sync` write-backs.
+  probes fire as well. **Not** observed: changes *inside* an object (`obj.list.Add(...)`, array elements) and write accesses from `sync` write-backs.
+- **Computed properties** (a `get` without `set`): a `changed` probe on one follows its **sources** - the fields and settable properties of the object that its getter reads (`this.x`,
+  `x` without `this.`, also through the other getters and methods of the object it calls). When one of them is written, the getter runs again, and the handlers fire if its value is another
+  than before (`old` is the value of the last evaluation). What the getter reads through other objects (`this.player.name`) is not followed. A `changing` probe on a computed property is an
+  error (`ArgumentException`: there is no write to stop); a probe on a member that does not exist is a `MissingMemberException`.
 - **Flow:** synchronously on the thread of the writer (for objects of the globals inside the section). If a handler writes the same member of the same object, nothing fires again for it. An exception in the handler runs to
   the writer: with `changing` the value stays unchanged, with `changed` it has already been written. Probes live with the object (its end removes them).
 - **Cost:** only objects with a probe take the slow write path; all others keep the fast paths unchanged.

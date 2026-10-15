@@ -32,11 +32,20 @@ namespace fire.Runtime
         /// <summary>Throws a `ReflectionException` (catchable) and remembers the redirection for the native call.</summary>
         internal Value ReflectFail(string message) => NativeFail("ReflectionException", message);
 
+        /// <summary>A native function whose nested script call already redirected an exception: it returns no result (see CallNativeGuarded).</summary>
+        internal Value NativeRedirected() { _nativeRedirected = true; return default; }
+
         /// <summary>Raises, from within a NATIVE function, a catchable script exception of the class `className` (with the constructor `(message)`) and
         /// remembers the redirection: the native call then returns no result (see CallNativeGuarded).</summary>
         internal Value NativeFail(string className, string message)
         {
-            var instance = ConstructNested(ResolveClass(className), new[] { Value.MakeString(message) });
+            // the message first; a class whose constructor wants more (IndexOutOfBoundsException: message, index, length) gets undefined for the rest
+            var rc = ResolveClass(className);
+            int arity = rc.Constructors.ContainsKey(1) || rc.Constructors.Count == 0 ? 1 : rc.Constructors.Keys.Where(k => k > 1).DefaultIfEmpty(1).Min();
+            var args = new Value[arity];
+            args[0] = Value.MakeString(message);
+            for (int i = 1; i < arity; i++) args[i] = Value.MakeUndefined();
+            var instance = ConstructNested(rc, args);
             ThrowException(Value.MakeClassRef(instance));
             _nativeRedirected = true;
             return default;

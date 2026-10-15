@@ -164,8 +164,8 @@ static class Scene3DTests
         print("bumpdata " + H.Sum(frame))
         try { bumpy.Texture.AddBumpmap(3, 3, heights) } catch (Scene3DException e) { print("error " + e.message) }
 
-        // lengths and angles need units
-        try { box.X = 3 } catch (Scene3DException e) { print("error " + e.message) }
+        // lengths and angles need units (a length property converts and refuses a number without a unit itself)
+        try { box.X = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
         try { box.RotationX = 1.5 } catch (Scene3DException e) { print("error " + e.message) }
         try { scene.Add(3) } catch (Scene3DException e) { print("error " + e.message) }
         try { scene.Add(floor, "ball") ; scene.Add(box, "floor") } catch (Scene3DException e) { print("error " + e.message) }

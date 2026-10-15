@@ -49,9 +49,9 @@ namespace fire.Package.Manager
         public const string ExamplePrelude = """
             // The prelude of the import "mathkit": fire source that is added to the program by `#import "mathkit"`.
             class MathKit {
-                static Square(x) { return x * x }
+                static Square(float x) { return x * x }
                 // __mathkit_hypot is a native written in C++ (mathkit.hpp, see docs/PACKAGE_NATIVES.md): native builds include it, the virtual machine runs it from a shared library.
-                static Hypot(a, b) { return __mathkit_hypot(a, b) }
+                static Hypot(float a, float b) { return __mathkit_hypot(a, b) }
             }
             """;
 

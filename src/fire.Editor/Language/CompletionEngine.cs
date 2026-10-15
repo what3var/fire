@@ -41,7 +41,7 @@ namespace fire.Editor
         private static readonly string[] Keywords =
         {
             "var", "func", "class", "construct", "destruct", "return",
-            "if", "else", "while", "for", "foreach", "in", "on", "new", "base", "this",
+            "if", "else", "while", "do", "for", "foreach", "in", "on", "new", "base", "this",
             "try", "catch", "finally", "throw", "is", "of", "from", "under",
             "extern", "unsafe", "interface", "readonly", "enum",
             "public", "private", "protected",
@@ -49,9 +49,10 @@ namespace fire.Editor
             "with", "extends", "switch", "case", "default", "break", "continue", "where",
             "fire", "taking", "sync", "flat", "copy", "take", "leave", "terminate", "actor", "process", "operator",
             "true", "false", "undefined", "and", "or",
+            "unit", "prefixed", "unprefixed", "coerce",
         };
 
-        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte" };
+        private static readonly string[] TypeKeywords = { "bool", "int", "float", "char", "string", "byte", "any" };
 
         public static string? GetCurrentKeyword(string source, int offset)
         {

@@ -123,9 +123,18 @@ namespace fire.UI.Markup
             var code = new Writer();
             string file = string.IsNullOrEmpty(sourceName) ? "the markup" : Path.GetFileName(sourceName);
             code.Line($"// Generated from {file} - do not edit, change the markup. Derive from the class and override the methods named in on...=\"...\":");
-            code.Line($"//     class {document.ClassName} : {document.BaseName} {{ Save(sender) {{ ... }} }}");
+            code.Line($"//     class {document.ClassName} : {document.BaseName} {{ undefined Save(any sender) {{ ... }} }}");
             code.Line("#import \"ui\"");
+            // the namespaces of the markup: an unqualified type name is looked up in them (a name that two of them have must be written with its prefix)
+            foreach (var ns in document.Namespaces.Values.Distinct()) code.Line($"#using {ns}");
+            bool inNamespace = document.Namespace != null && !preview;
+            if (inNamespace) code.Line($"#using {document.Namespace}");
             code.Line();
+            if (inNamespace)
+            {
+                code.Line($"namespace {document.Namespace} {{");
+                code.Indent++;
+            }
             code.Line($"class {(preview ? "FxPreview" : document.BaseName)} {{");
             code.Indent++;
 
@@ -196,7 +205,7 @@ namespace fire.UI.Markup
             foreach (var (handler, args) in handlers)
             {
                 code.Line($"// the handler of an event in the markup - override it in the derived class");
-                code.Line($"{handler}(sender{string.Concat(args.Select(a => ", " + a))}) {{ }}");
+                code.Line($"undefined {handler}(any sender{string.Concat(args.Select(a => ", any " + a))}) {{ }}");
             }
             if (handlers.Count > 0) code.Line();
 
@@ -204,7 +213,7 @@ namespace fire.UI.Markup
             if (preview)
             {
                 code.Line("// where every element ended up, for the design view");
-                code.Line("FxDump() {");
+                code.Line("undefined FxDump() {");
                 code.Line("    print(\"@fb \" + this.framebuffer.id)");
                 code.Line("    for (var i = 0; i < this.fxAll.count; i = i + 1) {");
                 code.Line("        var e = this.fxAll[i]");
@@ -215,16 +224,16 @@ namespace fire.UI.Markup
             else if (document.Kind == MarkupRootKind.Window)
             {
                 code.Line("// called once per cycle of this window (in Run(), also when it is attached to another window) - override it for a loop of your own");
-                code.Line("OnTick() { }");
+                code.Line("undefined OnTick() { }");
                 code.Line();
                 code.Line("// shows the window and runs until it is closed; with `other` (another window of the markup, or a UI.Root) that window is opened as well and worked off by the same loop");
-                code.Line("Run(other = undefined) {");
+                code.Line("undefined Run(any other = undefined) {");
                 code.Line("    if (other != undefined) { this.Open(other) }");
                 code.Line("    while (this.ui.Tick()) { }");
                 code.Line("}");
                 code.Line();
                 code.Line("// opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed");
-                code.Line("Open(other) {");
+                code.Line("undefined Open(any other) {");
                 code.Line("    var root = other");
                 code.Line("    if (!(other is of UI.Root)) {");
                 code.Line("        root = other.ui");
@@ -236,13 +245,18 @@ namespace fire.UI.Markup
             else
             {
                 code.Line("// adds the view to a container (UI.Root.content, a Panel or a Stack)");
-                code.Line("Attach(container) { container.Add(this.view) }");
+                code.Line("undefined Attach(any container) { container.Add(this.view) }");
             }
 
             if (bindings.Count > 0) EmitBindings(code, bindings);
 
             code.Indent--;
             code.Line("}");
+            if (inNamespace)
+            {
+                code.Indent--;
+                code.Line("}");
+            }
 
             if (errors.Count > 0) throw new MarkupException(errors);
             return code.ToString();
@@ -353,6 +367,8 @@ namespace fire.UI.Markup
         private static string? ValueCode(PropertyDef property, MarkupAttribute attribute, List<MarkupDiagnostic> errors) => attribute.Value switch
         {
             ExpressionValue when s_preview => null,   // code of the program: the design view does not run it
+            ObjectValue { PreviewSafe: false } when s_preview => null,
+            ObjectValue instance => instance.Code,   // a ready value (a brush, a pen, any object): no SolidBrush/Pen around it
             ExpressionValue expression => property.Kind switch
             {
                 PropertyKind.Color when !expression.IsRaw => $"new SolidBrush({expression.Code})",
@@ -603,19 +619,19 @@ namespace fire.UI.Markup
             code.Line();
             code.Line("// ---- data binding: the properties follow the data context (probes, SPEC 8.14) ----");
             code.Line("// sets the object the bindings read from (and write to) and connects them; null disconnects");
-            code.Line("SetDataContext(context) {");
+            code.Line("undefined SetDataContext(any context) {");
             code.Line("    this.fxUnbindAll()");
             code.Line("    this.dataContext = context");
             code.Line("    this.fxBindAll()");
             code.Line("}");
             code.Line();
-            code.Line("fxBindAll() {");
+            code.Line("undefined fxBindAll() {");
             code.Indent++;
             foreach (var b in bindings) code.Line($"this.fxBind{b.Index}()");
             code.Indent--;
             code.Line("}");
             code.Line();
-            code.Line("fxUnbindAll() {");
+            code.Line("undefined fxUnbindAll() {");
             code.Indent++;
             foreach (var b in bindings) code.Line($"this.fxUnbind{b.Index}()");
             code.Indent--;
@@ -629,7 +645,7 @@ namespace fire.UI.Markup
                 code.Line($"// {b.Target.Def.Tag}.{b.Property.Name} <- {(b.FromDataContext ? "" : b.Value.ElementName + ".")}{b.Value.Path} ({b.Value.Mode})");
 
                 // unbind: silence every probe of the binding
-                code.Line($"fxUnbind{b.Index}() {{");
+                code.Line($"undefined fxUnbind{b.Index}() {{");
                 code.Line($"    for (var i = 0; i < this.fxHandles{b.Index}.count; i = i + 1) {{");
                 code.Line($"        var h = this.fxHandles{b.Index}[i]");
                 code.Line("        silence h");
@@ -639,7 +655,7 @@ namespace fire.UI.Markup
                 code.Line();
 
                 // bind: a probe on every step of the path (the last one updates the target, an earlier one connects the path again), and for two-way the probe on the target
-                code.Line($"fxBind{b.Index}() {{");
+                code.Line($"undefined fxBind{b.Index}() {{");
                 code.Indent++;
                 code.Line($"this.fxUnbind{b.Index}()");
                 if (b.Value.Mode != BindingMode.OneTime)
@@ -673,7 +689,7 @@ namespace fire.UI.Markup
                 code.Line();
 
                 // update: read the source, convert, write the target
-                code.Line($"fxUpdate{b.Index}() {{");
+                code.Line($"undefined fxUpdate{b.Index}() {{");
                 code.Indent++;
                 code.Line($"if (this.fxBusy{b.Index}) {{ return }}");
                 code.Line($"var v = {b.Source}");
@@ -694,7 +710,7 @@ namespace fire.UI.Markup
                 if (b.Value.Mode == BindingMode.TwoWay)
                 {
                     code.Line();
-                    code.Line($"fxPush{b.Index}(value) {{");
+                    code.Line($"undefined fxPush{b.Index}(any value) {{");
                     code.Indent++;
                     code.Line($"if (this.fxBusy{b.Index}) {{ return }}");
                     code.Line($"var o = {b.Source}");

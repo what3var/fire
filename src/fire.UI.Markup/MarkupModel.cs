@@ -39,6 +39,10 @@ namespace fire.UI.Markup
     /// `Enum`/`Static` give a colour NUMBER (the generated script makes a brush of it), `Expr` (<paramref name="IsRaw"/>) a ready value (a brush).</summary>
     public sealed record ExpressionValue(string Code, bool IsRaw = false) : MarkupValue;
 
+    /// <summary>`[Type Arg1, Arg2]`: a new instance of `Type` (the constructor gets the arguments). <paramref name="Code"/> is the fire expression (`new Type(...)`) with the
+    /// names already qualified; <paramref name="PreviewSafe"/>: only classes of the libraries (UI, graphics) are made, so the design view can make it, too.</summary>
+    public sealed record ObjectValue(string TypeName, string Code, bool PreviewSafe) : MarkupValue;
+
     /// <summary>`{Binding Path, Mode=TwoWay, Converter=Key, ElementName=name}`: the value of a property of the data context (or of a named element) follows the property.</summary>
     public sealed record BindingValue(string Path, BindingMode Mode, string? Converter, string? ElementName) : MarkupValue;
 
@@ -125,6 +129,11 @@ namespace fire.UI.Markup
         /// <summary>The name of the generated base class (`base="..."`, else the class name plus `Base`).</summary>
         public string BaseName { get; init; } = "";
         public string Title { get; init; } = "fire";
+        /// <summary>The namespace of the markup (`namespace="App"`): the generated class is put into it, `local:Name` means a name in it. null: none.</summary>
+        public string? Namespace { get; init; }
+        /// <summary>The other namespaces the markup uses (`namespace:models="App.Models"`): prefix to namespace. `models:Person` is `App.Models.Person`, and an
+        /// unqualified type name is looked up in them (`#using`), as long as only one of them has it.</summary>
+        public Dictionary<string, string> Namespaces { get; } = new();
         public int Width { get; init; } = 640;
         public int Height { get; init; } = 480;
         public List<ConverterDeclaration> Converters { get; } = new();

@@ -100,7 +100,10 @@
                             <TextBlock Classes="label" Grid.Row="2" Text="C++ standard"/>
                             <TextBox Grid.Row="2" Grid.Column="1" x:Name="txtStd" HorizontalAlignment="Left" Width="100"/>
                             <TextBlock Classes="label" Grid.Row="3" Text="Optimization"/>
-                            <TextBox Grid.Row="3" Grid.Column="1" x:Name="txtOptimization" HorizontalAlignment="Left" Width="100"/>
+                            <StackPanel Grid.Row="3" Grid.Column="1" Orientation="Horizontal" Spacing="12">
+                                <TextBox x:Name="txtOptimization" Width="100" ToolTip.Tip="-O2 (default), -O3, -O0 ... or 'size': a small program (-Os, the linker drops unused code)"/>
+                                <CheckBox x:Name="chkStrip" Content="Strip symbols" VerticalAlignment="Center" ToolTip.Tip="Remove symbols and debug information (about half the size); switch off to debug the program"/>
+                            </StackPanel>
                             <TextBlock Classes="label" Grid.Row="4" Text="Project layout"/>
                             <ComboBox Grid.Row="4" Grid.Column="1" x:Name="cmbLayout" HorizontalAlignment="Left" Width="160"><ComboBoxItem Content="flat"/><ComboBoxItem Content="idf-component"/></ComboBox>
                             <TextBlock Classes="label" Grid.Row="5" Text="Build command"/>

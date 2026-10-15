@@ -197,6 +197,19 @@ namespace fire.Bytecode
 
         RelabelUnitDynamic,  //                      : candidate=pop, anchor=peek; push candidate with the unit of the anchor and the same number (`a::` without a unit)
         RelabelUnit,         // u16 unitIdx          : pop v; push v with the unit Units[unitIdx] and the same number (`v::unit`)
+
+        // `x!Type` with a class or interface: the same value, checked (`undefined` passes, anything that is not `is of Type` is an ArgumentException)
+        CastTo,              // u16 typeNameIdx      : peek v; error unless v is undefined or `is of` Typname
+        // `x!int[8]`, `x!byte`, `x!float[32]`: the number cut to a bit width (int: two's complement, `byte` unsigned 0..255; float: rounded to float32)
+        ConvertWidth,        // u8 bits, u8 flags    : pop v; push it converted (flags: 1 = float, 2 = unsigned)
+        RebindLambda,        //                      : pop target, pop lambda; push a new lambda with `target` as `this` (`a on obj`)
+        // The end of the prologue of a method: a parameter declared `int`/`float`/`bool` holds a value of that kind or `undefined` (a whole number
+        // becomes a float for a `float`), anything else is an ArgumentException (DeclaredKind). The unit has been checked before (CheckUnit):
+        // `unitIdx` names the unit demand the parameter then certainly has (0xFFFF: none known) - for the native generator.
+        GuardLocal,          // u16 slot, u8 TypeTag, u16 whatIdx, u16 unitIdx : the local (depth 0) is checked/converted in place
+        // Likewise for a parameter declared with a class, an interface or a constrained type parameter (`Point p`, `IShape s`, `T v`): `undefined`
+        // or what the declaration says (DeclaredType), anything else is an ArgumentException.
+        GuardLocalType,      // u16 slot, u16 specIdx, u16 whatIdx : the local (depth 0) is checked
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

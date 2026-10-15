@@ -27,7 +27,7 @@ The elements are the ones of the library `ui` (docs/UI.md): the layout container
 #include "Greeter.fxml"                   // the script generated from the markup is included right here
 
 class UpperConverter : UI.Converter {
-    Convert(value) { return value.ToUpper() }
+    any Convert(any value) { return value.ToUpper() }
 }
 
 class Person {
@@ -36,7 +36,7 @@ class Person {
 }
 
 class GreeterWindow : GreeterBase {        // the inheritance is declared here, in the code-behind
-    Ok(sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of onClick="Ok"
+    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of onClick="Ok"
 }
 
 var window = new GreeterWindow()
@@ -47,6 +47,28 @@ window.Run()
 `#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.fire]` writes the generated
 script (to look at it, or to ship it), and the editor shows it too (*Generated script* in the markup editor). Mistakes in the markup are reported with the line of the markup file.
 
+## Namespaces
+
+The root element says which namespace the markup belongs to and which other namespaces it uses:
+
+```xml
+<Window class="Shop" namespace="App" namespace:m="App.Models" namespace:ui2="Widgets">
+  <Resources>
+    <Converter key="Price" type="PriceConverter"/>          <!-- unqualified: found in App, App.Models or Widgets -->
+    <Converter key="Name" type="m:NameConverter"/>          <!-- App.Models.NameConverter -->
+  </Resources>
+  <Label color="{Enum local:Palette.Accent}" background="[ui2:Gradient #000000, #336699]"/>
+</Window>
+```
+
+- `namespace="App"` puts the generated class into `namespace App` (`App.ShopBase`); `local:Name` is a name in it.
+- `namespace:prefix="Name.Space"` binds another namespace to a prefix: `m:Person` is `App.Models.Person`.
+- A type name without a prefix (a converter, `[Type ...]`) is looked up in the namespace of the markup first and then in all bound namespaces (the generated script carries a `#using` for
+  each). As long as only one of them has the name, that is enough; when two bound namespaces have it, the compiler reports the name as ambiguous (`E4062`) - write it with its prefix.
+- `{Enum ...}` and `{Static ...}` are fire code, and fire reaches a static member or an enum only by its full name (`#using` applies to type names): write them with a prefix (`{Enum m:Colors.Red}`) or fully qualified.
+
+The `#using` lines of the generated script also apply to the file that includes it (`#include` inserts the script), so the code-behind can use the same names.
+
 ## The generated class
 
 For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..."` chooses another name). It has
@@ -56,7 +78,7 @@ For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..
 | a field per element with `name="..."` | typed with the class of the element: `UI.TextBox nameBox` |
 | `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (title, width, height from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
-| one method per handler name | `Ok(sender) { }` - empty; the derived class overrides it. `sender` is the element |
+| one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
 | `Run(other = undefined)`, `OnTick()` | a window: `Run()` loops `ui.Tick()` until the window is closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
@@ -114,7 +136,13 @@ The attribute names are those of the fire fields (the first letter may be upper 
 
 A text that starts with a brace is written `{}{like this}`.
 
-**Handlers:** `onClick="Ok"` calls the method `Ok(sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
+**Objects:** `[Type Arg1, Arg2]` assigns a new instance of `Type` - the arguments go to its constructor: `background="[SolidBrush #336699]"`, `itemsSource="[Names 'Ada', 'Bob']"`.
+An argument is a number (also with a unit: `2.5mm`), a text in quotes (`'it''s'` - single quotes are easiest inside an attribute; two quotes stand for one), `#RRGGBB` (a colour number),
+`true`/`false`/`undefined`, `{Enum ...}`/`{Static ...}`/`{Expr ...}` or another object (`[Pair 1, [Point 2, 3]]`). The value is used as it is: a colour property gets the brush itself, not a
+`SolidBrush` around it. The design view makes objects of the libraries (`UI.*`, `SolidBrush`, `Pen`); objects of your own classes are left out there, like `{Expr ...}`.
+A text that starts with `[` and a name is written `{}[like this]`.
+
+**Handlers:** `onClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
 override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)
 
 ## Styles, triggers and templates
@@ -186,10 +214,11 @@ or, with `ElementName`, to a property of another named element. It is built on `
 
 - **Path**: `Name`, or a path through objects: `Player.Stats.Hp`. Every object on the way is watched, so if `Player` is replaced the binding connects to the new one. A `null`/`undefined` on the way leaves the property as it is.
 - **Fields and properties**: the last step of a path may be a field or a property with `get`/`set`. A write to either (also through the setter of a property) updates the target, and a `TwoWay` binding writes through the setter. A property that only computes its value from other
-  members (`get` without `set`) is read when the binding connects and when its own probe fires - it does not notice when its sources change; give it a setter (or update a field that you bind to) to tell the binding.
+  members (`get` without `set`) follows its sources: when a field (or settable property) that its getter reads is written, the getter runs again and the target gets the new value
+  (SPEC 8.14 - what the getter reads through other objects, `this.player.name`, is not followed).
 - **Mode**: `OneWay` (default; the source changes the property), `TwoWay` (the property writes back to the source as well - a `TextBox` as the user types, a `CheckBox` when it is toggled; a write
   that does not change the value stops there, so a converter that normalizes a value cannot make the two chase each other), `OneTime` (read once when the context is set).
-- **Converter**: the key of a converter that sits between the two sides. A converter is a class with `Convert(value)` (source to property) and, for `TwoWay`, `ConvertBack(value)`;
+- **Converter**: the key of a converter that sits between the two sides. A converter is a class with `any Convert(any value)` (source to property) and, for `TwoWay`, `any ConvertBack(any value)`;
   deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter key="Upper" type="UpperConverter"/></Resources>`; these come with the library
   and need no declaration: `Not`, `IsEmpty`, `NotEmpty`, `Text` (`UI.NotConverter`, ...).
 - `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` leaves the elements as they are.

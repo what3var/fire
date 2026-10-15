@@ -69,7 +69,7 @@ namespace fire.Standard
 
                 class Errors {
                     // Throws the exception that fits the last error of a native function.
-                    static Throw() {
+                    static undefined Throw() {
                         var code = __WiFiLastError()
                         var message = __WiFiLastErrorMessage()
                         if (code == 3) { throw new NotFoundException(message) }
@@ -88,7 +88,7 @@ namespace fire.Standard
                 }
 
                 class Clock {
-                    static int Millis(limit) {
+                    static int Millis(any limit) {
                         if (limit == undefined) { return -1 }
                         var span = TimeSpan.Of(limit)
                         var ms = span.Ticks / 10000
@@ -110,7 +110,7 @@ namespace fire.Standard
                     }
 
                     // A moment before the next question: 1 ms at first, up to 20 ms when it takes long (and not past the deadline).
-                    static Pause(int deadline, int tries) {
+                    static undefined Pause(int deadline, int tries) {
                         var ms = 1
                         if (tries >= 3) { ms = 5 }
                         if (tries >= 20) { ms = 20 }
@@ -128,7 +128,7 @@ namespace fire.Standard
                     static bool Available() { return __WiFiSupported() == 1 }
 
                     // The names of the interfaces: "sim" first, then the real ones ("wifi" on an ESP32).
-                    static Interfaces() {
+                    static List Interfaces() {
                         var all = __WiFiInterfaces()
                         if (all == undefined) { WiFi.Errors.Throw() }
                         var list = new List()
@@ -171,7 +171,7 @@ namespace fire.Standard
                     bool closed
                     string name
                     int lastState
-                    var onState
+                    lambda<any> onState
 
                     construct(string name = undefined) {
                         this.handle = -1
@@ -188,12 +188,12 @@ namespace fire.Standard
                     string Name { get { return this.name } }
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new WiFiException("The station is closed.", 2) }
                     }
 
                     // The networks in range, strongest first (a list of WiFi.Network). Waits up to `timeout` (default 15 s) for the scan to finish: WiFi.TimeoutException.
-                    Scan(timeout = 15s) {
+                    List Scan(any timeout = 15s) {
                         this.Check()
                         if (!__WiFiScanBegin(this.handle)) { WiFi.Errors.Throw() }
                         var deadline = WiFi.Clock.Deadline(WiFi.Clock.Millis(timeout))
@@ -222,7 +222,7 @@ namespace fire.Standard
                     }
 
                     // Joins the network and waits (up to `timeout`, default 20 s) until it is connected: WiFi.NotFoundException, WiFi.AuthException, WiFi.TimeoutException. An empty password: an open network.
-                    Connect(string ssid, string password = "", timeout = 20s) {
+                    undefined Connect(string ssid, string password = "", any timeout = 20s) {
                         this.Start(ssid, password)
                         var deadline = WiFi.Clock.Deadline(WiFi.Clock.Millis(timeout))
                         var tries = 0
@@ -241,7 +241,7 @@ namespace fire.Standard
                     }
 
                     // Starts joining and returns at once; State, IsConnected and Poll() follow it.
-                    Start(string ssid, string password = "") {
+                    undefined Start(string ssid, string password = "") {
                         this.Check()
                         if (!__WiFiConnectBegin(this.handle, ssid, password)) { WiFi.Errors.Throw() }
                         this.lastState = 1
@@ -260,7 +260,7 @@ namespace fire.Standard
                     bool IsConnected { get { return this.State == 2 } }
 
                     // Calls `onState(state)` when the state has changed since the last call (also with a failed join: the exception is thrown). Call it from the loop of the program.
-                    Poll() {
+                    undefined Poll() {
                         var s = this.State
                         if (s != this.lastState) {
                             this.lastState = s
@@ -269,7 +269,7 @@ namespace fire.Standard
                         }
                     }
 
-                    Disconnect() {
+                    undefined Disconnect() {
                         this.Check()
                         if (!__WiFiDisconnect(this.handle)) { WiFi.Errors.Throw() }
                         this.lastState = 0
@@ -301,7 +301,7 @@ namespace fire.Standard
                         return t
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __WiFiClose(this.handle) }
@@ -327,17 +327,17 @@ namespace fire.Standard
                     string Name { get { return this.name } }
                     bool IsClosed { get { return this.closed } }
 
-                    Check() {
+                    undefined Check() {
                         if (this.closed) { throw new WiFiException("The access point is closed.", 2) }
                     }
 
                     // Starts the network `ssid` (without a password: open; else 8 to 63 characters, WPA2) on a channel (1 .. 13) for up to `maxClients` stations (1 .. 10).
-                    Start(string ssid, string password = "", int channel = 1, int maxClients = 4) {
+                    undefined Start(string ssid, string password = "", int channel = 1, int maxClients = 4) {
                         this.Check()
                         if (!__WiFiApStart(this.handle, ssid, password, channel, maxClients)) { WiFi.Errors.Throw() }
                     }
 
-                    Stop() {
+                    undefined Stop() {
                         this.Check()
                         if (!__WiFiApStop(this.handle)) { WiFi.Errors.Throw() }
                     }
@@ -372,7 +372,7 @@ namespace fire.Standard
                         return t
                     }
 
-                    Close() {
+                    undefined Close() {
                         if (this.closed) { return }
                         this.closed = true
                         if (this.handle >= 0) { __WiFiClose(this.handle) }
@@ -382,18 +382,18 @@ namespace fire.Standard
                 // The simulated radio "sim" from the outside: the networks in the air (for tests, and to try a program without the board).
                 class Sim {
                     // Puts a network in the air: an empty password makes it open; a network of the same name is replaced.
-                    static AddNetwork(string ssid, string password = "", int rssi = -60, int channel = 1) {
+                    static undefined AddNetwork(string ssid, string password = "", int rssi = -60, int channel = 1) {
                         if (!__WiFiSimAddNetwork(ssid, password, rssi, channel)) { WiFi.Errors.Throw() }
                     }
 
                     // Takes a network out of the air (a station that is joined to it loses the connection).
-                    static RemoveNetwork(string ssid) { __WiFiSimRemoveNetwork(ssid) }
+                    static undefined RemoveNetwork(string ssid) { __WiFiSimRemoveNetwork(ssid) }
 
                     // The connection of the station is lost (the router went away).
-                    static Drop() { __WiFiSimDrop() }
+                    static undefined Drop() { __WiFiSimDrop() }
 
                     // How many questions a join and a scan take to answer (default 2 and 1).
-                    static Delays(int joinQuestions, int scanQuestions) {
+                    static undefined Delays(int joinQuestions, int scanQuestions) {
                         if (!__WiFiSimDelays(joinQuestions, scanQuestions)) { WiFi.Errors.Throw() }
                     }
 
@@ -411,7 +411,7 @@ namespace fire.Standard
                     }
 
                     // Removes all networks and takes the radio back to the start.
-                    static Reset() { __WiFiSimReset() }
+                    static undefined Reset() { __WiFiSimReset() }
                 }
             }
             """;

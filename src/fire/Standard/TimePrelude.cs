@@ -23,16 +23,16 @@ namespace fire.Standard
                 construct(int d, int h, int m, int s) { this.ticks = d * 864000000000 + h * 36000000000 + m * 600000000 + s * 10000000 }
                 construct(int d, int h, int m, int s, int ms) { this.ticks = d * 864000000000 + h * 36000000000 + m * 600000000 + s * 10000000 + ms * 10000 }
 
-                static Zero() { return new TimeSpan(0) }
-                static FromTicks(int t) { return new TimeSpan(t) }
-                static FromMilliseconds(class x) { return new TimeSpan(__time_to_ticks(x, 10000)) }
-                static FromSeconds(class x) { return new TimeSpan(__time_to_ticks(x, 10000000)) }
-                static FromMinutes(class x) { return new TimeSpan(__time_to_ticks(x, 600000000)) }
-                static FromHours(class x) { return new TimeSpan(__time_to_ticks(x, 36000000000)) }
-                static FromDays(class x) { return new TimeSpan(__time_to_ticks(x, 864000000000)) }
+                static TimeSpan Zero() { return new TimeSpan(0) }
+                static TimeSpan FromTicks(int t) { return new TimeSpan(t) }
+                static TimeSpan FromMilliseconds(float x) { return new TimeSpan(__time_to_ticks(x, 10000)) }
+                static TimeSpan FromSeconds(float x) { return new TimeSpan(__time_to_ticks(x, 10000000)) }
+                static TimeSpan FromMinutes(float x) { return new TimeSpan(__time_to_ticks(x, 600000000)) }
+                static TimeSpan FromHours(float x) { return new TimeSpan(__time_to_ticks(x, 36000000000)) }
+                static TimeSpan FromDays(float x) { return new TimeSpan(__time_to_ticks(x, 864000000000)) }
 
                 // From a value with a time unit (`TimeSpan.Of(1.5s)`, `Of(250ms)`), a number (milliseconds) or a TimeSpan
-                static Of(class v) {
+                static TimeSpan Of(any v) {
                     if (v is of TimeSpan) { return v }
                     var t = __time_unit_ticks(v)
                     if (t == undefined) { return new TimeSpan(__time_to_ticks(v, 10000)) }
@@ -51,36 +51,36 @@ namespace fire.Standard
                 float TotalSeconds { get { return this.ticks / 10000000.0 } }
                 float TotalMilliseconds { get { return this.ticks / 10000.0 } }
 
-                Add(class o) { return new TimeSpan(this.ticks + o.ticks) }
-                Subtract(class o) { return new TimeSpan(this.ticks - o.ticks) }
-                Multiply(class f) { return new TimeSpan(__time_to_ticks(this.ticks, f)) }
-                Divide(class f) { return new TimeSpan(__time_to_ticks(this.ticks, 1.0 / f)) }
-                Negate() { return new TimeSpan(0 - this.ticks) }
-                Abs() { if (this.ticks < 0) { return new TimeSpan(0 - this.ticks) } return new TimeSpan(this.ticks) }
-                CompareTo(class o) {
+                TimeSpan Add(TimeSpan o) { return new TimeSpan(this.ticks + o.ticks) }
+                TimeSpan Subtract(TimeSpan o) { return new TimeSpan(this.ticks - o.ticks) }
+                TimeSpan Multiply(float f) { return new TimeSpan(__time_to_ticks(this.ticks, f)) }
+                TimeSpan Divide(float f) { return new TimeSpan(__time_to_ticks(this.ticks, 1.0 / f)) }
+                TimeSpan Negate() { return new TimeSpan(0 - this.ticks) }
+                TimeSpan Abs() { if (this.ticks < 0) { return new TimeSpan(0 - this.ticks) } return new TimeSpan(this.ticks) }
+                int CompareTo(TimeSpan o) {
                     if (this.ticks < o.ticks) { return -1 }
                     if (this.ticks > o.ticks) { return 1 }
                     return 0
                 }
-                Equals(class o) { return (o is of TimeSpan) && this.ticks == o.ticks }
+                bool Equals(any o) { return (o is of TimeSpan) && this.ticks == o.ticks }
 
                 // `ts + "text"` is a string concatenation (with ToString()), `ts + other` a sum
-                operator+(class o) {
+                any operator+(any o) {
                     if (o is of string) { return this.ToString() + o }
                     return new TimeSpan(this.ticks + o.ticks)
                 }
-                operator-(class o) { return new TimeSpan(this.ticks - o.ticks) }
-                operator*(class f) { return new TimeSpan(__time_to_ticks(this.ticks, f)) }
-                operator/(class f) { return new TimeSpan(__time_to_ticks(this.ticks, 1.0 / f)) }
-                operator<(class o) { return this.ticks < o.ticks }
-                operator>(class o) { return this.ticks > o.ticks }
-                operator<=(class o) { return this.ticks <= o.ticks }
-                operator>=(class o) { return this.ticks >= o.ticks }
-                operator==(class o) { return (o is of TimeSpan) && this.ticks == o.ticks }
-                operator!=(class o) { return !((o is of TimeSpan) && this.ticks == o.ticks) }
+                TimeSpan operator-(TimeSpan o) { return new TimeSpan(this.ticks - o.ticks) }
+                TimeSpan operator*(float f) { return new TimeSpan(__time_to_ticks(this.ticks, f)) }
+                TimeSpan operator/(float f) { return new TimeSpan(__time_to_ticks(this.ticks, 1.0 / f)) }
+                bool operator<(TimeSpan o) { return this.ticks < o.ticks }
+                bool operator>(TimeSpan o) { return this.ticks > o.ticks }
+                bool operator<=(TimeSpan o) { return this.ticks <= o.ticks }
+                bool operator>=(TimeSpan o) { return this.ticks >= o.ticks }
+                bool operator==(any o) { return (o is of TimeSpan) && this.ticks == o.ticks }
+                bool operator!=(any o) { return !((o is of TimeSpan) && this.ticks == o.ticks) }
 
                 // `[-][d.]hh:mm:ss[.fffffff]`
-                ToString() { return __time_span_text(this.ticks) }
+                string ToString() { return __time_span_text(this.ticks) }
             }
 
             // A point in time (calendar date and time of day). `kind` is "local" or "utc"; comparisons and differences assume the same kind (ToUtc()/ToLocal() convert).
@@ -93,36 +93,36 @@ namespace fire.Standard
                 construct(int y, int m, int d, int h, int mi, int s) { this.ticks = __time_make(y, m, d, h, mi, s, 0); this.kind = "local" }
                 construct(int y, int m, int d, int h, int mi, int s, int ms) { this.ticks = __time_make(y, m, d, h, mi, s, ms); this.kind = "local" }
 
-                static FromTicks(int ticks, string kind) {
+                static DateTime FromTicks(int ticks, string kind) {
                     var d = new DateTime(1, 1, 1)
                     d.ticks = ticks
                     d.kind = kind
                     return d
                 }
                 // The clock: `DateTime.Now` (local time), `DateTime.UtcNow`, `DateTime.Today` (local, at 00:00) - properties, like in .NET.
-                static UtcNow { get { return DateTime.FromTicks(__time_now(), "utc") } }
-                static Now {
+                static DateTime UtcNow { get { return DateTime.FromTicks(__time_now(), "utc") } }
+                static DateTime Now {
                     get {
                         var utc = __time_now()
                         return DateTime.FromTicks(utc + __time_local_offset(utc), "local")
                     }
                 }
-                static Today { get { return DateTime.Now.Date() } }
-                static DaysInMonth(int year, int month) { return __time_days_in_month(year, month) }
-                static IsLeapYear(int year) { return __time_days_in_month(year, 2) == 29 }
+                static DateTime Today { get { return DateTime.Now.Date() } }
+                static int DaysInMonth(int year, int month) { return __time_days_in_month(year, month) }
+                static bool IsLeapYear(int year) { return __time_days_in_month(year, 2) == 29 }
 
                 // Text -> point in time (ISO and common forms, "2024-03-15 14:30:00"); Parse throws a TimeException, TryParse returns undefined
-                static TryParse(string text) {
+                static DateTime TryParse(string text) {
                     var t = __time_parse(text)
                     if (t == undefined) { return undefined }
                     return DateTime.FromTicks(t, "local")
                 }
-                static Parse(string text) {
+                static DateTime Parse(string text) {
                     var d = DateTime.TryParse(text)
                     if (d == undefined) { throw new TimeException("Not a valid date: '" + text + "'") }
                     return d
                 }
-                static FromUnixSeconds(class s) { return DateTime.FromTicks(621355968000000000 + __time_to_ticks(s, 10000000), "utc") }
+                static DateTime FromUnixSeconds(float s) { return DateTime.FromTicks(621355968000000000 + __time_to_ticks(s, 10000000), "utc") }
 
                 int Ticks { get { return this.ticks } }
                 string Kind { get { return this.kind } }
@@ -137,65 +137,65 @@ namespace fire.Standard
                 int DayOfWeek { get { return __time_parts(this.ticks)[7] } }
                 int DayOfYear { get { return __time_parts(this.ticks)[8] } }
 
-                DayName() { return __time_format(this.ticks, "dddd") }
-                MonthName() { return __time_format(this.ticks, "MMMM") }
+                string DayName() { return __time_format(this.ticks, "dddd") }
+                string MonthName() { return __time_format(this.ticks, "MMMM") }
 
                 // Midnight of this day and the time of day as a duration
-                Date() { return DateTime.FromTicks(this.ticks - this.ticks % 864000000000, this.kind) }
-                TimeOfDay() { return new TimeSpan(this.ticks % 864000000000) }
+                DateTime Date() { return DateTime.FromTicks(this.ticks - this.ticks % 864000000000, this.kind) }
+                TimeSpan TimeOfDay() { return new TimeSpan(this.ticks % 864000000000) }
 
-                Add(class ts) { return DateTime.FromTicks(this.ticks + ts.ticks, this.kind) }
+                DateTime Add(TimeSpan ts) { return DateTime.FromTicks(this.ticks + ts.ticks, this.kind) }
                 // a TimeSpan -> DateTime, a DateTime -> TimeSpan
-                Subtract(class o) {
+                any Subtract(any o) {
                     if (o is of TimeSpan) { return DateTime.FromTicks(this.ticks - o.ticks, this.kind) }
                     return new TimeSpan(this.ticks - o.ticks)
                 }
-                AddTicks(int t) { return DateTime.FromTicks(this.ticks + t, this.kind) }
-                AddMilliseconds(class x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 10000), this.kind) }
-                AddSeconds(class x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 10000000), this.kind) }
-                AddMinutes(class x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 600000000), this.kind) }
-                AddHours(class x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 36000000000), this.kind) }
-                AddDays(class x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 864000000000), this.kind) }
-                AddMonths(int n) { return DateTime.FromTicks(__time_add_months(this.ticks, n), this.kind) }
-                AddYears(int n) { return DateTime.FromTicks(__time_add_months(this.ticks, n * 12), this.kind) }
+                DateTime AddTicks(int t) { return DateTime.FromTicks(this.ticks + t, this.kind) }
+                DateTime AddMilliseconds(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 10000), this.kind) }
+                DateTime AddSeconds(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 10000000), this.kind) }
+                DateTime AddMinutes(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 600000000), this.kind) }
+                DateTime AddHours(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 36000000000), this.kind) }
+                DateTime AddDays(float x) { return DateTime.FromTicks(this.ticks + __time_to_ticks(x, 864000000000), this.kind) }
+                DateTime AddMonths(int n) { return DateTime.FromTicks(__time_add_months(this.ticks, n), this.kind) }
+                DateTime AddYears(int n) { return DateTime.FromTicks(__time_add_months(this.ticks, n * 12), this.kind) }
 
-                ToUtc() {
+                DateTime ToUtc() {
                     if (this.kind == "utc") { return this }
                     // the offset of local time relative to UTC at this point in time (approximated from local time)
                     return DateTime.FromTicks(this.ticks - __time_local_offset(this.ticks), "utc")
                 }
-                ToLocal() {
+                DateTime ToLocal() {
                     if (this.kind == "local") { return this }
                     return DateTime.FromTicks(this.ticks + __time_local_offset(this.ticks), "local")
                 }
-                ToUnixSeconds() { return (this.ToUtc().ticks - 621355968000000000) / 10000000 }
+                any ToUnixSeconds() { return (this.ToUtc().ticks - 621355968000000000) / 10000000 }
 
-                CompareTo(class o) {
+                int CompareTo(DateTime o) {
                     if (this.ticks < o.ticks) { return -1 }
                     if (this.ticks > o.ticks) { return 1 }
                     return 0
                 }
-                Equals(class o) { return (o is of DateTime) && this.ticks == o.ticks }
+                bool Equals(any o) { return (o is of DateTime) && this.ticks == o.ticks }
 
                 // `dt + "text"` is a string concatenation (with ToString()), `dt + timespan` a later point in time
-                operator+(class ts) {
+                any operator+(any ts) {
                     if (ts is of string) { return this.ToString() + ts }
                     return DateTime.FromTicks(this.ticks + ts.ticks, this.kind)
                 }
-                operator-(class o) {
+                any operator-(any o) {
                     if (o is of TimeSpan) { return DateTime.FromTicks(this.ticks - o.ticks, this.kind) }
                     return new TimeSpan(this.ticks - o.ticks)
                 }
-                operator<(class o) { return this.ticks < o.ticks }
-                operator>(class o) { return this.ticks > o.ticks }
-                operator<=(class o) { return this.ticks <= o.ticks }
-                operator>=(class o) { return this.ticks >= o.ticks }
-                operator==(class o) { return (o is of DateTime) && this.ticks == o.ticks }
-                operator!=(class o) { return !((o is of DateTime) && this.ticks == o.ticks) }
+                bool operator<(DateTime o) { return this.ticks < o.ticks }
+                bool operator>(DateTime o) { return this.ticks > o.ticks }
+                bool operator<=(DateTime o) { return this.ticks <= o.ticks }
+                bool operator>=(DateTime o) { return this.ticks >= o.ticks }
+                bool operator==(any o) { return (o is of DateTime) && this.ticks == o.ticks }
+                bool operator!=(any o) { return !((o is of DateTime) && this.ticks == o.ticks) }
 
                 // "yyyy-MM-dd HH:mm:ss"; ToString(format) with the .NET time formats (e.g. "dd.MM.yyyy", "HH:mm", "o")
-                ToString() { return __time_format(this.ticks, "yyyy-MM-dd HH:mm:ss") }
-                ToString(string format) { return __time_format(this.ticks, format) }
+                string ToString() { return __time_format(this.ticks, "yyyy-MM-dd HH:mm:ss") }
+                string ToString(string format) { return __time_format(this.ticks, format) }
             }
             """;
     }

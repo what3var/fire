@@ -408,17 +408,53 @@ namespace fire.Native
         private string ProbeCode(List<string> fieldNames)
         {
             var sb = new StringBuilder();
+            // the computed properties (a getter without a setter) of the classes: what their getter reads (RuntimeClass.ComputedSources) and the getter itself
+            var computedCases = new StringBuilder();
+            foreach (var cls in _classList)
+            {
+                var names = new HashSet<string>();
+                for (var c = cls.Rc; c != null; c = c.Base)
+                    foreach (var key in c.Methods.Keys) if (key.StartsWith("get_")) names.Add(key.Substring(4));
+                var rows = new StringBuilder();
+                foreach (var name in names.OrderBy(n => n, StringComparer.Ordinal))
+                {
+                    if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
+                    string id = $"{cls.Id}_{Mangle(name)}";
+                    sb.AppendLine($"static const char* const rfc_{id}[] = {{{string.Concat(sources.Select(src => CStr(src) + ", "))}nullptr}};");
+                    sb.AppendLine($"static Value rfg_{id}(Value v, OwnList* list) {{ Value r = {getterFunc.Name}(v); adopt(r, list); return r; }}");
+                    rows.AppendLine($"            if (std::strcmp(member, {CStr(name)}) == 0) {{ *getter = rfg_{id}; return rfc_{id}; }}");
+                }
+                if (rows.Length > 0) computedCases.Append($"        case {cls.Id}:\n{rows}            break;\n");
+            }
+            // the members a probe can be put on (fields, properties, methods - also without the reflection metadata of `#import "reflection"`)
+            var memberCases = new StringBuilder();
+            foreach (var cls in _classList)
+            {
+                var names = new SortedSet<string>(cls.Rc.FieldIndex.Keys, StringComparer.Ordinal);
+                for (var c = cls.Rc; c != null; c = c.Base)
+                    foreach (var key in c.Methods.Keys) names.Add(key.StartsWith("get_") || key.StartsWith("set_") ? key.Substring(4) : key);
+                if (names.Count > 0) memberCases.Append($"        case {cls.Id}: {{ static const char* const n[] = {{{string.Concat(names.Select(n => CStr(n) + ", "))}nullptr}}; for (const char* const* p = n; *p; p++) if (std::strcmp(*p, member) == 0) return true; return false; }}\n");
+            }
+            sb.AppendLine($"[[maybe_unused]] static bool rf_probeHas(uint32_t cls, const char* member) {{\n    switch (cls) {{\n{memberCases}        default: return false;\n    }}\n}}");
+            sb.AppendLine($"[[maybe_unused]] static const char* const* rf_computed(uint32_t cls, const char* member, ProbeRawGet* getter) {{\n    (void)member; (void)getter;\n    switch (cls) {{\n{computedCases}        default: break;\n    }}\n    return nullptr;\n}}");
             sb.AppendLine(@"[[maybe_unused]] static int64_t rf_probeAdd(Value target, const char* member, bool changing, Value handler, char* err, size_t cap) {
     if (target.kind != K_Class) { std::snprintf(err, cap, ""'probe' expects an object, got: %s."", kindName(target)); return -1; }
     if (handler.kind != K_Lambda) { std::snprintf(err, cap, ""The handler of a probe must be a lambda, got: %s."", kindName(handler)); return -1; }
     if (lamOf(handler)->nparams > 4) { std::snprintf(err, cap, ""The handler of a probe may have at most 4 parameters (object, name, old, new), it has %u."", (unsigned)lamOf(handler)->nparams); return -1; }
     if (member) {
-        OwnList local = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
-        Value name = strFromUtf8(member, &local);
-        const RfClass* c = rf_classOf(asObj(target)->cls);
-        bool has = rf_kind(c, name) != 0;
-        leave(&local);
-        if (!has) { std::snprintf(err, cap, ""'%s' has no member '%s' - no probe can be registered there."", c->name, member); return -1; }
+        const char* cname = className(asObj(target)->cls);
+        if (!rf_probeHas(asObj(target)->cls, member)) { std::snprintf(err, cap, ""'%s' has no member '%s' - no probe can be registered there."", cname, member); return -1; }
+        // a computed property: the probe watches what its getter reads and compares the value
+        ProbeRawGet getter = nullptr;
+        if (const char* const* deps = rf_computed(asObj(target)->cls, member, &getter)) {
+            if (changing) { std::snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
+            OwnList current = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
+            Value now = getter(target, &current);
+            if (FIRE_UNLIKELY(g_unwind.active)) { leave(&current); return -2; }   // the getter threw: its exception is already unwinding, no probe
+            int64_t id = probeAddEntry(asObj(target), member, changing, handler, deps, getter, now);
+            leave(&current);
+            return id;
+        }
     }
     return probeAddEntry(asObj(target), member, changing, handler);
 }
@@ -444,6 +480,7 @@ namespace fire.Native
     if (member.kind == K_String) { strToUtf8(member, m, sizeof m); mem = m; }
     char err[500];
     int64_t id = rf_probeAdd(obj, mem, std::strcmp(k, ""changing"") == 0, handler, err, sizeof err);
+    if (id == -2) return Undef();   // the getter's own exception unwinds
     if (id < 0) return rfFail(err);
     return Int(id);
 }

@@ -43,6 +43,8 @@
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 12
 // a function keeps the list of its global scope in `g_globalOwn` for as long as it runs (the thread's or the program's top level): not a dangling pointer
 #pragma GCC diagnostic ignored "-Wdangling-pointer"
+// after inlining, GCC follows the pointer of a number (its bits share the union with `p`) into retain/release on paths where `isRef` is false: no real access
+#pragma GCC diagnostic ignored "-Warray-bounds"
 #endif
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -217,6 +219,8 @@ FIRE_THREAD_VARS(FIRE_X)
 inline Value indexError(const char* what, int64_t index, int64_t length);
 /// The use of a destroyed object, array or buffer (SPEC 2.3, 2.5): a DestroyedException, or the end of the program when there are no exceptions.
 inline Value destroyedError(Value leaf);
+/// An integer division or modulo by zero: a DivideByZeroException, or the end of the program when there are no exceptions.
+inline Value divideByZero();
 
 #ifdef FIRE_LIBRARY
 // The natives of a package built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.hpp): a run-time error does not end the process,
@@ -321,13 +325,20 @@ inline int formatReal(Real v, char* out) { return formatFloating<Real>(v, out); 
 /// The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code.
 extern const char* const g_dimNames[];
 
-struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; };
+struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; double offset; int32_t conv; };
 struct UnitDef {
     int32_t dims[FIRE_NDIMS];
     double scale;
     const char* display;   // the symbol of a named unit (`mm`), null for a derived one
     const char* name;      // Unit.ToString()
+    double offset;         // Unit.Offset: value_in_base = value * scale + offset (`unit Celsius: C { coerce K => value + 273.15 }`)
+    int32_t conv;          // Unit.Converter: the index of the conversion functions of the unit (g_unitTo/g_unitFrom), -1 for none
 };
+struct Value;
+/// The conversion functions of the units that have them (the static methods To and From of their hidden classes, generated).
+typedef Value (*UnitConvFn)(Value);
+inline const UnitConvFn* g_unitTo = nullptr;
+inline const UnitConvFn* g_unitFrom = nullptr;
 inline UnitDef* g_ud = nullptr;
 inline uint32_t g_udCount = 0, g_udCap = 0;
 
@@ -379,7 +390,9 @@ inline char* unitBuildName(const int32_t* dims, double scale, const char* displa
     return out;
 }
 
-inline void unitsInit(const UnitInit* init, uint32_t count) {
+inline void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* to = nullptr, const UnitConvFn* from = nullptr) {
+    g_unitTo = to;
+    g_unitFrom = from;
     g_udCap = count + 32;
     g_ud = static_cast<UnitDef*>(std::malloc(sizeof(UnitDef) * g_udCap));
     if (!g_ud) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
@@ -388,6 +401,8 @@ inline void unitsInit(const UnitInit* init, uint32_t count) {
         g_ud[i].scale = init[i].scale;
         g_ud[i].display = init[i].display;
         g_ud[i].name = unitBuildName(init[i].dims, init[i].scale, init[i].display);
+        g_ud[i].offset = init[i].offset;
+        g_ud[i].conv = init[i].conv;
     }
     g_udCount = count;
 }
@@ -396,7 +411,7 @@ inline void unitsInit(const UnitInit* init, uint32_t count) {
 inline uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
     for (uint32_t i = 0; i < g_udCount; i++) {
         const UnitDef& d = g_ud[i];
-        if (d.scale == scale && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
+        if (d.scale == scale && d.offset == 0 && d.conv < 0 && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
     }
     if (g_udCount == g_udCap) {
         g_udCap *= 2;
@@ -408,23 +423,60 @@ inline uint32_t unitIntern(const int32_t* dims, double scale, const char* displa
     d.scale = scale;
     d.display = display;
     d.name = unitBuildName(dims, scale, display);
+    d.offset = 0;
+    d.conv = -1;
     return g_udCount++;
 }
 
 inline bool unitCompatible(uint32_t a, uint32_t b) { return a == b || std::memcmp(g_ud[a].dims, g_ud[b].dims, sizeof g_ud[a].dims) == 0; }
 /// Unit.Equals: same dimensions and the scales differ by less than 1e-12.
-inline bool unitEq(uint32_t a, uint32_t b) { return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12); }
+inline bool unitEq(uint32_t a, uint32_t b) {
+    return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12 && g_ud[a].offset == g_ud[b].offset && g_ud[a].conv == g_ud[b].conv);
+}
+/// Unit.IsLinear: only a factor of its base unit (no offset, no conversion functions).
+inline bool unitLinear(uint32_t u) { return g_ud[u].offset == 0 && g_ud[u].conv < 0; }
 
-[[noreturn]] FIRE_COLD inline void unitConflict(uint32_t from, uint32_t to) {
+#ifdef FIRE_EXCEPTIONS
+inline void unitConflictThrow(uint32_t from, uint32_t to);
+#endif
+/// Two values of different dimensions in one operation (`1m + 1s`): the UnitMismatchException of the VM - thrown (the caller returns a value that tells the
+/// generated code to look at the unwinding flag), in a package library reported to the VM, without exceptions the end of the program.
+FIRE_COLD inline void unitConflict(uint32_t from, uint32_t to) {
+#ifdef FIRE_EXCEPTIONS
+    unitConflictThrow(from, to);
+#elif defined(FIRE_LIBRARY)
+    char text[200];
+    std::snprintf(text, sizeof text, "Incompatible units: '%s' cannot be converted to '%s'.", g_ud[from].name, g_ud[to].name);
+    fireError("UnitMismatchException", text);
+#else
     std::fflush(stdout);
     std::fprintf(stderr, "Unhandled exception. fire.Values.UnitMismatchException: Incompatible units: '%s' cannot be converted to '%s'.\n", g_ud[from].name, g_ud[to].name);
     exitNow(1);
+#endif
 }
 /// Unit.ConversionFactorTo
-inline double unitFactor(uint32_t from, uint32_t to) {
-    if (!unitCompatible(from, to)) unitConflict(from, to);
-    return g_ud[from].scale / g_ud[to].scale;
+/// The factor between two units without the rounding error of the scales, like the VM (Unit.NiceFactor): `0.3048 / 0.0254` is 12, not
+/// 12.000000000000002; a factor that is not a few units in the last place away from a number with 12 significant digits stays as it is.
+inline double unitNiceFactor(double factor) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.12g", factor);
+    double nice = std::strtod(text, nullptr);
+    return std::fabs(nice - factor) <= 8 * 2.220446049250313e-16 * std::fabs(factor) ? nice : factor;
 }
+inline double unitFactor(uint32_t from, uint32_t to) {
+    if (from == to) return 1.0;
+    if (!unitCompatible(from, to)) { unitConflict(from, to); return 1.0; }
+    struct Entry { uint32_t from, to; double factor; };
+    static thread_local Entry cache[64] = {};
+    Entry& e = cache[(from * 31u + to) & 63u];
+    if (e.from == from && e.to == to && e.factor != 0) return e.factor;
+    double factor = unitNiceFactor(g_ud[from].scale / g_ud[to].scale);
+    e = {from, to, factor};
+    return factor;
+}
+
+/// unitFactor between two units the generator knows (their ids are fixed): looked up once.
+template <uint32_t From, uint32_t To> inline double unitFactorConst() { static const double factor = unitFactor(From, To); return factor; }
 
 /// Unit.Multiply / Unit.Divide: a unit without dimensions leaves the other one as it is; `mm * mm` is `mm^2`.
 inline uint32_t unitMul(uint32_t a, uint32_t b) {
@@ -435,7 +487,8 @@ inline uint32_t unitMul(uint32_t a, uint32_t b) {
     int32_t dims[FIRE_NDIMS];
     for (int i = 0; i < FIRE_NDIMS; i++) dims[i] = x.dims[i] + y.dims[i];
     const char* display = nullptr;
-    if (x.display && y.display && std::strcmp(x.display, y.display) == 0) {
+    // (a unit with an offset or conversion functions counts as its reference unit: Unit.LinearPart, no `C^2`)
+    if (x.display && y.display && unitLinear(a) && unitLinear(b) && std::strcmp(x.display, y.display) == 0) {
         size_t l = std::strlen(x.display);
         char* square = static_cast<char*>(std::malloc(l + 3));
         if (!square) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
@@ -668,13 +721,68 @@ inline void poolRelease(uint32_t mark) {
 // reference to a local that reaches a call that is not inlined makes the local "escape", and the C++ compiler then
 // keeps it - and, since the generated code reuses its stack temporaries s0..sN, all of them - in memory for the whole
 // function instead of in registers. That alone made generated loops ~10x slower.
-[[noreturn]] FIRE_COLD inline void opFailed(const char* op) {
-    std::fflush(stdout);
-    std::fprintf(stderr, "fire runtime error: operator '%s' is not supported for these operands in the native backend yet\n", op);
-    exitNow(1);
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
+inline const char* coerceKindName(uint8_t kind);
+/// An operand of an arithmetic operator that is no number (`undefined * 2`, `-"a"`): the ArgumentException of the VM (Value.RequireNumeric) - the first
+/// operand that is no number is named.
+FIRE_COLD inline Value opFailed(Value a, Value b) {
+    char text[80];
+    std::snprintf(text, sizeof text, "Type %s is not numeric.", coerceKindName(!(a.kind == K_Int || a.kind == K_Float) ? a.kind : b.kind));
+    fireError("ArgumentException", text);
+    return Undef();   // (the generated code tests for undefined, then for the unwinding flag)
+}
+/// An operand of `& | # << >> ~` that is no int: `'&' expects int, not Float.`
+FIRE_COLD inline Value intOpFailed(const char* op, Value a, Value b) {
+    char text[80];
+    std::snprintf(text, sizeof text, "'%s' expects int, not %s.", op, coerceKindName(a.kind != K_Int ? a.kind : b.kind));
+    fireError("ArgumentException", text);
+    return Undef();
 }
 
 struct VPair { Value a, b; };
+
+/// Calls a conversion function of a unit (`To`: into the reference unit, `From`: back); false when it threw (the unwinding flag is set) or gave no number.
+FIRE_COLD inline bool unitCallConv(uint32_t u, bool to, double v, double& out) {
+    Value r = (to ? g_unitTo : g_unitFrom)[g_ud[u].conv](Float((Real)v));
+    if (g_unwind.active) return false;
+    if (r.kind == K_Int) { out = (double)r.i; return true; }
+    if (r.kind == K_Float) { out = (double)r.f; return true; }
+    char text[160];
+    std::snprintf(text, sizeof text, "The conversion of '%s' must give a number, not a value of type '%s'.", g_ud[u].name, coerceKindName(r.kind));
+    fireError("ArgumentException", text);
+    return false;
+}
+/// Unit.Convert: a number in `from` converted into `to` (the same dimension) - by the factor for units that are only one, else through the reference units:
+/// to(value) * scale + offset is the base value, and back (the factor and the shift without rounding error, a result next to 0 is 0). False: a
+/// conversion function threw.
+FIRE_COLD inline bool unitConvert(double v, uint32_t from, uint32_t to, double& out) {
+    if (from == to) { out = v; return true; }
+    if (unitLinear(from) && unitLinear(to)) { out = v * unitFactor(from, to); return true; }
+    if (!unitCompatible(from, to)) { unitConflict(from, to); return false; }
+    struct Entry { uint32_t from, to; double factor, shift; };
+    static thread_local Entry cache[16] = {};
+    Entry& e = cache[(from * 31u + to) & 15u];
+    if (!(e.from == from && e.to == to && e.factor != 0)) {
+        double shift = (g_ud[from].offset - g_ud[to].offset) / g_ud[to].scale;
+        e = {from, to, unitNiceFactor(g_ud[from].scale / g_ud[to].scale), shift == 0 ? 0 : unitNiceFactor(shift)};
+    }
+    double x = v;
+    if (g_ud[from].conv >= 0 && !unitCallConv(from, true, v, x)) return false;
+    double scaled = x * e.factor, y = scaled + e.shift;
+    if (std::fabs(y) <= 1e-12 * std::fmax(std::fabs(scaled), std::fabs(e.shift))) y = 0;   // (32F is 0C, not 5.7E-14C)
+    if (g_ud[to].conv >= 0) return unitCallConv(to, false, y, out);
+    out = y;
+    return true;
+}
+/// Unit.ToBase: the number in the base unit (`20C` is 293.15) - for `x:unitless`.
+FIRE_COLD inline bool unitToBase(double v, uint32_t u, double& out) {
+    double x = v;
+    if (g_ud[u].conv >= 0 && !unitCallConv(u, true, v, x)) return false;
+    out = x * g_ud[u].scale + g_ud[u].offset;
+    return true;
+}
 
 /// Value.AlignUnits: operands of the same dimension but a different scale (`500mm + 2m`) are converted implicitly - two ints stay ints
 /// (the finer unit is the target while the converted value does not overflow, else the coarser one and the fraction is cut off), a float
@@ -682,15 +790,24 @@ struct VPair { Value a, b; };
 FIRE_COLD inline VPair alignUnits(Value a, Value b) {
     uint32_t ua = a.unit, ub = b.unit;
     if (unitEq(ua, ub)) return {a, b};
-    if (!unitCompatible(ua, ub)) unitConflict(ua, ub);
+    if (!unitCompatible(ua, ub)) { unitConflict(ua, ub); return {Undef(), Undef()}; }   // (thrown: the callers give undefined)
+    if (!unitLinear(ua) || !unitLinear(ub)) {
+        // an offset or conversion functions: the right operand goes into the unit of the left one (`20C + 9F`)
+        double converted;
+        if (!unitConvert(b.kind == K_Int ? (double)b.i : (double)b.f, ub, ua, converted)) return {Undef(), Undef()};
+        b = a.kind == K_Int && b.kind == K_Int ? Int((int64_t)std::nearbyint(converted), ua) : Float((Real)converted, ua);
+        return {a, b};
+    }
     if (a.kind == K_Int && b.kind == K_Int) {
         bool aIsFine = g_ud[ua].scale <= g_ud[ub].scale;
         Value& fine = aIsFine ? a : b;
         Value& coarse = aIsFine ? b : a;
         uint32_t uFine = aIsFine ? ua : ub, uCoarse = aIsFine ? ub : ua;
+        // (a value a rounding error away from a whole number is that number: 1ft is 11.999999999999998in by the factors - Value.SnapWhole)
+        auto snap = [](double x) { double r = std::round(x); return std::fabs(x - r) <= 1e-9 * std::fmax(1.0, std::fabs(x)) ? r : std::trunc(x); };
         double up = (double)coarse.i * unitFactor(uCoarse, uFine);
-        if (up >= -9.2e18 && up <= 9.2e18) coarse = Int((int64_t)up, uFine);
-        else fine = Int((int64_t)((double)fine.i * unitFactor(uFine, uCoarse)), uCoarse);
+        if (up >= -9.2e18 && up <= 9.2e18) coarse = Int((int64_t)snap(up), uFine);
+        else fine = Int((int64_t)snap((double)fine.i * unitFactor(uFine, uCoarse)), uCoarse);
         return {a, b};
     }
     double factor = unitFactor(ub, ua);
@@ -700,18 +817,21 @@ FIRE_COLD inline VPair alignUnits(Value a, Value b) {
 
 FIRE_COLD inline Value addUnits(Value a, Value b) {
     VPair p = alignUnits(a, b);
+    if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return Undef();
     if (p.a.kind == K_Int && p.b.kind == K_Int) return Int((int64_t)((uint64_t)p.a.i + (uint64_t)p.b.i), p.a.unit);
     return Float(toR(p.a) + toR(p.b), p.a.unit);
 }
 FIRE_COLD inline Value subUnits(Value a, Value b) {
     VPair p = alignUnits(a, b);
+    if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return Undef();
     if (p.a.kind == K_Int && p.b.kind == K_Int) return Int((int64_t)((uint64_t)p.a.i - (uint64_t)p.b.i), p.a.unit);
     return Float(toR(p.a) - toR(p.b), p.a.unit);
 }
 FIRE_COLD inline Value modUnits(Value a, Value b) {
     VPair p = alignUnits(a, b);
+    if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return Undef();
     if (p.a.kind == K_Int && p.b.kind == K_Int) {
-        if (FIRE_UNLIKELY(p.b.i == 0)) fatal("Division by zero.");
+        if (FIRE_UNLIKELY(p.b.i == 0)) return divideByZero();
         if (FIRE_UNLIKELY(p.b.i == -1)) return Int(0, p.a.unit);
         return Int(p.a.i % p.b.i, p.a.unit);
     }
@@ -725,7 +845,7 @@ FIRE_COLD inline Value mulUnits(Value a, Value b) {
 FIRE_COLD inline Value divUnits(Value a, Value b) {
     uint32_t u = unitDiv(a.unit, b.unit);
     if (a.kind == K_Int && b.kind == K_Int) {
-        if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+        if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
         if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i), u);
         return Int(a.i / b.i, u);
     }
@@ -748,7 +868,7 @@ inline Value add(Value a, Value b) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i + (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) + toR(b), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
-    opFailed("+");
+    return opFailed(a, b);
 }
 inline Value ptrDiff(Value a, Value b);
 inline Value sub(Value a, Value b) {
@@ -758,41 +878,41 @@ inline Value sub(Value a, Value b) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i - (uint64_t)b.i), a.unit);
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) - toR(b), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return subUnits(a, b);
-    opFailed("-");
+    return opFailed(a, b);
 }
 inline Value mul(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
         if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i));
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) * toR(b));
     } else if (isNumeric(a) && isNumeric(b)) return mulUnits(a, b);
-    opFailed("*");
+    return opFailed(a, b);
 }
 inline Value divide(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == 0 && b.unit == 0)) {
         if (a.kind == K_Int && b.kind == K_Int) {
-            if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+            if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
             if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i));
             return Int(a.i / b.i);
         }
         if (isNumeric(a) && isNumeric(b)) return Float(toR(a) / toR(b));
     } else if (isNumeric(a) && isNumeric(b)) return divUnits(a, b);
-    opFailed("/");
+    return opFailed(a, b);
 }
 inline Value modulo(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) {
-            if (FIRE_UNLIKELY(b.i == 0)) fatal("Division by zero.");
+            if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
             if (FIRE_UNLIKELY(b.i == -1)) return Int(0, a.unit);
             return Int(a.i % b.i, a.unit);
         }
         if (isNumeric(a) && isNumeric(b)) return Float(std::fmod(toR(a), toR(b)), a.unit);
     } else if (isNumeric(a) && isNumeric(b)) return modUnits(a, b);
-    opFailed("%");
+    return opFailed(a, b);
 }
 /// `a ^ b` (power; `#` is the bitwise xor): ints multiply, a float or a negative exponent uses pow. The units must be equal.
 inline Value power(Value a, Value b) {
-    if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) opFailed("^");
-    if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) unitConflict(a.unit, b.unit);
+    if (FIRE_UNLIKELY(!isNumeric(a) || !isNumeric(b))) return opFailed(a, b);
+    if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); }
     bool useFloat = a.kind == K_Float || b.kind == K_Float || (b.kind == K_Int && b.i < 0);
     if (useFloat) return Float((Real)std::pow((double)toR(a), (double)toR(b)), a.unit);
     uint64_t result = 1, base = (uint64_t)a.i;
@@ -804,14 +924,23 @@ inline uint32_t unitOf(Value v) { return (v.kind == K_Int || v.kind == K_Float |
 /// The step of `x++`/`x--`: the constant 1 in the unit of `target` (`5cm++` is `6cm`).
 inline Value stepOf(Value target, Value one) { uint32_t u = unitOf(target); if (u && !unitIsUnitless(u) && (one.kind == K_Int || one.kind == K_Float)) one.unit = u; return one; }
 
-/// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even.
+/// `value:unit` - converts a number to another unit of the same dimension (Value.CoerceUnit); ints are rounded half to even. Of another dimension it never fails:
+/// the number in its base unit gets the target unit (`5mm:kg` is `0.005kg`, `7:s` is `7s`).
 inline Value coerceUnit(Value v, uint32_t target) {
     if (FIRE_UNLIKELY(!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined))) fatal("A value of this type carries no unit and cannot be converted.");
     if (unitEq(v.unit, target)) return v;
-    if (unitIsUnitless(target) && !unitIsUnitless(v.unit) && v.kind != K_Undefined) {   // `a:unitless`: the number in the base unit
-        double inBase = (v.kind == K_Int ? (double)v.i : (double)v.f) * g_ud[v.unit].scale;
+    // `a:unitless`, and `a:unit` of another dimension: the number in the base unit (the dimension is taken out), labelled with the target unit
+    if (v.kind != K_Undefined && ((unitIsUnitless(target) && !unitIsUnitless(v.unit)) || !unitCompatible(v.unit, target))) {
+        double inBase;
+        if (!unitToBase(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, inBase)) return Undef();
         if (v.kind == K_Int && std::fabs(inBase) < 9.0e15 && inBase == std::floor(inBase)) return Int((int64_t)inBase, target);
         return Float((Real)inBase, target);
+    }
+    if (v.kind == K_Undefined) return Undef(target);
+    if (!unitLinear(v.unit) || !unitLinear(target)) {
+        double converted;
+        if (!unitConvert(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, target, converted)) return Undef();
+        return v.kind == K_Int ? Int((int64_t)std::nearbyint(converted), target) : Float((Real)converted, target);
     }
     double factor = unitFactor(v.unit, target);
     if (v.kind == K_Int) return Int((int64_t)std::nearbyint((double)v.i * factor), target);
@@ -824,30 +953,67 @@ inline Value relabelUnit(Value v, uint32_t target) {
     v.unit = target;
     return v;
 }
-/// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType).
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
+/// The name of a kind as the VM writes it in its messages (ValueKind).
+inline const char* coerceKindName(uint8_t kind) {
+    switch (kind) {
+        case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_Pointer: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        default: return "Undefined";
+    }
+}
+/// `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType); anything else is an ArgumentException.
 inline Value coerceType(Value v, uint8_t target) {
     if (v.kind == target) return v;
     if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
     if (v.kind == K_Float && target == K_Int) return Int((int64_t)std::nearbyint((double)v.f), v.unit);
     if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
     if (v.kind == K_Undefined && target == K_Float) return Float(0, v.unit);
-    fatal("A value of this type cannot be coerced to the requested type.");
+    // characters: the number of the 16-bit code unit; a number outside 0..65535 wraps like a 16-bit cast
+    if (v.kind == K_Int && target == K_Char) return Char((uint16_t)v.i);
+    if (v.kind == K_Float && target == K_Char) return Char((uint16_t)(int64_t)std::nearbyint((double)v.f));
+    if (v.kind == K_Char && target == K_Int) return Int(v.i);
+    if (v.kind == K_Char && target == K_Float) return Float((Real)v.i);
+    if (v.kind == K_Undefined && target == K_Char) return Char(0);
+    char text[96];
+    std::snprintf(text, sizeof text, "Cannot coerce type %s to %s.", coerceKindName(v.kind), coerceKindName(target));
+    return fireError("ArgumentException", text);
+}
+
+/// `x!int[8]`, `x!byte`, `x!float[32]` (Value.ConvertWidth): the number cut to the width - an int in two's complement, `isUnsigned` keeps 0..2^bits-1,
+/// a float rounded to float32.
+inline Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
+    Value n = coerceType(v, toFloat ? K_Float : K_Int);
+    if (n.kind != (toFloat ? K_Float : K_Int)) return n;   // (the error of coerceType)
+    if (toFloat) return bits == 32 ? Float((Real)(float)n.f, n.unit) : n;
+    if (bits >= 64) return n;
+    uint64_t mask = (1ull << bits) - 1, raw = (uint64_t)n.i & mask;
+    int64_t r = (int64_t)raw;
+    if (!isUnsigned && (raw & (1ull << (bits - 1)))) r -= (int64_t)(1ull << bits);
+    return Int(r, n.unit);
 }
 
 inline Value negate(Value v) {
     if (v.kind == K_Int) return Int((int64_t)(0 - (uint64_t)v.i), v.unit);
     if (v.kind == K_Float) return Float(-v.f, v.unit);
-    fatal("Unary '-' expects a number.");
+    return opFailed(v, v);
 }
 inline Value lnot(Value v) {
-    if (FIRE_UNLIKELY(v.kind != K_Bool)) fatal("'!' (negation) expects bool.");
+    if (FIRE_UNLIKELY(v.kind != K_Bool)) {
+        char text[80];
+        std::snprintf(text, sizeof text, "'!' (negation) expects bool, not %s.", coerceKindName(v.kind));
+        fireError("ArgumentException", text);
+        return Undef();
+    }
     return Bool(v.i == 0);
 }
 
 #define FIRE_BITOP(NAME, OP, SYM)                                                              \
     inline Value NAME(Value a, Value b) {                                        \
-        if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) fatal("'" SYM "' expects int."); \
-        if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) unitConflict(a.unit, b.unit);                  \
+        if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(SYM, a, b);   \
+        if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); } \
         return Int(a.i OP b.i, a.unit);                                                        \
     }
 FIRE_BITOP(bitAnd, &, "&")
@@ -855,15 +1021,15 @@ FIRE_BITOP(bitOr, |, "|")
 FIRE_BITOP(bitXor, ^, "#")
 #undef FIRE_BITOP
 inline Value shl(Value a, Value b) {
-    if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) fatal("'<<' expects int.");
+    if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed("<<", a, b);
     return Int((int64_t)((uint64_t)a.i << (b.i & 63)), a.unit);
 }
 inline Value shr(Value a, Value b) {
-    if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) fatal("'>>' expects int.");
+    if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(">>", a, b);
     return Int(a.i >> (b.i & 63), a.unit);
 }
 inline Value bitNot(Value v) {
-    if (FIRE_UNLIKELY(v.kind != K_Int)) fatal("'~' expects int.");
+    if (FIRE_UNLIKELY(v.kind != K_Int)) return intOpFailed("~", v, v);
     return Int(~v.i, v.unit);
 }
 
@@ -880,39 +1046,55 @@ inline int compareNumeric(Value a, Value b) {
     if (std::isnan(x)) return std::isnan(y) ? 0 : -1;
     return 1;
 }
+/// Two texts by their UTF-16 code units (string.CompareOrdinal): -1, 0 or 1.
+inline int compareText(Value a, Value b) {
+    const Str* x = strOf(a);
+    const Str* y = strOf(b);
+    uint32_t n = x->length < y->length ? x->length : y->length;
+    for (uint32_t i = 0; i < n; i++)
+        if (x->data[i] != y->data[i]) return x->data[i] < y->data[i] ? -1 : 1;
+    return x->length < y->length ? -1 : (x->length > y->length ? 1 : 0);
+}
 inline int compare(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (isNumeric(a) && isNumeric(b)) return compareNumeric(a, b);
-    } else if (isNumeric(a) && isNumeric(b)) { VPair p = alignUnits(a, b); return compareNumeric(p.a, p.b); }
-    opFailed("<");
+    } else if (isNumeric(a) && isNumeric(b)) { VPair p = alignUnits(a, b); if (FIRE_UNLIKELY(p.a.kind == K_Undefined)) return 2; return compareNumeric(p.a, p.b); }
+    if (a.kind == K_Char && b.kind == K_Char) return a.i < b.i ? -1 : (a.i > b.i ? 1 : 0);
+    if (a.kind == K_String && b.kind == K_String) return compareText(a, b);   // texts by their codes (ordinal)
+    char msg[64];
+    std::snprintf(msg, sizeof msg, "Type %s is not numeric.", coerceKindName(isNumeric(a) ? b.kind : a.kind));
+    fireError("ArgumentException", msg);
+    return 2;   // failed (thrown): <, <=, > and >= are all false, the generated code then looks at the unwinding flag
 }
 inline bool lt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i < b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f < b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) < 0;   // (NaN sorts below everything, like the VM)
     }
     return compare(a, b) < 0;
 }
 inline bool le(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i <= b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f <= b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) <= 0;   // (NaN sorts below everything, like the VM)
     }
-    return compare(a, b) <= 0;
+    return compare(a, b) <= 0;   // (-1 or 0; a failed comparison gives 2)
 }
 inline bool gt(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i > b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f > b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) > 0;   // (NaN sorts below everything, like the VM)
     }
-    return compare(a, b) > 0;
+    int c = compare(a, b);
+    return c > 0 && c != 2;
 }
 inline bool ge(Value a, Value b) {
     if (FIRE_LIKELY(a.unit == b.unit)) {
         if (a.kind == K_Int && b.kind == K_Int) return a.i >= b.i;
-        if (a.kind == K_Float && b.kind == K_Float) return a.f >= b.f;
+        if (a.kind == K_Float && b.kind == K_Float) return compareNumeric(a, b) >= 0;   // (NaN sorts below everything, like the VM)
     }
-    return compare(a, b) >= 0;
+    int c = compare(a, b);
+    return c >= 0 && c != 2;
 }
 /// Value.Equals: different kinds are never equal (1 != 1.0), units and widths are ignored.
 inline bool eq(Value a, Value b) {
@@ -929,8 +1111,20 @@ inline bool eq(Value a, Value b) {
         default: return a.p == b.p;
     }
 }
+/// Value.OperatorEquals - the `==` of the language: numbers compare by value (`1 == 1.0`), compatible units are converted (`1m == 100cm`).
+inline bool opEq(Value a, Value b) {
+    if (!isNumeric(a) || !isNumeric(b)) return eq(a, b);
+    if (a.unit != b.unit && !unitEq(a.unit, b.unit) && unitCompatible(a.unit, b.unit)) { VPair p = alignUnits(a, b); a = p.a; b = p.b; }
+    if (a.kind == K_Int && b.kind == K_Int) return a.i == b.i;
+    return toR(a) == toR(b);
+}
 inline bool truthy(Value v) {
-    if (FIRE_UNLIKELY(v.kind != K_Bool)) fatal("A condition must be a bool.");
+    if (FIRE_UNLIKELY(v.kind != K_Bool)) {
+        char msg[64];
+        std::snprintf(msg, sizeof msg, "A condition must be a bool, not %s.", coerceKindName(v.kind));
+        fireError("ArgumentException", msg);
+        return false;
+    }
     return v.i != 0;
 }
 
@@ -960,6 +1154,8 @@ inline Obj* asObj(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
     return static_cast<Obj*>(const_cast<void*>(v.p));
 }
+/// The object of a value the generator proved to be one (an object of a known class).
+inline Obj* objAt(Value v) { return static_cast<Obj*>(const_cast<void*>(v.p)); }
 
 #ifdef FIRE_THREADS
 inline bool g_domainOn = false;   // a fire thread exists: the objects of the global scope are the shared domain (flag 64)
@@ -1209,14 +1405,36 @@ inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const 
 inline Value lamOn(Value lam) { return lamOf(lam)->on; }
 inline Value lamCapture(Value lam, uint32_t index) { return lamOf(lam)->caps()[index]; }
 
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
 /// `callee(args...)`
 FIRE_COLD inline Value callLamDefaults(Value callee, int argc, const Value* args, OwnList* list) {
     Lam* l = lamOf(callee);
-    if (!l->dflt || (uint32_t)argc > l->nparams || (uint32_t)argc < l->nreq || l->nparams > 16) fatal("A lambda was called with the wrong number of arguments.");
+    if (!l->dflt || (uint32_t)argc > l->nparams || (uint32_t)argc < l->nreq || l->nparams > 16) {
+        char text[160];
+        std::snprintf(text, sizeof text, "Wrong number of arguments: expected %u%s, got %d.", l->nparams, (uint32_t)argc < l->nparams ? " (the missing parameters have no default value)" : "", argc);
+        return fireError("ArgumentException", text);
+    }
     Value full[16];
     for (int i = 0; i < argc; i++) full[i] = args[i];
     for (uint32_t i = (uint32_t)argc; i < l->nparams; i++) full[i] = adoptV(l->dflt(callee, i), list);
     return l->fn(callee, full);
+}
+/// `a on obj` (OpCode.RebindLambda): a new lambda with the same body, captures and default values, and `on` as its `this`.
+inline Value rebindLam(Value lam, Value on, OwnList* list) {
+    if (FIRE_UNLIKELY(lam.kind != K_Lambda)) return fireError("ArgumentException", "'on' binds a lambda to an object; the value before 'on' is not a lambda.");
+    Lam* a = lamOf(lam);
+    Lam* l = allocLam(a->nparams, a->ncaps, a->fn, list);
+    l->nreq = a->nreq;
+    l->dflt = a->dflt;
+#ifdef FIRE_REFLECTION
+    l->sel = a->sel;
+    l->nsel = a->nsel;
+#endif
+    for (uint32_t i = 0; i < a->ncaps; i++) { l->caps()[i] = a->caps()[i]; retain(l->caps()[i]); }
+    l->on = on;
+    return LamV(l);
 }
 inline Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
     if (FIRE_UNLIKELY(callee.kind != K_Lambda)) fatal("Call of a value that is not a lambda.");
@@ -1225,18 +1443,90 @@ inline Value callLam(Value callee, int argc, const Value* args, OwnList* list) {
     return l->fn(callee, args);
 }
 
-/// CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters.
+#ifndef FIRE_LIBRARY
+inline Value fireError(const char* cls, const char* utf8);
+#endif
+/// CheckLambdaSignature: a value assigned to a `lambda<...>` annotation must have that many parameters (otherwise an ArgumentException).
 inline void checkLambda(Value v, int nparams) {
-    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) fatal("The lambda does not have the declared number of parameters.");
+    if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) {
+        char text[120];
+        if (v.kind != K_Lambda) std::snprintf(text, sizeof text, "Expected a lambda with %d parameter(s), got a value that is no lambda.", nparams);
+        else std::snprintf(text, sizeof text, "The lambda has %u parameter(s), its declaration says %d.", lamOf(v)->nparams, nparams);
+#ifndef FIRE_LIBRARY
+        fireError("ArgumentException", text);
+#else
+        fatal(text);
+#endif
+    }
 }
 
 /// A value does not have the unit that its declaration demands (an UnitMismatchException; defined with the exceptions).
 inline void unitMismatch(Value v, Value expectedText);
 
-/// CheckUnit: the value must have exactly this unit.
-inline void checkUnit(Value v, uint32_t unit, Value expectedText) {
-    uint32_t actual = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
-    if (FIRE_UNLIKELY(!unitEq(actual, unit))) unitMismatch(v, expectedText);
+/// CheckUnit (Value.AdaptToUnit): a declaration with a unit takes `v` - a value of the same dimension is converted into `unit`, `undefined` takes it; with
+/// `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float. Another dimension is an UnitMismatchException, a whole number that does not fit any
+/// more after the conversion an OverflowException. Values without a unit (strings, objects) are left alone.
+/// `obj.field = x` by the index of the field (the object is alive; the generated code checked the declaration of the field): like the sf_ helpers.
+inline void setFieldAt(Value v, uint32_t index, Value x) {
+    Obj* o = objAt(v);
+    Value old = o->fields()[index];
+    o->fields()[index] = x;
+    retain(x);
+    release(old);
+}
+
+/// A parameter or field declared int/float/bool (DeclaredKind): a value of that kind or undefined; a whole number for a float becomes one, anything
+/// else is an ArgumentException (the generated code then looks at the unwinding flag). `unitless`: declared without a unit - a number with one is
+/// converted like adaptUnit(v, unitless) first (another dimension is a UnitMismatchException).
+inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
+FIRE_COLD inline Value guardKindSlow(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
+    if (v.kind == K_Undefined) return v;
+    if (unitless && (v.kind == K_Int || v.kind == K_Float) && v.unit != 0) {
+        v = adaptUnit(v, 0, false, false, unitlessText);
+        if (!unitEq(v.unit, 0)) return Undef();   // (thrown)
+        v.unit = 0;
+    }
+    if (v.kind == kind) return v;
+    if (kind == K_Float && v.kind == K_Int) return Float((Real)v.i, v.unit);
+    char text[200];
+    std::snprintf(text, sizeof text, "%s is %s, not %s.", what, kind == K_Int ? "an int" : kind == K_Float ? "a float" : "a bool", coerceKindName(v.kind));
+    fireError("ArgumentException", text);
+    return Undef();
+}
+inline Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
+    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0)) return v;
+    return guardKindSlow(v, kind, unitless, what, unitlessText);
+}
+
+/// A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays.
+inline Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.unit) : v; }
+
+inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText) {
+    if (!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined)) return v;
+    if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   // a float declaration: a whole number becomes one (`float f = 3` holds 3.0)
+    if (unitEq(v.unit, unit)) return v;
+    if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
+    if (FIRE_UNLIKELY(!unitCompatible(v.unit, unit))) { unitMismatch(v, expectedText); return v; }
+    if (dimensionOnly) return v;
+    double converted;
+    if (!unitLinear(v.unit) || !unitLinear(unit)) {
+        if (!unitConvert(v.kind == K_Int ? (double)v.i : (double)v.f, v.unit, unit, converted)) return v;
+        if (v.kind == K_Float) return Float((Real)converted, unit);
+        converted = std::nearbyint(converted);
+    } else {
+        double factor = unitFactor(v.unit, unit);
+        if (v.kind == K_Float) return Float((Real)((double)v.f * factor), unit);
+        converted = std::nearbyint((double)v.i * factor);
+    }
+    if (FIRE_UNLIKELY(std::fabs(converted) >= 9.2e18)) {
+#ifndef FIRE_LIBRARY
+        fireError("OverflowException", "A whole number does not fit any more after the conversion into the unit of its declaration.");
+#else
+        fatal("A whole number does not fit any more after the conversion into the unit of its declaration.");
+#endif
+        return v;
+    }
+    return Int((int64_t)converted, unit);
 }
 
 /// The byte order of the machine, found out at run time (a 16-bit 1 starts with its low byte in little-endian memory).
@@ -1385,7 +1675,7 @@ FIRE_COLD inline Value addSlow(Value a, Value b, OwnList* list) {
     if (a.kind == K_Pointer && b.kind == K_Int) return ptrOffset(a, b.i);
     if (a.kind == K_String || b.kind == K_String) return concat(a, b, list);
     if (isNumeric(a) && isNumeric(b)) return addUnits(a, b);
-    opFailed("+");
+    return opFailed(a, b);
 }
 
 /// `+` for operands that may be strings (the generator uses `add` where both are known to be numbers).
@@ -1474,6 +1764,83 @@ inline Value newStrFrom(const char16_t* p, uint32_t n, OwnList* list) {
 }
 
 /// `__StringCall(id, text, args...)`: the methods of `string`. `argc` counts the arguments after the text.
+// Numbers from text (StringMethods.ParseInt/ParseFloat - the same rules): spaces at both ends, a sign, then for an int digits (also `0x`/`0b`) with `_` only
+// between two digits; for a float digits, an optional fraction and exponent.
+inline bool numSpace(char16_t c) { return c == u' ' || c == u'\t' || c == u'\r' || c == u'\n'; }
+inline void numBody(const char16_t* s, uint32_t len, uint32_t* start, uint32_t* end, bool* negative) {
+    uint32_t i = 0, e = len;
+    while (i < e && numSpace(s[i])) i++;
+    while (e > i && numSpace(s[e - 1])) e--;
+    *negative = false;
+    if (i < e && (s[i] == u'+' || s[i] == u'-')) { *negative = s[i] == u'-'; i++; }
+    *start = i; *end = e;
+}
+inline bool parseIntText(const char16_t* s, uint32_t len, int64_t* out) {
+    uint32_t i, end; bool negative;
+    numBody(s, len, &i, &end, &negative);
+    uint64_t radix = 10;
+    if (end - i > 2 && s[i] == u'0' && (s[i + 1] == u'x' || s[i + 1] == u'X')) { radix = 16; i += 2; }
+    else if (end - i > 2 && s[i] == u'0' && (s[i + 1] == u'b' || s[i + 1] == u'B')) { radix = 2; i += 2; }
+    if (i >= end) return false;
+    uint64_t magnitude = 0, limit = negative ? 9223372036854775808ull : 9223372036854775807ull;
+    for (uint32_t k = i; k < end; k++) {
+        char16_t c = s[k];
+        if (c == u'_' && k > i && k + 1 < end && s[k + 1] != u'_') continue;
+        uint64_t digit = c >= u'0' && c <= u'9' ? (uint64_t)(c - u'0') : c >= u'a' && c <= u'f' ? (uint64_t)(c - u'a' + 10) : c >= u'A' && c <= u'F' ? (uint64_t)(c - u'A' + 10) : 99;
+        if (digit >= radix) return false;
+        if (magnitude > (limit - digit) / radix) return false;
+        magnitude = magnitude * radix + digit;
+    }
+    *out = negative ? (int64_t)(0ull - magnitude) : (int64_t)magnitude;
+    return true;
+}
+inline bool parseFloatText(const char16_t* s, uint32_t len, double* out) {
+    uint32_t i, end; bool negative;
+    numBody(s, len, &i, &end, &negative);
+    char clean[400];
+    uint32_t n = 0, digits = 0, p = i;
+    auto isDigit = [](char16_t c) { return c >= u'0' && c <= u'9'; };
+    auto run = [&](void) {
+        uint32_t start = p;
+        while (p < end && n < 380 && (isDigit(s[p]) || (s[p] == u'_' && p > start && p + 1 < end && isDigit(s[p + 1])))) {
+            if (s[p] != u'_') { clean[n++] = (char)s[p]; digits++; }
+            p++;
+        }
+    };
+    run();
+    if (p < end && s[p] == u'.') { clean[n++] = '.'; p++; run(); }
+    if (digits == 0) return false;
+    if (p < end && (s[p] == u'e' || s[p] == u'E')) {
+        clean[n++] = 'e'; p++;
+        if (p < end && (s[p] == u'+' || s[p] == u'-')) clean[n++] = (char)s[p++];
+        uint32_t before = digits;
+        run();
+        if (digits == before) return false;
+    }
+    if (p != end) return false;
+    clean[n] = 0;
+    double v = std::strtod(clean, nullptr);
+    *out = negative ? -v : v;
+    return true;
+}
+/// `'text' is not a number.` as the ArgumentException of ToInt/ToFloat.
+inline Value numberTextError(Value text, const char* tail) {
+    char utf8[300];
+    uint32_t n = 0;
+    const Str* t = strOf(text);
+    for (uint32_t i = 0; i < t->length && n + 4 < 240; i++) {
+        uint32_t c = t->data[i];
+        if (c >= 0xD800 && c < 0xDC00 && i + 1 < t->length) { c = 0x10000 + ((c - 0xD800) << 10) + (t->data[i + 1] - 0xDC00); i++; }
+        if (c < 0x80) utf8[n++] = (char)c;
+        else if (c < 0x800) { utf8[n++] = (char)(0xC0 | (c >> 6)); utf8[n++] = (char)(0x80 | (c & 0x3F)); }
+        else if (c < 0x10000) { utf8[n++] = (char)(0xE0 | (c >> 12)); utf8[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); utf8[n++] = (char)(0x80 | (c & 0x3F)); }
+        else { utf8[n++] = (char)(0xF0 | (c >> 18)); utf8[n++] = (char)(0x80 | ((c >> 12) & 0x3F)); utf8[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); utf8[n++] = (char)(0x80 | (c & 0x3F)); }
+    }
+    utf8[n] = 0;
+    char message[340];
+    std::snprintf(message, sizeof message, "'%s%s", utf8, tail);
+    return fireError("ArgumentException", message);
+}
 inline Value stringCall(int64_t method, Value text, int argc, Value a0, Value a1, OwnList* list) {
     if (text.kind != K_String) fatal("The string method was called on something that is not a string.");
     const char16_t* s = strOf(text)->data;
@@ -1569,6 +1936,41 @@ inline Value stringCall(int64_t method, Value text, int argc, Value a0, Value a1
             if (method == 15) { for (uint32_t i = 0; i < pad; i++) d[i] = fill; std::memcpy(d + pad, s, len * sizeof(char16_t)); }
             else { std::memcpy(d, s, len * sizeof(char16_t)); for (uint32_t i = 0; i < pad; i++) d[len + i] = fill; }
             return StrV(r);
+        }
+        case 17: case 19: {  // ToInt / TryToInt
+            int64_t whole;
+            if (parseIntText(s, len, &whole)) return Int(whole);
+            if (method == 19) return Undef();
+            return numberTextError(text, "' is not a whole number.");
+        }
+        case 18: case 20: {  // ToFloat / TryToFloat
+            double number;
+            if (parseFloatText(s, len, &number)) return Float((Real)number);
+            if (method == 20) return Undef();
+            return numberTextError(text, "' is not a number.");
+        }
+        case 22: {  // Join(texts) - the prelude passes an array of strings
+            if (a0.kind != K_Array) return fireError("ArgumentException", "Join expects a List or an array.");
+            Arr* items = arrOf(a0);
+            uint64_t total = 0;
+            for (uint32_t i = 0; i < items->length; i++) total += strOf(items->items()[i])->length + (i > 0 ? len : 0);
+            if (total > 0x7FFFFFFF) fatal("The joined text is too long.");
+            Str* r = allocStr((uint32_t)total, list);
+            char16_t* d = strChars(r);
+            for (uint32_t i = 0; i < items->length; i++) {
+                if (i > 0) { std::memcpy(d, s, len * sizeof(char16_t)); d += len; }
+                const Str* part = strOf(items->items()[i]);
+                std::memcpy(d, part->data, part->length * sizeof(char16_t));
+                d += part->length;
+            }
+            return StrV(r);
+        }
+        case 21: {  // CompareTo(other)
+            Chars v = charsOf(a0);
+            uint32_t n = len < v.n ? len : v.n;
+            for (uint32_t i = 0; i < n; i++)
+                if (s[i] != v.p()[i]) return Int(s[i] < v.p()[i] ? -1 : 1);
+            return Int(len < v.n ? -1 : (len > v.n ? 1 : 0));
         }
         default: fatal("Unknown string method.");
     }
@@ -1788,6 +2190,7 @@ inline Value strArrayOf(const char* const* items, uint32_t n, OwnList* list) {
 }
 /// Generated: builds a ReflectionException (message) owned by the global scope.
 Value makeReflectError(Value message);
+#endif
 inline const char* kindName(Value v) {
     switch (v.kind) {
         case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
@@ -1795,7 +2198,98 @@ inline const char* kindName(Value v) {
         default: return "Undefined";
     }
 }
-#endif
+/// Unit.Sqrt: the square root of a unit (`m^2` → `m`, `cm^2` → `cm`); false when an exponent is odd. A display symbol that ends in `^2` (and has no other
+/// operator) loses it, otherwise the root has none.
+inline bool unitSqrt(uint32_t u, uint32_t* out) {
+    if (unitIsUnitless(u)) { *out = u; return true; }
+    const UnitDef& x = g_ud[u];
+    int32_t dims[FIRE_NDIMS];
+    for (int i = 0; i < FIRE_NDIMS; i++) { if (x.dims[i] % 2 != 0) return false; dims[i] = x.dims[i] / 2; }
+    char* display = nullptr;
+    if (x.display && unitLinear(u)) {
+        size_t l = std::strlen(x.display);
+        bool simple = l > 2 && std::strcmp(x.display + l - 2, "^2") == 0;
+        for (size_t i = 0; simple && i + 2 < l; i++) if (x.display[i] == '/' || x.display[i] == '*' || x.display[i] == '^') simple = false;
+        if (simple) {
+            display = static_cast<char*>(std::malloc(l - 1));
+            if (!display) { std::fputs("fire runtime error: Out of memory.\n", stderr); exitNow(1); }
+            std::memcpy(display, x.display, l - 2);
+            display[l - 2] = 0;
+        }
+    }
+    uint32_t id = unitIntern(dims, std::sqrt(x.scale), display);
+    if (display && g_ud[id].display != display) std::free(display);   // an equal unit existed
+    *out = id;
+    return true;
+}
+/// `__MathCall(id, x[, y])` (fire.Standard.MathMethods): Sqrt (also of the unit), Round/Floor/Ceiling (the unit stays, an int stays), the angle and exponential
+/// functions of a number without unit, Atan2 of two values of one dimension.
+inline Value mathCall(int64_t method, Value x, Value y) {
+    static const char* const names[] = {"", "Sqrt", "Round", "Floor", "Ceiling", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Atan2", "Log", "Log10", "Exp"};
+    const char* name = method >= 1 && method <= 14 ? names[method] : "?";
+    char text[200];
+    if (x.kind != K_Int && x.kind != K_Float) {
+        std::snprintf(text, sizeof text, "Math.%s expects a number, not a value of type '%s'.", name, kindName(x));
+        return fireError("ArgumentException", text);
+    }
+    double v = toR(x);
+    switch (method) {
+        case 1: {
+            uint32_t root;
+            if (!unitSqrt(x.unit, &root)) {
+                std::snprintf(text, sizeof text, "Math.Sqrt: the unit '%s' has no square root.", g_ud[x.unit].name);
+                return fireError("ArgumentException", text);
+            }
+            return Float((Real)std::sqrt(v), root);
+        }
+        case 2: case 3: case 4:
+            if (x.kind == K_Int) return x;
+            return Float((Real)(method == 2 ? std::round(v) : method == 3 ? std::floor(v) : std::ceil(v)), x.unit);
+        case 11: {
+            if (y.kind != K_Int && y.kind != K_Float) {
+                std::snprintf(text, sizeof text, "Math.Atan2 expects two numbers, not a value of type '%s'.", kindName(y));
+                return fireError("ArgumentException", text);
+            }
+            if (!unitCompatible(x.unit, y.unit)) {
+                std::snprintf(text, sizeof text, "Math.Atan2 expects two values of the same dimension, not '%s' and '%s'.", g_ud[x.unit].name, g_ud[y.unit].name);
+                return fireError("ArgumentException", text);
+            }
+            double yv;
+            if (!unitConvert(v, x.unit, y.unit, yv)) return Undef();
+            return Float((Real)std::atan2(yv, (double)toR(y)));
+        }
+    }
+    if (!unitIsUnitless(x.unit)) {
+        std::snprintf(text, sizeof text, "Math.%s expects a number without unit, not one in '%s'.", name, g_ud[x.unit].name);
+        return fireError("ArgumentException", text);
+    }
+    switch (method) {
+        case 5: return Float((Real)std::sin(v));
+        case 6: return Float((Real)std::cos(v));
+        case 7: return Float((Real)std::tan(v));
+        case 8: return Float((Real)std::asin(v));
+        case 9: return Float((Real)std::acos(v));
+        case 10: return Float((Real)std::atan(v));
+        case 12: return Float((Real)std::log(v));
+        case 13: return Float((Real)std::log10(v));
+        case 14: return Float((Real)std::exp(v));
+    }
+    fatal("Unknown Math function.");
+}
+/// `x!Dog` that does not hold (OpCode.CastTo): the ArgumentException of the VM's text.
+inline void castFailed(Value v, const char* typeName) {
+    char text[200];
+    std::snprintf(text, sizeof text, "Cannot convert a value of type '%s' to '%s'.", v.kind == K_Class ? className(asObj(v)->cls) : kindName(v), typeName);
+    fireError("ArgumentException", text);
+}
+
+/// A parameter or field declared with a class was given something else (DeclaredType.Mismatch of the VM): an ArgumentException.
+FIRE_COLD inline void guardClassFailed(Value v, const char* cls, const char* what) {
+    char text[300];
+    bool vowel = std::strchr("AEIOUaeiou", cls[0]) != nullptr;
+    std::snprintf(text, sizeof text, "%s is %s %s, not %s.", what, vowel ? "an" : "a", cls, v.kind == K_Class ? className(asObj(v)->cls) : kindName(v));
+    fireError("ArgumentException", text);
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Exceptions (SPEC 7): throw, try/catch/finally and resume.
@@ -1948,11 +2442,27 @@ inline Value indexError(const char* what, int64_t index, int64_t length) {
     Str* msg = allocStr((uint32_t)n, &unused);
     widenAscii(text, (uint32_t)n, strChars(msg));
     return throwValue(makeIndexError(StrV(msg), index, length));
+#elif defined(FIRE_LIBRARY)
+    (void)n;
+    return fireError("IndexOutOfBoundsException", text);   // the VM throws it as the exception of the program
 #else
     (void)n;
     fatal(text);
 #endif
 }
+
+#ifdef FIRE_EXCEPTIONS
+inline void unitConflictThrow(uint32_t from, uint32_t to) {
+    char text[240];
+    std::snprintf(text, sizeof text, "Incompatible units: '%s' cannot be converted to '%s'.", g_ud[from].name, g_ud[to].name);
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
+    char16_t buffer[240];
+    Value msg = newStrFrom(buffer, utf8ToUtf16(text, buffer, 240), &unused);
+    Value expected = newStrFrom(buffer, utf8ToUtf16(g_ud[to].name, buffer, 100), &unused);
+    Value actual = newStrFrom(buffer, utf8ToUtf16(g_ud[from].name, buffer, 100), &unused);
+    throwValue(makeUnitError(msg, expected, actual));
+}
+#endif
 
 inline void unitMismatch(Value v, Value expectedText) {
 #ifdef FIRE_EXCEPTIONS
@@ -1998,6 +2508,45 @@ inline Value fireError(const char* cls, const char* utf8) {
 }
 #endif
 
+/// The kind of a value as the VM names it (in the texts of the errors of calls and fields).
+inline const char* valueKindText(Value v) {
+    switch (v.kind) {
+        case K_Bool: return "Bool"; case K_Int: return "Int"; case K_Float: return "Float"; case K_Char: return "Char"; case K_String: return "String";
+        case K_Class: return "Class"; case K_Lambda: return "Lambda"; case K_Pointer: return "Pointer"; case K_Array: return "Array"; case K_Buffer: return "Buffer";
+        default: return "Undefined";
+    }
+}
+
+/// A method that the value does not have (a class that has it with other numbers of arguments is reported by the dispatcher itself): a MissingMemberException.
+FIRE_COLD inline Value missingMethod(Value self, const char* name, int argc) {
+    char text[400];
+    if (self.kind == K_Class) std::snprintf(text, sizeof text, "Method '%s' not found on '%s'.", name, className(asObj(self)->cls));
+    else std::snprintf(text, sizeof text, "'%s' (%d argument(s)) is not a known built-in method on a value of type %s.", name, argc, valueKindText(self));
+    return fireError("MissingMemberException", text);
+}
+
+/// A field that the value does not have: a MissingMemberException (the texts of the VM).
+FIRE_COLD inline Value missingField(Value v, const char* name) {
+    char text[400];
+    if (v.kind == K_Class) std::snprintf(text, sizeof text, "Field '%s' does not exist on an instance of '%s' (and there is no 'get_%s' property either).", name, className(asObj(v)->cls), name);
+    else if (v.kind == K_String) std::snprintf(text, sizeof text, "Strings have no field '%s' (only 'Length').", name);
+    else if (v.kind == K_Array) std::snprintf(text, sizeof text, "Arrays have no field '%s' (only 'Length').", name);
+    else {
+        // (not an object at all: an ArgumentException, like the VM)
+        if (v.kind == K_Buffer) std::snprintf(text, sizeof text, "Byte buffers have no field '%s' (only 'Length', 'littleEndian').", name);
+        else std::snprintf(text, sizeof text, "Field access on a value of type %s which is not an object.", valueKindText(v));
+        return fireError("ArgumentException", text);
+    }
+    return fireError("MissingMemberException", text);
+}
+
+/// An assignment to a field of something that is not an object: an ArgumentException (the text of the VM).
+FIRE_COLD inline void notObjectAssign(Value v) {
+    char text[200];
+    std::snprintf(text, sizeof text, "Field assignment on a value of type %s which is not an object.", valueKindText(v));
+    fireError("ArgumentException", text);
+}
+
 #ifdef FIRE_REFLECTION
 /// A reflection call that cannot be done: a ReflectionException, or the end of the program when there are no exceptions.
 inline Value rfFail(const char* utf8) {
@@ -2013,7 +2562,11 @@ inline Value rfFail(const char* utf8) {
 
 #ifdef FIRE_REFLECTION
 // ---- probes (SPEC 8.14): handlers for writes to the members of an object. An object with probes has flag 2; its setters look at them. -------
-struct ProbeEntry { int64_t id; char* member; bool changing; Value handler; };
+using ProbeRawSet = void (*)(Value obj, Value value, OwnList* list, uint32_t caller);
+using ProbeRawGet = Value (*)(Value obj, OwnList* list);
+/// A probe; on a computed property (a getter without a setter) `deps` (null-terminated) are the members its getter reads, `getter` evaluates it
+/// again and `last` is its value when it was last evaluated.
+struct ProbeEntry { int64_t id; char* member; bool changing; Value handler; const char* const* deps; ProbeRawGet getter; Value last; };
 struct ProbeNode {
     Obj* obj;
     ProbeEntry* entries; uint32_t n, cap;
@@ -2036,6 +2589,7 @@ inline ProbeNode* probeNodeOf(Obj* o, bool create) {
 }
 inline void probeRemoveAt(ProbeNode* node, uint32_t i) {
     release(node->entries[i].handler);
+    release(node->entries[i].last);
     std::free(node->entries[i].member);
     for (uint32_t k = i + 1; k < node->n; k++) node->entries[k - 1] = node->entries[k];
     node->n--;
@@ -2051,7 +2605,7 @@ inline void probeFree(Obj* o) {
             return;
         }
 }
-inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value handler) {
+inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value handler, const char* const* deps = nullptr, ProbeRawGet getter = nullptr, Value last = {K_Undefined, 0, 0, 0, {0}}) {
     ProbeNode* node = probeNodeOf(o, true);
     if (node->n == node->cap) {
         node->cap = node->cap ? node->cap * 2 : 4;
@@ -2065,6 +2619,10 @@ inline int64_t probeAddEntry(Obj* o, const char* member, bool changing, Value ha
     e.changing = changing;
     e.handler = handler;
     retain(handler);
+    e.deps = deps;
+    e.getter = getter;
+    e.last = last;
+    retain(last);
     return e.id;
 }
 /// `silence obj.member` (member null: all probes of the object).
@@ -2079,9 +2637,6 @@ inline void probeSilenceHandle(int64_t id) {
     for (ProbeNode* p = g_probeNodes; p; p = p->next)
         for (uint32_t i = 0; i < p->n; i++) if (p->entries[i].id == id) { probeRemoveAt(p, i); return; }
 }
-
-using ProbeRawSet = void (*)(Value obj, Value value, OwnList* list, uint32_t caller);
-using ProbeRawGet = Value (*)(Value obj, OwnList* list);
 
 /// The handler gets (new), (old, new), (object, old, new) or (object, name, old, new) by its number of parameters.
 inline Value probeRun(const ProbeEntry& e, Value obj, const char* name, Value oldValue, Value newValue, OwnList* list) {
@@ -2128,6 +2683,26 @@ inline void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw,
                 if (e.changing || (e.member && std::strcmp(e.member, name) != 0)) continue;
                 probeRun(e, obj, name, oldValue, value, &local);
             }
+        // the probes on computed properties that read this member: their getter again, `changed` when the value is another
+        for (uint32_t i = 0; i < node->n && !g_unwind.active; i++) {
+            ProbeEntry e = node->entries[i];
+            bool depends = false;
+            if (e.deps) for (const char* const* d = e.deps; *d; d++) if (std::strcmp(*d, name) == 0) { depends = true; break; }
+            if (!depends) continue;
+            bool running = false;
+            for (uint32_t k = 0; k < node->nrunning; k++) if (std::strcmp(node->running[k], e.member) == 0) running = true;
+            if (running || node->nrunning >= 8) continue;
+            node->running[node->nrunning++] = e.member;
+            Value now = e.getter(obj, &local);
+            if (!g_unwind.active && !eq(e.last, now)) {
+                Value old = e.last;
+                retain(now);
+                node->entries[i].last = now;   // (before the handler: it may add probes and move the entries)
+                probeRun(e, obj, e.member, old, now, &local);
+                release(old);
+            }
+            for (uint32_t k = 0; k < node->nrunning; k++) if (node->running[k] == e.member) { node->running[k] = node->running[--node->nrunning]; break; }
+        }
     }
     for (uint32_t i = 0; i < node->nrunning; i++) if (node->running[i] == name) { node->running[i] = node->running[--node->nrunning]; break; }
     leave(&local);
@@ -2200,6 +2775,24 @@ inline void setDefaultTimeout(Value t) {
 /// Generated: builds a DestroyedException (message) owned by the global scope.
 Value makeDestroyedError(Value message);
 
+/// Generated: builds a DivideByZeroException (message) owned by the global scope.
+Value makeDivideError(Value message);
+
+inline Value divideByZero() {
+#ifdef FIRE_EXCEPTIONS
+    OwnList unused = {nullptr, nullptr, 0, 0, nullptr, nullptr};
+    const char* text = "Division by zero.";
+    uint32_t n = (uint32_t)std::strlen(text);
+    Str* msg = allocStr(n, &unused);
+    widenAscii(text, n, strChars(msg));
+    return throwValue(makeDivideError(StrV(msg)));
+#elif defined(FIRE_LIBRARY)
+    return fireError("DivideByZeroException", "Division by zero.");
+#else
+    fatal("Division by zero.");
+#endif
+}
+
 inline Value destroyedError(Value leaf) {
     const char* text = leaf.kind == K_Buffer ? "Access to a destroyed buffer." : leaf.kind == K_Class ? "Access to a destroyed object." : "Access to a destroyed array.";
 #ifdef FIRE_EXCEPTIONS
@@ -2237,7 +2830,10 @@ inline Value arrayGet(Value a, Value i) {
         if ((uint64_t)i.i >= s->length) return indexError("String index", i.i, s->length);
         return Char(s->data[i.i]);
     }
-    fatal("Index access ('[]') is not possible on this value.");
+    char text[160];
+    std::snprintf(text, sizeof text, "Index access ('[]') on a value of type %s is not possible (neither an array nor a class with a 'GetIndex' method).", coerceKindName(a.kind));
+    fireError("ArgumentException", text);
+    return Undef();
 }
 
 /// `a[i] = v`; the array holds a count of the new element and lets go of the old one.
@@ -2261,8 +2857,10 @@ inline void arraySet(Value a, Value i, Value v) {
         b->bytes()[i.i] = (uint8_t)v.i;
         return;
     }
-    if (a.kind == K_String) fatal("Strings are immutable.");
-    fatal("Index access ('[]') is not possible on this value.");
+    if (a.kind == K_String) { fireError("ArgumentException", "Strings are immutable - 's[i] = ...' is not possible (Replace/Substring return a new string)."); return; }
+    char text[160];
+    std::snprintf(text, sizeof text, "Index assignment ('[]=') on a value of type %s is not possible (neither an array nor a class with a 'SetIndex' method).", coerceKindName(a.kind));
+    fireError("ArgumentException", text);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -3393,6 +3991,15 @@ inline void sectionRelease() {
     if (--r->refs == 0) delete r;
 }
 inline void sectionAbort() { if (g_curSection) { g_secDepth = 0; sectionRelease(); } }
+/// Waiting for something else (Sleep, a device, ...) inside a section: the thread gives its section back for the time of the wait - else
+/// the main program, which grants sections only while it waits itself, would be held as long as the thread waits - and takes it again afterwards.
+struct SectionYield {
+    int32_t held = 0;
+    SectionYield() { if (g_isThread && g_secDepth > 0) { held = g_secDepth; g_secDepth = 0; sectionRelease(); } }
+    ~SectionYield() { if (held > 0) { sectionAcquire(); g_secDepth = held; } }
+    SectionYield(const SectionYield&) = delete;
+    SectionYield& operator=(const SectionYield&) = delete;
+};
 /// One change of the shared domain from a thread: the section lasts as long as this object lives.
 struct SectionScope {
     bool entered = false;
@@ -3687,16 +4294,13 @@ inline int64_t syncGlobals() {
 /// what the threads leave for it (sections, jobs, their exceptions) while it sleeps; whatever that raises ends the sleep.
 inline void sleepTicks(int64_t ticks) {
     if (ticks <= 0) { gilYield(); return; }
-    // A thread sleeping inside a method of a shared object gives its section back for the sleep (else the main program, which only
-    // grants sections while it waits, would starve behind a polling thread) and takes it again afterwards.
-    int32_t heldDepth = 0;
-    if (g_isThread && g_secDepth > 0) { heldDepth = g_secDepth; g_secDepth = 0; sectionRelease(); }
+    // a thread sleeping inside a method of a shared object gives its section back for the sleep
+    SectionYield yield;
     int64_t deadline = steadyMs() + (ticks + TICKS_PER_MS - 1) / TICKS_PER_MS;
     blockUntil([] {
         if (!g_isThread) mainPoll();
         return g_unwind.active != 0;
     }, true, deadline);
-    if (heldDepth > 0) { sectionAcquire(); g_secDepth = heldDepth; }
 }
 
 /// The end of the main program: `terminate` runs its handler, then the main program waits for the fire threads (serving what they

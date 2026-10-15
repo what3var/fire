@@ -17,6 +17,13 @@ namespace fire.Runtime
         public bool IsChanging { get; init; }
 
         public LambdaValue Handler { get; init; } = null!;
+
+        /// <summary>A probe on a computed property (SPEC 8.14): the fields and settable properties its getter depends on (RuntimeClass.ComputedSources);
+        /// a write to one of them evaluates the getter again. null for every other probe.</summary>
+        public IReadOnlyCollection<string>? Sources { get; init; }
+
+        /// <summary>The value of the computed property when it was last evaluated (the `old` of the next change).</summary>
+        public Value LastValue { get; set; }
     }
 
     /// <summary>The probes of ONE object (see <see cref="ObjectInstance.Probes"/>). Thread-safe: probes can be set and
@@ -65,8 +72,18 @@ namespace fire.Runtime
         {
             lock (_gate)
                 foreach (var e in _entries)
-                    if (e.Member == null || e.Member == member) return true;
+                    if (e.Member == null || e.Member == member || e.Sources != null && e.Sources.Contains(member)) return true;
             return false;
+        }
+
+        /// <summary>The probes on computed properties that depend on `member`, in the order of their registration.</summary>
+        public List<ProbeEntry> DependentsOf(string member)
+        {
+            var result = new List<ProbeEntry>();
+            lock (_gate)
+                foreach (var e in _entries)
+                    if (e.Sources != null && e.Sources.Contains(member)) result.Add(e);
+            return result;
         }
 
         /// <summary>Snapshot of the matching probes in the order of their registration.</summary>

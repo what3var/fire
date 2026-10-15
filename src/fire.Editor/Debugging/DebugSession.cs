@@ -178,7 +178,7 @@ namespace fire.Editor
                 LastDiagnostics = warnings.Items.ToList();
                 return true;
             }
-            catch (Exception ex) when (ex is ParseException or LexException or ResolverException
+            catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
                 or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
             {
                 // All collected errors (the resolver/compiler do not stop at the

@@ -9,8 +9,7 @@ namespace fire.Values
     ///
     /// Access deliberately WITHOUT C# exceptions for the invalid-index case (see
     /// TryGet/TrySet) - return value/out parameter instead of throw/catch, so that
-    /// the same logic can be transferred 1:1 to C++ (goal: FreeRTOS port, see
-    /// docs/PORTING.md), where exceptions in embedded
+    /// the same logic can be transferred 1:1 to C++ (the native runtime, also on FreeRTOS), where exceptions in embedded
     /// environments are often switched off entirely. The VM (see VM.ArrayGet/
     /// ArraySet) turns a `false` here into a proper, catchable
     /// fire `IndexOutOfBoundsException` (VM.ThrowIndexOutOfBounds) -

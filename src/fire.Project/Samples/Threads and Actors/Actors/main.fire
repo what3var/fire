@@ -5,7 +5,7 @@
 actor Logger {
     int count
     construct() { this.count = 0 }
-    log(string message) {
+    undefined log(string message) {
         this.count = this.count + 1
         print("log " + this.count + ": " + message)
     }
