@@ -80,8 +80,15 @@ too: the type "kind or undefined" runs the C++ operation behind a test of the ki
 function throws for `undefined`). The result of a call of a function whose `return`s were not seen yet is "nothing yet" (it joins to the other side),
 and which scopes need an ownership list is found again in every round, so a type that becomes known later still makes the code lean.
 
-Not yet: direct calls on a receiver of a proven class; fields by index without the `gf_` switch; unboxed C++ locals (`int64_t`/`double` instead of
-`Value`); typed opcodes in the VM.
+Objects of a known class: `new C(...)` and `this` in a method of `C` give the type "an object of `C` or of a class derived from it", carried
+through variables like the other types. A field of such an object is read and written by its index (the fields of a base class come first, so the index
+is the same in every derived class; the declaration's unit and kind checks stay, unless the stored value's type already fits), and a method that no
+derived class overrides is called directly instead of through the dispatcher (a destroyed object still throws). An object with probes (its flag 2)
+is written through the setter, which tells them - one compare per write, every other object is written by the index. Properties, members with an
+access check, ownership methods and programs with threads or actors keep the helpers.
+
+Not yet: object types for parameters and fields (they would need the guard of step 2 for classes: `is of` on every assignment); unboxed C++ locals
+(`int64_t`/`double` instead of `Value`); typed opcodes in the VM.
 
 ## Decisions
 

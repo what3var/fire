@@ -14461,6 +14461,80 @@ else
             print(H.t)
             print(H.Get())
             """),
+        ("Objekte bekannter Klasse: direkte Aufrufe (ohne Override), Felder per Index (auch geerbt), zerstoerte Objekte werfen weiter", """
+            class Animal { string name
+              int legs = 4
+              construct(string n) { this.name = n }
+              string Speak() { return "..." }
+              string Describe(string prefix = ">") { return prefix + this.name + " " + this.Speak() + " " + this.legs }
+              int Legs() { return this.legs } }
+            class Dog : Animal { construct(string n) : base(n) { }
+              string Speak() { return "Woof" } }
+            class Bird : Animal { construct(string n) : base(n) { this.legs = 2 } }
+            Animal a = new Animal("generic")
+            Dog d = new Dog("Rex")
+            Bird b = new Bird("Tweety")
+            print(a.Describe())
+            print(d.Describe("* "))
+            print(b.Describe())
+            print(a.Legs() + d.Legs() + b.Legs())
+            var x = new Dog("Max")
+            print(x.Speak() + " " + x.name + " " + x.legs)
+            x.legs = 3
+            print(x.Legs())
+            class Box { int v = 1
+              int Get() { return this.v }
+              undefined Set(int n) { this.v = n } }
+            Box bx = new Box()
+            bx.Set(41)
+            print(bx.Get() + 1)
+            try { bx.v = "s" } catch (ArgumentException e) { print(e.message) }
+            class Counter { int count = 0
+              undefined Tick() { this.count = this.count + 1 } }
+            Counter c = new Counter()
+            for (int i = 0; i < 1000; i++) { c.Tick() }
+            print(c.count)
+            class Holder { Box inner
+              construct() { this.inner = new Box() } }
+            Holder h = new Holder()
+            h.inner.Set(7)
+            print(h.inner.Get())
+            class Temp { int t = 5 }
+            Temp tmp = new Temp()
+            delete tmp
+            try { print(tmp.t) } catch (Exception e) { print("destroyed: " + e.message) }
+            try { tmp.t = 3 } catch (Exception e) { print("destroyed2: " + e.message) }
+            class Keep { Box b
+              undefined Fill() { { Box local = new Box()
+                  this.b = local }
+                print(this.b.Get()) } }
+            Keep k = new Keep()
+            try { k.Fill() } catch (Exception e) { print("gone: " + e.message) }
+            """),
+        ("Auto-Properties mit Initialwert; Probes auf Feldern bleiben (nur ein beobachtetes Objekt nimmt den Setter, die anderen schreiben per Index)", """
+            class Counter {
+                int Count { get; set; } = 5
+                string Label { get; } = "c" + 1
+                float:m Len { get; set; } = 2m
+                static int Total { get; set; } = 100
+                int plain = 1
+            }
+            var c = new Counter()
+            print(c.Count + " " + c.Label + " " + c.Len + " " + Counter.Total)
+            c.Count++
+            c.Len = 30cm
+            print(c.Count + " " + c.Len)
+            var h = probe c.plain changed { print("plain: " + old + " -> " + value) }
+            var h2 = probe c.Count changed { print("Count: " + old + " -> " + value) }
+            c.plain = 2
+            c.Count = 9
+            var d = new Counter()
+            d.plain = 7
+            print(d.plain)
+            silence c
+            c.plain = 3
+            print(c.plain)
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))

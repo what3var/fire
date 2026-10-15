@@ -275,7 +275,8 @@ namespace fire.Native
         // Static types of values: what a stack slot or a variable certainly holds - an int, a float or a bool without a bit width, and the unit
         // of the number (its UnitId, 0: none), packed as `kind | unit << 8`; with NullableBit it may also be `undefined` (a parameter or field
         // declared int/float/bool, DeclaredKind); TypeUndefined is `undefined` only; TypeUnknown (0) is everything else.
-        private const byte KindInt = 1, KindFloat = 2, KindBool = 3, KindUnknown = 0;
+        // KindObj: an object of a class or of a class derived from it (the class is an index into _objTypeNames, where a number has its unit)
+        private const byte KindInt = 1, KindFloat = 2, KindBool = 3, KindObj = 4, KindUnknown = 0;
         // TypeNone: nothing yet - the result of a call of a function none of whose `return`s was seen yet (in the last round: one that never returns,
         // the code after the call does not run); it joins to the other side, and whatever is computed from it is TypeNone, too.
         private const int TypeUnknown = 0, NullableBit = 0x10, TypeUndefined = NullableBit, TypeNone = 0x20;
@@ -286,6 +287,71 @@ namespace fire.Native
         private static byte BaseKindOfType(int type) => (byte)(type & 0x0F);
         private static bool IsNullable(int type) => (type & NullableBit) != 0;
         private static int UnitOfType(int type) => type >> 8;
+        /// <summary>A number, a bool, undefined or nothing yet: a value that belongs to no scope (no ownership bookkeeping).</summary>
+        private static bool IsPlainType(int type) => type is TypeNone or TypeUndefined || BaseKindOfType(type) is KindInt or KindFloat or KindBool;
+
+        private readonly List<string> _objTypeNames = new();
+        private readonly Dictionary<string, int> _objTypeIndex = new();
+        /// <summary>The type "an object of this class or of a class derived from it".</summary>
+        private int ObjType(RuntimeClass rc)
+        {
+            if (!_objTypeIndex.TryGetValue(rc.Name, out int index)) { index = _objTypeNames.Count; _objTypeNames.Add(rc.Name); _objTypeIndex[rc.Name] = index; }
+            return TypeOf(KindObj, index);
+        }
+        private RuntimeClass ObjClass(int type) => FindClass(_objTypeNames[UnitOfType(type)]);
+        /// <summary>The classes of the program (that are created) an object of type `rc` can be: rc and the classes derived from it.</summary>
+        private IEnumerable<ClassInfo> InstancesOf(RuntimeClass rc) => _classList.Where(c => ClassIs(c.Rc, rc.Name));
+
+        /// <summary>The index of field `name` in every object an `rc` can be (the fields of a base class come first, so it is the same in derived
+        /// classes); null when a property, an access check or the threads (sections) need the field helpers, or the index differs.</summary>
+        private int? DirectFieldIndex(RuntimeClass rc, string name)
+        {
+            if (_usesThreads || HasProperty(name) || RestrictedField(name)) return null;
+            int? index = null;
+            foreach (var c in InstancesOf(rc))
+            {
+                if (!c.Rc.FieldIndex.TryGetValue(name, out int i) || index is { } known && known != i) return null;
+                index = i;
+            }
+            return index;
+        }
+
+        /// <summary>`obj.name = value` on an object of a known class: the checks of the field's declaration (unit, kind) and the store by index, like sf_
+        /// (a destroyed object throws first); null when the field helpers are needed.</summary>
+        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType)
+        {
+            if (DirectFieldIndex(rc, name) is not int index) return null;
+            string? unit = rc.FindFieldRequiredUnit(name);
+            byte kind = rc.FindFieldRequiredKind(name);
+            // a value whose type already is what the declaration demands needs no check (a number of the declared kind in its unit, or a bool)
+            if (kind != 0 && !IsNullable(valueType) && KindOfType(valueType) == KindOfDeclared(kind) && valueType != TypeNone)
+            {
+                int demanded = unit != null ? DemandedUnitId(unit) : DeclaredKind.IsUnitless(kind) ? 0 : -1;
+                if (KindOfDeclared(kind) == KindBool || demanded >= 0 && UnitOfType(valueType) == demanded) { unit = null; kind = 0; }
+            }
+            string checks = (unit != null ? $"x = {AdaptUnitCall("x", unit)}; " : "")
+                + (kind != 0 ? FieldKindCheck(name, kind) + " " : "");
+            string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
+            // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
+            string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
+            return $"{{ Value x = {value}; if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); {probed}else {{ {checks}{store} }} }}";
+        }
+
+        /// <summary>The one method `name(argc)` every object an `rc` can be runs (no derived class overrides it); null when there is none, several, an
+        /// access check, an ownership method or the threads (actors, sections) need the dispatcher.</summary>
+        private FunctionProto? DirectMethod(RuntimeClass rc, string name, int argc)
+        {
+            if (_usesThreads || _usesActors || RestrictedMethodName(name) || OwnMethodId(name, argc) != null) return null;
+            FunctionProto? proto = null;
+            foreach (var c in InstancesOf(rc))
+            {
+                var m = c.Rc.FindMethodWithAccess(name, argc).Proto;
+                if (m is not { IsStatic: false } || proto != null && !ReferenceEquals(proto, m)) return null;
+                proto = m;
+            }
+            return proto;
+        }
+
         /// <summary>Where two types meet: the same type, a type and `undefined` (nullable), else unknown.</summary>
         private static int JoinTypes(int a, int b)
         {
@@ -923,7 +989,7 @@ namespace fire.Native
             parameters.AddRange(Enumerable.Range(0, argc).Select(i => $"Value a{i}"));
             if (DispatchNeedsList(name, argc)) parameters.Add("OwnList* list");
             if (RestrictedMethodName(name)) parameters.Add("uint32_t caller");
-            return $"static Value {prefix}{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";
+            return $"[[maybe_unused]] static Value {prefix}{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";   // (direct calls can leave a dispatcher unused)
         }
 
         /// <summary>The program has actors: a call of a method on one is a message (SPEC / THREADING_DESIGN 2). The dispatcher that runs the method is then
@@ -2107,8 +2173,9 @@ namespace fire.Native
             // After a call: whatever came back belongs to the innermost scope now - unless it is certainly a number or a bool (the static return type).
             void AdoptResult(int slot, int type = TypeUnknown)
             {
-                if (type != TypeUnknown) { SetR(slot, false); SetT(slot, type); _kindsKept = true; return; }
+                if (IsPlainType(type)) { SetR(slot, false); SetT(slot, type); _kindsKept = true; return; }
                 E($"adopt({S(slot)}, &{OwnerList()});"); SetR(slot, true);
+                if (type != TypeUnknown) { SetT(slot, type); _kindsKept = true; }   // (an object of a known class)
             }
             // The list for the default values of a call that leaves out arguments (only then the scope needs one).
             string DefaultsList(FunctionProto proto, int argc) => argc < proto.ParamCount ? "&" + OwnerList() : "";
@@ -2695,13 +2762,21 @@ namespace fire.Native
                 // Objects
                 // ---------------------------------------------------------------------------------------------------
                 case OpCode.LoadThis:
-                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, IsExtensionMethod(f.Proto)); d++; return Next();
+                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, IsExtensionMethod(f.Proto));
+                    if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } thisClass) { SetT(d, ObjType(thisClass)); _kindsKept = true; }
+                    d++; return Next();
                 case OpCode.GetField:
                 {
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
+                    if (K(d - 1) == KindObj && DirectFieldIndex(ObjClass(Ty(d - 1)), field) is int fieldIndex)
+                    {
+                        // an object of a known class: the field by its index (a destroyed object throws, like gf_)
+                        E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objAt({S(d - 1)})->fields()[{fieldIndex}] : destroyedError({S(d - 1)});");
+                        Check();
+                    }
+                    else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});"); Check(); }   // (a destroyed object throws)
                     int fieldType = FieldType(field);
                     if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); _kindsKept = true; }
@@ -2713,7 +2788,8 @@ namespace fire.Native
                     Need(2);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
+                    if (K(d - 2) == KindObj && DirectSetField(ObjClass(Ty(d - 2)), field, S(d - 2), S(d - 1), Ty(d - 1)) is { } direct) E(direct);
+                    else E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
                     SetR(d - 2, R(d - 1));
@@ -2724,7 +2800,8 @@ namespace fire.Native
                     Need(1); RequireSelf();
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    E($"sf_{Mangle(field)}(self, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
+                    if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass && DirectSetField(selfClass, field, "self", S(d - 1), Ty(d - 1)) is { } direct) E(direct);
+                    else E($"sf_{Mangle(field)}(self, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
                 }
@@ -2756,6 +2833,7 @@ namespace fire.Native
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
+                    SetT(slot, ObjType(cls.Rc)); _kindsKept = true;
                     d = slot + 1; return Next();
                 }
                 case OpCode.ConstructBase:
@@ -2823,8 +2901,23 @@ namespace fire.Native
                         SetR(slot, false);
                         d = slot + 1; return Next();
                     }
+                    bool passesAddresses = Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3);
+                    if (K(slot) == KindObj && !passesAddresses && !(_usesReflection && ReflectionMethodNames.Contains(method))
+                        && DirectMethod(ObjClass(Ty(slot)), method, argc) is { } directProto)
+                    {
+                        // an object of a known class whose method no derived class overrides: the method itself, not the dispatcher (a destroyed object throws, like there)
+                        var target = GetFunc(directProto, FuncKind.Method);
+                        long mask = ArgMask();
+                        ArgsBefore(d - argc, argc, mask);
+                        var (dpre, dargs) = DefaultArgs(directProto, argc, S(slot), DefaultsList(directProto, argc));
+                        E($"{{ {dpre}if (FIRE_UNLIKELY(!leafAlive({S(slot)}))) {S(slot)} = destroyedError({S(slot)}); else {S(slot)} = {target.Name}({S(slot)}{CallArgs(d - argc, argc, mask, directProto.RefMask)}{dargs}); }}");
+                        ArgsAfter(argc, mask, S(slot));
+                        Check();
+                        AdoptResult(slot, ReturnType(target));
+                        d = slot + 1; return Next();
+                    }
                     _dispatchers.Add((method, argc));
-                    if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3)) _refCallSites.Add((method, argc));
+                    if (passesAddresses) _refCallSites.Add((method, argc));
                     int resultType = DispatchResultType(method, argc);
                     string extra = DispatchTail(method, argc, DispatchNeedsList(method, argc) ? "&" + OwnerList() : "", CallerId(f));
                     long dmask = ArgMask();
@@ -3034,7 +3127,7 @@ namespace fire.Native
                 {
                     Need(1);
                     _kindsKept = true;
-                    if (Ty(d - 1) != TypeUnknown) return Next();   // a number or a bool belongs to no scope
+                    if (IsPlainType(Ty(d - 1))) return Next();   // a number or a bool belongs to no scope
                     string target = ListName(st.Scopes[0].Id);
                     f.NeedsList.Add(st.Scopes[0].Id);
                     for (int i = 1; i < st.Scopes.Count; i++)

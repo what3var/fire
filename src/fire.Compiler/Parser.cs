@@ -2442,6 +2442,17 @@ namespace fire.Compiler
             if (getter == null && !getterIsAuto && setter == null && !setterIsAuto)
                 throw Error($"Property '{name}' needs at least 'get' or 'set'", Peek());
 
+            // `int Count { get; set; } = 5`: the initial value of an auto-property goes to its backing field (like the initializer of a field)
+            Expr? initializer = null;
+            if (Check(TokenType.Assign))
+            {
+                if (!getterIsAuto && !setterIsAuto)
+                    throw Error($"Only an auto-property ('get;' or 'set;') can have an initial value - '{name}' has no backing field", Peek());
+                Advance();
+                initializer = ParseExpression();
+                ExpectStatementTerminator();
+            }
+
             var result = new List<Stmt>();
 
             if (getterIsAuto || setterIsAuto)
@@ -2465,7 +2476,7 @@ namespace fire.Compiler
                 // never directly from outside ('this._AutoName' stays
                 // still normally allowed INSIDE the class).
                 string backingName = "_Auto" + name;
-                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, null, IsReadonly: false,
+                result.Add(new FieldDecl(_sourceIndex, line, type, Array.Empty<Expr?>(), backingName, initializer, IsReadonly: false,
                     Access: AccessModifier.Private, IsStatic: isStatic));
 
                 // Static: backing field via 'ClassName.field' instead of

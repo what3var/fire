@@ -1710,6 +1710,9 @@ class Person {
 }
 ```
 
+An auto-property can have an initial value like a field: `int Count { get; set; } = 5` (it initializes the backing field; a property
+with explicit accessors only has none).
+
 `get;`/`set;` (without a body of their own, with `;` instead of `{ ... }`) are a
 short form that automatically creates a **backing field** together with a trivial getter/
 setter - pure parser sugar, desugared completely to exactly the form

@@ -155,7 +155,7 @@ print(t.celsius)        // 100
 print(t.Freezing)       // False
 ```
 
-**Auto-properties** create the field themselves: `string Name { get; set; }`. The hidden field is called `_AutoName`; a get-only auto-property is
+**Auto-properties** create the field themselves: `string Name { get; set; }`, with an initial value `int Count { get; set; } = 5`. The hidden field is called `_AutoName`; a get-only auto-property is
 set through it in the constructor:
 
 ```fire

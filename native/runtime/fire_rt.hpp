@@ -1154,6 +1154,8 @@ inline Obj* asObj(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Class)) fatal("A member was accessed on something that is not an object.");
     return static_cast<Obj*>(const_cast<void*>(v.p));
 }
+/// The object of a value the generator proved to be one (an object of a known class).
+inline Obj* objAt(Value v) { return static_cast<Obj*>(const_cast<void*>(v.p)); }
 
 #ifdef FIRE_THREADS
 inline bool g_domainOn = false;   // a fire thread exists: the objects of the global scope are the shared domain (flag 64)
@@ -1464,12 +1466,20 @@ inline void unitMismatch(Value v, Value expectedText);
 /// CheckUnit (Value.AdaptToUnit): a declaration with a unit takes `v` - a value of the same dimension is converted into `unit`, `undefined` takes it; with
 /// `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float. Another dimension is an UnitMismatchException, a whole number that does not fit any
 /// more after the conversion an OverflowException. Values without a unit (strings, objects) are left alone.
+/// `obj.field = x` by the index of the field (the object is alive; the generated code checked the declaration of the field): like the sf_ helpers.
+inline void setFieldAt(Value v, uint32_t index, Value x) {
+    Obj* o = objAt(v);
+    Value old = o->fields()[index];
+    o->fields()[index] = x;
+    retain(x);
+    release(old);
+}
+
 /// A parameter or field declared int/float/bool (DeclaredKind): a value of that kind or undefined; a whole number for a float becomes one, anything
 /// else is an ArgumentException (the generated code then looks at the unwinding flag). `unitless`: declared without a unit - a number with one is
 /// converted like adaptUnit(v, unitless) first (another dimension is a UnitMismatchException).
 inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText);
-inline Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
-    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0)) return v;
+FIRE_COLD inline Value guardKindSlow(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
     if (v.kind == K_Undefined) return v;
     if (unitless && (v.kind == K_Int || v.kind == K_Float) && v.unit != 0) {
         v = adaptUnit(v, 0, false, false, unitlessText);
@@ -1482,6 +1492,10 @@ inline Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, V
     std::snprintf(text, sizeof text, "%s is %s, not %s.", what, kind == K_Int ? "an int" : kind == K_Float ? "a float" : "a bool", coerceKindName(v.kind));
     fireError("ArgumentException", text);
     return Undef();
+}
+inline Value guardKind(Value v, uint8_t kind, bool unitless, const char* what, Value unitlessText) {
+    if (FIRE_LIKELY(v.kind == kind) && (!unitless || v.unit == 0)) return v;
+    return guardKindSlow(v, kind, unitless, what, unitlessText);
 }
 
 /// A float declaration that takes every unit (`#any`): a whole number becomes a float, the unit stays.
