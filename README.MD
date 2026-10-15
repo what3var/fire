@@ -25,7 +25,9 @@ You should study the other documentation available if youre interested in detail
 Or just download it, compile it and have a look.
 
 [First Steps](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/First%20Steps.md)
+
 [The fire language - reference with examples and exercises](https://github.com/what3var/fire/blob/master/docs/language/README.md)
+
 [Embedding](https://github.com/what3var/fire/blob/master/src/fire.Editor/Help/Embedding.md)
 
 ## Screenshots
