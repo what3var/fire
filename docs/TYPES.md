@@ -102,7 +102,17 @@ is known is checked exactly (`Box<int>`: only an int - a whole number for a `flo
 calls a copy of the method made for them, in which those parameters are numbers of that kind without a unit - typed operations instead of generic
 ones; the call site tests the arguments when their types do not already say so and calls the generic method otherwise (`5cm` through `any`). One
 copy per method and type arguments, object types share the generic one. 30M calls of `Max`/`Clamp`/`Sum3` with ints and floats: 0.96 s -> 0.09 s.
-A type parameter found to be `int` becomes `float` when a later argument is a float (`Max(2, 3.5)`).
+A type parameter found to be `int` becomes `float` when a later argument is a float (`Max(2, 3.5)`), and the whole number is converted at the call,
+so the call takes the float copy. Copies are also made for the constant type arguments of classes (`new Acc<int>()`, `class IntBox : Box<int>`,
+passed on to base classes) and for the calls the program makes; a generic method starts with a **trampoline** that sends a call whose type
+arguments and arguments fit a copy there - so calls through the dispatcher, lambdas and generic code reach the copies too. Methods of
+`Acc<int>`/`Acc<float>`, partly through `any`: 0.30 s -> 0.20 s for 25M calls.
+A type parameter of the running method or class is passed on as a type argument (`Outer<V>` calling `Nested(v, 3)`, a generic class passing
+`item` or `this.item`); inside a lambda it is not.
+
+**Local variables** are checked at run time where the type checker cannot prove their declaration (`int x = someAny`, `Dog d = animal`,
+`T w = other`; a conflict it reports stays a warning in lax mode, and the program runs on as before): `ResolveResult.LocalGuards` marks the value, the compiler emits `GuardTop` (int/float/bool, without a unit demand - a local
+takes the unit of its value) or `GuardTopType` (DeclaredType). A value whose static type already fits is not checked, so typed code pays nothing.
 Their type "object of the class or undefined" reaches the
 fields and methods directly, too - the object is tested to be one (`kind == K_Class`), and `undefined` takes the helper, which reports it. A
 comparison with `undefined` of a number, a bool or an object of a known class is a test of the kind (unless a class overloads `==`). A linked

@@ -48,6 +48,9 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float, `Parameter 'v' is a T (int), not String.`). Without a known
   type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
   `any` and `class` are not checked.
+- A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot
+  prove for it (from `any`, a downcast; a conflict it reports is a warning in lax mode and stays unchecked) is checked when it is assigned (`ArgumentException`: `Variable 'x' is an int, not String.`). Unlike a
+  parameter or a field, a local takes the unit of its value (SPEC 3.5).
 
 ```
 var x = 1;              // int, unitless

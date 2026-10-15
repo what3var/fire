@@ -59,6 +59,10 @@ namespace fire.Compiler
         /// <summary>The type arguments the type checker found for a call of a generic method (`Box.Of(5)`: `int`), as DeclaredType texts ("" for one that
         /// is not known): the compiler gives them to the call (SetTypeArgs), the native generator can specialise the method for them. Filled by TypeChecker.</summary>
         public Dictionary<Expr, string[]> MethodTypeArgs { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>Values going into a local variable (declaration or assignment) whose type the type checker could not prove for its declaration
+        /// (`int x = someAny`, `Dog d = animal`, `T item = v`): the compiler checks them at runtime (GuardTop/GuardTopType). Filled by TypeChecker.</summary>
+        public Dictionary<Expr, (TypeRef Type, string What)> LocalGuards { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }

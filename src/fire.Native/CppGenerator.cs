@@ -109,7 +109,7 @@ namespace fire.Native
         private readonly Dictionary<FunctionProto, Func> _funcByProto = new(ReferenceEqualityComparer.Instance);
         private readonly List<Func> _funcs = new();
         /// <summary>The specialised copies of generic methods, by method and type arguments (see Specialize).</summary>
-        private readonly Dictionary<(FunctionProto, string), Func> _specFuncs = new();
+        private readonly Dictionary<(FunctionProto, string Key), Func> _specFuncs = new();
         private readonly Dictionary<string, ClassInfo> _classes = new();
         private readonly List<ClassInfo> _classList = new();
         private readonly SortedSet<(string Name, int Argc)> _dispatchers = new();
@@ -248,35 +248,137 @@ namespace fire.Native
         private (Func Target, string? Condition) Specialize(Func f, Instr ins, Func generic, int firstArg, int argc, System.Func<int, string> slot, System.Func<int, int> slotType)
         {
             if (generic.Proto is not { } proto || CallTArgsText(f, ins) is not { } text || text.Contains('$')) return (generic, null);
-            var parts = text.Split('|');
+            var specParams = SpecParamsFor(proto, "", text.Split('|'));
+            if (specParams == null || specParams.Any(p => p.Slot >= argc)) return (generic, null);   // (a default value: its kind is not known here)
+            var spec = SpecFunc(generic, "m:" + text, text, specParams);
+            var conditions = new List<string>();
+            foreach (var (param, kind) in specParams)
+                if (slotType(firstArg + param) != TypeOf(kind, 0)) conditions.Add(KindTest(slot(firstArg + param), kind));
+            return (spec, conditions.Count == 0 ? null : string.Join(" && ", conditions));
+        }
+
+        /// <summary>The parameters of a generic method that a copy for these type arguments types: those declared with a type parameter of the method
+        /// (`owner` "") or of class `owner` whose type argument is int, float or bool; null when there is none.</summary>
+        private static List<(int Slot, byte Kind)>? SpecParamsFor(FunctionProto proto, string owner, string[] parts)
+        {
             var specParams = new List<(int Slot, byte Kind)>();
             foreach (var c in OpInfo.Decode(proto.Chunk.Code))
             {
                 if (c.Op != OpCode.GuardLocalType) continue;
                 var spec = DeclaredType.Parse(proto.Chunk.Constants[c.A[1]].AsString());
-                if (spec.TypeParamIndex < 0 || spec.TypeParamClass!.Length > 0 || spec.TypeParamIndex >= parts.Length) continue;
+                if (spec.TypeParamIndex < 0 || spec.TypeParamClass != owner || spec.TypeParamIndex >= parts.Length) continue;
                 byte kind = parts[spec.TypeParamIndex] switch { "int" => KindInt, "float" => KindFloat, "bool" => KindBool, _ => KindUnknown };
-                if (kind == KindUnknown) continue;
-                if (c.A[0] >= argc) return (generic, null);   // (a default value: its kind is not known here)
-                specParams.Add((c.A[0], kind));
+                if (kind != KindUnknown) specParams.Add((c.A[0], kind));
             }
-            if (specParams.Count == 0) return (generic, null);
-            if (!_specFuncs.TryGetValue((proto, text), out var spec2))
+            return specParams.Count == 0 ? null : specParams;
+        }
+
+        /// <summary>The copy of a generic method for one set of type arguments (`key`: "m:" + those of the method, "c:Class:" + those of a class).</summary>
+        private Func SpecFunc(Func generic, string key, string? methodTArgs, List<(int Slot, byte Kind)> specParams)
+        {
+            if (_specFuncs.TryGetValue((generic.Proto!, key), out var spec)) return spec;
+            spec = new Func { Proto = generic.Proto, Chunk = generic.Chunk, Kind = generic.Kind, Index = _funcs.Count, SpecTArgs = methodTArgs, SpecParams = specParams };
+            _funcs.Add(spec);
+            _specFuncs[(generic.Proto!, key)] = spec;
+            _version++;
+            return spec;
+        }
+
+        /// <summary>A value that is a number of this kind without a unit (or a bool).</summary>
+        private static string KindTest(string value, byte kind) =>
+            kind == KindBool ? $"{value}.kind == K_Bool" : $"{value}.kind == {(kind == KindInt ? "K_Int" : "K_Float")} && {value}.unit == 0";
+
+        /// <summary>The type arguments the program uses with constants: of calls of generic methods (by method name and number of arguments) and of
+        /// classes (`new Box&lt;int&gt;()`, `class IntBox : Box&lt;int&gt;`; given on to the base classes) - the copies of generic methods are made for them.</summary>
+        private readonly Dictionary<(string Method, int Argc), SortedSet<string>> _callTArgTexts = new();
+        private readonly Dictionary<string, SortedSet<string>> _classTArgTexts = new();
+
+        private void AddTArgText<TKey>(Dictionary<TKey, SortedSet<string>> into, TKey key, string text) where TKey : notnull
+        {
+            if (text.Contains('$') || !text.Split('|').Any(t => t is "int" or "float" or "bool")) return;
+            if (!into.TryGetValue(key, out var set)) into[key] = set = new SortedSet<string>(StringComparer.Ordinal);
+            if (set.Add(text)) _version++;
+        }
+
+        /// <summary>The constant type arguments of a class instantiation, and those it gives its base classes.</summary>
+        private void AddClassTArgs(string className, string text)
+        {
+            AddTArgText(_classTArgTexts, className, text);
+            if (!_program.Program.Classes.TryGetValue(className, out var rc) || rc.Base == null || rc.BaseTypeArgs is not { } given) return;
+            var args = text.Split('|');
+            AddClassTArgs(rc.Base.Name, string.Join("|", given.Select(t => !t.StartsWith('$') ? t : int.Parse(t.AsSpan(1), CultureInfo.InvariantCulture) is var j && j < args.Length ? args[j] : "")));
+        }
+
+        /// <summary>Collects the constant type arguments of the calls and `new`s of a chunk (and the base type arguments of the classes).</summary>
+        private void CollectTArgTexts(Func f)
+        {
+            var code = f.Decoded!;
+            for (int i = 0; i < code.Count; i++)
             {
-                spec2 = new Func { Proto = proto, Chunk = proto.Chunk, Kind = generic.Kind, Index = _funcs.Count, SpecTArgs = text, SpecParams = specParams };
-                _funcs.Add(spec2);
-                _specFuncs[(proto, text)] = spec2;
-                _version++;
+                if (code[i].Op != OpCode.SetTypeArgs) continue;
+                string text = f.Chunk.Constants[code[i].A[0]].AsString();
+                int n = i + 1;
+                if (n < code.Count && code[n].Op == OpCode.CopyArgs) n++;
+                if (n >= code.Count) continue;
+                var next = code[n];
+                string Const(int k) => f.Chunk.Constants[next.A[k]].AsString();
+                if (code[i].A[1] == 0)
+                {
+                    if (next.Op is OpCode.NewObject or OpCode.NewObjectOwned) AddClassTArgs(Const(0), text);
+                }
+                else if (next.Op == OpCode.CallMethod) AddTArgText(_callTArgTexts, (Const(0), next.A[1]), text);
+                else if (next.Op is OpCode.CallStaticMethod or OpCode.CallBaseMethod) AddTArgText(_callTArgTexts, (Const(1), next.A[2]), text);
             }
-            var conditions = new List<string>();
-            foreach (var (param, kind) in specParams)
+            foreach (var ci in _classList)
+                if (ci.Rc.BaseTypeArgs is { } given && ci.Rc.Base != null && !given.Any(t => t.StartsWith('$'))) AddClassTArgs(ci.Rc.Base.Name, string.Join("|", given));
+        }
+
+        /// <summary>The method name and number of parameters of a method of a class (null for anything else).</summary>
+        private (string Name, int Argc)? MethodKey(FunctionProto proto)
+        {
+            foreach (var rc in _program.Program.Classes.Values)
+                foreach (var m in rc.Methods)
+                    if (m.Value.Contains(proto)) return (m.Key, proto.ParamCount);
+            return null;
+        }
+
+        /// <summary>The trampoline of a generic method: a call whose type arguments and arguments fit one of its copies (Specialize, SpecFunc) goes there -
+        /// also when it comes through the dispatcher, a lambda or the generic code of another method.</summary>
+        private string Trampoline(Func f)
+        {
+            if (f.SpecParams != null || f.Proto is not { } proto || f.Kind is not (FuncKind.Method or FuncKind.Static)) return "";
+            var lines = new StringBuilder();
+            string args = string.Join(", ", (f.HasSelf ? new[] { "self" } : Array.Empty<string>()).Concat(Enumerable.Range(0, f.ParamCount).Select(i => $"P{i}")));
+            string ParamTests(List<(int Slot, byte Kind)> ps) => string.Concat(ps.Select(p => " && " + KindTest($"P{p.Slot}", p.Kind)));
+            // the type arguments of the call of a generic method
+            if (f.HasCallTArgs && MethodKey(proto) is { } key && _callTArgTexts.TryGetValue(key, out var texts))
+                foreach (var text in texts)
+                {
+                    var parts = text.Split('|');
+                    if (SpecParamsFor(proto, "", parts) is not { } ps) continue;
+                    var spec = SpecFunc(f, "m:" + text, text, ps);
+                    string targs = string.Concat(parts.Select((t, i) => t.Length == 0 ? "" : $" && static_cast<TArgs>(g_callTArgs)[{i}] == {TArgRef(t)}"));
+                    lines.AppendLine($"    if (g_callTArgs{targs}{ParamTests(ps)}) return {spec.Name}({args});");
+                }
+            // the type arguments of the object (a method of a generic class, or of a class derived from one)
+            if (f.HasSelf)
             {
-                string arg = slot(firstArg + param);
-                if (slotType(firstArg + param) == TypeOf(kind, 0)) continue;
-                string kindName = kind == KindInt ? "K_Int" : kind == KindFloat ? "K_Float" : "K_Bool";
-                conditions.Add(kind == KindBool ? $"{arg}.kind == K_Bool" : $"{arg}.kind == {kindName} && {arg}.unit == 0");
+                var owners = OpInfo.Decode(proto.Chunk.Code).Where(c => c.Op == OpCode.GuardLocalType)
+                    .Select(c => DeclaredType.Parse(proto.Chunk.Constants[c.A[1]].AsString()).TypeParamClass).Where(o => !string.IsNullOrEmpty(o)).Distinct();
+                foreach (var owner in owners)
+                {
+                    if (!_classTArgTexts.TryGetValue(owner!, out var classTexts)) continue;
+                    foreach (var text in classTexts)
+                    {
+                        var parts = text.Split('|');
+                        if (SpecParamsFor(proto, owner!, parts) is not { } ps) continue;
+                        var spec = SpecFunc(f, $"c:{owner}:{text}", null, ps);
+                        string targs = string.Concat(parts.Select((t, k) => t is "int" or "float" or "bool" ? $" && {TArgOfExpr(owner!, k, "objAt(self)")} == {TArgRef(t)}" : ""));
+                        lines.AppendLine($"    if (self.kind == K_Class{targs}{ParamTests(ps)}) return {spec.Name}({args});");
+                    }
+                }
             }
-            return (spec2, conditions.Count == 0 ? null : string.Join(" && ", conditions));
+            return lines.ToString();
         }
 
         /// <summary>The text of the SetTypeArgs (for a call) right before a call instruction (a CopyArgs may stand between them), or null.</summary>
@@ -1876,6 +1978,7 @@ namespace fire.Native
             f.IndexOf = indexOfAddr;
             f.HasCallTArgs = code.Any(c => c.Op == OpCode.TakeCallTypeArgs);
             _pendingNewTArgs = null;
+            CollectTArgTexts(f);
             f.Regions = new Dictionary<int, Region>();
             f.Root = new Out();
             // which scopes need a list is found again in every round (pass 1 below sees every instruction before pass 2 emits): a scope that needed one
@@ -1975,6 +2078,7 @@ namespace fire.Native
             }
             sb.AppendLine(f.Signature);
             sb.AppendLine("{");
+            sb.Append(Trampoline(f));
             if (_usesTryDepth) sb.AppendLine("    CallDepth cd_;");
             if (f.HasSelf) sb.AppendLine("    (void)self;");
             if (f.Kind == FuncKind.FireBody) sb.AppendLine("    (void)args;");
@@ -3340,6 +3444,26 @@ namespace fire.Native
                     E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "static_cast<TArgs>(g_callTArgs)")}; g_callTArgs = nullptr; (void)ctargs;");
                     _kindsKept = true;
                     return Next();
+                case OpCode.GuardTop:
+                {
+                    // a value going into a local whose declaration the type checker could not prove: its kind (a whole number for a float is converted)
+                    Need(1);
+                    byte declared = (byte)(ins.A[0] + 1);
+                    E($"{S(d - 1)} = {GuardKindCall(S(d - 1), declared, Str(ins.A[1]))};");
+                    Check();
+                    byte kind = KindOfDeclared(declared);
+                    if (KindOfType(Ty(d - 1)) != kind) SetT(d - 1, kind == KindBool ? TypeOf(KindBool, 0) | NullableBit : TypeUnknown);
+                    _kindsKept = true;
+                    return Next();
+                }
+                case OpCode.GuardTopType:
+                {
+                    Need(1);
+                    E(ClassGuard(S(d - 1), Str(ins.A[0]), Str(ins.A[1]), SelfObj(f), f.HasCallTArgs ? "ctargs" : null));
+                    Check();
+                    _kindsKept = true;
+                    return Next();
+                }
                 case OpCode.GuardLocalType:
                 {
                     // the end of the prologue: the parameter holds undefined or what its declaration says (DeclaredType) - with a class, an object of it

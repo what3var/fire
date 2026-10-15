@@ -217,6 +217,11 @@ namespace fire.Bytecode
         SetTypeArgs,         // u16 textIdx, u8 forCall
         // The first instruction of a generic method: the scope of the call takes the type arguments its SetTypeArgs gave (none: unknown).
         TakeCallTypeArgs,
+        // A value going into a local variable whose declaration the type checker could not prove (`int x = someAny`): the value on top of the stack is
+        // checked (and a whole number for a float converted) like a parameter - GuardTop for int/float/bool (the tag of GuardLocal, without a unit
+        // demand), GuardTopType for a class, an interface or a type parameter (DeclaredType).
+        GuardTop,            // u8 kind tag, u16 whatIdx
+        GuardTopType,        // u16 specIdx, u16 whatIdx
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the
