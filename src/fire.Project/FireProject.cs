@@ -60,7 +60,7 @@ namespace fire.Projects
         public static readonly string[] DefaultFiles = { "**/*.{fire,script,fi,fic,fxml}" };
         /// <summary>The files that are compiled: scripts and the markup of user interfaces (`.fxml`, compiled to the script that is generated from it - no `#include` needed).</summary>
         public static readonly string[] SourceExtensions = { ".fire", ".script", ".fi", ".fic", ".fxml" };
-
+        
         public static bool IsSourceFile(string path) => SourceExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
         public static bool IsMarkupFile(string path) => string.Equals(Path.GetExtension(path), ".fxml", StringComparison.OrdinalIgnoreCase);
 
@@ -70,7 +70,7 @@ namespace fire.Projects
         /// <summary>The import name of a library (`#import "name"`); default: the project name (characters that are not allowed become `_`).</summary>
         public string? Import { get; set; }
         public List<string> Files { get; set; } = new();
-        public List<string> Exclude { get; set; } = new();
+        public List<string> Exclude { get; set; } = new() { "**/code","**/*.exe","**/*.dll"};
         public string? Entry { get; set; }
         public List<ProjectReference> References { get; set; } = new();
         public ProjectSettings Settings { get; set; } = new();

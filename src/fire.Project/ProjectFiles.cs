@@ -12,6 +12,8 @@ namespace fire.Projects
 
         private static readonly string[] SkippedFolders = { "bin", "obj", ".git", ".vs", "node_modules" };
 
+
+
         public static bool IsPattern(string text) => text.IndexOfAny(new[] { '*', '?' }) >= 0;
 
         /// <summary>A pattern (`/` as the separator; `*` any characters but `/`, `**` any folders, `?` one character, `{a,b}` one of the alternatives) as a regular expression over relative paths.</summary>
@@ -48,26 +50,38 @@ namespace fire.Projects
         private static List<string> Walk(string directory)
         {
             var found = new List<string>();
-            void Visit(string dir, string rel)
+
+            void VisitRecusively(string dir, string rel)
             {
                 IEnumerable<string> files;
                 try { files = System.IO.Directory.EnumerateFiles(dir); } catch (Exception) { return; }
-                foreach (var f in files) found.Add(rel + Path.GetFileName(f));
-                IEnumerable<string> subs;
-                try { subs = System.IO.Directory.EnumerateDirectories(dir); } catch (Exception) { return; }
-                foreach (var sub in subs)
+                
+                foreach (var f in files) 
+                    found.Add(rel + Path.GetFileName(f));
+                
+                IEnumerable<string> folders;
+                
+                try { folders = System.IO.Directory.EnumerateDirectories(dir); } catch (Exception) { return; }
+                
+                foreach (var folder in folders)
                 {
-                    string name = Path.GetFileName(sub);
-                    if (SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.')) continue;
+                    var name = Path.GetFileName(folder);
+                    if (SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.')) 
+                        continue;
+
                     bool nestedProject;
-                    try { nestedProject = System.IO.Directory.EnumerateFiles(sub, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
-                    if (nestedProject) continue;   // another project lives there: its files are its own
-                    Visit(sub, rel + name + "/");
+                    try { nestedProject = System.IO.Directory.EnumerateFiles(folder, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
+                    
+                    if (nestedProject) 
+                        continue;   // another project lives there: its files are its own
+                    
+                    VisitRecusively(folder, rel + name + "/");
                 }
             }
-            Visit(directory, "");
+            VisitRecusively(directory, "");
             return found;
         }
+
 
         /// <summary>The files of the project as full paths in the order they are compiled; `problems` gets what is wrong (a file that is named but does not exist).</summary>
         public static List<string> Resolve(FireProject project, List<string>? problems = null)
