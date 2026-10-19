@@ -234,6 +234,14 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
+        private static bool IsDeclaration(Ast.Stmt stmt) =>
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
+
+        /// <summary>`forge test` (docs/TESTING.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
+        /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
+        [ThreadStatic] public static Func<IReadOnlyList<Ast.Stmt>, int, string>? TestDriver;
+
         /// <summary>A library has no entry point: declarations only (classes, interfaces, enums, functions, namespaces, extensions), nothing that runs at the top level.</summary>
         private void CheckLibraryHasNoEntryPoint(IReadOnlyList<Ast.Stmt> program, int firstUserSource)
         {
@@ -242,7 +250,7 @@ namespace fire.Compiler
             foreach (var stmt in program)
             {
                 if (stmt.Source < firstUserSource || stmt.Source >= firstUserSource + userCount) continue;
-                if (stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective) continue;
+                if (IsDeclaration(stmt)) continue;
                 var file = Plan.Sources[stmt.Source - firstUserSource];
                 errors.Add($"{Path.GetFileName(file.Path)}:{stmt.Line}: a library has no entry point - this statement would run at the top level (put it in a function or a class).");
                 if (errors.Count >= 20) break;
@@ -428,6 +436,16 @@ namespace fire.Compiler
             // directly on itself (see Ast.TypeRef.Namespaces), set by the
             // parser when parsing each individual ProcessedSource.
             var program = Parser.ParseMultiple(processedSources);
+            int driverSources = 0;
+            if (TestDriver != null)
+            {
+                // `forge test`: the statements at the top level of the program's files do not run; a generated driver runs the tests instead
+                program.RemoveAll(stmt => stmt.Source >= firstUserSource && !IsDeclaration(stmt));
+                var driver = new ProcessedSource(TestDriver(program, firstUserSource), Array.Empty<string>(), "<tests>");
+                processedSources.Add(driver);
+                program.AddRange(Parser.ParseSource(driver, processedSources.Count - 1));
+                driverSources = 1;
+            }
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             var resolveResult = Resolver.Resolve(program, natives.Names);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
@@ -447,7 +465,7 @@ namespace fire.Compiler
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count, libraryFiles.Select(l => l.Path).ToList(), sources.Count) };
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList() };
 
             if (!string.IsNullOrEmpty(outname))
             {

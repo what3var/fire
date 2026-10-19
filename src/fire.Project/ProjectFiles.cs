@@ -69,8 +69,11 @@ namespace fire.Projects
             return found;
         }
 
+        /// <summary>The folder of the tests of a project (by convention; a test may stand in any file).</summary>
+        public const string TestingFolder = "testing";
+
         /// <summary>The files of the project as full paths in the order they are compiled; `problems` gets what is wrong (a file that is named but does not exist).</summary>
-        public static List<string> Resolve(FireProject project, List<string>? problems = null)
+        public static List<string> Resolve(FireProject project, List<string>? problems = null, bool tests = false)
         {
             string? dir = project.Directory;
             if (dir == null) return new List<string>();
@@ -95,6 +98,8 @@ namespace fire.Projects
                         if (Excluded(rel)) continue;
                         // the folder `templates/` holds what the project offers as templates (docs/TEMPLATES.md): files with placeholders, not code of the project - unless the files are named
                         if (project.Files.Count == 0 && rel.StartsWith("templates/", StringComparison.OrdinalIgnoreCase)) continue;
+                        // the folder `testing/` holds the tests of the project (docs/TESTING.md): only `forge test` compiles them
+                        if (project.Files.Count == 0 && !tests && rel.StartsWith(TestingFolder + "/", StringComparison.OrdinalIgnoreCase)) continue;
                         string full = Path.GetFullPath(rel, dir);
                         if (seen.Add(full)) result.Add(full);
                     }

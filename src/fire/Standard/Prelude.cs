@@ -31,10 +31,33 @@ namespace fire.Standard
         private const string CoreSource = """
             /// The base class of all exceptions (SPEC 7.1): it carries a `message`. Own exception classes derive from it (`class NotFound : Exception { }`);
             /// `catch (Exception e)` catches every thrown value. A program that declares a class `Exception` itself replaces this one.
+            /// `from..to` (RangeExpr): the whole numbers from `from` to `to`, both included, counting down when `to` is smaller; in the unit of `from`.
+            class __Range {
+                static int[] Of(int first : any, int last : any) {
+                    int n = 0
+                    var v = first
+                    if (first <= last) { while (v <= last) { n++; v++ } } else { while (v >= last) { n++; v-- } }
+                    any r[] = new any[n]
+                    v = first
+                    for (int i = 0; i < n; i++) {
+                        r[i] = v
+                        if (first <= last) { v++ } else { v-- }
+                    }
+                    return r
+                }
+            }
+
             class Exception {
                 string message
 
                 construct(string message = "") {
+                    this.message = message
+                }
+            }
+
+            // A failed check of a test (`#import "testing"`, `forge test`): a failure instead of an error.
+            class Assertion : Exception {
+                construct(string message = "assertion failed") {
                     this.message = message
                 }
             }

@@ -227,6 +227,25 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 `print`, `+` with a string and format strings use the method `string ToString()` of the class if it has one; otherwise an object prints as
 `<object Name>`.
 
+## Attributes
+
+An attribute is a name in square brackets on the line before a method, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
+new List<int>()]`; `{...}` is an array here, like `[...]`). A method may have several. Attributes do nothing by themselves; tools read them - `forge test`
+runs the methods with `[Test]` (docs/TESTING.md):
+
+```fire
+class CalcTests {
+    [Test "Adds", "2 + 2 is 4"]
+    undefined Adds() { print(2 + 2) }
+
+    [Test]
+    [Parameters 1..3, 10]
+    undefined Commutes(int a, int b) { print(a + b == b + a) }
+}
+```
+
+The arguments are ordinary expressions; they are evaluated when a tool uses them (the test runner: when the test runs).
+
 ## Static members and the top level
 
 Top-level code (outside of classes) runs from the top when the program starts; it can declare variables and use all classes, wherever they stand in the

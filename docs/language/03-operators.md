@@ -15,6 +15,7 @@ From the loosest to the tightest binding:
 | `&` | bitwise and (int only) |
 | `==` `!=` `##` | equality (`##` is the same as `!=`) |
 | `<` `<=` `>` `>=` `is of` `is in` `is from` `is under` | comparison and tests (see below), left to right |
+| `a..b` | range: the whole numbers from `a` to `b` (see below) |
 | `<<` `>>` | bit shift (int only) |
 | `+` `-` | addition, subtraction, joining texts |
 | `*` `/` `%` | multiplication, division, remainder |
@@ -115,6 +116,20 @@ print(p == p)               // True
 
 class Box { }
 ```
+
+## Ranges: `a..b`
+
+`a..b` is an array of the whole numbers from `a` to `b`, both included; when `b` is smaller than `a` it counts down. A unit of `a` stays on every number.
+
+```fire
+foreach (i in 1..5) { print(i) }        // 1 2 3 4 5 (one per line)
+print((5..1).length)                     // 5 - counting down: 5 4 3 2 1
+var steps = 1cm..3cm                     // [1cm, 2cm, 3cm]
+print(steps[2])                          // 3cm
+```
+
+The bounds are `int`s (a `float` is an `ArgumentException`). `..` binds looser than `+`, so `1..n - 1` is `1..(n - 1)`. In an attribute (`[Parameters 1..5]`,
+see docs/TESTING.md) a range runs a test once for each of its numbers.
 
 ## Logic
 

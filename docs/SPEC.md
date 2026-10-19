@@ -73,6 +73,7 @@ From loose (far up) to tightly binding (far down):
 &                         bitwise and      (int only)
 == != ##                  equality (`##` is a synonym for `!=`)
 < <= > >=                 comparison
+..                        range (int only): `1..5` is [1, 2, 3, 4, 5], `5..1` counts down
 << >>                     bit shift operators (int only)
 + -                       addition/subtraction
 * / %                     multiplication/division/modulo
@@ -969,6 +970,18 @@ method infrastructure therefore works automatically.
   not a real array but an object – writing `operator[](...)` and
   `GetIndex(...)`/`SetIndex(...)` by hand are therefore
   equivalent, the former merely being the more explicit, recommended notation.
+
+### 5.12 Attributes
+
+`[Name arg1, arg2, ...]` on the lines before a method (several are allowed, each in its own brackets): a name and arguments without parentheses, as in C#
+(`[Parameters 1..3, "x", {1, 2}, new List<int>()]`; `{a, b}` is an array literal here, the same as `[a, b]`). The arguments are arbitrary expressions; the
+compiler keeps them with the method (and their source text) without evaluating them - a tool that reads the attribute evaluates them where it needs them.
+Attributes stand only before methods. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md); other
+names are allowed and ignored.
+
+The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusive, descending when `b < a`; the unit of `a` stays on every element. In
+`[Parameters]` a range runs a test once per element.
 
 ## 6. Test operators: `is in`, `is of`, `is from`
 

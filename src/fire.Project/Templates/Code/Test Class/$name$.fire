@@ -1,0 +1,22 @@
+// Tests of $name$: `forge test` runs every method with [Test] (docs/TESTING.md).
+#import "testing"
+
+class $class$ {
+    // [PrepareTesting] runs once before the first test, [CleanTesting] once after the last;
+    // [PrepareTest] and [CleanTest] run before and after every test.
+    [PrepareTest]
+    undefined Prepare() { }
+
+    [Test "Adds two numbers", "2 + 2 is 4"]
+    undefined Adds() {
+        Testing.Assert.AreEqual(4, 2 + 2)
+    }
+
+    // A test with parameters runs once for each [Parameters]; a range (1..3) runs it for each number.
+    [Test]
+    [Parameters 1..3, 2]
+    [Parameters 10, 0]
+    undefined Multiplies(int a, int b) {
+        Testing.Assert.AreEqual(a * b, b * a)
+    }
+}

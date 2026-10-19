@@ -13,6 +13,8 @@ namespace fire.Projects
         /// <summary>The files in compile order (see ProjectFiles); <see cref="Refresh"/> reads the folder again.</summary>
         public IReadOnlyList<string> Files { get; private set; } = Array.Empty<string>();
         public IReadOnlyList<string> Problems { get; private set; } = Array.Empty<string>();
+        /// <summary>The files in the folder `testing/` (docs/TESTING.md): compiled only by `forge test`, with the other files.</summary>
+        public IReadOnlyList<string> TestFiles { get; private set; } = Array.Empty<string>();
         /// <summary>The other files in the project folder: resources, C++ sources, notes (not compiled).</summary>
         public IReadOnlyList<string> ContentFiles { get; private set; } = Array.Empty<string>();
         /// <summary>The folders below the project folder (relative paths with `/`), also the empty ones.</summary>
@@ -30,6 +32,7 @@ namespace fire.Projects
         {
             var problems = new List<string>(Project.Validate());
             Files = ProjectFiles.Resolve(Project, problems);
+            TestFiles = ProjectFiles.Resolve(Project, null, tests: true).Where(f => !Files.Contains(f, ProjectFiles.PathComparer)).ToList();
             Problems = problems;
             ContentFiles = ProjectFiles.ContentFiles(Project.Directory!, Files);
             Folders = ProjectFiles.Folders(Project.Directory!);

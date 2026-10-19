@@ -836,6 +836,16 @@ namespace fire.Compiler
                 case LambdaExpr lam: return InferLambda(lam, null);
                 case IsOfExpr io: Infer(io.Operand); return StaticType.Bool;
                 case IsInExpr ii: Infer(ii.Operand); return StaticType.Bool;
+                case RangeExpr range:
+                    {
+                        // `1..5`: whole numbers in the unit of the start
+                        var from = Infer(range.From, StaticType.Int);
+                        var to = Infer(range.To, StaticType.Int);
+                        foreach (var (bound, boundExpr) in new[] { (from, range.From), (to, range.To) })
+                            if (!bound.IsDynamic && bound.Kind != StaticKind.Int)
+                                Report(AssignCode, $"A range goes from a whole number to a whole number, not '{bound}'", boundExpr.Line);
+                        return StaticType.ArrayOf(StaticType.Int.WithUnit(from.Kind == StaticKind.Int ? from.Unit : null));
+                    }
                 case IsFromExpr ifr: Infer(ifr.Operand); Infer(ifr.OwnerExpr); return StaticType.Bool;
                 case UnitCoerceExpr uc:
                     {

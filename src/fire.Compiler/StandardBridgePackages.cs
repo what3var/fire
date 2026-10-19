@@ -53,6 +53,7 @@ namespace fire.Compiler
         {
             "time" => fire.Standard.TimePrelude.Source,
             "random" => fire.Standard.RandomPrelude.Source,
+            "testing" => fire.Standard.TestingPrelude.Source,
             "net" => fire.Standard.NetPrelude.Source,
             "http" => fire.Standard.HttpPrelude.Source,
             "tls" => fire.Standard.TlsPrelude.Source,

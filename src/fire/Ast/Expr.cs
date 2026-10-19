@@ -168,6 +168,10 @@ namespace fire.Ast
     // Check operators: is in / is of / is from / is under
     // ---------------------------------------------------------------
     public sealed record IsInExpr(int Line, Expr Operand, string UnitName) : Expr(Line);
+
+    /// <summary>`from..to` - the whole numbers from `from` to `to`, both included (counting down when `to` is smaller), as an array; in the unit of
+    /// `from` (`1cm..5cm`). Runs as `__Range.Of(from, to)` of the prelude.</summary>
+    public sealed record RangeExpr(int Line, Expr From, Expr To) : Expr(Line);
     public sealed record IsOfExpr(int Line, Expr Operand, TypeRef TypeRef) : Expr(Line);
     public sealed record IsFromExpr(int Line, Expr Operand, Expr OwnerExpr, bool Transitive) : Expr(Line);
 

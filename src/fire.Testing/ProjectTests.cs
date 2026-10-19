@@ -353,7 +353,7 @@ static class ProjectTests
 
         // ---- templates as folders (docs/TEMPLATES.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
         var codeTitles = catalog.Code.Select(x => x.Title).ToList();
-        Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "FXML Window", "FXML View" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
+        Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "Test Class", "FXML Window", "FXML View" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
         Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".fire" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".fire" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");
         Check("Vorlagen: ein vorgeschlagener Name", Tpl(TemplateScope.Code, "Fire Class").DefaultName == "MyClass" && Tpl(TemplateScope.Code, "FXML Window").DefaultName == "MainWindow");
 

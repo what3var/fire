@@ -32,7 +32,8 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
 keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
-folders and the folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
+folders, the folder `templates/` (what the project offers as templates), the folder `testing/` (its tests: only `forge test` compiles them, see docs/TESTING.md) and the
+folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
 last**: what the other files declare is known by then.
 
 **The code of a project is included on its own** - for the build and for the editor (colours of classes, completion, tooltips, "go to definition", the errors that are underlined). No
@@ -132,7 +133,7 @@ The templates that ship with fire (folders in `Templates/Project`; yours and tho
 |---|---|
 | Empty | the solution only |
 | Terminal | a program for the console: prints `Hello, World!` |
-| Library | a library with a class `Greeter` in `namespace {Name}`; no entry point |
+| Library | a library with a class `Greeter` in `namespace {Name}`; no entry point; a first test in `testing/` (`forge test`) |
 | Native Library | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
 
 The package **fire-windows** (the standard bridge `windows`, installed with fire) brings one more, in the same list marked `From fire-windows ...`:

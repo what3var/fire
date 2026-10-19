@@ -2205,6 +2205,16 @@ namespace fire.Compiler
                     throw new NotSupportedException(
                         "'base' is only valid as 'base.Method(...)', not as a standalone value.");
 
+                case RangeExpr range:
+                    // `a..b` runs as `__Range.Of(a, b)` of the prelude
+                    CompileExpr(range.From);
+                    CompileExpr(range.To);
+                    _chunk.EmitOp(OpCode.CallStaticMethod);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("__Range")));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("Of")));
+                    _chunk.EmitByte(2);
+                    break;
+
                 case IsInExpr iin:
                     CompileExpr(iin.Operand);
                     _chunk.EmitOp(OpCode.IsInUnit);

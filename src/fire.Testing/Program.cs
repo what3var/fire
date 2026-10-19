@@ -29,6 +29,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
@@ -14192,6 +14193,7 @@ ProjectTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
+TestingTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -14741,6 +14743,18 @@ else
             print(total + " " + ft)
             print(new Box<string>().Twice("ab") + " " + U.Max(2, 3.5) + " " + U.Max(4, 3.5))
             try { viaAny.Twice(s) } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Bereiche a..b: aufwaerts, abwaerts, mit Einheit, in foreach, Testing.Assert", """
+            #import "testing"
+            foreach (i in 1..3) { print(i) }
+            var down = 4..2
+            print(down.length + " " + down[0] + " " + down[2])
+            var steps = 1cm..3cm
+            print(steps[2])
+            var n = 4
+            print((1..n - 1).length)
+            Testing.Assert.AreSequenceEqual([2, 3], 2..3)
+            try { Testing.Assert.AreEqual(1, 2, "msg") } catch (Assertion e) { print(e.message) }
             """),
         ("Typen: Typargumente mit Einheit (Box<int> ohne, Box<int : cm>, Box<int : any>, Box<float : any m>), Lambdas nehmen Typargumente mit, typisierte Felder in der Kopie", """
             class Box<T> {
