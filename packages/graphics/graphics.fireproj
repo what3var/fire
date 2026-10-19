@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "name": "fire-graphics",
+  "type": "library",
+  "import": "graphics",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'graphics' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_gfx_font.hpp",
+      "native/fire_gfx.hpp",
+      "native/fire_gfx_ttf.hpp",
+      "native/fire_gfx_text.hpp",
+      "native/fire_gfx_images.hpp",
+      "native/fire_gfx_slicer.hpp",
+      "native/fire_bridge_graphics.hpp"
+    ],
+    "discover": false
+  }
+}

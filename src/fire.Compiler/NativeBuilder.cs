@@ -163,7 +163,7 @@ namespace fire.Compiler
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
             // the generated program asks for libraries it needs (`// fire-link: SDL2` for a window): -lSDL2, SDL2.lib with msvc
             if (File.Exists(cppFile))
-                foreach (string line in File.ReadLines(cppFile).Take(400))
+                foreach (string line in File.ReadLines(cppFile))
                     if (line.StartsWith("// fire-link: ", StringComparison.Ordinal))
                     {
                         string lib = line.Substring("// fire-link: ".Length).Trim();

@@ -117,7 +117,7 @@ namespace fire.Package.Manager
     }
 
     /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need
-    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see native/bridges/ of the compiler for examples). The virtual machine has no
+    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see packages/<name>/native/ of the compiler for examples). The virtual machine has no
     /// way to run C++: calling such a native there is an error that says so; a prelude that has no natives works in both.</summary>
     public sealed class PackageNative
     {

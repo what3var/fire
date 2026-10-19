@@ -603,6 +603,32 @@ namespace fire.Compiler
         // Classes (pre-pass: name -> RuntimeClass, analogous to the resolver)
         // -----------------------------------------------------------
         /// <summary>The type as it stood in the source (`int`, `Circle`, `lambda<int>`, `float[]`), "" if not given.</summary>
+        /// <summary>The value of an attribute argument as JSON when the compiler knows it (see AttributeMeta.ArgsJson), else null.</summary>
+        private static System.Text.Json.Nodes.JsonNode? ConstantJson(Expr expr)
+        {
+            static System.Text.Json.Nodes.JsonNode Tagged(string tag, System.Text.Json.Nodes.JsonNode? value) => new System.Text.Json.Nodes.JsonObject { [tag] = value };
+            switch (expr)
+            {
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.Int && (v.Unit == null || v.Unit.IsUnitless): return Tagged("i", v.AsInt());
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.Float && (v.Unit == null || v.Unit.IsUnitless): return Tagged("f", v.AsFloat());
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.String: return Tagged("s", v.AsString());
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.Bool: return Tagged("b", v.AsBool());
+                case UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value: var v } } when (v.Unit == null || v.Unit.IsUnitless) && v.Kind == ValueKind.Int: return Tagged("i", -v.AsInt());
+                case UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value: var v } } when (v.Unit == null || v.Unit.IsUnitless) && v.Kind == ValueKind.Float: return Tagged("f", -v.AsFloat());
+                case ArrayLiteralExpr array:
+                    var items = array.Elements.Select(ConstantJson).ToList();
+                    return items.Any(i => i == null) ? null : Tagged("a", new System.Text.Json.Nodes.JsonArray(items.ToArray()));
+                case RangeExpr range when ConstantJson(range.From) is System.Text.Json.Nodes.JsonObject from && from["i"] is { } f
+                                       && ConstantJson(range.To) is System.Text.Json.Nodes.JsonObject to && to["i"] is { } t:
+                    long a = f.GetValue<long>(), b = t.GetValue<long>();
+                    if (Math.Abs(b - a) > 10000) return null;
+                    var numbers = new List<System.Text.Json.Nodes.JsonNode?>();
+                    for (long n = a; a <= b ? n <= b : n >= b; n += a <= b ? 1 : -1) numbers.Add(Tagged("i", n));
+                    return Tagged("a", new System.Text.Json.Nodes.JsonArray(numbers.ToArray()));
+                default: return null;
+            }
+        }
+
         private static string TypeText(TypeRef? type, int extraArrayRank = 0)
         {
             if (type == null || type.IsInferred) return "";
@@ -655,6 +681,8 @@ namespace fire.Compiler
                         {
                             var m = new MemberMeta { Name = md.Name, Kind = "method", TypeName = TypeText(md.ReturnType), Access = AccessText(md.Access), IsStatic = md.IsStatic };
                             AddParams(m, md.Params);
+                            foreach (var a in md.Attributes ?? Array.Empty<AttributeDecl>())
+                                m.Attributes.Add(new AttributeMeta { Name = a.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = new System.Text.Json.Nodes.JsonArray(a.Args.Select(ConstantJson).ToArray()).ToJsonString() });
                             meta.Members.Add(m);
                             break;
                         }

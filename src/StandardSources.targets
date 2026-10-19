@@ -1,0 +1,19 @@
+<Project>
+  <!--
+    The standard libraries of fire as projects (docs/PACKAGES.md): the folder packages/ of the repository (Packages.firesln, one library project per import) is copied into the folder
+    Source of the output. spark, forge and ember pack and install them from there when they start (StandardSources.EnsureInstalled). After the build the libraries of their C++ are built
+    for this machine into Prebuilt/ (forge prebuild-standard), so that the virtual machine needs no C++ compiler for them as long as their C++ is not changed.
+    Imported by fire.Compiler, fire.Editor and fire.Testing (their output folders hold the compiler).
+  -->
+  <ItemGroup>
+    <StandardSource Include="$(MSBuildThisFileDirectory)..\packages\**\*" Exclude="$(MSBuildThisFileDirectory)..\packages\**\bin\**;$(MSBuildThisFileDirectory)..\packages\**\obj\**" />
+  </ItemGroup>
+  <Target Name="CopyStandardSources" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true'">
+    <RemoveDir Directories="$(TargetDir)Source" />
+    <Copy SourceFiles="@(StandardSource)" DestinationFiles="@(StandardSource->'$(TargetDir)Source\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <Copy SourceFiles="@(StandardSource)" DestinationFiles="@(StandardSource->'$(TargetDir)..\..\..\publish\Source\%(RecursiveDir)%(Filename)%(Extension)')" ContinueOnError="true" Condition="'$(StandardSourcesPublish)' != 'false'" />
+  </Target>
+  <Target Name="PrebuildStandardLibraries" AfterTargets="CopyStandardSources" Condition="'$(DesignTimeBuild)' != 'true' And Exists('$(TargetDir)forge.dll') And '$(PrebuildStandard)' != 'false'">
+    <Exec Command="dotnet &quot;$(TargetDir)forge.dll&quot; prebuild-standard &quot;$(TargetDir)Source&quot; &quot;$(TargetDir)Prebuilt&quot;" ContinueOnError="true" StandardOutputImportance="low" />
+  </Target>
+</Project>

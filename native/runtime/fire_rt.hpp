@@ -2160,6 +2160,7 @@ struct RfMember {
     uint8_t flags;                    // 1 static, 2 readonly, 4 can read, 8 can write
     const char* unit; const char* declared;
     const char* const* pnames; const char* const* ptypes; uint32_t pcount;
+    Value (*attrs)(OwnList* list);    // the attributes as [[name, values, texts], ...] (generated), nullptr: none
 };
 struct RfClass {
     const char* name; const char* base; uint8_t isActor;

@@ -44,6 +44,8 @@ namespace fire.Projects
         public List<fire.Package.Manager.PackageNativeFunction>? Functions { get; set; }
         public List<string>? Exceptions { get; set; }
         public string? Reset { get; set; }
+        /// <summary>false: only the `functions` named here are natives - the `inline Value` functions of the sources are not looked for (the standard libraries name all of theirs).</summary>
+        public bool? Discover { get; set; }
     }
 
     /// <summary>
@@ -76,6 +78,8 @@ namespace fire.Projects
         public ProjectSettings Settings { get; set; } = new();
         /// <summary>The C++ natives of the project (folder `native/`); null: none.</summary>
         public ProjectNative? Native { get; set; }
+        /// <summary>A standard library of fire (the projects of `Source/Packages.firesln`, docs/PACKAGES.md): its import may have a name of the compiler (`time`, `io`, ...).</summary>
+        public bool Standard { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -118,7 +122,7 @@ namespace fire.Projects
             var copy = new FireProject
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
-                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native,
+                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -143,6 +147,7 @@ namespace fire.Projects
                 References = p.References.Count > 0 ? p.References : null;
                 Settings = p.Settings.IsEmpty ? null : p.Settings;
                 Native = p.Native;
+                Standard = p.Standard ? true : null;
             }
             public int Format { get; }
             public string Name { get; }
@@ -154,6 +159,7 @@ namespace fire.Projects
             public List<ProjectReference>? References { get; }
             public ProjectSettings? Settings { get; }
             public ProjectNative? Native { get; }
+            public bool? Standard { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`.</summary>
@@ -181,7 +187,7 @@ namespace fire.Projects
             {
                 string import = ImportName;
                 if (!fire.Package.Manager.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter).");
-                else if (fire.Package.Manager.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
+                else if (!Standard && fire.Package.Manager.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
             }
             foreach (var r in References ?? new List<ProjectReference>())
             {

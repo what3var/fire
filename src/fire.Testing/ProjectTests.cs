@@ -280,8 +280,8 @@ static class ProjectTests
             File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.fire")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
-        // Desktop comes with the package fire-windows (PackageTemplates/windows, packed by bridge-packages); the folder has the same layout as a Templates folder
-        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(AppContext.BaseDirectory, "PackageTemplates", "windows"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        // Desktop comes with the package fire-windows (Source/windows/templates, packed with the project); the folder has the same layout as a Templates folder
+        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(StandardSources.DefaultFolder, "windows", "templates"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
         Check("Vorlagen: Desktop gehoert zum Paket fire-windows, nicht zu den eingebauten", catalog.Find(TemplateScope.Project, "Desktop") == null && windowsTemplates.Find(TemplateScope.Project, "Desktop") != null);
         var desktop = Workspace.CreateSolution(windowsTemplates.Find(TemplateScope.Project, "Desktop") ?? throw new InvalidOperationException("no template Desktop"), Path.Combine(t, "D"), "D");
         var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);

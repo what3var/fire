@@ -1,0 +1,119 @@
+{
+  "format": 1,
+  "name": "fire-audio",
+  "type": "library",
+  "import": "audio",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'audio' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_audio.hpp"
+    ],
+    "discover": false,
+    "linkLibraries": {
+      "posix": [
+        "dl"
+      ],
+      "windows": [
+        "winmm"
+      ],
+      "macos": [
+        "SDL2"
+      ]
+    },
+    "functions": [
+      {
+        "name": "__AudioLastError",
+        "arguments": 0,
+        "cpp": "audio::LastError"
+      },
+      {
+        "name": "__AudioLastErrorMessage",
+        "arguments": 0,
+        "cpp": "audio::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__AudioOpenCount",
+        "arguments": 0,
+        "cpp": "audio::OpenCount"
+      },
+      {
+        "name": "__AudioSupported",
+        "arguments": 0,
+        "cpp": "audio::Supported"
+      },
+      {
+        "name": "__AudioDevices",
+        "arguments": 0,
+        "cpp": "audio::Devices",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__AudioOpen",
+        "arguments": 3,
+        "cpp": "audio::Open"
+      },
+      {
+        "name": "__AudioWrite",
+        "arguments": 4,
+        "cpp": "audio::Write"
+      },
+      {
+        "name": "__AudioQueued",
+        "arguments": 1,
+        "cpp": "audio::Queued"
+      },
+      {
+        "name": "__AudioStop",
+        "arguments": 1,
+        "cpp": "audio::Stop"
+      },
+      {
+        "name": "__AudioSetVolume",
+        "arguments": 2,
+        "cpp": "audio::SetVolume"
+      },
+      {
+        "name": "__AudioClose",
+        "arguments": 1,
+        "cpp": "audio::Close"
+      },
+      {
+        "name": "__AudioWave",
+        "arguments": 9,
+        "cpp": "audio::Wave"
+      },
+      {
+        "name": "__AudioSimReset",
+        "arguments": 0,
+        "cpp": "audio::SimReset"
+      },
+      {
+        "name": "__AudioSimHold",
+        "arguments": 1,
+        "cpp": "audio::SimHold"
+      },
+      {
+        "name": "__AudioSimInfo",
+        "arguments": 1,
+        "cpp": "audio::SimInfo"
+      },
+      {
+        "name": "__AudioSimData",
+        "arguments": 0,
+        "cpp": "audio::SimData",
+        "needsList": true,
+        "returnsReference": true
+      }
+    ],
+    "reset": "audio::reset"
+  }
+}

@@ -230,7 +230,7 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 ## Attributes
 
 An attribute is a name in square brackets on the line before a method, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
-new List<int>()]`; `{...}` is an array here, like `[...]`). A method may have several. Attributes do nothing by themselves; tools read them - `forge test`
+new List<int>()]`; `{...}` is an array here, like `[...]`). A method may have several. Attributes do nothing by themselves; tools read them (reflection: `Member.Attributes`, see [Probes and reflection](16-probes-and-reflection.md)) - `forge test`
 runs the methods with `[Test]` (docs/TESTING.md):
 
 ```fire

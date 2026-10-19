@@ -48,8 +48,8 @@ namespace fire.Editor
             desktop.MainWindow = main;
             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
             main.Show();
-            // the standard packages (the bridges) are installed from PackageSource when they are missing - quick when nothing changed; never in the way of the start
-            Task.Run(() => fire.Package.Manager.StandardPackages.EnsureInstalled());
+            // the standard packages are packed and installed from the projects in Source when they are missing or changed - quick when nothing changed; never in the way of the start
+            Task.Run(() => fire.Compiler.StandardSources.EnsureInstalled());
 
             if (splash == null) { SplashDone.TrySetResult(); return; }
             splash.SetStatus("Ready");

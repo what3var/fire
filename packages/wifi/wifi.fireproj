@@ -1,0 +1,179 @@
+{
+  "format": 1,
+  "name": "fire-wifi",
+  "type": "library",
+  "import": "wifi",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'wifi' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_wifi.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__WiFiLastError",
+        "arguments": 0,
+        "cpp": "wifi::LastError"
+      },
+      {
+        "name": "__WiFiLastErrorMessage",
+        "arguments": 0,
+        "cpp": "wifi::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__WiFiOpenCount",
+        "arguments": 0,
+        "cpp": "wifi::OpenCount"
+      },
+      {
+        "name": "__WiFiSupported",
+        "arguments": 0,
+        "cpp": "wifi::Supported"
+      },
+      {
+        "name": "__WiFiInterfaces",
+        "arguments": 0,
+        "cpp": "wifi::Interfaces",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__WiFiOpen",
+        "arguments": 1,
+        "cpp": "wifi::Open"
+      },
+      {
+        "name": "__WiFiClose",
+        "arguments": 1,
+        "cpp": "wifi::Close"
+      },
+      {
+        "name": "__WiFiScanBegin",
+        "arguments": 1,
+        "cpp": "wifi::ScanBegin"
+      },
+      {
+        "name": "__WiFiScanStep",
+        "arguments": 1,
+        "cpp": "wifi::ScanStep"
+      },
+      {
+        "name": "__WiFiScanCount",
+        "arguments": 1,
+        "cpp": "wifi::ScanCount"
+      },
+      {
+        "name": "__WiFiScanSsid",
+        "arguments": 2,
+        "cpp": "wifi::ScanSsid",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__WiFiScanBssid",
+        "arguments": 2,
+        "cpp": "wifi::ScanBssid",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__WiFiScanInfo",
+        "arguments": 3,
+        "cpp": "wifi::ScanInfo"
+      },
+      {
+        "name": "__WiFiConnectBegin",
+        "arguments": 3,
+        "cpp": "wifi::ConnectBegin"
+      },
+      {
+        "name": "__WiFiConnectState",
+        "arguments": 1,
+        "cpp": "wifi::ConnectState"
+      },
+      {
+        "name": "__WiFiDisconnect",
+        "arguments": 1,
+        "cpp": "wifi::Disconnect"
+      },
+      {
+        "name": "__WiFiStationText",
+        "arguments": 2,
+        "cpp": "wifi::StationText",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__WiFiStationRssi",
+        "arguments": 1,
+        "cpp": "wifi::StationRssi"
+      },
+      {
+        "name": "__WiFiApStart",
+        "arguments": 5,
+        "cpp": "wifi::ApStart"
+      },
+      {
+        "name": "__WiFiApStop",
+        "arguments": 1,
+        "cpp": "wifi::ApStop"
+      },
+      {
+        "name": "__WiFiApRunning",
+        "arguments": 1,
+        "cpp": "wifi::ApRunning"
+      },
+      {
+        "name": "__WiFiApText",
+        "arguments": 2,
+        "cpp": "wifi::ApText",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__WiFiApClients",
+        "arguments": 1,
+        "cpp": "wifi::ApClients"
+      },
+      {
+        "name": "__WiFiSimAddNetwork",
+        "arguments": 4,
+        "cpp": "wifi::SimAddNetwork"
+      },
+      {
+        "name": "__WiFiSimRemoveNetwork",
+        "arguments": 1,
+        "cpp": "wifi::SimRemoveNetwork"
+      },
+      {
+        "name": "__WiFiSimDrop",
+        "arguments": 0,
+        "cpp": "wifi::SimDrop"
+      },
+      {
+        "name": "__WiFiSimDelays",
+        "arguments": 2,
+        "cpp": "wifi::SimDelays"
+      },
+      {
+        "name": "__WiFiSimApClients",
+        "arguments": 1,
+        "cpp": "wifi::SimApClients"
+      },
+      {
+        "name": "__WiFiSimReset",
+        "arguments": 0,
+        "cpp": "wifi::SimReset"
+      }
+    ],
+    "reset": "wifi::reset"
+  }
+}

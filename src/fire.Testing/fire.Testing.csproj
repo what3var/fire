@@ -27,4 +27,7 @@
     <ProjectReference Include="..\fire.Git\fire.Git.csproj" />
   </ItemGroup>
 
+  <!-- the standard libraries (packages/) next to the program as Source: the tests pack and install them into a store of their own; their C++ is built when it is used -->
+  <PropertyGroup><PrebuildStandard>false</PrebuildStandard><StandardSourcesPublish>false</StandardSourcesPublish></PropertyGroup>
+  <Import Project="..\StandardSources.targets" />
 </Project>

@@ -92,12 +92,28 @@ try {
 | Class | Members |
 |---|---|
 | `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)` |
-| `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
+| `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
+| `Attribute` | `Name`, `Args`, `ArgTexts`, `ArgCount()` - an attribute of a method (see [Classes](08-classes.md#attributes)) |
 | `Reflect` | `Get`, `Set`, `Call`, `New`, `Has`, `Probe`, `ProbeAll`, `Silence`, `SilenceAll`, `SilenceHandle` |
 
 - Reflection follows the same rules as normal code: `private`/`protected` apply to the calling code, `readonly` fields cannot be set, units are checked.
 - Errors are `ReflectionException`s.
 - Static members are described but cannot be used through `Reflect`.
+- `Member.Attributes` holds the attributes of a method, in the order of the source (empty for other members). `Args` are the values of the arguments that are
+  constants - numbers (also negative ones), strings, `true`/`false`, arrays of constants and ranges of `int` constants (`1..3` gives `[1, 2, 3]`); any other
+  argument (`new List<int>()`, a variable, a call) is `undefined` there. `ArgTexts` always has the source text of every argument.
+
+```fire
+#import "reflection"
+class Job {
+    [Retry 3, "network"]
+    undefined Run() { }
+}
+var m = Type.Of("Job").Find("Run")
+var retry = m.FindAttribute("Retry")
+print(retry.Args[0] + " " + retry.Args[1])   // 3 network
+print(m.HasAttribute("Test"))                 // False
+```
 
 ### Selectors
 

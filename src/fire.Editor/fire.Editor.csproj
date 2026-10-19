@@ -57,6 +57,6 @@
 	  <Win32Resource>fileicons.res</Win32Resource>
   </PropertyGroup>
 
-  <Import Project="..\BridgePackages.targets" />
+  <Import Project="..\StandardSources.targets" />
 
 </Project>

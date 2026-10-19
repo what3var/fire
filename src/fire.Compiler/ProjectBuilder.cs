@@ -52,15 +52,25 @@ namespace fire.Compiler
             try
             {
                 string preludePath = Path.Combine(workDir, import + ".fire");
-                File.WriteAllText(preludePath, Flatten(plan.Sources));
+                var imports = new List<string>();
+                File.WriteAllText(preludePath, Flatten(plan.Sources, imports));
 
                 var manifest = new PackageManifest
                 {
                     Name = project.Name, Version = version, Author = plan.Settings.Author ?? "", Description = plan.Settings.Description ?? "", License = plan.Settings.License ?? "",
                 };
                 var lib = plan.Libraries.Values.Where(l => plan.Project.Project.References.Any(r => r.IsProject && Path.GetFullPath(r.Project!.Replace('\\', '/'), project.Directory) == l.Project.FilePath)).ToList();
-                var packageImport = new PackageImport { Name = import, Prelude = preludePath, Native = plan.Native?.Native };   // the C++ goes into the package (copied by the forge)
+                var packageImport = new PackageImport { Name = import, Prelude = preludePath, Native = plan.Native?.Native, Standard = project.Project.Standard };   // the C++ goes into the package (copied by the forge)
                 foreach (var l in lib) { packageImport.Requires.Add(l.ImportName); manifest.Dependencies.Add(l.Name); }
+                // what the files import (`#import "time"`) is required by the package: whoever imports it gets those too (the lines are not in the prelude)
+                foreach (var name in imports)
+                {
+                    if (string.Equals(name, import, StringComparison.OrdinalIgnoreCase) || packageImport.Requires.Contains(name, StringComparer.OrdinalIgnoreCase)) continue;
+                    packageImport.Requires.Add(name);
+                    string? provider = StandardPackages.Bridges.Contains(name.ToLowerInvariant()) ? StandardPackages.PackageNameOf(name.ToLowerInvariant())
+                        : lib.Any(l => string.Equals(l.ImportName, name, StringComparison.OrdinalIgnoreCase)) ? null : PackageStore.Default.FindImport(name)?.Package.Name;
+                    if (provider != null && !manifest.Dependencies.Contains(provider)) manifest.Dependencies.Add(provider);
+                }
                 foreach (var pkg in plan.Packages) if (!manifest.Dependencies.Contains(pkg.Package!)) manifest.Dependencies.Add(pkg.Package!);
                 manifest.Imports.Add(packageImport);
                 // the folder `templates/` of the project goes into the package: the templates it offers to whoever installs it
@@ -115,9 +125,11 @@ namespace fire.Compiler
         }
 
         private static readonly Regex Include = new("^[ \\t]*#include[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled);
+        private static readonly Regex Import = new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled);
 
         /// <summary>The files of a library as one text: an `#include` is replaced by the file it names (once), because the prelude of a package is read where no folder of the project is known.</summary>
-        public static string Flatten(IReadOnlyList<SourceFile> files)
+        /// <param name="imports">Gets the names of the `#import` lines, which are left out (a package requires its imports instead).</param>
+        public static string Flatten(IReadOnlyList<SourceFile> files, List<string>? imports = null)
         {
             var sb = new StringBuilder();
             var done = new HashSet<string>(ProjectFiles.PathComparer);
@@ -127,6 +139,12 @@ namespace fire.Compiler
                 sb.Append("// ---- ").AppendLine(Path.GetFileName(path));
                 foreach (var line in text.Replace("\r\n", "\n").Split('\n'))
                 {
+                    if (imports != null && Import.Match(line) is { Success: true } im)
+                    {
+                        if (!imports.Contains(im.Groups[1].Value, StringComparer.OrdinalIgnoreCase)) imports.Add(im.Groups[1].Value);
+                        sb.AppendLine("// " + line.Trim());
+                        continue;
+                    }
                     var m = Include.Match(line);
                     if (!m.Success) { sb.AppendLine(line); continue; }
                     string target = Path.GetFullPath(m.Groups[1].Value, Path.GetDirectoryName(Path.GetFullPath(path))!);

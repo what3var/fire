@@ -1044,15 +1044,15 @@ namespace fire.Native
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{_target.Native.Platform}/fire_spi.hpp\"");   // (the spi package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{_target.Native.Platform}/fire_wifi.hpp\"");   // (the wifi package)
             if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{_target.Native.Platform}/fire_audio.hpp\"");   // (the audio package)
-            if (_usesGraphics) sb.AppendLine("#include \"bridges/fire_bridge_graphics.hpp\"");
+            if (_usesGraphics) AppendStandardNatives(sb, "graphics");
             if (_usesWindows)
             {
                 if (_target.Native.Platform is "posix" or "windows") sb.AppendLine("// fire-link: SDL2");   // the display of these platforms is SDL2: the build links it
                 sb.AppendLine($"#define FIRE_PLATFORM_DISPLAY_HEADER \"platform/{_target.Native.Platform}/fire_display.hpp\"");
-                sb.AppendLine("#include \"bridges/fire_bridge_windows.hpp\"");
+                AppendStandardNatives(sb, "windows");
             }
-            // the C++ source of the packages the program imports: after the runtime and the bridges, at the top level (the files include what they need and put their functions into namespace fire)
-            foreach (var (import, _) in _packageImports)
+            // the C++ source of the packages the program imports: after the runtime and the bridges (graphics, windows), at the top level (the files include what they need and put their functions into namespace fire)
+            foreach (var (import, _) in _packageImports.Where(p => !_standardNativesWritten.Contains(p.Import.Name)))
                 foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
                     sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {name}");
@@ -4192,6 +4192,24 @@ namespace fire.Native
             string text = single ? ((float)d).ToString("R", CultureInfo.InvariantCulture) : d.ToString("R", CultureInfo.InvariantCulture);
             if (!(text.Contains('.') || text.Contains('E') || text.Contains('e'))) text += ".0";
             return single ? text + "f" : text;
+        }
+
+        /// <summary>The C++ of an import the compiler knows itself (`graphics`, `windows`): its natives in the virtual machine are C#, its C++ is the source of the standard package
+        /// (`Source/graphics/native/`, docs/PACKAGES.md), put into the generated file like that of any package.</summary>
+        private readonly HashSet<string> _standardNativesWritten = new(StringComparer.OrdinalIgnoreCase);
+
+        private void AppendStandardNatives(StringBuilder sb, string import)
+        {
+            _standardNativesWritten.Add(import);   // (the project of the library itself has the same C++ as its own natives: it is written once)
+            var found = PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i)))
+                .FirstOrDefault(i => string.Equals(i.Name, import, StringComparison.OrdinalIgnoreCase) && i.Import.Native != null)
+                ?? throw new NativeNotSupportedException($"the standard package 'fire-{import}' with the C++ of `#import \"{import}\"` is not installed (start ember or spark once)");
+            foreach (var (name, text) in found.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
+            {
+                sb.AppendLine($"// ---- {found.Package.Name} {found.Package.Version}, import \"{import}\": {name}");
+                sb.AppendLine(text);
+                sb.AppendLine($"// ---- end of {name}");
+            }
         }
 
         private static string CString(string s) => CString(Encoding.UTF8.GetBytes(s));

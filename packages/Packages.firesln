@@ -1,0 +1,26 @@
+{
+  "format": 1,
+  "name": "Packages",
+  "projects": [
+    "graphics/graphics.fireproj",
+    "windows/windows.fireproj",
+    "devices/devices.fireproj",
+    "io/io.fireproj",
+    "ui/ui.fireproj",
+    "linq/linq.fireproj",
+    "reflection/reflection.fireproj",
+    "time/time.fireproj",
+    "random/random.fireproj",
+    "testing/testing.fireproj",
+    "net/net.fireproj",
+    "tls/tls.fireproj",
+    "http/http.fireproj",
+    "gpio/gpio.fireproj",
+    "i2c/i2c.fireproj",
+    "spi/spi.fireproj",
+    "wifi/wifi.fireproj",
+    "audio/audio.fireproj",
+    "tracker/tracker.fireproj",
+    "scene3d/scene3d.fireproj"
+  ]
+}

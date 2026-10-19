@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-ui",
+  "type": "library",
+  "import": "ui",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'ui' of fire: prelude."
+  }
+}

@@ -390,7 +390,7 @@ namespace fire.Editor
                     Add("Add Reference...", "add-reference");
                     _menu.Items.Add(new Separator());
                     if (node.Project!.Project.Type == OutputType.Exe) Add("Set as Startup Project", "set-startup");
-                    if (node.Project.Project.Type == OutputType.Library) Add("Pack as Package (.fpk)...", "pack");
+                    if (node.Project.Project.Type == OutputType.Library) { Add("Pack as Package (.fpk)...", "pack"); Add("Install (pack and install)", "install-library"); }
                     Add("Build / Run This Project", "run-project");
                     _menu.Items.Add(new Separator());
                     Add("Reload (read the folder again)", "refresh");

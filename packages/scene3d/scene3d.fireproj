@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "name": "fire-scene3d",
+  "type": "library",
+  "import": "scene3d",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'scene3d' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/s3d_engine.hpp",
+      "native/fire_bridge_scene3d.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__S3DMeshNew",
+        "arguments": 3,
+        "cpp": "s3d::MeshNew"
+      },
+      {
+        "name": "__S3DMeshTemplate",
+        "arguments": 2,
+        "cpp": "s3d::MeshTemplate"
+      },
+      {
+        "name": "__S3DMeshFromObj",
+        "arguments": 1,
+        "cpp": "s3d::MeshFromObj"
+      },
+      {
+        "name": "__S3DLookAt",
+        "arguments": 6,
+        "cpp": "s3d::LookAt",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__S3DMeshRetain",
+        "arguments": 1,
+        "cpp": "s3d::MeshRetain"
+      },
+      {
+        "name": "__S3DMeshFree",
+        "arguments": 1,
+        "cpp": "s3d::MeshFree"
+      },
+      {
+        "name": "__S3DMeshBounds",
+        "arguments": 1,
+        "cpp": "s3d::MeshBounds",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__S3DMeshTriangleCount",
+        "arguments": 1,
+        "cpp": "s3d::MeshTriangleCount"
+      },
+      {
+        "name": "__S3DTexNew",
+        "arguments": 3,
+        "cpp": "s3d::TexNew"
+      },
+      {
+        "name": "__S3DTexChecker",
+        "arguments": 4,
+        "cpp": "s3d::TexChecker"
+      },
+      {
+        "name": "__S3DTexFree",
+        "arguments": 1,
+        "cpp": "s3d::TexFree"
+      },
+      {
+        "name": "__S3DTexBumpAuto",
+        "arguments": 1,
+        "cpp": "s3d::TexBumpAuto"
+      },
+      {
+        "name": "__S3DTexBump",
+        "arguments": 5,
+        "cpp": "s3d::TexBump"
+      },
+      {
+        "name": "__S3DTexBumpClear",
+        "arguments": 1,
+        "cpp": "s3d::TexBumpClear"
+      },
+      {
+        "name": "__S3DFrameNew",
+        "arguments": 2,
+        "cpp": "s3d::FrameNew"
+      },
+      {
+        "name": "__S3DFrameFree",
+        "arguments": 1,
+        "cpp": "s3d::FrameFree"
+      },
+      {
+        "name": "__S3DFrameClear",
+        "arguments": 5,
+        "cpp": "s3d::FrameClear"
+      },
+      {
+        "name": "__S3DDraw",
+        "arguments": 5,
+        "cpp": "s3d::Draw"
+      },
+      {
+        "name": "__S3DFlush",
+        "arguments": 5,
+        "cpp": "s3d::Flush"
+      }
+    ],
+    "reset": "s3d::reset"
+  }
+}

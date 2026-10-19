@@ -40,11 +40,11 @@ namespace fire.Native
             "  Windows: let fire download SDL2 (it is kept in the folder Toolchain\\SDL2 next to the program), or unpack the MinGW package of SDL2 yourself\n" +
             "  and set the environment variable SDL2_DIR to its folder (the one with the include and lib folders, e.g. SDL2-2.30.9\\x86_64-w64-mingw32).";
 
-        /// <summary>Does the generated program ask for SDL2 (<c>// fire-link: SDL2</c> near its start)?</summary>
+        /// <summary>Does the generated program ask for SDL2 (a line <c>// fire-link: SDL2</c>)?</summary>
         public static bool IsRequiredBy(string cppFile)
         {
             if (!File.Exists(cppFile)) return false;
-            foreach (string line in File.ReadLines(cppFile).Take(400))
+            foreach (string line in File.ReadLines(cppFile))
                 if (line.StartsWith("// fire-link: ", StringComparison.Ordinal) && line.Substring("// fire-link: ".Length).Trim() == "SDL2") return true;
             return false;
         }

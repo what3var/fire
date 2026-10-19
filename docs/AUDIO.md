@@ -1,6 +1,6 @@
 # Sound (`#import "audio"`, the package `fire-audio`)
 
-Sound output: play samples, generate tones, play WAV files. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `native/bridges/fire_bridge_audio.hpp` over the platform layer `plat::audio`
+Sound output: play samples, generate tones, play WAV files. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/audio/native/fire_bridge_audio.hpp` over the platform layer `plat::audio`
 (`native/platform/std/fire_audio_*.hpp`), so the same code runs in the virtual machine (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build. It needs `time`.
 
 ```

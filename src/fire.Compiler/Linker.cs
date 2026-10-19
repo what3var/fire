@@ -234,6 +234,13 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>The key of an import the compiler knows itself (`graphics`, `windows`, `ui`, `linq`, `reflection`), else null.</summary>
+        private static string? BuiltInKey(string importName) => importName.ToLowerInvariant() switch
+        {
+            "graphics" => NativeImports.Graphics, "windows" => NativeImports.Windows, "ui" => NativeImports.Ui, "linq" => NativeImports.Linq, "reflection" => NativeImports.Reflection,
+            _ => null,
+        };
+
         /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
         private static bool IsDeclaration(Ast.Stmt stmt) =>
             stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
@@ -287,11 +294,17 @@ namespace fire.Compiler
             var projectImports = new List<string>();   // libraries of the project that a source imports
             ProjectNativeOverlay.Register(Plan);   // the C++ natives of the project and its libraries are found like those of installed packages
             if (ProjectNativeOverlay.OwnKey(Plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
+            // a library is its own import: `#import "name"` of its own name (in its tests, say) means the project's files - and a standard library of an import the compiler knows
+            // (`graphics`, `reflection`, ...) has the natives of the virtual machine, without the installed prelude
+            string? ownImport = Plan?.Type == fire.Projects.OutputType.Library ? Plan.Project.Project.ImportName : null;
+            var ownBuiltIn = new HashSet<string>();
+            if (ownImport != null && BuiltInKey(ownImport) is { } ownKey) { ownBuiltIn.Add(ownKey); nativeImports.Add(ownKey); }
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
                 {
                     string importName = args[0].AsString();
+                    if (ownImport != null && string.Equals(importName, ownImport, StringComparison.OrdinalIgnoreCase)) return null;
                     if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
                     return null;
@@ -421,7 +434,7 @@ namespace fire.Compiler
             // shifts the start of the user code by one source.
             firstUserSource += ImportedPreludes.Insert(
                 nativeImports, natives, processedSources,
-                preludeSource => Preprocessor.Process(preludeSource, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry));
+                preludeSource => Preprocessor.Process(preludeSource, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry), ownBuiltIn);
 
             // the libraries of the project come before the code of the project, the ones that others need first
             if (libraryFiles.Count > 0)

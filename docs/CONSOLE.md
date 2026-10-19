@@ -1,7 +1,7 @@
 # fire.Terminal – Framebuffer, Zeichnen und Fenster
 
 Die Grafikschicht von fire in eigenen Projekten, unabhängig vom Editor (`fire.Editor` referenziert sie nicht und wird nicht von ihnen
-referenziert). Die native C++-Runtime hat dieselbe Schicht pixelgleich (`native/bridges/fire_bridge_graphics.hpp`, `fire_bridge_windows.hpp`).
+referenziert). Die native C++-Runtime hat dieselbe Schicht pixelgleich (`packages/graphics/native/fire_bridge_graphics.hpp`, `fire_bridge_windows.hpp`).
 
 ## Projekt-Aufteilung
 
@@ -211,7 +211,7 @@ Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigene
 (C#: `Renderer.SetClip/ResetClip/GetClip`, `Surface.ClipLeft/ClipTop/ClipRight/ClipBottom`, `Blitter.Blit(..., clipLeft, clipTop, clipRight, clipBottom)`). `Clear`, `Clear(farbe)` und das Scrollen des Terminals gelten immer für den ganzen Framebuffer. Die UI-Bibliothek
 nutzt es für Bildlauf-Ausschnitte und Listen (`Root.PushClip/PopClip`).
 
-C++-Spiegel: `native/bridges/graphics/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
+C++-Spiegel: `packages/graphics/native/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
 (GPU) bleibt hinter derselben Schnittstelle möglich.
 
 ## Mehr Zeichenfunktionen

@@ -98,16 +98,41 @@ of a script that imports the package takes a few seconds for that and needs a C+
 Per-system code goes into `native.platformSources` (or behind `FIRE_TARGET_*`/`FIRE_HAL_*`), `platforms` limits where the C++ may be used.
 How to write a native, what crosses to the VM, prebuilt libraries and packed programs: **docs/PACKAGE_NATIVES.md**.
 
-## The standard packages (the bridges)
+## The standard libraries (`packages/`, `Source/`)
 
-The standard bridges of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random`, `testing`, `net`, `tls`, `http` - are also available as packages (`fire-graphics`, `fire-io`, ...), each with its prelude
-and its C++ sources (`native/bridges/`). They are marked `"standard": true`, which is the only way for an import to have the name of an import of the compiler. They are built with the solution:
-after the build, `fire.Compiler bridge-packages <folder>` (an MSBuild target in `src/BridgePackages.targets`, imported by the compiler and the editor) writes them into the folder `PackageSource` of the
-output. When **spark**, **forge** (the compiler) or **ember** start, they check that the standard packages are installed and install the missing or older ones from `PackageSource` (a time stamp in
-`Packages\.standard-stamp` keeps the check quick; a package file newer than the stamp is installed again). The move to C++ only is under way, bridge by bridge: **`time`, `io`, `devices` and `random` (a prelude only) already exist
-only as packages** (`#import "time"` needs `fire-time` to be installed; its functions are the C++ of `native/bridges/fire_bridge_time.hpp`, which the VM runs in a library through the package ABI,
-except `Sleep` and `__time_unit_ticks`, which the VM runs itself: `host` functions; `io` and `devices` ask the host for its path policy, console and device manager through the callbacks of the ABI). For the others the compiler still resolves
-`#import "graphics"` and the rest to its built-in C# bridges first.
+The libraries of fire - `graphics`, `windows`, `devices`, `io`, `ui`, `linq`, `reflection`, `time`, `random`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
+`tracker`, `scene3d` - are ordinary **library projects** (docs/PROJECTS.md) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
+`Packages.firesln` with one project per import:
+
+```
+packages/
+  Packages.firesln
+  time/
+    time.fireproj        "name": "fire-time", "import": "time", "standard": true, the natives (sources, functions, reset, link libraries)
+    time.fire            the fire code (the prelude of the package)
+    native/              the C++ (fire_bridge_time.hpp): the natives, for the VM (a library) and for native builds
+    testing/             the tests of the library (forge test), not part of the package
+  ui/
+    00_core.fire ...     a library may have several files; `#import "graphics"` in them makes graphics a requirement of the package
+  ...
+```
+
+The build copies the folder next to the programs as **`Source/`** (`src/StandardSources.targets`, imported by the compiler, the editor and the tests) and builds the libraries of the C++ for this
+machine into `Prebuilt/` (`forge prebuild-standard Source Prebuilt`). When **spark** or **forge** start (ember asks forge: `forge install-standard`), every project of `Source/Packages.firesln` that
+is not installed yet, or whose folder changed since it was installed, is packed (without its tests) and installed - the ones it imports first. A fingerprint of every project folder in
+`Packages/.source-stamps.json` keeps the check quick. A prebuilt library goes along when it was built from the same C++, so that the virtual machine needs no C++ compiler for the libraries
+as shipped; after a change of the C++ the library is built on first use like that of any package.
+
+**Changing a standard library**: *File > Open the Standard Libraries (Source)* opens the solution in spark. Change a file, run its tests (`forge test`, or the tests of the project), then
+*Install* the project (context menu of the project, or *Project > Install Library*): it is packed and installed at once; an installed package of the same version is replaced after a question.
+The next start of spark or forge would install it, too.
+
+What makes these projects special is small: `"standard": true` lets a project have the import name of a library of the compiler (`time`, `graphics`, ...), and `"native": { "discover": false,
+"functions": [...] }` names the natives explicitly (their C++ names are in namespaces such as `io::FileOpen`). Five imports have natives that are part of the virtual machine (C#): `graphics`,
+`windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package, and for native builds the C++ of `graphics` and `windows` too. Only the core prelude (`Exception`,
+`List<T>`, `Math`, string methods, ...) is built into the compiler.
+
+Inside its own project a library is the program: `#import "time"` in the tests of `time` means the project's files (and its C++, built for the VM), not the installed package.
 
 ## Making packages
 

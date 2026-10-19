@@ -1,0 +1,111 @@
+{
+  "format": 1,
+  "name": "fire-i2c",
+  "type": "library",
+  "import": "i2c",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'i2c' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_i2c.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__I2cLastError",
+        "arguments": 0,
+        "cpp": "i2c::LastError"
+      },
+      {
+        "name": "__I2cLastErrorMessage",
+        "arguments": 0,
+        "cpp": "i2c::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__I2cOpenCount",
+        "arguments": 0,
+        "cpp": "i2c::OpenCount"
+      },
+      {
+        "name": "__I2cSupported",
+        "arguments": 0,
+        "cpp": "i2c::Supported"
+      },
+      {
+        "name": "__I2cBuses",
+        "arguments": 0,
+        "cpp": "i2c::Buses",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__I2cOpen",
+        "arguments": 2,
+        "cpp": "i2c::Open"
+      },
+      {
+        "name": "__I2cSetSpeed",
+        "arguments": 2,
+        "cpp": "i2c::SetSpeed"
+      },
+      {
+        "name": "__I2cWrite",
+        "arguments": 5,
+        "cpp": "i2c::Write"
+      },
+      {
+        "name": "__I2cRead",
+        "arguments": 5,
+        "cpp": "i2c::Read"
+      },
+      {
+        "name": "__I2cWriteRead",
+        "arguments": 8,
+        "cpp": "i2c::WriteRead"
+      },
+      {
+        "name": "__I2cProbe",
+        "arguments": 2,
+        "cpp": "i2c::Probe"
+      },
+      {
+        "name": "__I2cClose",
+        "arguments": 1,
+        "cpp": "i2c::Close"
+      },
+      {
+        "name": "__I2cSimAdd",
+        "arguments": 1,
+        "cpp": "i2c::SimAdd"
+      },
+      {
+        "name": "__I2cSimRemove",
+        "arguments": 1,
+        "cpp": "i2c::SimRemove"
+      },
+      {
+        "name": "__I2cSimSetRegister",
+        "arguments": 3,
+        "cpp": "i2c::SimSetRegister"
+      },
+      {
+        "name": "__I2cSimGetRegister",
+        "arguments": 2,
+        "cpp": "i2c::SimGetRegister"
+      },
+      {
+        "name": "__I2cSimReset",
+        "arguments": 0,
+        "cpp": "i2c::SimReset"
+      }
+    ],
+    "reset": "i2c::reset"
+  }
+}

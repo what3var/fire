@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-random",
+  "type": "library",
+  "import": "random",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'random' of fire: prelude."
+  }
+}

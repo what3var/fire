@@ -1,0 +1,30 @@
+// The tests of DateTime and TimeSpan: `forge test packages/time/time.fireproj` (the C++ of native/ is built for the virtual machine).
+#import "testing"
+
+class TimeTests {
+    [Test]
+    undefined Spans() {
+        Testing.Assert.AreEqual(90, TimeSpan.FromMinutes(1.5).TotalSeconds)
+        Testing.Assert.AreEqual(TimeSpan.FromHours(1), TimeSpan.FromMinutes(30) + TimeSpan.FromMinutes(30))
+    }
+
+    [Test]
+    undefined Dates() {
+        var d = new DateTime(2024, 2, 28)
+        Testing.Assert.AreEqual(29, d.AddDays(1).Day)
+        Testing.Assert.AreEqual(3, d.AddDays(2).Month)
+        Testing.Assert.AreEqual(2025, d.AddMonths(12).Year)
+    }
+
+    [Test]
+    undefined Now() {
+        Testing.Assert.IsTrue(DateTime.UtcNow.Year >= 2024)
+    }
+
+    [Test "Sleep waits"]
+    undefined Sleeps() {
+        var start = DateTime.UtcNow
+        Sleep(20ms)
+        Testing.Assert.IsTrue((DateTime.UtcNow - start).TotalMilliseconds >= 15)
+    }
+}

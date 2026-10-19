@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-http",
+  "type": "library",
+  "import": "http",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'http' of fire: prelude."
+  }
+}

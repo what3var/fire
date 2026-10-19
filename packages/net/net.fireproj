@@ -1,0 +1,155 @@
+{
+  "format": 1,
+  "name": "fire-net",
+  "type": "library",
+  "import": "net",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'net' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_net.hpp"
+    ],
+    "discover": false,
+    "linkLibraries": {
+      "windows": [
+        "ws2_32"
+      ]
+    },
+    "functions": [
+      {
+        "name": "__NetLastError",
+        "arguments": 0,
+        "cpp": "net::LastError"
+      },
+      {
+        "name": "__NetLastErrorMessage",
+        "arguments": 0,
+        "cpp": "net::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__NetOpenCount",
+        "arguments": 0,
+        "cpp": "net::OpenCount"
+      },
+      {
+        "name": "__NetSupported",
+        "arguments": 0,
+        "cpp": "net::Supported"
+      },
+      {
+        "name": "__NetNativeHandle",
+        "arguments": 1,
+        "cpp": "net::NativeHandle"
+      },
+      {
+        "name": "__NetConnectBegin",
+        "arguments": 2,
+        "cpp": "net::ConnectBegin"
+      },
+      {
+        "name": "__NetConnectStep",
+        "arguments": 1,
+        "cpp": "net::ConnectStep"
+      },
+      {
+        "name": "__NetTcpListen",
+        "arguments": 3,
+        "cpp": "net::TcpListen"
+      },
+      {
+        "name": "__NetAccept",
+        "arguments": 2,
+        "cpp": "net::Accept"
+      },
+      {
+        "name": "__NetSend",
+        "arguments": 5,
+        "cpp": "net::Send"
+      },
+      {
+        "name": "__NetRecv",
+        "arguments": 5,
+        "cpp": "net::Recv"
+      },
+      {
+        "name": "__NetUdpOpen",
+        "arguments": 2,
+        "cpp": "net::UdpOpen"
+      },
+      {
+        "name": "__NetSendTo",
+        "arguments": 6,
+        "cpp": "net::SendTo"
+      },
+      {
+        "name": "__NetRecvFrom",
+        "arguments": 5,
+        "cpp": "net::RecvFrom"
+      },
+      {
+        "name": "__NetPeerHost",
+        "arguments": 1,
+        "cpp": "net::PeerHost",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__NetPeerPort",
+        "arguments": 1,
+        "cpp": "net::PeerPort"
+      },
+      {
+        "name": "__NetLocalHost",
+        "arguments": 1,
+        "cpp": "net::LocalHost",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__NetLocalPort",
+        "arguments": 1,
+        "cpp": "net::LocalPort"
+      },
+      {
+        "name": "__NetAvailable",
+        "arguments": 1,
+        "cpp": "net::Available"
+      },
+      {
+        "name": "__NetPoll",
+        "arguments": 4,
+        "cpp": "net::Poll"
+      },
+      {
+        "name": "__NetSetOption",
+        "arguments": 3,
+        "cpp": "net::SetOption"
+      },
+      {
+        "name": "__NetShutdown",
+        "arguments": 2,
+        "cpp": "net::Shutdown"
+      },
+      {
+        "name": "__NetClose",
+        "arguments": 1,
+        "cpp": "net::Close"
+      },
+      {
+        "name": "__NetResolve",
+        "arguments": 1,
+        "cpp": "net::Resolve",
+        "needsList": true,
+        "returnsReference": true
+      }
+    ],
+    "reset": "net::reset"
+  }
+}
