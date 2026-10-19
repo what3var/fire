@@ -111,7 +111,7 @@ namespace fire.Runtime
                         string key = m.Kind == "method" ? "m:" + m.Name + "/" + m.ParamNames.Count : "f:" + m.Name;
                         if (!seen.Add(key)) continue;
                     }
-                    var d = new ScriptArray(12);
+                    var d = new ScriptArray(13);
                     d.Items[0] = Str(m.Name);
                     d.Items[1] = Str(m.Kind);
                     d.Items[2] = Str(m.TypeName);
@@ -124,12 +124,49 @@ namespace fire.Runtime
                     d.Items[9] = Str(c.Name);
                     d.Items[10] = StringArray(m.ParamNames);
                     d.Items[11] = StringArray(m.ParamTypes);
+                    d.Items[12] = Attributes(m.Attributes);
                     result.Add(Value.MakeArray(d));
                 }
             }
             var arr = new ScriptArray(result.Count);
             for (int i = 0; i < result.Count; i++) arr.Items[i] = result[i];
             return Value.MakeArray(arr);
+        }
+
+        /// <summary>The attributes of a member: each as [name, values, texts] - a value the compiler did not know (not a constant) is undefined.</summary>
+        private static Value Attributes(IReadOnlyList<AttributeMeta> attributes)
+        {
+            var arr = new ScriptArray(attributes.Count);
+            for (int i = 0; i < attributes.Count; i++)
+            {
+                var a = attributes[i];
+                var values = System.Text.Json.Nodes.JsonNode.Parse(a.ArgsJson) as System.Text.Json.Nodes.JsonArray ?? new System.Text.Json.Nodes.JsonArray();
+                var v = new ScriptArray(values.Count);
+                for (int k = 0; k < values.Count; k++) v.Items[k] = FromJson(values[k]);
+                var entry = new ScriptArray(3);
+                entry.Items[0] = Str(a.Name);
+                entry.Items[1] = Value.MakeArray(v);
+                entry.Items[2] = StringArray(a.ArgTexts);
+                arr.Items[i] = Value.MakeArray(entry);
+            }
+            return Value.MakeArray(arr);
+        }
+
+        /// <summary>A value of AttributeMeta.ArgsJson.</summary>
+        private static Value FromJson(System.Text.Json.Nodes.JsonNode? node)
+        {
+            if (node is not System.Text.Json.Nodes.JsonObject o) return Value.MakeUndefined();
+            if (o["i"] is { } i) return Value.MakeInt(i.GetValue<long>());
+            if (o["f"] is { } f) return Value.MakeFloat(f.GetValue<double>());
+            if (o["s"] is { } s) return Str(s.GetValue<string>());
+            if (o["b"] is { } b) return Value.MakeBool(b.GetValue<bool>());
+            if (o["a"] is System.Text.Json.Nodes.JsonArray a)
+            {
+                var arr = new ScriptArray(a.Count);
+                for (int k = 0; k < a.Count; k++) arr.Items[k] = FromJson(a[k]);
+                return Value.MakeArray(arr);
+            }
+            return Value.MakeUndefined();
         }
 
         /// <summary>`Reflect.Probe`: the same as `probe obj.name changed|changing handler` (`name` undefined = all members); returns the handle.</summary>

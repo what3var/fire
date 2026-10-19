@@ -1,5 +1,5 @@
 LICENSE OF https://github.com/tomolt/libschrift
-Ported to C# in TrueTypeFont.cs (fire.Terminal) and to C++ in native/bridges/graphics/fire_gfx_ttf.hpp - the TrueType rendering of the graphics library
+Ported to C# in TrueTypeFont.cs (fire.Terminal) and to C++ in packages/graphics/native/fire_gfx_ttf.hpp - the TrueType rendering of the graphics library
 
 ISC License
 

@@ -131,6 +131,15 @@ namespace fire.Editor
                 FileTypeFilter = new[] { new FilePickerFileType("Package files") { Patterns = new[] { "*.fpk" } }, FilePickerFileTypes.All },
             });
             if (files.Count == 0 || files[0].TryGetLocalPath() is not { } file) return;
+            try
+            {
+                var manifest = Fpk.ReadManifest(file);
+                if (PackageStore.Default.Find(manifest.Name) is { } installed && installed.Version == manifest.Version
+                    && await Dialogs.Ask(this, $"{manifest.Name} {manifest.Version} is installed already.\n\nReplace it with this package?", "Package Manager",
+                        ("Replace", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.No)) != Dialogs.Answer.Yes)
+                    return;
+            }
+            catch (PackageException ex) { await Dialogs.Message(this, ex.Message, "Package Manager"); return; }
             await RunAsync($"Installing {System.IO.Path.GetFileName(file)}...", () => _service.Install(file));
         }
 

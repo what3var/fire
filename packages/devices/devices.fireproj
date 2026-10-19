@@ -1,0 +1,149 @@
+{
+  "format": 1,
+  "name": "fire-devices",
+  "type": "library",
+  "import": "devices",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'devices' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_devices.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__DEVMgrRefresh",
+        "arguments": 1,
+        "cpp": "dev::MgrRefresh"
+      },
+      {
+        "name": "__DEVMgrHandleForIdentifier",
+        "arguments": 1,
+        "cpp": "dev::MgrHandleForIdentifier"
+      },
+      {
+        "name": "__DEVMgrCount",
+        "arguments": 0,
+        "cpp": "dev::MgrCount"
+      },
+      {
+        "name": "__DEVMgrHandleAt",
+        "arguments": 1,
+        "cpp": "dev::MgrHandleAt"
+      },
+      {
+        "name": "__DEVMgrIsShared",
+        "arguments": 0,
+        "cpp": "dev::MgrIsShared"
+      },
+      {
+        "name": "__DEVMgrDefaultHandle",
+        "arguments": 0,
+        "cpp": "dev::MgrDefaultHandle"
+      },
+      {
+        "name": "__DEVIdentifier",
+        "arguments": 1,
+        "cpp": "dev::Identifier",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__DEVIsShared",
+        "arguments": 1,
+        "cpp": "dev::IsShared"
+      },
+      {
+        "name": "__DEVIsConnected",
+        "arguments": 1,
+        "cpp": "dev::IsConnected"
+      },
+      {
+        "name": "__DEVPortName",
+        "arguments": 1,
+        "cpp": "dev::PortName",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__DEVAvailability",
+        "arguments": 1,
+        "cpp": "dev::Availability"
+      },
+      {
+        "name": "__DEVTestAvailability",
+        "arguments": 1,
+        "cpp": "dev::TestAvailability"
+      },
+      {
+        "name": "__DEVConnect",
+        "arguments": 1,
+        "cpp": "dev::Connect"
+      },
+      {
+        "name": "__DEVDisconnect",
+        "arguments": 1,
+        "cpp": "dev::Disconnect"
+      },
+      {
+        "name": "__DEVDoCommand",
+        "arguments": 2,
+        "cpp": "dev::DoCommand"
+      },
+      {
+        "name": "__DEVHasData",
+        "arguments": 1,
+        "cpp": "dev::HasData"
+      },
+      {
+        "name": "__DEVReadString",
+        "arguments": 1,
+        "cpp": "dev::ReadString",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__DEVRead",
+        "arguments": 1,
+        "cpp": "dev::Read",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__DEVWriteString",
+        "arguments": 2,
+        "cpp": "dev::WriteString"
+      },
+      {
+        "name": "__DEVWrite",
+        "arguments": 2,
+        "cpp": "dev::Write"
+      },
+      {
+        "name": "__DEVWaitForString",
+        "arguments": 3,
+        "cpp": "dev::WaitForString",
+        "host": true
+      },
+      {
+        "name": "__DEVWaitFor",
+        "arguments": 3,
+        "cpp": "dev::WaitFor",
+        "host": true
+      },
+      {
+        "name": "__DEVWaitStep",
+        "arguments": 2,
+        "cpp": "dev::WaitStep"
+      }
+    ],
+    "exceptions": [
+      "DestroyedException"
+    ]
+  }
+}

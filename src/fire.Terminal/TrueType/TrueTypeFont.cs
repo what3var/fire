@@ -15,7 +15,7 @@ namespace fire.Terminal.TrueType
     /// text and rasterises glyphs into 8 bit coverage images with exact area coverage (anti-aliased, no hinting).
     ///
     /// This is a port to C# of libschrift 0.10.2 (https://github.com/tomolt/libschrift, (c) 2019-2022 Thomas Oltmann and contributors, ISC license, see LICENSE-libschrift.md);
-    /// the native build has the same algorithm in C++ (native/bridges/graphics/fire_gfx_ttf.hpp), and the tests compare both with the original: the glyph images are equal. Every read of the font
+    /// the native build has the same algorithm in C++ (packages/graphics/native/fire_gfx_ttf.hpp), and the tests compare both with the original: the glyph images are equal. Every read of the font
     /// is bounds checked (a damaged font gives a "no glyph" result and no exception). Not safe for concurrent use of ONE font from several threads (the caches are not locked).
     /// </summary>
     /// <remarks>

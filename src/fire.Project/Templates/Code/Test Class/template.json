@@ -1,0 +1,7 @@
+{
+  "title": "Test Class",
+  "description": "A class with tests: methods with [Test] that `forge test` runs (by convention in the folder testing/).",
+  "icon": "class",
+  "defaultName": "MyTests",
+  "order": 25
+}

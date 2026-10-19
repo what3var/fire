@@ -1248,7 +1248,7 @@ vermerkt statt umgesetzt):
 
 ## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
 
-> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `native/bridges/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
+> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `packages/io/native/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
 
 `src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und docs/PACKAGE_NATIVES.md): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),

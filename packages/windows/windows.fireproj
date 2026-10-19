@@ -1,0 +1,19 @@
+{
+  "format": 1,
+  "name": "fire-windows",
+  "type": "library",
+  "import": "windows",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'windows' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_windows.hpp"
+    ],
+    "discover": false
+  }
+}

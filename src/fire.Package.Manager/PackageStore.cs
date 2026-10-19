@@ -34,8 +34,17 @@ namespace fire.Package.Manager
         public IEnumerable<(string Name, string Text)> ReadNativeSources(IEnumerable<string> platformKeys)
         {
             if (Import.Native == null) yield break;
-            foreach (var src in Import.Native.SourcesFor(platformKeys)) yield return (src, StripPragmaOnce(File.ReadAllText(PathOf(src))));
+            var sources = Import.Native.SourcesFor(platformKeys);
+            var names = new HashSet<string>(sources.Select(s => Path.GetFileName(s.Replace('\\', '/'))), StringComparer.Ordinal);
+            foreach (var src in sources) yield return (src, StripLocalIncludes(StripPragmaOnce(File.ReadAllText(PathOf(src))), names));
         }
+
+        /// <summary>The sources go into one file in the order of the package (what a file includes comes before it): an `#include "x.hpp"` of another source of the package is
+        /// already there and is left out.</summary>
+        private static string StripLocalIncludes(string text, HashSet<string> names) =>
+            System.Text.RegularExpressions.Regex.Replace(text, @"^([ \t]*)#include[ \t]+""([^""\r\n]+)""[ \t]*\r?$",
+                m => names.Contains(Path.GetFileName(m.Groups[2].Value)) ? m.Groups[1].Value + "// (in this file already) #include \"" + m.Groups[2].Value + "\"" : m.Value,
+                System.Text.RegularExpressions.RegexOptions.Multiline);
 
         /// <summary>The sources are put into one generated file: `#pragma once` in a header would only be a warning there.</summary>
         private static string StripPragmaOnce(string text) =>

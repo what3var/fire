@@ -62,7 +62,7 @@ namespace fire.Package.Manager
         /// <summary>The imports of the compiler itself: a package must not take one of these names.</summary>
         public static readonly IReadOnlySet<string> ReservedImportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "print", "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d",
+            "print", "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d",
         };
 
         /// <summary>All problems of the description (empty: it is fine). <paramref name="fileExists"/> decides whether a referenced file exists (relative to the root of the
@@ -117,7 +117,7 @@ namespace fire.Package.Manager
     }
 
     /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need
-    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see native/bridges/ of the compiler for examples). The virtual machine has no
+    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see packages/<name>/native/ of the compiler for examples). The virtual machine has no
     /// way to run C++: calling such a native there is an error that says so; a prelude that has no natives works in both.</summary>
     public sealed class PackageNative
     {

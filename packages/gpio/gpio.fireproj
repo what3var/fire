@@ -1,0 +1,111 @@
+{
+  "format": 1,
+  "name": "fire-gpio",
+  "type": "library",
+  "import": "gpio",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'gpio' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_gpio.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__GpioLastError",
+        "arguments": 0,
+        "cpp": "gpio::LastError"
+      },
+      {
+        "name": "__GpioLastErrorMessage",
+        "arguments": 0,
+        "cpp": "gpio::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__GpioOpenCount",
+        "arguments": 0,
+        "cpp": "gpio::OpenCount"
+      },
+      {
+        "name": "__GpioSupported",
+        "arguments": 0,
+        "cpp": "gpio::Supported"
+      },
+      {
+        "name": "__GpioChips",
+        "arguments": 0,
+        "cpp": "gpio::Chips",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__GpioOpen",
+        "arguments": 2,
+        "cpp": "gpio::Open"
+      },
+      {
+        "name": "__GpioConfigure",
+        "arguments": 5,
+        "cpp": "gpio::Configure"
+      },
+      {
+        "name": "__GpioRead",
+        "arguments": 1,
+        "cpp": "gpio::Read"
+      },
+      {
+        "name": "__GpioWrite",
+        "arguments": 2,
+        "cpp": "gpio::Write"
+      },
+      {
+        "name": "__GpioPollEdge",
+        "arguments": 1,
+        "cpp": "gpio::PollEdge"
+      },
+      {
+        "name": "__GpioEdgeTime",
+        "arguments": 1,
+        "cpp": "gpio::EdgeTime"
+      },
+      {
+        "name": "__GpioClose",
+        "arguments": 1,
+        "cpp": "gpio::Close"
+      },
+      {
+        "name": "__GpioSimWire",
+        "arguments": 2,
+        "cpp": "gpio::SimWire"
+      },
+      {
+        "name": "__GpioSimUnwire",
+        "arguments": 2,
+        "cpp": "gpio::SimUnwire"
+      },
+      {
+        "name": "__GpioSimDrive",
+        "arguments": 2,
+        "cpp": "gpio::SimDrive"
+      },
+      {
+        "name": "__GpioSimLevel",
+        "arguments": 1,
+        "cpp": "gpio::SimLevel"
+      },
+      {
+        "name": "__GpioSimReset",
+        "arguments": 0,
+        "cpp": "gpio::SimReset"
+      }
+    ],
+    "reset": "gpio::reset"
+  }
+}

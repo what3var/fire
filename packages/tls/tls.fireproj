@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "name": "fire-tls",
+  "type": "library",
+  "import": "tls",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'tls' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_tls.hpp"
+    ],
+    "discover": false,
+    "linkLibraries": {
+      "posix": [
+        "ssl",
+        "crypto"
+      ],
+      "windows": [
+        "ws2_32",
+        "secur32",
+        "crypt32",
+        "ncrypt"
+      ]
+    },
+    "functions": [
+      {
+        "name": "__TlsLastError",
+        "arguments": 0,
+        "cpp": "tls::LastError"
+      },
+      {
+        "name": "__TlsLastErrorMessage",
+        "arguments": 0,
+        "cpp": "tls::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__TlsSupported",
+        "arguments": 0,
+        "cpp": "tls::Supported"
+      },
+      {
+        "name": "__TlsOpen",
+        "arguments": 7,
+        "cpp": "tls::Open"
+      },
+      {
+        "name": "__TlsHandshake",
+        "arguments": 1,
+        "cpp": "tls::Handshake"
+      },
+      {
+        "name": "__TlsServerContext",
+        "arguments": 2,
+        "cpp": "tls::ServerContext"
+      },
+      {
+        "name": "__TlsFreeContext",
+        "arguments": 1,
+        "cpp": "tls::FreeContext"
+      },
+      {
+        "name": "__TlsAccept",
+        "arguments": 2,
+        "cpp": "tls::Accept"
+      },
+      {
+        "name": "__TlsRead",
+        "arguments": 5,
+        "cpp": "tls::Read"
+      },
+      {
+        "name": "__TlsWrite",
+        "arguments": 5,
+        "cpp": "tls::Write"
+      },
+      {
+        "name": "__TlsPending",
+        "arguments": 1,
+        "cpp": "tls::Pending"
+      },
+      {
+        "name": "__TlsInfo",
+        "arguments": 1,
+        "cpp": "tls::Info",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__TlsClose",
+        "arguments": 1,
+        "cpp": "tls::Close"
+      }
+    ],
+    "reset": "tls::reset"
+  }
+}

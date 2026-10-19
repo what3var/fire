@@ -312,7 +312,7 @@ einzigen Maschine, keine Garantie.
 
 ### Bridges: Time und `Sleep` - umgesetzt
 
-Die Natives einer `#import`-Bibliothek stehen in einem eigenen Header `native/bridges/fire_bridge_<name>.hpp`, den die erzeugte Datei nur einbindet, wenn das Programm
+Die Natives einer `#import`-Bibliothek stehen in einem eigenen Header `packages/<name>/native/fire_bridge_<name>.hpp`, den die erzeugte Datei nur einbindet, wenn das Programm
 die Bibliothek importiert (`bridges/` liegt neben `fire_rt.hpp`; `NativeRuntimeFiles` schreibt sie mit). Sie benutzen die Runtime und die Plattformschicht (`plat::`), nie ein
 Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `DateTime.Now/UtcNow`, Kalenderrechnung, `ToString(format)` (die .NET-Zeitformate, Invariant Culture),
 `Parse`/`TryParse`, `TimeSpan`-Text. Was der Header von der Plattform braucht: `plat::unixMicros()` (Wanduhr) und für `Sleep` ohne Threads `plat::sleepMs`; die Zeitzone kommt aus

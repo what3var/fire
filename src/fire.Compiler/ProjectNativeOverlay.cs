@@ -15,6 +15,8 @@ namespace fire.Compiler
         /// <summary>Puts the native parts of the plan (the project's and its libraries') into the package store.</summary>
         public static void Register(BuildPlan? plan)
         {
+            // only this plan's projects: those of an earlier build (another project, the project of a standard library that was tested) must not hide the installed packages
+            PackageStore.Default.ClearOverlay();
             if (plan == null) return;
             foreach (var part in plan.NativeParts)
             {

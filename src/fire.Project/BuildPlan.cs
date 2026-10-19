@@ -75,7 +75,8 @@ namespace fire.Projects
             return File.ReadAllText(path);
         }
 
-        public static BuildPlan Create(Workspace workspace, LoadedProject project, Func<string, string?>? textOf = null)
+        /// <param name="tests">Also the files of `testing/` (`forge test`, docs/TESTING.md).</param>
+        public static BuildPlan Create(Workspace workspace, LoadedProject project, Func<string, string?>? textOf = null, bool tests = false)
         {
             var errors = new List<string>();
             project.Refresh();
@@ -145,7 +146,7 @@ namespace fire.Projects
             }
 
             var sources = new List<SourceFile>();
-            foreach (var f in project.Files)
+            foreach (var f in tests ? project.Files.Concat(project.TestFiles) : project.Files)
             {
                 if (TryReadSource(f, textOf, project.Name, errors, "") is { } source) sources.Add(source);
             }

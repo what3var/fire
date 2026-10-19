@@ -8,12 +8,19 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
-// The standard bridges that run as packages (time, ...): built and installed into a store of their own for this run (the C++ libraries of their natives are built on first use).
+// The standard libraries (time, io, graphics, ...): packed from their projects (Source next to the program, copied from packages/ of the repository) and installed into a store of their
+// own for this run (the C++ libraries of their natives are built on first use).
 var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
-StandardBridgePackages.Build(Path.Combine(standardRoot, "PackageSource"));
 fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
-foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
-    Console.WriteLine(problem);
+var standardInstalled = StandardSources.EnsureInstalled(m => Console.WriteLine(m), prebuiltFolder: null);
+static void CopyTree(string from, string to)
+{
+    Directory.CreateDirectory(to);
+    foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)), true);
+    foreach (var dir in Directory.GetDirectories(from)) CopyTree(dir, Path.Combine(to, Path.GetFileName(dir)));
+}
+if (standardInstalled.Count != fire.Package.Manager.StandardPackages.Bridges.Count)
+    Console.WriteLine($"FEHLER: Standardpakete: nur {standardInstalled.Count} von {fire.Package.Manager.StandardPackages.Bridges.Count} installiert ({string.Join(", ", standardInstalled)})");
 
 // Fonts for the tests: a synthetic TrueType font of about 1 KB (square, round and compound glyphs, a kern table; family "Fire Test"), written as "FireSans.ttf" into a folder that FIRE_FONT_DIRS names.
 // The system lookup of fonts finds it by file name ("firesans"), full name and family name - in the VM and in the native programs (they inherit the variable).
@@ -29,9 +36,12 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
+// the prelude of a standard library (from its installed package)
+string StdPrelude(string import) => fire.Package.Manager.PackageStore.Default.FindImport(import)!.ReadPrelude()!;
 string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
 IDisposable UseIoPackage(NativeRegistry natives, fire.IO.Bridge.IoPolicy? policy, fire.IO.Bridge.IoStdio? stdio)
 {
@@ -8609,7 +8619,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunGf(string script, VmExecutionMode mode, Func<string, byte[]>? reader = null)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, StdPrelude("graphics"), StdPrelude("windows"), script };
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
         var natives = new NativeRegistry();
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
@@ -9231,7 +9241,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.Standard.ReflectionPrelude.Source, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, StdPrelude("graphics"), StdPrelude("windows"), StdPrelude("reflection"), StdPrelude("ui"), script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -11174,7 +11184,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     List<string> RunCb(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, StdPrelude("graphics"), StdPrelude("windows"), script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -12205,8 +12215,8 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         {
             // linq brings reflection along (SelectProperty/SelectField)
             fire.Runtime.ReflectionNatives.Register(natives);
-            sources.Add(fire.Standard.ReflectionPrelude.Source);
-            sources.Add(fire.Standard.LinqPrelude.Source);
+            sources.Add(StdPrelude("reflection"));
+            sources.Add(StdPrelude("linq"));
         }
         if (script.Contains("#import \"time\""))
         {
@@ -12699,7 +12709,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
         fire.Runtime.ReflectionNatives.Register(natives);
-        var sources = new List<string> { fire.Standard.Prelude.Source, fire.Standard.ReflectionPrelude.Source, script };
+        var sources = new List<string> { fire.Standard.Prelude.Source, StdPrelude("reflection"), script };
         var program = Parser.ParseMultiple(sources
             .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
@@ -14192,6 +14202,7 @@ ProjectTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
+TestingTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -14741,6 +14752,74 @@ else
             print(total + " " + ft)
             print(new Box<string>().Twice("ab") + " " + U.Max(2, 3.5) + " " + U.Max(4, 3.5))
             try { viaAny.Twice(s) } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Bereiche a..b: aufwaerts, abwaerts, mit Einheit, in foreach, Testing.Assert", """
+            #import "testing"
+            foreach (i in 1..3) { print(i) }
+            var down = 4..2
+            print(down.length + " " + down[0] + " " + down[2])
+            var steps = 1cm..3cm
+            print(steps[2])
+            var n = 4
+            print((1..n - 1).length)
+            Testing.Assert.AreSequenceEqual([2, 3], 2..3)
+            try { Testing.Assert.AreEqual(1, 2, "msg") } catch (Assertion e) { print(e.message) }
+            """),
+        ("Typen: Typargumente mit Einheit (Box<int> ohne, Box<int : cm>, Box<int : any>, Box<float : any m>), Lambdas nehmen Typargumente mit, typisierte Felder in der Kopie", """
+            class Box<T> {
+                T value
+                undefined Put(T v) { value = v }
+                undefined PutAll(any items[]) {
+                    undefined lambda<any> put = (any x) => { T kept = x; print(kept) }
+                    foreach (x in items) { try { put(x) } catch (ArgumentException e) { print(e.message) } }
+                }
+            }
+            class Acc<T> {
+                T sum
+                T best
+                construct(T start) { sum = start; best = start }
+                undefined Add(T v) { sum = sum + v; if (v > best) best = v }
+                T Scaled(T k) { return sum * k - best }
+            }
+            class U {
+                static any Via<V>(V v) {
+                    any lambda<V> wrap = (V x) => { var b = new Box<V>(); b.Put(x); return b }
+                    return wrap(v)
+                }
+                static V Max<V>(V a, V b) { if (a > b) return a; return b }
+            }
+            any s = "x"
+            var b = new Box<int : cm>()
+            b.Put(5mm)
+            b.Put(2m)
+            print(b.value)
+            try { b.Put(3kg) } catch (UnitMismatchException e) { print(e.message) }
+            var u = new Box<int>()
+            u.Put(4)
+            try { u.Put(4cm) } catch (UnitMismatchException e) { print(e.message) }
+            var a = new Box<int : any>()
+            a.Put(7kg)
+            print(a.value)
+            var l = new Box<float : any m>()
+            l.Put(3cm)
+            try { l.Put(3s) } catch (UnitMismatchException e) { print(e.message) }
+            var fc = new Box<float : km>()
+            fc.Put(1500m)
+            print(l.value + " " + fc.value)
+            try { b.Put(s) } catch (ArgumentException e) { print(e.message) }
+            print(U.Max(5cm, 3cm) + " " + U.Max(2, 3))
+            var list = new List<int : cm>()
+            list.Add(3m)
+            print(list[0])
+            new Box<int>().PutAll([1, "two", 3])
+            any boxed = U.Via(2.5)
+            try { boxed.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var acc = new Acc<int>(0)
+            int t = 0
+            for (int i = 0; i < 1000; i++) { acc.Add(i % 13); t = t + acc.Scaled(2) % 7 }
+            var facc = new Acc<float>(0.0)
+            for (int i = 0; i < 100; i++) { facc.Add(0.5) }
+            print(t + " " + acc.sum + " " + facc.Scaled(0.5))
             """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
@@ -16677,6 +16756,8 @@ else
                 construct(float r) { this.radius = r; this.secret = 42 }
                 float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
                 float Area { get { return this.radius * this.radius * 3 } }
+                [Doc "scales", "the radius"]
+                [Values 1..3, {10, -2.5}, true, -4, new List()]
                 float Scale(float k) { return this.radius * k }
                 Grow() { this.radius = this.radius + 1 }
             }
@@ -16724,6 +16805,10 @@ else
             var mem = Type.Of(c).Find("Scale")
             print(mem.Kind + " " + mem.ParamCount() + " " + mem.TypeName)
             print(mem.Call(c, [3.0]))
+            print(mem.Attributes.count + " " + mem.HasAttribute("Doc") + " " + mem.HasAttribute("Nope") + " " + Type.Of(c).Find("Grow").Attributes.count)
+            var vals = mem.FindAttribute("Values")
+            for (int ai = 0; ai < vals.ArgCount(); ai++) { print(vals.ArgTexts[ai] + " = " + vals.Args[ai]) }
+            print(vals.Args[0][2] + " " + vals.Args[1][1] + " " + vals.Args[1].length + " " + (vals.Args[4] == undefined) + " " + mem.FindAttribute("Doc").Args[1])
             class Cfg {
                 int volume
                 string name
@@ -19832,7 +19917,7 @@ else
             }
 
             // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
-            string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+            string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
             string build;
             int buildExit;
             buildGate.Wait();
@@ -19878,7 +19963,7 @@ else
                     string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
                     string cppFile = Path.Combine(workDir, "schannel.cpp"), exeFile = Path.Combine(workDir, "schannel.exe");
                     File.WriteAllText(cppFile, cpp);
-                    string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                    string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                     string Run(string tool, string arguments, out int exit)
                     {
                         var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
@@ -20493,29 +20578,34 @@ else
             catch (fire.Native.NativeNotSupportedException ex) { refused = ex.Message.Contains("pkgwin") && ex.Message.Contains("windows"); }
             CheckNat("Paket: ein natives Paket nur fuer andere Plattformen wird fuers Ziel abgelehnt", refused);
 
-            // the standard bridges as packages: built into a folder, installed when missing, not again when nothing changed; the compiler still resolves the names to its built-in bridges
+            // the standard libraries as projects: packed and installed when missing, not again when nothing changed, again when a file changed
             {
-                string bridgeSource = Path.Combine(pkgDir, "BridgeSource");
-                var built = fire.Compiler.StandardBridgePackages.Build(bridgeSource);
-                var ioPackage = fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-io-")));
+                string sourceCopy = Path.Combine(pkgDir, "Source");
+                CopyTree(StandardSources.DefaultFolder, sourceCopy);
                 var bridgeStore = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "BridgePackages"));
                 var savedDefault = fire.Package.Manager.PackageStore.Default;
                 fire.Package.Manager.PackageStore.Default = bridgeStore;
                 try
                 {
-                    var first = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
-                    var second = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
-                    CheckNat("Bruecken-Pakete: je Standard-Bridge ein Paket mit Prelude und C++-Quellen, als standard markiert",
-                        built.Count == fire.Package.Manager.StandardPackages.Bridges.Count && ioPackage.Imports[0].Standard && ioPackage.Imports[0].Name == "io" && ioPackage.Imports[0].Prelude != null && ioPackage.Imports[0].Native?.Sources.Count > 0
-                        && fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-linq-"))).Dependencies.Contains("fire-reflection"));
-                    CheckNat("Bruecken-Pakete: beim Start werden fehlende installiert (mit Abhaengigkeiten), danach nichts mehr",
-                        first.Count > 0 && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0 && bridgeStore.Find("fire-time") != null && bridgeStore.Find("fire-reflection") != null);
+                    var first = StandardSources.EnsureInstalled(null, sourceCopy, bridgeStore, prebuiltFolder: null);
+                    var second = StandardSources.EnsureInstalled(null, sourceCopy, bridgeStore, prebuiltFolder: null);
+                    File.AppendAllText(Path.Combine(sourceCopy, "random", "random.fire"), "\nclass AddedByTheTest { }\n");
+                    var third = StandardSources.EnsureInstalled(null, sourceCopy, bridgeStore, prebuiltFolder: null);
+                    var io = bridgeStore.FindImport("io")!;
+                    var linq = bridgeStore.Find("fire-linq")!;
+                    CheckNat("Standardpakete: je Projekt ein Paket mit Prelude und C++-Quellen, als standard markiert, ohne die Tests",
+                        io.Import.Standard && io.Import.Prelude != null && io.Import.Native?.Sources.Count > 0 && linq.Manifest.Dependencies.Contains("fire-reflection")
+                        && bridgeStore.FindImport("random")!.Import.Requires.Contains("time") && !Directory.Exists(Path.Combine(bridgeStore.Find("fire-random")!.Directory, "testing"))
+                        && !(bridgeStore.FindImport("random")!.ReadPrelude() ?? "").Contains("RandomTests"));
+                    CheckNat("Standardpakete: beim Start werden fehlende installiert, danach nichts mehr, nach einer Aenderung nur das geaenderte",
+                        first.Count == fire.Package.Manager.StandardPackages.Bridges.Count && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0
+                        && third.SequenceEqual(new[] { "fire-random" }) && (bridgeStore.FindImport("random")!.ReadPrelude() ?? "").Contains("AddedByTheTest"), string.Join(",", first) + " / " + string.Join(",", second) + " / " + string.Join(",", third));
                     var windowsPackage = bridgeStore.Find("fire-windows");
                     CheckNat("Bruecken-Pakete: fire-windows bringt die Vorlage Desktop mit; sie steht nach dem Installieren im Katalog",
                         windowsPackage != null && File.Exists(Path.Combine(windowsPackage.Directory, "templates", "Project", "Desktop", "template.json"))
                         && fire.Projects.TemplateCatalog.Load(builtinRoot: Path.Combine(pkgDir, "none"), userRoot: Path.Combine(pkgDir, "none"), store: bridgeStore).Find(fire.Projects.TemplateScope.Project, "Desktop") is { } desktopTemplate && desktopTemplate.Source.Contains("fire-windows"));
-                    string builtIn = vmOutput("#import \"time\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
-                    CheckNat("Bruecken-Pakete: #import \"time\" nimmt weiter die eingebaute Bridge (kein doppelter Import)", builtIn == "90\n", builtIn);
+                    string builtIn = vmOutput("#import \"time\"\n#import \"ui\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
+                    CheckNat("Standardpakete: #import \"time\" und \"ui\" (Prelude aus dem Paket, Natives der VM) laufen", builtIn == "90\n", builtIn);
                 }
                 finally { fire.Package.Manager.PackageStore.Default = savedDefault; }
             }

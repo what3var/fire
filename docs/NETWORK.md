@@ -1,7 +1,7 @@
 # Networking and hardware buses - design and steps
 
 Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`), SPI (`fire-spi`) and WiFi (`fire-wifi`) are built**, see the references below; nothing of the hardware is tried on a board yet. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Sound (`fire-audio`) has a document of its own: docs/AUDIO.md. Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
-runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
+runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `packages/<name>/native/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.
 
@@ -85,7 +85,7 @@ runs in the thread of its server. A route's lambda must not fail with a *runtime
 
 ## TLS (`#import "tls"`, the package `fire-tls`)
 
-TLS over a TCP connection of the net package. The natives are C++ (`native/bridges/fire_bridge_tls.hpp` over `plat::tls`, one backend per platform); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
+TLS over a TCP connection of the net package. The natives are C++ (`packages/tls/native/fire_bridge_tls.hpp` over `plat::tls`, one backend per platform); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
 `http` uses it for `https://` URLs and for `Http.Server.UseTls`.
 
 ```
@@ -132,7 +132,7 @@ The versions are TLS 1.2 and 1.3; SNI is sent; a server that closes without `clo
 
 ## GPIO (`#import "gpio"`, the package `fire-gpio`)
 
-Digital pins. It needs `time` (the clock of the time limits). The natives are `native/bridges/fire_bridge_gpio.hpp` over `plat::gpio` (`native/platform/std/fire_gpio_*.hpp`): the **GPIO character device** of Linux
+Digital pins. It needs `time` (the clock of the time limits). The natives are `packages/gpio/native/fire_bridge_gpio.hpp` over `plat::gpio` (`native/platform/std/fire_gpio_*.hpp`): the **GPIO character device** of Linux
 (`/dev/gpiochipN`, the v2 ioctl interface of kernel 5.10+ - Raspberry Pi and other boards; used only when the kernel headers are there, `FIRE_NO_GPIO` switches it off), **ESP-IDF `driver/gpio`** on an ESP32
 (add the components `driver` and `esp_timer`), and a stub elsewhere (Windows, macOS: no chips). Every platform has the **simulated chip** `"sim"`, so a program can be written and tested on the PC.
 
@@ -164,7 +164,7 @@ button.Poll()                                              // hands every waitin
 
 ## I2C (`#import "i2c"`, the package `fire-i2c`)
 
-The I2C bus as a controller. The natives are `native/bridges/fire_bridge_i2c.hpp` over `plat::i2c` (`native/platform/std/fire_i2c_*.hpp`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
+The I2C bus as a controller. The natives are `packages/i2c/native/fire_bridge_i2c.hpp` over `plat::i2c` (`native/platform/std/fire_i2c_*.hpp`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
 there, `FIRE_NO_I2C` switches it off), the **master driver of ESP-IDF** (`driver/i2c_master.h`, IDF 5.2+; add the component `esp_driver_i2c` or `driver`) on an ESP32, and a stub elsewhere (no buses). Every platform has the **simulated bus** `"sim"`.
 
 ```
@@ -193,7 +193,7 @@ var r2 = bus.WriteRead(0x3C, command, 4)          // the general form: write, re
 
 ## SPI (`#import "spi"`, the package `fire-spi`)
 
-The SPI bus as a controller. The natives are `native/bridges/fire_bridge_spi.hpp` over `plat::spi` (`native/platform/std/fire_spi_*.hpp`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
+The SPI bus as a controller. The natives are `packages/spi/native/fire_bridge_spi.hpp` over `plat::spi` (`native/platform/std/fire_spi_*.hpp`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
 `FIRE_NO_SPI` switches it off), the **SPI master driver of ESP-IDF** (`driver/spi_master.h`; add the component `esp_driver_spi` or `driver`) on an ESP32, and a stub elsewhere (no devices). Every platform has the **simulated device** `"sim"`.
 A *device* is a bus with one chip select (that is how the kernel sees it and what a chip on the bus needs).
 
@@ -222,7 +222,7 @@ chip.Mode = 3                                      // clock polarity and phase; 
 
 ## WiFi (`#import "wifi"`, the package `fire-wifi`)
 
-The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `native/bridges/fire_bridge_wifi.hpp` over `plat::wifi` (`native/platform/std/fire_wifi_*.hpp`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
+The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `packages/wifi/native/fire_bridge_wifi.hpp` over `plat::wifi` (`native/platform/std/fire_wifi_*.hpp`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
 `esp_netif`, `nvs_flash`) on an ESP32. Where the operating system owns the network (Windows, Linux, macOS) there is no radio for a program to control: the list of interfaces is empty, and the package reports "not supported" (`WiFi.Board.Available()` is false). Every platform has the
 **simulated radio** `"sim"`. Once the station has an address the lwIP sockets of the `net` package (and `http`, `tls`) work - **the network packages do not know about WiFi**; a program joins the network first and then opens its sockets. Ethernet on the ESP32 would follow the same pattern.
 

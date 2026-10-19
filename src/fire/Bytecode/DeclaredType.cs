@@ -75,9 +75,26 @@ namespace fire.Bytecode
             return new Spec(t.Substring(0, end), alternatives, index, owner);
         }
 
-        /// <summary>A condition from its text (`Animal`, `int`, `in:cm`) - also a type argument of an object.</summary>
+        /// <summary>A condition from its text (`Animal`, `int`, `in:cm`) - also a type argument of an object (`int:cm`: the kind, its unit is NumberDemand's).</summary>
         public static Condition ConditionOf(string text) => s_conditions.GetOrAdd(text, c =>
-            c.StartsWith("in:", StringComparison.Ordinal) ? new Condition(true, c.Substring(3), Unit.Parse(c.Substring(3))) : new Condition(false, c, null));
+            c.StartsWith("in:", StringComparison.Ordinal) ? new Condition(true, c.Substring(3), Unit.Parse(c.Substring(3)))
+            : NumberDemand(c) is { } number ? new Condition(false, number.Kind, null) : new Condition(false, c, null));
+
+        /// <summary>A number type argument: its kind and what it demands of the unit (Value.AdaptToUnit) - `int` is a whole number without a unit
+        /// (`unitless`, like a declared `int`), `int:cm` one in cm, `int:any` one in any unit, `float:any m` a float of that dimension; null for others.</summary>
+        public static (string Kind, string Demand)? NumberDemand(string typeArg)
+        {
+            string kind = typeArg.StartsWith("int", StringComparison.Ordinal) ? "int" : typeArg.StartsWith("float", StringComparison.Ordinal) ? "float" : "";
+            if (kind.Length == 0 || typeArg.Length > kind.Length && typeArg[kind.Length] != ':') return null;
+            string unit = typeArg.Length > kind.Length ? typeArg.Substring(kind.Length + 1) : "unitless";
+            return (kind, (kind == "float" ? "#" : "") + unit);
+        }
+
+        /// <summary>A type argument as messages show it: `int`, `int : cm`, `in cm`, the class.</summary>
+        public static string DisplayOf(string typeArg) =>
+            typeArg.StartsWith("in:", StringComparison.Ordinal) ? "in " + typeArg.Substring(3)
+            : NumberDemand(typeArg) is { } number && typeArg.Contains(':') ? number.Kind + " : " + typeArg.Substring(number.Kind.Length + 1)
+            : GenericClassNames.PlainName(typeArg);
 
         /// <summary>The type argument of the k-th type parameter of class `declaringClass` for the object (its own, or the one its class gives that base
         /// class: RuntimeClass.BaseTypeArgs); null when it is not known.</summary>
@@ -117,7 +134,8 @@ namespace fire.Bytecode
             var spec = Parse(required);
             if (spec.TypeParamIndex >= 0)
             {
-                if (TypeArgFor(spec, owner, callTypeArgs) is { } typeArg) return Holds(value, ConditionOf(typeArg));
+                if (TypeArgFor(spec, owner, callTypeArgs) is { } typeArg)
+                    return Holds(value, ConditionOf(typeArg)) && (NumberDemand(typeArg) is not { } number || UnitFits(value, number.Demand));
                 if (spec.Alternatives.Length == 0) return true;   // (`T` without `where` and without a known type argument: anything)
             }
             foreach (var alternative in spec.Alternatives)
@@ -130,13 +148,26 @@ namespace fire.Bytecode
             return false;
         }
 
-        /// <summary>Like Fits, but a whole number for a `T` that is a `float` becomes a float (like a declared `float`).</summary>
-        public static bool FitsOrConvert(ref Value value, string? required, ObjectInstance? owner = null, string[]? callTypeArgs = null)
+        /// <summary>A number that is in the unit a type argument demands already (Fits; anything else goes through FitsOrConvert).</summary>
+        private static bool UnitFits(in Value value, string demand)
         {
+            demand = demand.TrimStart('#');
+            if (demand == "any" || demand.StartsWith("any ", StringComparison.Ordinal)) return demand == "any";
+            return (value.Unit ?? Unit.Unitless).Equals(s_demandUnits.GetOrAdd(demand, Unit.Parse));
+        }
+
+        private static readonly ConcurrentDictionary<string, Unit> s_demandUnits = new();
+
+        /// <summary>Like Fits, but a number of the kind of a number type argument (or a whole number for a `float`) is taken too: <paramref name="unitDemand"/>
+        /// then says what the caller converts it into (Value.AdaptToUnit - a mismatch of the dimension is a UnitMismatchException there).</summary>
+        public static bool FitsOrConvert(ref Value value, string? required, ObjectInstance? owner, string[]? callTypeArgs, out string? unitDemand)
+        {
+            unitDemand = null;
             if (Fits(value, required, owner, callTypeArgs)) return true;
-            if (value.Kind == ValueKind.Int && Parse(required!) is { TypeParamIndex: >= 0 } spec && TypeArgFor(spec, owner, callTypeArgs) == "float")
+            if (value.Kind is ValueKind.Int or ValueKind.Float && Parse(required!) is { TypeParamIndex: >= 0 } spec && TypeArgFor(spec, owner, callTypeArgs) is { } typeArg
+                && NumberDemand(typeArg) is { } number && (number.Kind == "float" || value.Kind == ValueKind.Int))
             {
-                value = Value.MakeFloat(value.AsInt(), value.Unit);
+                unitDemand = number.Demand;
                 return true;
             }
             return false;
@@ -169,7 +200,7 @@ namespace fire.Bytecode
             var spec = Parse(required);
             string display = spec.Display;
             if (spec.TypeParamIndex >= 0 && TypeArgFor(spec, owner, callTypeArgs) is { } typeArg)
-                display = spec.Display.Split(' ')[0] + " (" + (typeArg.StartsWith("in:", StringComparison.Ordinal) ? "in " + typeArg.Substring(3) : GenericClassNames.PlainName(typeArg)) + ")";
+                display = spec.Display.Split(' ')[0] + " (" + DisplayOf(typeArg) + ")";
             string have = value.Kind == ValueKind.Class && value.AsObjectRef() is ObjectInstance obj ? GenericClassNames.PlainName(obj.ClassName) : value.Kind.ToString();
             string article = "AEIOUaeiou".Contains(display[0]) ? "an" : "a";
             return $"{what} is {article} {display}, not {have}.";

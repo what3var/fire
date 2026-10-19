@@ -1,0 +1,18 @@
+// The tests of the queries: `forge test packages/linq/linq.fireproj`.
+#import "testing"
+
+class LinqTests {
+    [Test]
+    undefined WhereSelect() {
+        var q = Linq.From([1, 2, 3, 4, 5]).Where(x => x % 2 == 1).Select(x => x * 10).ToList()
+        Testing.Assert.AreSequenceEqual([10, 30, 50], q)
+    }
+
+    [Test]
+    undefined Aggregates() {
+        var q = Linq.From([3, 1, 2])
+        Testing.Assert.AreEqual(3, q.Count())
+        Testing.Assert.AreEqual(6, q.Sum(x => x))
+        Testing.Assert.AreSequenceEqual([1, 2, 3], q.OrderBy(x => x).ToList())
+    }
+}

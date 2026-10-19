@@ -1,10 +1,16 @@
 using fire.Compiler;
 
-// Command line of the compiler, see CommandLineParser (run / build).
-// `bridge-packages <folder>`: for the build of the solution - writes the packages of the standard bridges (docs/PACKAGES.md).
-if (args.Length >= 2 && args[0] == "bridge-packages")
+// Command line of the compiler, see CommandLineParser (run / build / native / test).
+// `prebuild-standard <Source> <Prebuilt>`: for the build of the solution - builds the libraries of the standard packages for this machine (docs/PACKAGES.md).
+if (args.Length >= 3 && args[0] == "prebuild-standard")
 {
-    foreach (var file in StandardBridgePackages.Build(args[1])) Console.WriteLine(file);
+    foreach (var file in StandardSources.Prebuild(args[1], args[2], Console.Error.WriteLine)) Console.WriteLine(file);
+    return 0;
+}
+// `install-standard`: packs and installs the standard packages from Source next to the program (what every start does; ember asks for it).
+if (args.Length >= 1 && args[0] == "install-standard")
+{
+    StandardSources.EnsureInstalled(Console.WriteLine);
     return 0;
 }
 
@@ -32,7 +38,7 @@ if (args.Length >= 2 && args[0] == "ui")
     }
 }
 
-// The standard packages (the bridges as packages) are installed from the folder PackageSource next to the program when they are missing - quick when nothing changed.
-fire.Package.Manager.StandardPackages.EnsureInstalled(message => Console.Error.WriteLine(message));
+// The standard packages are packed and installed from the projects in Source next to the program when they are missing or changed - quick when nothing changed.
+StandardSources.EnsureInstalled(message => Console.Error.WriteLine(message));
 fire.Compiler.ConsoleToolchainPrompt.Install();
 return CommandLineRunner.Run(args, Console.Out, Console.Error);

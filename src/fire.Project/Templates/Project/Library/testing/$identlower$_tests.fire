@@ -1,0 +1,9 @@
+// The tests of $name$ (`forge test`, docs/TESTING.md): the folder testing/ is not part of the package.
+#import "testing"
+
+class GreeterTests {
+    [Test "Greets by name"]
+    undefined Hello() {
+        Testing.Assert.AreEqual("Hello, World!", $ident$.Greeter.Hello("World"))
+    }
+}

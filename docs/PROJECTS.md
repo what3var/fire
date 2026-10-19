@@ -32,7 +32,8 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
 keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
-folders and the folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
+folders, the folder `templates/` (what the project offers as templates), the folder `testing/` (its tests: only `forge test` compiles them, see docs/TESTING.md) and the
+folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
 last**: what the other files declare is known by then.
 
 **The code of a project is included on its own** - for the build and for the editor (colours of classes, completion, tooltips, "go to definition", the errors that are underlined). No
@@ -47,7 +48,8 @@ it is compiled (docs/RESOURCES.md: the path is relative to the file that writes 
 `__name` (a last parameter `OwnList* list` says that the function allocates its result and returns it). A library project wraps them in classes; programs that reference the library use
 them (in the virtual machine a shared library is built from the C++ for the machine; a native build puts the C++ into the generated file), and the package that is packed carries the C++.
 `native` can also name `sources` (files and patterns, default `native/**`), `platformSources`, `platforms`, `linkLibraries`, `exceptions`, `reset` and `functions` (to say more about a function,
-like `returnsReference`) - the same as in a package.
+like `returnsReference`) - the same as in a package. `"discover": false` takes only the named `functions` (no search for `inline Value` functions in the files). `"standard": true` (top
+level of the project) is for the standard libraries of `Source/Packages.firesln` (docs/PACKAGES.md): their import names are those of the compiler.
 
 **Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `name`, `codename`, `description`, `author`, `license`
 (a library that is packed), `comments`, `icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `output`. Paths are relative to the
@@ -93,7 +95,9 @@ How it works (and why this is the answer to "references to other fire assemblies
   compatible between builds.
 * **Packages are the binary form.** `fire build Core.fireproj` (or "Pack" in the editor) checks the library and writes `Core-1.2.0.fpk` - an ordinary package of `ember` with the
   library's files as its prelude (an `#include` is inlined), the import name, the version of the settings, and the libraries and packages it references as `dependencies` and
-  `requires`. Installed (`ember install`), any program `#import "Core"`s it - without the project. A solution project and its package are interchangeable.
+  `requires`. Installed (`ember install`), any program `#import "Core"`s it - without the project. A solution project and its package are interchangeable. What the library's files
+  `#import` (`time`, another package) becomes a requirement of the package too; the `#import` lines are not part of its prelude. **Install** (project menu, context menu of a library)
+  packs the library and installs it at once (an installed package of the same version is replaced after a question); *File > Install Package File* installs an `.fpk`.
 * **The package takes its metadata from the project**: name (the project's), import name (`import`, default the name), version (`settings.version`, three numbers), description, author, license
   (`settings.*`, the solution's go behind the project's), the libraries and packages it references (as dependencies and `requires`). *Pack as Package* (project menu, context menu of a
   library) asks for version, description, author, license and the folder, writes the answers back into the project and can raise the patch number afterwards (`1.2.3` -> `1.2.4`, ready for the
@@ -132,7 +136,7 @@ The templates that ship with fire (folders in `Templates/Project`; yours and tho
 |---|---|
 | Empty | the solution only |
 | Terminal | a program for the console: prints `Hello, World!` |
-| Library | a library with a class `Greeter` in `namespace {Name}`; no entry point |
+| Library | a library with a class `Greeter` in `namespace {Name}`; no entry point; a first test in `testing/` (`forge test`) |
 | Native Library | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
 
 The package **fire-windows** (the standard bridge `windows`, installed with fire) brings one more, in the same list marked `From fire-windows ...`:

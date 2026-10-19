@@ -282,8 +282,10 @@ namespace fire.Compiler
             // `List<int>`: the generic class (named `List`1` next to a non-generic `List`) with its type arguments
             if (type.TypeArgs is { Count: > 0 } typeArgs && result.Kind == StaticKind.Class)
                 result = StaticType.ClassOf(GenericName(PlainName(type.BaseName), typeArgs.Count), typeArgs.Select(a => Declared(a, 0, map) ?? StaticType.Dynamic).ToList());
-            // a number declared without a unit is unitless; `: any` takes every unit, `: any m` every unit of that dimension
-            if (result.IsNumber && arrayRanks + type.ArrayRank == 0)
+            // a number declared without a unit is unitless; `: any` takes every unit, `: any m` every unit of that dimension (a type parameter replaced by
+            // its type argument keeps the argument's unit: `T v` of a `Box<int : cm>` is in cm)
+            bool substituted = map != null && map.ContainsKey(type.BaseName);
+            if (result.IsNumber && arrayRanks + type.ArrayRank == 0 && !(substituted && type.Unit == null))
                 result = type.Unit switch
                 {
                     null => result.WithUnit(Unit.Unitless),
@@ -394,10 +396,10 @@ namespace fire.Compiler
             return TypeParamRef(name) is { } typeParam ? StaticType.Dynamic with { TypeParam = typeParam } : StaticType.Dynamic;
         }
 
-        /// <summary>A type parameter of the running method (`$k@`) or class (`$k@Class`): what a call of a generic method passes on for it (null: none, or in a lambda).</summary>
+        /// <summary>A type parameter of the running method (`$k@`) or class (`$k@Class`): what a call of a generic method passes on for it (null: none);
+        /// a lambda takes those it uses along.</summary>
         private string? TypeParamRef(string name)
         {
-            if (_inLambda) return null;
             if (_bodyTypeParams != null)
                 for (int k = 0; k < _bodyTypeParams.Count; k++)
                     if (_bodyTypeParams[k].Name == name) return $"${k}@";
@@ -834,6 +836,16 @@ namespace fire.Compiler
                 case LambdaExpr lam: return InferLambda(lam, null);
                 case IsOfExpr io: Infer(io.Operand); return StaticType.Bool;
                 case IsInExpr ii: Infer(ii.Operand); return StaticType.Bool;
+                case RangeExpr range:
+                    {
+                        // `1..5`: whole numbers in the unit of the start
+                        var from = Infer(range.From, StaticType.Int);
+                        var to = Infer(range.To, StaticType.Int);
+                        foreach (var (bound, boundExpr) in new[] { (from, range.From), (to, range.To) })
+                            if (!bound.IsDynamic && bound.Kind != StaticKind.Int)
+                                Report(AssignCode, $"A range goes from a whole number to a whole number, not '{bound}'", boundExpr.Line);
+                        return StaticType.ArrayOf(StaticType.Int.WithUnit(from.Kind == StaticKind.Int ? from.Unit : null));
+                    }
                 case IsFromExpr ifr: Infer(ifr.Operand); Infer(ifr.OwnerExpr); return StaticType.Bool;
                 case UnitCoerceExpr uc:
                     {
@@ -1202,11 +1214,21 @@ namespace fire.Compiler
         /// <summary>A type as a run-time type argument (DeclaredType text): a basic type, a class or an interface; "" for anything else.</summary>
         private static string TypeArgText(StaticType type) => type.Kind switch
         {
-            StaticKind.Int => "int", StaticKind.Float => "float", StaticKind.Bool => "bool", StaticKind.Char => "char", StaticKind.String => "string",
+            StaticKind.Int or StaticKind.Float => NumberTypeArgText(type.Kind == StaticKind.Int ? "int" : "float", type),
+            StaticKind.Bool => "bool", StaticKind.Char => "char", StaticKind.String => "string",
             StaticKind.Class when type.Class != null => type.Class,
             StaticKind.Dynamic when type.TypeParam != null => type.TypeParam,
             _ => "",
         };
+
+        /// <summary>A number type argument found from a value: `int` without a unit, `int:cm` in cm, `int:any m` of a dimension, `int:any` when its unit is not known.</summary>
+        private static string NumberTypeArgText(string kind, StaticType type)
+        {
+            if (type.Unit is not { } unit) return kind + ":any";
+            if (unit.IsUnitless) return kind;
+            if (DemandText(unit) is not { } demand) return kind + ":any";
+            return kind + ":" + (type.UnitIsDimension ? "any " : "") + demand;
+        }
 
         /// <summary>The map with every type parameter that was not found as `any`.</summary>
         private static Dictionary<string, StaticType> WithOpen(Dictionary<string, StaticType> map, HashSet<string> open)

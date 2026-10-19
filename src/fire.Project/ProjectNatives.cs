@@ -55,7 +55,7 @@ namespace fire.Projects
             // the functions: the ones named in the project, then the ones found in the files
             var explicitCpp = new HashSet<string>(n.Functions?.Select(f => f.Cpp) ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             if (n.Functions != null) native.Functions.AddRange(n.Functions);
-            foreach (var file in sources.Concat(native.PlatformSources.Values.SelectMany(v => v)))
+            foreach (var file in n.Discover == false ? Enumerable.Empty<string>() : sources.Concat(native.PlatformSources.Values.SelectMany(v => v)))
             {
                 string text;
                 try { text = File.ReadAllText(file); }

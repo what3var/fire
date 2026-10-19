@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-reflection",
+  "type": "library",
+  "import": "reflection",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'reflection' of fire: prelude."
+  }
+}

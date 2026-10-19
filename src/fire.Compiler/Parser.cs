@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using fire.Ast;
 using fire.Lexing;
 using fire.Standard;
@@ -173,6 +174,16 @@ namespace fire.Compiler
         /// to `class extends X`, even if extension and target class come from
         /// different files/namespaces (see
         /// Ast.ClassExtensionDecl.TargetRef documentation).</summary>
+        /// <summary>One more source after <see cref="ParseMultiple"/> (the units are known by then): a generated one such as the driver of `forge test`.</summary>
+        public static List<Stmt> ParseSource(ProcessedSource src, int sourceIndex)
+        {
+            var parser = new Parser(new Lexer(src.Source).Tokenize());
+            parser._usingNamespaces = src.Usings;
+            parser._sourceIndex = sourceIndex;
+            parser._fileName = src.Name;
+            return parser.ParseProgram();
+        }
+
         public static List<Stmt> ParseMultiple(IReadOnlyList<ProcessedSource> sources)
         {
             var combined = new List<Stmt>();
@@ -1183,7 +1194,22 @@ namespace fire.Compiler
         {
             Expect(TokenType.Lt, "Expected '<'");
             var args = new List<TypeRef>();
-            do args.Add(ParseTypeRef(allowArray: true));
+            do
+            {
+                var arg = ParseTypeRef(allowArray: true);
+                // `Box<int : cm>`, `List<float : any>`, `Box<int : any m>`: a number type argument with its unit (without one it is unitless)
+                if (arg is { BaseName: "int" or "float", Unit: null, ArrayRank: 0 } && Check(TokenType.Colon) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)))
+                {
+                    Advance();
+                    string unit = Advance().Lexeme;
+                    if (unit == "any" && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0))) unit = "any " + Advance().Lexeme;
+                    arg = arg with { Unit = unit };
+                }
+                // (`int : any m` - the type itself took `: any` and left the dimension)
+                else if (arg is { BaseName: "int" or "float", Unit: "any" } && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)))
+                    arg = arg with { Unit = "any " + Advance().Lexeme };
+                args.Add(arg);
+            }
             while (Match(TokenType.Comma));
             Expect(TokenType.Gt, "Expected '>' after the type arguments");
             return args;
@@ -1225,6 +1251,12 @@ namespace fire.Compiler
                     case TokenType.LBracket:
                         if (expectName || PeekAt(i + 1).Type != TokenType.RBracket) return -1;
                         i++;
+                        break;
+                    case TokenType.Colon:
+                        // `int : cm`, `int : any m`: the unit of a number type argument
+                        if (expectName || PeekAt(i - 1).Lexeme is not ("int" or "float") || PeekAt(i + 1).Type != TokenType.Identifier && !IsCustomUnitWordAt(i + 1)) return -1;
+                        i++;
+                        if (PeekAt(i).Lexeme == "any" && (PeekAt(i + 1).Type == TokenType.Identifier || IsCustomUnitWordAt(i + 1))) i++;
                         break;
                     case TokenType.Identifier when !expectName && token.Lexeme == "lambda":   // `int lambda<...>`: a return type before `lambda`
                         break;
@@ -1289,7 +1321,7 @@ namespace fire.Compiler
         private List<Expr?> ParseArrayRanks()
         {
             var ranks = new List<Expr?>();
-            while (Check(TokenType.LBracket))
+            while (Check(TokenType.LBracket) && LineContinues())   // `[` on the next line is something else (an attribute of the next method)
             {
                 Advance();
                 Expr? size = Check(TokenType.RBracket) ? null : ParseExpression();
@@ -2562,9 +2594,108 @@ namespace fire.Compiler
             return result;
         }
 
+        /// <summary>`[Test "title"]`, `[Parameters 1..3, "x"]`: the attributes before a class member (each in its own brackets).</summary>
+        private List<AttributeDecl> ParseAttributes()
+        {
+            var attributes = new List<AttributeDecl>();
+            while (Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.Identifier)
+            {
+                int line = Advance().Line;   // '['
+                string name = Advance().Lexeme;
+                var args = new List<Expr>();
+                var texts = new List<string>();
+                if (!Check(TokenType.RBracket))
+                {
+                    do
+                    {
+                        int first = _pos;
+                        args.Add(Check(TokenType.LBrace) ? ParseBraceArray() : ParseExpression());
+                        texts.Add(TokensText(first, _pos));
+                    }
+                    while (Match(TokenType.Comma));
+                }
+                Expect(TokenType.RBracket, $"Expected ']' after the attribute '{name}'");
+                attributes.Add(new AttributeDecl(line, name, args, texts));
+            }
+            return attributes;
+        }
+
+        /// <summary>The positions of the braces of `{a, b}` arrays in attribute arguments: their text uses `[` `]`.</summary>
+        private readonly HashSet<int> _braceArrayTokens = new();
+
+        /// <summary>`{a, b}` in an attribute argument (as in C#): an array literal like `[a, b]`.</summary>
+        private Expr ParseBraceArray()
+        {
+            _braceArrayTokens.Add(_pos);
+            int line = Advance().Line;   // '{'
+            var elements = new List<Expr>();
+            if (!Check(TokenType.RBrace))
+                do { elements.Add(Check(TokenType.LBrace) ? ParseBraceArray() : ParseExpression()); } while (Match(TokenType.Comma));
+            _braceArrayTokens.Add(_pos);
+            Expect(TokenType.RBrace, "Expected '}' after the array of an attribute argument");
+            return new ArrayLiteralExpr(line, elements);
+        }
+
+        /// <summary>The tokens [first, end) as source text again (strings and chars quoted; an interpolated string cannot be given back).</summary>
+        private string TokensText(int first, int end)
+        {
+            var sb = new StringBuilder();
+            for (int i = first; i < end; i++)
+            {
+                var t = _tokens[i];
+                // a space between two tokens, but not inside `f(a, b)`, `[1, 2]` or `a.b`
+                if (sb.Length > 0)
+                {
+                    var type = Kind(i);
+                    var before = Kind(i - 1);
+                    bool callOrIndex = type is TokenType.LParen or TokenType.LBracket && before is TokenType.Identifier or TokenType.RParen or TokenType.RBracket;
+                    if (!callOrIndex && type is not (TokenType.Comma or TokenType.RParen or TokenType.RBracket or TokenType.Dot or TokenType.Semicolon)
+                        && before is not (TokenType.LParen or TokenType.LBracket or TokenType.Dot or TokenType.Bang)
+                        && !(before == TokenType.Minus && (i - 1 == first || Kind(i - 2) is TokenType.Comma or TokenType.LParen or TokenType.LBracket or TokenType.Assign)))   // `-1`
+                        sb.Append(' ');
+                }
+                switch (t.Type)
+                {
+                    case TokenType.StringLiteral: sb.Append('"').Append(Escape(t.Lexeme, '"')).Append('"'); break;
+                    case TokenType.CharLiteral: sb.Append('\'').Append(Escape(t.Lexeme, '\'')).Append('\''); break;
+                    case TokenType.InterpolatedStringLiteral: throw Error("An attribute cannot take an interpolated string", t);
+                    case TokenType.LBrace when _braceArrayTokens.Contains(i): sb.Append('['); break;
+                    case TokenType.RBrace when _braceArrayTokens.Contains(i): sb.Append(']'); break;
+                    default: sb.Append(t.Lexeme); break;
+                }
+            }
+            return sb.ToString();
+
+            // the braces of `{1, 2}` count as brackets
+            TokenType Kind(int at) => _tokens[at].Type switch
+            {
+                TokenType.LBrace when _braceArrayTokens.Contains(at) => TokenType.LBracket,
+                TokenType.RBrace when _braceArrayTokens.Contains(at) => TokenType.RBracket,
+                var other => other,
+            };
+
+            static string Escape(string text, char quote)
+            {
+                var e = new StringBuilder();
+                foreach (char c in text)
+                    e.Append(c switch { '\\' => "\\\\", '\n' => "\\n", '\t' => "\\t", '\r' => "\\r", _ when c == quote => "\\" + quote, _ => c.ToString() });
+                return e.ToString();
+            }
+        }
+
         private List<Stmt> ParseClassMemberCore()
         {
+            var attributes = ParseAttributes();
             int line = Peek().Line;
+            var result = ParseClassMemberAfterAttributes(line);
+            if (attributes.Count == 0) return result;
+            if (result is not [MethodDecl method])
+                throw Error("Attributes ('[Name ...]') can only stand before a method", _tokens[Math.Max(0, _pos - 1)]);
+            return new List<Stmt> { method with { Attributes = attributes } };
+        }
+
+        private List<Stmt> ParseClassMemberAfterAttributes(int line)
+        {
             var access = ParseOptionalAccessModifier();
 
             if (Check(TokenType.Construct))
@@ -3015,9 +3146,21 @@ namespace fire.Compiler
             return left;
         }
 
-        private Expr ParseRelationalOrIs()
+        /// <summary>`a..b`: a range (between the comparisons and the shifts: `1..n + 1` is `1..(n + 1)`, `x in 1..3 < y` is not a thing).</summary>
+        private Expr ParseRange()
         {
             var left = ParseShift();
+            if (LineContinues() && Check(TokenType.DotDot))
+            {
+                int line = Advance().Line;
+                left = new RangeExpr(line, left, ParseShift());
+            }
+            return left;
+        }
+
+        private Expr ParseRelationalOrIs()
+        {
+            var left = ParseRange();
             while (LineContinues())
             {
                 if (Check(TokenType.Lt) || Check(TokenType.LtEq) ||
@@ -3031,7 +3174,7 @@ namespace fire.Compiler
                         TokenType.Gt => BinaryOp.Gt,
                         _ => BinaryOp.GtEq,
                     };
-                    left = new BinaryExpr(opTok.Line, op, left, ParseShift());
+                    left = new BinaryExpr(opTok.Line, op, left, ParseRange());
                 }
                 else if (Check(TokenType.Is))
                 {

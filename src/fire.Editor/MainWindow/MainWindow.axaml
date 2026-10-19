@@ -87,6 +87,8 @@
 					<MenuItem Header="Build Settings (of the project or the file)" Click="BuildSettings_Click"/>
 					<MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
 					<MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
+					<MenuItem Header="Install Package File (.fpk)..." Click="InstallPackageFile_Click"/>
+					<MenuItem Header="Open the Standard Libraries (Source)" Click="OpenStandardSources_Click"/>
 					<Separator/>
 					<MenuItem Header="E_xit" Click="Exit_Click"/>
 				</MenuItem>
@@ -131,6 +133,7 @@
 					<Separator/>
 					<MenuItem Header="Set as _Startup Project" x:Name="mnuSetStartup" Click="SetStartup_Click"/>
 					<MenuItem Header="_Pack Library as Package (.fpk)..." x:Name="mnuPackLibrary" Click="PackLibrary_Click"/>
+					<MenuItem Header="_Install Library (pack and install)" x:Name="mnuInstallLibrary" Click="InstallLibrary_Click"/>
 					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
 					<MenuItem Header="Project Pr_operties..." x:Name="mnuProjectProperties" Click="ProjectProperties_Click"/>
 				</MenuItem>

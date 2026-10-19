@@ -29,6 +29,21 @@ namespace fire.Bytecode
 
         public List<string> ParamNames { get; set; } = new();
         public List<string> ParamTypes { get; set; } = new();
+
+        /// <summary>The attributes before a method (`[Test "Title"]`, SPEC 5.12), in the order of the source.</summary>
+        public List<AttributeMeta> Attributes { get; set; } = new();
+    }
+
+    /// <summary>An attribute of a method for reflection: its name, its arguments as source text and - where the compiler can tell - their values.</summary>
+    [MemoryPackable]
+    public sealed partial class AttributeMeta
+    {
+        public string Name { get; set; } = "";
+        public List<string> ArgTexts { get; set; } = new();
+
+        /// <summary>The values of the arguments as JSON, one element per argument: `{"i":5}`, `{"f":1.5}`, `{"s":"text"}`, `{"b":true}`, `{"a":[...]}` (an array) or `null` (not a
+        /// constant - `new List()`, a call, a number with a unit: only its text is known).</summary>
+        public string ArgsJson { get; set; } = "[]";
     }
 
     /// <summary>The members declared in a class ITSELF (inheritance goes via <see cref="RuntimeClass.Base"/>) and their base names.</summary>

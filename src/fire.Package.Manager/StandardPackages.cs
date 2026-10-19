@@ -1,66 +1,51 @@
+using System.Diagnostics;
+
 namespace fire.Package.Manager
 {
     /// <summary>
-    /// The standard bridges of fire as packages (docs/PACKAGES.md): one package per bridge (<c>fire-io</c>, <c>fire-time</c>, ...) with its prelude and its C++ sources. The build of the solution
-    /// writes them into the folder <c>PackageSource</c> next to the compiler (<c>fire.Compiler bridge-packages</c>); when spark, forge or ember start, <see cref="EnsureInstalled"/> installs
-    /// the ones that are missing (or older). The compiler still resolves these names to its built-in bridges first.
+    /// The standard libraries of fire as packages (docs/PACKAGES.md): one package per import (<c>fire-io</c>, <c>fire-time</c>, ...). Their sources are projects - the folder <c>Source</c> next to
+    /// the programs holds <c>Packages.firesln</c> with one library project per import; when spark or forge start they pack and install the projects that are missing or changed
+    /// (fire.Compiler's <c>StandardSources</c>). ember has no compiler: <see cref="EnsureInstalled"/> asks forge next to it to do that.
     /// </summary>
     public static class StandardPackages
     {
         public const string Prefix = "fire-";
 
-        /// <summary>The bridges that are packaged: the names of their imports.</summary>
-        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d" };
+        /// <summary>The standard libraries: the names of their imports.</summary>
+        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d" };
 
         public static string PackageNameOf(string bridge) => Prefix + bridge;
 
-        private static string StampFile => Path.Combine(PackageStore.Default.Root, ".standard-stamp");
-
-        /// <summary>Checks that the standard packages are installed and installs what is missing or older than the files in <paramref name="sourceFolder"/> (default: <c>PackageSource</c> next to the
-        /// program). Quick when nothing changed: it only compares the age of the package files with the time of the last installation. Returns what was installed; problems are reported to
-        /// <paramref name="log"/>, never thrown (a program must start without them).</summary>
-        public static IReadOnlyList<string> EnsureInstalled(Action<string>? log = null, string? sourceFolder = null)
+        /// <summary>For a program without the compiler (ember): runs `forge install-standard` next to it, which packs and installs the standard libraries from <c>Source</c> when they
+        /// are missing or changed. Never throws; what forge says goes to <paramref name="log"/>.</summary>
+        public static void EnsureInstalled(Action<string>? log = null)
         {
-            var installed = new List<string>();
             try
             {
-                string folder = sourceFolder ?? EmberSettings.DefaultSourceFolder;
-                if (!Directory.Exists(folder)) return installed;
-                var files = Directory.GetFiles(folder, Prefix + "*" + Fpk.Extension);
-                if (files.Length == 0) return installed;
-
-                var store = PackageStore.Default;
-                bool allThere = Bridges.All(b => store.Find(PackageNameOf(b)) != null);
-                DateTime newest = files.Max(File.GetLastWriteTimeUtc);
-                DateTime stamp = File.Exists(StampFile) ? File.GetLastWriteTimeUtc(StampFile) : DateTime.MinValue;
-                if (allThere && stamp >= newest) return installed;
-
-                var service = new PackageManagerService(store, new IPackageSource[] { new FolderSource(folder) });
-                foreach (var bridge in Bridges)
-                {
-                    try
-                    {
-                        string name = PackageNameOf(bridge);
-                        var listing = service.Find(name).FirstOrDefault(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
-                        if (listing?.Latest == null) continue;
-                        // a package file newer than the last check was built again (the version of a build is the same): it is installed again
-                        string? file = files.FirstOrDefault(f => Path.GetFileName(f).StartsWith(name + "-", StringComparison.OrdinalIgnoreCase));
-                        bool rebuilt = file != null && File.GetLastWriteTimeUtc(file) > stamp;
-                        if (!rebuilt && store.Find(name) is { } have && SemanticVersion.TryParse(have.Version, out var h) && SemanticVersion.TryParse(listing.Latest.Version, out var l) && h.CompareTo(l) >= 0) continue;
-                        log?.Invoke($"Installing the standard package {name} {listing.Latest.Version}...");
-                        service.Install(name + "@" + listing.Latest.Version, log, force: rebuilt);
-                        installed.Add(name);
-                    }
-                    catch (PackageException ex) { log?.Invoke(ex.Message); }
-                }
-                Directory.CreateDirectory(store.Root);
-                File.WriteAllText(StampFile, DateTime.UtcNow.ToString("O"));
+                string dir = AppContext.BaseDirectory;
+                if (!File.Exists(Path.Combine(dir, "Source", "Packages.firesln"))) return;
+                string? forge = new[] { "forge.exe", "forge" }.Select(n => Path.Combine(dir, n)).FirstOrDefault(File.Exists);
+                ProcessStartInfo psi;
+                if (forge != null) psi = new ProcessStartInfo(forge);
+                else if (File.Exists(Path.Combine(dir, "forge.dll"))) { psi = new ProcessStartInfo("dotnet"); psi.ArgumentList.Add(Path.Combine(dir, "forge.dll")); }
+                else return;
+                psi.ArgumentList.Add("install-standard");
+                psi.RedirectStandardOutput = true;
+                psi.RedirectStandardError = true;
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                using var process = Process.Start(psi);
+                if (process == null) return;
+                process.OutputDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) log?.Invoke(e.Data); };
+                process.ErrorDataReceived += (_, e) => { if (!string.IsNullOrEmpty(e.Data)) log?.Invoke(e.Data); };
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                process.WaitForExit();
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PackageException)
+            catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception or InvalidOperationException)
             {
                 log?.Invoke("The standard packages could not be checked: " + ex.Message);
             }
-            return installed;
         }
     }
 }

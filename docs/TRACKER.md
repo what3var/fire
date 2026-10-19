@@ -2,7 +2,7 @@
 
 A player for **tracker modules**: ProTracker `.mod` files with 4 to 32 channels - the music of the Amiga demos, games and the whole scene that followed. A module carries its own recorded instruments (8 bit
 samples) and a score; the player only mixes them. That is why it sounds the same on every machine, unlike MIDI, which leaves the voices to the sound card (and most sound cards and default synthesizers are
-bad at it). Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `native/bridges/fire_bridge_tracker.hpp`. It plays through the `audio` package
+bad at it). Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/tracker/native/fire_bridge_tracker.hpp`. It plays through the `audio` package
 (docs/AUDIO.md) and so needs it, and `time`.
 
 ```

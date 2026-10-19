@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-testing",
+  "type": "library",
+  "import": "testing",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'testing' of fire: prelude."
+  }
+}

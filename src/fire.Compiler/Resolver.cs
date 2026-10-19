@@ -1693,6 +1693,11 @@ namespace fire.Compiler
                     ResolveExpr(iin.Operand);
                     break;
 
+                case RangeExpr range:
+                    ResolveExpr(range.From);
+                    ResolveExpr(range.To);
+                    break;
+
                 case IsOfExpr iof:
                     ResolveExpr(iof.Operand);
                     // `value is of IFoo`: an interface is also allowed as a type (the class names it in `class X : IFoo`)

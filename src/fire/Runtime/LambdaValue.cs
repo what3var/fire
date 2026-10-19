@@ -33,6 +33,10 @@ namespace fire.Runtime
         /// or null. On a call they land as slots directly after the parameters.</summary>
         public Value[]? Captures { get; }
 
+        /// <summary>The type arguments of the generic code the lambda was made in that its body uses (SetTypeArgs for a lambda), or null: a call of
+        /// the lambda gives them to its scope (TakeCallTypeArgs), where its body names the i-th `$i@`.</summary>
+        public string[]? TypeArgs { get; init; }
+
         public LambdaValue(FunctionProto proto, object? onTarget, IOwner? owner = null, Value[]? captures = null)
         {
             Proto = proto;
@@ -45,7 +49,7 @@ namespace fire.Runtime
         /// this context; `a` itself stays unchanged (SPEC 4.2). The same proto
         /// is reused (execution, not definition, changes).</summary>
         public LambdaValue WithOnTarget(object? newTarget, IOwner? owner = null) =>
-            new(Proto, newTarget, owner, Captures);
+            new(Proto, newTarget, owner, Captures) { TypeArgs = TypeArgs };
 
         internal void SetOwnerInternal(IOwner newOwner) => Owner = newOwner;
 

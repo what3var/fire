@@ -1,0 +1,23 @@
+// The tests of framebuffers and the renderer: `forge test packages/graphics/graphics.fireproj` (the natives of graphics are part of the virtual machine).
+#import "testing"
+
+class GraphicsTests {
+    [Test]
+    [Parameters 8, 4]
+    [Parameters 1, 1]
+    undefined Size(int width, int height) {
+        var fb = new Framebuffer(width, height)
+        Testing.Assert.AreEqual(width, fb.Width())
+        Testing.Assert.AreEqual(height, fb.Height())
+    }
+
+    [Test "FillRect fills exactly the rectangle"]
+    undefined Fill() {
+        var fb = new Framebuffer(8, 4)
+        var r = new Renderer(fb)
+        r.AlphaBlending = false
+        r.FillRect(0, 0, 2, 2, new SolidBrush(0x7F00FF00))
+        Testing.Assert.AreEqual(0x7F00FF00, r.GetPixel(1, 1))
+        Testing.Assert.AreNotEqual(0x7F00FF00, r.GetPixel(2, 2))
+    }
+}

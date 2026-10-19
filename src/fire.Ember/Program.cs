@@ -26,7 +26,7 @@ namespace fire.Ember
             if (args.Length == 0 || args[0] is "help" or "-h" or "--help" or "/?") { Console.WriteLine(Usage); return args.Length == 0 ? 2 : 0; }
             try
             {
-                // the standard packages (the bridges) are installed from PackageSource when they are missing - quick when nothing changed
+                // the standard packages are packed and installed from Source (by forge next to ember) when they are missing or changed - quick when nothing changed
                 if (args[0].ToLowerInvariant() is not ("create" or "blank" or "forge" or "index"))
                     StandardPackages.EnsureInstalled(Console.WriteLine);
                 return Run(args[0].ToLowerInvariant(), args.Skip(1).ToArray());

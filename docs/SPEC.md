@@ -44,8 +44,11 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
 - A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
   way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); likewise an interface (`IEnumerable` also takes arrays, buffers and strings) and a
-  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found -
-  `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float, `Parameter 'v' is a T (int), not String.`). Without a known
+  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found,
+  a lambda made in generic code those it uses - `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float,
+  `Parameter 'v' is a T (int), not String.`). A number type argument is what the same declaration means: `Box<int>` holds ints without a unit
+  (`UnitMismatchException` for `5cm`), `Box<int : cm>` ints converted into cm, `Box<int : any m>` lengths in their own unit, `Box<int : any>` ints
+  in any unit. A type argument found for a generic method from a value carries that value's unit (`Max(5cm, 3cm)`: `int : cm`; unknown: `int : any`). Without a known
   type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
   `any` and `class` are not checked.
 - A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot
@@ -70,6 +73,7 @@ From loose (far up) to tightly binding (far down):
 &                         bitwise and      (int only)
 == != ##                  equality (`##` is a synonym for `!=`)
 < <= > >=                 comparison
+..                        range (int only): `1..5` is [1, 2, 3, 4, 5], `5..1` counts down
 << >>                     bit shift operators (int only)
 + -                       addition/subtraction
 * / %                     multiplication/division/modulo
@@ -782,11 +786,11 @@ return types) – without the resolver reporting "unknown type".
 
 Type ARGUMENTS may be NESTED arbitrarily deeply
 (`new Container<Box<int>>(...)`, `new Container<Box<Box<int>>>(...)`, ...)
-- fully supported syntactically. However, since (see next paragraph) there is
-NO real generic specialization, for the
+- fully supported syntactically. For the
 constraint check (`where`) on a nested type argument only
-its OUTER name counts (`Box`, not `Box<int>`) – the inner arguments
-are read purely syntactically and then discarded.
+its OUTER name counts (`Box`, not `Box<int>`), and the object keeps only that
+outer class as its type argument (see below): an element of a `Container<Box<int>>`
+is checked to be a `Box`, its own type argument is the `Box`'s business.
 
 **Same name as a non-generic class**: A generic class
 may bear the same name as a non-generic one (as in C#):
@@ -817,15 +821,15 @@ the `GetCurrent()` of its enumerator returns). `List<int>` and `List<string>` do
 the number of type parameters (`E4061`), a class that is not generic takes none (`E4045`). `List<T>`, `IEnumerable<T>` and `IEnumerator<T>` of the standard library are
 generic in this way.
 
-**Important limitation**: Since this language is dynamically typed,
-**no real type substitution** takes place (unlike C#, where the
-compiler generates specialized code per instantiation) – the check
-of the type arguments against the `where` conditions happens **once at
-`new Name<...>(...)`**, afterwards `T` behaves in the body of the class like an
-ordinary placeholder type name that is not checked any further. Generic
-**methods** (`RetType Name<T>(params) where T ... { }`) are parsed
-and the type parameters accepted, but **not** checked against explicit
-type arguments at the call site – `Name<T>(x)` as call syntax would be
+**Type arguments at run time.** The type arguments are not erased: the check against the `where` conditions happens
+**once at `new Name<...>(...)`**, and the object keeps its type arguments - a parameter, a field or a local declared `T`
+then takes only what the type argument says (`new Box<int>()`: ints; a whole number for a `float` is converted; see
+section 3 and docs/TYPES.md). There is one class at run time for all instantiations (a `Box<int>` and a `Box<string>`
+are both a `Box`); the native backend additionally makes **specialised copies** of the methods for type arguments
+`int`, `float` and `bool` (typed arithmetic instead of generic values) and sends calls there that fit them.
+Generic **methods** (`RetType Name<T>(params) where T ... { }`) take their type arguments from the arguments
+(the type checker finds them and passes them to the call, where they are kept like those of an object); explicit
+type arguments at the call site are not written – `Name<T>(x)` as call syntax would be
 ambiguous with `<`/`>` as comparison operators at normal expression positions
 (unlike `new Name<...>`, where an argument list must
 follow directly after the class name, which makes it unambiguous). A
@@ -966,6 +970,20 @@ method infrastructure therefore works automatically.
   not a real array but an object – writing `operator[](...)` and
   `GetIndex(...)`/`SetIndex(...)` by hand are therefore
   equivalent, the former merely being the more explicit, recommended notation.
+
+### 5.12 Attributes
+
+`[Name arg1, arg2, ...]` on the lines before a method (several are allowed, each in its own brackets): a name and arguments without parentheses, as in C#
+(`[Parameters 1..3, "x", {1, 2}, new List<int>()]`; `{a, b}` is an array literal here, the same as `[a, b]`). The arguments are arbitrary expressions; the
+compiler keeps them with the method (and their source text) without evaluating them - a tool that reads the attribute evaluates them where it needs them.
+Reflection (`Member.Attributes`, section on reflection) gives every attribute with its name, the source texts of its arguments and the values of those
+that are constants (numbers, strings, `bool`, arrays of constants, ranges of `int` constants; otherwise `undefined`).
+Attributes stand only before methods. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md); other
+names are allowed and ignored.
+
+The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusive, descending when `b < a`; the unit of `a` stays on every element. In
+`[Parameters]` a range runs a test once per element.
 
 ## 6. Test operators: `is in`, `is of`, `is from`
 
@@ -1892,7 +1910,7 @@ here, `BinaryNumericOrOperator` there).
 
 ### 8.11 Streams and file access (`#import "io"`)
 
-`#import "io"` unlocks the namespace `IO` (the package `fire-io`: its prelude and the C++ of `native/bridges/fire_bridge_io.hpp`; in the VM a library built from it, like `graphics`/
+`#import "io"` unlocks the namespace `IO` (the package `fire-io`: its prelude and the C++ of `packages/io/native/fire_bridge_io.hpp`; in the VM a library built from it, like `graphics`/
 `devices`: native functions `__IO...` plus a fire prelude). Everything lives in `namespace IO`,
 so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
 namespace is only reachable **fully qualified** (`IO.FileMode.Create`).
@@ -2102,7 +2120,7 @@ t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
 - **`Type`**: `Name`, `Base` (a `Type` or `undefined`), `IsActor`, `Interfaces` (names), `All` (all `Member`s, also inherited ones; a derived class hides same-named ones of the base, constructors only its own),
   `Fields()`/`Properties()`/`Methods()`/`Constructors()`, `Find(name)`/`Has(name)`, `IsSubclassOf(type)`, `New(args)`; `Type.Of(x)`, `Type.Named(name)`, `Type.Names()`.
 - **`Member`**: `Name`, `Kind` (`"field"`, `"property"`, `"method"`, `"constructor"`), `TypeName` (the declared type as in the source, for methods the return type, `""` if not given), `Access` (`"public"`/`"private"`/`"protected"`),
-  `IsStatic`, `IsReadonly`, `CanRead`/`CanWrite` (properties), `Unit` (required unit), `DeclaredIn`, `ParamNames`/`ParamTypes`, `ParamCount()`, plus `Get(obj)`, `Set(obj, value)`, `Call(obj, args)`.
+  `IsStatic`, `IsReadonly`, `CanRead`/`CanWrite` (properties), `Unit` (required unit), `DeclaredIn`, `ParamNames`/`ParamTypes`, `ParamCount()`, `Attributes` (list of `Attribute`: `Name`, `Args`, `ArgTexts`, `ArgCount()`), `FindAttribute(name)`/`HasAttribute(name)`, plus `Get(obj)`, `Set(obj, value)`, `Call(obj, args)`.
 - **Rules:** Reflection bypasses nothing, it runs through the same paths as normal code. `private`/`protected` apply to the code that **called** the library (from a method of the class itself `Reflect.Get(this, "secret")`
   is allowed, from outside not: `AccessDeniedException`; in `Performance` mode the check is omitted as everywhere); a `readonly` field cannot be assigned; units are checked (`UnitMismatchException`); property accessors
   run as normal methods (an exception in them runs to the outer `catch`); for objects of the globals the section rules apply (THREADING_DESIGN.md section 7).
@@ -2212,7 +2230,7 @@ exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` th
 
 ### 8.16 Devices (`#import "devices"`)
 
-The extension controls devices via the **DeviceManager** (`src/fire.Device.Manager`: drivers, devices, handles; the package `fire-devices`: the fire classes and the C++ of `native/bridges/fire_bridge_devices.hpp`, which in the VM asks the host's device manager through the callbacks of the package ABI). A device has an identifier `driver:port`
+The extension controls devices via the **DeviceManager** (`src/fire.Device.Manager`: drivers, devices, handles; the package `fire-devices`: the fire classes and the C++ of `packages/devices/native/fire_bridge_devices.hpp`, which in the VM asks the host's device manager through the callbacks of the package ABI). A device has an identifier `driver:port`
 (`serial:COM3`, `loopback:echo`). The `serial` driver (115200 baud) is built in; `loopback` is a simulated echo device without hardware (everything you send comes back after a few milliseconds).
 
 You work at the **command level**: send text and bytes, wait for certain characters, execute commands as objects.
