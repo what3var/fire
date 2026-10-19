@@ -117,7 +117,27 @@ var f = new Box<float>()
 f.Put(3)                                                                // stored as 3.0
 ```
 
-`new Box<T>()` inside generic code passes the type argument on, and a class like `class IntBox : Box<int>` fixes it for its objects.
+`new Box<T>()` inside generic code passes the type argument on, and a class like `class IntBox : Box<int>` fixes it for its objects. A lambda
+made in generic code takes the type arguments it uses along.
+
+A number type argument means exactly what the declaration `int x` or `int x : cm` means - `T` is replaced by it:
+
+| Type argument | `T value` holds |
+|---|---|
+| `Box<int>` | whole numbers without a unit (`Put(4cm)` is a `UnitMismatchException`) |
+| `Box<int : cm>` | whole numbers in cm (`Put(2m)` stores `200cm`, `Put(3kg)` is a `UnitMismatchException`) |
+| `Box<float : any m>` | floats of the dimension length, in their own unit |
+| `Box<int : any>` | whole numbers in any unit |
+
+```fire
+class Box<T> {
+    T item
+    undefined Put(T item) { this.item = item }
+}
+var lengths = new List<int : cm>()
+lengths.Add(3m)
+print(lengths[0])        // 300cm
+```
 
 ## Generic methods
 

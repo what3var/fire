@@ -14742,6 +14742,62 @@ else
             print(new Box<string>().Twice("ab") + " " + U.Max(2, 3.5) + " " + U.Max(4, 3.5))
             try { viaAny.Twice(s) } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Typen: Typargumente mit Einheit (Box<int> ohne, Box<int : cm>, Box<int : any>, Box<float : any m>), Lambdas nehmen Typargumente mit, typisierte Felder in der Kopie", """
+            class Box<T> {
+                T value
+                undefined Put(T v) { value = v }
+                undefined PutAll(any items[]) {
+                    undefined lambda<any> put = (any x) => { T kept = x; print(kept) }
+                    foreach (x in items) { try { put(x) } catch (ArgumentException e) { print(e.message) } }
+                }
+            }
+            class Acc<T> {
+                T sum
+                T best
+                construct(T start) { sum = start; best = start }
+                undefined Add(T v) { sum = sum + v; if (v > best) best = v }
+                T Scaled(T k) { return sum * k - best }
+            }
+            class U {
+                static any Via<V>(V v) {
+                    any lambda<V> wrap = (V x) => { var b = new Box<V>(); b.Put(x); return b }
+                    return wrap(v)
+                }
+                static V Max<V>(V a, V b) { if (a > b) return a; return b }
+            }
+            any s = "x"
+            var b = new Box<int : cm>()
+            b.Put(5mm)
+            b.Put(2m)
+            print(b.value)
+            try { b.Put(3kg) } catch (UnitMismatchException e) { print(e.message) }
+            var u = new Box<int>()
+            u.Put(4)
+            try { u.Put(4cm) } catch (UnitMismatchException e) { print(e.message) }
+            var a = new Box<int : any>()
+            a.Put(7kg)
+            print(a.value)
+            var l = new Box<float : any m>()
+            l.Put(3cm)
+            try { l.Put(3s) } catch (UnitMismatchException e) { print(e.message) }
+            var fc = new Box<float : km>()
+            fc.Put(1500m)
+            print(l.value + " " + fc.value)
+            try { b.Put(s) } catch (ArgumentException e) { print(e.message) }
+            print(U.Max(5cm, 3cm) + " " + U.Max(2, 3))
+            var list = new List<int : cm>()
+            list.Add(3m)
+            print(list[0])
+            new Box<int>().PutAll([1, "two", 3])
+            any boxed = U.Via(2.5)
+            try { boxed.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var acc = new Acc<int>(0)
+            int t = 0
+            for (int i = 0; i < 1000; i++) { acc.Add(i % 13); t = t + acc.Scaled(2) % 7 }
+            var facc = new Acc<float>(0.0)
+            for (int i = 0; i < 100; i++) { facc.Add(0.5) }
+            print(t + " " + acc.sum + " " + facc.Scaled(0.5))
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))

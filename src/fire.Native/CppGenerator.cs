@@ -69,7 +69,11 @@ namespace fire.Native
             /// <summary>A copy of a generic method for constant type arguments (the hybrid of generics): their SetTypeArgs text, and the parameters
             /// (slot, kind) that are an int/float/bool type parameter - the call site makes sure they hold that kind without a unit.</summary>
             public string? SpecTArgs;
-            public List<(int Slot, byte Kind)>? SpecParams;
+            public List<(int Slot, byte Kind, int Unit)>? SpecParams;
+            /// <summary>A copy for the type arguments of a class (`Box&lt;int&gt;`): that class and its type arguments - a field declared with one of
+            /// its type parameters holds a number of that kind and unit (its setter converts every value into it) or undefined.</summary>
+            public string? SpecClassOwner;
+            public string[]? SpecClassArgs;
             public string Code = "";
             // Per generation of the chunk (see GenerateChunk): the catch regions, the finally bookkeeping and the decoded code.
             public Dictionary<int, Region> Regions = new();
@@ -125,6 +129,8 @@ namespace fire.Native
         private readonly SortedSet<(string Cls, int Index)> _targOfs = new();
         /// <summary>The type arguments of the next NewObject (a SetTypeArgs right before it): a C++ expression of TArgs.</summary>
         private string? _pendingNewTArgs;
+        /// <summary>The type arguments the next lambda takes along (SetTypeArgs with `forCall` 2).</summary>
+        private string? _pendingLambdaTArgs;
         /// <summary>The member chains of selector lambdas (`c => c.radius`), each a static array.</summary>
         private readonly Dictionary<string[], string> _selectorPaths = new(new SelectorPathComparer());
         private sealed class SelectorPathComparer : IEqualityComparer<string[]>
@@ -252,29 +258,28 @@ namespace fire.Native
             if (specParams == null || specParams.Any(p => p.Slot >= argc)) return (generic, null);   // (a default value: its kind is not known here)
             var spec = SpecFunc(generic, "m:" + text, text, specParams);
             var conditions = new List<string>();
-            foreach (var (param, kind) in specParams)
-                if (slotType(firstArg + param) != TypeOf(kind, 0)) conditions.Add(KindTest(slot(firstArg + param), kind));
+            foreach (var (param, kind, unit) in specParams)
+                if (slotType(firstArg + param) != TypeOf(kind, unit)) conditions.Add(KindTest(slot(firstArg + param), kind, unit));
             return (spec, conditions.Count == 0 ? null : string.Join(" && ", conditions));
         }
 
         /// <summary>The parameters of a generic method that a copy for these type arguments types: those declared with a type parameter of the method
-        /// (`owner` "") or of class `owner` whose type argument is int, float or bool; null when there is none.</summary>
-        private static List<(int Slot, byte Kind)>? SpecParamsFor(FunctionProto proto, string owner, string[] parts)
+        /// (`owner` "") or of class `owner` whose type argument is int or float in a known unit (`int`: none, `int : cm`), or bool; null when there is none.</summary>
+        private List<(int Slot, byte Kind, int Unit)>? SpecParamsFor(FunctionProto proto, string owner, string[] parts)
         {
-            var specParams = new List<(int Slot, byte Kind)>();
+            var specParams = new List<(int Slot, byte Kind, int Unit)>();
             foreach (var c in OpInfo.Decode(proto.Chunk.Code))
             {
                 if (c.Op != OpCode.GuardLocalType) continue;
                 var spec = DeclaredType.Parse(proto.Chunk.Constants[c.A[1]].AsString());
                 if (spec.TypeParamIndex < 0 || spec.TypeParamClass != owner || spec.TypeParamIndex >= parts.Length) continue;
-                byte kind = parts[spec.TypeParamIndex] switch { "int" => KindInt, "float" => KindFloat, "bool" => KindBool, _ => KindUnknown };
-                if (kind != KindUnknown) specParams.Add((c.A[0], kind));
+                if (SpecKind(parts[spec.TypeParamIndex]) is { } typed) specParams.Add((c.A[0], typed.Kind, typed.Unit));
             }
             return specParams.Count == 0 ? null : specParams;
         }
 
         /// <summary>The copy of a generic method for one set of type arguments (`key`: "m:" + those of the method, "c:Class:" + those of a class).</summary>
-        private Func SpecFunc(Func generic, string key, string? methodTArgs, List<(int Slot, byte Kind)> specParams)
+        private Func SpecFunc(Func generic, string key, string? methodTArgs, List<(int Slot, byte Kind, int Unit)> specParams)
         {
             if (_specFuncs.TryGetValue((generic.Proto!, key), out var spec)) return spec;
             spec = new Func { Proto = generic.Proto, Chunk = generic.Chunk, Kind = generic.Kind, Index = _funcs.Count, SpecTArgs = methodTArgs, SpecParams = specParams };
@@ -284,9 +289,31 @@ namespace fire.Native
             return spec;
         }
 
-        /// <summary>A value that is a number of this kind without a unit (or a bool).</summary>
-        private static string KindTest(string value, byte kind) =>
-            kind == KindBool ? $"{value}.kind == K_Bool" : $"{value}.kind == {(kind == KindInt ? "K_Int" : "K_Float")} && {value}.unit == 0";
+        /// <summary>A field of `this` read in a copy for the type arguments of a class (`this.value` of a `Box&lt;int&gt;`): a field declared with a type
+        /// parameter whose type argument is a number in a known unit holds that or undefined; null otherwise.</summary>
+        private int? SpecFieldType(Func f, Instr ins, string field)
+        {
+            if (f.SpecClassOwner is not { } owner || f.SpecClassArgs is not { } args || f.Chunk.OwnerClass is not { } rc) return null;
+            int i = f.IndexOf[ins.Addr] - 1;
+            if (i < 0 || f.Decoded[i].Op != OpCode.LoadThis) return null;   // (the object of the method itself, not another one of the class)
+            if (rc.FindFieldRequiredType(field) is not { } required || DeclaredType.Parse(required) is not { TypeParamIndex: >= 0 } spec
+                || spec.TypeParamClass != owner || spec.TypeParamIndex >= args.Length || SpecKind(args[spec.TypeParamIndex]) is not { } typed) return null;
+            return TypeOf(typed.Kind, typed.Unit) | NullableBit;
+        }
+
+        /// <summary>The kind and unit a value of a type argument certainly has (`int`, `int:cm`, `float`, `bool`); null when its unit is open (`int:any`) or it is no number.</summary>
+        private (byte Kind, int Unit)? SpecKind(string typeArg)
+        {
+            if (typeArg == "bool") return (KindBool, 0);
+            if (DeclaredType.NumberDemand(typeArg) is not { } number) return null;
+            string demand = number.Demand.TrimStart('#');
+            if (demand == "any" || demand.StartsWith("any ", StringComparison.Ordinal)) return null;
+            return (number.Kind == "int" ? KindInt : KindFloat, UnitId(DemandUnit(demand)));
+        }
+
+        /// <summary>A value that is a number of this kind in this unit (or a bool).</summary>
+        private static string KindTest(string value, byte kind, int unit) =>
+            kind == KindBool ? $"{value}.kind == K_Bool" : $"{value}.kind == {(kind == KindInt ? "K_Int" : "K_Float")} && {value}.unit == {unit}";
 
         /// <summary>The type arguments the program uses with constants: of calls of generic methods (by method name and number of arguments) and of
         /// classes (`new Box&lt;int&gt;()`, `class IntBox : Box&lt;int&gt;`; given on to the base classes) - the copies of generic methods are made for them.</summary>
@@ -295,7 +322,7 @@ namespace fire.Native
 
         private void AddTArgText<TKey>(Dictionary<TKey, SortedSet<string>> into, TKey key, string text) where TKey : notnull
         {
-            if (text.Contains('$') || !text.Split('|').Any(t => t is "int" or "float" or "bool")) return;
+            if (text.Contains('$') || !text.Split('|').Any(t => SpecKind(t) != null)) return;
             if (!into.TryGetValue(key, out var set)) into[key] = set = new SortedSet<string>(StringComparer.Ordinal);
             if (set.Add(text)) _version++;
         }
@@ -349,7 +376,7 @@ namespace fire.Native
             if (f.SpecParams != null || f.Proto is not { } proto || f.Kind is not (FuncKind.Method or FuncKind.Static)) return "";
             var lines = new StringBuilder();
             string args = string.Join(", ", (f.HasSelf ? new[] { "self" } : Array.Empty<string>()).Concat(Enumerable.Range(0, f.ParamCount).Select(i => $"P{i}")));
-            string ParamTests(List<(int Slot, byte Kind)> ps) => string.Concat(ps.Select(p => " && " + KindTest($"P{p.Slot}", p.Kind)));
+            string ParamTests(List<(int Slot, byte Kind, int Unit)> ps) => string.Concat(ps.Select(p => " && " + KindTest($"P{p.Slot}", p.Kind, p.Unit)));
             // the type arguments of the call of a generic method
             if (f.HasCallTArgs && MethodKey(proto) is { } key && _callTArgTexts.TryGetValue(key, out var texts))
                 foreach (var text in texts)
@@ -373,7 +400,9 @@ namespace fire.Native
                         var parts = text.Split('|');
                         if (SpecParamsFor(proto, owner!, parts) is not { } ps) continue;
                         var spec = SpecFunc(f, $"c:{owner}:{text}", null, ps);
-                        string targs = string.Concat(parts.Select((t, k) => t is "int" or "float" or "bool" ? $" && {TArgOfExpr(owner!, k, "objAt(self)")} == {TArgRef(t)}" : ""));
+                        string targs = string.Concat(parts.Select((t, k) => SpecKind(t) != null ? $" && {TArgOfExpr(owner!, k, "objAt(self)")} == {TArgRef(t)}" : ""));
+                        spec.SpecClassOwner = owner;
+                        spec.SpecClassArgs = parts;
                         lines.AppendLine($"    if (self.kind == K_Class{targs}{ParamTests(ps)}) return {spec.Name}({args});");
                     }
                 }
@@ -720,9 +749,23 @@ namespace fire.Native
             foreach (var (text, id) in _targIds.OrderBy(kv => kv.Value))
             {
                 var condition = DeclaredType.ConditionOf(text);
-                string display = condition.IsUnit ? "in " + condition.Name : GenericClassNames.PlainName(text);
-                sb.AppendLine($"static bool tah_{id}(Value v) {{ return {HoldsExpr("v", condition)}; }}");
-                sb.AppendLine($"static const TArg ta_{id} = {{{CString(display)}, tah_{id}, {(text == "float" ? "true" : "false")}}};");
+                string holds = HoldsExpr("v", condition);
+                string kind = "0", adapt = "nullptr";
+                if (DeclaredType.NumberDemand(text) is { } number)
+                {
+                    // a number type argument: of its kind and in its unit already (anything else of the kind is converted: taa_)
+                    kind = number.Kind == "int" ? "K_Int" : "K_Float";
+                    string demand = number.Demand.TrimStart('#');
+                    if (demand.StartsWith("any ", StringComparison.Ordinal)) holds += $" && unitCompatible(unitOf(v), {UnitId(DemandUnit(demand.Substring(4)))})";
+                    else if (demand != "any") holds += $" && v.unit == {UnitId(DemandUnit(demand))}";
+                    if (number.Demand != "any")
+                    {
+                        sb.AppendLine($"static Value taa_{id}(Value v) {{ return {AdaptUnitCall("v", number.Demand)}; }}");
+                        adapt = "taa_" + id;
+                    }
+                }
+                sb.AppendLine($"static bool tah_{id}(Value v) {{ return {holds}; }}");
+                sb.AppendLine($"static const TArg ta_{id} = {{{CString(DeclaredType.DisplayOf(text))}, tah_{id}, {(text.StartsWith("float", StringComparison.Ordinal) && DeclaredType.NumberDemand(text) != null ? "true" : "false")}, {kind}, {adapt}}};");
             }
             foreach (var (text, id) in _targListIds.OrderBy(kv => kv.Value))
                 sb.AppendLine($"static const TArg* const tl_{id}[] = {{{string.Join(", ", text.Split('|').Select(TArgRef))}}};");
@@ -956,6 +999,9 @@ namespace fire.Native
                 GenerateChunk(main);
                 for (int i = 0; i < _funcs.Count; i++) GenerateChunk(_funcs[i]);
                 RegisterTargets();
+                // (made once more when the file is put together: the strings, units and type arguments they use are registered by now)
+                foreach (var name in _fieldNames.ToList()) FieldHelpers(name);
+                TArgTables();
                 if (_version == before) break;
                 if (round > 40) throw new NativeNotSupportedException("code generation does not settle");
             }
@@ -1978,6 +2024,7 @@ namespace fire.Native
             f.IndexOf = indexOfAddr;
             f.HasCallTArgs = code.Any(c => c.Op == OpCode.TakeCallTypeArgs);
             _pendingNewTArgs = null;
+            _pendingLambdaTArgs = null;
             CollectTArgTexts(f);
             f.Regions = new Dictionary<int, Region>();
             f.Root = new Out();
@@ -3119,7 +3166,15 @@ namespace fire.Native
                 // Objects
                 // ---------------------------------------------------------------------------------------------------
                 case OpCode.LoadThis:
-                    RequireSelf(); E($"{S(d)} = self;"); SetR(d, IsExtensionMethod(f.Proto));
+                    RequireSelf();
+                    if (f.Kind == FuncKind.Lambda)
+                    {
+                        // a lambda has no `this` of its own (SPEC 4.2), only an `on` target: without one it is an ArgumentException, like in the VM
+                        E($"{S(d)} = FIRE_UNLIKELY(self.kind == K_Undefined) ? fireError(\"ArgumentException\", \"'this' is not bound at this point.\") : self;");
+                        Check();
+                    }
+                    else E($"{S(d)} = self;");
+                    SetR(d, IsExtensionMethod(f.Proto));
                     if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } thisClass) { SetT(d, ObjType(thisClass)); _kindsKept = true; }
                     d++; return Next();
                 case OpCode.GetField:
@@ -3137,6 +3192,7 @@ namespace fire.Native
                     else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});"); Check(); }   // (a destroyed object throws)
                     int fieldType = FieldType(field);
+                    if (fieldType == TypeUnknown && SpecFieldType(f, ins, field) is { } specType) fieldType = specType;
                     if (fieldType != TypeUnknown) { SetR(d - 1, false); SetT(d - 1, fieldType); _kindsKept = true; }
                     else SetR(d - 1, true);
                     return Next();
@@ -3402,7 +3458,9 @@ namespace fire.Native
                     int first = d - captures - (hasOn ? 1 : 0);
                     var sbCaps = new StringBuilder();
                     for (int i = 0; i < captures; i++) sbCaps.Append($" l->caps()[{i}] = {S(first + i)}; retain({S(first + i)});");
-                    E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{defaultsInit}{sbCaps} {S(first)} = LamV(l); }}");
+                    string lambdaTArgs = _pendingLambdaTArgs != null ? $" l->targs = {_pendingLambdaTArgs};" : "";
+                    _pendingLambdaTArgs = null;
+                    E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{defaultsInit}{lambdaTArgs}{sbCaps} {S(first)} = LamV(l); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
                 case OpCode.Call:
@@ -3434,14 +3492,16 @@ namespace fire.Native
                 {
                     // the type arguments of the next `new` (the object keeps them) or of the next call of a generic method (it takes them: TakeCallTypeArgs)
                     string typeArgs = TArgsExpr(f, Str(ins.A[0]));
-                    if (ins.A[1] != 0) E($"g_callTArgs = {typeArgs};");
+                    if (ins.A[1] == 1) E($"g_callTArgs = {typeArgs};");
+                    else if (ins.A[1] == 2) _pendingLambdaTArgs = typeArgs;
                     else _pendingNewTArgs = typeArgs;
                     _kindsKept = true;
                     return Next();
                 }
                 case OpCode.TakeCallTypeArgs:
                     // (a specialised copy knows its type arguments; the caller set them for the generic method all the same)
-                    E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "static_cast<TArgs>(g_callTArgs)")}; g_callTArgs = nullptr; (void)ctargs;");
+                    if (f.Kind == FuncKind.Lambda) E("TArgs ctargs = lamOf(lam)->targs; (void)ctargs;");   // (what the lambda took along)
+                    else E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "static_cast<TArgs>(g_callTArgs)")}; g_callTArgs = nullptr; (void)ctargs;");
                     _kindsKept = true;
                     return Next();
                 case OpCode.GuardTop:
@@ -3471,8 +3531,8 @@ namespace fire.Native
                     string spec = Str(ins.A[1]);
                     if (f.SpecParams?.FirstOrDefault(p => p.Slot == ins.A[0]) is { Kind: not 0 } specParam)
                     {
-                        // a specialised copy: the call site made sure the argument is a number of that kind without a unit (or a bool)
-                        JoinVarType(VarKey(f, v), TypeOf(specParam.Kind, 0));
+                        // a specialised copy: the call site made sure the argument is a number of that kind in that unit (or a bool)
+                        JoinVarType(VarKey(f, v), TypeOf(specParam.Kind, specParam.Unit));
                         _kindsKept = true;
                         return Next();
                     }

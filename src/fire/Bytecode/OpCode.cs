@@ -214,6 +214,7 @@ namespace fire.Bytecode
         // parameter of `Class` taken from `this` (`new Box<T>()` inside a generic class); the object keeps them (ObjectInstance.TypeArgs).
         // With `forCall` 1 they are those of the next call of a generic method (`Box.Of(5)`), kept in the scope of the call (Scope.TypeArgs); `$k@` is
         // the k-th type parameter of the method that runs.
+        // With `forCall` 2 they are those a lambda takes along (the next MakeLambda/MakeLambdaCapturing; LambdaValue.TypeArgs), its body names them `$i@`.
         SetTypeArgs,         // u16 textIdx, u8 forCall
         // The first instruction of a generic method: the scope of the call takes the type arguments its SetTypeArgs gave (none: unknown).
         TakeCallTypeArgs,

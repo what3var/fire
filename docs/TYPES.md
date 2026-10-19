@@ -108,7 +108,14 @@ passed on to base classes) and for the calls the program makes; a generic method
 arguments and arguments fit a copy there - so calls through the dispatcher, lambdas and generic code reach the copies too. Methods of
 `Acc<int>`/`Acc<float>`, partly through `any`: 0.30 s -> 0.20 s for 25M calls.
 A type parameter of the running method or class is passed on as a type argument (`Outer<V>` calling `Nested(v, 3)`, a generic class passing
-`item` or `this.item`); inside a lambda it is not.
+`item` or `this.item`); a lambda made in generic code takes the ones it uses along (SetTypeArgs before MakeLambda, `LambdaValue.TypeArgs`,
+natively `Lam::targs`; its body names the i-th `$i@`, nested lambdas pass them on).
+**Number type arguments carry their unit:** `int` is a whole number without a unit (like a declared `int`), `int:cm` one in cm, `int:any` one in
+any unit, `int:any m` one of a dimension (`Box<int : cm>`; texts in ObjectInstance.TypeArgs, `DeclaredType.NumberDemand`). A value of the kind is
+converted into the unit (`Value.AdaptToUnit`; another dimension is a `UnitMismatchException`). The type checker keeps the unit when it replaces
+`T` (`Put(5mm)` on a `Box<int : cm>` is TC007, `Put(3kg)` TC006). Natively a `TArg` has its kind and a conversion function (`taa_N`); the copies
+of generic methods are made for a known unit (`int : cm` too), and in a copy for the type arguments of a class a field of `this` declared `T`
+is typed (its setter converts every value into the type argument; `Acc<int>`/`Acc<float>` with two `T` fields: 0.48 s -> 0.36 s).
 
 **Local variables** are checked at run time where the type checker cannot prove their declaration (`int x = someAny`, `Dog d = animal`,
 `T w = other`; a conflict it reports stays a warning in lax mode, and the program runs on as before): `ResolveResult.LocalGuards` marks the value, the compiler emits `GuardTop` (int/float/bool, without a unit demand - a local

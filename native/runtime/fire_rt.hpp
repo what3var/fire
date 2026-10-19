@@ -541,6 +541,13 @@ struct Str : Ref {
 };
 
 /// A lambda value: the function, the values it captured when it was created (copies, SPEC 4.2.1) and the `on` target (`this`).
+/// A type argument (`int`, `Dog`, `in cm`) of an object (`new Box<int>()`) or of a call of a generic method: what a declaration with that type
+/// parameter takes (generated once per text, see DeclaredType of the VM).
+/// A number type argument also has its kind and the conversion into its unit (`int`: into no unit, `int : cm`: into cm; null for `int : any`).
+struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); };
+/// The type arguments of an object or a call, one per type parameter (nullptr: not known); interned, never freed.
+using TArgs = const TArg* const*;
+
 struct alignas(alignof(Value)) Lam : Ref {
     uint32_t nparams;
     uint32_t ncaps;
@@ -548,6 +555,7 @@ struct alignas(alignof(Value)) Lam : Ref {
     Value on;
     Value (*fn)(Value lam, const Value* args);
     Value (*dflt)(Value lam, uint32_t index);   // the default value of parameter `index` (null: the lambda has none)
+    TArgs targs;      // the type arguments of the generic code it was made in that its body uses (nullptr: none)
 #ifdef FIRE_REFLECTION
     const char* const* sel;   // a selector lambda (`c => c.radius`): the member chain (SPEC 8.13), else null
     uint32_t nsel;
@@ -1142,12 +1150,6 @@ inline bool truthy(Value v) {
 // Differences to the VM: a reference to a destroyed *object* is not detected (the VM keeps destroyed objects readable); a destroyed
 // array or buffer is (see the handles above).
 // ---------------------------------------------------------------------------------------------------------------------
-/// A type argument (`int`, `Dog`, `in cm`) of an object (`new Box<int>()`) or of a call of a generic method: what a declaration with that type
-/// parameter takes (generated once per text, see DeclaredType of the VM).
-struct TArg { const char* display; bool (*holds)(Value); bool isFloat; };
-/// The type arguments of an object or a call, one per type parameter (nullptr: not known); interned, never freed.
-using TArgs = const TArg* const*;
-
 struct alignas(alignof(Value)) Obj : Owned {
     uint32_t cls;      // class id (assigned by the generator)
     uint32_t nfields;
@@ -1404,6 +1406,7 @@ inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const 
     l->on = Undef();
     l->fn = fn;
     l->dflt = nullptr;
+    l->targs = nullptr;
 #ifdef FIRE_REFLECTION
     l->sel = nullptr;
     l->nsel = 0;
@@ -1439,6 +1442,7 @@ inline Value rebindLam(Value lam, Value on, OwnList* list) {
     Lam* l = allocLam(a->nparams, a->ncaps, a->fn, list);
     l->nreq = a->nreq;
     l->dflt = a->dflt;
+    l->targs = a->targs;
 #ifdef FIRE_REFLECTION
     l->sel = a->sel;
     l->nsel = a->nsel;
@@ -2309,10 +2313,15 @@ FIRE_COLD inline void guardTArgFailed(Value v, const char* param, const TArg* ta
     guardClassFailed(v, display, what);
 }
 
-/// A declaration with a type parameter: the value fits its type argument (a whole number for a `float` becomes one); false: it does not.
+/// A declaration with a type parameter: the value fits its type argument; a number of its kind (a whole number for a `float`) is converted into its
+/// unit (another dimension: a UnitMismatchException, which leaves the unwinding set); false: it does not fit.
 inline bool fitsTArg(Value& v, const TArg* ta) {
     if (v.kind == K_Undefined || ta->holds(v) || (v.kind == K_Class && !leafAlive(v))) return true;
-    if (ta->isFloat && v.kind == K_Int) { v = Float(static_cast<Real>(v.i), v.unit); return true; }
+    if (ta->kind != 0 && (v.kind == ta->kind || (ta->isFloat && v.kind == K_Int))) {
+        if (ta->adapt) v = ta->adapt(v);
+        else if (v.kind == K_Int && ta->isFloat) v = Float(static_cast<Real>(v.i), v.unit);
+        return true;
+    }
     return false;
 }
 

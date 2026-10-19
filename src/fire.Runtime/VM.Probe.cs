@@ -29,6 +29,7 @@ namespace fire.Runtime
             var scope = new Scope(_globalScope);
             foreach (var a in args) scope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) scope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
 
             _currentThis = lambda.OnTarget;
             _currentScope = scope;

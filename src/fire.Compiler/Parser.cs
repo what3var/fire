@@ -1183,7 +1183,22 @@ namespace fire.Compiler
         {
             Expect(TokenType.Lt, "Expected '<'");
             var args = new List<TypeRef>();
-            do args.Add(ParseTypeRef(allowArray: true));
+            do
+            {
+                var arg = ParseTypeRef(allowArray: true);
+                // `Box<int : cm>`, `List<float : any>`, `Box<int : any m>`: a number type argument with its unit (without one it is unitless)
+                if (arg is { BaseName: "int" or "float", Unit: null, ArrayRank: 0 } && Check(TokenType.Colon) && (PeekAt(1).Type == TokenType.Identifier || IsCustomUnitWordAt(1)))
+                {
+                    Advance();
+                    string unit = Advance().Lexeme;
+                    if (unit == "any" && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0))) unit = "any " + Advance().Lexeme;
+                    arg = arg with { Unit = unit };
+                }
+                // (`int : any m` - the type itself took `: any` and left the dimension)
+                else if (arg is { BaseName: "int" or "float", Unit: "any" } && (Check(TokenType.Identifier) || IsCustomUnitWordAt(0)))
+                    arg = arg with { Unit = "any " + Advance().Lexeme };
+                args.Add(arg);
+            }
             while (Match(TokenType.Comma));
             Expect(TokenType.Gt, "Expected '>' after the type arguments");
             return args;
@@ -1225,6 +1240,12 @@ namespace fire.Compiler
                     case TokenType.LBracket:
                         if (expectName || PeekAt(i + 1).Type != TokenType.RBracket) return -1;
                         i++;
+                        break;
+                    case TokenType.Colon:
+                        // `int : cm`, `int : any m`: the unit of a number type argument
+                        if (expectName || PeekAt(i - 1).Lexeme is not ("int" or "float") || PeekAt(i + 1).Type != TokenType.Identifier && !IsCustomUnitWordAt(i + 1)) return -1;
+                        i++;
+                        if (PeekAt(i).Lexeme == "any" && (PeekAt(i + 1).Type == TokenType.Identifier || IsCustomUnitWordAt(i + 1))) i++;
                         break;
                     case TokenType.Identifier when !expectName && token.Lexeme == "lambda":   // `int lambda<...>`: a return type before `lambda`
                         break;

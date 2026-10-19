@@ -2046,7 +2046,7 @@ namespace fire.Runtime
             bool hasOnTarget = ReadByte() != 0;
             var proto = _currentChunk.Functions[protoIdx];
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
-            var lambdaValue = new LambdaValue(proto, onTarget);
+            var lambdaValue = new LambdaValue(proto, onTarget) { TypeArgs = TakeLambdaTypeArgs() };
             Push(Value.MakeLambda(lambdaValue));
             return;
         }
@@ -2061,7 +2061,7 @@ namespace fire.Runtime
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
             var captures = new Value[captureCount];
             for (int i = captureCount - 1; i >= 0; i--) captures[i] = Pop();
-            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures)));
+            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures) { TypeArgs = TakeLambdaTypeArgs() }));
         }
 
         // -----------------------------------------------------------
@@ -2208,6 +2208,7 @@ namespace fire.Runtime
                 && fastCallee.AsLambda() is LambdaValue fastLambda
                 && fastLambda.Proto.ParamCount == argCount)
             {
+                _pendingCallTypeArgs = fastLambda.TypeArgs;   // (taken by the TakeCallTypeArgs of a lambda made in generic code)
                 EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, captures: fastLambda.Captures);
                 return;
             }
@@ -2237,6 +2238,7 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
             ApplyCopyMask(funcScope, copyMask, lambda.Proto.RefMask);
 
             _currentThis = lambda.OnTarget;
@@ -5339,6 +5341,7 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -5404,6 +5407,7 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -6032,7 +6036,11 @@ namespace fire.Runtime
             var callTypeArgs = _currentScope.TypeArgs;    // (a `U` of the method: the type argument of the call - the prologue runs in its scope)
             if (DeclaredType.Fits(guarded, requiredType, owner, callTypeArgs)) return;
             var checkedValue = guarded;
-            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs)) { guarded = checkedValue; return; }
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand))
+            {
+                if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) guarded = checkedValue;
+                return;
+            }
             ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
@@ -6057,7 +6065,11 @@ namespace fire.Runtime
             var callTypeArgs = CallScopeTypeArgs();
             if (DeclaredType.Fits(top, requiredType, owner, callTypeArgs)) return;
             var checkedValue = top;
-            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs)) { top = checkedValue; return; }
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand))
+            {
+                if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) top = checkedValue;
+                return;
+            }
             ThrowArgumentError(DeclaredType.Mismatch(top, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
@@ -6072,7 +6084,8 @@ namespace fire.Runtime
         /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldType(ref Value value, string? requiredType, string fieldName, ObjectInstance? owner)
         {
-            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner)) return true;
+            // (a number type argument with a unit: converted into it, a UnitMismatchException for another dimension)
+            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner, null, out var unitDemand)) return unitDemand == null || AdaptFieldUnit(ref value, unitDemand);
             ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'", owner));
             return false;
         }
@@ -6085,7 +6098,7 @@ namespace fire.Runtime
         private void OpSetTypeArgs()
         {
             string text = _constants[ReadU16()].AsString();
-            bool forCall = ReadByte() != 0;
+            byte forCall = ReadByte();
             if (!_typeArgTemplates.TryGetValue(text, out var template)) _typeArgTemplates[text] = template = text.Split('|');
             string[] args;
             if (!text.Contains('$')) args = template;   // (the same array for every object: it is never changed)
@@ -6108,12 +6121,23 @@ namespace fire.Runtime
                     else args[i] = DeclaredType.TypeArgOf(_currentThis as ObjectInstance, t.Substring(at + 1), k) ?? "";
                 }
             }
-            if (forCall) _pendingCallTypeArgs = args;
+            if (forCall == 1) _pendingCallTypeArgs = args;
+            else if (forCall == 2) _pendingLambdaTypeArgs = args;
             else _pendingTypeArgs = args;
         }
 
         /// <summary>The type arguments for the next call of a generic method (SetTypeArgs with `forCall`; TakeCallTypeArgs, the first instruction of the method, gives them to the scope of the call).</summary>
         private string[]? _pendingCallTypeArgs;
+
+        /// <summary>The type arguments the next lambda takes along (SetTypeArgs with `forCall` 2).</summary>
+        private string[]? _pendingLambdaTypeArgs;
+
+        private string[]? TakeLambdaTypeArgs()
+        {
+            var args = _pendingLambdaTypeArgs;
+            _pendingLambdaTypeArgs = null;
+            return args;
+        }
 
         /// <summary>A new object takes the type arguments of its `new` (SetTypeArgs right before it), if there are any.</summary>
         private void TakeTypeArgs(ObjectInstance instance)

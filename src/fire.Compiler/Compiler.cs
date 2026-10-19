@@ -422,7 +422,9 @@ namespace fire.Compiler
         /// <summary>What a declaration `C x` (a parameter, a field) with a class, an interface or a type parameter of `owner` that has `where` conditions
         /// promises, checked at run time (GuardLocalType, FieldInfo.RequiredType, DeclaredType); null for a number, a string, an unconstrained type
         /// parameter (or one of a method), an array, a lambda, `any`...</summary>
-        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner)
+        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner) => MapSpec(DeclaredTypeOfCore(type, owner));
+
+        private string? DeclaredTypeOfCore(TypeRef? type, RuntimeClass? owner)
         {
             if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null) return null;
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
@@ -447,7 +449,9 @@ namespace fire.Compiler
             if (_refParams.IsTypeParam(tr.BaseName)) return "";
             switch (tr.BaseName)
             {
-                case "int": case "float": case "bool": case "char": case "string": return tr.BaseName;
+                // a number without a unit is unitless (like a declared `int`); `int : cm` is one in cm, `int : any` one in any unit
+                case "int": case "float": return tr.Unit == null ? tr.BaseName : tr.BaseName + ":" + tr.Unit;
+                case "bool": case "char": case "string": return tr.BaseName;
                 case "any": case "class": return "";
             }
             if (_refParams.EnumNames.Contains(tr.BaseName)) return "int";
@@ -459,12 +463,37 @@ namespace fire.Compiler
             return "";
         }
 
+        /// <summary>In a lambda: the type parameters of the code around it that its body uses (`$k@` of the method, `$k@Class` of the class, as that
+        /// code names them) - the lambda takes them along when it is made (SetTypeArgs for a lambda, LambdaValue.TypeArgs) and names the i-th `$i@`.
+        /// Null outside of a lambda.</summary>
+        private List<string>? _lambdaTypeRefs;
+
+        /// <summary>A type argument text as the code being compiled names it (in a lambda: the type parameter it took along).</summary>
+        private string MapTypeRef(string text)
+        {
+            if (_lambdaTypeRefs == null || !text.StartsWith('$')) return text;
+            int i = _lambdaTypeRefs.IndexOf(text);
+            if (i < 0) { i = _lambdaTypeRefs.Count; _lambdaTypeRefs.Add(text); }
+            return $"${i}@";
+        }
+
+        private string MapTypeRefs(IEnumerable<string> texts) => string.Join("|", texts.Select(MapTypeRef));
+
+        /// <summary>A DeclaredType of a type parameter as the code being compiled names it (in a lambda: the type parameter it took along).</summary>
+        private string? MapSpec(string? spec)
+        {
+            if (spec == null || _lambdaTypeRefs == null || DeclaredType.Parse(spec) is not { TypeParamIndex: >= 0 } parsed) return spec;
+            string mapped = MapTypeRef($"${parsed.TypeParamIndex}@{parsed.TypeParamClass}");
+            int start = spec.IndexOf('\u0001'), end = spec.IndexOf('\u0003');
+            return spec.Substring(0, start + 1) + "@" + mapped.Substring(1, mapped.Length - 2) + "@" + spec.Substring(end);
+        }
+
         /// <summary>`new Box<...>(...)`: the type arguments for the object (SetTypeArgs, right before NewObject/NewObjectOwned); nothing when none is known.</summary>
         private void EmitTypeArgs(NewExpr ne)
         {
             if (ne.ClassRef.TypeArgs is not { Count: > 0 } typeArgs) return;
             _refParams.ClassDecls.TryGetValue(ResolveNewClassName(ne), out var target);
-            var texts = typeArgs.Select((t, i) => TypeArgText(t, _enclosingClass, target, i)).ToList();
+            var texts = typeArgs.Select((t, i) => MapTypeRef(TypeArgText(t, _enclosingClass, target, i))).ToList();
             if (texts.All(t => t.Length == 0)) return;
             _chunk.EmitOp(OpCode.SetTypeArgs);
             _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", texts))));
@@ -2074,7 +2103,7 @@ namespace fire.Compiler
         {
             if (s_methodTypeArgs == null || !s_methodTypeArgs.TryGetValue(call, out var texts) || texts.All(t => t.Length == 0)) return;
             _chunk.EmitOp(OpCode.SetTypeArgs);
-            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", texts))));
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(texts))));
             _chunk.EmitByte(1);
         }
 
@@ -2405,6 +2434,13 @@ namespace fire.Compiler
         {
             var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = _enclosingClass;
+            // in generic code the lambda takes the type parameters it uses along (it has no `this` and no call of its own to take them from)
+            inner._methodTypeParams = _methodTypeParams;
+            if (_methodTypeParams is { Count: > 0 } || _enclosingClass?.Decl?.TypeParams is { Count: > 0 } || _lambdaTypeRefs != null)
+            {
+                inner._lambdaTypeRefs = new List<string>();
+                inner._chunk.EmitOp(OpCode.TakeCallTypeArgs);
+            }
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
             if (_refs.TryGetValue(lambda, out var nameRef) && nameRef is ResolvedRef.LambdaCaptures named)
@@ -2433,6 +2469,14 @@ namespace fire.Compiler
             bool hasOnTarget = lambda.OnTarget != null;
             if (hasOnTarget)
                 CompileExpr(lambda.OnTarget!); // in the ENCLOSING (current) scope, not in the lambda scope
+
+            if (inner._lambdaTypeRefs is { Count: > 0 } usedTypeParams)
+            {
+                // the type arguments the body uses, as the code here has them (MakeLambda keeps them in the lambda)
+                _chunk.EmitOp(OpCode.SetTypeArgs);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(usedTypeParams))));
+                _chunk.EmitByte(2);
+            }
 
             if (captures != null)
             {

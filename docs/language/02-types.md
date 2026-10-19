@@ -71,7 +71,8 @@ b.size = undefined        // allowed
 The same holds for a **class**: a parameter or field declared `Point p` holds `undefined` or an object of `Point` or of a class derived from it;
 anything else is an `ArgumentException` (`Parameter 'p' is a Point, not String.`). An **interface** is checked the same way (the class of the object
 declares it; `IEnumerable` also takes arrays, buffers and strings), and a **type parameter** by its type argument: an object keeps the type
-arguments of its `new` (`T value` of a `Box<int>` holds only ints, of a `Box<float>` a float - a whole number becomes one), a call of a generic
+arguments of its `new` (`T value` of a `Box<int>` holds only ints without a unit - `Box<int : cm>` ints in cm, `Box<int : any>` ints in any
+unit -, of a `Box<float>` a float - a whole number becomes one), a call of a generic
 method those that were found for it. Without type arguments (the raw form `new Box()`) `T` is checked by its `where` conditions (`T inside` with
 `where T is of Animal` holds an `Animal`, `where T is in "m"` a length) and not at all without them; `any` and `class` are not checked.
 A **local variable** keeps the promise of its type too: `int x = someAny` with a string in it is an `ArgumentException`

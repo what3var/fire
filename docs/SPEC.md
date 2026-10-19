@@ -44,8 +44,11 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
 - A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
   way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); likewise an interface (`IEnumerable` also takes arrays, buffers and strings) and a
-  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found -
-  `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float, `Parameter 'v' is a T (int), not String.`). Without a known
+  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found,
+  a lambda made in generic code those it uses - `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float,
+  `Parameter 'v' is a T (int), not String.`). A number type argument is what the same declaration means: `Box<int>` holds ints without a unit
+  (`UnitMismatchException` for `5cm`), `Box<int : cm>` ints converted into cm, `Box<int : any m>` lengths in their own unit, `Box<int : any>` ints
+  in any unit. A type argument found for a generic method from a value carries that value's unit (`Max(5cm, 3cm)`: `int : cm`; unknown: `int : any`). Without a known
   type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
   `any` and `class` are not checked.
 - A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot
@@ -782,11 +785,11 @@ return types) – without the resolver reporting "unknown type".
 
 Type ARGUMENTS may be NESTED arbitrarily deeply
 (`new Container<Box<int>>(...)`, `new Container<Box<Box<int>>>(...)`, ...)
-- fully supported syntactically. However, since (see next paragraph) there is
-NO real generic specialization, for the
+- fully supported syntactically. For the
 constraint check (`where`) on a nested type argument only
-its OUTER name counts (`Box`, not `Box<int>`) – the inner arguments
-are read purely syntactically and then discarded.
+its OUTER name counts (`Box`, not `Box<int>`), and the object keeps only that
+outer class as its type argument (see below): an element of a `Container<Box<int>>`
+is checked to be a `Box`, its own type argument is the `Box`'s business.
 
 **Same name as a non-generic class**: A generic class
 may bear the same name as a non-generic one (as in C#):
@@ -817,15 +820,15 @@ the `GetCurrent()` of its enumerator returns). `List<int>` and `List<string>` do
 the number of type parameters (`E4061`), a class that is not generic takes none (`E4045`). `List<T>`, `IEnumerable<T>` and `IEnumerator<T>` of the standard library are
 generic in this way.
 
-**Important limitation**: Since this language is dynamically typed,
-**no real type substitution** takes place (unlike C#, where the
-compiler generates specialized code per instantiation) – the check
-of the type arguments against the `where` conditions happens **once at
-`new Name<...>(...)`**, afterwards `T` behaves in the body of the class like an
-ordinary placeholder type name that is not checked any further. Generic
-**methods** (`RetType Name<T>(params) where T ... { }`) are parsed
-and the type parameters accepted, but **not** checked against explicit
-type arguments at the call site – `Name<T>(x)` as call syntax would be
+**Type arguments at run time.** The type arguments are not erased: the check against the `where` conditions happens
+**once at `new Name<...>(...)`**, and the object keeps its type arguments - a parameter, a field or a local declared `T`
+then takes only what the type argument says (`new Box<int>()`: ints; a whole number for a `float` is converted; see
+section 3 and docs/TYPES.md). There is one class at run time for all instantiations (a `Box<int>` and a `Box<string>`
+are both a `Box`); the native backend additionally makes **specialised copies** of the methods for type arguments
+`int`, `float` and `bool` (typed arithmetic instead of generic values) and sends calls there that fit them.
+Generic **methods** (`RetType Name<T>(params) where T ... { }`) take their type arguments from the arguments
+(the type checker finds them and passes them to the call, where they are kept like those of an object); explicit
+type arguments at the call site are not written – `Name<T>(x)` as call syntax would be
 ambiguous with `<`/`>` as comparison operators at normal expression positions
 (unlike `new Name<...>`, where an argument list must
 follow directly after the class name, which makes it unambiguous). A
