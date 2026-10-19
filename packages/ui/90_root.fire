@@ -95,6 +95,8 @@ namespace UI {
             // Events are polled, not delivered by callback: this way they run in the main program, and an
             // onClick lambda sees the real global variables (a callback, by contrast, works on a copy, SPEC 8.1.4)
             window.EnableEvents()
+            // the cycle of the window's manager (Window.Show/Run, WindowManager): the events of the window are distributed and the interface is drawn
+            window.onCycle = func () on this => { this.Cycle() }
             // If the user drags the window to another size, the framebuffer gets it (as long as it is valid) and the interface arranges itself anew - instead of its image being stretched.
             // `window.AutoResize = false` leaves it at stretching.
             window.AutoResize = true
@@ -355,6 +357,24 @@ namespace UI {
             return open
         }
 
+        // The interface's part of a cycle of the window's manager (Window.onCycle): distribute the events that came in, bring the interface up to date
+        // (only what has changed is painted) and call onTick. The manager then shows the frame.
+        undefined Cycle() {
+            while (true) {
+                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
+                if (e == undefined) { break }
+                this.Dispatch(e)
+            }
+            if (this.window.IsClosed) { this.closed = true }
+            this.JoyRepeat()
+            this.Update()
+            var callback = this.onTick
+            if (callback != undefined) { callback() }
+        }
+
+        // Shows the window and goes on (Window.Show): the thread of the window's manager shows it, the events are handled at the program's safe points.
+        undefined Show() { this.window.Show() }
+
         // The cycle of this root only (without the attached ones).
         bool TickOne() {
             this.JoyRepeat()
@@ -380,6 +400,9 @@ namespace UI {
             // only one window waits for the screen refresh, otherwise every cycle takes as many frame periods as there are windows
             other.window.VSync = false
             this.attached.Add(other)
+            // the window's manager cycles it too (Run, Show)
+            if (this.window.Manager == undefined) { WindowManager.Default.Attach(this.window) }
+            this.window.Manager.Attach(other.window)
         }
 
         // Takes the attached root out again (its window stays open, but nobody processes it any more).
@@ -387,6 +410,8 @@ namespace UI {
             for (var i = 0; i < this.attached.count; i = i + 1) {
                 if (this.attached[i] == other) {
                     this.attached.RemoveAt(i)
+                    var manager = other.window.Manager
+                    if (manager != undefined) { manager.Detach(other.window) }
                     return
                 }
             }
@@ -411,10 +436,11 @@ namespace UI {
             else if (type == 1) { this.closed = true }
         }
 
-        // Runs until the window is closed. With `other` (a root) it is attached beforehand: `ui.Run(second)` processes both windows.
+        // Runs until the windows are closed: the window's manager (WindowManager.Default if it has none) runs on this thread (Window.Run). With `other`
+        // (a root) it is attached beforehand: `ui.Run(second)` processes both windows.
         undefined Run(Root other = undefined) {
             if (other != undefined) { this.Attach(other) }
-            while (this.Tick()) { }
+            this.window.Run()
         }
 
         undefined SetFocus(Element element) {

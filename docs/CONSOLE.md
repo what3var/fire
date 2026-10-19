@@ -330,6 +330,43 @@ auf die rohen Pixel-Daten:
   `TickAll()` bedient dabei beliebig viele gleichzeitig offene Fenster und
   räumt automatisch jedes auf, das der Nutzer währenddessen geschlossen hat.
 
+## Fenster-Manager (`WindowManager`, fire)
+
+Im Skript (`#import "windows"`) taktet ein **`WindowManager`** die Fenster, die an ihm hängen: jedes holt seine Ereignisse (Callbacks, Warteschlange), ruft sein `onCycle`
+(ein `UI.Root` zeichnet dort) und zeigt sein Bild.
+
+| | |
+|---|---|
+| `new Window(fb, "Titel", manager)` | das Fenster hängt sich gleich an `manager` (der Parameter ist optional); `window.Manager` ist sein Manager |
+| `window.Show()` | hängt das Fenster an `WindowManager.Default`, falls es noch keinen Manager hat, und **startet** den Manager: ein eigener Thread öffnet die Fenster, holt ihre Ereignisse und zeigt ihre Bilder (etwa 60-mal je Sekunde). Das Programm läuft weiter |
+| `window.Run()` | wie `Show`, aber der Manager läuft **blockierend auf dem aufrufenden Thread**, bis alle seine Fenster geschlossen sind |
+| `window.Tick()` | ein Zyklus nur dieses Fensters (wie bisher, ohne Manager) |
+| `WindowManager.Default` | der Manager der Fenster, die keinen anderen haben; ein Programm kann weitere anlegen (`new WindowManager()`) |
+| `manager.Attach(window)`, `manager.Detach(window)` | hängt an (von einem anderen Manager weg) bzw. nimmt heraus; nur das erste Fenster eines Managers wartet auf den Bildaufbau (VSync) |
+| `manager.Start()` | startet den Thread (einmal); `false`, wo die Plattform keinen Thread für Fenster hat (macOS, WebAssembly, Geräte ohne Threads) - dort `Run`/`Tick` nehmen |
+| `manager.Run()`, `manager.Tick()` | alle Fenster bis zum Schließen bzw. ein Zyklus aller Fenster auf dem aufrufenden Thread; `Run` auf einem gestarteten Manager wartet, bis seine Fenster zu sind |
+| `manager.IsStarted`, `manager.Count` | läuft der Thread? wie viele Fenster sind noch offen? |
+
+**Was auf welchem Thread läuft.** Der Thread des Managers besitzt nur die Fenster des Betriebssystems (SDL bedient ein Fenster nur auf dem Thread, der es erzeugt hat - daher
+öffnet sich ein Fenster erst, wenn der Thread, der es zeigt, es zum ersten Mal pumpt). Alles, was das Programm berührt - Callbacks, `NextEvent`, `onCycle`, das Zeichnen -
+läuft weiter auf dem Programm-Thread: der Thread des Managers bittet das Hauptprogramm nach jedem Zyklus um einen Lauf von `manager.Tick()`, das Hauptprogramm macht ihn an
+seinem nächsten sicheren Punkt (wie Host-Callbacks: nach einem nativen Aufruf, in Schleifen, in `Sleep`, bei `sync globals`; mit `#nosync` nur bei `sync globals`). Das Bild
+gibt das Programm am Ende des Zyklus als Kopie an den Thread weiter. Es gibt also keinen geteilten Speicher und keine Kopien der Objekte.
+
+**Programmende.** Solange ein gestarteter Manager offene Fenster hat, endet das Programm nach seiner letzten Anweisung nicht: es wartet und macht die Zyklen, bis die Fenster zu
+sind (ein `terminate` beendet es trotzdem). So reicht für ein Fensterprogramm:
+
+```
+#import "ui"
+var fb = new Framebuffer(320, 200)
+var win = new Window(fb, "Hallo")
+var ui = new UI.Root(fb, win)
+ui.Add(new UI.Label("Hallo", 20, 20))
+win.Show()                  // oder ui.Show(); das Programm wartet am Ende, bis das Fenster zu ist
+```
+
+Nativ schaltet ein Programm, das `Start` (also auch `Show`) benutzt, die fire-Threads ein (GIL, sichere Punkte); ein Programm, das nur `Run`/`Tick` nimmt, bleibt ohne.
+
 ## VSync und die Dauer von `Tick`
 
 `Tick` zeigt den Framebuffer an. Mit **VSync** (Vorgabe, `IFramebufferRenderer.VSync`, im Skript `window.VSync`) wartet jedes Tick auf die Bildwiederholung des Monitors: bei 60 Hz dauert es 16,7 ms, egal wie wenig

@@ -44,6 +44,10 @@ window.SetDataContext(new Person())
 window.Run()
 ```
 
+In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it (docs/PROJECTS.md), and the code-behind is simply the `.fire` file of the
+same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
+first row **Designer** opens the markup editor (like a double click on the markup itself), below it is the code-behind.
+
 `#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.fire]` writes the generated
 script (to look at it, or to ship it), and the editor shows it too (*Generated script* in the markup editor). Mistakes in the markup are reported with the line of the markup file.
 
@@ -79,12 +83,13 @@ For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..
 | `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (title, width, height from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
-| `Run(other = undefined)`, `OnTick()` | a window: `Run()` loops `ui.Tick()` until the window is closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Run(other = undefined)`, `OnTick()` | a window: `Run()` runs the window's manager (docs/CONSOLE.md, *Window managers*) on this thread until the windows are closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Show()` | a window: shows it and goes on - the thread of its window manager shows it, the program handles its events at its safe points and waits at its end until it is closed |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
 | `dataContext`, `SetDataContext(obj)` | only with bindings, see below |
 
-The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run OnTick Attach Open`: a named element or a handler must not use them.
+The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run Show OnTick Attach Open`: a named element or a handler must not use them.
 
 `<View class="Settings" width="300" height="200">` is the root of a part of an interface: no window of its own, but a panel that a window adds with `Attach` - the same markup language, so
 that a window can be composed of views.

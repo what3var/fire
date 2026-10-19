@@ -37,6 +37,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { Di
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
@@ -14203,6 +14204,7 @@ DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
 TestingTests.Run();
+WindowManagerTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -20166,6 +20168,30 @@ else
             }
             print(win.NextEvent())
             """, new[] { "keydown 97 4 1 False", "keyup 97 4 0 False", "down 1 32 24", "up 1 32 24", "move 10 12 1", "rel 3 -2 1", "scroll 0 1.5", "text éx 2", "closerequest", "close", "open False", "queued 24 97 4 1 False ", "queued 25 97 4 0 False ", "queued 8 1 32 24 ", "queued 11 1 32 24 ", "queued 9 10 12 1 ", "queued 10 3 -2 1 ", "queued 12 0 1.5 0 0 ", "queued 3 éx ", "queued 2 ", "queued 1 ", "undefined" }, "-DFIRE_DISPLAY_SELFTEST "),
+                ("Fenster: WindowManager.Run auf dem Programm-Thread (Konstruktor-Parameter, onCycle, Callbacks)", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var mine = new WindowManager()
+            var win = new Window(fb, "run", mine)
+            var cycles = 0
+            win.onCycle = func () => { cycles++ }
+            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k) })
+            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+            print("mine " + (win.Manager == mine) + ", started " + mine.IsStarted)
+            win.Run()
+            print("done: cycles " + (cycles > 0) + ", closed " + win.IsClosed + ", left " + mine.Count)
+            """, new[] { "mine True, started False", "key 97", "down 1 32 24", "done: cycles True, closed True, left 0" }, "-DFIRE_DISPLAY_SELFTEST "),
+                ("Fenster: Window.Show startet den Thread des Managers, das Programm geht weiter und wartet am Ende", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "shown")
+            var cycles = 0
+            win.onCycle = func () => { cycles++ }
+            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k + " in cycle " + (cycles >= 0)) })
+            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+            win.Show()
+            print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
+            """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
             };
             var windowTarget = TargetProfile.Host;
             foreach (var wc in windowCases)

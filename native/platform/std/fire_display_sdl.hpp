@@ -26,6 +26,13 @@ namespace fire { namespace plat { namespace disp {
 
 constexpr bool available = true;
 
+/// A thread of the program (not one of SDL's) that used SDL ends: SDL's thread-local data of it is freed (a window manager's thread, fire_bridge_windows.hpp).
+inline void threadDone() {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+    SDL_TLSCleanup();
+#endif
+}
+
 class Window {
 public:
     ~Window() { close(); }

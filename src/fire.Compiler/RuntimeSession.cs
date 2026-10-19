@@ -52,6 +52,7 @@ namespace fire.Compiler
 
         public void CloseHostResources()
         {
+            WindowManager?.StopManagers();   // the threads of fire's window managers end with the run
             IoResources?.Dispose();
             DeviceResources?.Dispose();
         }
@@ -173,7 +174,7 @@ namespace fire.Compiler
                 // `#import "windows"`: the SDL window for the framebuffer (registered directly behind graphics, as when translating)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer);   // windowRenderer: null = a SDL window
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer, FireRuntime.AddHostHold);   // windowRenderer: null = a SDL window
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }

@@ -369,10 +369,13 @@ static class ProjectTests
         var winProject = terminal.Projects[0];
         var winFiles = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name));
         var viewFiles = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "FXML View"), winProject.Directory, new TemplateValues("SettingsView", winProject.Name));
-        terminal.AddFile(winProject, winFiles[0]);
-        terminal.AddFile(winProject, viewFiles[0]);
+        foreach (var f in winFiles.Concat(viewFiles)) terminal.AddFile(winProject, f);
         var winPlan = BuildPlan.Create(terminal, terminal.Projects[0]);
-        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winFiles[0]).Contains("<Window class=\"Main\"") && File.ReadAllText(viewFiles[0]).Contains("<View class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        string winMarkup = winFiles.First(f => f.EndsWith(".fxml")), viewMarkup = viewFiles.First(f => f.EndsWith(".fxml"));
+        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        Check("Vorlagen: FXML-Fenster und -View bringen den Code-behind gleichen Namens mit (class Name : NameBase), geoeffnet wird das Markup",
+            winFiles.Count == 2 && viewFiles.Count == 2 && File.ReadAllText(Path.ChangeExtension(winMarkup, ".fire")).Contains("class Main : MainBase {") && File.ReadAllText(Path.ChangeExtension(viewMarkup, ".fire")).Contains("class SettingsView : SettingsViewBase {")
+            && TemplateInstaller.FilesToOpen(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name), winFiles).SequenceEqual(new[] { winMarkup }), string.Join(", ", winFiles.Concat(viewFiles)));
 
         // the user's folder: with and without template.json, placeholders in paths (in both spellings) and in the text, binary files as they are
         string userRoot = Path.Combine(t, "user-templates");

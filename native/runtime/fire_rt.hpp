@@ -4307,6 +4307,28 @@ inline Value (*g_terminateFn)(Value) = nullptr;
 inline void registerThreadsCatch(int32_t typeId, Value (*fn)(Value)) { g_threadsCatches.push_back({typeId, fn}); }
 inline void registerTerminateCatch(Value (*fn)(Value)) { g_terminateFn = fn; }
 
+// Host services: native code on a thread of its own (the thread of a window manager, `#import "windows"`) asks the main program to run something at its
+// next safe point - with the GIL and the real globals, like a job. Holds keep the program alive at its end (windows that are still open).
+inline std::atomic<uint32_t> g_hostPending{0};
+inline std::atomic<int32_t> g_hostHolds{0};
+inline std::vector<void (*)()> g_hostServices;   // registered by the main program
+/// From any thread: the main program runs the host services at its next safe point.
+inline void hostRequest() {
+    g_hostPending.store(1, std::memory_order_relaxed);
+    g_attn.fetch_or(ATTN_SECT, std::memory_order_relaxed);
+    notifyEvent();
+}
+/// From any thread: adds (or removes, negative) holds on the end of the program.
+inline void hostHold(int32_t delta) {
+    g_hostHolds.fetch_add(delta, std::memory_order_relaxed);
+    notifyEvent();
+}
+/// The main program: runs the host services if one was asked for.
+inline void hostServe() {
+    if (g_hostPending.exchange(0, std::memory_order_relaxed) == 0) return;
+    for (void (*service)() : g_hostServices) service();
+}
+
 /// The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`).
 inline int drainQueue();
 inline bool g_autoSync = true;
@@ -4322,7 +4344,7 @@ inline void mainPoll() {
         (void)r;
     }
     if (g_pendingExc.empty()) g_attn.fetch_and(~ATTN_MAIN, std::memory_order_relaxed);
-    if (g_autoSync && !g_unwind.active) drainQueue();
+    if (g_autoSync && !g_unwind.active) { drainQueue(); hostServe(); }
 }
 
 FIRE_COLD inline bool pollSlow() {
@@ -4343,7 +4365,7 @@ inline bool pollSignals() {
 /// `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0.
 inline int64_t syncGlobals() {
     int64_t handled = 0;
-    if (!g_isThread) { mainPoll(); handled = drainQueue(); }
+    if (!g_isThread) { mainPoll(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
     gilYield();
     return handled;
 }
@@ -4372,7 +4394,12 @@ inline void mainFinish() {
         clearUnwind();
         g_leaving = 0;
     }
-    blockUntil([] { mainPoll(); drainQueue(); return g_threadsLive == 0 && g_pendingExc.empty() && g_reqs.empty(); }, false);
+    // (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile)
+    blockUntil([] {
+        mainPoll(); drainQueue();
+        if (!g_unwind.active) hostServe();
+        return g_threadsLive == 0 && g_pendingExc.empty() && g_reqs.empty() && (g_hostHolds.load(std::memory_order_relaxed) <= 0 || g_terminate.requested);
+    }, false);
     for (plat::Thread* t : g_threadList) plat::threadJoin(t);
     g_threadList.clear();
     g_leaving = 1;   // the globals are destroyed now: nothing interrupts the destructors

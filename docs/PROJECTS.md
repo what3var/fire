@@ -155,7 +155,8 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   also empty folders - and references. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
   pictures (a viewer), other data files (the hex editor). The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
   code (C++), a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
-  picture - in the *pixel editor*.
+  picture - in the *pixel editor*. The markup of an interface (`Name.fxml`) opens like a folder: its first row **Designer** opens the markup editor (as a double click on the
+  file does), below it is the code-behind `Name.fire` of the same folder.
 * **Viewer for pictures**: any size and colour depth the platform decodes (PNG, BMP, GIF, JPEG), zoom with sharp pixels (Ctrl+wheel), a grid of pixels, a chequerboard that shows what is
   transparent; *Edit pixels* opens the picture in the pixel editor.
 * **Pixel editor** (File > New > Raster Image, or *Edit pixels*): a palette of 256 colours - the palette of fire with entry 0 transparent - or true colour; pencil, eraser, line, rectangle (filled or

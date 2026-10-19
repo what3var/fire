@@ -290,7 +290,7 @@ namespace fire.UI.Markup
         /// <summary>The names the generated class uses itself; a named element must not take them.</summary>
         public static readonly IReadOnlySet<string> ReservedNames = new HashSet<string>
         {
-            "framebuffer", "window", "ui", "view", "dataContext", "SetDataContext", "Run", "OnTick", "Attach", "Open",
+            "framebuffer", "window", "ui", "view", "dataContext", "SetDataContext", "Run", "Show", "OnTick", "Attach", "Open",
         };
 
         private static readonly Regex Identifier = new("^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);

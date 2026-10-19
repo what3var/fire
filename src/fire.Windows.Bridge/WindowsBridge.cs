@@ -81,6 +81,15 @@ namespace fire.Windows.Bridge
                     return Value.MakeUndefined();
                 },
                 ["GetTouchMouse"] = args => Value.MakeBool(mgr.GetTouchMouse((int)args[0].AsInt())),
+                // the two halves of a cycle (fire's WindowManager): events in, frame out
+                ["Pump"] = args => Value.MakeBool(mgr.Pump((int)args[0].AsInt())),
+                ["Present"] = args => { mgr.Present((int)args[0].AsInt()); return Value.MakeUndefined(); },
+                // window managers
+                ["MgrCreate"] = args => Value.MakeInt(mgr.CreateManager()),
+                ["MgrAttach"] = args => Value.MakeBool(mgr.AttachToManager((int)args[0].AsInt(), (int)args[1].AsInt())),
+                ["MgrDetach"] = args => Value.MakeBool(mgr.DetachFromManager((int)args[0].AsInt(), (int)args[1].AsInt())),
+                ["MgrStart"] = args => args[1].Kind == ValueKind.Lambda && mgr.StartManager((int)args[0].AsInt(), (LambdaValue)args[1].AsLambda()) ? Value.MakeBool(true) : Value.MakeBool(false),
+                ["MgrWait"] = args => { mgr.ManagerWait((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
             };
         }
         
@@ -100,6 +109,13 @@ namespace fire.Windows.Bridge
                 ["GetAutoResize"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetTouchMouse"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetTouchMouse"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Pump"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Present"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrCreate"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrAttach"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrDetach"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrStart"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrWait"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

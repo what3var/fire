@@ -36,7 +36,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"devices"` | serial ports and device packets |
 | `"gpio"`, `"i2c"`, `"spi"`, `"wifi"` | hardware access on boards like the Raspberry Pi and the ESP32 |
 | `"graphics"` | framebuffers, drawing, images, fonts |
-| `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events |
+| `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events; `WindowManager` cycles windows (`window.Show()` with a thread of its own, `window.Run()` on this thread) |
 | `"ui"` | the UI library (controls, layout, styles, data binding, `.fxml` markup) |
 | `"audio"` | sound output |
 | `"tracker"` | a MOD music player |

@@ -12,4 +12,4 @@ button.onClick = func () => { clicks++; label.text = "Clicked " + clicks + " tim
 ui.Add(label)
 ui.Add(button)
 
-while (ui.Tick()) { }
+ui.Run()                    // runs until the window is closed (ui.Show() would show it and go on)

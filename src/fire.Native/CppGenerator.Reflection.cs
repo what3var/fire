@@ -439,7 +439,7 @@ namespace fire.Native
             foreach (var cls in _classList)
             {
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) cases.AppendLine($"        case {cls.Id}: return o->fields()[{index}];");
-                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
+                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{cases}        default: return Undef();\n    }}\n}}");
             sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{");
@@ -463,7 +463,7 @@ namespace fire.Native
                 var rows = new StringBuilder();
                 foreach (var name in names.OrderBy(n => n, StringComparer.Ordinal))
                 {
-                    if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
+                    if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || getter.IsStatic || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
                     string id = $"{cls.Id}_{Mangle(name)}";
                     sb.AppendLine($"static const char* const rfc_{id}[] = {{{string.Concat(sources.Select(src => CStr(src) + ", "))}nullptr}};");
                     sb.AppendLine($"static Value rfg_{id}(Value v, OwnList* list) {{ Value r = {getterFunc.Name}(v); adopt(r, list); return r; }}");

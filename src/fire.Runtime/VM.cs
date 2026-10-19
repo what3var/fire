@@ -905,11 +905,27 @@ namespace fire.Runtime
                     // A leave/terminate called in nested execution is only now unwound in an orderly way;
                     // afterwards the halt chunk is there again and the next read lands here again.
                     if (FinishDeferredShutdown()) continue;
+                    // Windows that a window manager's thread shows keep the program alive: it serves them until they are closed.
+                    if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) { WaitForHostHolds(); if (FinishDeferredShutdown()) continue; }
                     // Normal end or orderly leave/terminate (not the halt chunk of an unhandled exception).
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
                 }
                 Step(op);
+            }
+        }
+
+        /// <summary>The program has run its last statement, but the host still holds it (open windows of a window manager's thread, see
+        /// FireRuntime.AddHostHold): it waits and runs what is posted to it (the managers' cycles, callbacks, jobs of fire threads) until the holds are
+        /// gone or the program is ended (`leave`/`terminate` in a callback).</summary>
+        private void WaitForHostHolds()
+        {
+            while (FireRuntime.HostHolds > 0 && !_stopExecutionRequested)
+            {
+                if (!_inbound.IsEmpty) DrainInbound();
+                if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
+                if (_stopExecutionRequested) break;
+                if (_inbound.IsEmpty) FireRuntime.WaitForWake(5);
             }
         }
 
@@ -1198,6 +1214,7 @@ namespace fire.Runtime
         /// debugger may have stopped them). Returns false (ended).</summary>
         private bool FinishAtHalt()
         {
+            if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) WaitForHostHolds();
             if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
             _shutdownReleasePending = false;
             IsHalted = true;

@@ -4,6 +4,8 @@ using fire.Terminal.Event;
 using fire.Values;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Threading;
 using static SDL3.SDL;
 
 namespace fire.Terminal.Windows
@@ -26,15 +28,19 @@ namespace fire.Terminal.Windows
 
         private readonly Func<IFramebufferRenderer>? _rendererFactory;
 
+        private readonly Action<int>? _hold;
+
         // Event queues of the windows that requested them via EnableEventQueue (polling style instead of a callback, see
         // NextEvent). Only filled as long as a queue is requested, so that a pure callback window accumulates nothing.
         private readonly Dictionary<int, Queue<IEvent>> _eventQueues = new();
         private const int MaxQueuedEvents = 4096;
 
         /// <param name="rendererFactory">Creates the renderer per window (default: SDL). Replaceable for tests and other backends.</param>
+        /// <param name="hold">Adds holds on the program end (fire.Runtime's FireRuntime.AddHostHold): the windows that a manager's thread shows keep the program alive.</param>
         public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
-            Func<IFramebufferRenderer>? rendererFactory = null)
+            Func<IFramebufferRenderer>? rendererFactory = null, Action<int>? hold = null)
         {
+            _hold = hold;
             _framebuffers = framebuffers ?? throw new ArgumentNullException(nameof(framebuffers));
             _callbacks = new List<EventCallback>();
             _rendererFactory = rendererFactory;
@@ -157,7 +163,14 @@ namespace fire.Terminal.Windows
         {
             if (!_windows.TryGet(id, out var window) || window == null) return false;
             _eventQueues.Remove(id);
-            window.Dispose();
+            bool threadOwned = false;
+            lock (_managersGate)
+                if (_managed.TryGetValue(id, out var entry))
+                {
+                    threadOwned = entry.Manager.Started;
+                    DetachLocked(entry.Manager, entry.State);   // a manager's thread closes its OS window itself
+                }
+            if (!threadOwned) window.Dispose();
             return _windows.Destroy(id);
         }
 
@@ -171,11 +184,11 @@ namespace fire.Terminal.Windows
 
         public bool GetTouchMouse(int id) => _windows.Get(id).TouchMouse;
 
-        public void SetTouchMouse(int id, bool enabled) => _windows.Get(id).TouchMouse = enabled;
+        public void SetTouchMouse(int id, bool enabled) { _windows.Get(id); OnOwner(id, w => w.TouchMouse = enabled); }
 
         public bool GetVSync(int id) => _windows.Get(id).VSync;
 
-        public void SetVSync(int id, bool enabled) => _windows.Get(id).VSync = enabled;
+        public void SetVSync(int id, bool enabled) { _windows.Get(id); OnOwner(id, w => w.VSync = enabled); }
 
         /// <summary>A single cycle for ONE window (see
         /// ConsoleWindow.Tick) - returns false if the window was closed
@@ -183,8 +196,18 @@ namespace fire.Terminal.Windows
         /// follow up with DestroyWindow(id)).</summary>
         public bool Tick(int id)
         {
-            var result = _windows.Get(id).Tick();
+            var window = _windows.Get(id);
+            if (ManagedStarted(id)) { bool open = Pump(id); Present(id); return open; }
+            var result = window.Tick();
+            Deliver(id, result?.Events);
+            return result?.StillOpen == true;
+        }
 
+        /// <summary>Puts the events of a window into its queue (EnableEventQueue) and runs its callbacks - on the calling thread (the program's).</summary>
+        private void Deliver(int id, IEnumerable<IEvent>? events)
+        {
+            if (events == null) return;
+            var result = new WindowPumpResult { StillOpen = true, Events = events };
             if (result?.Events != null)
             {
                 if (_eventQueues.TryGetValue(id, out var queue))
@@ -323,7 +346,249 @@ namespace fire.Terminal.Windows
                 }
             }
 
-            return result?.StillOpen == true;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------------------------------------
+        // Window managers (fire's `WindowManager`, docs/UI.md): a manager cycles the windows attached to it - on the program's thread (Tick/Run), or,
+        // once started, with a thread of its own that owns the OS windows: it opens them, fetches their events and shows the last frame the program
+        // published, about 60 times a second. The program's side of a cycle (callbacks, the queue, drawing) still runs on the program's thread: the
+        // thread posts the manager's service lambda to it (see the callback runner), which the main program runs at its next safe point.
+        // ---------------------------------------------------------------------------------------------------------------------------------------------
+
+        private sealed class ManagedWindow
+        {
+            public int Id;
+            public ConsoleWindow Window = null!;
+            public readonly System.Collections.Concurrent.ConcurrentQueue<IEvent> Inbox = new();
+            public volatile bool Closed;
+            public Framebuffer? Front;          // the frame the program published last (under the manager's gate)
+            public bool FrontNew;
+            public bool Release;                // the thread closes the OS window and forgets it
+            public readonly System.Collections.Concurrent.ConcurrentQueue<Action<ConsoleWindow>> Todo = new();   // settings for the thread
+        }
+
+        private sealed class Manager
+        {
+            public int Id;
+            public readonly object Gate = new();
+            public readonly List<ManagedWindow> Windows = new();
+            public Thread? Thread;
+            public volatile bool Stop;
+            public LambdaValue? Service;
+            public int ServicePending;
+            public long Cycles;
+            public bool Started => Thread != null;
+        }
+
+        private readonly Dictionary<int, Manager> _managers = new();
+        private readonly Dictionary<int, (Manager Manager, ManagedWindow State)> _managed = new();
+        private int _nextManager = 1;
+        private readonly object _managersGate = new();
+
+        public int CreateManager()
+        {
+            lock (_managersGate)
+            {
+                int id = _nextManager++;
+                _managers[id] = new Manager { Id = id };
+                return id;
+            }
+        }
+
+        private Manager ManagerOf(int id)
+        {
+            lock (_managersGate)
+                return _managers.TryGetValue(id, out var m) ? m : throw new InvalidOperationException($"No window manager with ID {id}.");
+        }
+
+        private bool ManagedStarted(int windowId)
+        {
+            lock (_managersGate) return _managed.TryGetValue(windowId, out var entry) && entry.Manager.Started;
+        }
+
+        /// <summary>Attaches the window to the manager (taking it from another manager first).</summary>
+        public bool AttachToManager(int managerId, int windowId)
+        {
+            var manager = ManagerOf(managerId);
+            var window = _windows.Get(windowId);
+            lock (_managersGate)
+            {
+                if (_managed.TryGetValue(windowId, out var old))
+                {
+                    if (old.Manager == manager) return true;
+                    DetachLocked(old.Manager, old.State);
+                }
+                var state = new ManagedWindow { Id = windowId, Window = window };
+                lock (manager.Gate) manager.Windows.Add(state);
+                _managed[windowId] = (manager, state);
+                if (manager.Started) _hold?.Invoke(1);
+                return true;
+            }
+        }
+
+        public bool DetachFromManager(int managerId, int windowId)
+        {
+            var manager = ManagerOf(managerId);
+            lock (_managersGate)
+            {
+                if (!_managed.TryGetValue(windowId, out var entry) || entry.Manager != manager) return false;
+                DetachLocked(manager, entry.State);
+                return true;
+            }
+        }
+
+        private void DetachLocked(Manager manager, ManagedWindow state)
+        {
+            _managed.Remove(state.Id);
+            if (manager.Started)
+            {
+                // the OS window belongs to the manager's thread: it closes it there
+                lock (manager.Gate) state.Release = true;
+                _hold?.Invoke(-1);
+            }
+            else lock (manager.Gate) manager.Windows.Remove(state);
+        }
+
+        /// <summary>Starts the manager's thread. `service` is the fire lambda that the program runs for each cycle (it is posted to the program through the
+        /// callback runner). false when it already runs.</summary>
+        public bool StartManager(int managerId, LambdaValue service)
+        {
+            var manager = ManagerOf(managerId);
+            lock (_managersGate)
+            {
+                if (manager.Started) return false;
+                manager.Service = service;
+                lock (manager.Gate) _hold?.Invoke(manager.Windows.Count(w => !w.Release));
+                manager.Thread = new Thread(() => PumpThread(manager)) { IsBackground = true, Name = "fire window manager " + managerId };
+            }
+            manager.Thread.Start();
+            return true;
+        }
+
+        public bool ManagerStarted(int managerId) => ManagerOf(managerId).Started;
+
+        /// <summary>Waits (on the program's thread) up to `milliseconds` for the next cycle of the manager's thread.</summary>
+        public void ManagerWait(int managerId, int milliseconds)
+        {
+            var manager = ManagerOf(managerId);
+            lock (manager.Gate)
+            {
+                long seen = manager.Cycles;
+                if (manager.Started && manager.Cycles == seen) Monitor.Wait(manager.Gate, Math.Max(1, milliseconds));
+            }
+        }
+
+        private void PumpThread(Manager manager)
+        {
+            var events = new List<IEvent>();
+            while (!manager.Stop)
+            {
+                long start = Environment.TickCount64;
+                ManagedWindow[] windows;
+                lock (manager.Gate) windows = manager.Windows.ToArray();
+                foreach (var w in windows)
+                {
+                    if (w.Release)
+                    {
+                        lock (manager.Gate) manager.Windows.Remove(w);
+                        try { w.Window.Dispose(); } catch (Exception) { }
+                        continue;
+                    }
+                    if (w.Closed) continue;
+                    try
+                    {
+                        while (w.Todo.TryDequeue(out var todo)) todo(w.Window);
+                        var result = w.Window.PumpRaw();
+                        if (result?.Events != null) foreach (var e in result.Events) w.Inbox.Enqueue(e);
+                        if (result != null && !result.StillOpen) w.Closed = true;
+                        Framebuffer? frame;
+                        lock (manager.Gate) { frame = w.Front; w.FrontNew = false; }
+                        if (frame != null) lock (frame) w.Window.Present(frame);
+                    }
+                    catch (Exception)
+                    {
+                        w.Closed = true;   // a window that cannot be shown counts as closed
+                    }
+                }
+                lock (manager.Gate) { manager.Cycles++; Monitor.PulseAll(manager.Gate); }
+                if (manager.Service != null && Interlocked.CompareExchange(ref manager.ServicePending, 1, 0) == 0)
+                    Callback(manager.Service, Array.Empty<Value>());
+                // about 60 cycles a second: with VSync the presenting has already waited for the screen, otherwise (or with nothing to show) the rest of the period
+                long rest = 16 - (Environment.TickCount64 - start);
+                if (rest > 0) Thread.Sleep((int)rest);
+            }
+            ManagedWindow[] left;
+            lock (manager.Gate) { left = manager.Windows.ToArray(); manager.Windows.Clear(); }
+            foreach (var w in left) { try { w.Window.Dispose(); } catch (Exception) { } }
+        }
+
+        /// <summary>The program's side of a cycle, first half: the events of the window (from its manager's thread, or fetched here when nobody else
+        /// shows it) go into its queue and to its callbacks; with AutoResize a resize gives the framebuffer the new size. false once the window is closed.</summary>
+        public bool Pump(int id)
+        {
+            var window = _windows.Get(id);
+            ManagedWindow? state = null;
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.Started) state = entry.State;
+            if (state == null)
+            {
+                var result = window.Pump();
+                Deliver(id, result?.Events);
+                return result?.StillOpen == true;
+            }
+            Manager? owner;
+            lock (_managersGate) owner = _managed.TryGetValue(id, out var current) ? current.Manager : null;
+            if (owner != null) Interlocked.Exchange(ref owner.ServicePending, 0);   // the program runs a cycle: the next one may be posted
+            var events = new List<IEvent>();
+            while (state.Inbox.TryDequeue(out var e)) events.Add(e);
+            if (window.AutoResize)
+                foreach (var e in events)
+                    if (e is ResizeEvent resize && Framebuffer.IsValidSize(resize.Width, resize.Height))
+                        window.Framebuffer.Resize(resize.Width, resize.Height);
+            Deliver(id, events);
+            return !state.Closed;
+        }
+
+        /// <summary>The program's side of a cycle, second half: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread.</summary>
+        public void Present(int id)
+        {
+            var window = _windows.Get(id);
+            Manager? manager = null;
+            ManagedWindow? state = null;
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.Started) { manager = entry.Manager; state = entry.State; }
+            if (state == null || manager == null) { window.Present(window.Framebuffer); return; }
+            var fb = window.Framebuffer;
+            fb.Resolve();
+            Framebuffer? front;
+            lock (manager.Gate) front = state.Front;
+            if (front == null || front.Width != fb.Width || front.Height != fb.Height) front = new Framebuffer(fb.Width, fb.Height);
+            lock (front) Array.Copy(fb.Pixels, front.Pixels, Math.Min(fb.Pixels.Length, front.Pixels.Length));
+            lock (manager.Gate) { state.Front = front; state.FrontNew = true; }
+        }
+
+        /// <summary>A setting of the OS window: right away, or - when a manager's thread owns the window - on that thread.</summary>
+        private void OnOwner(int id, Action<ConsoleWindow> change)
+        {
+            var window = _windows.Get(id);
+            ManagedWindow? state = null;
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.Started) state = entry.State;
+            if (state == null) change(window);
+            else state.Todo.Enqueue(change);
+        }
+
+        /// <summary>Stops the threads of all managers (the end of the program run) and closes their windows.</summary>
+        public void StopManagers()
+        {
+            Manager[] all;
+            lock (_managersGate) { all = _managers.Values.ToArray(); }
+            foreach (var m in all)
+            {
+                if (!m.Started) continue;
+                lock (_managersGate)
+                    foreach (var entry in _managed.Where(e => e.Value.Manager == m).ToList()) { _managed.Remove(entry.Key); _hold?.Invoke(-1); }
+                m.Stop = true;
+                m.Thread!.Join(2000);
+            }
+            lock (_managersGate) _managers.Clear();
         }
 
         /// <summary>Convenience method: ticks ALL currently managed

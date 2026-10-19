@@ -411,12 +411,16 @@ namespace fire.Editor
                     UpdateStatus($"{template.Title} {dialog.Name} added to {project.Name}.");
                     return;
                 }
-                if (template.Files.Count != 1) { await Dialogs.Message(this, $"'{template.Title}' makes several files: open or create a project first, and add it there.", title); return; }
-                string name = values.Expand(template.Files[0]);
-                string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, template.Files[0].Replace('/', Path.DirectorySeparatorChar))));
-                string ext = Path.GetExtension(name).ToLowerInvariant();
-                var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
-                CreateDocument(kind, text, null, untitledName: name);
+                // without a project: one unsaved document per file of the template (an FXML window: its code-behind, then the markup in front)
+                var opens = template.Open.Select(o => values.Expand(o)).ToHashSet(StringComparer.Ordinal);
+                foreach (var rel in template.Files.OrderBy(f => opens.Contains(values.Expand(f)) ? 1 : 0))
+                {
+                    string name = values.Expand(rel);
+                    string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, rel.Replace('/', Path.DirectorySeparatorChar))));
+                    string ext = Path.GetExtension(name).ToLowerInvariant();
+                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                    CreateDocument(kind, text, null, untitledName: Path.GetFileName(name));
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, title); }
         }

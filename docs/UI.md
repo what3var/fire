@@ -1,7 +1,7 @@
 # Oberflächen-Bibliothek (`#import "ui"`)
 
-Eine minimale, komplett in fire geschriebene Oberfläche, die in einem Framebuffer läuft: Schaltflächen, Beschriftungen, Kontrollkästchen, Textfelder, Panels und ein Stapel-Layout. Sie liegt als
-eigene Brücke in `src/fire.UI.Bridge` (nur fire-Quelltext, `UiBridge.PreludeSource`, `namespace UI`; keine native Funktion, keine DLL) und baut auf den Klassen der Grafik-Brücke auf
+Eine minimale, komplett in fire geschriebene Oberfläche, die in einem Framebuffer läuft: Schaltflächen, Beschriftungen, Kontrollkästchen, Textfelder, Panels und ein Stapel-Layout. Sie ist
+die Standardbibliothek `fire-ui` (Projekt `packages/ui`, nur fire-Quelltext, `namespace UI`; keine native Funktion) und baut auf den Klassen der Grafik-Brücke auf
 (`Framebuffer`, `Renderer`, `Window`, siehe `docs/CONSOLE.md`). `#import "ui"` schaltet `graphics` und `windows` (das Fenster, siehe `docs/CONSOLE.md`) automatisch mit zu (`ImportedPreludes.WithDependencies`).
 
 ```
@@ -163,10 +163,17 @@ ordnet sich in der neuen Größe neu an und malt neu - Elemente mit `halign`/`va
 Elemente (Menüs) bleiben im Fenster. `ui.width` und `ui.height` sind immer die aktuelle Größe; `ui.onResize = func (int w, int h) => { ... }` wird danach gerufen (zum Beispiel für ein eigenes Bild in einem `Canvas`).
 Wer das Strecken des festen Bildes vorzieht, setzt `window.AutoResize = false`.
 
+## Show, Run und der Fenster-Manager
+
+Die Fenster laufen über einen `WindowManager` (docs/CONSOLE.md, *Fenster-Manager*): der Root hängt sich an den Zyklus seines Fensters (`window.onCycle`) und verteilt dort die
+Ereignisse, zeichnet und ruft `onTick`. `ui.Show()` zeigt das Fenster und lässt das Programm weiterlaufen (der Thread des Managers zeigt es, die Ereignisse behandelt das
+Programm an seinen sicheren Punkten und am Ende wartet es, bis das Fenster zu ist); `ui.Run()` lässt den Manager blockierend auf dem aufrufenden Thread laufen, bis die Fenster
+zu sind. `while (ui.Tick()) { ... }` geht wie bisher: ein Zyklus dieses Roots (und seiner angehängten).
+
 ## Mehrere Fenster
 
-Ein Programm kann mehrere Fenster haben - jedes ist ein `UI.Root` mit eigenem Framebuffer und `Window`. `ui.Attach(anderes)` hängt den Root eines weiteren Fensters an: `ui.Tick()` (und `ui.Run()`) macht dann
-in jedem Zyklus auch dessen Zyklus, bis sein Fenster geschlossen wird (das schließt es nur aus der Liste; das Ende von `Run` bestimmt das Fenster, an das angehängt wurde). `ui.Run(anderes)` hängt an und läuft.
+Ein Programm kann mehrere Fenster haben - jedes ist ein `UI.Root` mit eigenem Framebuffer und `Window`. `ui.Attach(anderes)` hängt den Root eines weiteren Fensters an - auch an den Fenster-Manager des eigenen
+Fensters: `ui.Run()`/`ui.Show()` bedienen dann beide, `ui.Tick()` macht in jedem Zyklus auch dessen Zyklus, bis sein Fenster geschlossen wird. `ui.Run(anderes)` hängt an und läuft, bis beide zu sind.
 `ui.Detach(anderes)` nimmt es wieder heraus; `ui.attached` ist die Liste. `ui.onTick` ist ein Lambda ohne Parameter, das der Zyklus dieses Roots am Ende ruft. Nur das Hauptfenster wartet auf den Bildaufbau (VSync),
 die angehängten nicht, damit n Fenster nicht n-mal warten. Der angehängte Root (und was ihn besitzt) muss so lange leben wie sein Fenster - zum Beispiel als Feld des öffnenden Fensters.
 

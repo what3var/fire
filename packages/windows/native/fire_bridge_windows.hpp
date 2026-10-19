@@ -7,15 +7,51 @@
 #pragma once
 
 #include FIRE_PLATFORM_DISPLAY_HEADER
+#include <algorithm>
+#include <atomic>
 
 namespace fire {
 namespace win {
 
 struct Callback { int type; Value lam; };
 
-struct WindowState {
+// A window manager's thread needs the fire threads (the GIL, host services; the generator switches them on when the program can start one) and a
+// platform whose windows may live on another thread than the main one (not macOS, not the browser).
+#if defined(FIRE_THREADS) && !defined(__EMSCRIPTEN__) && !defined(__APPLE__)
+#define FIRE_WINDOW_THREADS 1
+using WinMutex = plat::Mutex;
+#else
+struct WinMutex { void lock() {} void unlock() {} };
+#endif
+
+// What the program and the thread of a window manager share of one window. The OS window (display) belongs to the thread that opens and pumps it: the
+// program's thread (Tick, a manager that runs there) or the manager's thread (Window.Show) - SDL serves a window only on the thread that created it.
+struct Shared {
+    WinMutex m;
     plat::disp::Window display;
+    std::string title;
+    int width = 0, height = 0;        // the size it opens with
+    bool opened = false, failed = false;
+    // between the program and the manager's thread (under m)
+    std::vector<plat::disp::Event> inbox;   // the events the thread fetched
+    bool closed = false;              // the thread saw the window close
+    std::vector<uint32_t> front;      // the frame the program published last
+    int frontW = 0, frontH = 0;
+    bool frontNew = false;
+    int vsyncReq = -1, touchReq = -1; // settings for the thread
+    bool release = false;             // the window is gone: the thread closes it and frees this
+    // the thread's own
+    std::vector<uint32_t> shown;
+    int shownW = 0, shownH = 0;
+};
+
+struct Mgr;
+
+struct WindowState {
+    Shared* sh = nullptr;
     gfx::Framebuffer* fb = nullptr;
+    Mgr* mgr = nullptr;
+    bool vsync = true;
     std::vector<Callback> callbacks;
     std::vector<plat::disp::Event> queue;   // the events for NextEvent (only once EnableEvents was called)
     size_t queueHead = 0;
@@ -25,14 +61,17 @@ struct WindowState {
     ~WindowState() {
         for (Callback& c : callbacks) release(c.lam);
         if (fb) gfx::fbRelease(fb);
+        delete sh;
     }
 };
 
 struct Windows {
     std::vector<WindowState*> list{1, nullptr};
-    ~Windows() { for (WindowState* w : list) delete w; }
+    ~Windows();
 };
-inline Windows& windows() { static Windows w; return w; }
+inline void managersFirst();
+// (the managers are made first, so they are destroyed last: the windows stop their threads when they go)
+inline Windows& windows() { managersFirst(); static Windows w; return w; }
 constexpr size_t MaxQueuedEvents = 4096;
 
 inline WindowState* windowOf(Value id) {
@@ -130,10 +169,256 @@ inline void dispatch(WindowState* w, const plat::disp::Event& e) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// Window managers (fire's WindowManager, docs/UI.md): a manager cycles the windows attached to it - on the program's thread (Tick/Run), or, once started,
+// with a thread of its own that opens the OS windows, fetches their events and shows the last frame the program published, about 60 times a second. The
+// program's side of a cycle (callbacks, the queue, drawing) still runs on the program's thread: the thread asks the main program (hostRequest) to run the
+// manager's service lambda at its next safe point.
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+struct Mgr {
+    WinMutex m;
+    std::vector<Shared*> shown;           // the windows its thread shows (under m)
+    std::vector<WindowState*> attached;   // the program's view
+    std::atomic<bool> stop{false};
+    std::atomic<uint32_t> pending{0};     // a cycle was asked for and has not run yet
+    Value service = {K_Undefined, 0, 0, 0, {0}};
+#ifdef FIRE_WINDOW_THREADS
+    plat::Thread* thread = nullptr;
+    plat::Mutex cycleM;
+    plat::CondVar cycleCv;
+    uint64_t cycles = 0;
+    bool started() const { return thread != nullptr; }
+#else
+    bool started() const { return false; }
+#endif
+};
+
+struct Managers {
+    std::vector<Mgr*> list{1, nullptr};
+    ~Managers();
+};
+inline Managers& managers() { static Managers m; return m; }
+inline void managersFirst() { managers(); }
+
+inline Mgr* mgrOf(Value id) {
+    int64_t i = (int32_t)id.i;
+    Managers& all = managers();
+    if (i > 0 && (size_t)i < all.list.size() && all.list[(size_t)i]) return all.list[(size_t)i];
+    fatal(("No window manager with ID " + std::to_string(i) + ".").c_str());
+}
+
+inline bool threaded(WindowState* w) { return w->mgr && w->mgr->started(); }
+
+/// Opens the OS window on the calling thread (once); false when it cannot be opened (no display).
+inline bool ensureOpen(Shared* s, bool vsync) {
+    if (s->opened) return !s->failed;
+    s->opened = true;
+    if (!s->display.open(s->title, s->width, s->height, vsync)) s->failed = true;
+    return !s->failed;
+}
+
+inline void stopThread(Mgr* m);
+
+inline Windows::~Windows() {
+    // the threads of the managers end first: they show windows of this list
+    for (Mgr* m : managers().list) if (m) stopThread(m);
+    for (WindowState* w : list) delete w;
+}
+
+inline Managers::~Managers() {
+    for (Mgr* m : list) if (m) { stopThread(m); if (m->service.kind == K_Lambda) release(m->service); delete m; }
+}
+
+#ifdef FIRE_WINDOW_THREADS
+inline void pumpThread(void* arg) {
+    Mgr* m = static_cast<Mgr*>(arg);
+    std::vector<plat::disp::Event> events;
+    while (!m->stop.load(std::memory_order_relaxed)) {
+        int64_t start = plat::nowMs();
+        m->m.lock();
+        std::vector<Shared*> list = m->shown;
+        m->m.unlock();
+        for (Shared* s : list) {
+            s->m.lock();
+            if (s->release) {
+                s->m.unlock();
+                m->m.lock();
+                m->shown.erase(std::remove(m->shown.begin(), m->shown.end(), s), m->shown.end());
+                m->m.unlock();
+                delete s;   // closes the OS window here, on its thread
+                continue;
+            }
+            if (s->closed) { s->m.unlock(); continue; }
+            if (!ensureOpen(s, s->vsyncReq != 0)) { s->closed = true; s->m.unlock(); continue; }
+            if (s->vsyncReq >= 0) { s->display.setVSync(s->vsyncReq != 0); s->vsyncReq = -1; }
+            if (s->touchReq >= 0) { s->display.setTouchMouse(s->touchReq != 0); s->touchReq = -1; }
+            events.clear();
+            int w = s->frontW > 0 ? s->frontW : s->width, h = s->frontH > 0 ? s->frontH : s->height;
+            bool open = s->display.pump(events, w, h);
+            for (const plat::disp::Event& e : events) if (s->inbox.size() < MaxQueuedEvents) s->inbox.push_back(e);
+            if (!open) s->closed = true;
+            if (s->frontNew) { s->shown.swap(s->front); s->shownW = s->frontW; s->shownH = s->frontH; s->frontNew = false; }
+            s->m.unlock();
+            // (the program publishes into `front` meanwhile; what is shown is the thread's own copy)
+            if (!s->shown.empty()) s->display.present(s->shown.data(), s->shownW, s->shownH);
+        }
+        m->cycleM.lock();
+        m->cycles++;
+        m->cycleCv.notifyAll();
+        m->cycleM.unlock();
+        if (m->pending.exchange(1, std::memory_order_relaxed) == 0) hostRequest();
+        // about 60 cycles a second: with VSync the presenting has already waited for the screen, otherwise the rest of the period
+        int64_t rest = 16 - (plat::nowMs() - start);
+        if (rest > 0) plat::sleepMs(rest);
+    }
+    m->m.lock();
+    std::vector<Shared*> left;
+    left.swap(m->shown);
+    m->m.unlock();
+    for (Shared* s : left) {
+        s->m.lock();
+        bool gone = s->release;
+        if (!gone) s->display.close();   // (the program frees it with its window)
+        s->m.unlock();
+        if (gone) delete s;
+    }
+    plat::disp::threadDone();
+}
+
+/// The main program at a safe point: the cycles that the threads of the managers asked for (each runs the manager's Tick).
+inline void serveManagers() {
+    static bool busy = false;
+    if (busy) { g_hostPending.store(1, std::memory_order_relaxed); return; }   // a cycle is running: the next safe point after it
+    busy = true;
+    for (Mgr* m : managers().list)
+        if (m && m->started() && m->pending.load(std::memory_order_relaxed) && m->service.kind == K_Lambda) runCallback(m->service, 0, nullptr);
+    busy = false;
+}
+#endif
+
+inline void stopThread(Mgr* m) {
+#ifdef FIRE_WINDOW_THREADS
+    if (!m->thread) return;
+    m->stop.store(true);
+    plat::threadJoin(m->thread);
+    m->thread = nullptr;
+#else
+    (void)m;
+#endif
+}
+
+inline Value WinMgrCreate() {
+    Managers& all = managers();
+    all.list.push_back(new Mgr());
+    return Int((int64_t)all.list.size() - 1);
+}
+
+inline void detachFrom(WindowState* w) {
+    Mgr* m = w->mgr;
+    if (!m) return;
+    m->attached.erase(std::remove(m->attached.begin(), m->attached.end(), w), m->attached.end());
+    if (m->started()) {
+        // the OS window belongs to the manager's thread: it closes it there; the window starts afresh (unopened) on whatever cycles it next
+        Shared* fresh = new Shared();
+        fresh->title = w->sh->title;
+        fresh->width = w->fb->width; fresh->height = w->fb->height;
+        w->sh->m.lock();
+        w->sh->release = true;
+        w->sh->m.unlock();
+        w->sh = fresh;
+#ifdef FIRE_WINDOW_THREADS
+        hostHold(-1);
+#endif
+    }
+    w->mgr = nullptr;
+}
+
+inline Value WinMgrAttach(Value mgrId, Value winId) {
+    Mgr* m = mgrOf(mgrId);
+    WindowState* w = windowOf(winId);
+    if (w->mgr == m) return Bool(true);
+    detachFrom(w);
+    w->mgr = m;
+    m->attached.push_back(w);
+    if (m->started()) {
+        m->m.lock();
+        m->shown.push_back(w->sh);
+        m->m.unlock();
+#ifdef FIRE_WINDOW_THREADS
+        hostHold(1);
+#endif
+    }
+    return Bool(true);
+}
+
+inline Value WinMgrDetach(Value mgrId, Value winId) {
+    Mgr* m = mgrOf(mgrId);
+    WindowState* w = windowOf(winId);
+    if (w->mgr != m) return Bool(false);
+    detachFrom(w);
+    return Bool(true);
+}
+
+/// Starts the manager's thread; `service` is the fire lambda the program runs for each cycle. false where there is no thread for windows.
+inline Value WinMgrStart(Value mgrId, Value service) {
+    Mgr* m = mgrOf(mgrId);
+#ifdef FIRE_WINDOW_THREADS
+    if (m->started()) return Bool(false);
+    if (service.kind != K_Lambda) return Bool(false);
+    static bool registered = false;
+    if (!registered) { registered = true; g_hostServices.push_back(serveManagers); }
+    retain(service);
+    m->service = service;
+    m->m.lock();
+    for (WindowState* w : m->attached) {
+        // a window that this thread opened already cannot move to the manager's thread: it starts afresh there
+        if (w->sh->opened) {
+            Shared* fresh = new Shared();
+            fresh->title = w->sh->title;
+            fresh->width = w->fb->width; fresh->height = w->fb->height;
+            delete w->sh;
+            w->sh = fresh;
+        }
+        w->sh->vsyncReq = w->vsync ? 1 : 0;
+        w->sh->touchReq = w->touchMouse ? 1 : 0;
+        m->shown.push_back(w->sh);
+    }
+    m->m.unlock();
+    hostHold((int32_t)m->attached.size());
+    m->thread = plat::threadStart(pumpThread, m, 0);
+    return Bool(true);
+#else
+    (void)m; (void)service;
+    return Bool(false);
+#endif
+}
+
+/// Waits (on the program's thread, without the GIL) up to `ms` for the next cycle of the manager's thread.
+inline Value WinMgrWait(Value mgrId, Value ms) {
+    Mgr* m = mgrOf(mgrId);
+    int64_t wait = ms.i > 0 ? ms.i : 1;
+#ifdef FIRE_WINDOW_THREADS
+    if (m->started()) {
+        gilRelease();
+        m->cycleM.lock();
+        uint64_t seen = m->cycles;
+        while (m->cycles == seen) if (!m->cycleCv.waitFor(m->cycleM, wait)) break;
+        m->cycleM.unlock();
+        gilAcquire();
+        return Undef();
+    }
+#endif
+    (void)m;
+    plat::sleepMs(wait);
+    return Undef();
+}
+
 inline Value WinCreate(Value fbId, Value title) {
     gfx::Framebuffer* fb = gfx::fbOf(fbId);
     WindowState* w = new WindowState();
-    if (!w->display.open(toUtf8(title), fb->width, fb->height, true)) { delete w; return Int(-1); }
+    w->sh = new Shared();
+    w->sh->title = toUtf8(title);
+    w->sh->width = fb->width; w->sh->height = fb->height;
     w->fb = fb;
     gfx::fbRetain(fb);
     Windows& all = windows();
@@ -143,19 +428,86 @@ inline Value WinCreate(Value fbId, Value title) {
 inline Value WinDestroy(Value id) {
     int64_t i = (int32_t)id.i;
     Windows& all = windows();
-    if (i > 0 && (size_t)i < all.list.size() && all.list[(size_t)i]) { delete all.list[(size_t)i]; all.list[(size_t)i] = nullptr; return Bool(true); }
+    if (i > 0 && (size_t)i < all.list.size() && all.list[(size_t)i]) {
+        WindowState* w = all.list[(size_t)i];
+        if (threaded(w)) {
+            // the manager's thread closes the OS window and frees what it shares
+            Shared* s = w->sh;
+            detachFrom(w);   // (gives w a fresh, unopened one and marks the old one for release)
+            (void)s;
+        } else if (w->mgr) detachFrom(w);
+        delete w;
+        all.list[(size_t)i] = nullptr;
+        return Bool(true);
+    }
     return Bool(false);
 }
-inline Value WinTick(Value id) {
+
+/// The events of a cycle go to the queue (EnableEvents) and to the callbacks; with AutoResize a resize gives the framebuffer the new size.
+inline void deliver(Value id, WindowState* w, std::vector<plat::disp::Event>& events) {
+    if (w->autoResize)
+        for (const plat::disp::Event& e : events)
+            if (e.type == plat::disp::EV_RESIZE && gfx::Framebuffer::validSize(e.width, e.height)) w->fb->resize(e.width, e.height);
+    if (w->queueOn) for (const plat::disp::Event& e : events) if (w->queue.size() - w->queueHead < MaxQueuedEvents) w->queue.push_back(e);
+    int64_t i = (int32_t)id.i;
+    for (const plat::disp::Event& e : events) {
+        dispatch(w, e);
+        if (!windows().list[(size_t)i]) break;   // a callback destroyed the window
+    }
+}
+
+/// The first half of a cycle (WindowManager): the events of the window - from its manager's thread, or fetched here when nobody else shows it.
+inline Value WinPump(Value id) {
     WindowState* w = windowOf(id);
     std::vector<plat::disp::Event> events;
-    bool open = w->display.pump(events, w->fb->width, w->fb->height);
+    bool open;
+    if (threaded(w)) {
+        w->mgr->pending.store(0, std::memory_order_relaxed);   // the program runs a cycle: the next one may be asked for
+        w->sh->m.lock();
+        events.swap(w->sh->inbox);
+        open = !w->sh->closed;
+        w->sh->m.unlock();
+    } else {
+        if (!ensureOpen(w->sh, w->vsync)) return Bool(false);
+        open = w->sh->display.pump(events, w->fb->width, w->fb->height);
+    }
+    deliver(id, w, events);
+    return Bool(open);
+}
+
+/// The second half of a cycle: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread.
+inline Value WinPresent(Value id) {
+    WindowState* w = windowOf(id);
+    if (threaded(w)) {
+        std::vector<uint32_t> pixels(w->fb->pixelCount());
+        w->fb->resolveTo(pixels.data());
+        w->sh->m.lock();
+        w->sh->front.swap(pixels);
+        w->sh->frontW = w->fb->width; w->sh->frontH = w->fb->height;
+        w->sh->frontNew = true;
+        w->sh->m.unlock();
+        return Undef();
+    }
+    if (!ensureOpen(w->sh, w->vsync)) return Undef();
+    std::vector<uint32_t> pixels(w->fb->pixelCount());
+    w->fb->resolveTo(pixels.data());
+    w->sh->display.present(pixels.data(), w->fb->width, w->fb->height);
+    return Undef();
+}
+
+/// One cycle of this window alone (Window.Tick): events, frame, then the callbacks.
+inline Value WinTick(Value id) {
+    WindowState* w = windowOf(id);
+    if (threaded(w)) { Value open = WinPump(id); if (windows().list[(size_t)(int32_t)id.i]) WinPresent(id); return open; }
+    if (!ensureOpen(w->sh, w->vsync)) return Bool(false);
+    std::vector<plat::disp::Event> events;
+    bool open = w->sh->display.pump(events, w->fb->width, w->fb->height);
     if (w->autoResize)
         for (const plat::disp::Event& e : events)
             if (e.type == plat::disp::EV_RESIZE && gfx::Framebuffer::validSize(e.width, e.height)) w->fb->resize(e.width, e.height);
     std::vector<uint32_t> pixels(w->fb->pixelCount());
     w->fb->resolveTo(pixels.data());
-    w->display.present(pixels.data(), w->fb->width, w->fb->height);
+    w->sh->display.present(pixels.data(), w->fb->width, w->fb->height);
     if (w->queueOn) for (const plat::disp::Event& e : events) if (w->queue.size() - w->queueHead < MaxQueuedEvents) w->queue.push_back(e);
     int64_t i = (int32_t)id.i;
     for (const plat::disp::Event& e : events) {
@@ -203,9 +555,21 @@ inline Value WinRegisterEvent(Value id, Value type, Value lam) {
     w->callbacks.push_back({t, lam});
     return Bool(true);
 }
-inline Value WinSetVSync(Value id, Value on) { windowOf(id)->display.setVSync(on.i != 0); return Undef(); }
-inline Value WinGetVSync(Value id) { return Bool(windowOf(id)->display.vsync()); }
-inline Value WinSetTouchMouse(Value id, Value on) { WindowState* w = windowOf(id); w->touchMouse = on.i != 0; w->display.setTouchMouse(w->touchMouse); return Undef(); }
+inline Value WinSetVSync(Value id, Value on) {
+    WindowState* w = windowOf(id);
+    w->vsync = on.i != 0;
+    if (threaded(w)) { w->sh->m.lock(); w->sh->vsyncReq = w->vsync ? 1 : 0; w->sh->m.unlock(); }
+    else w->sh->display.setVSync(w->vsync);
+    return Undef();
+}
+inline Value WinGetVSync(Value id) { return Bool(windowOf(id)->vsync); }
+inline Value WinSetTouchMouse(Value id, Value on) {
+    WindowState* w = windowOf(id);
+    w->touchMouse = on.i != 0;
+    if (threaded(w)) { w->sh->m.lock(); w->sh->touchReq = w->touchMouse ? 1 : 0; w->sh->m.unlock(); }
+    else w->sh->display.setTouchMouse(w->touchMouse);
+    return Undef();
+}
 inline Value WinGetTouchMouse(Value id) { return Bool(windowOf(id)->touchMouse); }
 inline Value WinSetAutoResize(Value id, Value on) { windowOf(id)->autoResize = on.i != 0; return Undef(); }
 inline Value WinGetAutoResize(Value id) { return Bool(windowOf(id)->autoResize); }

@@ -203,6 +203,7 @@ namespace fire.Native
         {
             ["Create"] = (2, false), ["Destroy"] = (1, false), ["Tick"] = (1, false), ["EnableEvents"] = (1, false), ["NextEvent"] = (1, true), ["RegisterEvent"] = (3, false),
             ["SetVSync"] = (2, false), ["GetVSync"] = (1, false), ["SetAutoResize"] = (2, false), ["GetAutoResize"] = (1, false), ["SetTouchMouse"] = (2, false), ["GetTouchMouse"] = (1, false),
+            ["Pump"] = (1, false), ["Present"] = (1, false), ["MgrCreate"] = (0, false), ["MgrAttach"] = (2, false), ["MgrDetach"] = (2, false), ["MgrStart"] = (2, false), ["MgrWait"] = (2, false),
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName" };
@@ -1678,6 +1679,9 @@ namespace fire.Native
                 }
                 var (getter, getterDecl, getterAccess) = cls.Rc.FindMethodWithAccess("get_" + name, 0);
                 var (setter, setterDecl, setterAccess) = cls.Rc.FindMethodWithAccess("set_" + name, 1);
+                if (getter is { IsStatic: true }) getter = null;   // a static property is not a member of the object
+                if (setter is { IsStatic: true }) setter = null;
+                if (getter == null && setter == null) continue;
                 string AccessorGuard(string method, RuntimeClass decl, AccessModifier access, bool isSetter)
                 {
                     if (!CheckAccess || access == AccessModifier.Public) return "";
@@ -3033,6 +3037,17 @@ namespace fire.Native
                         UseWindows();
                         string name = native.Substring(6);
                         int first = d - argc;
+                        if (name == "WinMgrStart")
+                        {
+                            // the thread of a window manager runs the program's cycles at its safe points: fire threads (the GIL, host services); a platform
+                            // without threads has no such thread - Start says false and the program uses Run/Tick
+                            if (!_target.Native.SupportsThreads)
+                            {
+                                E($"{S(first)} = Bool(false);");
+                                d = first + 1; SetR(first, false); return Next();
+                            }
+                            UseThreads();
+                        }
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name == "WinNextEvent" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         E($"{S(first)} = win::{name}({args});");
                         Check();

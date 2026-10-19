@@ -7,6 +7,8 @@ namespace fire { namespace plat { namespace disp {
 
 constexpr bool available = false;
 
+inline void threadDone() {}
+
 class Window {
 public:
     bool open(const std::string&, int, int, bool) { return false; }
