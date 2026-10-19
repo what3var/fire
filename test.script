@@ -1,5 +1,6 @@
 #import "graphics"
 #import "windows"
+#strict
 var fb = new Framebuffer(640, 480)
 
 print("Framebuffer erstellt, id=" + fb.id)
@@ -13,7 +14,7 @@ class MyWin : Window
     public bool closing = false;
     construct(Framebuffer buffer, string caption) : base(buffer, caption)
     {
-        
+        VSync = false
     }
 }
 
@@ -41,7 +42,7 @@ print("Fenster nach einem Tick offen: " + stillOpen)
 
 while(!win.closing) {
     i++
-    con.SetColor(i, 0)
+    con.SetColor(i % 256, 0)
     con.Print("Test " + i);
     win.Tick()
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography.X509Certificates;
 using fire.Ast;
 using fire.Bytecode;
 using fire.Lexing;
@@ -752,9 +753,18 @@ namespace fire.Compiler
             // chain, so it does not need Base to have been preprocessed already).
             foreach (var rc in classes.Values)
             {
+                var set = new HashSet<RuntimeClass>();
                 bool isActor = false;
                 for (var walk = rc; walk != null; walk = walk.Base)
+                {
                     if (walk.Decl.IsActor) { isActor = true; break; }
+                    if (set.Contains(walk))
+                    {
+                        _errors.Add(new CompilerException("Circular class inheritance!", rc.Decl.Line));
+                        break;
+                    }
+                    set.Add(walk);
+                }
                 rc.IsActor = isActor;
             }
 

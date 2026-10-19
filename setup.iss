@@ -3,7 +3,7 @@
 ; Non-commercial use only
 
 #define MyAppName "spark"
-#define MyAppVersion "0.1"
+#define MyAppVersion "alpha-2610"
 #define MyAppPublisher "what3var"
 #define MyAppURL "https://github.com/what3var/fire/"
 #define MyAppExeName "spark.exe"
@@ -63,6 +63,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Dirs]
 Name: "{app}\Packages"; Permissions: users-modify
+Name: "{app}\Toolchain"; Permissions: users-modify
 
 [Files]
 Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
