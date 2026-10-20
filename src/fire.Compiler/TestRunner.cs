@@ -125,16 +125,46 @@ namespace fire.Compiler
         private string _status = "";
         private int _shownWidth;
 
+        private volatile bool _cancelled;
+        private VM? _vm;
+        private Process? _process;
+
         public TestRunner(TextWriter output, bool live)
         {
             _out = output;
             _live = live;
         }
 
+        /// <summary>Only these tests run (null: all).</summary>
+        public TestFilter? Filter { get; set; }
+
+        /// <summary>A test started (on the thread of the run - the editor posts it to its UI thread).</summary>
+        public event Action<TestResult>? TestStarted;
+
+        /// <summary>A test finished (its status, message and output are complete).</summary>
+        public event Action<TestResult>? TestFinished;
+
+        /// <summary>Was the run stopped with <see cref="Cancel"/>?</summary>
+        public bool Cancelled => _cancelled;
+
+        /// <summary>Stops the run from another thread: the VM leaves at its next check point, a native test program is killed. The running test ends as an error "cancelled".</summary>
+        public void Cancel()
+        {
+            _cancelled = true;
+            lock (_lock)
+            {
+                _vm?.RequestLeave();
+                try { if (_process is { HasExited: false }) _process.Kill(entireProcessTree: true); }
+                catch (InvalidOperationException) { }
+                catch (System.ComponentModel.Win32Exception) { }
+            }
+        }
+
         /// <summary>Runs the tests of <paramref name="sources"/> in the VM.</summary>
         /// <param name="files">The names of the files of <paramref name="sources"/> (for the messages), when there is no plan.</param>
+        /// <param name="basePath">The folder `#include` of a file without a plan starts from (else the current folder).</param>
         public TestRun RunInVm(string title, IReadOnlyList<string> sources, VmExecutionMode? mode = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
-            IReadOnlyList<string>? files = null)
+            IReadOnlyList<string>? files = null, string? basePath = null)
         {
             var run = new TestRun { Title = title };
             var protocol = Attach(run);
@@ -149,13 +179,16 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) protocol.Line(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: floatWidth, defines: defines, plan: plan);
+                }, basePath: basePath, floatWidth: floatWidth, defines: defines, plan: plan);
             }
             finally { Linker.TestDriver = null; }
-            if (tests > 0)
+            if (tests > 0 && !_cancelled)
             {
-                session.Run();
-                if (session.VirtualMachine!.UnhandledException is { } ex) protocol.Stopped(new UncaughtScriptException(ex).Message);
+                lock (_lock) _vm = session.VirtualMachine;
+                try { session.Run(); }
+                finally { lock (_lock) _vm = null; }
+                if (_cancelled && !protocol.Done) protocol.Stopped("cancelled");
+                else if (session.VirtualMachine!.UnhandledException is { } ex) protocol.Stopped(new UncaughtScriptException(ex).Message);
                 else if (!protocol.Done) protocol.Stopped("the program ended before the tests were done (`leave`/`terminate`?)");
             }
             run.Duration = watch.Elapsed;
@@ -184,17 +217,20 @@ namespace fire.Compiler
                 try { result = NativeBuilder.Build(sources, config, target, toolchain, exe, mode, floatWidth, defines: defines, plan: plan); }
                 finally { Linker.TestDriver = null; }
                 if (!result.Ok) { run.Problems.Add("The native build of the tests failed:" + Environment.NewLine + result.Log.TrimEnd()); return run; }
-                if (tests == 0) return run;
+                if (tests == 0 || _cancelled) return run;
 
                 var psi = new ProcessStartInfo(exe) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Directory.GetCurrentDirectory() };
                 using var process = Process.Start(psi)!;
+                lock (_lock) _process = process;
                 var errors = new StringBuilder();
                 process.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errors) errors.AppendLine(e.Data); };
                 process.BeginErrorReadLine();
                 string? line;
                 while ((line = process.StandardOutput.ReadLine()) != null) lock (_lock) protocol.Line(line);
                 process.WaitForExit();
-                if (!protocol.Done) protocol.Stopped($"the program ended with code {process.ExitCode} before the tests were done" + (errors.Length > 0 ? ": " + errors.ToString().Trim() : ""));
+                lock (_lock) _process = null;
+                if (_cancelled && !protocol.Done) protocol.Stopped("cancelled");
+                else if (!protocol.Done) protocol.Stopped($"the program ended with code {process.ExitCode} before the tests were done" + (errors.Length > 0 ? ": " + errors.ToString().Trim() : ""));
             }
             finally
             {
@@ -204,7 +240,7 @@ namespace fire.Compiler
             return run;
         }
 
-        private static string Driver(IReadOnlyList<Ast.Stmt> program, int first, fire.Projects.BuildPlan? plan, IReadOnlyList<string>? files, TestRun run, out int tests)
+        private string Driver(IReadOnlyList<Ast.Stmt> program, int first, fire.Projects.BuildPlan? plan, IReadOnlyList<string>? files, TestRun run, out int tests)
         {
             string? FileOf(int source)
             {
@@ -212,13 +248,14 @@ namespace fire.Compiler
                 if (plan != null) return i >= 0 && i < plan.Sources.Count ? Path.GetRelativePath(plan.Project.Directory, plan.Sources[i].Path).Replace('\\', '/') : null;
                 return files != null && i >= 0 && i < files.Count ? files[i] : null;
             }
-            return TestDriver.Generate(program, first, FileOf, run.Problems, out tests);
+            return TestDriver.Generate(program, first, FileOf, run.Problems, out tests, Filter);
         }
 
         private TestProtocol Attach(TestRun run)
         {
             var protocol = new TestProtocol(run);
-            protocol.Started += r => Status($"{run.Passed} ok, {run.Failed + run.Errors} failed - {r.Name}");
+            protocol.Started += r => { Status($"{run.Passed} ok, {run.Failed + run.Errors} failed - {r.Name}"); TestStarted?.Invoke(r); };
+            protocol.Finished += r => TestFinished?.Invoke(r);
             return protocol;
         }
 

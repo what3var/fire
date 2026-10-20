@@ -48,7 +48,11 @@ forge test Demo.firesln           every project of the solution (-p <name>: only
 forge test Lib/Lib.fireproj       one project
 forge test a.fire b.fire          files (joined into one program, like `forge run`)
 forge test ... --engine native    as a native program for this machine (built with the toolchain of fire.native.json)
+forge test ... --filter A.B,C     only these tests: Class.Method, or a class for all its tests; * stands for any text (CalcTests.*, *.Add*)
 ```
+
+With `--filter`, a class without a chosen test is left out completely (no object, no `[PrepareTesting]`). A class whose `[CleanTesting]` checks that all its
+tests ran will of course complain when only some of them run.
 
 `-m`, `-f`, `-D`, `--types`, `--config` and `--toolchain` work as with `run`/`build`. The tests run in the virtual machine unless `--engine native` is given.
 
@@ -106,3 +110,27 @@ for `forge test`: `build`, `run` and the package of a library leave them out. Te
 (they do not run, they are just classes).
 
 The template **Test Class** (Add > New Item) makes a class with a test and a test with parameters; a new **Library** project brings `testing/` with a first test.
+
+## The Test Explorer (spark)
+
+**Test > Test Explorer** (or View > Test Explorer) opens the tests in the editor, a panel next to the Solution Explorer. The box at the top picks the scope:
+
+- **Solution** - every project of the open solution (one group per project);
+- **Project** - the project of the active document (also when the document is in its `testing/` folder), else the one selected in the Solution Explorer,
+  else the startup project;
+- **Current File** - the tests of the active file: in a project, the project is compiled with its tests and only the tests of this file run; a file that belongs
+  to no project runs alone (like `forge test file.fire`).
+
+The tree shows project, class and test, with the title of `[Test]`. The explorer finds the tests without compiling anything (it only parses the files, also the
+unsaved text of open documents) and looks again when a file is saved, the workspace changes or - for Project and Current File - another document becomes active.
+
+The buttons: **Run all** (Ctrl+R, also Test > Run All Tests), **Run selected** (the tests below the selected row: a test, a class or a project), **Run failed**,
+**Stop** and **Refresh**. Each group runs in the virtual machine, like `forge test` (the same driver, so `[PrepareTesting]`, `[PrepareTest]` and the others
+work the same). The results come in while the tests run: ✔ passed, ✖ failed (an `Assertion`), ⚠ error (another exception), ▶ running, ◌ waiting, ○ not run.
+A test with `[Parameters]` gets one row per set of values. Below the tree, the details of the selected row: the description, the message, what the test printed
+and the file and line; for a class or a project the tests that failed and the problems of the run (a program that does not compile, an attribute in the wrong
+place). A double click (or Enter) opens the test in the editor.
+
+Stop ends the run at the next instruction of the VM; the test that was running is an error "cancelled". A program that is started with F5 and a test run do
+not run at the same time - stop the program first.
+

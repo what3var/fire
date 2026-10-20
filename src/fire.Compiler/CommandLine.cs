@@ -38,6 +38,8 @@ namespace fire.Compiler
         public string? Engine { get; init; }
         /// <summary>`--toolchain`: the toolchain of a native build; null = the configuration's.</summary>
         public string? ToolchainName { get; init; }
+        /// <summary>`forge test --filter`: the tests that run.</summary>
+        public string? TestFilter { get; init; }
         /// <summary>`--config`: the native build configuration; null = the nearest fire.native.json next to the first file.</summary>
         public string? ConfigFile { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
@@ -93,7 +95,7 @@ namespace fire.Compiler
             -o      Name of the file produced by build or native.
             test    runs the tests: the methods with [Test] (docs/TESTING.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
                     project in the current folder (all projects of a solution, or -p <name>). The files in testing/ of a project belong to its tests; the top level of a program does not run.
-                    Exit code 0 when every test passed, 1 otherwise.
+                    --filter A.B,C runs only these tests (Class.Method, or a class for all its tests; * for any text). Exit code 0 when every test passed, 1 otherwise.
             ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
 
             A project (`.fireproj`) or a solution (`.firesln`, docs/PROJECTS.md) instead of the files: run runs the project (of a solution: the startup project, or -p <name>), build builds it -
@@ -124,7 +126,7 @@ namespace fire.Compiler
             int? floatWidth = null;
             TypeCheckMode? typeChecking = null;
             TargetProfile? target = null;
-            string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null;
+            string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
             bool keep = false;
             string? output = null;
             var defines = new List<string>();
@@ -163,6 +165,13 @@ namespace fire.Compiler
                     string? value = toolchainInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--toolchain must be followed by the toolchain name.");
                     toolchainName = Unquote(value);
+                }
+                else if (TryOption(arg, "--filter", "--filter", out var filterInline))
+                {
+                    if (command != CommandKind.Test) return Fail(command, "--filter is only available with test.");
+                    string? value = filterInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--filter must be followed by the tests (Class.Method or Class, separated by commas).");
+                    testFilter = Unquote(value);
                 }
                 else if (TryOption(arg, "--config", "--config", out var configInline))
                 {
@@ -235,6 +244,7 @@ namespace fire.Compiler
                 Target = target,
                 TargetName = targetName,
                 Engine = engine,
+                TestFilter = testFilter,
                 ToolchainName = toolchainName,
                 ConfigFile = configFile,
                 KeepSources = keep,
@@ -437,7 +447,7 @@ namespace fire.Compiler
                 if (!File.Exists(f)) { stderr.WriteLine($"File not found: {f}"); return ExitUsage; }
 
             bool live = stdout == Console.Out && !Console.IsOutputRedirected;
-            var runner = new TestRunner(stdout, live);
+            var runner = new TestRunner(stdout, live) { Filter = options.TestFilter != null ? fire.Compiler.TestFilter.Parse(options.TestFilter) : null };
             fire.Native.NativeConfig? config = null;
             string engine = options.Engine ?? "vm";
             if (engine == "native")

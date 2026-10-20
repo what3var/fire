@@ -38,6 +38,7 @@ static class TestingTests
         {
             Attributes();
             Files(root);
+            Explorer(root);
             Project(root);
         }
         catch (Exception ex)
@@ -163,6 +164,53 @@ static class TestingTests
         string ok = Write(root, "ok.fire", "#import \"testing\"\nclass A {\n    [Test]\n    undefined One() { Testing.Assert.AreEqual(\"x\", \"x\") }\n}\n");
         (exit, output) = Forge("test", ok);
         Check("Alles bestanden: Exitcode 0", exit == 0 && output.Contains("1 test: 1 passed, 0 failed, 0 errors"), output);
+    }
+
+    /// <summary>What the Test Explorer of the editor uses: finding the tests without running them, a filter, live events, stopping a run.</summary>
+    private static void Explorer(string root)
+    {
+        string calc = Path.Combine(root, "calc.fire");
+        var found = TestDiscovery.InFile(calc);
+        Check("Explorer: findet alle Tests der Datei mit Klasse, Titel, Zeile", found.Count == 6 && found.Select(t => t.Key).SequenceEqual(new[]
+            { "CalcTests.Add", "CalcTests.Grid", "CalcTests.Fails", "CalcTests.Crashes", "CalcTests.Asserts", "CalcTests.Static" })
+            && found[0] is { Title: "Addition", Description: "adds two numbers", HasParameters: true } && found[2] is { Title: "On purpose", HasParameters: false } && found[3].Title == "Crashes",
+            string.Join("; ", found.Select(t => $"{t.Key} {t.Title} {t.Line}")));
+        var lines = File.ReadAllLines(calc);
+        Check("Explorer: die Zeile ist die der Methode", found.All(t => t.Line >= 1 && t.Line <= lines.Length && lines[t.Line - 1].Contains("undefined " + t.Method + "(")),
+            string.Join("; ", found.Select(t => $"{t.Method}:{t.Line}")));
+        var problems = new List<string>();
+        Check("Explorer: Datei ohne Tests, kaputte Datei", TestDiscovery.InFile("x.fire", "print(1)").Count == 0 && TestDiscovery.InFile("y.fire", "class C { [Test] undefined M( { }", problems).Count == 0 && problems.Count == 1,
+            string.Join("; ", problems));
+        Check("Explorer: #include wird uebersprungen, Zeilen bleiben", TestDiscovery.InFile(Path.Combine(root, "inc.fire"), "#include \"missing.fire\"\nclass I {\n  [Test]\n  undefined T() { }\n}\n") is [{ Key: "I.T", Line: 4 }]);
+
+        var filter = TestFilter.Parse("CalcTests.Add, Other, *.St*");
+        Check("Filter: Klasse.Methode, Klasse, Muster", filter.Includes("CalcTests", "Add") && !filter.Includes("CalcTests", "Grid") && filter.Includes("Other", "X") && filter.Includes("CalcTests", "Static"));
+
+        var (exit, output) = Forge("test", calc, "--filter", "CalcTests.Add,CalcTests.Static");
+        // (the [CleanTesting] of the class counts all its tests - with a filter it complains, as it should)
+        Check("forge test --filter: nur die gewaehlten Tests", output.Contains("5 tests: 5 passed") && output.Contains("CalcTests.Static") && !output.Contains("Grid") && !output.Contains("On purpose"), output);
+        (exit, output) = Forge("test", calc, "--filter", "Nothing.Here");
+        Check("forge test --filter: kein Treffer laeuft nichts", output.Contains("no tests"), output);
+
+        // the events of a run, as the explorer shows them
+        var runner = new TestRunner(TextWriter.Null, false) { Filter = TestFilter.Of(new[] { "CalcTests.Grid", "CalcTests.Fails" }) };
+        var started = new List<string>();
+        var finished = new List<string>();
+        runner.TestStarted += r => started.Add(r.Name);
+        runner.TestFinished += r => finished.Add($"{r.Name}={r.Status}");
+        var run = runner.RunInVm("calc", new[] { File.ReadAllText(calc) }, files: new[] { "calc.fire" }, basePath: root);
+        Check("Runner: Ereignisse fuer Start und Ende jedes Falls", started.Count == 5 && finished.Count == 5 && finished.Contains("CalcTests.Grid(2, 2)=Failed") && finished.Contains("CalcTests.On purpose=Failed")
+            && run.Results.Count == 5, string.Join("; ", finished));
+
+        // stopping a run: a test that never ends
+        string endless = Write(root, "endless.fire", "class E {\n    [Test]\n    undefined First() { }\n    [Test]\n    undefined Forever() { while (true) { } }\n    [Test]\n    undefined After() { }\n}\n");
+        var stopper = new TestRunner(TextWriter.Null, false);
+        stopper.TestStarted += r => { if (r.Method == "Forever") ThreadPool.QueueUserWorkItem(_ => { Thread.Sleep(200); stopper.Cancel(); }); };
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        var stopped = stopper.RunInVm("endless", new[] { File.ReadAllText(endless) }, files: new[] { "endless.fire" });
+        Check("Runner: Cancel beendet einen haengenden Test", watch.Elapsed.TotalSeconds < 20 && stopper.Cancelled && stopped.Results.Any(r => r.Method == "First" && r.Status == TestStatus.Passed)
+            && stopped.Results.Any(r => r.Method == "Forever" && r.Status == TestStatus.Error && r.Message == "cancelled") && !stopped.Results.Any(r => r.Method == "After"),
+            string.Join("; ", stopped.Results.Select(r => $"{r.Name}={r.Status}:{r.Message}")) + " | " + string.Join("; ", stopped.Problems));
     }
 
     private static void Project(string root)

@@ -175,6 +175,19 @@
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
 				</MenuItem>
+				<!-- the Test Explorer (docs/TESTING.md): the tests of the solution, the project or the active file -->
+				<MenuItem Header="_Test">
+					<MenuItem Header="Test _Explorer" Click="TestsOpen_Click"/>
+					<Separator/>
+					<MenuItem Header="Run _All Tests (of the Explorer's scope)" Click="TestsRunAll_Click" InputGesture="Ctrl+R"/>
+					<MenuItem Header="Run Tests of This _File" Click="TestsRunFile_Click"/>
+					<MenuItem Header="Run _Failed Tests" Click="TestsRunFailed_Click"/>
+					<MenuItem Header="_Stop Test Run" Click="TestsStop_Click"/>
+					<Separator/>
+					<MenuItem Header="Scope: _Solution" Tag="Solution" Click="TestsScope_Click"/>
+					<MenuItem Header="Scope: _Project" Tag="Project" Click="TestsScope_Click"/>
+					<MenuItem Header="Scope: Current F_ile" Tag="File" Click="TestsScope_Click"/>
+				</MenuItem>
 				<MenuItem Header="_Devices">
 					<MenuItem Header="_Search for Devices" Click="DevicesSearch_Click"/>
 					<MenuItem Header="_Connect" Click="DevicesConnect_Click"/>
@@ -198,6 +211,7 @@
 					<MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Sol_ution Explorer" Tag="solution" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="Test E_xplorer" Tag="tests" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<Separator/>
 					<!-- the tool strips: filled in MainWindow (BuildToolbarsMenu) -->
 					<MenuItem Header="Tool_bars" x:Name="mnuToolbars" SubmenuOpened="ToolbarsMenu_SubmenuOpened"/>

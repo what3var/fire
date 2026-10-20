@@ -32,7 +32,7 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
 keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
-folders, the folder `templates/` (what the project offers as templates), the folder `testing/` (its tests: only `forge test` compiles them, see docs/TESTING.md) and the
+folders, the folder `templates/` (what the project offers as templates), the folder `testing/` (its tests: only `forge test` and the Test Explorer of spark compile them, see docs/TESTING.md) and the
 folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
 last**: what the other files declare is known by then.
 
@@ -175,6 +175,8 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   (the libraries, the project's symbols for `#if`).
 * Old window layouts without the Solution Explorer fall back to the default layout once.
 
+* **Test Explorer** (a tool window, menu *Test*): the tests of the solution, the project or the active file - run all, the selected or the failed ones, results live,
+  a double click goes to the test; see docs/TESTING.md.
 * **Git**: the state of the files in the explorer, commit, history, branches, pull and push - see docs/GIT.md.
 
 ## Open points

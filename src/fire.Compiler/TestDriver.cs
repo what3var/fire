@@ -24,8 +24,9 @@ namespace fire.Compiler
         private static readonly HashSet<string> Known = new(StringComparer.Ordinal) { Test, Parameters, PrepareTest, CleanTest, PrepareTesting, CleanTesting };
 
         /// <summary>The driver for the classes of <paramref name="program"/> from source <paramref name="firstUserSource"/> on. What is wrong with an attribute goes to
-        /// <paramref name="problems"/> (with file and line, see <paramref name="fileOf"/>); that test does not run. <paramref name="testCount"/>: the tests found (a set of parameters counts once).</summary>
-        public static string Generate(IReadOnlyList<Stmt> program, int firstUserSource, Func<int, string?> fileOf, List<string> problems, out int testCount)
+        /// <paramref name="problems"/> (with file and line, see <paramref name="fileOf"/>); that test does not run. <paramref name="testCount"/>: the tests found (a set of parameters counts once).
+        /// <paramref name="filter"/>: only these tests run; a class without one of them is left out completely (no object, no `[PrepareTesting]`, none of its problems).</summary>
+        public static string Generate(IReadOnlyList<Stmt> program, int firstUserSource, Func<int, string?> fileOf, List<string> problems, out int testCount, TestFilter? filter = null)
         {
             var sb = new StringBuilder();
             var runs = new List<string>();
@@ -44,6 +45,7 @@ namespace fire.Compiler
             foreach (var cls in program.OfType<ClassDecl>().Where(c => c.Source >= firstUserSource))
             {
                 var methods = cls.Members.OfType<MethodDecl>().ToList();
+                if (filter != null && !methods.Any(m => Has(m, Test) && filter.Includes(cls.Name, m.Name))) continue;
                 string where(int line) => $"{fileOf(cls.Source) ?? "?"}:{line}";
                 foreach (var m in methods)
                     foreach (var a in m.Attributes ?? Array.Empty<AttributeDecl>())
@@ -52,7 +54,7 @@ namespace fire.Compiler
 
                 foreach (var m in methods.Where(m => Has(m, Parameters) && !Has(m, Test)))
                     problems.Add($"{where(m.Line)}: '{cls.Name}.{m.Name}' has [Parameters] but no [Test].");
-                var tests = methods.Where(m => Has(m, Test)).ToList();
+                var tests = methods.Where(m => Has(m, Test) && (filter == null || filter.Includes(cls.Name, m.Name))).ToList();
                 if (tests.Count == 0) continue;
                 if (cls.TypeParams is { Count: > 0 }) { problems.Add($"{where(cls.Line)}: the test class '{cls.Name}' is generic - a test class needs a plain `new {cls.Name}()`."); continue; }
 

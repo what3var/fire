@@ -216,7 +216,7 @@ static class ProjectTests
         created.AddFile(prog, extra);
         Check("Aenderungen: eine Datei ausserhalb wird namentlich aufgenommen, die Muster bleiben", prog.Contains(extra) && prog.Contains(Path.Combine(c, "Prog", "main.fire")));
         created.RemoveFile(prog, Path.Combine(c, "Prog", "main.fire"));
-        Check("Aenderungen: eine Datei, die ein Muster nimmt, wird ausgeschlossen", !prog.Contains(Path.Combine(c, "Prog", "main.fire")) && prog.Project.Exclude.Count == 1 && File.Exists(Path.Combine(c, "Prog", "main.fire")));
+        Check("Aenderungen: eine Datei, die ein Muster nimmt, wird ausgeschlossen", !prog.Contains(Path.Combine(c, "Prog", "main.fire")) && prog.Project.Exclude.Except(FireProject.DefaultExclude).Count() == 1 && File.Exists(Path.Combine(c, "Prog", "main.fire")));
         created.RemoveProject(lib);
         Check("Aenderungen: ein Projekt aus der Mappe nehmen (die Dateien bleiben)", created.Projects.Count == 1 && File.Exists(Path.Combine(c, "Lib", "Lib.fireproj")) && !File.ReadAllText(Path.Combine(c, "New.firesln")).Contains("Lib.fireproj"));
         int changed = 0; created.Changed += () => changed++;

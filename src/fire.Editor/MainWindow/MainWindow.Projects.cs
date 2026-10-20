@@ -163,6 +163,7 @@ namespace fire.Editor
             fire.Package.Manager.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
             // what belongs to which project (and the libraries) may have changed: check the open scripts again
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
+            ScheduleTestDiscovery();
         }
 
         /// <summary>The explorer and the status bar follow the workspace and the active document.</summary>

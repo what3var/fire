@@ -72,7 +72,9 @@ namespace fire.Projects
         /// <summary>The import name of a library (`#import "name"`); default: the project name (characters that are not allowed become `_`).</summary>
         public string? Import { get; set; }
         public List<string> Files { get; set; } = new();
-        public List<string> Exclude { get; set; } = new() { "**/code","**/*.exe","**/*.dll"};
+        /// <summary>What a project leaves out when its file names nothing else: build output (`code`) and binaries. The file does not repeat it.</summary>
+        public static readonly string[] DefaultExclude = { "**/code", "**/*.exe", "**/*.dll" };
+        public List<string> Exclude { get; set; } = new(DefaultExclude);
         public string? Entry { get; set; }
         public List<ProjectReference> References { get; set; } = new();
         public ProjectSettings Settings { get; set; } = new();
@@ -143,7 +145,7 @@ namespace fire.Projects
             {
                 Format = p.Format; Name = p.Name; Type = p.Type; Import = p.Import; Entry = p.Entry;
                 Files = p.Files.Count > 0 ? p.Files : null;
-                Exclude = p.Exclude.Count > 0 ? p.Exclude : null;
+                Exclude = p.Exclude.Count > 0 && !p.Exclude.SequenceEqual(DefaultExclude) ? p.Exclude : null;
                 References = p.References.Count > 0 ? p.References : null;
                 Settings = p.Settings.IsEmpty ? null : p.Settings;
                 Native = p.Native;
