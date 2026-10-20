@@ -585,6 +585,14 @@ namespace fire.UI.Markup
                         return null;
                     }
                     return $"Framebuffer.FromResource(new Resource({Quote(trimmed)}))";
+                case PropertyKind.Geometry:
+                    if (trimmed.Length == 0)
+                    {
+                        errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs the name of a symbol ({string.Join(", ", MarkupSchema.IconNames)}) or path data like M 8 1 L 15 8 L 1 8 Z."));
+                        return null;
+                    }
+                    if (MarkupSchema.IconNames.FirstOrDefault(n => n.Equals(trimmed, StringComparison.OrdinalIgnoreCase)) is { } icon) return $"UI.Icons.{icon}()";
+                    return $"UI.Geometry.Parse({Quote(trimmed)})";
                 case PropertyKind.StyleRef:
                     return "this.fxStyle_" + trimmed;
                 case PropertyKind.TemplateRef:

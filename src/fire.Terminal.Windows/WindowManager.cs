@@ -48,6 +48,22 @@ namespace fire.Terminal.Windows
 
         public bool GetBlocked(int id) => _blocked.Contains(id);
 
+        // Window.AutoClose: the windows that close themselves when the user asks for it (the frame's close button, Alt+F4) - all, except those in
+        // _manualClose; a window that got such a request counts as closed from then on (Tick/Pump say false).
+        private readonly HashSet<int> _manualClose = new();
+        private readonly HashSet<int> _closeRequested = new();
+
+        public bool GetAutoClose(int id) { _windows.Get(id); return !_manualClose.Contains(id); }
+
+        public void SetAutoClose(int id, bool enabled)
+        {
+            _windows.Get(id);
+            if (enabled) _manualClose.Remove(id); else _manualClose.Add(id);
+        }
+
+        /// <summary>Has the window been closed by a close request (AutoClose)?</summary>
+        public bool CloseRequested(int id) => _closeRequested.Contains(id);
+
         /// <summary>Started managers only give the beat, the windows stay on the program's thread (it opens and pumps them at its safe points): macOS,
         /// where windows may only live on the main thread. FIRE_WINDOW_COOPERATIVE=1 switches it on elsewhere too (tests).</summary>
         public static bool CooperativeManagers { get; set; } =
@@ -182,6 +198,8 @@ namespace fire.Terminal.Windows
             if (!_windows.TryGet(id, out var window) || window == null) return false;
             _eventQueues.Remove(id);
             _blocked.Remove(id);
+            _manualClose.Remove(id);
+            _closeRequested.Remove(id);
             bool threadOwned = false;
             lock (_managersGate)
                 if (_managed.TryGetValue(id, out var entry))
@@ -219,7 +237,7 @@ namespace fire.Terminal.Windows
             if (ManagedStarted(id)) { bool open = Pump(id); Present(id); return open; }
             var result = window.Tick();
             Deliver(id, result?.Events);
-            return result?.StillOpen == true;
+            return result?.StillOpen == true && !_closeRequested.Contains(id);
         }
 
         /// <summary>Puts the events of a window into its queue (EnableEventQueue) and runs its callbacks - on the calling thread (the program's).</summary>
@@ -227,6 +245,8 @@ namespace fire.Terminal.Windows
         {
             if (events == null) return;
             if (_blocked.Contains(id)) events = events.Where(e => e.Type == Event.EventType.Resize || e.Type == Event.EventType.Close).ToList();
+            // AutoClose: the request closes the window (its handlers still hear of it)
+            if (!_manualClose.Contains(id) && events.Any(e => e.Type == Event.EventType.CloseRequest)) _closeRequested.Add(id);
             var result = new WindowPumpResult { StillOpen = true, Events = events };
             if (result?.Events != null)
             {
@@ -586,7 +606,7 @@ namespace fire.Terminal.Windows
                 if (beat != null) Interlocked.Exchange(ref beat.ServicePending, 0);   // the program runs a cycle: the next one may be asked for
                 var result = window.Pump();
                 Deliver(id, result?.Events);
-                return result?.StillOpen == true;
+                return result?.StillOpen == true && !_closeRequested.Contains(id);
             }
             Manager? owner;
             lock (_managersGate) owner = _managed.TryGetValue(id, out var current) ? current.Manager : null;
@@ -598,7 +618,7 @@ namespace fire.Terminal.Windows
                     if (e is ResizeEvent resize && Framebuffer.IsValidSize(resize.Width, resize.Height))
                         window.Framebuffer.Resize(resize.Width, resize.Height);
             Deliver(id, events);
-            return !state.Closed;
+            return !state.Closed && !_closeRequested.Contains(id);
         }
 
         /// <summary>The program's side of a cycle, second half: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread.</summary>

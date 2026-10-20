@@ -83,6 +83,9 @@ A `.fpk` is a zip file with a `package.json` in its root and the files that it n
   A package can bring several. An import can have a **prelude**, **natives**, or both. A package that is only a prelude is allowed.
 * `requires`: other imports (of the compiler or of packages) that this one switches on, like `ui` switches on `graphics`.
 * `dependencies`: other *packages* that `ember install` installs too.
+* `resources` (of an import): the files its prelude embeds with `new Resource("path")` - `{ "icons/up.png": "sensorkit/icons/up.png" }`, the path as the prelude
+  writes it (relative to the prelude's folder) and where the file lies in the package (in a forge file: where it is now). `forge build` of a library fills it
+  (docs/RESOURCES.md).
 
 ### The prelude
 

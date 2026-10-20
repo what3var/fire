@@ -94,6 +94,9 @@ namespace fire.Windows.Bridge
                 ["SetBlocked"] = args => { mgr.SetBlocked((int)args[0].AsInt(), args[1].AsBool()); return Value.MakeUndefined(); },
                 // the program runs the cycle its manager's thread asked for: the next one may be asked for
                 ["MgrServed"] = args => { mgr.ManagerServed((int)args[0].AsInt()); return Value.MakeUndefined(); },
+                // Window.AutoClose: a close request (the frame's button) closes the window
+                ["SetAutoClose"] = args => { mgr.SetAutoClose((int)args[0].AsInt(), args[1].AsBool()); return Value.MakeUndefined(); },
+                ["GetAutoClose"] = args => Value.MakeBool(mgr.GetAutoClose((int)args[0].AsInt())),
             };
         }
         
@@ -122,6 +125,8 @@ namespace fire.Windows.Bridge
                 ["MgrWait"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetBlocked"] = args => Value.MakeUndefined() /*STUB*/,
                 ["MgrServed"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

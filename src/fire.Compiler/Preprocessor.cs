@@ -415,6 +415,19 @@ namespace fire.Compiler
             });
         }
 
+        /// <summary>Replaces the path of every `new Resource("path")` in the code of a line (not in a comment or a string) by what `map` makes of it (packing a library, see
+        /// ProjectBuilder.Flatten).</summary>
+        public static string MapResourcePaths(string line, Func<string, string> map)
+        {
+            if (line.IndexOf("Resource", StringComparison.Ordinal) < 0) return line;
+            return ResourceCall.Replace(line, m =>
+            {
+                if (!IsCode(line, m.Index)) return m.Value;
+                string mapped = map(Regex.Unescape(m.Groups[1].Value));
+                return "new Resource(\"" + mapped.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\")";
+            });
+        }
+
         /// <summary>Is the position in the line code - not in a string and not behind a `//`?</summary>
         private static bool IsCode(string line, int index)
         {

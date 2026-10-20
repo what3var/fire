@@ -113,7 +113,7 @@ The attribute names are those of the fire fields (the first letter may be upper 
 | `ScrollViewer` (one child) | `vmode`, `hmode` (`Disabled Auto Visible`) | |
 | `ToolBar` (container: buttons and `Separator`s) | `showBorder`, `filled` | |
 | `Label` | `text`, `color` (the text brush) | |
-| `Button` | `text` | `onClick` |
+| `Button` | `text`, `icon` (a symbol of `UI.Icons` such as `Up`, or path data `M 8 1 L 15 8 L 1 8 Z`), `image` (an image file, embedded), `iconSize` | `onClick` |
 | `CheckBox` | `text`, `isChecked` | `onChange` |
 | `TextBox` | `text`, `maxLength` | `onChange`, `onEnter` |
 | `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `text`, `maxLength`, `maxSuggestions`, `displayMember` | `onChange`, `onEnter`, `onChosen` |

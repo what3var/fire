@@ -55,6 +55,11 @@ static class WindowManagerTests
             }
         }
 
+        public void CloseRequest()
+        {
+            lock (_gate) _pending.Add(new fire.Terminal.Event.Event { Type = fire.Terminal.Event.EventType.CloseRequest });
+        }
+
         public void Key(int code)
         {
             lock (_gate) _pending.Add(new fire.Terminal.Event.KeyEvent { Type = fire.Terminal.Event.EventType.KeyDown, KeyCode = code });
@@ -107,6 +112,7 @@ static class WindowManagerTests
         ReflectionNatives.Register(natives);
         natives.Register("__TestKey", args => { lock (fakes) fakes[(int)args[0].AsInt()].Key((int)args[1].AsInt()); return Value.MakeUndefined(); });
         natives.Register("__TestClick", args => { lock (fakes) fakes[(int)args[0].AsInt()].Click((float)args[1].AsFloat(), (float)args[2].AsFloat()); return Value.MakeUndefined(); });
+        natives.Register("__TestCloseRequest", args => { lock (fakes) fakes[(int)args[0].AsInt()].CloseRequest(); return Value.MakeUndefined(); });
         natives.Register("__TestWait", args => { Thread.Sleep((int)args[0].AsInt()); return Value.MakeUndefined(); });
 
         var resolved = Resolver.Resolve(program, natives.Names);
@@ -140,6 +146,8 @@ static class WindowManagerTests
             UiRoot();
             ShowAndRun();
             Cooperative();
+            AutoClose();
+            ButtonSymbols();
         }
         catch (Exception ex)
         {
@@ -333,6 +341,92 @@ static class WindowManagerTests
             """, 5, 8);
         Check("Show waehrend Run: das Fenster laeuft im laufenden Loop mit (kein Thread)", r.Unhandled == null
             && r.Lines.Contains("shown, started False, count 2") && r.Lines.Contains("done True") && r.Windows.All(w => w.OpenedOn == r.MainThread), Show(r));
+    }
+
+    // AutoClose: the close button of the frame closes the window (default); switched off, the program hears of it and closes the window itself
+    private static void AutoClose()
+    {
+        var r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var w = new Window(fb, "Closes")
+            var heard = 0
+            w.RegisterCloseRequest(func () => { heard++ })
+            print("auto " + w.AutoClose)
+            __TestCloseRequest(0)
+            w.Run()
+            print("closed " + w.IsClosed + ", heard " + heard)
+            """, 0);
+        Check("AutoClose (Vorgabe): die Schliessanfrage schliesst das Fenster, der Handler hoert sie trotzdem", r.Unhandled == null && r.Lines.Contains("auto True") && r.Lines.Contains("closed True, heard 1") && !r.Lines.Contains("TIMEOUT"), Show(r));
+
+        r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var w = new Window(fb, "Asks")
+            w.AutoClose = false
+            var requests = 0
+            var cycles = 0
+            w.RegisterCloseRequest(func () => {
+                requests++
+                if (requests == 2) { w.Close() }
+            })
+            w.onCycle = func () => {
+                cycles++
+                if (cycles == 5) { __TestCloseRequest(0) }
+            }
+            __TestCloseRequest(0)
+            w.Run()
+            print("requests " + requests + ", cycles >= 5 " + (cycles >= 5) + ", closed " + w.IsClosed)
+            """, 0);
+        Check("AutoClose = false: die Anfrage wird nur gemeldet, das Programm schliesst selbst (Close)", r.Unhandled == null && r.Lines.Contains("requests 2, cycles >= 5 True, closed True"), Show(r));
+
+        r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var w = new Window(fb, "Tick loop")
+            __TestCloseRequest(0)
+            var ticks = 0
+            while (w.Tick()) { ticks++ }
+            print("loop ended after " + ticks)
+            """, 0);
+        Check("AutoClose: eine Schleife mit Tick endet mit der Schliessanfrage", r.Unhandled == null && r.Lines.Any(l => l.StartsWith("loop ended after")), Show(r));
+    }
+
+    // Button.icon (a vector symbol in the colour of the text) and Button.image (a picture)
+    private static void ButtonSymbols()
+    {
+        var r = Run("""
+            #import "ui"
+            var fb = new Framebuffer(120, 80)
+            var win = new Window(fb, "Symbols")
+            var ui = new UI.Root(fb, win)
+            var plain = new UI.Button("Up", 0, 0, -1, -1)
+            var withIcon = new UI.Button("Up", 0, 0, -1, -1)
+            withIcon.icon = UI.Icons.Up()
+            var only = new UI.Button("", 60, 0, 30, 30)
+            only.icon = UI.Icons.Home()
+            var red = UI.Color.Rgb(255, 0, 0)
+            var pic = new UI.Button("", 0, 40, 30, 30)
+            var picture = new Framebuffer(2, 2)
+            var painter = new Renderer(picture)
+            painter.FillRect(0, 0, 2, 2, new SolidBrush(red))
+            pic.image = picture
+            var stack = new UI.StackPanel(0, 0, -1, -1, true)
+            stack.Add(plain)
+            stack.Add(withIcon)
+            ui.Add(stack)
+            ui.Add(only)
+            ui.Add(pic)
+            ui.Tick()
+            print("wider " + (withIcon.actualWidth == plain.actualWidth + 16 + 6))
+            var text = __GRPHBshGetColor(ui.theme.text.id)
+            print("icon pixel " + ((ui.renderer.GetPixel(75, 13) & 16777215) == (text & 16777215)))
+            print("face pixel " + ((ui.renderer.GetPixel(62, 2) & 16777215) != (text & 16777215)))
+            print("image pixel " + ((ui.renderer.GetPixel(15, 55) & 16777215) == (red & 16777215)))
+            win.Close()
+            """, 0);
+        Check("Button: Symbol (Geometrie in Textfarbe) und Bild werden gezeichnet, das Symbol macht den Knopf breiter", r.Unhandled == null
+            && r.Lines.SequenceEqual(new[] { "wider True", "icon pixel True", "face pixel True", "image pixel True" }), Show(r));
     }
 
     // macOS: the manager's thread only gives the beat, the program opens, pumps and shows the windows at its safe points (here switched on by hand)

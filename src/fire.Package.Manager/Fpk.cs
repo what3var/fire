@@ -32,6 +32,7 @@ namespace fire.Package.Manager
             foreach (var import in forgeCopy.Imports)
             {
                 if (!string.IsNullOrWhiteSpace(import.Prelude)) import.Prelude = Absolute(import.Prelude);
+                import.Resources = import.Resources?.ToDictionary(kv => kv.Key, kv => Absolute(kv.Value));
                 if (import.Native != null)
                 {
                     import.Native.Sources = import.Native.Sources.Select(Absolute).ToList();
@@ -68,6 +69,20 @@ namespace fire.Package.Manager
             foreach (var import in packaged.Imports)
             {
                 if (!string.IsNullOrWhiteSpace(import.Prelude)) import.Prelude = Place(import.Name, import.Prelude);
+                // the resources lie where the prelude finds them: its folder + the path it writes
+                if (import.Resources is { Count: > 0 })
+                {
+                    string folder = import.Prelude!.Contains('/') ? import.Prelude.Substring(0, import.Prelude.LastIndexOf('/') + 1) : "";
+                    var placed = new Dictionary<string, string>();
+                    foreach (var (name, file) in import.Resources)
+                    {
+                        string entry = folder + name.Replace('\\', '/');
+                        if (!used.Add(entry)) throw new PackageException($"The resource '{name}' of '{import.Name}' collides with another file of the package ('{entry}').");
+                        entries.Add((Absolute(file), entry));
+                        placed[name] = entry;
+                    }
+                    import.Resources = placed;
+                }
                 if (import.Native != null)
                 {
                     import.Native.Sources = import.Native.Sources.Select(s => Place(import.Name, s)).ToList();

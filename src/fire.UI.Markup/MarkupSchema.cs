@@ -23,6 +23,8 @@ namespace fire.UI.Markup
         Enum,
         /// <summary>The path of an image file: the script embeds the file as a resource (docs/RESOURCES.md) and loads it.</summary>
         Image,
+        /// <summary>A vector symbol: the name of one of `UI.Icons` (`Up`, `Home`, ...) or path data (`M 8 1 L 15 8 L 1 8 Z`, see UI.Geometry.Parse).</summary>
+        Geometry,
         /// <summary>The key of a `Style` of the `Resources`.</summary>
         StyleRef,
         /// <summary>The key of a `ControlTemplate` of the `Resources`.</summary>
@@ -176,7 +178,7 @@ namespace fire.UI.Markup
             }),
             Define("Button", false, "new UI.Button(\"\", 0, 0)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text),
+                new("text", PropertyKind.Text), new("icon", PropertyKind.Geometry), new("image", PropertyKind.Image), new("iconSize", PropertyKind.Int),
             }, "onClick"),
             Define("CheckBox", false, "new UI.CheckBox(\"\", 0, 0)", new PropertyDef[]
             {
@@ -279,6 +281,9 @@ namespace fire.UI.Markup
                 : Find(tag) is { IsPart: false } def ? def : null;
 
         /// <summary>The converters of the library `ui` that a binding can name without declaring them: key to class.</summary>
+        /// <summary>The ready-made symbols of `UI.Icons` (Button.icon).</summary>
+        public static readonly string[] IconNames = { "Up", "Down", "Back", "Forward", "Home", "Folder", "File", "Close", "Check", "Add" };
+
         public static readonly IReadOnlyDictionary<string, string> BuiltInConverters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Not"] = "UI.NotConverter",

@@ -235,7 +235,8 @@ namespace fire.Compiler
         }
 
         /// <summary>The key of an import the compiler knows itself (`graphics`, `windows`, `ui`, `linq`, `reflection`), else null.</summary>
-        private static string? BuiltInKey(string importName) => importName.ToLowerInvariant() switch
+        /// <summary>The key of an import whose natives are part of the virtual machine (its fire code is a standard package); null for any other.</summary>
+        public static string? BuiltInKey(string importName) => importName.ToLowerInvariant() switch
         {
             "graphics" => NativeImports.Graphics, "windows" => NativeImports.Windows, "ui" => NativeImports.Ui, "linq" => NativeImports.Linq, "reflection" => NativeImports.Reflection,
             _ => null,
@@ -434,7 +435,7 @@ namespace fire.Compiler
             // shifts the start of the user code by one source.
             firstUserSource += ImportedPreludes.Insert(
                 nativeImports, natives, processedSources,
-                preludeSource => Preprocessor.Process(preludeSource, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry), ownBuiltIn);
+                (preludeSource, folder) => Preprocessor.Process(preludeSource, folder, alreadyIncluded, registry), ownBuiltIn);
 
             // the libraries of the project come before the code of the project, the ones that others need first
             if (libraryFiles.Count > 0)

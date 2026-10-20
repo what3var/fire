@@ -501,6 +501,87 @@ static class ProjectTests
         var resWs = Workspace.Open(Path.Combine(m0, "R", "R.fireproj"));
         Check("Inhalt: new Resource(...) holt die Datei aus dem Projektordner (Pfad relativ zur Quelldatei)", RunPlan(BuildPlan.Create(resWs, resWs.Projects[0])).Trim() == "hello from a resource" && !resWs.Projects[0].Files.Any(f => f.EndsWith("hello.txt")));
 
+        // a library with resources: packing rewrites the paths relative to the project and puts the files into the package; installed, the program that imports it finds them
+        Write(m0, "ResLib/ResLib.fireproj", """{ "name": "ResLib", "type": "library", "settings": { "version": "1.0.0" } }""");
+        Write(m0, "ResLib/assets/greeting.txt", "hello from a package");
+        Write(m0, "ResLib/assets/more/second.txt", "second file");
+        Write(m0, "ResLib/code/reslib.script", "class ResLib {\n    static string Greeting() { return new Resource(\"../assets/greeting.txt\").Text() }\n    // new Resource(\"in a comment stays\")\n    static string Second() { return new Resource(\"../assets/more/second.txt\").Text() }\n}\n");
+        var resLibWs = Workspace.Open(Path.Combine(m0, "ResLib", "ResLib.fireproj"));
+        string resLibPack = ProjectBuilder.PackLibrary(BuildPlan.Create(resLibWs, resLibWs.Projects[0]), Path.Combine(m0, "out"));
+        var resLibManifest = fire.Package.Manager.Fpk.ReadManifest(resLibPack);
+        var resLibEntries = System.IO.Compression.ZipFile.OpenRead(resLibPack).Entries.Select(e => e.FullName).ToList();
+        Check("Paket-Ressourcen: die Dateien gehen ins Paket, neben das Prelude", resLibManifest.Imports[0].Resources is { Count: 2 } r2 && r2["assets/greeting.txt"] == "ResLib/assets/greeting.txt"
+            && resLibEntries.Contains("ResLib/assets/greeting.txt") && resLibEntries.Contains("ResLib/assets/more/second.txt"), string.Join(", ", resLibEntries));
+        string resLibExtracted = Path.Combine(m0, "extracted");
+        fire.Package.Manager.Fpk.Extract(resLibPack, resLibExtracted);
+        string resLibPrelude = File.ReadAllText(Path.Combine(resLibExtracted, "ResLib", "ResLib.fire"));
+        Check("Paket-Ressourcen: das Prelude nennt die Pfade relativ zum Projekt, Kommentare bleiben", resLibPrelude.Contains("new Resource(\"assets/greeting.txt\")") && resLibPrelude.Contains("new Resource(\"assets/more/second.txt\")") && resLibPrelude.Contains("new Resource(\"in a comment stays\")"), resLibPrelude);
+        var storeBefore = fire.Package.Manager.PackageStore.Default;
+        try
+        {
+            storeBefore.Install(resLibPack);
+            var usesOutput = new StringBuilder();
+            var usesSession = RuntimeSession.Build(new[] { "#import \"ResLib\"\nprint(ResLib.Greeting())\nprint(ResLib.Second())\n" }, null, args => { usesOutput.AppendLine(args[0].ToString()); return Value.MakeUndefined(); });
+            usesSession.Run();
+            Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", usesOutput.ToString().Replace("\r\n", "\n") == "hello from a package\nsecond file\n", usesOutput.ToString());
+        }
+        catch (Exception ex) { Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", false, Describe(ex)); }
+        finally { storeBefore.Remove("ResLib"); }
+        Write(m0, "BadRes/BadRes.fireproj", """{ "name": "BadRes", "type": "library" }""");
+        Write(m0, "BadRes/bad.script", "class BadRes { static string T() { return new Resource(\"missing.txt\").Text() } }\n");
+        var badResWs = Workspace.Open(Path.Combine(m0, "BadRes", "BadRes.fireproj"));
+        Check("Paket-Ressourcen: eine fehlende Datei ist ein Fehler", Throws(() => ProjectBuilder.PackLibrary(BuildPlan.Create(badResWs, badResWs.Projects[0]), Path.Combine(m0, "out"))));
+
+        // ---- live diagnostics of the editor in a project: the other files are compiled along, only the errors of the open file are shown ---------------------
+        string nsDir = Path.Combine(root, "ns");
+        Write(nsDir, "NsLib/NsLib.fireproj", """{ "name": "NsLib", "type": "library" }""");
+        string nsA = Write(nsDir, "NsLib/a.fire", "namespace Geo {\n    class Shape {\n        int area = 3\n        int Area() { return this.area }\n    }\n    class M { static int Max(int a, int b) { return a > b ? a : b } }\n    enum Kind { Square, Round }\n}\n");
+        string nsB = Write(nsDir, "NsLib/b.fire", "namespace Geo {\n    class Square : Shape {\n        int Side() { return Geo.M.Max(1, 2) + this.Area() + this.area + Geo.Kind.Round! }\n    }\n}\n");
+        string nsC = Write(nsDir, "NsLib/c.fire", "namespace Geo {\n    class Broken {\n        int X() { return missingInOtherFile }\n    }\n}\n");
+        var nsWs = Workspace.Open(Path.Combine(nsDir, "NsLib", "NsLib.fireproj"));
+        var nsPlan = BuildPlan.Create(nsWs, nsWs.Projects[0]);
+        List<(string Path, string Text)> OthersOf(string self) => nsPlan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
+        var bDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
+        Check("Editor: Namespaces, Basisklassen und Enums aus anderen Dateien des Projekts sind bekannt; Fehler anderer Dateien erscheinen nicht", bDiag.Count(d => d.IsError) == 0, string.Join("\n", bDiag.Select(d => d.Line + ": " + d.Message)));
+        var bBroken = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB).Replace("this.area +", "this.area + notThere +"), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
+        Check("Editor: ein Fehler in der offenen Datei wird mit Zeile gemeldet", bBroken.Any(d => d.IsError && d.Line == 3 && d.Message.Contains("notThere")), string.Join("\n", bBroken.Select(d => d.Line + ": " + d.Message)));
+        var cDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsC), OthersOf(nsC), Path.GetDirectoryName(nsC), nsPlan);
+        Check("Editor: der Fehler der anderen Datei steht in ihr selbst", cDiag.Any(d => d.IsError && d.Line == 3 && d.Message.Contains("missingInOtherFile")), string.Join("\n", cDiag.Select(d => d.Line + ": " + d.Message)));
+        File.WriteAllText(nsC, "namespace Geo { class Broken { int X( { } }\n");
+        var bWithUnparsable = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), BuildPlan.Create(nsWs, nsWs.Projects[0]));
+        Check("Editor: eine andere Datei, die gerade nicht lesbar ist, macht in der offenen keine Fehler", !bWithUnparsable.Any(d => d.IsError && d.Message.Contains("Broken")), string.Join("\n", bWithUnparsable.Select(d => d.Line + ": " + d.Message)));
+        // the standard libraries themselves (the solution packages/Packages.firesln): a file of `ui` knows the namespace UI of the other files
+        string uiSource = Path.Combine(StandardSources.DefaultFolder, "ui", "ui.fireproj");
+        if (File.Exists(uiSource))
+        {
+            var uiWs = Workspace.Open(uiSource);
+            var uiLibPlan = BuildPlan.Create(uiWs, uiWs.Projects[0]);
+            string controls = uiLibPlan.Sources.First(f => Path.GetFileName(f.Path) == "30_controls.fire").Path;
+            var uiDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(controls), uiLibPlan.Sources.Where(f => f.Path != controls).Select(f => (f.Path, f.Text)).ToList(), Path.GetDirectoryName(controls), uiLibPlan);
+            Check("Editor: packages/ui/30_controls.fire ohne Fehler (UI aus den anderen Dateien bekannt)", uiDiag.Count(d => d.IsError) == 0, string.Join("\n", uiDiag.Take(10).Select(d => d.Line + ": " + d.Message)));
+        }
+        else Check("Editor: die Quellen der Standardbibliotheken liegen neben dem Programm", false, uiSource);
+        // every file of every standard library (the solution packages/Packages.firesln), its tests included: no error in the editor
+        string packagesSln = Path.Combine(StandardSources.DefaultFolder, "Packages.firesln");
+        if (File.Exists(packagesSln))
+        {
+            var pkgWs = Workspace.Open(packagesSln);
+            var problems = new List<string>();
+            foreach (var project in pkgWs.Projects)
+            {
+                var pkgPlan = BuildPlan.Create(pkgWs, project);
+                var files = pkgPlan.Sources.Select(f => (f.Path, f.Text)).ToList();
+                foreach (var testFile in Directory.Exists(Path.Combine(project.Directory, "testing")) ? Directory.GetFiles(Path.Combine(project.Directory, "testing"), "*.fire") : Array.Empty<string>())
+                    if (!files.Any(f => ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), Path.GetFullPath(testFile)))) files.Add((testFile, File.ReadAllText(testFile)));
+                foreach (var (file, text) in files)
+                {
+                    var diag = fire.Editor.LiveDiagnostics.AnalyzeInProject(text, files.Where(f => f.Path != file).ToList(), Path.GetDirectoryName(file), pkgPlan);
+                    foreach (var d in diag.Where(d => d.IsError).Take(3)) problems.Add($"{project.Name}/{Path.GetFileName(file)}:{d.Line}: {d.Message}");
+                }
+            }
+            Check("Editor: in den Standardbibliotheken (Packages.firesln) zeigt keine Datei Fehler", problems.Count == 0, string.Join("\n", problems.Take(40)));
+        }
+
         // ---- the code of a project is included on its own: no #include, markup files too ---------------------------------------------------
         string m = Path.Combine(root, "markup");
         Write(m, "Ui/Ui.fireproj", """{ "name": "Ui" }""");

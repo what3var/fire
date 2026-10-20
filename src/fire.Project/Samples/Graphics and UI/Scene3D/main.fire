@@ -6,7 +6,6 @@
 
 class MainWin : Window
 {
-	public bool closing = false;
     construct(Framebuffer buffer, string caption) : base(buffer, caption)
     {
     	AutoResize = true
@@ -19,9 +18,6 @@ var fb = new Framebuffer(640, 480)
 var win = new MainWin(fb, "Scene3D")
 var scene = new Scene()
 var renderer = new Renderer(fb)
-
-win.RegisterCloseRequest(func () on win => {this.closing = true});
-
 
 var floor = new Object(Template.Plane, 0m, 0m, 0m, 8m, 0m, 8m)
 floor.Texture = Texture.Checker(64, 8, S3D.Rgb(235, 235, 235), S3D.Rgb(90, 100, 120))
@@ -94,7 +90,7 @@ var whiteBrush = new SolidBrush(15)
 var blackBrush = new SolidBrush(0)
 var lastSecond = DateTime.Now.Second
 
-while (win.Tick() && !win.closing) {
+while (win.Tick()) {
     box.Rotate(0deg, 1deg, 0deg)
     //cone.Rotate(0deg, -2deg, 0deg)
     cam.Render()

@@ -83,6 +83,12 @@ namespace fire.Package.Manager
                 if (!seen.Add(import.Name)) problems.Add(where + "the name is used twice.");
                 if (string.IsNullOrWhiteSpace(import.Prelude) && import.Native == null) problems.Add(where + "needs a 'prelude' and/or a 'native' part.");
                 if (!string.IsNullOrWhiteSpace(import.Prelude) && fileExists != null && !fileExists(import.Prelude)) problems.Add(where + $"the prelude '{import.Prelude}' does not exist.");
+                foreach (var (name, file) in import.Resources ?? new())
+                {
+                    if (string.IsNullOrWhiteSpace(import.Prelude)) { problems.Add(where + "has resources but no prelude that uses them."); break; }
+                    if (Path.IsPathRooted(name) || name.Replace('\\', '/').Split('/').Any(part => part == ".." || part.Length == 0)) problems.Add(where + $"the resource '{name}' must be a path below the prelude's folder.");
+                    else if (fileExists != null && !fileExists(file)) problems.Add(where + $"the resource '{name}' ('{file}') does not exist.");
+                }
                 if (import.Native is { } native)
                 {
                     if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
@@ -114,6 +120,9 @@ namespace fire.Package.Manager
         public List<string> Requires { get; set; } = new();
         /// <summary>The natives as C++ source (only for the native backend). Optional.</summary>
         public PackageNative? Native { get; set; }
+        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/RESOURCES.md): the key is the path as the prelude writes it (relative to the prelude's folder,
+        /// with `/`), the value the file - in a forge file where it is now, in a package where it lies in the package (the prelude's folder + the key).</summary>
+        public Dictionary<string, string>? Resources { get; set; }
     }
 
     /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need

@@ -30,6 +30,12 @@ while (ui.Tick()) {                      // zeichnen, Fenster-Zyklus, Ereignisse
 
 ## Steuerelemente
 
+**Symbole auf Knöpfen.** `button.icon` ist eine Vektorform (`UI.Geometry`), die in der Textfarbe gezeichnet wird (ausgegraut, wenn der Knopf gesperrt ist):
+fertige gibt es in `UI.Icons` (`Up`, `Down`, `Back`, `Forward`, `Home`, `Folder`, `File`, `Close`, `Check`, `Add`, Raster 16 x 16) oder eigene mit
+`UI.Geometry.Parse("M 8 1 L 15 8 L 1 8 Z")` (geschlossene Figuren werden gefüllt, offene als Linie gezeichnet). `button.image` ist ein Bild (`Framebuffer`), etwa
+`Framebuffer.FromResource(new Resource("icons/home.png"))` - auch aus einem Paket (docs/RESOURCES.md). Beides steht vor dem Text (oder allein, ohne Text), `iconSize` Pixel
+groß (16); ein Knopf ohne feste Größe wird entsprechend breiter.
+
 Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibliothek diese Elemente mit; alle erben von `UI.Element`, haben also Layout-Felder, `style`, `template` (wo es Sinn hat) und lassen sich stylen:
 
 - **`ScrollViewer(x, y, w, h)`**: zeigt EIN Kind (`SetContent(element)`) in einem Ausschnitt; Bildlaufleisten erscheinen, wenn es nicht hineinpasst (`vmode`/`hmode` = `UI.ScrollMode.Disabled/Auto/Visible`, senkrecht Auto, waagerecht Disabled: dann wird das Kind auf die Breite des Ausschnitts begrenzt, ein WrapPanel bricht um).

@@ -53,7 +53,8 @@ namespace fire.Compiler
             {
                 string preludePath = Path.Combine(workDir, import + ".fire");
                 var imports = new List<string>();
-                File.WriteAllText(preludePath, Flatten(plan.Sources, imports));
+                var resources = new Dictionary<string, string>();
+                File.WriteAllText(preludePath, Flatten(plan.Sources, imports, resources, project.Directory));
 
                 var manifest = new PackageManifest
                 {
@@ -61,6 +62,8 @@ namespace fire.Compiler
                 };
                 var lib = plan.Libraries.Values.Where(l => plan.Project.Project.References.Any(r => r.IsProject && Path.GetFullPath(r.Project!.Replace('\\', '/'), project.Directory) == l.Project.FilePath)).ToList();
                 var packageImport = new PackageImport { Name = import, Prelude = preludePath, Native = plan.Native?.Native, Standard = project.Project.Standard };   // the C++ goes into the package (copied by the forge)
+                // the files of `new Resource("...")` go into the package, next to the prelude, at the paths the prelude now writes (relative to the project)
+                if (resources.Count > 0) packageImport.Resources = resources;
                 foreach (var l in lib) { packageImport.Requires.Add(l.ImportName); manifest.Dependencies.Add(l.Name); }
                 // what the files import (`#import "time"`) is required by the package: whoever imports it gets those too (the lines are not in the prelude)
                 foreach (var name in imports)
@@ -129,7 +132,9 @@ namespace fire.Compiler
 
         /// <summary>The files of a library as one text: an `#include` is replaced by the file it names (once), because the prelude of a package is read where no folder of the project is known.</summary>
         /// <param name="imports">Gets the names of the `#import` lines, which are left out (a package requires its imports instead).</param>
-        public static string Flatten(IReadOnlyList<SourceFile> files, List<string>? imports = null)
+        /// <param name="resources">Gets the files of `new Resource("path")`: the path in the text becomes the file's path relative to <paramref name="baseDirectory"/> (a file outside of
+        /// it: `external/name`), the key of the map; the value is the file.</param>
+        public static string Flatten(IReadOnlyList<SourceFile> files, List<string>? imports = null, Dictionary<string, string>? resources = null, string? baseDirectory = null)
         {
             var sb = new StringBuilder();
             var done = new HashSet<string>(ProjectFiles.PathComparer);
@@ -146,7 +151,7 @@ namespace fire.Compiler
                         continue;
                     }
                     var m = Include.Match(line);
-                    if (!m.Success) { sb.AppendLine(line); continue; }
+                    if (!m.Success) { sb.AppendLine(resources != null ? Preprocessor.MapResourcePaths(line, p => ResourceKey(p, path)) : line); continue; }
                     string target = Path.GetFullPath(m.Groups[1].Value, Path.GetDirectoryName(Path.GetFullPath(path))!);
                     if (chain.Contains(target, ProjectFiles.PathComparer)) throw new ProjectException($"Circular include of '{target}'.");
                     string included;
@@ -155,6 +160,19 @@ namespace fire.Compiler
                     catch (fire.UI.Markup.MarkupException ex) { throw new ProjectException($"{Path.GetFileName(target)}: {ex.Message}"); }
                     Add(target, included, chain.Append(target).ToList());
                 }
+            }
+            string ResourceKey(string written, string file)
+            {
+                string full = Path.GetFullPath(written, Path.GetDirectoryName(Path.GetFullPath(file))!);
+                if (!File.Exists(full)) throw new ProjectException($"{Path.GetFileName(file)}: the resource '{written}' ('{full}') does not exist.");
+                string root = Path.GetFullPath(baseDirectory ?? Path.GetDirectoryName(Path.GetFullPath(file))!);
+                string rel = Path.GetRelativePath(root, full).Replace('\\', '/');
+                if (rel.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(rel)) rel = "external/" + Path.GetFileName(full);
+                string key = rel;
+                for (int k = 2; resources!.TryGetValue(key, out var other) && !ProjectFiles.PathComparer.Equals(other, full); k++)
+                    key = rel.Substring(0, rel.LastIndexOf('/') + 1) + k + "_" + Path.GetFileName(full);
+                resources[key] = full;
+                return key;
             }
             foreach (var f in files) Add(f.Path, f.Text, new List<string> { Path.GetFullPath(f.Path) });
             return sb.ToString();

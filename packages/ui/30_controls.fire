@@ -26,10 +26,15 @@ namespace UI {
         }
     }
 
+    // A button: its text and/or a symbol in front of it - `icon` (a UI.Geometry, a vector shape such as UI.Icons.Up(), drawn in the colour of the text) or
+    // `image` (a Framebuffer, such as Framebuffer.FromResource(new Resource("icons/home.png"))), each `iconSize` pixels big.
     class Button : Element {
         string text
         lambda onClick
         bool clicked = false
+        UI.Geometry icon
+        Framebuffer image
+        int iconSize = 16
 
         construct(string text, int x = 0, int y = 0, int width = 90, int height = 26) : base(x, y, width, height) {
             this.text = text
@@ -39,10 +44,59 @@ namespace UI {
 
         string StyleKey() { return "Button" }
 
-        // Without a fixed size (width/height = -1) as big as the text plus margin
+        // Without a fixed size (width/height = -1) as big as the symbol and the text plus margin
         undefined MeasureCore(Root root, int aw, int ah) {
-            this.cw = this.TextWidth(root, this.text) + 24
-            this.ch = this.TextHeight(root) + 12
+            this.cw = this.ContentWidth(root) + 24
+            this.ch = UI.M.Max(this.TextHeight(root), this.HasSymbol() ? this.iconSize : 0) + 12
+        }
+
+        bool HasSymbol() { return this.icon != undefined || this.image != undefined }
+
+        // symbol, gap, text
+        int ContentWidth(Root root) {
+            var w = 0
+            if (this.HasSymbol()) { w = this.iconSize }
+            if (this.text != undefined && this.text != "") {
+                if (w > 0) { w = w + 6 }
+                w = w + this.TextWidth(root, this.text)
+            }
+            return w
+        }
+
+        // Draws the symbol into the square (x, y, size): the picture scaled to fit, the geometry scaled to fit and filled (closed figures) or drawn (open ones) with `brush`.
+        undefined DrawSymbol(Root root, int x, int y, Brush brush) {
+            var size = this.iconSize
+            var picture = this.image
+            if (picture != undefined) {
+                var sw = picture.Width()
+                var sh = picture.Height()
+                if (sw > 0 && sh > 0) {
+                    var dw = size
+                    var dh = sh * size / sw
+                    if (dh > size) {
+                        dh = size
+                        dw = sw * size / sh
+                    }
+                    root.renderer.BlitScaled(picture, 0, 0, sw, sh, x + (size - dw) / 2, y + (size - dh) / 2, UI.M.Max(1, dw), UI.M.Max(1, dh), 2)
+                }
+                return
+            }
+            var g = this.icon
+            if (g == undefined) { return }
+            var box = UI.M.Max(g.Width(), g.Height()) + 1
+            var scale = size * 1.0 / box
+            var pen = new Pen(__GRPHBshGetColor(brush.id), UI.M.Max(1, size / 8))
+            for (var i = 0; i < g.figures.count; i = i + 1) {
+                var f = g.figures[i]
+                if (f.Count() < 2) { continue }
+                var pts = new float[f.points.count]
+                for (var k = 0; k < f.points.count; k = k + 2) {
+                    pts[k] = x + f.points[k] * scale
+                    pts[k + 1] = y + f.points[k + 1] * scale
+                }
+                if (f.closed && f.Count() >= 3) { root.renderer.FillPolygon(pts, brush) }
+                else { root.renderer.DrawPath(pts, pen, f.closed) }
+            }
         }
 
         // Has the button been clicked since the last query? (resets the flag)
@@ -76,9 +130,15 @@ namespace UI {
             var color = theme.text
             if (this.foreground != undefined) { color = this.foreground }
             if (!this.enabled) { color = theme.textDisabled }
-            var tx = ax + (this.actualWidth - this.TextWidth(root, this.text)) / 2
-            var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
-            this.DrawString(root, tx, ty, this.text, color)
+            var tx = ax + (this.actualWidth - this.ContentWidth(root)) / 2
+            if (this.HasSymbol()) {
+                this.DrawSymbol(root, tx, ay + (this.actualHeight - this.iconSize) / 2, color)
+                tx = tx + this.iconSize + 6
+            }
+            if (this.text != undefined && this.text != "") {
+                var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
+                this.DrawString(root, tx, ty, this.text, color)
+            }
         }
 
         undefined MouseDown(Root root, int button, int px, int py) {

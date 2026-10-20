@@ -99,6 +99,14 @@ class Window {
         set { __GRPHWinSetAutoResize(this.id, value) }
     }
 
+    // true (default): when the user asks to close the window (the button in its frame, Alt+F4), it closes - Tick/Cycle say false, a Run or Show(true)
+    // waiting for it ends. Handlers of RegisterCloseRequest still hear of it. false: the request is only reported (EventType.CloseRequest) and the
+    // program decides - e.g. asks whether to save - and closes the window itself with Close().
+    bool AutoClose {
+        get { return __GRPHWinGetAutoClose(this.id) }
+        set { __GRPHWinSetAutoClose(this.id, value) }
+    }
+
     // true (default): a finger on the touchscreen ALSO triggers mouse events (as SDL does by itself), so a program that only listens to the mouse can be operated with a finger.
     // false: only the touch events (EventType.TouchDown/TouchMove/TouchUp). A UI.Root switches it off and evaluates the fingers itself.
     bool TouchMouse {

@@ -223,9 +223,13 @@ namespace Dialogs {
             top.margin = new UI.Thickness(8, 8, 8, 4)
             top.SetColumns("auto, auto, *")
             top.SetRows("auto")
-            var up = new UI.Button("Up", 0, 0, 56, 26)
+            var up = new UI.Button("Up", 0, 0, 64, 26)
+            up.icon = UI.Icons.Up()
+            up.iconSize = 12
             up.onClick = func () on this => { this.GoUp() }
-            var home = new UI.Button("Home", 0, 0, 64, 26)
+            var home = new UI.Button("Home", 0, 0, 80, 26)
+            home.icon = UI.Icons.Home()
+            home.iconSize = 12
             home.onClick = func () on this => { this.Navigate(this.Home()) }
             this.placeBox = new UI.TextBox("", 0, 0, -1, 26)
             this.placeBox.margin = new UI.Thickness(6, 0, 0, 0)

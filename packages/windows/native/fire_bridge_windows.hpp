@@ -63,6 +63,8 @@ struct WindowState {
     bool touchMouse = true;    // Window.TouchMouse
     bool autoResize = false;   // a resize of the window resizes the framebuffer (Window.AutoResize)
     bool blocked = false;      // a modal window of its manager is open: its input is dropped (Window.Show(true))
+    bool autoClose = true;     // a close request (the frame's button) closes the window (Window.AutoClose)
+    bool closeRequested = false;
     ~WindowState() {
         for (Callback& c : callbacks) release(c.lam);
         if (fb) gfx::fbRelease(fb);
@@ -223,7 +225,12 @@ inline bool threaded(WindowState* w) { return w->mgr && w->mgr->ownsWindows(); }
 
 /// The events that a blocked window still gets: a resize and the end of the program.
 inline void dropBlocked(WindowState* w, std::vector<plat::disp::Event>& events) {
-    if (!w->blocked) return;
+    if (!w->blocked) {
+        // AutoClose: the request closes the window (its handlers still hear of it)
+        if (w->autoClose)
+            for (const plat::disp::Event& e : events) if (e.type == plat::disp::EV_CLOSE_REQUEST) w->closeRequested = true;
+        return;
+    }
     events.erase(std::remove_if(events.begin(), events.end(), [](const plat::disp::Event& e) { return e.type != plat::disp::EV_RESIZE && e.type != plat::disp::EV_CLOSE; }), events.end());
 }
 
@@ -517,7 +524,7 @@ inline Value WinPump(Value id) {
     }
     dropBlocked(w, events);
     deliver(id, w, events);
-    return Bool(open);
+    return Bool(open && !w->closeRequested);
 }
 
 /// The second half of a cycle: shows the framebuffer - here, or (a started manager) hands a copy to the manager's thread.
@@ -560,7 +567,7 @@ inline Value WinTick(Value id) {
         dispatch(w, e);
         if (!windows().list[(size_t)i]) break;   // a callback destroyed the window
     }
-    return Bool(open);
+    return Bool(open && !w->closeRequested);
 }
 inline Value WinEnableEvents(Value id) { windowOf(id)->queueOn = true; return Bool(true); }
 inline Value WinNextEvent(Value id, OwnList* list) {
@@ -619,6 +626,8 @@ inline Value WinSetTouchMouse(Value id, Value on) {
 inline Value WinGetTouchMouse(Value id) { return Bool(windowOf(id)->touchMouse); }
 inline Value WinSetAutoResize(Value id, Value on) { windowOf(id)->autoResize = on.i != 0; return Undef(); }
 inline Value WinGetAutoResize(Value id) { return Bool(windowOf(id)->autoResize); }
+inline Value WinSetAutoClose(Value id, Value on) { windowOf(id)->autoClose = on.i != 0; return Undef(); }
+inline Value WinGetAutoClose(Value id) { return Bool(windowOf(id)->autoClose); }
 inline Value WinSetBlocked(Value id, Value on) { windowOf(id)->blocked = on.i != 0; return Undef(); }
 /// The program runs the cycle the manager's thread asked for: the next one may be asked for (also when that cycle does nothing, see RunModal).
 inline Value WinMgrServed(Value mgrId) { mgrOf(mgrId)->pending.store(0, std::memory_order_relaxed); return Undef(); }

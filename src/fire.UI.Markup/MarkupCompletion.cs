@@ -242,6 +242,7 @@ namespace fire.UI.Markup
             PropertyKind.Collection => "a list: {Binding ...}",
             PropertyKind.Code => "{Expr ...}",
             PropertyKind.Image => "the path of an image",
+            PropertyKind.Geometry => "a symbol (Up, Home, ...) or path data",
             _ => p.Kind.ToString().ToLowerInvariant(),
         };
 
@@ -318,6 +319,7 @@ namespace fire.UI.Markup
                 PropertyKind.DataTemplateRef => Words(info.DataTemplates, "data template"),
                 PropertyKind.ViewRef => Words(info.Views, "collection view"),
                 PropertyKind.Color => Words(new[] { "#000000", "#FFFFFF" }, "colour"),
+                PropertyKind.Geometry => Words(MarkupSchema.IconNames, "symbol"),
                 _ => Enumerable.Empty<MarkupCompletionItem>(),
             };
             bool refKind = property.Kind is PropertyKind.StyleRef or PropertyKind.TemplateRef or PropertyKind.DataTemplateRef or PropertyKind.ViewRef;
