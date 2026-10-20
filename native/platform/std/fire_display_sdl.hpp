@@ -41,7 +41,8 @@ public:
         vsync_ = vsync;
         winW_ = width; winH_ = height;
         SDL_SetMainReady();
-        if (SDL_WasInit(SDL_INIT_VIDEO) == 0 && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
+        // every window holds a reference of its own (SDL counts them): closing one window must not shut the video down under the others
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
         ownsVideo_ = true;
         window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_RESIZABLE);
         if (!window_) { close(); return false; }
@@ -51,7 +52,8 @@ public:
         SDL_StartTextInput();
         windowId_ = SDL_GetWindowID(window_);
         // joysticks are an extra: without a driver the window opens all the same (the devices that are plugged in report themselves as SDL_JOYDEVICEADDED)
-        if (SDL_WasInit(SDL_INIT_JOYSTICK) == 0 && SDL_InitSubSystem(SDL_INIT_JOYSTICK) == 0) ownsJoystick_ = true;
+        // (a reference of its own as well, see above)
+        if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) == 0) ownsJoystick_ = true;
         SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, touchMouse_ ? "1" : "0");
 #if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT)
         selftest();

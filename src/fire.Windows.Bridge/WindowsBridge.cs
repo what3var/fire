@@ -90,6 +90,10 @@ namespace fire.Windows.Bridge
                 ["MgrDetach"] = args => Value.MakeBool(mgr.DetachFromManager((int)args[0].AsInt(), (int)args[1].AsInt())),
                 ["MgrStart"] = args => args[1].Kind == ValueKind.Lambda && mgr.StartManager((int)args[0].AsInt(), (LambdaValue)args[1].AsLambda()) ? Value.MakeBool(true) : Value.MakeBool(false),
                 ["MgrWait"] = args => { mgr.ManagerWait((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
+                // a modal window of its manager is open: the input of this window is dropped (Window.Show(true))
+                ["SetBlocked"] = args => { mgr.SetBlocked((int)args[0].AsInt(), args[1].AsBool()); return Value.MakeUndefined(); },
+                // the program runs the cycle its manager's thread asked for: the next one may be asked for
+                ["MgrServed"] = args => { mgr.ManagerServed((int)args[0].AsInt()); return Value.MakeUndefined(); },
             };
         }
         
@@ -116,6 +120,8 @@ namespace fire.Windows.Bridge
                 ["MgrDetach"] = args => Value.MakeUndefined() /*STUB*/,
                 ["MgrStart"] = args => Value.MakeUndefined() /*STUB*/,
                 ["MgrWait"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetBlocked"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrServed"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

@@ -167,9 +167,11 @@ Wer das Strecken des festen Bildes vorzieht, setzt `window.AutoResize = false`.
 ## Show, Run und der Fenster-Manager
 
 Die Fenster laufen über einen `WindowManager` (docs/CONSOLE.md, *Fenster-Manager*): der Root hängt sich an den Zyklus seines Fensters (`window.onCycle`) und verteilt dort die
-Ereignisse, zeichnet und ruft `onTick`. `ui.Show()` zeigt das Fenster und lässt das Programm weiterlaufen (der Thread des Managers zeigt es, die Ereignisse behandelt das
-Programm an seinen sicheren Punkten und am Ende wartet es, bis das Fenster zu ist); `ui.Run()` lässt den Manager blockierend auf dem aufrufenden Thread laufen, bis die Fenster
-zu sind. `while (ui.Tick()) { ... }` geht wie bisher: ein Zyklus dieses Roots (und seiner angehängten).
+Ereignisse, zeichnet und ruft `onTick`. `ui.Show()` zeigt das Fenster und lässt das Programm weiterlaufen (läuft der Manager noch nicht, zeigt es sein Thread; die Ereignisse
+behandelt das Programm an seinen sicheren Punkten und am Ende wartet es, bis das Fenster zu ist); `ui.Show(true)` ist **modal**: es kehrt erst zurück, wenn das Fenster zu ist,
+und die anderen Fenster des Managers bekommen so lange keine Eingaben - so öffnet ein Klick einen Dialog (docs/DIALOGS.md). `ui.Run()` ist der Startpunkt: es lässt den Manager
+blockierend auf dem aufrufenden Thread laufen, bis die Fenster zu sind - läuft er schon, wird das Fenster dort nur gezeigt (kein zweiter Loop). `while (ui.Tick()) { ... }` geht
+wie bisher: ein Zyklus dieses Roots (und seiner angehängten).
 
 ## Mehrere Fenster
 

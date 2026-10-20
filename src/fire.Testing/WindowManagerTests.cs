@@ -138,6 +138,8 @@ static class WindowManagerTests
             Started();
             Managers();
             UiRoot();
+            ShowAndRun();
+            Cooperative();
         }
         catch (Exception ex)
         {
@@ -235,6 +237,134 @@ static class WindowManagerTests
             """, 0, 4);
         Check("Mehrere Manager: Konstruktor-Parameter haengt an, Attach verschiebt, Detach loest, Tick zaehlt", r.Unhandled == null
             && r.Lines.SequenceEqual(new[] { "a: True, b: True, default: True", "b: True, count 2", "moved: True, mine 1, default 1", "detached: True, mine 0", "ticks 3" }), Show(r));
+    }
+
+    // Show(modal) and Run(): the manager of the window, started with a thread only when nobody runs it; a modal window blocks the input of the others
+    private static void ShowAndRun()
+    {
+        // modal from an event while Run runs the manager on the program's thread: the dialog is cycled there, the main window takes no input meanwhile
+        var r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var main = new Window(fb, "Main")
+            main.RegisterKeyDown(func (int k, int s, int m, bool rep) => {
+                if (k == 65) {
+                    var dlg = new Window(fb, "Dialog")
+                    print("modal opens, running " + main.Manager.IsRunning)
+                    __TestKey(0, 66)
+                    __TestKey(1, 67)
+                    dlg.RegisterKeyDown(func (int k2, int s2, int m2, bool r2) => { print("dialog key " + k2 + ", main blocked " + main.IsBlocked) })
+                    dlg.Show(true)
+                    print("modal closed " + dlg.IsClosed + ", main blocked " + main.IsBlocked + ", same manager " + (dlg.Manager == undefined))
+                    __TestKey(0, 68)
+                } else { print("key " + k) }
+            })
+            __TestKey(0, 65)
+            main.Run()
+            print("end, started " + WindowManager.Default.IsStarted)
+            """, 30, 6);
+        Check("Show(true) in einem Ereignis waehrend Run: der Dialog laeuft auf dem Programm-Thread, das Hauptfenster bekommt solange keine Eingaben", r.Unhandled == null
+            && r.Lines.Contains("modal opens, running True") && r.Lines.Contains("dialog key 67, main blocked True")
+            && r.Lines.Contains("modal closed True, main blocked False, same manager True") && !r.Lines.Contains("key 66") && r.Lines.Contains("key 68")
+            && r.Lines.LastOrDefault() == "end, started False", Show(r));
+        Check("Show(true) waehrend Run: kein eigener Thread, alles auf dem Programm-Thread", r.Windows.Count == 2
+            && r.Windows.All(w => w.OpenedOn == r.MainThread && w.PumpedOn.SetEquals(new[] { r.MainThread })) && r.Windows[1].Disposed, Show(r));
+
+        // modal without a running manager: it is started with a thread, Show(true) waits for the window
+        r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var w = new Window(fb, "Modal")
+            var cycles = 0
+            w.onCycle = func () => { cycles++ }
+            w.Show(true)
+            print("after modal: closed " + w.IsClosed + ", started " + WindowManager.Default.IsStarted + ", cycled " + (cycles > 2) + ", left " + WindowManager.Default.Count)
+            """, 8);
+        Check("Show(true) ohne laufenden Manager: er bekommt einen Thread, Show wartet, bis das Fenster zu ist", r.Unhandled == null
+            && r.Lines.Contains("after modal: closed True, started True, cycled True, left 0") && r.Windows.Count == 1 && r.Windows[0].OpenedOn != r.MainThread && r.HoldsAfter == 0, Show(r));
+
+        // Close() ends a modal window from its own event
+        r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var w = new Window(fb, "Closes itself")
+            w.RegisterKeyDown(func (int k, int s, int m, bool rep) => { w.Close() })
+            __TestKey(0, 13)
+            w.Show(true)
+            print("closed " + w.IsClosed)
+            """, 0);
+        Check("Close() beendet ein modales Fenster", r.Unhandled == null && r.Lines.Contains("closed True") && !r.Lines.Contains("TIMEOUT") && r.Windows.Count == 1 && r.Windows[0].Disposed, Show(r));
+
+        // a second Run (from an event) does not start a loop of its own; Run of another manager there starts that one with a thread
+        r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var a = new Window(fb, "A")
+            var b = new Window(fb, "B")
+            var mine = new WindowManager()
+            var c = new Window(fb, "C", mine)
+            a.RegisterKeyDown(func (int k, int s, int m, bool rep) => {
+                b.Run()
+                print("inner run returned, b on default " + (b.Manager == WindowManager.Default) + ", started " + WindowManager.Default.IsStarted)
+                c.Run()
+                print("other manager started " + mine.IsStarted)
+            })
+            __TestKey(0, 13)
+            a.Run()
+            print("outer run done, b closed " + b.IsClosed)
+            """, 10, 14, 6);
+        Check("Run aus einem Ereignis: kein zweiter Loop, das Fenster laeuft im aeusseren mit; Run eines anderen Managers startet diesen mit Thread", r.Unhandled == null
+            && r.Lines.Contains("inner run returned, b on default True, started False") && r.Lines.Contains("other manager started True")
+            && r.Lines.Contains("outer run done, b closed True") && r.Windows.Count == 3 && r.Windows[2].OpenedOn != r.MainThread && r.Windows[2].Disposed && r.HoldsAfter == 0, Show(r));
+
+        // Show while Run runs the manager: no thread
+        r = Run("""
+            #import "windows"
+            var fb = new Framebuffer(32, 24)
+            var a = new Window(fb, "A")
+            var b = new Window(fb, "B")
+            a.RegisterKeyDown(func (int k, int s, int m, bool rep) => {
+                b.Show()
+                print("shown, started " + WindowManager.Default.IsStarted + ", count " + WindowManager.Default.Count)
+            })
+            __TestKey(0, 13)
+            a.Run()
+            print("done " + b.IsClosed)
+            """, 5, 8);
+        Check("Show waehrend Run: das Fenster laeuft im laufenden Loop mit (kein Thread)", r.Unhandled == null
+            && r.Lines.Contains("shown, started False, count 2") && r.Lines.Contains("done True") && r.Windows.All(w => w.OpenedOn == r.MainThread), Show(r));
+    }
+
+    // macOS: the manager's thread only gives the beat, the program opens, pumps and shows the windows at its safe points (here switched on by hand)
+    private static void Cooperative()
+    {
+        bool before = fire.Terminal.Windows.WindowManager.CooperativeManagers;
+        fire.Terminal.Windows.WindowManager.CooperativeManagers = true;
+        try
+        {
+            var r = Run("""
+                #import "windows"
+                var fb = new Framebuffer(32, 24)
+                var w = new Window(fb, "Beat")
+                var cycles = 0
+                w.onCycle = func () => { cycles++ }
+                w.RegisterKeyDown(func (int k, int s, int m, bool rep) => { print("key " + k) })
+                w.Show()
+                print("goes on, started " + w.Manager.IsStarted)
+                __TestKey(0, 70)
+                while (cycles < 3) { __TestWait(2) }
+                print("cycles ran")
+                var dlg = new Window(fb, "Modal")
+                dlg.Show(true)
+                print("modal done " + dlg.IsClosed)
+                """, 40, 5);
+            Check("Kooperativ (macOS): Show startet nur den Takt, das Programm oeffnet und pumpt die Fenster an seinen sicheren Punkten", r.Unhandled == null
+                && r.Lines.FirstOrDefault() == "goes on, started True" && r.Lines.Contains("key 70") && r.Lines.Contains("cycles ran") && r.Lines.Contains("modal done True")
+                && r.Windows.Count == 2 && r.Windows.All(w => w.OpenedOn == r.MainThread && w.PumpedOn.SetEquals(new[] { r.MainThread })), Show(r)
+                + "\n" + string.Join("; ", r.Windows.Select(w => $"{w.OpenedOn} {string.Join(",", w.PumpedOn)} main {r.MainThread}")));
+            Check("Kooperativ: das Programmende wartet aufs Schliessen und gibt dann frei", r.Windows.Count == 2 && r.Windows[0].Pumps >= 40 && r.HoldsAfter == 0 && !r.Lines.Contains("TIMEOUT"), Show(r));
+        }
+        finally { fire.Terminal.Windows.WindowManager.CooperativeManagers = before; }
     }
 
     // UI.Root with Show: the interface is drawn and its clicks are handled in the program while the manager's thread shows the window

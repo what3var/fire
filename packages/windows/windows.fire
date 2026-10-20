@@ -1,15 +1,19 @@
 #import "graphics"
 
-// A window that shows a framebuffer. It opens when it is first shown: `Show()` hands it to its WindowManager, whose thread shows it from then on
-// (the program goes on), `Run()` runs the manager on this thread until the windows are closed, and `Tick()` is one cycle of this window alone.
+// A window that shows a framebuffer. It opens when it is first shown: `Show()` hands it to its WindowManager and goes on (a manager that nobody runs
+// yet gets a thread of its own), `Show(true)` waits until the window is closed (modal: the other windows of its manager take no input meanwhile),
+// `Run()` is the start of a program with windows (it runs the manager on this thread until its windows are closed - unless it already runs), and
+// `Tick()` is one cycle of this window alone.
 class Window {
     int id
     // The manager that cycles this window (undefined until it is attached; Show and Run attach it to WindowManager.Default)
     WindowManager Manager
     // Called once per cycle of the manager, after the events and before the frame is shown (a UI.Root draws here)
     lambda onCycle
-    // true once the window has been closed
+    // true once the window has been closed (by the user or Close)
     bool IsClosed = false
+    // the modal window that blocks this one (see Show(true)): its depth in the manager's modal windows, 0 = none
+    int blockedBy = 0
 
     construct(Framebuffer framebuffer, string title, WindowManager manager = undefined) {
         this.id = __GRPHWinCreate(framebuffer.id, title)
@@ -25,27 +29,51 @@ class Window {
         __GRPHWinDestroy(this.id)
     }
 
-    // Shows the window and goes on: the window's manager (WindowManager.Default if it has none) is started, its thread shows the window and fetches its
-    // events, and the program handles them at its next safe point (a loop, a Sleep, ... - and at its end it waits until the windows are closed).
-    undefined Show() {
+    // Shows the window on its manager (the one given to the constructor, else WindowManager.Default). A manager that nobody runs yet is started with a
+    // thread of its own (Start): it shows the windows, and the program handles their events at its safe points (a loop, a Sleep, ... - and at its end it
+    // waits until the windows are closed). `modal`: waits until this window is closed (or Close is called); meanwhile the other windows of the manager
+    // take no input (they go on being shown) and the cycles run here - also when Show(true) is called from an event of another window.
+    undefined Show(bool modal = false) {
         if (this.Manager == undefined) { WindowManager.Default.Attach(this) }
-        this.Manager.Start()
+        var manager = this.Manager
+        if (!manager.IsRunning) { manager.Start() }
+        if (modal) { manager.RunModal(this) }
     }
 
-    // Shows the window and runs its manager on this thread until all its windows are closed (blocking).
+    // The start of a program with windows (like the main loop of an STA thread): shows the window on its manager (as Show) and - if nobody runs that
+    // manager yet - runs it on this thread until its windows are closed (blocking). Does the manager already run (its thread, a Run further up, an
+    // event of one of its windows), the window is only shown there; no second loop is started. Neither is one while another manager's loop runs on
+    // this thread: then the manager gets a thread of its own (as with Show).
     undefined Run() {
         if (this.Manager == undefined) { WindowManager.Default.Attach(this) }
         this.Manager.Run()
     }
 
+    // Closes the window: the next cycle of its manager takes it out (and a Show(true) waiting for it returns). Closing it with its frame does the same.
+    undefined Close() { this.IsClosed = true }
+
+    // Does a modal window of its manager block the input of this window? (see Show(true))
+    bool IsBlocked { get { return this.blockedBy > 0 } }
+
     // One cycle of the manager for this window: events in (callbacks, queue), onCycle, frame out. false once the window is closed.
     bool Cycle() {
+        if (this.IsClosed) { return false }
         var open = __GRPHWinPump(this.id)
         var hook = this.onCycle
         if (hook != undefined) { hook() }
         __GRPHWinPresent(this.id)
         if (!open) { this.IsClosed = true }
-        return open
+        return !this.IsClosed
+    }
+
+    // Half a cycle for a window that waits below a modal one: its events (without the input, see IsBlocked) and its last frame, without onCycle - it may be
+    // the window whose event opened the modal one, and that is still running.
+    bool Idle() {
+        if (this.IsClosed) { return false }
+        var open = __GRPHWinPump(this.id)
+        __GRPHWinPresent(this.id)
+        if (!open) { this.IsClosed = true }
+        return !this.IsClosed
     }
 
     // Fetches the events and shows the current content of the framebuffer. With VSync (the default) every tick waits for the
@@ -163,14 +191,21 @@ class Window {
 }
 
 // Cycles windows: shows their framebuffers and gives them their events. `Run()` does it on the calling thread until the windows are closed; `Start()`
-// gives the manager a thread of its own that shows the windows, while the program goes on and handles their events at its safe points. There is a
+// gives the manager a thread of its own that shows the windows, while the program goes on and handles their events at its safe points. On macOS, where
+// windows may only live on the main thread, that thread only gives the beat and the program shows the windows itself at its safe points. There is a
 // default manager (`WindowManager.Default`) that Window.Show and Window.Run use; a program may make more (`new WindowManager()`), each with its windows.
 class WindowManager {
     int id
     List windows
     bool started = false
     bool ticking = false
+    // the loops of Run on the calling thread (this manager's)
+    int runs = 0
+    // the modal windows that are open (Window.Show(true)), innermost last
+    int modals = 0
     static WindowManager defaultManager
+    // the loops of Run of all managers on the program's thread
+    static int loops = 0
 
     construct() {
         this.id = __GRPHWinMgrCreate()
@@ -191,6 +226,9 @@ class WindowManager {
 
     // Does a thread of its own show the windows? (see Start)
     bool IsStarted { get { return this.started } }
+
+    // Does someone cycle the windows: its thread (Start), a Run, or a modal window (Window.Show(true))?
+    bool IsRunning { get { return this.started || this.runs > 0 || this.modals > 0 || this.ticking } }
 
     // The number of attached windows that are still open
     int Count { get { return this.windows.count } }
@@ -223,7 +261,10 @@ class WindowManager {
     // program runs Tick() at its next safe point. false where the platform has no thread for windows (then use Run or Tick).
     bool Start() {
         if (this.started) { return true }
-        this.started = __GRPHWinMgrStart(this.id, func () on this => { this.Tick() })
+        this.started = __GRPHWinMgrStart(this.id, func () on this => {
+            __GRPHWinMgrServed(this.id)
+            this.Tick()
+        })
         return this.started
     }
 
@@ -246,13 +287,63 @@ class WindowManager {
     }
 
     // Runs until all windows are closed (blocking). Not started: the manager runs on this thread; started: this thread waits while the manager's
-    // thread shows the windows (the cycles run here).
+    // thread shows the windows (the cycles run here). Called while the manager already runs on this thread (an event of one of its windows, a modal
+    // window) it returns at once - the running loop goes on with the windows; called while another manager's loop runs here, the manager is started
+    // with a thread of its own instead (a second loop here would stop the first one).
     undefined Run() {
+        if (this.ticking || this.runs > 0 || this.modals > 0) { return }
+        if (!this.started && WindowManager.loops > 0) {
+            this.Start()
+            return
+        }
         if (this.started) {
             while (this.windows.count > 0) { __GRPHWinMgrWait(this.id, 20) }
             return
         }
+        this.runs = this.runs + 1
+        WindowManager.loops = WindowManager.loops + 1
         while (this.Tick()) { }
+        WindowManager.loops = WindowManager.loops - 1
+        this.runs = this.runs - 1
+    }
+
+    // Window.Show(true): cycles until `modal` is closed, here on the calling thread. Meanwhile the other windows take no input (IsBlocked) and only get half
+    // a cycle (Idle) - the window whose event called Show(true) is still in that event. Windows that open on the manager during it work as usual.
+    undefined RunModal(Window modal) {
+        this.modals = this.modals + 1
+        var depth = this.modals
+        for (var i = 0; i < this.windows.count; i = i + 1) {
+            var other = this.windows[i]
+            if (other != modal && other.blockedBy == 0) {
+                other.blockedBy = depth
+                __GRPHWinSetBlocked(other.id, true)
+            }
+        }
+        var wasTicking = this.ticking
+        this.ticking = true   // (the cycles the manager's thread asks for run here meanwhile)
+        while (!modal.IsClosed && modal.Manager == this) {
+            var i = 0
+            while (i < this.windows.count) {
+                var window = this.windows[i]
+                var open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
+                if (!open) {
+                    this.Detach(window)
+                    continue
+                }
+                i = i + 1
+            }
+            if (this.started) { __GRPHWinMgrWait(this.id, 20) }
+        }
+        if (modal.Manager == this) { this.Detach(modal) }
+        this.ticking = wasTicking
+        for (var i = 0; i < this.windows.count; i = i + 1) {
+            var other = this.windows[i]
+            if (other.blockedBy == depth) {
+                other.blockedBy = 0
+                __GRPHWinSetBlocked(other.id, false)
+            }
+        }
+        this.modals = this.modals - 1
     }
 }
 

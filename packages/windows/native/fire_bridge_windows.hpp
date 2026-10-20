@@ -15,10 +15,14 @@ namespace win {
 
 struct Callback { int type; Value lam; };
 
-// A window manager's thread needs the fire threads (the GIL, host services; the generator switches them on when the program can start one) and a
-// platform whose windows may live on another thread than the main one (not macOS, not the browser).
-#if defined(FIRE_THREADS) && !defined(__EMSCRIPTEN__) && !defined(__APPLE__)
+// A window manager's thread needs the fire threads (the GIL, host services; the generator switches them on when the program can start one), not the
+// browser. Where windows may only live on the main thread (macOS; FIRE_WINDOW_COOPERATIVE elsewhere, for tests) the thread only gives the beat: it asks the
+// program for a cycle about 60 times a second, and the program opens, pumps and shows the windows itself (FIRE_WINDOW_COOP).
+#if defined(FIRE_THREADS) && !defined(__EMSCRIPTEN__)
 #define FIRE_WINDOW_THREADS 1
+#if defined(__APPLE__) || defined(FIRE_WINDOW_COOPERATIVE)
+#define FIRE_WINDOW_COOP 1
+#endif
 using WinMutex = plat::Mutex;
 #else
 struct WinMutex { void lock() {} void unlock() {} };
@@ -58,6 +62,7 @@ struct WindowState {
     bool queueOn = false;
     bool touchMouse = true;    // Window.TouchMouse
     bool autoResize = false;   // a resize of the window resizes the framebuffer (Window.AutoResize)
+    bool blocked = false;      // a modal window of its manager is open: its input is dropped (Window.Show(true))
     ~WindowState() {
         for (Callback& c : callbacks) release(c.lam);
         if (fb) gfx::fbRelease(fb);
@@ -188,8 +193,14 @@ struct Mgr {
     plat::CondVar cycleCv;
     uint64_t cycles = 0;
     bool started() const { return thread != nullptr; }
+#ifdef FIRE_WINDOW_COOP
+    bool ownsWindows() const { return false; }
+#else
+    bool ownsWindows() const { return thread != nullptr; }
+#endif
 #else
     bool started() const { return false; }
+    bool ownsWindows() const { return false; }
 #endif
 };
 
@@ -207,7 +218,14 @@ inline Mgr* mgrOf(Value id) {
     fatal(("No window manager with ID " + std::to_string(i) + ".").c_str());
 }
 
-inline bool threaded(WindowState* w) { return w->mgr && w->mgr->started(); }
+/// Does a manager's thread own the OS window (it opens and pumps it)?
+inline bool threaded(WindowState* w) { return w->mgr && w->mgr->ownsWindows(); }
+
+/// The events that a blocked window still gets: a resize and the end of the program.
+inline void dropBlocked(WindowState* w, std::vector<plat::disp::Event>& events) {
+    if (!w->blocked) return;
+    events.erase(std::remove_if(events.begin(), events.end(), [](const plat::disp::Event& e) { return e.type != plat::disp::EV_RESIZE && e.type != plat::disp::EV_CLOSE; }), events.end());
+}
 
 /// Opens the OS window on the calling thread (once); false when it cannot be opened (no display).
 inline bool ensureOpen(Shared* s, bool vsync) {
@@ -230,6 +248,19 @@ inline Managers::~Managers() {
 }
 
 #ifdef FIRE_WINDOW_THREADS
+/// The thread of a cooperative manager (FIRE_WINDOW_COOP): only the beat - the program opens, pumps and shows the windows at its safe points.
+inline void beatThread(void* arg) {
+    Mgr* m = static_cast<Mgr*>(arg);
+    while (!m->stop.load(std::memory_order_relaxed)) {
+        m->cycleM.lock();
+        m->cycles++;
+        m->cycleCv.notifyAll();
+        m->cycleM.unlock();
+        if (m->pending.exchange(1, std::memory_order_relaxed) == 0) hostRequest();
+        plat::sleepMs(16);
+    }
+}
+
 inline void pumpThread(void* arg) {
     Mgr* m = static_cast<Mgr*>(arg);
     std::vector<plat::disp::Event> events;
@@ -317,7 +348,11 @@ inline void detachFrom(WindowState* w) {
     Mgr* m = w->mgr;
     if (!m) return;
     m->attached.erase(std::remove(m->attached.begin(), m->attached.end(), w), m->attached.end());
-    if (m->started()) {
+    if (!m->ownsWindows()) {
+#ifdef FIRE_WINDOW_THREADS
+        if (m->started()) hostHold(-1);
+#endif
+    } else {
         // the OS window belongs to the manager's thread: it closes it there; the window starts afresh (unopened) on whatever cycles it next
         Shared* fresh = new Shared();
         fresh->title = w->sh->title;
@@ -340,7 +375,10 @@ inline Value WinMgrAttach(Value mgrId, Value winId) {
     detachFrom(w);
     w->mgr = m;
     m->attached.push_back(w);
-    if (m->started()) {
+#ifdef FIRE_WINDOW_THREADS
+    if (m->started() && !m->ownsWindows()) hostHold(1);
+#endif
+    if (m->ownsWindows()) {
         m->m.lock();
         m->shown.push_back(w->sh);
         m->m.unlock();
@@ -369,6 +407,11 @@ inline Value WinMgrStart(Value mgrId, Value service) {
     if (!registered) { registered = true; g_hostServices.push_back(serveManagers); }
     retain(service);
     m->service = service;
+#ifdef FIRE_WINDOW_COOP
+    hostHold((int32_t)m->attached.size());
+    m->thread = plat::threadStart(beatThread, m, 0);
+    return Bool(true);
+#endif
     m->m.lock();
     for (WindowState* w : m->attached) {
         // a window that this thread opened already cannot move to the manager's thread: it starts afresh there
@@ -468,9 +511,11 @@ inline Value WinPump(Value id) {
         open = !w->sh->closed;
         w->sh->m.unlock();
     } else {
+        if (w->mgr && w->mgr->started()) w->mgr->pending.store(0, std::memory_order_relaxed);   // (a cooperative manager: the same)
         if (!ensureOpen(w->sh, w->vsync)) return Bool(false);
         open = w->sh->display.pump(events, w->fb->width, w->fb->height);
     }
+    dropBlocked(w, events);
     deliver(id, w, events);
     return Bool(open);
 }
@@ -505,6 +550,7 @@ inline Value WinTick(Value id) {
     if (w->autoResize)
         for (const plat::disp::Event& e : events)
             if (e.type == plat::disp::EV_RESIZE && gfx::Framebuffer::validSize(e.width, e.height)) w->fb->resize(e.width, e.height);
+    dropBlocked(w, events);
     std::vector<uint32_t> pixels(w->fb->pixelCount());
     w->fb->resolveTo(pixels.data());
     w->sh->display.present(pixels.data(), w->fb->width, w->fb->height);
@@ -573,6 +619,9 @@ inline Value WinSetTouchMouse(Value id, Value on) {
 inline Value WinGetTouchMouse(Value id) { return Bool(windowOf(id)->touchMouse); }
 inline Value WinSetAutoResize(Value id, Value on) { windowOf(id)->autoResize = on.i != 0; return Undef(); }
 inline Value WinGetAutoResize(Value id) { return Bool(windowOf(id)->autoResize); }
+inline Value WinSetBlocked(Value id, Value on) { windowOf(id)->blocked = on.i != 0; return Undef(); }
+/// The program runs the cycle the manager's thread asked for: the next one may be asked for (also when that cycle does nothing, see RunModal).
+inline Value WinMgrServed(Value mgrId) { mgrOf(mgrId)->pending.store(0, std::memory_order_relaxed); return Undef(); }
 
 }  // namespace win
 }  // namespace fire

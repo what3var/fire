@@ -226,14 +226,14 @@ namespace fire.UI.Markup
                 code.Line("// called once per cycle of this window (in Run(), also when it is attached to another window) - override it for a loop of your own");
                 code.Line("undefined OnTick() { }");
                 code.Line();
-                code.Line("// shows the window and runs its window manager on this thread until the windows are closed; with `other` (another window of the markup, or a UI.Root) that window is opened as well");
+                code.Line("// the start of the program: shows the window and runs its window manager on this thread until the windows are closed (if nobody runs it yet, else it is only shown); with `other` (another window of the markup, or a UI.Root) that window is opened as well");
                 code.Line("undefined Run(any other = undefined) {");
                 code.Line("    if (other != undefined) { this.Open(other) }");
                 code.Line("    this.ui.Run()");
                 code.Line("}");
                 code.Line();
-                code.Line("// shows the window and goes on: the thread of its window manager shows it, the events are handled at the program's safe points (and at its end)");
-                code.Line("undefined Show() { this.ui.Show() }");
+                code.Line("// shows the window on its window manager (started with a thread of its own if nobody runs it yet), the events are handled at the program's safe points (and at its end); `modal`: returns when the window is closed, the other windows take no input meanwhile");
+                code.Line("undefined Show(bool modal = false) { this.ui.Show(modal) }");
                 code.Line();
                 code.Line("// opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed");
                 code.Line("undefined Open(any other) {");

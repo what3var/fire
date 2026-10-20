@@ -83,8 +83,8 @@ For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..
 | `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (title, width, height from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
-| `Run(other = undefined)`, `OnTick()` | a window: `Run()` runs the window's manager (docs/CONSOLE.md, *Window managers*) on this thread until the windows are closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
-| `Show()` | a window: shows it and goes on - the thread of its window manager shows it, the program handles its events at its safe points and waits at its end until it is closed |
+| `Run(other = undefined)`, `OnTick()` | a window: `Run()` is the start of the program - it runs the window's manager (docs/CONSOLE.md, *Window managers*) on this thread until the windows are closed (if it already runs, the window is only shown there) and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Show(modal = false)` | a window: shows it and goes on - a window manager that nobody runs yet gets a thread of its own, the program handles the events at its safe points and waits at its end until the window is closed. `Show(true)`: modal - returns when the window is closed, the other windows of the manager take no input meanwhile |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
 | `dataContext`, `SetDataContext(obj)` | only with bindings, see below |

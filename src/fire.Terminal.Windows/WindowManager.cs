@@ -35,6 +35,24 @@ namespace fire.Terminal.Windows
         private readonly Dictionary<int, Queue<IEvent>> _eventQueues = new();
         private const int MaxQueuedEvents = 4096;
 
+        // Windows whose input is blocked (Window.Blocked: a modal window of their manager is open): their input events are dropped, only a resize and the
+        // closing of the program still come through.
+        private readonly HashSet<int> _blocked = new();
+
+        /// <summary>Blocks the input of the window (a modal window is open above it) or lets it through again.</summary>
+        public void SetBlocked(int id, bool blocked)
+        {
+            _windows.Get(id);
+            if (blocked) _blocked.Add(id); else _blocked.Remove(id);
+        }
+
+        public bool GetBlocked(int id) => _blocked.Contains(id);
+
+        /// <summary>Started managers only give the beat, the windows stay on the program's thread (it opens and pumps them at its safe points): macOS,
+        /// where windows may only live on the main thread. FIRE_WINDOW_COOPERATIVE=1 switches it on elsewhere too (tests).</summary>
+        public static bool CooperativeManagers { get; set; } =
+            OperatingSystem.IsMacOS() || Environment.GetEnvironmentVariable("FIRE_WINDOW_COOPERATIVE") == "1";
+
         /// <param name="rendererFactory">Creates the renderer per window (default: SDL). Replaceable for tests and other backends.</param>
         /// <param name="hold">Adds holds on the program end (fire.Runtime's FireRuntime.AddHostHold): the windows that a manager's thread shows keep the program alive.</param>
         public WindowManager(FramebufferManager framebuffers, Action<LambdaValue, Value[]> callbackRunner,
@@ -163,11 +181,12 @@ namespace fire.Terminal.Windows
         {
             if (!_windows.TryGet(id, out var window) || window == null) return false;
             _eventQueues.Remove(id);
+            _blocked.Remove(id);
             bool threadOwned = false;
             lock (_managersGate)
                 if (_managed.TryGetValue(id, out var entry))
                 {
-                    threadOwned = entry.Manager.Started;
+                    threadOwned = entry.Manager.OwnsWindows;
                     DetachLocked(entry.Manager, entry.State);   // a manager's thread closes its OS window itself
                 }
             if (!threadOwned) window.Dispose();
@@ -207,6 +226,7 @@ namespace fire.Terminal.Windows
         private void Deliver(int id, IEnumerable<IEvent>? events)
         {
             if (events == null) return;
+            if (_blocked.Contains(id)) events = events.Where(e => e.Type == Event.EventType.Resize || e.Type == Event.EventType.Close).ToList();
             var result = new WindowPumpResult { StillOpen = true, Events = events };
             if (result?.Events != null)
             {
@@ -377,7 +397,9 @@ namespace fire.Terminal.Windows
             public LambdaValue? Service;
             public int ServicePending;
             public long Cycles;
+            public bool Cooperative;            // its thread only gives the beat (CooperativeManagers): the windows stay on the program's thread
             public bool Started => Thread != null;
+            public bool OwnsWindows => Thread != null && !Cooperative;
         }
 
         private readonly Dictionary<int, Manager> _managers = new();
@@ -403,7 +425,7 @@ namespace fire.Terminal.Windows
 
         private bool ManagedStarted(int windowId)
         {
-            lock (_managersGate) return _managed.TryGetValue(windowId, out var entry) && entry.Manager.Started;
+            lock (_managersGate) return _managed.TryGetValue(windowId, out var entry) && entry.Manager.OwnsWindows;
         }
 
         /// <summary>Attaches the window to the manager (taking it from another manager first).</summary>
@@ -440,13 +462,17 @@ namespace fire.Terminal.Windows
         private void DetachLocked(Manager manager, ManagedWindow state)
         {
             _managed.Remove(state.Id);
-            if (manager.Started)
+            if (manager.OwnsWindows)
             {
                 // the OS window belongs to the manager's thread: it closes it there
                 lock (manager.Gate) state.Release = true;
                 _hold?.Invoke(-1);
             }
-            else lock (manager.Gate) manager.Windows.Remove(state);
+            else
+            {
+                lock (manager.Gate) manager.Windows.Remove(state);
+                if (manager.Started) _hold?.Invoke(-1);
+            }
         }
 
         /// <summary>Starts the manager's thread. `service` is the fire lambda that the program runs for each cycle (it is posted to the program through the
@@ -458,14 +484,21 @@ namespace fire.Terminal.Windows
             {
                 if (manager.Started) return false;
                 manager.Service = service;
+                manager.Cooperative = CooperativeManagers;
                 lock (manager.Gate) _hold?.Invoke(manager.Windows.Count(w => !w.Release));
-                manager.Thread = new Thread(() => PumpThread(manager)) { IsBackground = true, Name = "fire window manager " + managerId };
+                manager.Thread = manager.Cooperative
+                    ? new Thread(() => BeatThread(manager)) { IsBackground = true, Name = "fire window manager " + managerId + " (beat)" }
+                    : new Thread(() => PumpThread(manager)) { IsBackground = true, Name = "fire window manager " + managerId };
             }
             manager.Thread.Start();
             return true;
         }
 
         public bool ManagerStarted(int managerId) => ManagerOf(managerId).Started;
+
+        /// <summary>The program runs the cycle that the manager's thread asked for (its service lambda): the next one may be asked for - also when that cycle
+        /// does nothing (a modal window runs the cycles itself meanwhile).</summary>
+        public void ManagerServed(int managerId) => Interlocked.Exchange(ref ManagerOf(managerId).ServicePending, 0);
 
         /// <summary>Waits (on the program's thread) up to `milliseconds` for the next cycle of the manager's thread.</summary>
         public void ManagerWait(int managerId, int milliseconds)
@@ -475,6 +508,19 @@ namespace fire.Terminal.Windows
             {
                 long seen = manager.Cycles;
                 if (manager.Started && manager.Cycles == seen) Monitor.Wait(manager.Gate, Math.Max(1, milliseconds));
+            }
+        }
+
+        /// <summary>The thread of a cooperative manager: about 60 times a second it asks the program for a cycle; the program opens, pumps and shows the
+        /// windows itself (Pump/Present as without a thread).</summary>
+        private void BeatThread(Manager manager)
+        {
+            while (!manager.Stop)
+            {
+                lock (manager.Gate) { manager.Cycles++; Monitor.PulseAll(manager.Gate); }
+                if (manager.Service != null && Interlocked.CompareExchange(ref manager.ServicePending, 1, 0) == 0)
+                    Callback(manager.Service, Array.Empty<Value>());
+                Thread.Sleep(16);
             }
         }
 
@@ -528,9 +574,16 @@ namespace fire.Terminal.Windows
         {
             var window = _windows.Get(id);
             ManagedWindow? state = null;
-            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.Started) state = entry.State;
+            Manager? beat = null;
+            lock (_managersGate)
+                if (_managed.TryGetValue(id, out var entry))
+                {
+                    if (entry.Manager.OwnsWindows) state = entry.State;
+                    else if (entry.Manager.Started) beat = entry.Manager;
+                }
             if (state == null)
             {
+                if (beat != null) Interlocked.Exchange(ref beat.ServicePending, 0);   // the program runs a cycle: the next one may be asked for
                 var result = window.Pump();
                 Deliver(id, result?.Events);
                 return result?.StillOpen == true;
@@ -554,7 +607,7 @@ namespace fire.Terminal.Windows
             var window = _windows.Get(id);
             Manager? manager = null;
             ManagedWindow? state = null;
-            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.Started) { manager = entry.Manager; state = entry.State; }
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.OwnsWindows) { manager = entry.Manager; state = entry.State; }
             if (state == null || manager == null) { window.Present(window.Framebuffer); return; }
             var fb = window.Framebuffer;
             fb.Resolve();
@@ -570,7 +623,7 @@ namespace fire.Terminal.Windows
         {
             var window = _windows.Get(id);
             ManagedWindow? state = null;
-            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.Started) state = entry.State;
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.OwnsWindows) state = entry.State;
             if (state == null) change(window);
             else state.Todo.Enqueue(change);
         }

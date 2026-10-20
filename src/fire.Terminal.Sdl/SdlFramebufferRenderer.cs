@@ -98,6 +98,8 @@ namespace fire.Terminal.Sdl
             return (moved.X - origin.X, moved.Y - origin.Y);
         }
 
+        private bool _ownsJoystick;
+
         public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle)
         {
             _internalHandle = internalHandle;
@@ -107,7 +109,7 @@ namespace fire.Terminal.Sdl
             if (!SDL.Init(SDL.InitFlags.Video))
                 throw new InvalidOperationException($"SDL.Init failed: {SDL.GetError()}");
             // Joysticks are a bonus: without a driver the window opens anyway. The devices that are already plugged in report themselves afterwards as JoystickAdded.
-            SDL.InitSubSystem(SDL.InitFlags.Joystick);
+            _ownsJoystick = SDL.InitSubSystem(SDL.InitFlags.Joystick);
             SDL.SetHint(SDL.Hints.TouchMouseEvents, _touchMouse ? "1" : "0");
 
             // SDL3-CS offers CreateWindowAndRenderer as ONE call (instead of
@@ -357,7 +359,9 @@ namespace fire.Terminal.Sdl
             if (_texture != IntPtr.Zero) SDL.DestroyTexture(_texture);
             if (_renderer != IntPtr.Zero) SDL.DestroyRenderer(_renderer);
             if (_window != IntPtr.Zero) SDL.DestroyWindow(_window);
-            SDL.Quit();
+            // only this window's references (SDL counts them per subsystem): SDL.Quit would shut the video down under the other windows
+            if (_ownsJoystick) SDL.QuitSubSystem(SDL.InitFlags.Joystick);
+            SDL.QuitSubSystem(SDL.InitFlags.Video);
         }
     }
 }

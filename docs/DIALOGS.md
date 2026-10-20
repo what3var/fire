@@ -28,9 +28,9 @@ d.InitialDirectory = IO.Directory.GetHomeDirectory()
 if (d.ShowDialog() == Dialogs.DialogResult.OK) { print(d.FileName) }
 ```
 
-A dialog is **modal for the code that opens it**: `ShowDialog()` (and `Show`) open a window of their own and cycle it on the calling thread until the user is done;
-then the code goes on. Called from a click handler of an interface that runs with `Run()`, the interface waits meanwhile. Closing the window with its frame or
-Escape cancels.
+A dialog is **modal**: `ShowDialog()` (and `Show`) open a window of their own on `WindowManager.Default` with `Window.Show(true)` (docs/CONSOLE.md) and return when
+the user is done; meanwhile the other windows of that manager take no input but go on being shown. It works from a click handler of an interface (`Run()` or `Show()`)
+as well as from a program without any window (the manager then gets its thread). Closing the window with its frame or Escape cancels.
 
 ## The file dialogs
 
@@ -59,8 +59,8 @@ Escape gives `Cancel` (with `YesNo`: `No`, with `OK`: `OK`).
 ## Limits
 
 - One file at a time (no multiple selection); no new folder from inside the dialog; no preview.
-- The windows of the interface that opened the dialog go on drawing when they are shown by a `WindowManager` thread (`Show()`), and their input is handled at the
-  program's safe points - only an interface run with `Run()` waits.
+- Only the windows of `WindowManager.Default` are blocked; windows of another manager (`new Window(fb, title, manager)`) keep taking input.
+- While the dialog is open, the window that opened it is not redrawn (its click handler is still running): a window that changes its size meanwhile keeps its old picture.
 - The look is that of the `ui` library (its theme, its font).
 
 Tests: `packages/dialogs/testing` (the parts without a window) and the suite block "Dialoge" (`src/fire.Testing/DialogTests.cs`: the dialogs with fake windows that play

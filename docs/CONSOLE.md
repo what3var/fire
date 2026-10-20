@@ -338,20 +338,28 @@ Im Skript (`#import "windows"`) taktet ein **`WindowManager`** die Fenster, die 
 | | |
 |---|---|
 | `new Window(fb, "Titel", manager)` | das Fenster hängt sich gleich an `manager` (der Parameter ist optional); `window.Manager` ist sein Manager |
-| `window.Show()` | hängt das Fenster an `WindowManager.Default`, falls es noch keinen Manager hat, und **startet** den Manager: ein eigener Thread öffnet die Fenster, holt ihre Ereignisse und zeigt ihre Bilder (etwa 60-mal je Sekunde). Das Programm läuft weiter |
-| `window.Run()` | wie `Show`, aber der Manager läuft **blockierend auf dem aufrufenden Thread**, bis alle seine Fenster geschlossen sind |
+| `window.Show(modal = false)` | zeigt das Fenster auf seinem Manager (dem aus dem Konstruktor, sonst `WindowManager.Default`). Läuft der Manager noch nicht, wird er **gestartet**: ein eigener Thread öffnet die Fenster, holt ihre Ereignisse und zeigt ihre Bilder (etwa 60-mal je Sekunde). Das Programm läuft weiter. Läuft der Manager schon (sein Thread, ein `Run`, ein Ereignis eines seiner Fenster), wird nur angezeigt |
+| `window.Show(true)` | **modal**: wie oben, aber der Aufruf kehrt erst zurück, wenn das Fenster geschlossen ist; solange bekommen die anderen Fenster des Managers keine Eingaben (sie werden weiter gezeigt, `window.IsBlocked`). Die Zyklen laufen auf dem aufrufenden Thread - auch wenn `Show(true)` aus einem Ereignis eines anderen Fensters kommt. Fenster, die währenddessen aufgehen, arbeiten normal; modale Fenster können verschachtelt werden |
+| `window.Run()` | der Startpunkt eines Fensterprogramms (wie die Nachrichtenschleife eines STA-Threads): zeigt das Fenster wie `Show` und lässt den Manager - wenn ihn noch niemand betreibt - **blockierend auf dem aufrufenden Thread** laufen, bis alle seine Fenster geschlossen sind. Ein zweiter Aufruf startet keinen eigenen Loop: läuft der Manager schon, wird das Fenster dort nur gezeigt (aus einem Ereignis kehrt `Run` sofort zurück); läuft auf diesem Thread schon der Loop eines anderen Managers, bekommt dieser Manager einen eigenen Thread. Gestartet wartet `Run`, bis seine Fenster zu sind |
+| `window.Close()` | schließt das Fenster (der nächste Zyklus nimmt es heraus, ein wartendes `Show(true)` kehrt zurück); `window.IsClosed` |
 | `window.Tick()` | ein Zyklus nur dieses Fensters (wie bisher, ohne Manager) |
 | `WindowManager.Default` | der Manager der Fenster, die keinen anderen haben; ein Programm kann weitere anlegen (`new WindowManager()`) |
 | `manager.Attach(window)`, `manager.Detach(window)` | hängt an (von einem anderen Manager weg) bzw. nimmt heraus; nur das erste Fenster eines Managers wartet auf den Bildaufbau (VSync) |
-| `manager.Start()` | startet den Thread (einmal); `false`, wo die Plattform keinen Thread für Fenster hat (macOS, WebAssembly, Geräte ohne Threads) - dort `Run`/`Tick` nehmen |
-| `manager.Run()`, `manager.Tick()` | alle Fenster bis zum Schließen bzw. ein Zyklus aller Fenster auf dem aufrufenden Thread; `Run` auf einem gestarteten Manager wartet, bis seine Fenster zu sind |
-| `manager.IsStarted`, `manager.Count` | läuft der Thread? wie viele Fenster sind noch offen? |
+| `manager.Start()` | startet den Thread (einmal); `false`, wo die Plattform keine Threads hat (WebAssembly, Geräte ohne Threads) - dort `Run`/`Tick` nehmen. Unter macOS gibt der Thread nur den Takt vor (unten) |
+| `manager.Run()`, `manager.Tick()` | alle Fenster bis zum Schließen bzw. ein Zyklus aller Fenster auf dem aufrufenden Thread (die Regeln von `window.Run()`); `Run` auf einem gestarteten Manager wartet, bis seine Fenster zu sind |
+| `manager.IsStarted`, `manager.IsRunning`, `manager.Count` | läuft der Thread? betreibt jemand die Fenster (Thread, `Run`, ein modales Fenster)? wie viele Fenster sind noch offen? |
 
 **Was auf welchem Thread läuft.** Der Thread des Managers besitzt nur die Fenster des Betriebssystems (SDL bedient ein Fenster nur auf dem Thread, der es erzeugt hat - daher
 öffnet sich ein Fenster erst, wenn der Thread, der es zeigt, es zum ersten Mal pumpt). Alles, was das Programm berührt - Callbacks, `NextEvent`, `onCycle`, das Zeichnen -
 läuft weiter auf dem Programm-Thread: der Thread des Managers bittet das Hauptprogramm nach jedem Zyklus um einen Lauf von `manager.Tick()`, das Hauptprogramm macht ihn an
 seinem nächsten sicheren Punkt (wie Host-Callbacks: nach einem nativen Aufruf, in Schleifen, in `Sleep`, bei `sync globals`; mit `#nosync` nur bei `sync globals`). Das Bild
 gibt das Programm am Ende des Zyklus als Kopie an den Thread weiter. Es gibt also keinen geteilten Speicher und keine Kopien der Objekte.
+
+**macOS.** Dort dürfen Fenster nur auf dem Hauptthread leben. Ein gestarteter Manager hat deshalb einen Thread, der nur den **Takt** gibt: etwa 60-mal je Sekunde bittet er
+das Programm um einen Zyklus, und das Programm öffnet, pumpt und zeigt die Fenster an seinen sicheren Punkten selbst (wie bei `Run`, nur ohne Blockieren). Für das Programm sieht
+das genauso aus wie mit eigenem Thread: `Show` kehrt zurück, die Ereignisse kommen an den sicheren Punkten, am Ende wartet es. Nur: rechnet das Programm lange ohne sicheren Punkt,
+steht das Fenster so lange (anderswo zeigt der Thread des Managers dann wenigstens das letzte Bild). In der VM schaltet `FIRE_WINDOW_COOPERATIVE=1` das auch auf anderen
+Systemen ein, nativ `-D FIRE_WINDOW_COOPERATIVE` (zum Testen).
 
 **Programmende.** Solange ein gestarteter Manager offene Fenster hat, endet das Programm nach seiner letzten Anweisung nicht: es wartet und macht die Zyklen, bis die Fenster zu
 sind (ein `terminate` beendet es trotzdem). So reicht für ein Fensterprogramm:

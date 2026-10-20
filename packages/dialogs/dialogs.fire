@@ -11,7 +11,8 @@ namespace Dialogs {
     enum DialogResult { None, OK, Cancel, Yes, No }
     enum MessageBoxButtons { OK, OKCancel, YesNo, YesNoCancel }
 
-    // A modal window: its own framebuffer, window and UI.Root, cycled on the calling thread until Close() (closing the window with its frame or Escape cancels).
+    // A modal window: its own framebuffer, window and UI.Root on WindowManager.Default, shown with Window.Show(true) until Close() (closing the window with its
+    // frame or Escape cancels).
     class DialogWindow {
         Framebuffer framebuffer
         Window window
@@ -41,10 +42,12 @@ namespace Dialogs {
             }
         }
 
-        // Cycles the window until the dialog is closed; its result.
+        // Shows the window modal (Window.Show(true)) until the dialog is closed; its result. Closing the window with its frame cancels.
         int Run() {
-            while (!this.done) {
-                if (!this.root.Tick() && !this.done) { this.Close(this.cancelResult) }
+            this.window.Show(true)
+            if (!this.done) {
+                this.result = this.cancelResult
+                this.done = true
             }
             return this.result
         }
@@ -52,6 +55,7 @@ namespace Dialogs {
         undefined Close(int result) {
             this.result = result
             this.done = true
+            this.window.Close()
         }
     }
 

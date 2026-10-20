@@ -377,8 +377,9 @@ namespace UI {
             if (callback != undefined) { callback() }
         }
 
-        // Shows the window and goes on (Window.Show): the thread of the window's manager shows it, the events are handled at the program's safe points.
-        undefined Show() { this.window.Show() }
+        // Shows the window (Window.Show): on its manager, which gets a thread of its own if nobody runs it yet; the events are handled at the program's safe
+        // points. `modal`: returns when the window is closed, the other windows of the manager take no input meanwhile.
+        undefined Show(bool modal = false) { this.window.Show(modal) }
 
         // The cycle of this root only (without the attached ones).
         bool TickOne() {
