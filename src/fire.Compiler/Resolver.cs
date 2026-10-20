@@ -531,8 +531,18 @@ namespace fire.Compiler
         /// MemberExpr case).</summary>
         private (string ClassName, bool IsStatic)? FindMemberInClassChain(ClassDecl? startClass, string name)
         {
+            var classList = new HashSet<ClassDecl>();
+
             for (var cd = startClass; cd != null; cd = GetBaseClassDecl(cd))
             {
+                if (!classList.Add(cd))
+                {
+                    var message = "Circular inheritance detected in class '" + cd.Name + "'";
+                    if (!_errors.Any(e => e.Line == cd.Line && e.RawMessage == message))
+                        _errors.Add(new ResolverException(message, cd.Line));
+                    break; // Avoid infinite loops in case of circular inheritance
+                }
+
                 foreach (var member in cd.Members)
                 {
                     switch (member)
