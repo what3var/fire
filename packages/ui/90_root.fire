@@ -32,6 +32,10 @@ namespace UI {
         lambda onTick
         // A lambda (width, height) that is called after the interface has been brought to a new window size (see autoResize)
         lambda<int, int> onResize
+        // Sees every key first (key, modifier): when it returns true, the key is used up and no element gets it (a dialog takes Escape this way)
+        lambda<int, int> onKeyPreview
+        // Counts the cycles of this root (Tick, Cycle): elements measure short intervals with it (a double click)
+        int cycles = 0
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
@@ -360,6 +364,7 @@ namespace UI {
         // The interface's part of a cycle of the window's manager (Window.onCycle): distribute the events that came in, bring the interface up to date
         // (only what has changed is painted) and call onTick. The manager then shows the frame.
         undefined Cycle() {
+            this.cycles = this.cycles + 1
             while (true) {
                 var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
                 if (e == undefined) { break }
@@ -377,6 +382,7 @@ namespace UI {
 
         // The cycle of this root only (without the attached ones).
         bool TickOne() {
+            this.cycles = this.cycles + 1
             this.JoyRepeat()
             this.Update()
             var open = this.window.Tick()
@@ -799,6 +805,8 @@ namespace UI {
         }
 
         undefined KeyDown(int key, int mod) {
+            var preview = this.onKeyPreview
+            if (preview != undefined && preview(key, mod) == true) { return }
             if (key == UI.Keys.Tab()) {
                 // the shift keys are bits 1 and 2 of mod
                 this.FocusStep(mod % 4 != 0)

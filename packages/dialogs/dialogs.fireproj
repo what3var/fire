@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-dialogs",
+  "type": "library",
+  "import": "dialogs",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'dialogs' of fire: open, save and folder dialogs and message boxes, built with the user interface library."
+  }
+}

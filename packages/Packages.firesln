@@ -10,6 +10,8 @@
     "linq/linq.fireproj",
     "reflection/reflection.fireproj",
     "time/time.fireproj",
+    "filesystem/filesystem.fireproj",
+    "dialogs/dialogs.fireproj",
     "random/random.fireproj",
     "testing/testing.fireproj",
     "net/net.fireproj",

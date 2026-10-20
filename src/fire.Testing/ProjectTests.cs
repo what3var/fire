@@ -94,7 +94,15 @@ static class ProjectTests
         string json = File.ReadAllText(projPath);
         var back = FireProject.Load(projPath);
         Check("Projektdatei: speichern und laden", back.Name == "Round" && back.Type == OutputType.Library && back.Settings.Mode == "performance" && back.References.Count == 1 && back.References[0].Package == "fire-http");
-        Check("Projektdatei: was leer ist, steht nicht in der Datei", !json.Contains("\"files\"") && !json.Contains("\"exclude\"") && !json.Contains("floatWidth") && json.Contains("\"type\": \"library\""), json);
+        Check("Projektdatei: die Standard-Ausschluesse stehen in der Datei", json.Contains("\"exclude\"") && json.Contains("**/*.dll") && back.Exclude.SequenceEqual(FireProject.DefaultExclude), json);
+        back.Exclude.Clear();
+        back.Exclude.Add("old/**");
+        back.Save();
+        Check("Projektdatei: eine eigene Ausschlussliste wird beim Laden nicht durch die Standardwerte ersetzt", FireProject.Load(projPath).Exclude.SequenceEqual(new[] { "old/**" }), File.ReadAllText(projPath));
+        back.Exclude.Clear();
+        back.Save();
+        Check("Projektdatei: eine leere Ausschlussliste bleibt leer", FireProject.Load(projPath).Exclude.Count == 0, File.ReadAllText(projPath));
+        Check("Projektdatei: was leer ist, steht nicht in der Datei", !json.Contains("\"files\"") && !json.Contains("floatWidth") && json.Contains("\"type\": \"library\""), json);
         Check("Projektdatei: Importname aus dem Namen", new FireProject { Name = "my-lib 2" }.ImportName == "my_lib_2" && new FireProject { Name = "3d" }.ImportName == "L3d" && new FireProject { Name = "x", Import = "Y" }.ImportName == "Y");
         Check("Projektdatei: ein reservierter Importname wird gemeldet", new FireProject { Name = "net", Type = OutputType.Library }.Validate().Any(p => p.Contains("belongs to the compiler")));
         Check("Projektdatei: ungueltiges JSON ist ein ProjectException", Throws(() => FireProject.Parse("{ not json")));

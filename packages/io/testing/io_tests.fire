@@ -1,34 +1,7 @@
-// The tests of streams, files and paths: `forge test packages/io/io.fireproj` (the C++ of native/ is built for the virtual machine).
+// The tests of streams and text: `forge test packages/io/io.fireproj` (the C++ of native/ is built for the virtual machine). Files: packages/filesystem.
 #import "testing"
 
 class IoTests {
-    string folder = ""
-
-    [PrepareTesting]
-    undefined Start() {
-        this.folder = IO.Path.Combine(IO.Path.Temp(), "fire-io-tests")
-        IO.Directory.Create(this.folder)
-    }
-
-    [CleanTesting]
-    undefined Stop() { IO.Directory.Delete(this.folder, true) }
-
-    [Test]
-    undefined Paths() {
-        Testing.Assert.AreEqual("b.txt", IO.Path.FileName(IO.Path.Combine("a", "b.txt")))
-        Testing.Assert.AreEqual(".txt", IO.Path.Extension("x/y.txt"))
-    }
-
-    [Test]
-    undefined TextFile() {
-        var f = IO.Path.Combine(this.folder, "t.txt")
-        IO.File.WriteAllText(f, "one\ntwo")
-        Testing.Assert.IsTrue(IO.File.Exists(f))
-        Testing.Assert.AreEqual("one\ntwo", IO.File.ReadAllText(f))
-        IO.File.Delete(f)
-        Testing.Assert.IsFalse(IO.File.Exists(f))
-    }
-
     [Test]
     undefined MemoryStream() {
         var m = new IO.MemoryStream()
@@ -36,5 +9,25 @@ class IoTests {
         m.Position = 0
         Testing.Assert.AreEqual(72, m.ReadByte())
         Testing.Assert.AreEqual(5, m.Length)
+    }
+
+    [Test]
+    undefined TextOnStreams() {
+        var m = new IO.MemoryStream()
+        var w = new IO.TextWriter(m, true)
+        w.WriteLine("one")
+        w.Write("zwei ä")
+        w.Close()
+        m.Position = 0
+        var r = new IO.TextReader(m)
+        Testing.Assert.AreEqual("one", r.ReadLine())
+        Testing.Assert.AreEqual("zwei ä", r.ReadLine())
+        Testing.Assert.IsUndefined(r.ReadLine())
+    }
+
+    [Test "A path is no stream", "TextReader/TextWriter take streams; files come from IO.File (filesystem)"]
+    undefined NoPaths() {
+        Testing.Assert.Throws(() => { new IO.TextReader("x.txt") })
+        Testing.Assert.Throws(() => { new IO.TextWriter("x.txt") })
     }
 }

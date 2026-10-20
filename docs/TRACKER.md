@@ -17,7 +17,7 @@ ABI (docs/PACKAGE_NATIVES.md), a native build compiles it into the program; **bo
 ## Quick start
 
 ```
-#import "io"
+#import "filesystem"
 #import "tracker"
 
 var song = Tracker.Song.Load(IO.File.ReadAllBytes("tune.mod"))     // 44100 Hz; Load(bytes, 48000) for another rate

@@ -94,7 +94,7 @@ s.WriteString("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
 print(s.Info)                                              // "TLSv1.3 TLS_AES_256_GCM_SHA384"
 
 var o = new Tls.Options()
-o.caPem = IO.File.ReadAllText("my-ca.pem")                 // trust exactly these (or o.caFile = "path")
+o.caPem = IO.File.ReadAllText("my-ca.pem")                 // trust exactly these (or o.caFile = "path"); IO.File needs #import "filesystem"
 // o.verify = false                                        // no checking at all: for tests only
 var t = Tls.Stream.Connect("intranet", 8443, o)
 

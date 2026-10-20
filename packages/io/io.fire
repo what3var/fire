@@ -1,6 +1,4 @@
 namespace IO {
-    enum FileMode { Open, Create, CreateNew, OpenOrCreate, Append }
-    enum FileAccess { Read, Write, ReadWrite }
     enum SeekOrigin { Begin, Current, End }
 
     class IOException : Exception {
@@ -51,14 +49,6 @@ namespace IO {
         static int Handle(int handle) {
             if (handle < 0) { Throw() }
             return handle
-        }
-
-        // The default FileAccess for a FileMode when none is given (-1).
-        static int AccessFor(int mode, int access) {
-            if (access != -1) { return access }
-            if (mode == IO.FileMode.Open) { return IO.FileAccess.Read }
-            if (mode == IO.FileMode.Append) { return IO.FileAccess.Write }
-            return IO.FileAccess.ReadWrite
         }
     }
 
@@ -264,20 +254,6 @@ namespace IO {
         }
     }
 
-    // A file. `mode`: IO.FileMode, `access`: IO.FileAccess (if not given,
-    // depending on mode: Open -> Read, Append -> Write, otherwise ReadWrite).
-    class FileStream : NativeStream {
-        string name
-
-        construct(string path, int mode = IO.FileMode.Open, int access = -1) : base(-1) {
-            this.name = path
-            this.handle = IO.IOErrors.Handle(__IOFileOpen(path, mode, IO.IOErrors.AccessFor(mode, access)))
-        }
-
-        // The path, as given on opening.
-        string Name { get { return this.name } }
-    }
-
     // A stream in memory (grows on writing). With a
     // buffer: starts with a COPY of its content, position 0.
     class MemoryStream : NativeStream {
@@ -313,186 +289,11 @@ namespace IO {
         }
     }
 
-    // Pure text processing on paths (no file access). As everywhere in
-    // this language with the namespace: IO.Path.Combine(...).
-    class Path {
-        // The character that separates directories ("/" or "\").
-        static string Separator() { return __IOPathSeparator() }
-
-        // Joins path parts; an absolute part discards everything before it
-        // (like Path.Combine in .NET).
-        static string Combine(string a, string b) {
-            var r = __IOPathCombine(a, b)
-            if (r == undefined) { IO.IOErrors.Throw() }
-            return r
-        }
-
-        static string Combine(string a, string b, string c) {
-            return IO.Path.Combine(IO.Path.Combine(a, b), c)
-        }
-
-        // "dir/name.txt" -> "name.txt"
-        static string FileName(string path) { return IO.Path.Text(__IOPathFileName(path)) }
-
-        // "dir/name.txt" -> "name"
-        static string Stem(string path) { return IO.Path.Text(__IOPathStem(path)) }
-
-        // "dir/name.txt" -> ".txt" ("" without extension)
-        static string Extension(string path) { return IO.Path.Text(__IOPathExtension(path)) }
-
-        // "dir/sub/name.txt" -> "dir/sub" ("" for a bare name)
-        static string Parent(string path) { return IO.Path.Text(__IOPathParent(path)) }
-
-        // The absolute, normalised path (without "..").
-        static string FullPath(string path) { return IO.Path.Text(__IOPathFull(path)) }
-
-        // The directory for temporary files.
-        static string Temp() { return IO.Path.Text(__IOPathTemp()) }
-
-        static bool IsRooted(string path) { return __IOPathIsRooted(path) }
-
-        static string Text(any value) {
-            if (value == undefined) { IO.IOErrors.Throw() }
-            return value
-        }
-    }
-
-    // Files as a whole. Every access goes through the host's policy;
-    // errors are IO.IOException and derivatives. Text is UTF-8, lines
-    // are written with "\n" and read with \n, \r\n or \r.
-    class File {
-        static bool Exists(string path) {
-            var r = __IOFileExists(path)
-            if (r < 0) { IO.IOErrors.Throw() }
-            return r == 1
-        }
-
-        // Size in bytes.
-        static int Size(string path) {
-            var n = __IOFileSize(path)
-            if (n < 0) { IO.IOErrors.Throw() }
-            return n
-        }
-
-        // Time of the last modification: seconds since 1970 (UTC), with the unit s.
-        static any ModifiedTime(string path) {
-            var t = __IOFileTime(path)
-            if (t == undefined) { IO.IOErrors.Throw() }
-            return t * 1s   // the native gives plain seconds (units do not cross the package ABI)
-        }
-
-        // A missing file is not an error.
-        static undefined Delete(string path) {
-            if (!__IOFileDelete(path)) { IO.IOErrors.Throw() }
-        }
-
-        static undefined Copy(string source, string target, bool overwrite = false) {
-            if (!__IOFileCopy(source, target, overwrite)) { IO.IOErrors.Throw() }
-        }
-
-        static undefined Move(string source, string target, bool overwrite = false) {
-            if (!__IOFileMove(source, target, overwrite)) { IO.IOErrors.Throw() }
-        }
-
-        // A TextReader/TextWriter on the file (see there); without append it is overwritten.
-        static IO.TextReader OpenText(string path) { return new IO.TextReader(path) }
-        static IO.TextWriter CreateText(string path) { return new IO.TextWriter(path) }
-        static IO.TextWriter AppendText(string path) { return new IO.TextWriter(path, true) }
-
-        static byte[] ReadAllBytes(string path) {
-            var stream = new IO.FileStream(path)
-            var data = stream.ReadAll()
-            stream.Close()
-            return data
-        }
-
-        // Creates the file or overwrites it.
-        static undefined WriteAllBytes(string path, byte buffer[]) {
-            var stream = new IO.FileStream(path, IO.FileMode.Create)
-            stream.Write(buffer)
-            stream.Close()
-        }
-
-        static undefined AppendAllBytes(string path, byte buffer[]) {
-            var stream = new IO.FileStream(path, IO.FileMode.Append)
-            stream.Write(buffer)
-            stream.Close()
-        }
-
-        static string ReadAllText(string path) {
-            return IO.Utf8.GetString(IO.File.ReadAllBytes(path))
-        }
-
-        static undefined WriteAllText(string path, string text) {
-            IO.File.WriteAllBytes(path, IO.Utf8.GetBytes(text))
-        }
-
-        static undefined AppendAllText(string path, string text) {
-            IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
-        }
-
-        // All lines as a List of strings (`foreach (line in ...)`, `.count`, `[i]`).
-        static List ReadAllLines(string path) {
-            return new List(__IOSplitLines(IO.File.ReadAllText(path)))
-        }
-
-        // Each line of a List (or an array), each terminated with "\n".
-        static undefined WriteAllLines(string path, any lines) {
-            var stream = new IO.FileStream(path, IO.FileMode.Create)
-            if (lines is of List) {
-                foreach (line in lines) {
-                    stream.Write(IO.Utf8.GetBytes(line + "\n"))
-                }
-            } else {
-                for (var i = 0; i < lines.length; i++) {
-                    stream.Write(IO.Utf8.GetBytes(lines[i] + "\n"))
-                }
-            }
-            stream.Close()
-        }
-    }
-
-    class Directory {
-        static bool Exists(string path) {
-            var r = __IODirExists(path)
-            if (r < 0) { IO.IOErrors.Throw() }
-            return r == 1
-        }
-
-        // Also creates missing intermediate directories; an existing one is not an error.
-        static undefined Create(string path) {
-            if (!__IODirCreate(path)) { IO.IOErrors.Throw() }
-        }
-
-        // A non-empty directory only with recursive = true.
-        static undefined Delete(string path, bool recursive = false) {
-            if (!__IODirDelete(path, recursive)) { IO.IOErrors.Throw() }
-        }
-
-        // Full paths of the files as a sorted List. pattern: e.g. "*.txt".
-        static List GetFiles(string path, string pattern = "*", bool recursive = false) {
-            var list = __IODirList(path, pattern, recursive, 0)
-            if (list == undefined) { IO.IOErrors.Throw() }
-            return new List(list)
-        }
-
-        // Full paths of the subdirectories as a sorted List.
-        static List GetDirectories(string path, string pattern = "*", bool recursive = false) {
-            var list = __IODirList(path, pattern, recursive, 1)
-            if (list == undefined) { IO.IOErrors.Throw() }
-            return new List(list)
-        }
-
-        // The current working directory.
-        static string Current() { return __IOCurrentDir() }
-    }
-
-    // Reads UTF-8 text line by line from a stream. `new IO.TextReader(path)`
-    // opens the file itself; `new IO.TextReader(stream)` reads from an
-    // existing stream and CLOSES it too, unless leaveOpen is true.
-    // Lines end with "\n" or "\r\n" (the "\r" does not belong to the line).
+    // Reads UTF-8 text line by line from a stream: `new IO.TextReader(stream)` reads from an
+    // existing stream and CLOSES it too, unless leaveOpen is true. A file: IO.File.OpenText(path)
+    // (`#import "filesystem"`). Lines end with "\n" or "\r\n" (the "\r" does not belong to the line).
     //
-    //     var reader = new IO.TextReader("notes.txt")
+    //     var reader = IO.File.OpenText("notes.txt")
     //     foreach (line in reader) { print(line) }
     //
     // ReadLine() returns undefined at the end of the stream.
@@ -518,13 +319,11 @@ namespace IO {
             this.chunk = new byte[4096]
             this.pending = new IO.MemoryStream()
             if (source is of string) {
-                this.source = new IO.FileStream(source)
-                this.ownsSource = true
-            } else {
-                this.source = source
-                this.ownsSource = !leaveOpen
-                try source.TakeTo(this)   // (a stream that is only the result of a call passed on - `new IO.TextReader(IO.File.Open(...))` - belongs to the reader; one that belongs to somebody else stays)
+                throw new IOException("A TextReader reads from a stream - for a file use IO.File.OpenText(path) (#import \"filesystem\").", 1)
             }
+            this.source = source
+            this.ownsSource = !leaveOpen
+            try source.TakeTo(this)   // (a stream that is only the result of a call passed on - `new IO.TextReader(IO.File.Open(...))` - belongs to the reader; one that belongs to somebody else stays)
         }
 
         destruct() { try { this.Close() } catch (IO.IOException e) { } }
@@ -644,11 +443,9 @@ namespace IO {
         string GetCurrent() { return this.line }
     }
 
-    // Writes UTF-8 text (without byte-order mark) to a stream. `new
-    // IO.TextWriter(path[, append])` opens the file itself (overwrites,
-    // with append = true it appends); `new IO.TextWriter(stream[, leaveOpen])`
-    // writes to an existing stream and CLOSES it too, unless
-    // leaveOpen is true. Lines end with "\n".
+    // Writes UTF-8 text (without byte-order mark) to a stream: `new IO.TextWriter(stream[, leaveOpen])`
+    // writes to an existing stream and CLOSES it too, unless leaveOpen is true. A file:
+    // IO.File.CreateText(path) / IO.File.AppendText(path) (`#import "filesystem"`). Lines end with "\n".
     class TextWriter {
         IO.Stream target
         bool ownsTarget
@@ -660,15 +457,11 @@ namespace IO {
             this.ownsTarget = false
             this.closed = false
             if (dest is of string) {
-                var mode = IO.FileMode.Create
-                if (flag) { mode = IO.FileMode.Append }
-                this.target = new IO.FileStream(dest, mode)
-                this.ownsTarget = true
-            } else {
-                this.target = dest
-                this.ownsTarget = !flag
-                try dest.TakeTo(this)   // (see TextReader)
+                throw new IOException("A TextWriter writes to a stream - for a file use IO.File.CreateText(path) or IO.File.AppendText(path) (#import \"filesystem\").", 1)
             }
+            this.target = dest
+            this.ownsTarget = !flag
+            try dest.TakeTo(this)   // (see TextReader)
         }
 
         destruct() { try { this.Close() } catch (IO.IOException e) { } }

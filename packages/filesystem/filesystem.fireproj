@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-filesystem",
+  "type": "library",
+  "import": "filesystem",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'filesystem' of fire: files, directories and paths (IO.File, IO.Directory, IO.Path, IO.FileStream) on the streams of 'io'."
+  }
+}

@@ -537,6 +537,36 @@ inline Value DirList(Value path, Value pattern, Value recursive, Value kind, Own
     return strArray(entries, list);
 }
 inline Value CurrentDir(OwnList* list) { ok(); return str8(plat::fs::currentDir(), list); }
+/// The time of the last change of a file or a directory (unix seconds; undefined on an error).
+inline Value EntryTime(Value path) {
+    std::string full;
+    if (!authorize(path, A_Read, full)) return Undef();
+    int64_t seconds = 0;
+    plat::fs::Status s = plat::fs::entryTime(full, seconds);
+    if (!s.ok()) { fail(s); return Undef(); }
+    ok();
+    return Int(seconds);
+}
+inline Value DirMove(Value source, Value target) {
+    std::string to, from;
+    if (!authorize(target, A_Write, to)) return Bool(false);
+    if (!authorize(source, A_Read | A_Delete, from)) return Bool(false);
+    plat::fs::Status s = plat::fs::moveDir(from, to);
+    if (!s.ok()) { fail(s); return Bool(false); }
+    ok();
+    return Bool(true);
+}
+inline Value SetCurrentDir(Value path) {
+    std::string full;
+    if (!authorize(path, A_List, full)) return Bool(false);
+    plat::fs::Status s = plat::fs::setCurrentDir(full);
+    if (!s.ok()) { fail(s); return Bool(false); }
+    ok();
+    return Bool(true);
+}
+/// The drives (Windows) or the root.
+inline Value Roots(OwnList* list) { ok(); return strArray(plat::fs::roots(), list); }
+inline Value HomeDir(OwnList* list) { ok(); return str8(plat::fs::homeDir(), list); }
 
 // ---- paths (text only, no file access) ----------------------------------------------------------------------------------------------------
 inline bool isSep(char c) {

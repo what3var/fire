@@ -163,6 +163,10 @@ namespace UI {
         int headerHeight = 0
         int viewW = 0
         int viewH = 0
+        // the row and cycle of the last click: a second click on the same row within `doubleClickCycles` activates it (like Enter)
+        int lastClickIndex = -1
+        int lastClickCycle = -1000
+        int doubleClickCycles = 24
 
         construct(int x = 0, int y = 0, int width = 160, int height = 120) : base(x, y, width, height) {
             this.items = new List()
@@ -451,7 +455,16 @@ namespace UI {
             }
             this.HeaderClick(root, px, py)
             var index = this.RowAt(root, px, py)
-            if (index >= 0) { this.Select(index) }
+            if (index >= 0) {
+                this.Select(index)
+                if (index == this.lastClickIndex && root.cycles - this.lastClickCycle <= this.doubleClickCycles) {
+                    this.lastClickIndex = -1
+                    this.Activate()
+                    return
+                }
+            }
+            this.lastClickIndex = index
+            this.lastClickCycle = root.cycles
         }
 
         undefined HeaderClick(Root root, int px, int py) { }

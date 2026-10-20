@@ -1908,19 +1908,19 @@ method calls, not operators/special syntax - the operator
 overloading of `SPEC 5.11` remains unaffected (different opcodes: `CallMethod`
 here, `BinaryNumericOrOperator` there).
 
-### 8.11 Streams and file access (`#import "io"`)
+### 8.11 Streams (`#import "io"`) and files (`#import "filesystem"`)
 
-`#import "io"` unlocks the namespace `IO` (the package `fire-io`: its prelude and the C++ of `packages/io/native/fire_bridge_io.hpp`; in the VM a library built from it, like `graphics`/
-`devices`: native functions `__IO...` plus a fire prelude). Everything lives in `namespace IO`,
-so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
+`#import "io"` unlocks the namespace `IO` with the streams (the package `fire-io`: its prelude and the C++ of `packages/io/native/fire_bridge_io.hpp`; in the VM a library built
+from it, like `graphics`/`devices`: native functions `__IO...` plus a fire prelude). `#import "filesystem"` (the package `fire-filesystem`, fire only, on the natives of `io`)
+adds the file system to the same namespace: `IO.FileStream`, `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileMode`, `IO.FileAccess`, `IO.SearchOption` - named like
+System.IO in .NET (docs/FILESYSTEM.md). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
 namespace is only reachable **fully qualified** (`IO.FileMode.Create`).
 
-Structure: streams (`IO.FileStream`, `IO.MemoryStream`, your own streams), file/directory API
-(`IO.File`, `IO.Directory`, `IO.Path`, `IO.Utf8`), text (`IO.TextReader`, `IO.TextWriter`) and
-standard input/output (`IO.Stdio`) - all described below.
+Structure: streams (`IO.MemoryStream`, your own streams; with `filesystem` also `IO.FileStream`), text (`IO.TextReader`, `IO.TextWriter`, `IO.Utf8`), standard
+input/output (`IO.Stdio`); with `filesystem` the file/directory API (`IO.File`, `IO.Directory`, `IO.Path`) - all described below.
 
 ```
-#import "io"
+#import "filesystem"
 
 var w = new IO.FileStream("out.bin", IO.FileMode.Create)   // without access: Open->Read, Append->Write, otherwise ReadWrite
 w.Write("Hello".ToBytes())          // Write(buffer) / Write(buffer, offset, count) -> number of bytes
@@ -1950,58 +1950,59 @@ var rest = r.ReadAll()              // everything up to the end as a buffer
 `IO.FileMode`: `Open` (must exist), `Create` (create/truncate), `CreateNew` (must be
 new), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
 
-**File and directory API.** Static methods, always written with the namespace
+**File and directory API (`#import "filesystem"`).** Static methods, always written with the namespace
 (`IO.File.Exists(...)`, a static access is only resolved via the exactly written
-name).
+name). The names are those of .NET (docs/FILESYSTEM.md has the full list).
 
 ```
+#import "filesystem"
 var f = IO.Path.Combine("data", "notes.txt")
-IO.Directory.Create("data")
+IO.Directory.CreateDirectory("data")
 IO.File.WriteAllText(f, "Greetings\nsecond line")
 foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // a List of strings (.count, [i])
-print(IO.File.Size(f) + " bytes, modified " + IO.File.ModifiedTime(f))   // seconds since 1970 with unit s
+print(IO.File.Size(f) + " bytes, modified " + IO.File.GetLastWriteTime(f))   // a DateTime (local time)
 IO.File.Copy(f, "backup.txt", true)
-foreach (name in IO.Directory.GetFiles("data", "*.txt")) { print(IO.Path.FileName(name)) }
+foreach (name in IO.Directory.GetFiles("data", "*.txt")) { print(IO.Path.GetFileName(name)) }
 ```
 
 | Class | Methods |
 |---|---|
-| `IO.File` | `Exists`, `Size`, `ModifiedTime`, `Delete` (a missing file is not an error), `Copy(source, target, overwrite = false)`, `Move(source, target, overwrite = false)`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines` (returns a `List`), `WriteAllLines` (List or array) |
-| `IO.Directory` | `Exists`, `Create` (also intermediate directories, an existing one is not an error), `Delete(path, recursive = false)`, `GetFiles(path, pattern = "*", recursive = false)`, `GetDirectories(...)` (full paths as a sorted `List`), `Current()` |
-| `IO.Path` | `Combine(a, b[, c])` (an absolute part discards everything before it), `FileName`, `Stem`, `Extension` (with the dot), `Parent`, `FullPath`, `Temp()`, `IsRooted`, `Separator()` |
-| `IO.Utf8` | `GetBytes(text)`, `GetString(buffer[, offset, count])` |
+| `IO.File` | `Exists`, `Size`, `GetLastWriteTime`/`GetLastWriteTimeUtc` (DateTime), `Delete` (a missing file is not an error), `Copy(source, target, overwrite = false)`, `Move(source, target, overwrite = false)`, `Open(path, mode, access)`, `OpenRead`, `OpenWrite`, `Create`, `OpenText`, `CreateText`, `AppendText`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines` (returns a `List`), `WriteAllLines`, `AppendAllLines` (List or array) |
+| `IO.Directory` | `Exists`, `CreateDirectory` (also intermediate directories, an existing one is not an error), `Delete(path, recursive = false)`, `Move`, `GetFiles(path, pattern = "*", searchOption)`, `GetDirectories(...)`, `GetFileSystemEntries(...)` (full paths as a sorted `List`; `IO.SearchOption.AllDirectories` or `true` for the subdirectories), `GetParent`, `GetDirectoryRoot`, `GetLogicalDrives`, `GetLastWriteTime`, `GetCurrentDirectory`, `SetCurrentDirectory`, `GetHomeDirectory` |
+| `IO.Path` | `Combine(a, b[, c[, d]])` (an absolute part discards everything before it), `GetFileName`, `GetFileNameWithoutExtension`, `GetExtension` (with the dot), `HasExtension`, `ChangeExtension`, `GetDirectoryName`, `GetFullPath`, `GetRelativePath`, `GetPathRoot`, `IsPathRooted`, `IsPathFullyQualified`, `GetTempPath`, `GetTempFileName`, `DirectorySeparatorChar` |
+| `IO.Utf8` (`io`) | `GetBytes(text)`, `GetString(buffer[, offset, count])` |
 
 Text is **UTF-8** (`string.ToBytes()`, on the other hand, is ASCII only): written without a byte order mark,
 read with removal of a BOM, invalid sequences become U+FFFD. `WriteAllLines` terminates every
 line with `\n`, `ReadAllLines` recognizes `\n`, `\r\n` and `\r` (a trailing line break
 does not produce an empty last line). Every path goes through the `IoPolicy` before access (reading:
-`Exists`/`Size`/`ModifiedTime`/`Copy` source; writing: `Create`/`Copy` target/`Move` target;
+`Exists`/`Size`/`GetLastWriteTime`/`Copy` source; writing: `CreateDirectory`/`Copy` target/`Move` target;
 deleting: `Delete`/`Move` source; listing: `GetFiles`/`GetDirectories`); a rejected access
 is an `IO.PermissionException` (code 6), also for `Exists` - a query must not reveal what
 exists outside the permitted area. `IO.Path` itself is pure text processing without
 file access. `Copy`/`Move` onto an existing target without `overwrite` throws
 `IO.FileExistsException`, a missing directory `IO.DirectoryNotFoundException`.
 
-**Text (`IO.TextReader`, `IO.TextWriter`).** UTF-8, line by line, on files or arbitrary streams:
+**Text (`IO.TextReader`, `IO.TextWriter`).** UTF-8, line by line, on streams - files come from `IO.File` (`filesystem`):
 
 ```
-var out = new IO.TextWriter("log.txt")            // overwrites; ("log.txt", true) appends
+var out = IO.File.CreateText("log.txt")            // overwrites; IO.File.AppendText appends
 out.WriteLine("Greetings")
 out.Write("Value: ")
 out.Write(42)                                      // numbers etc. are written as text
 out.Close()
 
-foreach (line in new IO.TextReader("log.txt")) { print(line) }   // line by line
+foreach (line in IO.File.OpenText("log.txt")) { print(line) }   // line by line
 
-var reader = IO.File.OpenText("log.txt")           // also CreateText / AppendText
+var reader = IO.File.OpenText("log.txt")
 var first = reader.ReadLine()                      // undefined at the end
 var rest = reader.ReadAll()                        // the rest as one string
 reader.Close()
 ```
 
-`new IO.TextReader(source[, leaveOpen])` / `new IO.TextWriter(target[, flag])`: with a **path**
-they open the file themselves (writer: `flag` = append); with a **stream** (`IO.IStream`) they read/
-write on it and **close it as well**, unless `leaveOpen`/`flag` is true. Lines end with
+`new IO.TextReader(stream[, leaveOpen])` / `new IO.TextWriter(stream[, leaveOpen])` read/write on a
+**stream** (`IO.IStream`) and **close it as well**, unless `leaveOpen` is true (a path is an `IO.IOException`:
+use `IO.File.OpenText`/`CreateText`/`AppendText`). Lines end with
 `\n` or `\r\n` (the `\r` is not part of the line), `\n` is written. `TextReader`: `ReadLine()`,
 `ReadAll()`, `ReadLines()` (List), `EndOfStream`, `foreach`. Both close themselves in `destruct()`
 and throw `IO.StreamClosedException` if you carry on after `Close()`.

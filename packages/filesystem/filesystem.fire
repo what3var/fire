@@ -1,0 +1,341 @@
+#import "io"
+#import "time"
+
+// The file system (docs/FILESYSTEM.md): files, directories and paths, like System.IO in .NET. The classes live in the namespace IO next to the streams of
+// `io` (IO.Stream, IO.TextReader, ...): `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileStream`. Every access goes through the host's policy; errors are
+// IO.IOException and its derivatives (IO.FileNotFoundException, IO.DirectoryNotFoundException, IO.PermissionException, IO.FileExistsException).
+namespace IO {
+    enum FileMode { Open, Create, CreateNew, OpenOrCreate, Append }
+    enum FileAccess { Read, Write, ReadWrite }
+    // Directory.GetFiles(..., IO.SearchOption.AllDirectories) also looks into the subdirectories (`true` does the same).
+    enum SearchOption { TopDirectoryOnly, AllDirectories }
+
+    // A file as a stream. `mode`: IO.FileMode, `access`: IO.FileAccess (if not given, depending on mode: Open -> Read, Append -> Write, otherwise ReadWrite).
+    class FileStream : NativeStream {
+        string name
+
+        construct(string path, int mode = IO.FileMode.Open, int access = -1) : base(-1) {
+            this.name = path
+            this.handle = IO.IOErrors.Handle(__IOFileOpen(path, mode, IO.FileStream.AccessFor(mode, access)))
+        }
+
+        // The path, as given on opening.
+        string Name { get { return this.name } }
+
+        // The FileAccess for a FileMode when none is given (-1).
+        static int AccessFor(int mode, int access) {
+            if (access != -1) { return access }
+            if (mode == IO.FileMode.Open) { return IO.FileAccess.Read }
+            if (mode == IO.FileMode.Append) { return IO.FileAccess.Write }
+            return IO.FileAccess.ReadWrite
+        }
+    }
+
+    // Paths as text (nothing is read from the disk except in GetFullPath, which looks at the current directory). Both "/" and, on Windows, "\" separate.
+    class Path {
+        // The character that separates directories on this system ("/" or "\").
+        static string DirectorySeparatorChar { get { return __IOPathSeparator() } }
+        // The other separator that is accepted too ("/" on Windows, "/" elsewhere).
+        static string AltDirectorySeparatorChar { get { return "/" } }
+
+        // Joins path parts; an absolute part discards everything before it (like Path.Combine in .NET).
+        static string Combine(string a, string b) { return IO.Path.Checked(__IOPathCombine(a, b)) }
+        static string Combine(string a, string b, string c) { return IO.Path.Combine(IO.Path.Combine(a, b), c) }
+        static string Combine(string a, string b, string c, string d) { return IO.Path.Combine(IO.Path.Combine(IO.Path.Combine(a, b), c), d) }
+
+        // "dir/name.txt" -> "name.txt"
+        static string GetFileName(string path) { return IO.Path.Checked(__IOPathFileName(path)) }
+
+        // "dir/name.txt" -> "name"
+        static string GetFileNameWithoutExtension(string path) { return IO.Path.Checked(__IOPathStem(path)) }
+
+        // "dir/name.txt" -> ".txt" ("" without an extension)
+        static string GetExtension(string path) { return IO.Path.Checked(__IOPathExtension(path)) }
+
+        // true if the name has an extension ("a.txt", not "a" or "a.")
+        static bool HasExtension(string path) { return IO.Path.GetExtension(path) != "" }
+
+        // "dir/name.txt", ".md" -> "dir/name.md"; "md" works too; "" or undefined removes the extension.
+        static string ChangeExtension(string path, any extension) {
+            var old = IO.Path.GetExtension(path)
+            var stem = path.Substring(0, path.length - old.length)
+            if (stem.EndsWith(".")) { stem = stem.Substring(0, stem.length - 1) }
+            if (extension == undefined || extension == "") { return stem }
+            if (extension.StartsWith(".")) { return stem + extension }
+            return stem + "." + extension
+        }
+
+        // "dir/sub/name.txt" -> "dir/sub" ("" for a bare name or a root)
+        static string GetDirectoryName(string path) { return IO.Path.Checked(__IOPathParent(path)) }
+
+        // The absolute, normalised path (without "." and "..", relative to the current directory).
+        static string GetFullPath(string path) { return IO.Path.Checked(__IOPathFull(path)) }
+
+        // The directory for temporary files (with a separator at the end).
+        static string GetTempPath() { return IO.Path.Checked(__IOPathTemp()) }
+
+        // Makes a new, empty file in the temporary directory and returns its path.
+        static string GetTempFileName() {
+            var folder = IO.Path.GetTempPath()
+            var stamp = DateTime.UtcNow.ticks % 100000000
+            for (var i = 0; i < 1000; i++) {
+                var candidate = IO.Path.Combine(folder, "fire" + (stamp + i) + ".tmp")
+                try {
+                    var created = new IO.FileStream(candidate, IO.FileMode.CreateNew)
+                    created.Close()
+                    return candidate
+                } catch (IO.FileExistsException e) { }
+            }
+            throw new IOException("No temporary file could be made in '" + folder + "'.")
+        }
+
+        static bool IsPathRooted(string path) { return __IOPathIsRooted(path) }
+
+        // true if the path does not depend on the current directory ("/a", "C:\a" - not "a" or "\a" on Windows).
+        static bool IsPathFullyQualified(string path) {
+            if (IO.Path.DirectorySeparatorChar == "/") { return path.StartsWith("/") }
+            return path.length >= 3 && path[1] == ':' && (path[2] == '\\' || path[2] == '/')
+        }
+
+        // The root of a path: "/" or "C:\" (or "" for a relative path).
+        static string GetPathRoot(string path) {
+            if (IO.Path.DirectorySeparatorChar == "/") {
+                if (path.StartsWith("/")) { return "/" }
+                return ""
+            }
+            if (path.length >= 2 && path[1] == ':') {
+                if (path.length >= 3 && (path[2] == '\\' || path[2] == '/')) { return path.Substring(0, 3) }
+                return path.Substring(0, 2)
+            }
+            if (path.StartsWith("\\") || path.StartsWith("/")) { return path.Substring(0, 1) }
+            return ""
+        }
+
+        // The path of `path` seen from the directory `relativeTo`: GetRelativePath("/a/b", "/a/c/d.txt") is "../c/d.txt" (with the separator of the
+        // system). Paths on different roots (drives) stay absolute.
+        static string GetRelativePath(string relativeTo, string path) {
+            var sep = IO.Path.DirectorySeparatorChar
+            var start = IO.Path.Parts(IO.Path.GetFullPath(relativeTo))
+            var goal = IO.Path.Parts(IO.Path.GetFullPath(path))
+            var full = IO.Path.GetFullPath(path)
+            if (start.count == 0 || goal.count == 0 || !IO.Path.SamePart(start[0], goal[0])) { return full }
+            var same = 0
+            while (same < start.count && same < goal.count && IO.Path.SamePart(start[same], goal[same])) { same++ }
+            var result = new List()
+            for (var i = same; i < start.count; i++) { result.Add("..") }
+            for (var i = same; i < goal.count; i++) { result.Add(goal[i]) }
+            if (result.count == 0) { return "." }
+            return sep.Join(result)
+        }
+
+        // The parts of a full path: the root first ("/" or "C:"), then the names.
+        static List Parts(string full) {
+            var parts = new List()
+            var root = IO.Path.GetPathRoot(full)
+            parts.Add(root.Replace("\\", "").Replace("/", "") == "" ? "/" : root.Replace("\\", "").Replace("/", ""))
+            var rest = full.Substring(root.length).Replace("\\", "/")
+            foreach (part in rest.Split("/")) {
+                if (part != "") { parts.Add(part) }
+            }
+            return parts
+        }
+
+        // Names compare without case on Windows.
+        static bool SamePart(string a, string b) {
+            if (IO.Path.DirectorySeparatorChar == "/") { return a == b }
+            return a.ToLower() == b.ToLower()
+        }
+
+        static string Checked(any value) {
+            if (value == undefined) { IO.IOErrors.Throw() }
+            return value
+        }
+    }
+
+    // Files as a whole. Text is UTF-8; lines are written with "\n" and read with \n, \r\n or \r.
+    class File {
+        static bool Exists(string path) {
+            var r = __IOFileExists(path)
+            if (r < 0) { IO.IOErrors.Throw() }
+            return r == 1
+        }
+
+        // The size in bytes.
+        static int Size(string path) {
+            var n = __IOFileSize(path)
+            if (n < 0) { IO.IOErrors.Throw() }
+            return n
+        }
+
+        // The time of the last change (local time).
+        static DateTime GetLastWriteTime(string path) { return IO.File.GetLastWriteTimeUtc(path).ToLocal() }
+        static DateTime GetLastWriteTimeUtc(string path) {
+            var t = __IOFileTime(path)
+            if (t == undefined) { IO.IOErrors.Throw() }
+            return DateTime.FromUnixSeconds(t)
+        }
+
+        // A missing file is not an error.
+        static undefined Delete(string path) {
+            if (!__IOFileDelete(path)) { IO.IOErrors.Throw() }
+        }
+
+        static undefined Copy(string source, string target, bool overwrite = false) {
+            if (!__IOFileCopy(source, target, overwrite)) { IO.IOErrors.Throw() }
+        }
+
+        static undefined Move(string source, string target, bool overwrite = false) {
+            if (!__IOFileMove(source, target, overwrite)) { IO.IOErrors.Throw() }
+        }
+
+        // A stream on the file (see IO.FileStream).
+        static IO.FileStream Open(string path, int mode, int access = -1) { return new IO.FileStream(path, mode, access) }
+        static IO.FileStream OpenRead(string path) { return new IO.FileStream(path, IO.FileMode.Open, IO.FileAccess.Read) }
+        static IO.FileStream OpenWrite(string path) { return new IO.FileStream(path, IO.FileMode.OpenOrCreate, IO.FileAccess.Write) }
+        // Creates the file or empties it.
+        static IO.FileStream Create(string path) { return new IO.FileStream(path, IO.FileMode.Create) }
+
+        // A TextReader/TextWriter on the file (see there); CreateText overwrites, AppendText appends.
+        static IO.TextReader OpenText(string path) { return new IO.TextReader(new IO.FileStream(path)) }
+        static IO.TextWriter CreateText(string path) { return new IO.TextWriter(new IO.FileStream(path, IO.FileMode.Create)) }
+        static IO.TextWriter AppendText(string path) { return new IO.TextWriter(new IO.FileStream(path, IO.FileMode.Append)) }
+
+        static byte[] ReadAllBytes(string path) {
+            var stream = new IO.FileStream(path)
+            var data = stream.ReadAll()
+            stream.Close()
+            return data
+        }
+
+        // Creates the file or overwrites it.
+        static undefined WriteAllBytes(string path, byte buffer[]) {
+            var stream = new IO.FileStream(path, IO.FileMode.Create)
+            stream.Write(buffer)
+            stream.Close()
+        }
+
+        static undefined AppendAllBytes(string path, byte buffer[]) {
+            var stream = new IO.FileStream(path, IO.FileMode.Append)
+            stream.Write(buffer)
+            stream.Close()
+        }
+
+        static string ReadAllText(string path) {
+            return IO.Utf8.GetString(IO.File.ReadAllBytes(path))
+        }
+
+        static undefined WriteAllText(string path, string text) {
+            IO.File.WriteAllBytes(path, IO.Utf8.GetBytes(text))
+        }
+
+        static undefined AppendAllText(string path, string text) {
+            IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
+        }
+
+        // All lines as a List of strings (`foreach (line in ...)`, `.count`, `[i]`).
+        static List ReadAllLines(string path) {
+            return new List(__IOSplitLines(IO.File.ReadAllText(path)))
+        }
+
+        // Each line of a List (or an array), each ended with "\n".
+        static undefined WriteAllLines(string path, any lines) {
+            IO.File.WriteLines(new IO.FileStream(path, IO.FileMode.Create), lines)
+        }
+
+        static undefined AppendAllLines(string path, any lines) {
+            IO.File.WriteLines(new IO.FileStream(path, IO.FileMode.Append), lines)
+        }
+
+        static undefined WriteLines(IO.FileStream stream, any lines) {
+            if (lines is of List) {
+                foreach (line in lines) {
+                    stream.Write(IO.Utf8.GetBytes(line + "\n"))
+                }
+            } else {
+                for (var i = 0; i < lines.length; i++) {
+                    stream.Write(IO.Utf8.GetBytes(lines[i] + "\n"))
+                }
+            }
+            stream.Close()
+        }
+    }
+
+    // Directories. The lists are full paths, sorted.
+    class Directory {
+        static bool Exists(string path) {
+            var r = __IODirExists(path)
+            if (r < 0) { IO.IOErrors.Throw() }
+            return r == 1
+        }
+
+        // Also creates the missing directories in between; an existing one is not an error.
+        static undefined CreateDirectory(string path) {
+            if (!__IODirCreate(path)) { IO.IOErrors.Throw() }
+        }
+
+        // A directory that is not empty only with recursive = true.
+        static undefined Delete(string path, bool recursive = false) {
+            if (!__IODirDelete(path, recursive)) { IO.IOErrors.Throw() }
+        }
+
+        // Moves (renames) a directory with everything in it; the target must not exist.
+        static undefined Move(string source, string target) {
+            if (!__IODirMove(source, target)) { IO.IOErrors.Throw() }
+        }
+
+        // The files; `pattern` e.g. "*.txt" (`*` any text, `?` one character), `searchOption` IO.SearchOption.AllDirectories (or true) for the subdirectories too.
+        static List GetFiles(string path, string pattern = "*", any searchOption = IO.SearchOption.TopDirectoryOnly) {
+            return IO.Directory.Entries(path, pattern, searchOption, 0)
+        }
+
+        // The subdirectories.
+        static List GetDirectories(string path, string pattern = "*", any searchOption = IO.SearchOption.TopDirectoryOnly) {
+            return IO.Directory.Entries(path, pattern, searchOption, 1)
+        }
+
+        // The subdirectories first, then the files.
+        static List GetFileSystemEntries(string path, string pattern = "*", any searchOption = IO.SearchOption.TopDirectoryOnly) {
+            var all = IO.Directory.GetDirectories(path, pattern, searchOption)
+            foreach (file in IO.Directory.GetFiles(path, pattern, searchOption)) { all.Add(file) }
+            return all
+        }
+
+        static List Entries(string path, string pattern, any searchOption, int kind) {
+            var recursive = searchOption is of bool ? searchOption : searchOption == IO.SearchOption.AllDirectories
+            var list = __IODirList(path, pattern, recursive, kind)
+            if (list == undefined) { IO.IOErrors.Throw() }
+            return new List(list)
+        }
+
+        // The directory that contains `path` (its full path), or undefined for a root.
+        static string GetParent(string path) {
+            var full = IO.Path.GetFullPath(path)
+            var parent = IO.Path.GetDirectoryName(full)
+            if (parent == "" || parent == full) { return undefined }
+            return parent
+        }
+
+        // The root of the path: "/" or "C:\".
+        static string GetDirectoryRoot(string path) { return IO.Path.GetPathRoot(IO.Path.GetFullPath(path)) }
+
+        // The drives ("C:\", "D:\") on Windows, "/" elsewhere.
+        static List GetLogicalDrives() { return new List(__IORoots()) }
+
+        // The time of the last change (local time).
+        static DateTime GetLastWriteTime(string path) { return IO.Directory.GetLastWriteTimeUtc(path).ToLocal() }
+        static DateTime GetLastWriteTimeUtc(string path) {
+            var t = __IOEntryTime(path)
+            if (t == undefined) { IO.IOErrors.Throw() }
+            return DateTime.FromUnixSeconds(t)
+        }
+
+        // The current working directory.
+        static string GetCurrentDirectory() { return __IOCurrentDir() }
+        static undefined SetCurrentDirectory(string path) {
+            if (!__IOSetCurrentDir(path)) { IO.IOErrors.Throw() }
+        }
+
+        // The user's home folder (USERPROFILE on Windows, HOME elsewhere; "" when unknown).
+        static string GetHomeDirectory() { return __IOHomeDir() }
+    }
+}

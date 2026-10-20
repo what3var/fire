@@ -1,0 +1,45 @@
+// The parts of the dialogs that need no window: `forge test packages/dialogs/dialogs.fireproj`. The dialogs themselves are tested with a fake window in the
+// suite (src/fire.Testing/DialogTests.cs).
+#import "testing"
+
+class GlobTests {
+    [Test]
+    undefined Patterns() {
+        Testing.Assert.IsTrue(Dialogs.Glob.Match("*.txt", "notes.TXT"))
+        Testing.Assert.IsFalse(Dialogs.Glob.Match("*.txt", "notes.md"))
+        Testing.Assert.IsTrue(Dialogs.Glob.Match("a?c.*", "abc.png"))
+        Testing.Assert.IsTrue(Dialogs.Glob.Match("*", "anything"))
+        Testing.Assert.IsTrue(Dialogs.Glob.Match("*.*", "noext"))
+        Testing.Assert.IsTrue(Dialogs.Glob.MatchAny("*.png; *.bmp", "x.bmp"))
+        Testing.Assert.IsFalse(Dialogs.Glob.MatchAny("*.png;*.bmp", "x.gif"))
+    }
+}
+
+class FileDialogTests {
+    [Test]
+    undefined Filter() {
+        var d = new Dialogs.OpenFileDialog()
+        d.Filter = "Text|*.txt|Pictures|*.png;*.bmp|All|*.*"
+        d.FilterIndex = 2
+        d.ParseFilter()
+        Testing.Assert.AreEqual(3, d.filterNames.count)
+        Testing.Assert.AreEqual("Pictures", d.filterNames[d.filterAt])
+        Testing.Assert.AreEqual("*.png;*.bmp", d.filterPatterns[1])
+        var none = new Dialogs.SaveFileDialog()
+        none.ParseFilter()
+        Testing.Assert.AreEqual(1, none.filterNames.count)
+    }
+
+    [Test]
+    undefined Extension() {
+        var d = new Dialogs.SaveFileDialog()
+        d.Filter = "Text|*.txt|All|*.*"
+        d.ParseFilter()
+        Testing.Assert.AreEqual("a/b.txt", d.WithExtension("a/b"))
+        Testing.Assert.AreEqual("a/b.md", d.WithExtension("a/b.md"))
+        d.filterAt = 1
+        Testing.Assert.AreEqual("a/b", d.WithExtension("a/b"))
+        d.DefaultExt = "log"
+        Testing.Assert.AreEqual("a/b.log", d.WithExtension("a/b"))
+    }
+}

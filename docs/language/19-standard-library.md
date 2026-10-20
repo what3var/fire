@@ -29,7 +29,9 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"testing"` | namespace `Testing`: `Assert` (`AreEqual`, `IsTrue`, `Throws`, ...) for the tests that `forge test` runs - see docs/TESTING.md |
 | `"linq"` | queries over arrays, lists and `IEnumerable`s - see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq) |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
-| `"io"` | namespace `IO`: `File`, `Directory`, `Path`, text and binary streams, console input |
+| `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
+| `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see docs/FILESYSTEM.md |
+| `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see docs/DIALOGS.md |
 | `"net"` | namespace `Net`: TCP clients and servers, UDP, DNS |
 | `"http"` | namespace `Http`: HTTP client and server (HTTPS with `"tls"`) |
 | `"tls"` | namespace `Tls`: encrypted connections |
@@ -91,17 +93,27 @@ print(rnd.Pick(cards) >= 1)
 ### Files
 
 ```fire
-#import "io"
-var path = IO.Path.Combine(IO.Path.Temp(), "fire-doc.txt")
+#import "filesystem"
+var path = IO.Path.Combine(IO.Path.GetTempPath(), "fire-doc.txt")
 IO.File.WriteAllText(path, "hello file")
 print(IO.File.ReadAllText(path))
 print(IO.File.Exists(path))         // True
 IO.File.Delete(path)
 ```
 
-`IO.File`: `Exists`, `Size`, `Delete`, `Copy`, `Move`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines`, `WriteAllLines`, `ReadAllBytes`,
-`WriteAllBytes`, `OpenText`, `CreateText`, `AppendText`. `IO.Directory`: `Exists`, `Create`, `Delete`, ... `IO.Path`: `Combine`, `FileName`, `Stem`,
-`Extension`, `Parent`, `FullPath`, `Temp`, `Separator`. Errors are `IO.IOException`s (`FileNotFoundException`, `DirectoryNotFoundException`, ...).
+`IO.File`: `Exists`, `Size`, `GetLastWriteTime`, `Delete`, `Copy`, `Move`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines`, `WriteAllLines`, `ReadAllBytes`,
+`WriteAllBytes`, `OpenRead`, `OpenText`, `CreateText`, `AppendText`. `IO.Directory`: `Exists`, `CreateDirectory`, `Delete`, `Move`, `GetFiles`, `GetDirectories`, ... `IO.Path`:
+`Combine`, `GetFileName`, `GetFileNameWithoutExtension`, `GetExtension`, `ChangeExtension`, `GetDirectoryName`, `GetFullPath`, `GetRelativePath`, `GetTempPath`, ...
+Errors are `IO.IOException`s (`FileNotFoundException`, `DirectoryNotFoundException`, ...).
+
+### Dialogs
+
+```
+#import "dialogs"
+var path = Dialogs.OpenFileDialog.Show("Text files|*.txt|All files|*.*")   // undefined when cancelled
+if (path != undefined) { print(IO.File.ReadAllText(path)) }
+if (Dialogs.MessageBox.Show("Quit?", "Demo", Dialogs.MessageBoxButtons.YesNo) == Dialogs.DialogResult.Yes) { print("bye") }
+```
 Streams are closed by their destructor when their owner ends (see [Ownership](13-ownership.md)).
 
 ## More documentation

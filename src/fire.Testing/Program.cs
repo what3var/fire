@@ -38,18 +38,20 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxT
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 // the prelude of a standard library (from its installed package)
 string StdPrelude(string import) => fire.Package.Manager.PackageStore.Default.FindImport(import)!.ReadPrelude()!;
-string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
+// `io` with `filesystem` (files, directories, paths) and `time` (which filesystem uses for DateTime): their preludes as one source.
+string IoPreludeSource() => string.Join("\n", new[] { "io", "time", "filesystem" }.Select(i => fire.Package.Manager.PackageStore.Default.FindImport(i)!.ReadPrelude()!));
 IDisposable UseIoPackage(NativeRegistry natives, fire.IO.Bridge.IoPolicy? policy, fire.IO.Bridge.IoStdio? stdio)
 {
-    var ioImport = fire.Package.Manager.PackageStore.Default.FindImport("io")!;
-    var (ioNames, ioLibraries) = fire.Compiler.PackageImports.NativesOf(new[] { ioImport.Key });
-    string ioLibrary = fire.Compiler.PackageLibrary.Ensure(ioImport);
-    fire.Runtime.PackageNativeBinding.Register(natives, ioNames, ioLibraries, _ => ioLibrary);
+    var imports = new[] { "io", "time" }.Select(i => fire.Package.Manager.PackageStore.Default.FindImport(i)!).ToList();
+    var (names, libraries) = fire.Compiler.PackageImports.NativesOf(imports.Select(i => i.Key));
+    var paths = imports.ToDictionary(i => fire.Compiler.PackageLibrary.FileNameFor(i), i => fire.Compiler.PackageLibrary.Ensure(i));
+    fire.Runtime.PackageNativeBinding.Register(natives, names, libraries, file => paths.TryGetValue(file, out var path) ? path : null);
     return fire.Runtime.PackageHost.Begin(policy, stdio);
 }
 
@@ -5272,9 +5274,10 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("Interface-Mitglieder", "interface I { Foo() }\nclass A : I { Bar() {} }\nI a\na.|", "Foo", "Bar", exact: true);
     CheckCompletion("Prelude-Klasse", "var l = new List()\nl.|", "Add,GetEnumerator", "Speak");
     CheckCompletion("Erweiterung per #import", "#import \"graphics\"\nvar fb = new Framebuffer(1, 2)\nfb.|", "Width,Height,ReadByte");
-    CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "FileStream,MemoryStream,Stream,IStream,FileMode,SeekOrigin,IOException");
-    CheckCompletion("#import io: Stream-Mitglieder", "#import \"io\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
-    CheckCompletion("#import io: IO.FileMode.", "#import \"io\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
+    CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "MemoryStream,Stream,IStream,SeekOrigin,IOException,TextReader", "FileStream,FileMode,Directory");
+    CheckCompletion("#import filesystem: IO. zeigt dazu Dateien, Verzeichnisse, Pfade", "#import \"filesystem\"\nIO.|", "FileStream,FileMode,File,Directory,Path,SearchOption,MemoryStream,Stream");
+    CheckCompletion("#import io: Stream-Mitglieder", "#import \"filesystem\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
+    CheckCompletion("#import io: IO.FileMode.", "#import \"filesystem\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
     CheckCompletion("nach 'new' nur Klassen (keine Interfaces)", "interface I { Foo() }\nclass A { }\nvar x = new |", "A", "I,var");
     CheckCompletion("bool hat keine Mitglieder", "var b = true\nb.|", "", exact: true);
     CheckCompletion("Variable aus fremder Methode nicht sichtbar -> Fallback", "class A { M() { var q = new B() }\n N() { q.| } }\nclass B { Z() {} }", "Z");
@@ -5496,7 +5499,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.ReadAllLines(f).count)
         IO.File.WriteAllLines(f, lines)
         print(IO.File.Size(f))
-        print(IO.File.ModifiedTime(f) > 1000000000s)
+        print(IO.File.GetLastWriteTime(f).Year >= 2001)
         print(IO.File.ReadAllBytes(f).length)
         IO.File.WriteAllBytes(f, "AB".ToBytes())
         print(IO.File.ReadAllText(f))
@@ -5524,30 +5527,30 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         var d = "{{apiDir}}"
         IO.File.WriteAllLines(IO.Path.Combine(d, "l.txt"), ["eins", "zwei"])
         foreach (line in IO.File.ReadAllLines(IO.Path.Combine(d, "l.txt"))) { print(line) }
-        foreach (name in IO.Directory.GetFiles(d, "l*")) { print(IO.Path.FileName(name)) }
+        foreach (name in IO.Directory.GetFiles(d, "l*")) { print(IO.Path.GetFileName(name)) }
         """, new[] { "eins", "zwei", "l.txt" });
 
     CheckIo("Directory und Path", $$"""
         var d = "{{apiDir}}"
         var sub = IO.Path.Combine(d, "a", "b")
         print(IO.Directory.Exists(sub))
-        IO.Directory.Create(sub)
-        IO.Directory.Create(sub)
+        IO.Directory.CreateDirectory(sub)
+        IO.Directory.CreateDirectory(sub)
         print(IO.Directory.Exists(sub))
         IO.File.WriteAllText(IO.Path.Combine(sub, "x.txt"), "1")
         IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
         IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
         var files = IO.Directory.GetFiles(sub)
-        print(files.count + " " + IO.Path.FileName(files[0]) + " " + IO.Path.FileName(files[1]))
+        print(files.count + " " + IO.Path.GetFileName(files[0]) + " " + IO.Path.GetFileName(files[1]))
         print(IO.Directory.GetFiles(sub, "*.txt").count)
         print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).count)
-        print(IO.Path.FileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
+        print(IO.Path.GetFileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
         try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
         IO.Directory.Delete(IO.Path.Combine(d, "a"), true)
         print(IO.Directory.Exists(IO.Path.Combine(d, "a")))
         var p = "dir/sub/name.tar.gz"
-        print(IO.Path.FileName(p) + " " + IO.Path.Stem(p) + " " + IO.Path.Extension(p) + " " + IO.Path.Parent(p))
-        print(IO.Path.IsRooted(p) + " " + IO.Path.IsRooted(IO.Path.FullPath(p)))
+        print(IO.Path.GetFileName(p) + " " + IO.Path.GetFileNameWithoutExtension(p) + " " + IO.Path.GetExtension(p) + " " + IO.Path.GetDirectoryName(p))
+        print(IO.Path.IsPathRooted(p) + " " + IO.Path.IsPathRooted(IO.Path.GetFullPath(p)))
         print(IO.Path.Combine("a", "/abs") == "/abs" || IO.Path.Combine("a", "/abs") == "/abs")
         try { IO.Directory.GetFiles(IO.Path.Combine(d, "gibtsnicht")) } catch (IO.DirectoryNotFoundException e) { print("kein Verzeichnis " + e.code) }
         """, new[] { "False", "True", "2 x.txt y.log", "1", "2", "b", "nicht leer", "False", "name.tar.gz name.tar .gz dir/sub", "False True", "True", "kein Verzeichnis 4" });
@@ -5558,7 +5561,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.Exists(f))
         try { IO.File.WriteAllText(IO.Path.Combine(d, "w.txt"), "x") } catch (IO.PermissionException e) { print("write " + e.code) }
         try { IO.File.Delete(f) } catch (IO.PermissionException e) { print("delete " + e.code) }
-        try { IO.Directory.Create(IO.Path.Combine(d, "n")) } catch (IO.PermissionException e) { print("mkdir " + e.code) }
+        try { IO.Directory.CreateDirectory(IO.Path.Combine(d, "n")) } catch (IO.PermissionException e) { print("mkdir " + e.code) }
         try { IO.Directory.GetFiles("/") } catch (IO.PermissionException e) { print("list " + e.code) }
         try { IO.File.Copy(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("copy " + e.code) }
         try { IO.File.Move(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("move " + e.code) }
@@ -5571,7 +5574,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("TextWriter und TextReader: Zeilen, UTF-8, EndOfStream", $$"""
         var f = "{{textDir}}/t.txt"
-        var w = new IO.TextWriter(f)
+        var w = IO.File.CreateText(f)
         w.WriteLine("Grüße")
         w.Write("zwei")
         w.Write(" ")
@@ -5581,7 +5584,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         w.Write("ohne Ende")
         w.Close()
         print(IO.File.Size(f))
-        var r = new IO.TextReader(f)
+        var r = IO.File.OpenText(f)
         var l = r.ReadLine()
         while (l != undefined) { print("[" + l + "]"); l = r.ReadLine() }
         print(r.EndOfStream)
@@ -5590,14 +5593,14 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("TextReader: foreach, ReadAll, ReadLines, Anhaengen, OpenText", $$"""
         var f = "{{textDir}}/t.txt"
-        foreach (zeile in new IO.TextReader(f)) { print("f:" + zeile) }
-        var a = new IO.TextWriter(f, true)
+        foreach (zeile in IO.File.OpenText(f)) { print("f:" + zeile) }
+        var a = IO.File.AppendText(f)
         a.WriteLine("!")
         a.Close()
         var rd = IO.File.OpenText(f)
         print(rd.ReadAll())
         rd.Close()
-        print(new IO.TextReader(f).ReadLines().count)
+        print(IO.File.OpenText(f).ReadLines().count)
         var cw = IO.File.CreateText(f)
         cw.WriteLine("neu")
         cw.Close()
@@ -5629,13 +5632,13 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("TextReader/TextWriter: destruct() schliesst, Fehler bleiben Exceptions", $$"""
         {
-            var r = new IO.TextReader("{{textDir}}/t.txt")
-            var w = new IO.TextWriter("{{textDir}}/d.txt")
+            var r = IO.File.OpenText("{{textDir}}/t.txt")
+            var w = IO.File.CreateText("{{textDir}}/d.txt")
             print("offen " + __IOOpenCount())
         }
         print("offen " + __IOOpenCount())
-        try { var x = new IO.TextReader("{{textDir}}/gibtsnicht.txt") } catch (IO.FileNotFoundException e) { print("fehlt") }
-        try { var w = new IO.TextWriter("{{textDir}}/x.txt"); w.Close(); w.WriteLine("z") } catch (IO.StreamClosedException e) { print("geschlossen") }
+        try { var x = IO.File.OpenText("{{textDir}}/gibtsnicht.txt") } catch (IO.FileNotFoundException e) { print("fehlt") }
+        try { var w = IO.File.CreateText("{{textDir}}/x.txt"); w.Close(); w.WriteLine("z") } catch (IO.StreamClosedException e) { print("geschlossen") }
         print("offen " + __IOOpenCount())
         """, new[] { "offen 3", "offen 0", "fehlt", "geschlossen", "offen 0" });
 
@@ -7169,6 +7172,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             {
                 var lines = RunLife($$"""
                     #import "io"
+                    #import "filesystem"
                     var w = new IO.FileStream("{{leaveFile}}", IO.FileMode.Create)
                     w.Write("Hallo".ToBytes())
                     var Work = func () => {
@@ -10121,6 +10125,32 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("umbrechen " + sv3.showV + " " + sv3.showH + " " + wp.actualWidth + "x" + wp.actualHeight + " Ausschnitt " + sv3.viewW)
         """, new[] { "beide Leisten True True Ausschnitt 88x68 Inhalt 300x200", "ganz unten rechts 212,132 Kind bei -212,-132", "Rad nach oben 90", "Rad nach unten 132", "Rad seitlich 212", "gezogen 132", "klein False False", "umbrechen True False 88x120 Ausschnitt 88" });
 
+    CheckUi("Listen: Doppelklick aktiviert (wie Enter), zwei Klicks auf verschiedene Zeilen nicht; onKeyPreview sieht Tasten zuerst", uiHead + """
+        var lb = new UI.ListBox(10, 10, 100, 80)
+        for (var i = 0; i < 5; i = i + 1) { lb.Add("item " + i) }
+        ui.Add(lb)
+        ui.Draw()
+        var activated = 0
+        lb.onActivate = func () => { activated = activated + 1 }
+        ui.MouseDown(1, 20, 15)
+        ui.MouseUp(1, 20, 15)
+        ui.MouseDown(1, 20, 35)
+        ui.MouseUp(1, 20, 35)
+        print("verschiedene Zeilen " + activated)
+        ui.MouseDown(1, 20, 35)
+        ui.MouseUp(1, 20, 35)
+        print("Doppelklick " + activated + " " + lb.selectedIndex)
+        var seen = 0
+        ui.onKeyPreview = func (int key, int mod) => {
+            seen = seen + 1
+            return key == 27
+        }
+        ui.SetFocus(lb)
+        ui.KeyDown(27, 0)
+        ui.KeyDown(13, 0)
+        print("Vorschau " + seen + " " + activated)
+        """, new[] { "verschiedene Zeilen 0", "Doppelklick 1 1", "Vorschau 2 2" });
+
     CheckUi("Listen: ListBox (Auswahl, Tastatur, Rad), ListView (Spalten, Sortieren per Kopfzeile), CollectionView (Filter, Sortierung, aktuelles Element)", uiHead + """
         class Person {
             string name
@@ -12012,6 +12042,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "linq"
         #import "devices"
         #import "io"
+        #import "filesystem"
         var fb = new Framebuffer(8, 4)
         print(fb.Width() + "x" + fb.Height())
         print(DateTime.Now.Year > 2000)
@@ -14205,6 +14236,7 @@ SyntaxTests.Run();
 TypeTests.Run();
 TestingTests.Run();
 WindowManagerTests.Run();
+DialogTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -17501,9 +17533,10 @@ else
     {
         ("IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)", """
             #import "io"
-            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i1")
+            #import "filesystem"
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_io_test_i1")
             if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
-            IO.Directory.Create(IO.Path.Combine(dir, "sub/deeper"))
+            IO.Directory.CreateDirectory(IO.Path.Combine(dir, "sub/deeper"))
             print(IO.Directory.Exists(dir))
             var f = IO.Path.Combine(dir, "a.txt")
             IO.File.WriteAllText(f, "Hallo Welt\nZeile 2 äöü €\r\nZeile 3 é 😀\n\nletzte")
@@ -17512,7 +17545,7 @@ else
             foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
             IO.File.AppendAllText(f, "\nangehaengt")
             print(IO.File.ReadAllLines(f).count)
-            var reader = new IO.TextReader(f)
+            var reader = IO.File.OpenText(f)
             print(reader.ReadLine())
             print(reader.ReadLine())
             reader.Close()
@@ -17523,16 +17556,16 @@ else
             print(IO.File.ReadAllText(IO.Path.Combine(dir, "b.txt")))
             IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"))
             IO.File.Move(IO.Path.Combine(dir, "b.txt"), IO.Path.Combine(dir, "sub/deeper/d.txt"))
-            foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.FileName(p)) }
-            foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.FileName(p)) }
-            foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.FileName(p)) }
+            foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.GetFileName(p)) }
+            foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.GetFileName(p)) }
+            foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.GetFileName(p)) }
             try { IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt")) } catch (IO.FileExistsException e) { print("exists") }
             IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"), true)
             try { IO.File.ReadAllText(IO.Path.Combine(dir, "nope.txt")) } catch (IO.FileNotFoundException e) { print("not found") }
             try { IO.File.WriteAllText(IO.Path.Combine(dir, "nodir/x.txt"), "x") } catch (IO.DirectoryNotFoundException e) { print("no dir") }
             try { IO.Directory.Delete(dir) } catch (IO.IOException e) { print("not empty") }
-            var t = IO.File.ModifiedTime(f)
-            print(t > 1000000000s)
+            var t = IO.File.GetLastWriteTime(f)
+            print(t.Year >= 2001)
             IO.File.Delete(f)
             IO.File.Delete(f)
             print(IO.File.Exists(f))
@@ -17541,6 +17574,7 @@ else
             """),
         ("IO: MemoryStream, UTF-8, Pfade", """
             #import "io"
+            #import "filesystem"
             var m = new IO.MemoryStream()
             m.Write(IO.Utf8.GetBytes("0123456789"))
             print(m.Length + " " + m.Position)
@@ -17578,20 +17612,21 @@ else
             bom[3] = 65
             print(IO.Utf8.GetString(bom))
             print(IO.Path.Combine("a", "b") + " " + IO.Path.Combine("a/", "b") + " " + IO.Path.Combine("a", "/b") + " [" + IO.Path.Combine("", "b") + "]")
-            print(IO.Path.FileName("/x/y/z.tar.gz") + " " + IO.Path.Stem("/x/y/z.tar.gz") + " " + IO.Path.Extension("/x/y/z.tar.gz"))
-            print("[" + IO.Path.Extension(".gitignore") + "] [" + IO.Path.Stem(".gitignore") + "] [" + IO.Path.Extension("noext") + "] [" + IO.Path.Extension("dot.") + "] [" + IO.Path.FileName("dir/") + "]")
-            print(IO.Path.Parent("/x/y/z") + "|" + IO.Path.Parent("/x") + "|" + IO.Path.Parent("x") + "|" + IO.Path.Parent("a/b/") + "|" + IO.Path.Parent("a//b") + "|" + IO.Path.Parent("/"))
-            print(IO.Path.IsRooted("/x") + " " + IO.Path.IsRooted("x") + " " + IO.Path.Separator())
-            print(IO.Path.FullPath("/a/b/../c/./d//e") )
-            print(IO.Path.FullPath("x/../y") == IO.Path.Combine(IO.Directory.Current(), "y"))
-            print(IO.Path.Temp().length > 1)
+            print(IO.Path.GetFileName("/x/y/z.tar.gz") + " " + IO.Path.GetFileNameWithoutExtension("/x/y/z.tar.gz") + " " + IO.Path.GetExtension("/x/y/z.tar.gz"))
+            print("[" + IO.Path.GetExtension(".gitignore") + "] [" + IO.Path.GetFileNameWithoutExtension(".gitignore") + "] [" + IO.Path.GetExtension("noext") + "] [" + IO.Path.GetExtension("dot.") + "] [" + IO.Path.GetFileName("dir/") + "]")
+            print(IO.Path.GetDirectoryName("/x/y/z") + "|" + IO.Path.GetDirectoryName("/x") + "|" + IO.Path.GetDirectoryName("x") + "|" + IO.Path.GetDirectoryName("a/b/") + "|" + IO.Path.GetDirectoryName("a//b") + "|" + IO.Path.GetDirectoryName("/"))
+            print(IO.Path.IsPathRooted("/x") + " " + IO.Path.IsPathRooted("x") + " " + IO.Path.DirectorySeparatorChar)
+            print(IO.Path.GetFullPath("/a/b/../c/./d//e") )
+            print(IO.Path.GetFullPath("x/../y") == IO.Path.Combine(IO.Directory.GetCurrentDirectory(), "y"))
+            print(IO.Path.GetTempPath().length > 1)
             print("done")
             """),
         ("IO: FileStream (Modi, Zugriff, Position, Laenge, Fehlercodes), TextReader/TextWriter", """
             #import "io"
-            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i4")
+            #import "filesystem"
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_io_test_i4")
             if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
-            IO.Directory.Create(dir)
+            IO.Directory.CreateDirectory(dir)
             var p = IO.Path.Combine(dir, "data.bin")
             var s = new IO.FileStream(p, IO.FileMode.Create)
             print(s.CanRead + " " + s.CanWrite + " " + s.CanSeek)
@@ -17647,7 +17682,7 @@ else
             w.Close()
             print(IO.File.Size(p))
             IO.File.WriteAllLines(IO.Path.Combine(dir, "lines.txt"), ["alpha", "beta", "", "gamma"])
-            var rd = new IO.TextReader(IO.Path.Combine(dir, "lines.txt"))
+            var rd = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
             print(rd.EndOfStream)
             var count = 0
             foreach (l in rd) { count = count + 1 }
@@ -18001,12 +18036,13 @@ else
         ("Grafik: Bild aus einer Datei laden (IO-Richtlinie)", """
             #import "graphics"
             #import "io"
+            #import "filesystem"
             class Img {
                 static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
             }
             var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
-            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_gfx_test_g3")
-            IO.Directory.Create(dir)
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_gfx_test_g3")
+            IO.Directory.CreateDirectory(dir)
             var path = IO.Path.Combine(dir, "t.bmp")
             IO.File.WriteAllBytes(path, bmp)
             var fb = Framebuffer.FromFile(path)

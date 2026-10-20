@@ -21,7 +21,7 @@ out.Beep(440, 200)                                 // a 440 Hz sine for 200 ms, 
 out.Tone(523.25, 500, Audio.Wave.Square, 30)       // queue a tone (Hz, ms, wave, volume in percent); returns when it is queued
 out.Drain()                                        // wait until everything queued has been played
 
-var sound = Audio.Sound.FromWav(IO.File.ReadAllBytes("door.wav"))     // needs #import "io"
+var sound = Audio.Sound.FromWav(IO.File.ReadAllBytes("door.wav"))     // needs #import "filesystem"
 var player = sound.Open()                          // an output that fits the sound (its rate and its channels)
 player.Play(sound)
 player.Drain()

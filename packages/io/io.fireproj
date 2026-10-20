@@ -187,6 +187,35 @@
         "returnsReference": true
       },
       {
+        "name": "__IOEntryTime",
+        "arguments": 1,
+        "cpp": "io::EntryTime"
+      },
+      {
+        "name": "__IODirMove",
+        "arguments": 2,
+        "cpp": "io::DirMove"
+      },
+      {
+        "name": "__IOSetCurrentDir",
+        "arguments": 1,
+        "cpp": "io::SetCurrentDir"
+      },
+      {
+        "name": "__IORoots",
+        "arguments": 0,
+        "cpp": "io::Roots",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOHomeDir",
+        "arguments": 0,
+        "cpp": "io::HomeDir",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
         "name": "__IOPathCombine",
         "arguments": 2,
         "cpp": "io::PathCombine",
