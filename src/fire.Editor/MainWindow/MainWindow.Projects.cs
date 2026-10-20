@@ -84,7 +84,7 @@ namespace fire.Editor
                 {
                     var plan = CreatePlan(project);
                     string self = Path.GetFullPath(script.FilePath);
-                    var others = plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => f.Text).ToList();
+                    var others = plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
                     return LiveDiagnostics.AnalyzeInProject(source, others, script.BaseDirectory, plan);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { /* the files cannot be read right now: the file alone */ }

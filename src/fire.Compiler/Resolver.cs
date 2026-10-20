@@ -28,6 +28,9 @@ namespace fire.Compiler
 
         public IReadOnlyList<ResolverException> Errors { get; }
 
+        /// <summary>The index of the source (Parser.ParseMultiple) the error is in; -1 when unknown. The editor shows only the errors of the open file.</summary>
+        public int Source { get; internal set; } = -1;
+
         public ResolverException(string message, int line)
             : base($"{message} ({line})")
         {
@@ -186,9 +189,13 @@ namespace fire.Compiler
         /// property both validate its type) and is remembered only ONCE.</summary>
         private void AddError(ResolverException error)
         {
-            if (_errorMessages.Add(error.Message))
+            if (error.Source < 0) error.Source = _currentSource;
+            if (_errorMessages.Add(error.Source + ":" + error.Message))
                 _errors.Add(error);
         }
+
+        /// <summary>The source of the statement that is being resolved (for ResolverException.Source).</summary>
+        private int _currentSource = -1;
 
         /// <summary>See Ast.NoShadowDirective/ResolveResult.NoShadowGlobals
         /// - set by Resolve() BEFORE any statement resolution in a
@@ -302,7 +309,10 @@ namespace fire.Compiler
             resolver.CollectEnums(program);
             resolver._noShadowGlobals = program.Any(s => s is NoShadowDirective);
             foreach (var stmt in program)
+            {
+                resolver._currentSource = stmt.Source;
                 resolver.ResolveStmt(stmt);
+            }
             return resolver;
         }
 
@@ -417,6 +427,7 @@ namespace fire.Compiler
         {
             foreach (var stmt in statements)
             {
+                _currentSource = stmt.Source;
                 switch (stmt)
                 {
                     case ClassDecl cd:

@@ -18,6 +18,7 @@
     <Compile Include="..\fire.Editor\Markdown\MarkdownParser.cs" Link="Editor\MarkdownParser.cs" />
     <Compile Include="..\fire.Editor\Markdown\LanguageHelp.cs" Link="Editor\LanguageHelp.cs" />
     <Compile Include="..\fire.Editor\Language\DocComments.cs" Link="Editor\DocComments.cs" />
+    <Compile Include="..\fire.Editor\Language\LiveDiagnostics.cs" Link="Editor\LiveDiagnostics.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -32,6 +32,11 @@ namespace fire.Compiler
 
         public IReadOnlyList<CompilerException> Errors { get; }
 
+        /// <summary>The index of the source (Parser.ParseMultiple) the error is in; -1 when unknown. The editor shows only the errors of the open file.</summary>
+        public int Source { get; internal set; } = -1;
+
+        internal CompilerException At(int source) { if (Source < 0) Source = source; return this; }
+
         public CompilerException(string message, int line)
             : base($"{message} ({line})")
         {
@@ -760,7 +765,7 @@ namespace fire.Compiler
                     if (walk.Decl.IsActor) { isActor = true; break; }
                     if (set.Contains(walk))
                     {
-                        _errors.Add(new CompilerException("Circular class inheritance!", rc.Decl.Line));
+                        _errors.Add(new CompilerException("Circular class inheritance!", rc.Decl.Line).At(rc.Decl.Source));
                         break;
                     }
                     set.Add(walk);
@@ -912,7 +917,7 @@ namespace fire.Compiler
                 }
                 catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
                 {
-                    _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, member.Line));
+                    _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, member.Line)).At(rc.Decl.Source));
                 }
             }
 
@@ -936,7 +941,7 @@ namespace fire.Compiler
                     }
                     catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
                     {
-                        _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line));
+                        _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line)).At(rc.Decl.Source));
                     }
                 }
             }
@@ -1378,7 +1383,7 @@ namespace fire.Compiler
             }
             catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
             {
-                _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, stmt.Line));
+                _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, stmt.Line)).At(CurrentSourceIndex));
                 _currentScopeDepth = scopeDepth;
                 while (_loopStack.Count > loopCount) _loopStack.Pop();
             }

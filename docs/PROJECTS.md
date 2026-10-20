@@ -172,7 +172,9 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.fire (single file)`). Unsaved buffers of the project's files go into the build.
 * **F5 on a library file** runs the *startup project* (a library has no entry point); **Build** on a library packs it (`Core-1.2.0.fpk`).
 * Breakpoints belong to a file of the project (not to "the" script), also in library files; the debugger shows the file it is in. Live diagnostics of a file are made in the context of its project
-  (the libraries, the project's symbols for `#if`).
+  (the libraries, the project's symbols for `#if`): the other files of the project are compiled along - their classes, namespaces, members and `#import`s are known -
+  and only the errors of the open file are shown (each error of the compiler knows the file it is in). A library that is a standard import (the solution
+  `packages/Packages.firesln`) is its own import there, as in a build.
 * Old window layouts without the Solution Explorer fall back to the default layout once.
 
 * **Test Explorer** (a tool window, menu *Test*): the tests of the solution, the project or the active file - run all, the selected or the failed ones, results live,
