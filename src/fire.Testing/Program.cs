@@ -39,6 +39,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTest
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
@@ -14237,6 +14238,7 @@ TypeTests.Run();
 TestingTests.Run();
 WindowManagerTests.Run();
 DialogTests.Run();
+DockingTests.Run();
 ImageTests.Run();
 GitTests.Run();
 

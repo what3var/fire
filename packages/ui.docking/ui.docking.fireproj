@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-ui.docking",
+  "type": "library",
+  "import": "ui.docking",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'ui.docking' of fire: a dock manager for tool windows and movable toolstrips with overflow, and a status bar, built on the user interface library."
+  }
+}

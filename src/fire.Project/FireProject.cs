@@ -189,7 +189,7 @@ namespace fire.Projects
             if (Type == OutputType.Library)
             {
                 string import = ImportName;
-                if (!fire.Package.Manager.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter).");
+                if (!fire.Package.Manager.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots).");
                 else if (!Standard && fire.Package.Manager.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
             }
             foreach (var r in References ?? new List<ProjectReference>())

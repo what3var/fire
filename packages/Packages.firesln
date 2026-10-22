@@ -12,6 +12,7 @@
     "time/time.fireproj",
     "filesystem/filesystem.fireproj",
     "dialogs/dialogs.fireproj",
+    "ui.docking/ui.docking.fireproj",
     "random/random.fireproj",
     "testing/testing.fireproj",
     "net/net.fireproj",

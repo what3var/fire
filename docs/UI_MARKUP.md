@@ -118,6 +118,7 @@ The attribute names are those of the fire fields (the first letter may be upper 
 | `TextBox` | `text`, `maxLength` | `onChange`, `onEnter` |
 | `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `text`, `maxLength`, `maxSuggestions`, `displayMember` | `onChange`, `onEnter`, `onChosen` |
 | `ListBox` (`<Item>text</Item>`) | `displayMember`, `selectedIndex` | `onSelect`, `onActivate` |
+| `ComboBox` (`<Item>text</Item>`) | `displayMember`, `selectedIndex`, `maxDropDownItems`, `itemsSource` | `onSelect` |
 | `ListView` (`<Column header="Name" member="name" width="100"/>`) | `displayMember`, `selectedIndex` | `onSelect`, `onActivate` |
 | `TreeView` (`<TreeNode text="..." expanded="true">`, nested) | `indent` | `onSelect` |
 | `RadioButtons` (`<Item>text</Item>`) | `header`, `horizontal`, `spacing`, `selectedIndex` | `onChange` |

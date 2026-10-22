@@ -235,6 +235,7 @@ namespace UI {
         static int PageUp() { return 1073741899 }
         static int PageDown() { return 1073741902 }
         static int End() { return 1073741901 }
+        static int F4() { return 1073741885 }
     }
 
     // Converters of the data bindings of the markup (docs/UI_MARKUP.md): Convert goes from the source to the property of the element, ConvertBack the other

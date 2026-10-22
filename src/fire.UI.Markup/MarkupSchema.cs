@@ -196,6 +196,11 @@ namespace fire.UI.Markup
             {
                 new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int),
             }.Concat(ListSources).ToArray(), new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = ItemParts },
+            Define("ComboBox", ChildMode.Parts, "new UI.ComboBox(0, 0, 140, 24)", new PropertyDef[]
+            {
+                new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int), new("maxDropDownItems", PropertyKind.Int),
+                new("itemsSource", PropertyKind.Collection),
+            }, new[] { new EventDef("onSelect") }) with { PartTags = ItemParts },
             Define("ListView", ChildMode.Parts, "new UI.ListView(0, 0, 240, 140)", new PropertyDef[]
             {
                 new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int),
@@ -230,7 +235,7 @@ namespace fire.UI.Markup
             // ---- parts: what the containers above contain (no common properties, no style) ----
             new ElementDef("Item", "", ChildMode.None, "", new PropertyDef[] { new("text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
             {
-                PartOf = new[] { "ListBox", "ListView", "RadioButtons" }, AddCall = "{p}.Add({text})",
+                PartOf = new[] { "ListBox", "ListView", "RadioButtons", "ComboBox" }, AddCall = "{p}.Add({text})",
             },
             new ElementDef("Suggestion", "", ChildMode.None, "", new PropertyDef[] { new("text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
             {

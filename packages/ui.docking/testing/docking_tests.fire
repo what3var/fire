@@ -1,0 +1,104 @@
+// The parts of ui.docking that need no window: `forge test packages/ui.docking/ui.docking.fireproj`. Dragging, drawing and the overflow menu are tested with a fake
+// window in the suite (src/fire.Testing/DockingTests.cs).
+#import "testing"
+
+class PanelTests {
+    [Test]
+    undefined RowsAreCompacted() {
+        var panel = new UI.Docking.ToolStripPanel(UI.Dock.Top)
+        var a = panel.Add(new UI.Docking.ToolStrip("A"), 0)
+        var b = panel.Add(new UI.Docking.ToolStrip("B"), 3)
+        var c = panel.Add(new UI.Docking.ToolStrip("C"), 5)
+        Testing.Assert.AreEqual(6, panel.RowCount())
+        panel.Compact()
+        Testing.Assert.AreEqual(3, panel.RowCount())
+        Testing.Assert.AreEqual(1, b.row)
+        Testing.Assert.AreEqual(2, c.row)
+        panel.InsertRow(0)
+        Testing.Assert.AreEqual(1, a.row)
+        panel.Remove(a)
+        Testing.Assert.AreEqual(2, panel.strips.count)
+        Testing.Assert.AreEqual(0, b.row)
+    }
+
+    [Test]
+    undefined StripsOfARowBySequence() {
+        var panel = new UI.Docking.ToolStripPanel(UI.Dock.Left)
+        var a = panel.Add(new UI.Docking.ToolStrip("A"), 0, 50)
+        var b = panel.Add(new UI.Docking.ToolStrip("B"), 0, 10)
+        var row = panel.RowStrips(0)
+        Testing.Assert.AreEqual("B", row[0].text)
+        Testing.Assert.AreEqual("A", row[1].text)
+        Testing.Assert.IsFalse(a.horizontal)
+        Testing.Assert.IsFalse(panel.Horizontal())
+    }
+}
+
+class ItemTests {
+    [Test]
+    undefined OverflowModes() {
+        var strip = new UI.Docking.ToolStrip("T")
+        var b = strip.AddButton("Go")
+        b.overflow = UI.Docking.Overflow.Always
+        Testing.Assert.AreEqual(UI.Docking.Overflow.Always, UI.Docking.ToolStrip.ModeOf(b))
+        Testing.Assert.AreEqual(UI.Docking.Overflow.AsNeeded, UI.Docking.ToolStrip.ModeOf(new UI.Label("x")))
+        Testing.Assert.IsTrue(UI.Docking.ToolStrip.SpringOf(strip.AddLabel("s", true)))
+    }
+
+    [Test]
+    undefined CheckableButtonAndSplitMenu() {
+        var b = new UI.Docking.ToolStripButton("Wrap")
+        b.checkable = true
+        b.Click()
+        Testing.Assert.IsTrue(b.isChecked)
+        Testing.Assert.IsTrue(b.TakeClicked())
+        Testing.Assert.IsFalse(b.TakeClicked())
+        var split = new UI.Docking.ToolStripSplitButton("Run")
+        split.AddItem("Debug")
+        split.AddItem("Release")
+        Testing.Assert.AreEqual(2, split.items.count)
+    }
+}
+
+class ManagerTests {
+    [Test]
+    undefined ShowHideAndTabs() {
+        var dm = new UI.Docking.DockManager()
+        var a = dm.Add(new UI.Docking.ToolWindow("A", new UI.Panel()), UI.Dock.Left)
+        var b = dm.AddTabbed(new UI.Docking.ToolWindow("B", new UI.Panel()), a)
+        var c = dm.Add(new UI.Docking.ToolWindow("C", new UI.Panel()), UI.Dock.Right)
+        Testing.Assert.AreEqual(1, dm.leftPanes.count)
+        Testing.Assert.AreEqual(2, a.Pane().windows.count)
+        Testing.Assert.AreEqual(UI.Dock.Right, c.side)
+        b.Close()
+        Testing.Assert.IsTrue(b.isHidden)
+        Testing.Assert.AreEqual(1, dm.hidden.count)
+        b.Show()
+        Testing.Assert.IsTrue(b.Pane() == a.Pane())
+        c.Float(10, 20)
+        Testing.Assert.IsTrue(c.isFloating)
+        Testing.Assert.AreEqual(0, dm.rightPanes.count)
+        Testing.Assert.AreEqual(3, dm.ToolWindows().count)
+        c.Hide()
+        c.Show()
+        Testing.Assert.IsTrue(c.isFloating)
+        c.DockTo(UI.Dock.Bottom)
+        Testing.Assert.AreEqual(UI.Dock.Bottom, c.side)
+        Testing.Assert.AreEqual(0, dm.floats.count)
+    }
+
+    [Test]
+    undefined StripsMoveBetweenEdges() {
+        var dm = new UI.Docking.DockManager()
+        var s = dm.AddToolStrip(new UI.Docking.ToolStrip("S"))
+        Testing.Assert.AreEqual(1, dm.topStrips.strips.count)
+        dm.FloatToolStrip(s, 30, 40)
+        Testing.Assert.IsTrue(s.floating)
+        Testing.Assert.AreEqual(0, dm.topStrips.strips.count)
+        dm.AddToolStrip(s, UI.Dock.Right)
+        Testing.Assert.IsFalse(s.floating)
+        Testing.Assert.IsFalse(s.horizontal)
+        Testing.Assert.AreEqual(0, dm.floats.count)
+        Testing.Assert.AreEqual(1, dm.ToolStrips().count)
+    }
+}

@@ -31,6 +31,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
 | `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
 | `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see docs/FILESYSTEM.md |
+| `"ui.docking"` | namespace `UI.Docking`: a `DockManager` for tool windows (docked, tabbed, floating) and movable toolstrips with an overflow menu, a `StatusBar` - see docs/DOCKING.md |
 | `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see docs/DIALOGS.md |
 | `"net"` | namespace `Net`: TCP clients and servers, UDP, DNS |
 | `"http"` | namespace `Http`: HTTP client and server (HTTPS with `"tls"`) |

@@ -319,6 +319,292 @@ namespace UI {
         }
     }
 
+    // The drop-down list of a ComboBox: rows follow the pointer, a click chooses, a click outside only closes it.
+    class ComboList : ListBox {
+        ComboBox combo
+
+        construct() : base(0, 0, 160, 24) { }
+
+        string StyleKey() { return "ComboList" }
+
+        // the keys stay with the ComboBox
+        bool Focusable() { return false }
+
+        bool PopupOutside(Root root, int px, int py) {
+            var consumed = this.owner != undefined && this.owner.Contains(px, py)
+            root.ClosePopup(this)
+            return consumed
+        }
+
+        undefined Hover(Root root, int px, int py) {
+            base.Hover(root, px, py)
+            var index = this.RowAt(root, px, py)
+            if (index >= 0) { this.Select(index) }
+        }
+
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.OverBar(px, py)) {
+                base.MouseDown(root, button, px, py)
+                return
+            }
+            var index = this.RowAt(root, px, py)
+            if (index >= 0 && this.combo != undefined) {
+                var target = this.combo
+                target.Choose(index)
+                root.SetFocus(target)
+            }
+        }
+    }
+
+    // A drop-down selection: the chosen element in a box, a click (or Alt+Down, F4, Enter, Space) opens the list of `items`. `displayMember` as with ListBox,
+    // `selectedIndex`/`selectedItem`/`text`, `onSelect`/`TakeChanged()`. Closed, Up/Down select the previous/next element directly.
+    class ComboBox : Element {
+        List items
+        string displayMember = ""
+        int selectedIndex = -1
+        int seenSelected = -1
+        lambda onSelect
+        bool changed = false
+        // at most that many rows are visible at once, more scroll
+        int maxDropDownItems = 8
+        ComboList popupList
+
+        construct(int x = 0, int y = 0, int width = 140, int height = 24) : base(x, y, width, height) {
+            this.items = new List()
+            this.popupList = new ComboList()
+        }
+
+        string StyleKey() { return "ComboBox" }
+
+        bool Focusable() { return true }
+
+        int count { get { return this.items.count } }
+
+        // Appends an element; an object belongs to the box from now on (numbers and text belong to nobody).
+        any Add(any item) {
+            UI.M.Own(this, item)
+            this.items.Add(item)
+            this.Invalidate()
+            return item
+        }
+
+        undefined Remove(any item) {
+            var index = this.items.IndexOf(item)
+            if (index < 0) { return }
+            this.items.RemoveAt(index)
+            if (index == this.selectedIndex) { this.Select(-1) }
+            else if (index < this.selectedIndex) {
+                this.selectedIndex = this.selectedIndex - 1
+                this.seenSelected = this.selectedIndex
+            }
+            this.Invalidate()
+        }
+
+        undefined Clear() {
+            this.CloseDropDown()
+            this.items = new List()
+            this.Select(-1)
+            this.Invalidate()
+        }
+
+        // Replaces the elements by `list`; `own`: the list belongs to the box from now on.
+        undefined SetItems(List list, bool own = true) {
+            this.CloseDropDown()
+            if (own) { list.TakeTo(this) }
+            this.items = list
+            this.selectedIndex = -1
+            this.seenSelected = -1
+            this.Invalidate()
+        }
+
+        List itemsSource {
+            get { return this.items }
+            set { this.SetItems(value, false) }
+        }
+
+        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+
+        any selectedItem {
+            get {
+                if (this.selectedIndex < 0 || this.selectedIndex >= this.items.count) { return undefined }
+                return this.items[this.selectedIndex]
+            }
+            set { this.Select(this.items.IndexOf(value)) }
+        }
+
+        // The text of the selected element ("" without a selection).
+        string text {
+            get {
+                var item = this.selectedItem
+                if (item == undefined) { return "" }
+                return this.ItemText(item)
+            }
+        }
+
+        // Selects the element (-1: none) and reports the change.
+        undefined Select(int index) {
+            if (index >= this.items.count) { index = this.items.count - 1 }
+            if (index < -1) { index = -1 }
+            if (index == this.selectedIndex) { return }
+            this.selectedIndex = index
+            this.seenSelected = index
+            this.changed = true
+            this.Invalidate()
+            var callback = this.onSelect
+            if (callback != undefined) { callback() }
+        }
+
+        // Selects the first element whose text is `text`; false if there is none.
+        bool SelectText(string text) {
+            for (var i = 0; i < this.items.count; i = i + 1) {
+                if (this.ItemText(this.items[i]) == text) {
+                    this.Select(i)
+                    return true
+                }
+            }
+            return false
+        }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        bool IsDropDownOpen() {
+            var root = this.host
+            return root != undefined && root.IsPopup(this.popupList)
+        }
+
+        // Opens the list below the box (above it if there is no room below).
+        undefined OpenDropDown() {
+            var root = this.host
+            if (root == undefined || this.IsDropDownOpen() || this.items.count == 0) { return }
+            var list = this.popupList
+            list.combo = this
+            list.displayMember = this.displayMember
+            list.SetItems(this.items, false)
+            var rows = UI.M.Min(this.items.count, UI.M.Max(1, this.maxDropDownItems))
+            list.width = this.actualWidth
+            list.height = rows * list.RowHeight(root) + 2
+            list.Select(this.selectedIndex)
+            list.TakeChanged()
+            var y = this.ay + this.actualHeight
+            if (y + list.height > root.height && this.ay - list.height >= 0) { y = this.ay - list.height }
+            root.ShowPopup(list, this.ax, y, false, this)
+            if (this.selectedIndex >= 0) { list.EnsureVisible(root, this.selectedIndex) }
+            this.Invalidate()
+        }
+
+        undefined CloseDropDown() {
+            var root = this.host
+            if (root != undefined && root.IsPopup(this.popupList)) { root.ClosePopup(this.popupList) }
+            this.Invalidate()
+        }
+
+        // Takes the row of the list and closes it.
+        undefined Choose(int index) {
+            this.CloseDropDown()
+            this.Select(index)
+        }
+
+        undefined MeasureCore(Root root, int aw, int ah) {
+            var w = 0
+            for (var i = 0; i < this.items.count; i = i + 1) { w = UI.M.Max(w, this.TextWidth(root, this.ItemText(this.items[i]))) }
+            this.cw = w + 30
+            this.ch = this.TextHeight(root) + 10
+        }
+
+        undefined Poll(Root root) {
+            base.Poll(root)
+            if (this.selectedIndex != this.seenSelected) {
+                // set from outside (e.g. by a binding): treat like a selection
+                var want = this.selectedIndex
+                this.selectedIndex = this.seenSelected
+                this.Select(want)
+            }
+        }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var theme = root.theme
+            var r = root.renderer
+            var back = theme.inputBack
+            if (!this.enabled) { back = theme.faceDisabled }
+            else if (this.background != undefined) { back = this.background }
+            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            // the button with the arrow on the right
+            var bw = 18
+            var bx = ax + this.actualWidth - bw
+            var face = theme.face
+            if (!this.enabled) { face = theme.faceDisabled }
+            else if (this.IsDropDownOpen()) { face = theme.facePressed }
+            else if (this.hover) { face = theme.faceHover }
+            r.FillRect(bx, ay + 1, bw - 1, this.actualHeight - 2, face)
+            var border = theme.border
+            if (this.pen != undefined) { border = this.pen }
+            if (this.focused) { border = theme.borderFocus }
+            r.DrawLine(bx, ay + 1, bx, ay + this.actualHeight - 2, theme.border)
+            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+            var color = theme.text
+            if (this.foreground != undefined) { color = this.foreground }
+            if (!this.enabled) { color = theme.textDisabled }
+            var mx = bx + bw / 2
+            var my = ay + this.actualHeight / 2
+            r.FillTriangle(mx - 4, my - 2, mx + 4, my - 2, mx, my + 3, color)
+            var item = this.selectedItem
+            if (item != undefined) {
+                root.PushClip(ax + 1, ay + 1, this.actualWidth - bw - 2, this.actualHeight - 2)
+                this.DrawString(root, ax + 5, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.ItemText(item), color)
+                root.PopClip()
+            }
+        }
+
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.IsDropDownOpen()) { this.CloseDropDown() } else { this.OpenDropDown() }
+        }
+
+        bool WantsKey(int key) {
+            if (key == UI.Keys.Down() || key == UI.Keys.Up()) { return this.IsDropDownOpen() || this.items.count > 0 }
+            return false
+        }
+
+        // the Alt keys are bits 9 and 10 (256, 512) of mod
+        undefined KeyDown(Root root, int key, int mod) {
+            var alt = (mod / 256) % 4 != 0
+            var open = this.IsDropDownOpen()
+            if (open) {
+                var list = this.popupList
+                if (key == UI.Keys.Escape() || (alt && key == UI.Keys.Up()) || key == UI.Keys.F4()) {
+                    this.CloseDropDown()
+                } else if (key == UI.Keys.Down()) {
+                    list.Select(UI.M.Min(list.count - 1, list.selectedIndex + 1))
+                    list.EnsureVisible(root, list.selectedIndex)
+                } else if (key == UI.Keys.Up()) {
+                    list.Select(UI.M.Max(0, list.selectedIndex - 1))
+                    list.EnsureVisible(root, list.selectedIndex)
+                } else if (key == UI.Keys.Enter() || key == UI.Keys.Space()) {
+                    var index = list.selectedIndex
+                    if (index >= 0) { this.Choose(index) } else { this.CloseDropDown() }
+                }
+                list.TakeChanged()
+                return
+            }
+            if ((alt && key == UI.Keys.Down()) || key == UI.Keys.F4() || key == UI.Keys.Enter() || key == UI.Keys.Space()) {
+                this.OpenDropDown()
+                return
+            }
+            if (this.items.count == 0) { return }
+            if (key == UI.Keys.Down()) { this.Select(UI.M.Min(this.items.count - 1, this.selectedIndex + 1)) }
+            else if (key == UI.Keys.Up()) { this.Select(UI.M.Max(0, this.selectedIndex - 1)) }
+            else if (key == UI.Keys.Home()) { this.Select(0) }
+            else if (key == UI.Keys.End()) { this.Select(this.items.count - 1) }
+        }
+    }
+
     // A vertical (in a horizontal bar) or horizontal line between elements.
     class Separator : Element {
         construct() : base(0, 0, -1, -1) { }

@@ -267,6 +267,7 @@ namespace fire.Editor
             ("DockPanel", "<DockPanel width=\"400\" height=\"300\">\n  <ToolBar DockPanel.Dock=\"Top\">\n    <Button text=\"Open\"/>\n  </ToolBar>\n  \n</DockPanel>"),
             ("ScrollViewer", "<ScrollViewer width=\"200\" height=\"100\">\n  <StackPanel>\n    \n  </StackPanel>\n</ScrollViewer>"),
             ("ListBox", "<ListBox name=\"list\" width=\"160\" height=\"100\" onSelect=\"Picked\">\n  <Item>One</Item>\n  <Item>Two</Item>\n</ListBox>"),
+            ("ComboBox", "<ComboBox name=\"choice\" width=\"140\" selectedIndex=\"0\">\n  <Item>One</Item>\n  <Item>Two</Item>\n</ComboBox>"),
             ("ListView", "<ListView width=\"240\" height=\"120\">\n  <Column header=\"Name\" member=\"name\" width=\"120\"/>\n  <Column header=\"Age\" member=\"age\"/>\n</ListView>"),
             ("TreeView", "<TreeView width=\"200\" height=\"120\">\n  <TreeNode text=\"root\" expanded=\"true\">\n    <TreeNode text=\"child\"/>\n  </TreeNode>\n</TreeView>"),
             ("RadioButtons", "<RadioButtons header=\"Size\" selectedIndex=\"0\">\n  <Item>Small</Item>\n  <Item>Large</Item>\n</RadioButtons>"),

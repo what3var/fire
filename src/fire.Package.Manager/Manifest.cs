@@ -57,12 +57,13 @@ namespace fire.Package.Manager
         }
 
         public static readonly Regex NamePattern = new(@"^[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.Compiled);
-        public static readonly Regex ImportNamePattern = new(@"^[A-Za-z][A-Za-z0-9_]*$", RegexOptions.Compiled);
+        // letters, digits and '_', starting with a letter; several such parts may be joined by dots ("ui.docking")
+        public static readonly Regex ImportNamePattern = new(@"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
 
         /// <summary>The imports of the compiler itself: a package must not take one of these names.</summary>
         public static readonly IReadOnlySet<string> ReservedImportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d",
+            "print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d", "ui.docking",
         };
 
         /// <summary>All problems of the description (empty: it is fine). <paramref name="fileExists"/> decides whether a referenced file exists (relative to the root of the
@@ -78,7 +79,7 @@ namespace fire.Package.Manager
             foreach (var import in Imports ?? new List<PackageImport>())
             {
                 string where = $"Import '{import.Name}': ";
-                if (!ImportNamePattern.IsMatch(import.Name ?? "")) { problems.Add($"Import name '{import.Name}' is not a name (letters, digits and '_', starting with a letter)."); continue; }
+                if (!ImportNamePattern.IsMatch(import.Name ?? "")) { problems.Add($"Import name '{import.Name}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots)."); continue; }
                 if (!import.Standard && ReservedImportNames.Contains(import.Name!)) problems.Add(where + "this name belongs to the compiler.");
                 if (!seen.Add(import.Name)) problems.Add(where + "the name is used twice.");
                 if (string.IsNullOrWhiteSpace(import.Prelude) && import.Native == null) problems.Add(where + "needs a 'prelude' and/or a 'native' part.");
