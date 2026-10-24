@@ -68,7 +68,7 @@ namespace fire.Native
             foreach (var rc in _program.Program.Classes.Values.ToList())
             {
                 RegisterClass(rc.Name);
-                foreach (var ctor in rc.Constructors.Values)
+                foreach (var ctor in rc.AllConstructors)
                 {
                     GetFunc(ctor, FuncKind.Ctor);
                     // `Reflect.New` with fewer arguments evaluates the default values: their functions have to exist before the code is written
@@ -385,7 +385,7 @@ namespace fire.Native
             {
                 if (!_classes.TryGetValue(rc.Name, out var info)) continue;
                 var byArgc = new List<string>();
-                foreach (var ctor in rc.Constructors.Values)
+                foreach (var ctor in rc.AllConstructors)
                 {
                     int required = ctor.ParamCount;
                     while (required > 0 && required - 1 < ctor.ParamDefaults.Count && ctor.ParamDefaults[required - 1] != null) required--;

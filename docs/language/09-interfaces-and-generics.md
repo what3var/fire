@@ -141,7 +141,7 @@ print(lengths[0])        // 300cm
 
 ## Generic methods
 
-A method can have its own type parameters. They are taken from the arguments - the call is written without `<...>`:
+A method can have its own type parameters. They are taken from the arguments - the call is usually written without `<...>`:
 
 ```fire
 class Util {
@@ -157,6 +157,18 @@ The type arguments found for a call are passed to it, so its parameters are chec
 with an `any text = "x"` is an `ArgumentException`). An `int` and a `float` together give a `float` (`Pick(2, 3.5, true)`), and the `2` is a
 `2.0` already at the call. In native code a call with `int`, `float` or `bool` type arguments runs a copy of the method made for them, with
 typed arithmetic - for generic methods and for the methods of a `Box<int>` or `Box<float>` alike.
+
+The type arguments can also be written: `Util.Pick<string>(a, b, true)`. Then they are not inferred, and when the method is overloaded
+(see [Overloading by type](08-classes.md#overloading-by-type)) the call means the generic overload with that many type parameters:
+
+```fire
+class Util {
+    static string Describe(string s) { return "a string" }
+    static string Describe<T>(T x) { return "something" }
+}
+print(Util.Describe("x"))           // a string
+print(Util.Describe<string>("x"))   // something
+```
 
 ## Generic types of the standard library
 

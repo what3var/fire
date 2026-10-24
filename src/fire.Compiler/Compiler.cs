@@ -1286,7 +1286,42 @@ namespace fire.Compiler
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic) { RefMask = RefMaskOf(parms) };
+            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
+            {
+                RefMask = RefMaskOf(parms), ParamTypes = inner.OverloadTypesOf(parms, rc), TypeParamCount = typeParams?.Count ?? 0,
+            };
+        }
+
+        /// <summary>The types of the parameters for overloading by type (Overloads; FunctionProto.ParamTypes).</summary>
+        private string?[] OverloadTypesOf(IReadOnlyList<LambdaParam> parms, RuntimeClass? owner) => parms.Select(p => OverloadTypeOf(p, owner)).ToArray();
+
+        private string OverloadTypeOf(LambdaParam p, RuntimeClass? owner)
+        {
+            var t = p.Type;
+            if (p.ByRef) return "";
+            if (p.ArrayRanks.Count > 0 || t is { ArrayRank: > 0 }) return "k:array";
+            if (t == null || t.IsInferred || t.PointerDepth > 0) return "";
+            if (t.LambdaSignature != null || t.BaseName == "lambda") return "k:lambda";
+            bool methodParam = _methodTypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+            bool classParam = owner?.Decl?.TypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+            if (methodParam || classParam) return "g:" + (DeclaredTypeOfCore(t, owner) ?? "");
+            switch (t.BaseName)
+            {
+                case "int": return "k:int";
+                case "float": return "k:float";
+                case "bool": return "k:bool";
+                case "char": return "k:char";
+                case "string": return "k:string";
+                case "class": return "k:class";
+                case "any": return "";
+            }
+            if (_refParams.EnumNames.Contains(t.BaseName)) return "k:int";
+            if (_knownClassNames == null) return "";
+            bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
+            string name = t.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(t, args.Count, Known) : t.ResolveBaseName(Known);
+            if (_refParams.InterfaceNames.Contains(name)) return "i:" + name;
+            if (_knownClassNames.Contains(name)) return "c:" + name;
+            return _refParams.IsTypeParam(t.BaseName) ? "g:" : "";
         }
 
         /// <summary>Constructor proto: [base constructor call (explicit with
@@ -1358,7 +1393,10 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var paramDefaults = ctor != null ? CompileParamDefaults(rc, ctor.Params) : Array.Empty<FunctionProto?>();
-            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults) { RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0 };
+            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults)
+            {
+                RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0, ParamTypes = ctor != null ? inner.OverloadTypesOf(ctor.Params, rc) : null,
+            };
         }
 
         // -----------------------------------------------------------
@@ -2144,6 +2182,14 @@ namespace fire.Compiler
         /// <summary>A call of a generic method whose type arguments the type checker found: they go to the call (SetTypeArgs, right before it).</summary>
         private void EmitCallTypeArgs(CallExpr call)
         {
+            if (call.TypeArgs is { Count: > 0 } written)
+            {
+                // `Pick<string>(a, b)`: the written type arguments (mode 3: a generic overload is meant)
+                _chunk.EmitOp(OpCode.SetTypeArgs);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(written.Select(t => TypeArgText(t, _enclosingClass, null, 0))))));
+                _chunk.EmitByte(3);
+                return;
+            }
             if (s_methodTypeArgs == null || !s_methodTypeArgs.TryGetValue(call, out var texts) || texts.All(t => t.Length == 0)) return;
             _chunk.EmitOp(OpCode.SetTypeArgs);
             _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(texts))));

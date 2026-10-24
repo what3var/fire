@@ -306,6 +306,62 @@ static class TypeTests
             print(total + " " + names[0] + " " + anything)
             """) == "TC001 TC001|7 n4 3");
 
+        // overloading by parameter type (SPEC 5.4.3): the checker picks the overload of the argument types and knows its return type
+        Check("Ueberladung: der Rueckgabetyp kommt von der passenden Ueberladung", Run("""
+            #strict
+            class U {
+                static int F(int x) { return x + 1 }
+                static string F(string s) { return s + "!" }
+                static string F<T>(T x) { return "g" }
+            }
+            int a = U.F(1)
+            string b = U.F("s")
+            string c = U.F<int>(2)
+            print(a + " " + b + " " + c)
+            """) == "|2 s! g");
+        Check("Ueberladung: falscher Rueckgabetyp der gewaehlten Ueberladung wird gemeldet", Run("""
+            class U {
+                static int F(int x) { return x }
+                static string F(string s) { return s }
+            }
+            int c = U.F("s")
+            """) == "TC001|");
+        Check("Ueberladung: Typargumente ohne generische Methode passender Laenge sind ein Fehler", Run("""
+            class U { static int F(int x) { return x } }
+            print(U.F<string>(1))
+            """, TypeCheckMode.Strict) == "|ERROR TC002");
+        Check("Ueberladung: zwei Methoden mit denselben Parametertypen sind ein Fehler, andere Typen nicht", Run("""
+            class U {
+                int F(int x) { return 1 }
+                int F(int y) { return 2 }
+            }
+            """).StartsWith("|ERROR") && Run("""
+            class U {
+                int F(int x) { return 1 }
+                int F(float y) { return 2 }
+                construct(int a) { }
+                construct(string a) { }
+            }
+            print(new U(1).F(1.5))
+            """) == "|2");
+        Check("Ueberladung: ein typisierter Parameter in der Ableitung ueberschreibt einen untypisierten der Basis", Run("""
+            class B { string Over(any x) { return "base" } }
+            class D : B { string Over(int x) { return "derived" } }
+            print(new D().Over(2))
+            new D().Over("a")
+            """, TypeCheckMode.Strict) == "|ERROR TC002");
+        Check("Ueberladung: ein any-Argument waehlt erst zur Laufzeit (kein Befund)", Run("""
+            #strict
+            class U {
+                static string F(int x) { return "int" }
+                static string F(string s) { return "string" }
+            }
+            any v = "x"
+            print(U.F(v))
+            v = 3
+            print(U.F(v))
+            """) == "|string\nint");
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {

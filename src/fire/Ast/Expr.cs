@@ -178,7 +178,8 @@ namespace fire.Ast
     // ---------------------------------------------------------------
     // Postfix: Aufruf / Member / Index / Zuweisung
     // ---------------------------------------------------------------
-    public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args) : Expr(Line);
+    /// <summary>TypeArgs: type arguments written at the call of a generic method (`Pick<string>(a, b)`) - only generic overloads are meant then; null without.</summary>
+    public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null) : Expr(Line);
     public sealed record MemberExpr(int Line, Expr Target, string Name) : Expr(Line);
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
     public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);

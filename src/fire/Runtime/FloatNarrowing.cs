@@ -36,7 +36,7 @@ namespace fire.Runtime
                 foreach (var (_, init) in rc.Fields) Visit(init);
                 foreach (var (_, init) in rc.StaticFields) Visit(init);
                 foreach (var overloads in rc.Methods.Values) foreach (var m in overloads) Visit(m);
-                foreach (var ctor in rc.Constructors.Values) Visit(ctor);
+                foreach (var ctor in rc.AllConstructors) Visit(ctor);
                 Visit(rc.Destructor);
             }
         }

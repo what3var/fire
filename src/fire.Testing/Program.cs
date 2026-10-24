@@ -14284,6 +14284,154 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("Ueberladung nach Typ: statisch - Basistypen, Klasse vor Basisklasse vor Interface vor generic vor any, int nach float", """
+            interface IShape { float Area() }
+            class Animal {
+                string name
+                construct(string n) { this.name = n }
+            }
+            class Dog : Animal {
+                construct(string n) : base(n) { }
+            }
+            class Puppy : Dog {
+                construct(string n) : base(n) { }
+            }
+            class Square : IShape {
+                float Area() { return 4.0 }
+            }
+            class Show {
+                static string Of(int x) { return "int " + x }
+                static string Of(float x) { return "float " + x }
+                static string Of(string x) { return "string " + x }
+                static string Of(bool x) { return "bool " + x }
+                static string Of(Animal a) { return "animal " + a.name }
+                static string Of(Dog d) { return "dog " + d.name }
+                static string Of(IShape s) { return "shape " + s.Area() }
+                static string Of<T>(T x) { return "generic" }
+
+                static string Num(float x) { return "float" }
+                static string Num(any x) { return "any" }
+            }
+            print(Show.Of(1))
+            print(Show.Of(1.5))
+            print(Show.Of("a"))
+            print(Show.Of(true))
+            print(Show.Of(new Animal("rex")))
+            print(Show.Of(new Dog("bello")))
+            print(Show.Of(new Puppy("tiny")))
+            print(Show.Of(new Square()))
+            print(Show.Of('c'))
+            print(Show.Num(3))
+            print(Show.Num("x"))
+            any v = 7
+            print(Show.Of(v))
+            """),
+        ("Ueberladung nach Typ: DoThis<string>(x) meint die generische, Basis-/abgeleitete Klasse, Konstruktoren, any-Werte zur Laufzeit", """
+            #strict
+            class Util {
+                static string DoThis(string s) { return "string" }
+                static string DoThis<T>(T x) { return "generic" }
+                static T Echo<T>(T x) { return x }
+            }
+            print(Util.DoThis("x"))
+            print(Util.DoThis<string>("x"))
+            print(Util.DoThis(5))
+            int e = Util.Echo<int>(4)
+            print(e + 1)
+
+            class Base {
+                string Hello(int x) { return "base int" }
+                string Hello(string x) { return "base string" }
+                string Over(any x) { return "base any" }
+            }
+            class Derived : Base {
+                string Hello(int x) { return "derived int" }
+                string Over(int x) { return "derived int" }
+            }
+            var d = new Derived()
+            print(d.Hello(1))
+            print(d.Hello("a"))
+
+            print(d.Over(2))
+
+            class Point {
+                string made
+                construct(int x) { this.made = "int" }
+                construct(string s) { this.made = "string" }
+                construct(float f) { this.made = "float" }
+            }
+            print(new Point(1).made + " " + new Point("a").made + " " + new Point(2.5).made)
+            string r = Util.DoThis("y")
+            print(r)
+            for (int i = 0; i < 3; i++) {
+                any v = i
+                if (i == 1) { v = "s" }
+                print(Util.DoThis(v))
+            }
+            """),
+        ("Ueberladung nach Typ: Dispatcher, base-Aufruf, Operatoren, Klassen-Typparameter, Basis-Konstruktor mit any", """
+            interface IShape { float Area() }
+            class Animal {
+                string name
+                construct(string n) { this.name = n }
+            }
+            class Dog : Animal { construct(string n) : base(n) { } }
+            class Puppy : Dog { construct(string n) : base(n) { } }
+            class Square : IShape { float Area() { return 4.0 } }
+
+            class Vec {
+                float x
+                construct(float x) { this.x = x }
+                Vec operator*(float f) { return new Vec(this.x * f) }
+                Vec operator*(Vec o) { return new Vec(this.x * o.x) }
+            }
+
+            class Pick {
+                string Of<T>(T x) { return "generic" }
+                string Of(IShape s) { return "interface" }
+                string Of(Animal a) { return "base " + a.name }
+                string Of(Dog d) { return "derived " + d.name }
+                string Num(int i) { return "int" }
+                string Num(float f) { return "float" }
+            }
+            class SubPick : Pick {
+                string Num(int i) { return "sub int / " + base.Num(i) + " / " + base.Num(1.5) }
+            }
+
+            class Box<T> {
+                string Put(T x) { return "T" }
+                string Put(string s) { return "string" }
+            }
+
+            class Basis {
+                string made
+                construct(int x) { this.made = "int" }
+                construct(string s) { this.made = "string" }
+            }
+            class Child : Basis {
+                construct(any v) : base(v) { }
+            }
+
+            var p = new Pick()
+            print(p.Of(new Puppy("tiny")))
+            print(p.Of(new Dog("rex")))
+            print(p.Of(new Animal("cat")))
+            print(p.Of(new Square()))
+            print(p.Of(42))
+            print(p.Of<int>(42))
+            print(p.Num(1) + " " + p.Num(1.0))
+            var sp = new SubPick()
+            print(sp.Num(3))
+            print(sp.Num(3.5))
+            var v = new Vec(2.0)
+            print((v * 3.0).x)
+            print((v * new Vec(5.0)).x)
+            var b = new Box<int>()
+            print(b.Put(1) + " " + b.Put("a"))
+            print(new Child(1).made + " " + new Child("x").made)
+            any items = [1, "a", 2.5, new Dog("d"), new Square()]
+            foreach (it in items) { print(p.Of(it)) }
+            """),
         ("Laufzeitfehler: Operanden falschen Typs, Bedingungen, Index und Einheitenkonflikte sind abfangbar (gleiche Texte)", """
             try { print(undefined * 2) } catch (ArgumentException e) { print("1 " + e.message) }
             try { print(-"a") } catch (ArgumentException e) { print("2 " + e.message) }

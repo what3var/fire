@@ -165,6 +165,7 @@ struct Zombies { Owned* head; int32_t depth; };
     X(uint32_t, g_callDepth, 0)         /* the number of fire functions that are running on this thread (only kept when the program uses `try x.Take...`) */ \
     X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
     X(const void*, g_callTArgs, nullptr)     /* the type arguments for the next call of a generic method (TArgs) */ \
+    X(int32_t, g_explicitTArgs, 0)           /* the call names its type arguments (`M<string>(x)`): their number - only generic overloads with that many count */ \
     X(Zombies, g_zombies, (Zombies{nullptr, 0}))          /* destroyed objects whose memory is freed at the end of the batch */ \
     X(BridgeError, g_ioError, (BridgeError{0, {0}}))      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, (BridgeError{0, {0}}))  /* the device bridge */ \
@@ -202,6 +203,7 @@ inline ThreadLocals& tl() {
 #define g_scopeCount (::fire::tl().g_scopeCount)
 #define g_reflCaller (::fire::tl().g_reflCaller)
 #define g_callTArgs (::fire::tl().g_callTArgs)
+#define g_explicitTArgs (::fire::tl().g_explicitTArgs)
 #define g_zombies (::fire::tl().g_zombies)
 #define g_ioError (::fire::tl().g_ioError)
 #define g_deviceError (::fire::tl().g_deviceError)

@@ -3384,6 +3384,15 @@ namespace fire.Compiler
                     var args = ParseArgList();
                     expr = new CallExpr(line, expr, args);
                 }
+                else if (Check(TokenType.Lt) && expr is IdentifierExpr or MemberExpr && TypeArgListEnd(0) is var typeArgsEnd and > 0
+                         && PeekAt(typeArgsEnd).Type == TokenType.LParen && PeekAt(typeArgsEnd).Line == Peek().Line)
+                {
+                    // `Pick<string>(a, b)`: the type arguments of a generic method, written at the call
+                    int line = Peek().Line;
+                    var typeArgs = ParseTypeArgRefs();
+                    var args = ParseArgList();
+                    expr = new CallExpr(line, expr, args, typeArgs);
+                }
                 else if (Check(TokenType.LBracket))
                 {
                     int line = Advance().Line;

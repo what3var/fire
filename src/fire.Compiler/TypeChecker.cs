@@ -533,6 +533,133 @@ namespace fire.Compiler
 
         private MethodDecl? FindMethod(string className, string name, int argc) => FindMethod(StaticType.ClassOf(className), name, argc, out _);
 
+        /// <summary>Every method `name` of the receiver that takes `argc` arguments, in the order the run time prefers them for a tie (the own class first;
+        /// a method of a base class that one of a derived class overrides - same parameter count, the same or untyped parameter types - left out).</summary>
+        private List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> FindMethods(StaticType receiver, string name, int argc)
+        {
+            var found = new List<(MethodDecl, Dictionary<string, StaticType>?)>();
+            if (receiver.Class != null && _interfaces.TryGetValue(receiver.Class, out var iface))
+            {
+                var map = MapFor(iface.TypeParams, receiver.Args);
+                foreach (var sig in iface.Methods.Where(m => m.Name == name && Fits(m.Params, argc)))
+                    found.Add((new MethodDecl(0, sig.Line, sig.ReturnType, sig.Name, sig.Params, new Stmt.BlockStmt(0, sig.Line, Array.Empty<Stmt>())), map));
+                return found;
+            }
+            var seen = new List<MethodDecl>();
+            foreach (var (decl, classMap) in Chain(receiver))
+            {
+                var named = decl.Members.OfType<MethodDecl>().Where(m => m.Name == name).ToList();
+                var fitting = named.Where(m => Fits(m.Params, argc) && !seen.Any(d => OverridesStatic(d, m)))
+                    .OrderBy(m => m.Params.Count == argc ? 0 : 1).ThenBy(m => m.Params.Count);
+                foreach (var m in fitting) found.Add((m, classMap));
+                seen.AddRange(named);
+            }
+            return found;
+        }
+
+        /// <summary>The type of a parameter as overloading compares it: "" for one that takes everything (untyped, `any`, `ref`, a type parameter).</summary>
+        private static string OverloadKey(LambdaParam p, MethodDecl m)
+        {
+            var t = p.Type;
+            if (p.ByRef || t == null || t.IsInferred || t.BaseName == "any") return "";
+            if (m.TypeParams?.Any(tp => tp.Name == t.BaseName) == true && t.TypeArgs == null) return "";
+            if (p.ArrayRanks.Count > 0 || t.ArrayRank > 0) return "array";
+            return t.BaseName == "lambda" ? "lambda" : t.BaseName;
+        }
+
+        private static bool OverridesStatic(MethodDecl derived, MethodDecl baseMethod) =>
+            derived.Params.Count == baseMethod.Params.Count
+            && derived.Params.Zip(baseMethod.Params).All(p => OverloadKey(p.First, derived) is var a && OverloadKey(p.Second, baseMethod) is var b && (a == b || a == "" || b == ""));
+
+        private const int NoMatch = -1;
+        private const int Unknown = -2;
+
+        /// <summary>How closely an argument of this static type fits the parameter (like Bytecode.Overloads at run time); Unknown when only the value can
+        /// tell (a dynamic argument, or a class argument whose subclasses another candidate takes more closely).</summary>
+        private int StaticScore(StaticType arg, LambdaParam p, MethodDecl m, Dictionary<string, StaticType>? map)
+        {
+            if (p.ByRef) return Bytecode.Overloads.AnyScore;
+            string key = OverloadKey(p, m);
+            if (key == "")
+            {
+                bool generic = p.Type != null && m.TypeParams?.Any(tp => tp.Name == p.Type.BaseName) == true || p.Type != null && map?.ContainsKey(p.Type.BaseName) == true;
+                return arg.Kind == StaticKind.Undefined ? Bytecode.Overloads.UndefinedScore : generic ? Bytecode.Overloads.GenericScore : Bytecode.Overloads.AnyScore;
+            }
+            if (arg.Kind == StaticKind.Undefined) return Bytecode.Overloads.UndefinedScore;
+            if (arg.IsDynamic) return Unknown;
+            var declared = Declared(p.Type, p.ArrayRanks.Count, map);
+            if (declared == null || declared.IsDynamic) return arg.Kind == StaticKind.Undefined ? Bytecode.Overloads.UndefinedScore : Bytecode.Overloads.GenericScore;
+            switch (declared.Kind)
+            {
+                case StaticKind.Int: case StaticKind.Bool: case StaticKind.Char: case StaticKind.String: case StaticKind.Lambda: case StaticKind.Array:
+                    return arg.Kind == declared.Kind ? Bytecode.Overloads.ExactKind : NoMatch;
+                case StaticKind.Float:
+                    return arg.Kind == StaticKind.Float ? Bytecode.Overloads.ExactKind : arg.Kind == StaticKind.Int ? Bytecode.Overloads.IntToFloat : NoMatch;
+                case StaticKind.Object:
+                    return arg.Kind is StaticKind.Class or StaticKind.Object ? Bytecode.Overloads.ObjectScore : NoMatch;
+                case StaticKind.Class:
+                    if (arg.Kind == StaticKind.Object) return Unknown;
+                    if (arg.Kind == StaticKind.Array && declared.Class == "IEnumerable") return Bytecode.Overloads.InterfaceScore;
+                    if (arg.Kind != StaticKind.Class || arg.Class == null || declared.Class == null) return NoMatch;
+                    if (_interfaces.ContainsKey(declared.Class)) return Implements(arg.Class, declared.Class) ? Bytecode.Overloads.InterfaceScore : _interfaces.ContainsKey(arg.Class) ? Unknown : NoMatch;
+                    int distance = ClassDistance(arg.Class, declared.Class);
+                    if (distance >= 0) return Bytecode.Overloads.ClassExact - distance;
+                    // a value declared as a base class may be an object of the parameter's class at run time
+                    return ClassDistance(declared.Class, arg.Class) >= 0 || _interfaces.ContainsKey(arg.Class) ? Unknown : NoMatch;
+            }
+            return Bytecode.Overloads.AnyScore;
+        }
+
+        /// <summary>How many steps up from `derived` the class `baseName` is (0: the same), -1 when it is no base class of it.</summary>
+        private int ClassDistance(string derived, string baseName)
+        {
+            string? name = derived;
+            for (int d = 0; d < 64 && name != null; d++)
+            {
+                if (name == baseName) return d;
+                if (!_classes.TryGetValue(name, out var decl)) return -1;
+                name = decl.BaseRefs?.Select(b => NameOf(b)).FirstOrDefault(n => _classes.ContainsKey(n));
+            }
+            return -1;
+        }
+
+        /// <summary>Does the class (or one of its base classes) implement the interface?</summary>
+        private bool Implements(string className, string iface)
+        {
+            string? name = className;
+            for (int d = 0; d < 64 && name != null && _classes.TryGetValue(name, out var decl); d++)
+            {
+                if (decl.BaseRefs?.Any(b => NameOf(b) == iface) == true) return true;
+                name = decl.BaseRefs?.Select(b => NameOf(b)).FirstOrDefault(n => _classes.ContainsKey(n));
+            }
+            return false;
+        }
+
+        /// <summary>The overload the run time takes for arguments of these static types; null when only the values can tell (or none fits).</summary>
+        private (MethodDecl Method, Dictionary<string, StaticType>? Map)? PickOverload(List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> candidates, IReadOnlyList<StaticType> args)
+        {
+            int best = -1;
+            long bestScore = long.MinValue;
+            bool unknown = false;
+            for (int c = 0; c < candidates.Count; c++)
+            {
+                var (m, map) = candidates[c];
+                long total = 0;
+                bool fits = true;
+                for (int i = 0; i < args.Count && i < m.Params.Count; i++)
+                {
+                    int score = StaticScore(args[i], m.Params[i], m, map);
+                    if (score == NoMatch) { fits = false; break; }
+                    if (score == Unknown) { unknown = true; fits = false; break; }
+                    total += score;
+                }
+                if (fits && total > bestScore) { best = c; bestScore = total; }
+            }
+            if (unknown || best < 0) return null;
+            return candidates[best];
+        }
+
+
         private static bool Fits(IReadOnlyList<LambdaParam> parameters, int argc) =>
             argc <= parameters.Count && argc >= parameters.Count(p => p.DefaultValue == null);
 
@@ -1142,6 +1269,7 @@ namespace fire.Compiler
             StaticType? lambda = null;
             string name = "the lambda";
             StaticType? calleeTarget = null;
+            List<(MethodDecl Method, Dictionary<string, StaticType>? Map)>? candidates = null;
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
@@ -1149,21 +1277,40 @@ namespace fire.Compiler
                 calleeTarget = target;
                 if (target.Kind == StaticKind.Class)
                 {
-                    method = FindMethod(target, m.Name, c.Args.Count, out map);
-                    if (method == null && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
+                    candidates = FindMethods(target, m.Name, c.Args.Count);
+                    if (candidates.Count == 0 && FindMember(target, m.Name) is { Kind: StaticKind.Lambda } field) { lambda = field; name = m.Name; }
                 }
             }
             else if (c.Callee is IdentifierExpr id)
             {
-                if (_class != null && !IsLocal(id.Name)) method = FindMethod(ThisClass(), id.Name, c.Args.Count, out map);
-                if (method == null && Lookup(id.Name) is { Kind: StaticKind.Lambda } variable) { lambda = variable; name = id.Name; }
+                if (_class != null && !IsLocal(id.Name)) candidates = FindMethods(ThisClass(), id.Name, c.Args.Count);
+                if (candidates is not { Count: > 0 } && Lookup(id.Name) is { Kind: StaticKind.Lambda } variable) { lambda = variable; name = id.Name; }
             }
             else if (Infer(c.Callee) is { Kind: StaticKind.Lambda } callee) lambda = callee;
+
+            // `Pick<string>(a, b)`: only generic methods with that many type parameters are meant
+            if (c.TypeArgs is { Count: > 0 } written && candidates != null)
+            {
+                candidates = candidates.Where(x => x.Method.TypeParams?.Count == written.Count).ToList();
+                if (candidates.Count == 0)
+                {
+                    Report(ArgumentCode, $"No generic method '{(c.Callee as MemberExpr)?.Name ?? (c.Callee as IdentifierExpr)?.Name}' with {written.Count} type parameter(s) takes {c.Args.Count} argument(s)", c.Line);
+                    foreach (var a in c.Args) Infer(a);
+                    return StaticType.Dynamic;
+                }
+            }
+            if (candidates is { Count: > 1 }) return InferOverloadedCall(c, candidates);
+            if (candidates is { Count: 1 }) (method, map) = candidates[0];
 
             // a generic method (`R Select<R>(R lambda<T> fn)`): its type parameters are taken from the arguments, one after the other (a later argument
             // - a lambda - sees what the earlier ones fixed); what is not found is `any`
             HashSet<string>? open = null;
-            if (method?.TypeParams is { Count: > 0 } typeParams)
+            if (method?.TypeParams is { Count: > 0 } writtenParams && c.TypeArgs is { Count: > 0 } writtenArgs)
+            {
+                map = map == null ? new Dictionary<string, StaticType>() : new Dictionary<string, StaticType>(map);
+                for (int i = 0; i < writtenParams.Count; i++) map[writtenParams[i].Name] = Declared(writtenArgs[i], 0, map) ?? StaticType.Dynamic;
+            }
+            else if (method?.TypeParams is { Count: > 0 } typeParams)
             {
                 map = map == null ? new Dictionary<string, StaticType>() : new Dictionary<string, StaticType>(map);
                 open = typeParams.Select(p => p.Name).ToHashSet();
@@ -1206,6 +1353,30 @@ namespace fire.Compiler
             {
                 if (c.Callee is MemberExpr callee && calleeTarget != null) ReportMissingMethod(callee, calleeTarget, c.Args.Count);
                 return StaticType.Dynamic;
+            }
+            CheckArguments(method.Params, args, c.Args, method.Name, map);
+            return DeclaredOrDynamic(method.ReturnType, 0, map);
+        }
+
+        /// <summary>A call that several overloads by type could take: the arguments are inferred first (without the parameter types to go by), then the
+        /// overload the run time takes for them is checked like a single method - when the static types decide it; otherwise the result is not known.</summary>
+        private StaticType InferOverloadedCall(CallExpr c, List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> candidates)
+        {
+            var args = c.Args.Select(a => Infer(a)).ToList();
+            if (PickOverload(candidates, args) is not var (method, map)) return StaticType.Dynamic;
+            if (method.TypeParams is { Count: > 0 } typeParams)
+            {
+                map = map == null ? new Dictionary<string, StaticType>() : new Dictionary<string, StaticType>(map);
+                if (c.TypeArgs is { Count: > 0 } written)
+                    for (int i = 0; i < typeParams.Count; i++) map[typeParams[i].Name] = Declared(written[i], 0, map) ?? StaticType.Dynamic;
+                else
+                {
+                    var open = typeParams.Select(p => p.Name).ToHashSet();
+                    foreach (var p in open) map.Remove(p);
+                    for (int i = 0; i < args.Count && i < method.Params.Count; i++) Bind(method.Params[i].Type, method.Params[i].ArrayRanks.Count, args[i], map, open);
+                    _methodTypeArgs[c] = typeParams.Select(p => map.TryGetValue(p.Name, out var found) ? TypeArgText(found) : "").ToArray();
+                    map = WithOpen(map, open);
+                }
             }
             CheckArguments(method.Params, args, c.Args, method.Name, map);
             return DeclaredOrDynamic(method.ReturnType, 0, map);

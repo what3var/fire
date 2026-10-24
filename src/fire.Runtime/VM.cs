@@ -1133,7 +1133,7 @@ namespace fire.Runtime
                 return false;
 
             var rc = ResolveClass(actor.ClassName);
-            var proto = rc.FindMethod(message.MethodName, message.Args.Length)
+            var proto = FindOverload(rc, message.MethodName, message.Args, actor).Proto
                 ?? throw MethodNotFound(rc, message.MethodName, message.Args.Length);
             CheckArity(proto, message.Args.Length);
             var args = FillDefaultArgs(proto, message.Args, actor);
@@ -2226,6 +2226,7 @@ namespace fire.Runtime
                 && fastLambda.Proto.ParamCount == argCount)
             {
                 _pendingCallTypeArgs = fastLambda.TypeArgs;   // (taken by the TakeCallTypeArgs of a lambda made in generic code)
+                _pendingExplicitTypeArgs = false;
                 EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, captures: fastLambda.Captures);
                 return;
             }
@@ -2256,6 +2257,7 @@ namespace fire.Runtime
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
             _pendingCallTypeArgs = lambda.TypeArgs;
+            _pendingExplicitTypeArgs = false;
             ApplyCopyMask(funcScope, copyMask, lambda.Proto.RefMask);
 
             _currentThis = lambda.OnTarget;
@@ -2452,7 +2454,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = rc.FindConstructor(args, null)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
@@ -2462,7 +2464,7 @@ namespace fire.Runtime
                 return;
             }
 
-            if (ctorProto.ParamCount == argCount)
+            if (ctorProto.ParamCount == argCount && !rc.IsConstructorTypeOverloaded(argCount))
                 StoreSite(site, new SiteCache(rc, ctorProto, 0));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
@@ -2484,7 +2486,7 @@ namespace fire.Runtime
             var owner = RequireObjectInstance(Pop(), "Object creation with owner");
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = rc.FindConstructor(args, null)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
@@ -2513,7 +2515,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = rc.FindConstructor(args, null)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             args = FillDefaultArgs(ctorProto, args, _currentThis);
 
@@ -2928,7 +2930,7 @@ namespace fire.Runtime
                 // `this` is the value itself. Before the fixed built-in conversions below.
                 if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
                 {
-                    var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
+                    var (extProto, extDeclaringRc, extAccess) = FindOverload(extensionRc, methodName, args, null);
                     if (extProto != null)
                     {
                         if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
@@ -2997,7 +2999,7 @@ namespace fire.Runtime
             }
 
             var rc = ResolveClass(obj.ClassName);
-            var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcCall, accessCall) = FindOverload(rc, methodName, args, obj);
             if (proto == null)
             {
                 // The ownership transfer (SPEC 2.2) is there for every object, without the class declaring it.
@@ -3016,7 +3018,7 @@ namespace fire.Runtime
                 return;
             }
             CheckArity(proto, args.Length);
-            if (proto.ParamCount == argCount && obj.RtClass != null)
+            if (proto.ParamCount == argCount && obj.RtClass != null && !rc.IsTypeOverloaded(methodName, argCount))
             {
                 var forwarder = proto.Forwarder;
                 int forwarderField = -1;
@@ -3188,7 +3190,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(baseClassName);
-            var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcBase, accessBase) = FindOverload(rc, methodName, args, _currentThis as ObjectInstance);
             if (proto == null)
                 throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
@@ -3379,7 +3381,7 @@ namespace fire.Runtime
             for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
 
             var callRc = ResolveClass(callClassName);
-            var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
+            var (callProto, declaringRcCall, accessCall) = FindOverload(callRc, callMethodName, callArgs, null);
             if (callProto == null)
                 throw MethodNotFound(callRc, callMethodName, callArgs.Length);
             if (!callProto.IsStatic)
@@ -3396,7 +3398,7 @@ namespace fire.Runtime
             CheckArity(callProto, callArgs.Length);
             callArgs = FillDefaultArgs(callProto, callArgs, null);
 
-            if (callProto.ParamCount == callArgCount)
+            if (callProto.ParamCount == callArgCount && !callRc.IsTypeOverloaded(callMethodName, callArgCount))
                 StoreSite(site, new SiteCache(null, callProto, 0));
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
@@ -5359,6 +5361,7 @@ namespace fire.Runtime
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
             _pendingCallTypeArgs = lambda.TypeArgs;
+            _pendingExplicitTypeArgs = false;
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -5425,6 +5428,7 @@ namespace fire.Runtime
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
             _pendingCallTypeArgs = lambda.TypeArgs;
+            _pendingExplicitTypeArgs = false;
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -5453,7 +5457,7 @@ namespace fire.Runtime
         private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
         {
             var rc = ResolveClass(obj.ClassName);
-            var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcNested, accessNested) = FindOverload(rc, methodName, args, obj);
             if (proto == null)
                 throw new InvalidOperationException(
                     $"Method '{methodName}' not found on '{rc.Name}' (needed for a property or operator overload).");
@@ -5502,7 +5506,7 @@ namespace fire.Runtime
         /// instance properties).</summary>
         private Value? CallStaticMethodNested(RuntimeClass rc, string methodName, Value[] args)
         {
-            var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcNested, accessNested) = FindOverload(rc, methodName, args, null);
             if (proto == null)
                 throw new InvalidOperationException(
                     $"Static method '{methodName}' not found on '{rc.Name}' (needed for a property).");
@@ -5550,7 +5554,7 @@ namespace fire.Runtime
         /// to recursively build yet ANOTHER exception for it.</summary>
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = rc.FindConstructor(args, null)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
@@ -6138,13 +6142,33 @@ namespace fire.Runtime
                     else args[i] = DeclaredType.TypeArgOf(_currentThis as ObjectInstance, t.Substring(at + 1), k) ?? "";
                 }
             }
-            if (forCall == 1) _pendingCallTypeArgs = args;
+            if (forCall is 1 or 3)
+            {
+                _pendingCallTypeArgs = args;
+                _pendingExplicitTypeArgs = forCall == 3;   // (3: written at the call, `M<string>(x)`)
+            }
             else if (forCall == 2) _pendingLambdaTypeArgs = args;
             else _pendingTypeArgs = args;
         }
 
         /// <summary>The type arguments for the next call of a generic method (SetTypeArgs with `forCall`; TakeCallTypeArgs, the first instruction of the method, gives them to the scope of the call).</summary>
         private string[]? _pendingCallTypeArgs;
+
+        /// <summary>The call names its type arguments (`M&lt;string&gt;(x)`, SetTypeArgs with `forCall` 3): a generic overload is meant.</summary>
+        private bool _pendingExplicitTypeArgs;
+
+        /// <summary>The method a call `name(args)` on `rc` reaches: among overloads by type the one that fits the arguments most closely (Overloads).
+        /// `owner`: the object whose type parameters a `T` parameter means. A method that is not generic leaves the type arguments of the call alone.</summary>
+        private (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) FindOverload(RuntimeClass rc, string name, Value[] args, ObjectInstance? owner)
+        {
+            int explicitCount = _pendingExplicitTypeArgs ? _pendingCallTypeArgs?.Length ?? 0 : 0;
+            _pendingExplicitTypeArgs = false;
+            var found = explicitCount > 0 || rc.IsTypeOverloaded(name, args.Length)
+                ? rc.FindMethodWithAccess(name, args, owner, _pendingCallTypeArgs, explicitCount)
+                : rc.FindMethodWithAccess(name, args.Length);
+            if (found.Proto is { TypeParamCount: 0 }) _pendingCallTypeArgs = null;
+            return found;
+        }
 
         /// <summary>The type arguments the next lambda takes along (SetTypeArgs with `forCall` 2).</summary>
         private string[]? _pendingLambdaTypeArgs;

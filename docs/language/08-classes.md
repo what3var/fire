@@ -51,8 +51,8 @@ print(c.Greet("World"))         // Hello, World
 print(c.Greet("World", "Hi"))   // Hi, World
 ```
 
-- **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters. The number of
-  arguments decides which one runs.
+- **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters or different
+  parameter **types**. The overload closest to the given values runs (see [Overloading by type](#overloading-by-type)).
 - **Default values**: `Type name = value` makes a parameter optional. Optional parameters stand at the end.
 - A parameter without a type is `any` (`TC004`).
 - **Passing**: numbers, `bool`, `char` and strings are copied; objects, arrays and lambdas are passed by reference.
@@ -191,6 +191,44 @@ class Handle {
 }
 print("after")          // open A, using A, close A, after
 ```
+
+## Overloading by type
+
+Overloads with the same number of parameters are told apart by the types of their parameters. The one **closest to the values** runs: per argument
+the exact type or class first, then a base class (the closer, the better), then an interface, then a type parameter, then an untyped (`any`)
+parameter - so **derived class > base class > interface > generic**.
+
+```fire
+interface IShape { float Area() }
+class Animal { }
+class Dog : Animal { }
+class Puppy : Dog { }
+class Square : IShape { float Area() { return 4.0 } }
+
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(float x) { return "float" }
+    static string Of(Animal a) { return "animal" }
+    static string Of(Dog d) { return "dog" }
+    static string Of(IShape s) { return "shape" }
+    static string Of<T>(T x) { return "generic" }
+}
+print(Show.Of(1))               // int
+print(Show.Of(2.5))             // float
+print(Show.Of(new Puppy()))     // dog - Dog is closer to Puppy than Animal
+print(Show.Of(new Animal()))    // animal
+print(Show.Of(new Square()))    // shape
+print(Show.Of("text"))          // generic
+print(Show.Of<int>(1))          // generic - written type arguments mean the generic method
+```
+
+- The values decide at run time: a variable of type `any` picks the overload of what it holds then. Where the type checker knows the argument types,
+  it makes the same choice and knows the return type of that overload.
+- An `int` goes into a `float` parameter, but an exact `int` overload wins.
+- Two methods with the same parameter types in one class are an error.
+- In a derived class, a method with the same parameter types (or untyped ones) **overrides** the inherited one; with other types it is one more
+  overload next to it.
+- Constructors and operators (`Vec operator*(float f)`, `Vec operator*(Vec o)`) are overloaded the same way.
 
 ## Operator overloading
 

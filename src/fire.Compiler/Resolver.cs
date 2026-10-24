@@ -582,6 +582,21 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>The parameter types of a method as overloading by type compares them (see Bytecode.Overloads): "" for an untyped parameter, `any`, a
+        /// `ref` parameter or a type parameter (they take everything), otherwise the written type.</summary>
+        private static string[] SignatureKeys(IReadOnlyList<LambdaParam> parms, IReadOnlyCollection<string> typeParamNames) =>
+            parms.Select(p =>
+            {
+                var t = p.Type;
+                if (p.ByRef || t == null || t.IsInferred || t.BaseName == "any" || typeParamNames.Contains(t.BaseName) && t.TypeArgs == null && t.ArrayRank == 0 && p.ArrayRanks.Count == 0) return "";
+                if (p.ArrayRanks.Count > 0 || t.ArrayRank > 0) return "array";
+                if (t.LambdaSignature != null || t.BaseName == "lambda") return "lambda";
+                return t.BaseName == "byte" ? "int" : (t.Namespaces is { Count: > 0 } ns ? string.Join(".", ns) + "." : "") + t.BaseName;
+            }).ToArray();
+
+        /// <summary>Two methods of one class with these parameter types could not be told apart by a call.</summary>
+        private static bool SameSignature(string[] a, string[] b) => a.Length == b.Length && a.Zip(b).All(p => p.First == p.Second);
+
         private bool ClassHasMethod(ClassDecl cd, string name, int arity)
         {
             foreach (var member in cd.Members)
@@ -1429,8 +1444,8 @@ namespace fire.Compiler
             // a SEPARATE count (the name plays no role there -
             // there is only "the" constructor of a class, several
             // overloads differ purely by arity).
-            var seenMethodSignatures = new HashSet<(string Name, int Arity)>();
-            var seenConstructorArities = new HashSet<int>();
+            var seenMethodSignatures = new List<(string Name, string[] Types)>();
+            var seenConstructorSignatures = new List<string[]>();
 
             // Every member is a restart point of its own (see
             // ResolveStmt) - an error in one field/method does
@@ -1454,10 +1469,12 @@ namespace fire.Compiler
                             break;
 
                         case ConstructorDecl ctor:
-                            if (!seenConstructorArities.Add(ctor.Params.Count))
+                            var ctorTypes = SignatureKeys(ctor.Params, classTypeParamNames);
+                            if (seenConstructorSignatures.Any(t => SameSignature(t, ctorTypes)))
                                 AddError(new ResolverException(
-                                    $"A constructor with {ctor.Params.Count} parameter(s) is already defined " +
-                                    "in this class (an overload needs a different number of parameters).", ctor.Line));
+                                    $"A constructor with {ctor.Params.Count} parameter(s) of these types is already defined " +
+                                    "in this class (an overload needs a different number of parameters or other parameter types).", ctor.Line));
+                            seenConstructorSignatures.Add(ctorTypes);
                             ResolveFunctionLike(ctor.Params, ctor.Body, ctor.BaseArgs, isConstructor: true);
                             break;
 
@@ -1472,10 +1489,12 @@ namespace fire.Compiler
                             {
                                 if (md.ReturnType != null)
                                     Guard(() => ValidateTypeRef(md.ReturnType, md.Line));
-                                if (!seenMethodSignatures.Add((md.Name, md.Params.Count)))
+                                var methodTypes = SignatureKeys(md.Params, classTypeParamNames.Concat(methodTypeParamNames).ToList());
+                                if (seenMethodSignatures.Any(m => m.Name == md.Name && SameSignature(m.Types, methodTypes)))
                                     AddError(new ResolverException(
-                                        $"Method '{md.Name}' with {md.Params.Count} parameter(s) is already defined " +
-                                        "in this class (an overload needs a different number of parameters).", md.Line));
+                                        $"Method '{md.Name}' with {md.Params.Count} parameter(s) of these types is already defined " +
+                                        "in this class (an overload needs a different number of parameters or other parameter types).", md.Line));
+                                seenMethodSignatures.Add((md.Name, methodTypes));
                                 ResolveFunctionLike(md.Params, md.Body, baseArgs: null, isConstructor: false, isStatic: md.IsStatic);
                             }
                             finally
@@ -1732,6 +1751,8 @@ namespace fire.Compiler
 
                 case CallExpr call:
                     _calleeArity[call.Callee] = call.Args.Count;   // (a member that is called: the member warnings of a method, not of a property)
+                    if (call.TypeArgs != null)
+                        foreach (var typeArg in call.TypeArgs) Guard(() => ValidateTypeRef(typeArg, call.Line));
                     ResolveExpr(call.Callee);
                     foreach (var a in call.Args) ResolveExprAllowTake(a);
                     break;

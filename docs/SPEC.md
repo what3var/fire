@@ -575,19 +575,16 @@ class Calculator {
 ```
 
 Several methods with the same name are allowed as long as they differ in the
-**number of parameters** – in a dynamically typed
-language that is the only distinguishing feature that is generally reliable at call time
-(overloading by parameter *type* could not be checked
-consistently, since types are attached to values at run time, not to
-variables). Two methods with the same name **and** the same
-number of parameters in the same class are an error. A derived
-class can add an overload with a DIFFERENT arity without hiding the
-inherited overloads of the base class – the call searches across
-the whole inheritance chain for the overload that matches the actual
-number of arguments.
+**number of parameters** or in the **types** of their parameters (5.4.3). Two
+methods with the same name, the same number of parameters and the same
+parameter types in the same class are an error (an untyped parameter and a
+type parameter count as the same type there). A derived class can add
+overloads without hiding the inherited overloads of the base class – the call
+searches across the whole inheritance chain for the overload that matches the
+arguments.
 
 **Constructors** work the same way – several `construct(...)` with
-different numbers of parameters in the same class:
+different numbers or types of parameters in the same class:
 
 ```
 class Point {
@@ -659,6 +656,74 @@ Util.Add10(arr[3])     // a variable, a field (`obj.n`, a bare field name in a c
 - A call is bound to its method only at run time (by name and number of arguments). The caller therefore passes the reference when **any** method of this name
   and number of parameters declares that position `ref`; a method that declares it without `ref` receives the value (a copy for basic types and strings).
 - `ref` is a word only in front of a parameter; as a variable name it stays possible.
+
+### 5.4.3 Overloading by parameter type
+
+Overloads may have the same number of parameters when their parameter types
+differ. The overload that runs is the one **closest to the given values**. The
+values decide at run time (a variable of type `any` holds whatever it holds
+then); the type checker makes the same choice where it knows the types of the
+arguments, and uses the return type of that overload.
+
+```
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(float x) { return "float" }
+    static string Of(string x) { return "string" }
+    static string Of(Animal a) { return "animal" }
+    static string Of(Dog d) { return "dog" }
+    static string Of(IShape s) { return "shape" }
+    static string Of<T>(T x) { return "generic" }
+}
+Show.Of(1)              // int
+Show.Of(new Puppy())    // dog (Puppy : Dog : Animal - the closest class)
+Show.Of(new Square())   // shape (Square implements IShape)
+Show.Of('c')            // generic
+Show.Of<string>("x")    // generic - written type arguments mean the generic method
+```
+
+Per argument the closeness is, from the closest:
+
+1. the exact basic type (`int`, `float`, `bool`, `char`, `string`, a lambda,
+   an array) or the exact class of the object,
+2. a base class of the object – the closer in the chain, the better,
+3. an `int` for a `float` parameter (ranks with a distant base class: below the
+   exact type, above everything that follows),
+4. an interface the object implements,
+5. `class` (any object),
+6. a type parameter (of the method or the class; its `where` conditions and a
+   known type argument must fit),
+7. an untyped or `any` parameter.
+
+So between a derived class, its base class, an interface and a generic
+parameter the priority is exactly that order: **derived > base > interface >
+generic**. The scores of all arguments add up; the overload with the best sum
+runs. An overload a value does not fit at all (a `string` for an `int`, an
+object of an unrelated class) is out. Where two overloads fit equally well, the
+one of the most derived class wins, then the one whose number of parameters
+matches without default values, then the one declared first. `undefined` fits
+every parameter equally. When no overload fits, the first one (in that order)
+is called and its parameter check reports the `ArgumentException`.
+
+**Written type arguments.** A generic method can be called with its type
+arguments: `DoThis<string>(that)`. Then only the generic overloads with that
+many type parameters are considered – the call clearly means the generic one –
+and the type arguments are those written (not inferred from the arguments).
+The type checker reports `TC002` when there is no such generic method.
+
+**Overriding.** A method of a derived class overrides the one of a base class
+when it has the same number of parameters and, per parameter, the same type –
+or an untyped parameter or a type parameter on either side (`string Over(int
+x)` in the derived class overrides `string Over(any x)` of the base class).
+With other parameter types it stands next to the inherited method as another
+overload: `Derived.Hello(int)` and the inherited `Base.Hello(string)` are both
+callable on a `Derived`.
+
+**Operators** (5.11) are overloaded the same way: `Vec operator*(float f)` and
+`Vec operator*(Vec o)` can stand side by side.
+
+The native backend chooses the same way: where the values decide, the generated
+code scores the arguments; elsewhere the call goes directly to the one method.
 
 ### 5.5 Extension classes (`class extends`)
 
