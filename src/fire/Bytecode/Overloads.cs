@@ -9,7 +9,7 @@ namespace fire.Bytecode
     /// <summary>
     /// Overloading by parameter type (SPEC 5.4.3): methods (and constructors) of the same name may have the same number of parameters when their
     /// parameter types differ. A call takes the overload whose parameters fit the given values most closely - per argument: the exact basic type or
-    /// class first, then a base class (the closer, the better), then an interface, then a type parameter, then an untyped (`any`) parameter.
+    /// class first, then a base class (the closer, the better), then an interface, then a type parameter, then `class` (any object), then an untyped (`any`) parameter.
     /// An `int` goes into a `float` parameter, but an exact `float` beats that.
     ///
     /// Every parameter of a method has a descriptor (FunctionProto.ParamTypes), made by the compiler:
@@ -28,7 +28,7 @@ namespace fire.Bytecode
         // the ranks (higher = closer); a class at distance d from the class of the object scores ClassExact - d
         public const int AnyScore = 10;
         public const int GenericScore = 20;
-        public const int ObjectScore = 25;
+        public const int ObjectScore = 15;
         public const int InterfaceScore = 30;
         public const int ClassExact = 1000;
         public const int ExactKind = 1000;

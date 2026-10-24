@@ -14284,6 +14284,54 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("Ueberladung nach Typ: ref-Parameter, statisch und Instanz gemischt, Basistyp-Erweiterung, generic vor class vor any", """
+            class Inc {
+                static string Bump(ref int x) { x = x + 1; return "ref int" }
+                static string Bump(string s) { return "string " + s }
+                string Twice(ref float f) { f = f * 2.0; return "ref float" }
+                string Twice(int i) { return "int" }
+                construct() { }
+                construct(ref int n) { n = n + 10 }
+                construct(string s) { }
+            }
+            int a = 1
+            print(Inc.Bump(a) + " " + a)
+            print(Inc.Bump("q"))
+            float g = 1.5
+            var inc = new Inc()
+            print(inc.Twice(g) + " " + g)
+            print(inc.Twice(3))
+            int k = 5
+            var made = new Inc(k)
+            print(k)
+
+            class Mixed {
+                static string Go(int x) { return "static int" }
+                string Go(string s) { return "instance string" }
+            }
+            print(Mixed.Go(1))
+            print(new Mixed().Go("s"))
+
+            class extends string {
+                string Tag(int n) { return this + "#" + n }
+                string Tag(string s) { return this + "/" + s }
+                string Tag<T>(T x) { return this + "?" }
+            }
+            print("a".Tag(1))
+            print("b".Tag("c"))
+            print("d".Tag(2.5))
+
+            class Thing { }
+            class Prio {
+                static string P(class c) { return "class" }
+                static string P<T>(T x) { return "generic" }
+                static string Q(class c) { return "class" }
+                static string Q(any x) { return "any" }
+            }
+            print(Prio.P(new Thing()))
+            print(Prio.Q(new Thing()))
+            print(Prio.Q(3))
+            """),
         ("Ueberladung nach Typ: statisch - Basistypen, Klasse vor Basisklasse vor Interface vor generic vor any, int nach float", """
             interface IShape { float Area() }
             class Animal {

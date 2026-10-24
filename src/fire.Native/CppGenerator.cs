@@ -803,7 +803,7 @@ namespace fire.Native
             foreach (var cls in _classList)
                 foreach (var method in MethodsFor(cls.Rc, name, argc))
                 {
-                    if (method.IsStatic) continue;
+                    if (method.IsStatic && !cls.Rc.IsTypeOverloaded(name, argc)) continue;
                     if (!_funcByProto.TryGetValue(method, out var target)) return TypeUnknown;
                     int type = ReturnType(target);
                     if (type == TypeUnknown) return TypeUnknown;
@@ -1313,17 +1313,28 @@ namespace fire.Native
             foreach (var (name, argc) in _dispatchers.ToList())
             {
                 foreach (var cls in _classList.ToList())
-                    foreach (var method in MethodsFor(cls.Rc, name, argc))
+                {
+                    var methods = MethodsFor(cls.Rc, name, argc);
+                    bool overloaded = methods.Count > 1 && methods.Any(m => !m.IsStatic);
+                    foreach (var method in methods)
                         if (!method.IsStatic)   // a static method of the same name (`Reflect.Set`) is not what a call on an object means
                         {
                             GetFunc(method, FuncKind.Method);
                             DefaultArgs(method, argc, "self", "list");   // registers the functions of the default values
                         }
-                foreach (var (_, method, _) in ExtensionMethods(name, argc))
-                {
-                    GetFunc(method, FuncKind.Method);
-                    DefaultArgs(method, argc, "self", "list");
+                        else if (overloaded)
+                        {
+                            // (unless it is one of several overloads the values decide between)
+                            GetFunc(method, FuncKind.Static);
+                            DefaultArgs(method, argc, "Undef()", "list");
+                        }
                 }
+                foreach (var (_, _, extensionRc) in ExtensionMethods(name, argc))
+                    foreach (var method in MethodsFor(extensionRc, name, argc))
+                    {
+                        GetFunc(method, FuncKind.Method);
+                        DefaultArgs(method, argc, "self", "list");
+                    }
             }
             RegisterReflectionTargets();
             foreach (var cls in _classList.ToList())
@@ -1355,7 +1366,7 @@ namespace fire.Native
         /// <summary>Does a method call of this name with this many arguments reach an implementation that fills in default values? Then its dispatcher gets the scope list.</summary>
         private bool DispatchNeedsDefaults(string name, int argc) =>
             _program.Program.Classes.Values.Any(rc => MethodsFor(rc, name, argc).Any(m => m.ParamCount != argc))
-            || ExtensionMethods(name, argc).Any(e => e.Proto.ParamCount != argc);
+            || ExtensionMethods(name, argc).Any(e => MethodsFor(e.Rc, name, argc).Any(m => m.ParamCount != argc));
 
         /// <summary>The conversions of the base types that a method call reaches when no class defines the method (SPEC 8.10): per kind of receiver the C++ expression.</summary>
         private static IEnumerable<(string Kind, string Expr)> BuiltinMethods(string name, int argc)
@@ -1449,7 +1460,7 @@ namespace fire.Native
             // classes where the types of the arguments decide between overloads: grouped by their candidates
             var overloaded = new List<(FunctionProto[] Protos, RuntimeClass[] Declaring, List<ClassInfo> Classes)>();
             foreach (var cls in _classList)
-                if (cls.Rc.IsTypeOverloaded(name, argc) && cls.Rc.Candidates(name, argc) is var set && set.Protos.All(p => !p.IsStatic))
+                if (cls.Rc.IsTypeOverloaded(name, argc) && cls.Rc.Candidates(name, argc) is var set && set.Protos.Any(p => !p.IsStatic))
                 {
                     int group = overloaded.FindIndex(o => o.Protos.SequenceEqual(set.Protos) && o.Declaring.SequenceEqual(set.Declaring));
                     if (group < 0) overloaded.Add((set.Protos, set.Declaring, new List<ClassInfo> { cls }));
@@ -1468,6 +1479,13 @@ namespace fire.Native
 
             // a call site that passes addresses: an implementation without `ref` for that position gets the value
             bool derefs = _refCallSites.Contains((name, argc));
+            // a static overload the values pick on an object (the VM runs it, without using the object)
+            string StaticImpl(FunctionProto proto)
+            {
+                var (pre, defaults) = DefaultArgs(proto, argc, "Undef()", "list");
+                return $"{{ {pre}return {_funcByProto[proto].Name}({(ArgsFor(proto) + defaults).TrimStart(',', ' ')}); }}";
+            }
+            string ScoredArg(int i) => derefs ? $"derefArg(a{i})" : $"a{i}";   // (an address is scored by the value it points to)
             string ArgsFor(FunctionProto proto) => string.Concat(Enumerable.Range(0, argc).Select(i => derefs && (proto.RefMask >> i & 1) == 0 ? $", derefArg(a{i})" : $", a{i}"));
             // an implementation with default values: the missing arguments are evaluated first (in order), then it is called
             bool restricted = RestrictedMethodName(name);
@@ -1493,7 +1511,17 @@ namespace fire.Native
             if (DispatchNeedsList(name, argc)) sb.AppendLine("    (void)list;   // (a method that only works on numbers or text allocates nothing)");
             sb.AppendLine("    switch (self.kind) {");
             foreach (var (cpp, proto, extensionRc) in extensions)
-                sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto, extensionRc, true)}");
+            {
+                if (extensionRc.IsTypeOverloaded(name, argc))
+                {
+                    // a base-type extension with overloads by type: the values decide, like for objects
+                    var set = extensionRc.Candidates(name, argc);
+                    sb.AppendLine($"        case {cpp}: {{");
+                    sb.Append(OverloadChoice(set.Protos, argc, "nullptr", c => CallImpl(_funcByProto[set.Protos[c]].Name, set.Protos[c], extensionRc, true, set.Declaring[c]), "            ", ScoredArg));
+                    sb.AppendLine("        }");
+                }
+                else sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto, extensionRc, true)}");
+            }
             foreach (var (kind, expr) in builtins)
                 if (!extensions.Any(e => e.Cpp == kind)) sb.AppendLine($"        case {kind}: return {expr};");
             if (enumeratorOfArray)
@@ -1527,7 +1555,7 @@ namespace fire.Native
                         foreach (var cls in classes) sb.AppendLine($"                case {cls.Id}:");
                         sb.AppendLine("                {");
                         var sample = classes[0].Rc;
-                        sb.Append(OverloadChoice(protos, argc, "objAt(self)", c => CallImpl(_funcByProto[protos[c]].Name, protos[c], sample, false, declaring[c]), "                    "));
+                        sb.Append(OverloadChoice(protos, argc, "objAt(self)", c => protos[c].IsStatic ? StaticImpl(protos[c]) : CallImpl(_funcByProto[protos[c]].Name, protos[c], sample, false, declaring[c]), "                    ", ScoredArg));
                         sb.AppendLine("                }");
                     }
                     sb.AppendLine("                default: break;");
@@ -2528,12 +2556,14 @@ namespace fire.Native
             // overloads by type where the target is known up to the overload: the selector scores the arguments (access: per candidate, by the class of this code)
             StepResult OverloadedCall(RuntimeClass rc, string method, int argc, FuncKind kind, int slot, string self, string what, bool owned = false, ClassInfo? newClass = null)
             {
+                long argMask = ArgMask();
+                uint addressBits = 0;
+                for (int i = 0; i < Math.Min(argc, 16); i++) if ((argMask >> (4 * i) & 15) == 3) addressBits |= 1u << i;
                 var selector = OverloadSelectorFor(rc, method, argc, kind, (declaring, access) =>
                     !CheckAccess || AccessAllowed(f.Chunk.OwnerClass, declaring, access) ? null
                     : kind == FuncKind.Ctor ? $"Constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here."
-                    : $"{what} '{method}' of '{declaring.Name}' is {DescribeAccess(access)} and cannot be called from here.");
+                    : $"{what} '{method}' of '{declaring.Name}' is {DescribeAccess(access)} and cannot be called from here.", addressBits);
                 long mask = ArgMask();
-                if (Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (mask >> (4 * i) & 15) == 3)) throw new NativeNotSupportedException($"`ref` arguments for the overloads of {rc.Name}.{method}");
                 int first = d - argc;
                 ArgsBefore(first, argc, mask);
                 string args = Args(first, argc);
@@ -3195,7 +3225,6 @@ namespace fire.Native
                     var rc = FindClass(cls);
                     if (rc.IsTypeOverloaded(method, argc))
                     {
-                        if (rc.Candidates(method, argc).Protos.Any(p => !p.IsStatic)) throw new NativeNotSupportedException($"{cls}.{method}: static and instance overloads");
                         if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                         return OverloadedCall(rc, method, argc, FuncKind.Static, d - argc, "Undef()", "Static method");
                     }

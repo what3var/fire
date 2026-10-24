@@ -16,7 +16,7 @@ namespace fire.Native
     {
         /// <summary>A selector function for a call whose target is known up to the overload (a static method, a base method, a constructor):
         /// `Value ovs_N(Value self, Value a0, ..., OwnList* list)`.</summary>
-        private sealed record OverloadSelector(string Name, RuntimeClass Rc, FunctionProto[] Candidates, RuntimeClass[] Declaring, int Argc, FuncKind Kind, string[] Denied);
+        private sealed record OverloadSelector(string Name, RuntimeClass Rc, FunctionProto[] Candidates, RuntimeClass[] Declaring, int Argc, FuncKind Kind, string[] Denied, uint Addresses, string Method);
 
         private readonly Dictionary<string, OverloadSelector> _overloadSelectors = new();
         /// <summary>Classes named by a parameter of an overload: each gets `ovd_Name(v)`, the score of an object for it (closer classes score higher).</summary>
@@ -31,8 +31,9 @@ namespace fire.Native
         }
 
         /// <summary>The selector for a static or base method call (`kind` Static/Method) or a constructor (Ctor) of `rc`; `denied` holds, per
-        /// candidate, the message of the AccessDeniedException when the calling code may not use it (null: allowed).</summary>
-        private OverloadSelector OverloadSelectorFor(RuntimeClass rc, string name, int argc, FuncKind kind, System.Func<RuntimeClass, AccessModifier, string?> denied)
+        /// candidate, the message of the AccessDeniedException when the calling code may not use it (null: allowed);
+        /// `addresses`: bit i - the call site passes the address of a variable as argument i (for a `ref` parameter of some candidate).</summary>
+        private OverloadSelector OverloadSelectorFor(RuntimeClass rc, string name, int argc, FuncKind kind, System.Func<RuntimeClass, AccessModifier, string?> denied, uint addresses)
         {
             FunctionProto[] protos;
             RuntimeClass[] declaring;
@@ -48,15 +49,15 @@ namespace fire.Native
                 declaring = set.Declaring;
             }
             var deniedMessages = protos.Select((p, i) => denied(declaring[i], p.Access ?? AccessModifier.Public) ?? "").ToArray();
-            string key = $"{rc.Name}|{(kind == FuncKind.Ctor ? "#new" : name)}|{argc}|{kind}|{string.Join("|", deniedMessages)}";
+            string key = $"{rc.Name}|{(kind == FuncKind.Ctor ? "#new" : name)}|{argc}|{kind}|{addresses}|{string.Join("|", deniedMessages)}";
             if (_overloadSelectors.TryGetValue(key, out var selector)) return selector;
-            if (protos.Any(p => p.RefMask != 0)) throw new NativeNotSupportedException($"overloads of {rc.Name}.{name} with `ref` parameters");
             foreach (var proto in protos)
             {
+                if (kind == FuncKind.Static && !proto.IsStatic) continue;   // (an instance method a static call picks is an error at run time, like in the VM)
                 GetFunc(proto, kind);
                 DefaultArgs(proto, argc, "self", "list");   // (registers the functions of the default values)
             }
-            selector = new OverloadSelector($"ovs_{_overloadSelectors.Count}", rc, protos, declaring, argc, kind, deniedMessages);
+            selector = new OverloadSelector($"ovs_{_overloadSelectors.Count}", rc, protos, declaring, argc, kind, deniedMessages, addresses, name);
             _overloadSelectors[key] = selector;
             return selector;
         }
@@ -68,6 +69,7 @@ namespace fire.Native
             int? result = null;
             foreach (var proto in selector.Candidates)
             {
+                if (selector.Kind == FuncKind.Static && !proto.IsStatic) continue;
                 if (!_funcByProto.TryGetValue(proto, out var target)) return TypeUnknown;
                 int type = ReturnType(target);
                 result = result is { } r ? JoinTypes(r, type) : type;
@@ -85,12 +87,18 @@ namespace fire.Native
             sb.AppendLine("{");
             sb.AppendLine("    (void)self; (void)list;");
             string ownerObj = selector.Kind == FuncKind.Static ? "nullptr" : "(self.kind == K_Class ? objAt(self) : nullptr)";
+            // an argument that carries an address: its value is scored, and a candidate without `ref` there gets the value
+            bool IsAddress(int i) => (selector.Addresses >> i & 1) != 0;
+            for (int i = 0; i < selector.Argc; i++)
+                if (IsAddress(i)) sb.AppendLine($"    Value v{i} = derefArg(a{i});");
             sb.Append(OverloadChoice(selector.Candidates, selector.Argc, ownerObj, c =>
             {
                 var proto = selector.Candidates[c];
+                if (selector.Kind == FuncKind.Static && !proto.IsStatic)
+                    return $"{{ fatal({CString($"'{selector.Method}' on '{selector.Rc.Name}' is not a static method - 'ClassName.{selector.Method}(...)' can only be used to call 'static' methods.")}); return Undef(); }}";
                 if (selector.Denied[c].Length > 0) return $"return accessDenied({CString(selector.Denied[c])});";
                 var (pre, defaults) = DefaultArgs(proto, selector.Argc, "self", "list");
-                string args = string.Concat(Enumerable.Range(0, selector.Argc).Select(i => $", a{i}"));
+                string args = string.Concat(Enumerable.Range(0, selector.Argc).Select(i => IsAddress(i) && (proto.RefMask >> i & 1) == 0 ? $", v{i}" : $", a{i}"));
                 string target = _funcByProto[proto].Name;
                 return selector.Kind switch
                 {
@@ -98,14 +106,15 @@ namespace fire.Native
                     FuncKind.Static => $"{{ {pre}return {target}({(args + defaults).TrimStart(',', ' ')}); }}",
                     _ => $"{{ {pre}return {target}(self{args}{defaults}); }}",
                 };
-            }, "    "));
+            }, "    ", i => IsAddress(i) ? $"v{i}" : $"a{i}"));
             sb.AppendLine("}");
             return sb.ToString();
         }
 
         /// <summary>The statements that pick a candidate by the scores of the arguments `a0` ... and run `call(index)` (a statement that returns).</summary>
-        private string OverloadChoice(IReadOnlyList<FunctionProto> candidates, int argc, string ownerObj, System.Func<int, string> call, string indent)
+        private string OverloadChoice(IReadOnlyList<FunctionProto> candidates, int argc, string ownerObj, System.Func<int, string> call, string indent, System.Func<int, string>? argValue = null)
         {
+            argValue ??= i => $"a{i}";
             var sb = new StringBuilder();
             sb.AppendLine($"{indent}int ovN = g_explicitTArgs; g_explicitTArgs = 0; (void)ovN;");
             sb.AppendLine($"{indent}int64_t ovBest = INT64_MIN; int ovWin = -1;");
@@ -115,7 +124,7 @@ namespace fire.Native
                 string typeCondition = proto.TypeParamCount == 0 ? "ovN == 0" : $"ovN == 0 || ovN == {proto.TypeParamCount}";
                 var line = new StringBuilder($"{indent}do {{ if (!({typeCondition})) break; int64_t t = 0; int s; (void)s;");
                 for (int i = 0; i < argc && i < proto.ParamCount; i++)
-                    line.Append($" s = {OverloadScoreExpr($"a{i}", Overloads.TypeAt(proto, i), ownerObj, proto.TypeParamCount > 0)}; if (s < 0) break; t += s;");
+                    line.Append($" s = {OverloadScoreExpr(argValue(i), Overloads.TypeAt(proto, i), ownerObj, proto.TypeParamCount > 0)}; if (s < 0) break; t += s;");
                 line.Append($" if (t > ovBest) {{ ovBest = t; ovWin = {c}; }} }} while (0);");
                 sb.AppendLine(line.ToString());
             }

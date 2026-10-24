@@ -690,14 +690,14 @@ Per argument the closeness is, from the closest:
 3. an `int` for a `float` parameter (ranks with a distant base class: below the
    exact type, above everything that follows),
 4. an interface the object implements,
-5. `class` (any object),
-6. a type parameter (of the method or the class; its `where` conditions and a
+5. a type parameter (of the method or the class; its `where` conditions and a
    known type argument must fit),
+6. `class` (any object),
 7. an untyped or `any` parameter.
 
 So between a derived class, its base class, an interface and a generic
 parameter the priority is exactly that order: **derived > base > interface >
-generic**. The scores of all arguments add up; the overload with the best sum
+generic > `class` > `any`**. The scores of all arguments add up; the overload with the best sum
 runs. An overload a value does not fit at all (a `string` for an `int`, an
 object of an unrelated class) is out. Where two overloads fit equally well, the
 one of the most derived class wins, then the one whose number of parameters
@@ -723,7 +723,9 @@ callable on a `Derived`.
 `Vec operator*(Vec o)` can stand side by side.
 
 The native backend chooses the same way: where the values decide, the generated
-code scores the arguments; elsewhere the call goes directly to the one method.
+code scores the arguments (also for `ref` parameters, static calls, base calls,
+constructors and base-type extensions); elsewhere the call goes directly to the
+one method.
 
 ### 5.5 Extension classes (`class extends`)
 

@@ -195,8 +195,8 @@ print("after")          // open A, using A, close A, after
 ## Overloading by type
 
 Overloads with the same number of parameters are told apart by the types of their parameters. The one **closest to the values** runs: per argument
-the exact type or class first, then a base class (the closer, the better), then an interface, then a type parameter, then an untyped (`any`)
-parameter - so **derived class > base class > interface > generic**.
+the exact type or class first, then a base class (the closer, the better), then an interface, then a type parameter, then `class` (any object),
+then an untyped (`any`) parameter - so **derived class > base class > interface > generic > `class` > `any`**.
 
 ```fire
 interface IShape { float Area() }
