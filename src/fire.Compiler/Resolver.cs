@@ -66,6 +66,11 @@ namespace fire.Compiler
         /// <summary>Values going into a local variable (declaration or assignment) whose type the type checker could not prove for its declaration
         /// (`int x = someAny`, `Dog d = animal`, `T item = v`): the compiler checks them at runtime (GuardTop/GuardTopType). Filled by TypeChecker.</summary>
         public Dictionary<Expr, (TypeRef Type, string What)> LocalGuards { get; } = new(ReferenceEqualityComparer.Instance);
+
+        /// <summary>Calls of a method or constructor overloaded by type whose overload the type checker could tell from the static types of the
+        /// arguments: the overload and what it assumed of each argument (Bytecode.OverloadHint text). The compiler puts it in front of the call
+        /// (OpCode.OverloadHint); at run time the arguments are checked against the assumptions and the overload is taken without scoring. Filled by TypeChecker.</summary>
+        public Dictionary<Expr, string> OverloadHints { get; } = new(ReferenceEqualityComparer.Instance);
         public required IReadOnlyDictionary<string, ClassDecl> Classes { get; init; }
         public required int GlobalSlotCount { get; init; }
         public required IReadOnlyDictionary<string, ExternDecl> Externs { get; init; }

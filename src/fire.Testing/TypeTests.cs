@@ -362,6 +362,56 @@ static class TypeTests
             print(U.F(v))
             """) == "|string\nint");
 
+        // the type checker's choice goes to the call (OverloadHint): taken when the arguments are what it assumed, otherwise the run time scores them
+        {
+            long taken = VM.HintsTaken, missed = VM.HintsMissed;
+            string output = Run("""
+                class Animal { }
+                class Dog : Animal { }
+                class Show {
+                    static string Of(int x) { return "int" }
+                    static string Of(string s) { return "string" }
+                    static string Of(Animal a) { return "animal" }
+                    static string Of<T>(T x) { return "generic" }
+                    string Me(int x) { return "me int" }
+                    string Me(float f) { return "me float" }
+                    construct() { }
+                    construct(int a) { }
+                    construct(string s) { }
+                }
+                class SubShow : Show {
+                    string Me(int x) { return "sub int" }
+                }
+                print(Show.Of(1) + " " + Show.Of("s") + " " + Show.Of(new Dog()) + " " + Show.Of(2.5))
+                var s = new Show(3)
+                var t = new Show("x")
+                print(s.Me(1) + " " + s.Me(1.5))
+                Show sub = new SubShow()
+                print(sub.Me(1) + " " + sub.Me(1.5))
+                any v = "dyn"
+                print(Show.Of(v))
+                """, TypeCheckMode.Strict);
+            Check("Ueberladung vorab gewaehlt: statisch, Konstruktor, Objekt (auch abgeleitet) nehmen den Hinweis, any waehlt zur Laufzeit",
+                output == "|int string animal generic\nme int me float\nsub int me float\nstring" && VM.HintsTaken - taken == 10 && VM.HintsMissed == missed,
+                $"{output} taken {VM.HintsTaken - taken} missed {VM.HintsMissed - missed}");
+            taken = VM.HintsTaken; missed = VM.HintsMissed;
+            output = Run("""
+                class Show {
+                    static string Of(int x) { return "int" }
+                    static string Of(string s) { return "string" }
+                }
+                int x = 3
+                x = "text"
+                print(Show.Of(x))
+                """);
+            Check("Ueberladung vorab gewaehlt: passt der Wert nicht zur Annahme (lax), waehlt die Laufzeit richtig",
+                output == "TC001|string" && VM.HintsMissed - missed == 1, $"{output} missed {VM.HintsMissed - missed}");
+            Check("Rueckgabewert: ein unbewiesener Wert wird gegen den deklarierten Typ geprueft", Run("""
+                class U { static int F() { any v = "s"; return v } }
+                try { int z = U.F() } catch (ArgumentException e) { print(e.message) }
+                """) == "|Return value of 'F' is an int, not String.");
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {

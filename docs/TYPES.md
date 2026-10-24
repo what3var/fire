@@ -124,6 +124,21 @@ Their type "object of the class or undefined" reaches the
 fields and methods directly, too - the object is tested to be one (`kind == K_Class`), and `undefined` takes the helper, which reports it. A
 comparison with `undefined` of a number, a bool or an object of a known class is a test of the kind (unless a class overloads `==`). A linked
 list walked through typed parameters and fields (`Step(Body first, float dt)`, `b.pos.x`, `b = b.next`) runs a third fewer instructions.
+
+**Return values** are checked the same way: a `return` of a method (or getter) with a declared type whose value the type checker cannot prove
+(`int F() { any v = ...; return v }`) is checked at run time ("Return value of 'F' ..."), so the declared type of a call holds for its result.
+
+**Overloads chosen at compile time.** Where the static types of the arguments decide which overload by type a call takes (SPEC 5.4.3), the type
+checker records the overload and what it assumed of each argument (`ResolveResult.OverloadHints`; a kind, a class or an interface - or nothing for
+an argument all overloads take untyped). The compiler puts `OverloadHint` in front of the call. At run time the arguments are compared with the
+assumptions (one test each): when they hold, the overload is taken without scoring the candidates, and the call site's inline cache keeps it
+(`SiteCache.Guard` - a cache hit checks the assumptions again); when they do not (a lax program after a warning, a value from code that was not
+checked), the call scores the candidates as before - the hint only saves time, it never changes the choice. No hint is made when the choice
+depends on more than the static types: a dynamic argument where an overload is typed, a parameter typed with a type parameter of the class or one
+with `where` conditions, or (on an object) a class derived from the receiver's that adds an overload of its own. The native backend does the same:
+a hinted call tests the assumptions and calls the method directly. `FIRE_NO_OVERLOAD_HINTS=1` switches the hints off (to compare or to find a
+wrong one).
+
 Field access on something that is not an object (`undefined.x`, `5.x = 1`) is an `ArgumentException` in the native code as in the VM.
 A scope that owns nothing (nothing in it creates an object or a temporary string) keeps no bookkeeping: hoisting a value out of it is
 dropped, and so is its list (`leave` in every loop iteration) and that of the function when only the hoist needed it. In the linked list above the

@@ -2562,7 +2562,7 @@ namespace fire.Native
                 var selector = OverloadSelectorFor(rc, method, argc, kind, (declaring, access) =>
                     !CheckAccess || AccessAllowed(f.Chunk.OwnerClass, declaring, access) ? null
                     : kind == FuncKind.Ctor ? $"Constructor of '{rc.Name}' is {DescribeAccess(access)} and cannot be called from here."
-                    : $"{what} '{method}' of '{declaring.Name}' is {DescribeAccess(access)} and cannot be called from here.", addressBits);
+                    : $"{what} '{method}' of '{declaring.Name}' is {DescribeAccess(access)} and cannot be called from here.", addressBits, HintBefore(f, ins));
                 long mask = ArgMask();
                 int first = d - argc;
                 ArgsBefore(first, argc, mask);
@@ -3453,6 +3453,38 @@ namespace fire.Native
                         AdoptResult(slot, specCondition == null ? ReturnType(callee) : JoinTypes(ReturnType(callee), ReturnType(target)));
                         d = slot + 1; return Next();
                     }
+                    if (!passesAddresses && !WrapDispatchers && !RestrictedMethodName(method) && OwnMethodId(method, argc) == null
+                        && !(_usesReflection && ReflectionMethodNames.Contains(method))
+                        && HintBefore(f, ins) is { IsConstructor: false } callHint && callHint.Method == method)
+                    {
+                        // the overload the type checker chose (OverloadHint): when the arguments are what it assumed, the method of the object's class runs
+                        // directly - no scoring; otherwise (and for any other receiver) the dispatcher
+                        var classes = ObjSlot(slot) ? InstancesOf(ObjClass(Ty(slot))).ToList()
+                            : _classList.Where(c => { for (var r = c.Rc; r != null; r = r.Base) if (r.Name == callHint.DeclaringClass) return true; return false; }).ToList();
+                        var hinted = classes.Select(c => (c.Id, Proto: HintTarget(callHint, c.Rc))).Where(t => t.Proto is { IsStatic: false }).ToList();
+                        if (hinted.Count > 0)
+                        {
+                            _dispatchers.Add((method, argc));
+                            string hextra = DispatchTail(method, argc, DispatchNeedsList(method, argc) ? "&" + OwnerList() : "", CallerId(f));
+                            long hmask = ArgMask();
+                            ArgsBefore(d - argc, argc, hmask);
+                            string hargs = Args(d - argc, argc);
+                            string dispatch = $"call_{Mangle(method)}_{argc}({S(slot)}{hargs}{hextra})";
+                            var line = new StringBuilder($"if ({S(slot)}.kind == K_Class && leafAlive({S(slot)}) && {HintHolds(callHint, i => S(d - argc + i))}) {{ g_explicitTArgs = 0; switch (objAt({S(slot)})->cls) {{ ");
+                            foreach (var group in hinted.GroupBy(t => t.Proto!))
+                            {
+                                var target = GetFunc(group.Key, FuncKind.Method);
+                                var (hpre, hdefaults) = DefaultArgs(group.Key, argc, S(slot), DefaultsList(group.Key, argc));
+                                line.Append(string.Concat(group.Select(t => $"case {t.Id}: "))).Append($"{{ {hpre}{ClearCallTArgs(group.Key)}{S(slot)} = {target.Name}({S(slot)}{hargs}{hdefaults}); break; }} ");
+                            }
+                            line.Append($"default: {S(slot)} = {dispatch}; break; }} }} else {S(slot)} = {dispatch};");
+                            E(line.ToString());
+                            ArgsAfter(argc, hmask, S(slot));
+                            Check();
+                            AdoptResult(slot, DispatchResultType(method, argc));
+                            d = slot + 1; return Next();
+                        }
+                    }
                     _dispatchers.Add((method, argc));
                     if (passesAddresses) _refCallSites.Add((method, argc));
                     int resultType = DispatchResultType(method, argc);
@@ -3615,6 +3647,9 @@ namespace fire.Native
                     _kindsKept = true;
                     return Next();
                 }
+                case OpCode.OverloadHint:
+                    // (read by the call it stands in front of: OverloadHintBefore)
+                    return Next();
                 case OpCode.TakeCallTypeArgs:
                     // (a specialised copy knows its type arguments; the caller set them for the generic method all the same)
                     if (f.Kind == FuncKind.Lambda) E("TArgs ctargs = lamOf(lam)->targs; (void)ctargs;");   // (what the lambda took along)

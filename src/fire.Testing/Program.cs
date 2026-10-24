@@ -14284,6 +14284,52 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("Ueberladung vorab gewaehlt (OverloadHint): statisch, Konstruktor, Objekt einer abgeleiteten Klasse, any zur Laufzeit", """
+            class Animal { }
+            class Dog : Animal { }
+            class Show {
+                static string Of(int x) { return "int" }
+                static string Of(string s) { return "string" }
+                static string Of(Animal a) { return "animal" }
+                static string Of<T>(T x) { return "generic" }
+                string Me(int x) { return "me int" }
+                string Me(float f) { return "me float" }
+                construct() { }
+                construct(int a) { }
+                construct(string s) { }
+            }
+            class SubShow : Show {
+                string Me(int x) { return "sub int" }
+            }
+            print(Show.Of(1))
+            print(Show.Of("s"))
+            print(Show.Of(new Dog()))
+            print(Show.Of(2.5))
+            var s = new Show(3)
+            var t = new Show("x")
+            print(s.Me(1) + " " + s.Me(1.5))
+            Show sub = new SubShow()
+            print(sub.Me(1) + " " + sub.Me(1.5))
+            any v = "dyn"
+            print(Show.Of(v))
+            """),
+        ("Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (lax) nimmt abwechselnd Hinweis und Bewertung", """
+            class Show {
+                static string Of(int x) { return "int" }
+                static string Of(string s) { return "string" }
+                string Me(int x) { return "me int" }
+                string Me(string s) { return "me string" }
+                string made
+                construct(int a) { this.made = "ctor int" }
+                construct(string s) { this.made = "ctor string" }
+            }
+            var sh = new Show(1)
+            for (int i = 0; i < 6; i++) {
+                int x = i
+                if (i % 2 == 1) { x = "odd" }
+                print(Show.Of(x) + " / " + sh.Me(x) + " / " + new Show(x).made)
+            }
+            """),
         ("Ueberladung nach Typ: ref-Parameter, statisch und Instanz gemischt, Basistyp-Erweiterung, generic vor class vor any", """
             class Inc {
                 static string Bump(ref int x) { x = x + 1; return "ref int" }

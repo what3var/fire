@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using fire.Ast;
 using fire.Runtime;
 using fire.Values;
@@ -140,6 +141,128 @@ namespace fire.Bytecode
                 }
             }
             return best;
+        }
+    }
+}
+
+namespace fire.Bytecode
+{
+    /// <summary>
+    /// The overload a call takes when the type checker could tell it from the static types of the arguments (ResolveResult.OverloadHints, emitted as
+    /// OpCode.OverloadHint right before the call): the method (its class, name and position among the methods of that name there; for a constructor its
+    /// position among the constructors with as many parameters) and per argument what the choice assumed of it. At run time the arguments are checked
+    /// against the assumptions (a kind, a class, an interface - one test each); when they hold, the overload is taken without scoring the candidates,
+    /// otherwise the call scores them as usual. So a static type that turns out wrong (a lax program, a value from code that was not checked) only
+    /// costs the shortcut, never the right choice.
+    /// </summary>
+    public sealed class OverloadHint
+    {
+        public const string ConstructorName = "#new";
+        private const char Separator = '\u001f';
+
+        private enum Need : byte { Any, Undefined, Int, Float, Bool, Char, String, Lambda, Array, Object, Class, Interface }
+
+        public string DeclaringClass { get; }
+        public string Method { get; }
+        public int Ordinal { get; }
+        public int ParamCount { get; }
+        public int Argc { get; }
+        public string[] Assumptions { get; }
+        private readonly Need[] _needs;
+        public bool IsConstructor => Method == ConstructorName;
+
+        private OverloadHint(string[] parts)
+        {
+            DeclaringClass = parts[0];
+            Method = parts[1];
+            Ordinal = int.Parse(parts[2], System.Globalization.CultureInfo.InvariantCulture);
+            ParamCount = int.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture);
+            Argc = int.Parse(parts[4], System.Globalization.CultureInfo.InvariantCulture);
+            Assumptions = parts.AsSpan(5).ToArray();
+            _needs = new Need[Assumptions.Length];
+            for (int i = 0; i < Assumptions.Length; i++)
+                _needs[i] = Assumptions[i] switch
+                {
+                    "" => Need.Any, "u" => Need.Undefined, "k:int" => Need.Int, "k:float" => Need.Float, "k:bool" => Need.Bool, "k:char" => Need.Char,
+                    "k:string" => Need.String, "k:lambda" => Need.Lambda, "k:array" => Need.Array, "k:class" => Need.Object,
+                    var a when a.StartsWith("i:", StringComparison.Ordinal) => Need.Interface,
+                    _ => Need.Class,
+                };
+        }
+
+        public static string Format(string declaringClass, string method, int ordinal, int paramCount, int argc, IEnumerable<string> assumptions) =>
+            string.Join(Separator, new[] { declaringClass, method, ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                paramCount.ToString(System.Globalization.CultureInfo.InvariantCulture), argc.ToString(System.Globalization.CultureInfo.InvariantCulture) }.Concat(assumptions));
+
+        public static OverloadHint Parse(string text) => new(text.Split(Separator));
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<string, OverloadHint> s_parsed = new();
+
+        /// <summary>The hint of a constant text (parsed once per text object).</summary>
+        public static OverloadHint Of(string text) => s_parsed.GetValue(text, Parse);
+
+        /// <summary>Do the arguments meet what the choice assumed?</summary>
+        public bool Holds(ReadOnlySpan<Value> args)
+        {
+            if (args.Length != Argc) return false;
+            for (int i = 0; i < args.Length; i++)
+            {
+                ref readonly var v = ref args[i];
+                bool ok = _needs[i] switch
+                {
+                    Need.Any => true,
+                    Need.Undefined => v.Kind == ValueKind.Undefined,
+                    Need.Int => v.Kind == ValueKind.Int,
+                    Need.Float => v.Kind == ValueKind.Float,
+                    Need.Bool => v.Kind == ValueKind.Bool,
+                    Need.Char => v.Kind == ValueKind.Char,
+                    Need.String => v.Kind == ValueKind.String,
+                    Need.Lambda => v.Kind == ValueKind.Lambda,
+                    Need.Array => v.Kind is ValueKind.Array or ValueKind.Buffer,
+                    Need.Object => v.Kind == ValueKind.Class,
+                    _ => v.Kind != ValueKind.Undefined && Overloads.Score(v, Assumptions[i]) != Overloads.NoMatch,
+                };
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        private sealed record Entry(RuntimeClass Rc, FunctionProto? Proto, RuntimeClass? Declaring);
+        private volatile Entry? _last;
+
+        /// <summary>The overload on an object of class `rc` (its own override of the method, if it has one; for a constructor `rc` is the class
+        /// itself); null when it cannot be found (then the call scores the candidates). The last class is remembered.</summary>
+        public (FunctionProto? Proto, RuntimeClass? Declaring) Resolve(RuntimeClass rc, Func<string, RuntimeClass?> classByName)
+        {
+            var last = _last;
+            if (last != null && ReferenceEquals(last.Rc, rc)) return (last.Proto, last.Declaring);
+            var (proto, declaring) = Find(rc, classByName);
+            _last = new Entry(rc, proto, declaring);
+            return (proto, declaring);
+        }
+
+        private (FunctionProto?, RuntimeClass?) Find(RuntimeClass rc, Func<string, RuntimeClass?> classByName)
+        {
+            if (IsConstructor)
+            {
+                if (rc.Name != DeclaringClass || !rc.Constructors.TryGetValue(ParamCount, out var first)) return (null, null);
+                var group = new List<FunctionProto> { first };
+                group.AddRange(rc.ExtraConstructors.Where(c => c.ParamCount == ParamCount));
+                return Ordinal < group.Count ? (group[Ordinal], rc) : (null, null);
+            }
+            // the receiver must be of the class the hint was made for (or derived from it)
+            bool derives = false;
+            for (var c = rc; c != null; c = c.Base) if (c.Name == DeclaringClass) { derives = true; break; }
+            if (!derives || classByName(DeclaringClass) is not { } declaringRc || !declaringRc.Methods.TryGetValue(Method, out var list) || Ordinal >= list.Count)
+                return (null, null);
+            var chosen = list[Ordinal];
+            var set = rc.Candidates(Method, Argc);
+            for (int i = 0; i < set.Count; i++)
+                if (ReferenceEquals(set.Protos[i], chosen)) return (chosen, set.Declaring[i]);
+            // overridden in the class of the object (with the same parameter types)
+            for (int i = 0; i < set.Count; i++)
+                if (set.Protos[i].ParamCount == chosen.ParamCount && Overloads.SameSignature(set.Protos[i], chosen)) return (set.Protos[i], set.Declaring[i]);
+            return (null, null);
         }
     }
 }

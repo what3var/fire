@@ -497,6 +497,7 @@ namespace fire.Compiler
         /// <summary>`new Box<...>(...)`: the type arguments for the object (SetTypeArgs, right before NewObject/NewObjectOwned); nothing when none is known.</summary>
         private void EmitTypeArgs(NewExpr ne)
         {
+            EmitOverloadHint(ne);
             if (ne.ClassRef.TypeArgs is not { Count: > 0 } typeArgs) return;
             _refParams.ClassDecls.TryGetValue(ResolveNewClassName(ne), out var target);
             var texts = typeArgs.Select((t, i) => MapTypeRef(TypeArgText(t, _enclosingClass, target, i))).ToList();
@@ -526,6 +527,7 @@ namespace fire.Compiler
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
             s_localGuards = resolveResult.LocalGuards;
+            s_overloadHints = resolveResult.OverloadHints;
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
@@ -2159,6 +2161,17 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
+        [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
+        /// <summary>`FIRE_NO_OVERLOAD_HINTS=1`: no OverloadHint is emitted (every call scores its candidates) - to compare and to find a wrong hint.</summary>
+        private static readonly bool NoOverloadHints = Environment.GetEnvironmentVariable("FIRE_NO_OVERLOAD_HINTS") == "1";
+
+        /// <summary>A call of an overload the type checker could tell (ResolveResult.OverloadHints): the hint goes in front of its other prefixes.</summary>
+        private void EmitOverloadHint(Expr call)
+        {
+            if (s_overloadHints == null || NoOverloadHints || !s_overloadHints.TryGetValue(call, out var hint)) return;
+            _chunk.EmitOp(OpCode.OverloadHint);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(hint)));
+        }
 
         /// <summary>A value going into a local whose declaration the type checker could not prove: checked on the stack (GuardTop/GuardTopType).</summary>
         private void EmitLocalGuard(TypeRef type, string what)
@@ -2182,6 +2195,7 @@ namespace fire.Compiler
         /// <summary>A call of a generic method whose type arguments the type checker found: they go to the call (SetTypeArgs, right before it).</summary>
         private void EmitCallTypeArgs(CallExpr call)
         {
+            EmitOverloadHint(call);
             if (call.TypeArgs is { Count: > 0 } written)
             {
                 // `Pick<string>(a, b)`: the written type arguments (mode 3: a generic overload is meant)

@@ -88,6 +88,7 @@ namespace fire.Compiler
         private readonly Dictionary<Expr, string> _unitChecks;
         private readonly Dictionary<Expr, string[]> _methodTypeArgs;
         private readonly Dictionary<Expr, (TypeRef Type, string What)> _localGuards;
+        private readonly Dictionary<Expr, string> _overloadHints;
         /// <summary>The declared types of the local variables (by scope, like _scopes): a value whose type does not prove the declaration is checked at runtime.</summary>
         private readonly List<Dictionary<string, TypeRef>> _localTypes = new();
         private readonly Dictionary<int, bool> _strictBySource = new();
@@ -102,15 +103,20 @@ namespace fire.Compiler
         /// <summary>The type of `this` in a `class extends string/array/...` (null: the class being checked decides).</summary>
         private StaticType? _thisType;
         private StaticType? _returnType;
+        /// <summary>The declared return type of the method (or getter) being checked and what a failed check of a return value calls it - a value whose
+        /// type is not proven is checked at run time (LocalGuards), so the declared type of a call holds for its result.</summary>
+        private TypeRef? _returnTypeRef;
+        private string _returnWhat = "";
         private int _source;
         /// <summary>The types of the `return` statements of the untyped method that is being checked (null: not collecting; a lambda inside does not count).</summary>
         private List<StaticType>? _collectedReturns;
         private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
         private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks,
-            Dictionary<Expr, string[]> methodTypeArgs, Dictionary<Expr, (TypeRef Type, string What)> localGuards)
+            Dictionary<Expr, string[]> methodTypeArgs, Dictionary<Expr, (TypeRef Type, string What)> localGuards, Dictionary<Expr, string> overloadHints)
         {
             _localGuards = localGuards;
+            _overloadHints = overloadHints;
             _unitChecks = unitChecks;
             _methodTypeArgs = methodTypeArgs;
             _classes = classes;
@@ -122,7 +128,7 @@ namespace fire.Compiler
         /// <paramref name="defaultMode"/> is the project's or the command line's setting; a `#lax` / `#strict` in a file takes its place for that file.</summary>
         public static IReadOnlyList<Diagnostic> Check(IReadOnlyList<Stmt> program, ResolveResult resolved, TypeCheckMode defaultMode, int firstUserSource)
         {
-            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks, resolved.MethodTypeArgs, resolved.LocalGuards);
+            var checker = new TypeChecker(resolved.Classes, defaultMode, firstUserSource, resolved.UnitChecks, resolved.MethodTypeArgs, resolved.LocalGuards, resolved.OverloadHints);
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
@@ -479,6 +485,22 @@ namespace fire.Compiler
             };
             if (needed) _localGuards[valueExpr] = (type, $"Variable '{name}'");
         }
+
+        /// <summary>Like GuardLocalValue, for another declared target (a return value): `what` names it in the message.</summary>
+        private void GuardValue(Expr valueExpr, StaticType value, StaticType target, TypeRef type, string what)
+        {
+            if (value.Kind == StaticKind.Undefined || !Assignable(value, target)) return;
+            bool needed = target.Kind switch
+            {
+                StaticKind.Int => value.Kind != StaticKind.Int,
+                StaticKind.Float => value.Kind is not (StaticKind.Float or StaticKind.Int),
+                StaticKind.Bool => value.Kind != StaticKind.Bool,
+                StaticKind.Class => value.Kind != StaticKind.Class || !DerivesFrom(value.Class!, target.Class!),
+                StaticKind.Dynamic => target.TypeParam != null && value.TypeParam != target.TypeParam,
+                _ => false,
+            };
+            if (needed) _localGuards[valueExpr] = (type, what);
+        }
         private void Declare(string name, StaticType type)
         {
             _scopes[^1][name] = type;
@@ -660,6 +682,89 @@ namespace fire.Compiler
         }
 
 
+        /// <summary>The OverloadHint of a call whose overload the static types decide, or null when the run time has to decide after all: an argument the
+        /// overloads differ on is of an unknown type, a parameter is a type parameter whose type argument or `where` the value has to meet, or (for a
+        /// call on an object) a class derived from the receiver's adds an overload of its own.</summary>
+        private string? OverloadHintFor(MethodDecl method, List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> candidates, IReadOnlyList<StaticType> args,
+            string receiverClass, bool virtualCall)
+        {
+            if (_interfaces.ContainsKey(receiverClass)) return null;
+            var declaring = _classes.FirstOrDefault(d => d.Value.Members.Any(x => ReferenceEquals(x, method)));
+            if (declaring.Value == null) return null;
+            if (virtualCall && !DerivedKeepOverloads(receiverClass, method.Name, args.Count, candidates.Select(x => x.Method).ToList())) return null;
+            var assumptions = Assumptions(candidates.Select(x => (x.Method, declaring.Value)).ToList(), args);
+            if (assumptions == null) return null;
+            int ordinal = declaring.Value.Members.OfType<MethodDecl>().Where(x => x.Name == method.Name).TakeWhile(x => !ReferenceEquals(x, method)).Count();
+            return Bytecode.OverloadHint.Format(declaring.Key, method.Name, ordinal, method.Params.Count, args.Count, assumptions);
+        }
+
+        private string? ConstructorHint(ClassDecl decl, string className, ConstructorDecl chosen, List<MethodDecl> asMethods, MethodDecl picked,
+            IReadOnlyList<StaticType> args, Dictionary<string, StaticType>? map)
+        {
+            var assumptions = Assumptions(asMethods.Select(m => (m, decl)).ToList(), args);
+            if (assumptions == null) return null;
+            int ordinal = decl.Members.OfType<ConstructorDecl>().Where(k => k.Params.Count == chosen.Params.Count).TakeWhile(k => !ReferenceEquals(k, chosen)).Count();
+            return Bytecode.OverloadHint.Format(className, Bytecode.OverloadHint.ConstructorName, ordinal, chosen.Params.Count, args.Count, assumptions);
+        }
+
+        /// <summary>What the choice assumes of each argument (Bytecode.Overloads.Holds): its kind or class as the type checker knows it; "" for an argument
+        /// all overloads take untyped. Null when the choice depends on more than that (an unknown type where an overload is typed, a type parameter of
+        /// the class, or one with `where` conditions).</summary>
+        private string[]? Assumptions(List<(MethodDecl Method, ClassDecl Owner)> candidates, IReadOnlyList<StaticType> args)
+        {
+            var result = new string[args.Count];
+            for (int i = 0; i < args.Count; i++)
+            {
+                bool allLoose = true;
+                foreach (var (m, owner) in candidates)
+                {
+                    if (i >= m.Params.Count) continue;
+                    var p = m.Params[i];
+                    if (p.ByRef || p.Type == null || p.Type.IsInferred || p.Type.BaseName == "any") continue;
+                    // a type parameter: of the class (its type argument decides at run time) or of the method with `where` conditions - not decided by the kind
+                    if (owner.TypeParams?.Any(tp => tp.Name == p.Type.BaseName) == true) return null;
+                    if (m.TypeParams?.FirstOrDefault(tp => tp.Name == p.Type.BaseName) is { } tp)
+                    {
+                        if (tp.ConstraintGroups.Count > 0) return null;
+                        continue;
+                    }
+                    allLoose = false;
+                }
+                var a = args[i];
+                result[i] = a.Kind switch
+                {
+                    StaticKind.Undefined => "u",
+                    StaticKind.Int => "k:int",
+                    StaticKind.Float => "k:float",
+                    StaticKind.Bool => "k:bool",
+                    StaticKind.Char => "k:char",
+                    StaticKind.String => "k:string",
+                    StaticKind.Lambda => "k:lambda",
+                    StaticKind.Array => "k:array",
+                    StaticKind.Object => "k:class",
+                    StaticKind.Class when a.Class != null => (_interfaces.ContainsKey(a.Class) ? "i:" : "c:") + a.Class,
+                    _ => allLoose ? "" : null!,
+                };
+                if (result[i] == null) return null;
+            }
+            return result;
+        }
+
+        /// <summary>Does no class derived from `cls` declare a method `name` for `argc` arguments other than one with the very parameter types of a
+        /// candidate (an override that keeps the choice)? Otherwise an object of such a class may take another overload.</summary>
+        private bool DerivedKeepOverloads(string cls, string name, int argc, List<MethodDecl> candidates)
+        {
+            foreach (var (subName, sub) in _classes)
+            {
+                if (subName == cls || ClassDistance(subName, cls) <= 0) continue;
+                foreach (var m in sub.Members.OfType<MethodDecl>())
+                    if (m.Name == name && Fits(m.Params, argc) && !candidates.Any(c => c.Params.Count == m.Params.Count
+                            && c.Params.Zip(m.Params).All(p => OverloadKey(p.First, c) == OverloadKey(p.Second, m))))
+                        return false;
+            }
+            return true;
+        }
+
         private static bool Fits(IReadOnlyList<LambdaParam> parameters, int argc) =>
             argc <= parameters.Count && argc >= parameters.Count(p => p.DefaultValue == null);
 
@@ -717,7 +822,11 @@ namespace fire.Compiler
                     {
                         var type = Infer(r.Value, _returnType);
                         _collectedReturns?.Add(type);
-                        if (_returnType is { } expected) CheckAssignable(type, expected, r.Line, "the return value", ReturnCode, r.Value);
+                        if (_returnType is { } expected)
+                        {
+                            CheckAssignable(type, expected, r.Line, "the return value", ReturnCode, r.Value);
+                            if (_returnTypeRef != null) GuardValue(r.Value, type, expected, _returnTypeRef, _returnWhat);
+                        }
                     }
                     else _collectedReturns?.Add(StaticType.Undefined);
                     break;
@@ -863,7 +972,7 @@ namespace fire.Compiler
                             _collectedReturns = untyped && SuggestReturnTypes ? new List<StaticType>() : null;
                             var previousTypeParams = _bodyTypeParams;
                             _bodyTypeParams = m.TypeParams;
-                            CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType));
+                            CheckBody(m.Params, m.Body, untyped ? null : Declared(m.ReturnType), untyped ? null : m.ReturnType, $"Return value of '{m.Name}'");
                             _bodyTypeParams = previousTypeParams;
                             if (_collectedReturns != null) Console.Error.WriteLine($"SUGGEST\t{ownerName}\t{m.Name}\t{m.Params.Count}\t{SuggestedType(_collectedReturns)}");
                             _collectedReturns = previousCollected;
@@ -877,7 +986,7 @@ namespace fire.Compiler
                         CheckBody(Array.Empty<LambdaParam>(), d.Body, null);
                         break;
                     case PropertyDecl p:
-                        if (p.Getter != null) CheckBody(Array.Empty<LambdaParam>(), p.Getter, Declared(p.Type));
+                        if (p.Getter != null) CheckBody(Array.Empty<LambdaParam>(), p.Getter, Declared(p.Type), p.Type, $"Property '{p.Name}'");
                         if (p.Setter != null) CheckBody(new[] { new LambdaParam("value", p.Type, Array.Empty<Expr?>()) }, p.Setter, null);
                         break;
                 }
@@ -912,15 +1021,18 @@ namespace fire.Compiler
             return "any";
         }
 
-        private void CheckBody(IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body, StaticType? returnType)
+        private void CheckBody(IReadOnlyList<LambdaParam> parameters, Stmt.BlockStmt body, StaticType? returnType, TypeRef? returnTypeRef = null, string what = "")
         {
             var previousReturn = _returnType;
+            var (previousRef, previousWhat) = (_returnTypeRef, _returnWhat);
             _returnType = returnType;
+            (_returnTypeRef, _returnWhat) = (returnTypeRef, what);
             Push();
             foreach (var p in parameters) Declare(p.Name, DeclaredOrDynamic(p.Type, p.ArrayRanks.Count));
             foreach (var s in body.Statements) Check(s);
             Pop();
             _returnType = previousReturn;
+            (_returnTypeRef, _returnWhat) = (previousRef, previousWhat);
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -1233,6 +1345,8 @@ namespace fire.Compiler
             }
 
             var previousReturn = _returnType;
+            var previousReturnRef = _returnTypeRef;
+            _returnTypeRef = null;   // (a lambda: its values are not checked against a declaration)
             var previousCollected = _collectedReturns;
             _returnType = expectedReturn;
             var returns = new List<StaticType>();
@@ -1242,6 +1356,7 @@ namespace fire.Compiler
             foreach (var s in lam.Body.Statements) Check(s);
             Pop();
             _returnType = previousReturn;
+            _returnTypeRef = previousReturnRef;
             _collectedReturns = previousCollected;
             var values = returns.Where(r => r.Kind != StaticKind.Undefined).ToList();
             StaticType? returned = expectedReturn ?? (values.Count == 0 ? StaticType.Undefined : Join(values) is { IsDynamic: false } joined ? joined : null);
@@ -1270,10 +1385,15 @@ namespace fire.Compiler
             string name = "the lambda";
             StaticType? calleeTarget = null;
             List<(MethodDecl Method, Dictionary<string, StaticType>? Map)>? candidates = null;
+            // the class whose methods the call searches, and whether an object of a derived class can be the receiver (then its overloads count too)
+            string? receiverClass = null;
+            bool virtualCall = true;
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
-                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
+                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); virtualCall = false; }
+                if (m.Target is BaseExpr) virtualCall = false;
+                receiverClass = target.Class;
                 calleeTarget = target;
                 if (target.Kind == StaticKind.Class)
                 {
@@ -1283,7 +1403,7 @@ namespace fire.Compiler
             }
             else if (c.Callee is IdentifierExpr id)
             {
-                if (_class != null && !IsLocal(id.Name)) candidates = FindMethods(ThisClass(), id.Name, c.Args.Count);
+                if (_class != null && !IsLocal(id.Name)) { candidates = FindMethods(ThisClass(), id.Name, c.Args.Count); receiverClass = ThisClass().Class; }
                 if (candidates is not { Count: > 0 } && Lookup(id.Name) is { Kind: StaticKind.Lambda } variable) { lambda = variable; name = id.Name; }
             }
             else if (Infer(c.Callee) is { Kind: StaticKind.Lambda } callee) lambda = callee;
@@ -1299,7 +1419,7 @@ namespace fire.Compiler
                     return StaticType.Dynamic;
                 }
             }
-            if (candidates is { Count: > 1 }) return InferOverloadedCall(c, candidates);
+            if (candidates is { Count: > 1 }) return InferOverloadedCall(c, candidates, receiverClass, virtualCall);
             if (candidates is { Count: 1 }) (method, map) = candidates[0];
 
             // a generic method (`R Select<R>(R lambda<T> fn)`): its type parameters are taken from the arguments, one after the other (a later argument
@@ -1360,10 +1480,11 @@ namespace fire.Compiler
 
         /// <summary>A call that several overloads by type could take: the arguments are inferred first (without the parameter types to go by), then the
         /// overload the run time takes for them is checked like a single method - when the static types decide it; otherwise the result is not known.</summary>
-        private StaticType InferOverloadedCall(CallExpr c, List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> candidates)
+        private StaticType InferOverloadedCall(CallExpr c, List<(MethodDecl Method, Dictionary<string, StaticType>? Map)> candidates, string? receiverClass, bool virtualCall)
         {
             var args = c.Args.Select(a => Infer(a)).ToList();
             if (PickOverload(candidates, args) is not var (method, map)) return StaticType.Dynamic;
+            if (receiverClass != null && OverloadHintFor(method, candidates, args, receiverClass, virtualCall) is { } hint) _overloadHints[c] = hint;
             if (method.TypeParams is { Count: > 0 } typeParams)
             {
                 map = map == null ? new Dictionary<string, StaticType>() : new Dictionary<string, StaticType>(map);
@@ -1480,6 +1601,20 @@ namespace fire.Compiler
             var map = MapFor(decl.TypeParams, typeArgs);
             var ctors = decl.Members.OfType<ConstructorDecl>().Where(c => Fits(c.Params, n.Args.Count)).ToList();
             var ctor = ctors.Count == 1 ? ctors[0] : null;
+            if (ctors.Count > 1)
+            {
+                // constructors overloaded by type: the one the static types of the arguments decide (in the order the run time prefers them)
+                var asMethods = ctors.OrderBy(k => k.Params.Count == n.Args.Count ? 0 : 1).ThenBy(k => k.Params.Count)
+                    .Select(k => (Ctor: k, Method: new MethodDecl(k.Source, k.Line, null, "#new", k.Params, k.Body))).ToList();
+                var ctorArgs = n.Args.Select(a => Infer(a)).ToList();
+                if (PickOverload(asMethods.Select(x => (x.Method, (Dictionary<string, StaticType>?)map)).ToList(), ctorArgs) is var (picked, _))
+                {
+                    var chosen = asMethods.First(x => ReferenceEquals(x.Method, picked)).Ctor;
+                    CheckArguments(chosen.Params, ctorArgs, n.Args, "new " + PlainName(plain), map);
+                    if (ConstructorHint(decl, plain, chosen, asMethods.Select(x => x.Method).ToList(), picked, ctorArgs, map) is { } hint) _overloadHints[n] = hint;
+                }
+                return StaticType.ClassOf(plain, typeArgs);
+            }
             var args = n.Args.Select((a, i) => Infer(a, ctor != null && i < ctor.Params.Count && !ctor.Params[i].ByRef ? Declared(ctor.Params[i].Type, ctor.Params[i].ArrayRanks.Count, map) : null)).ToList();
             if (ctor != null) CheckArguments(ctor.Params, args, n.Args, "new " + PlainName(plain), map);
             return StaticType.ClassOf(plain, typeArgs);

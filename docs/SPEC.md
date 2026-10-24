@@ -727,6 +727,15 @@ code scores the arguments (also for `ref` parameters, static calls, base calls,
 constructors and base-type extensions); elsewhere the call goes directly to the
 one method.
 
+**Chosen at compile time.** Where the type checker knows the types of the
+arguments, it already makes the choice: the call carries the overload and what
+it assumed of the arguments (`OverloadHint`). At run time only these
+assumptions are checked (one test per argument); when they hold, the overload
+runs without scoring the candidates, and the call site caches it like any other
+call. Should a value not be what its static type says (in lax mode after a
+warning), the call scores the candidates as usual - the result is always the
+same as without the shortcut (docs/TYPES.md).
+
 ### 5.5 Extension classes (`class extends`)
 
 ```

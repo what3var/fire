@@ -2436,8 +2436,10 @@ namespace fire.Runtime
 
             // Fast path (inline cache): class and constructor of this site are known, access and
             // argument check already passed.
-            if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor })
+            if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor } ctorEntry
+                && (ctorEntry.Guard == null || ctorEntry.Guard.Holds(_stack.AsSpan(_sp - argCount, argCount))))
             {
+                if (ctorEntry.Guard != null) TakeGuardedHit(cachedCtor);
                 var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
                 if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
                 TakeTypeArgs(created);
@@ -2454,7 +2456,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args, null)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
@@ -2464,8 +2466,8 @@ namespace fire.Runtime
                 return;
             }
 
-            if (ctorProto.ParamCount == argCount && !rc.IsConstructorTypeOverloaded(argCount))
-                StoreSite(site, new SiteCache(rc, ctorProto, 0));
+            if (ctorProto.ParamCount == argCount && (!rc.IsConstructorTypeOverloaded(argCount) || _hintTaken != null))
+                StoreSite(site, new SiteCache(rc, ctorProto, 0, guard: _hintTaken));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             TakeTypeArgs(instance);
@@ -2486,7 +2488,7 @@ namespace fire.Runtime
             var owner = RequireObjectInstance(Pop(), "Object creation with owner");
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args, null)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
@@ -2515,7 +2517,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args, null)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             args = FillDefaultArgs(ctorProto, args, _currentThis);
 
@@ -2863,8 +2865,10 @@ namespace fire.Runtime
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
                 && cachedObj.Mailbox == null
-                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain))
+                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain)
+                && (siteEntry.Guard == null || siteEntry.Guard.Holds(_stack.AsSpan(_sp - argCount, argCount))))
             {
+                if (siteEntry.Guard != null) TakeGuardedHit(cachedMethod);
                 // A method that only calls a native function with `this.field` and its parameters (all methods of the
                 // bridge preludes): call the native function directly, without scope/frame (see NativeForwarder).
                 if (siteEntry.Forwarder is { } forwarder && copyMask == 0 && cachedObj.ThreadLock == null)
@@ -3018,13 +3022,13 @@ namespace fire.Runtime
                 return;
             }
             CheckArity(proto, args.Length);
-            if (proto.ParamCount == argCount && obj.RtClass != null && !rc.IsTypeOverloaded(methodName, argCount))
+            if (proto.ParamCount == argCount && obj.RtClass != null && (!rc.IsTypeOverloaded(methodName, argCount) || _hintTaken != null))
             {
                 var forwarder = proto.Forwarder;
                 int forwarderField = -1;
                 if (forwarder != null && !obj.RtClass.FieldIndex.TryGetValue(forwarder.FieldName, out forwarderField))
                     forwarder = null;
-                StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField));
+                StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField, guard: _hintTaken));
             }
             args = FillDefaultArgs(proto, args, obj);
 
@@ -3361,8 +3365,10 @@ namespace fire.Runtime
 
             // Fast path: the same site has already resolved once (class/method are fixed as constants
             // in the bytecode, see SiteCache) - no more lookup by class and method name.
-            if (LookupSite(site) is { Proto: { } cachedStatic })
+            if (LookupSite(site) is { Proto: { } cachedStatic } staticEntry
+                && (staticEntry.Guard == null || staticEntry.Guard.Holds(_stack.AsSpan(_sp - callArgCount, callArgCount))))
             {
+                if (staticEntry.Guard != null) TakeGuardedHit(cachedStatic);
                 EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null, copyMask: copyMask);
                 return;
             }
@@ -3398,8 +3404,8 @@ namespace fire.Runtime
             CheckArity(callProto, callArgs.Length);
             callArgs = FillDefaultArgs(callProto, callArgs, null);
 
-            if (callProto.ParamCount == callArgCount && !callRc.IsTypeOverloaded(callMethodName, callArgCount))
-                StoreSite(site, new SiteCache(null, callProto, 0));
+            if (callProto.ParamCount == callArgCount && (!callRc.IsTypeOverloaded(callMethodName, callArgCount) || _hintTaken != null))
+                StoreSite(site, new SiteCache(null, callProto, 0, guard: _hintTaken));
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var callScope = new Scope(_globalScope);
@@ -4255,6 +4261,13 @@ namespace fire.Runtime
 
                 case OpCode.GuardLocal: OpGuardLocal(); break;
                 case OpCode.SetTypeArgs: OpSetTypeArgs(); break;
+                case OpCode.OverloadHint:
+                {
+                    int hintIdx = ReadU16();
+                    var parsed = _chunk.ParsedHints ??= new OverloadHint?[_constants.Length];
+                    _pendingHint = parsed[hintIdx] ??= OverloadHint.Of(_constants[hintIdx].AsString());
+                    break;
+                }
                 case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; break;
                 case OpCode.GuardTop: OpGuardTop(); break;
                 case OpCode.GuardTopType: OpGuardTopType(); break;
@@ -5554,7 +5567,7 @@ namespace fire.Runtime
         /// to recursively build yet ANOTHER exception for it.</summary>
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
-            var ctorProto = rc.FindConstructor(args, null)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
@@ -6163,11 +6176,64 @@ namespace fire.Runtime
         {
             int explicitCount = _pendingExplicitTypeArgs ? _pendingCallTypeArgs?.Length ?? 0 : 0;
             _pendingExplicitTypeArgs = false;
+            // the overload the type checker chose (OverloadHint): taken when the arguments are what it assumed - no scoring
+            var hint = _pendingHint;
+            _hintTaken = null;
+            if (hint != null)
+            {
+                _pendingHint = null;
+                if (hint.Method == name && hint.Holds(args) && hint.Resolve(rc, _classByName) is { Proto: { } chosen } resolved)
+                {
+                    System.Threading.Interlocked.Increment(ref HintsTaken);
+                    _hintTaken = hint;
+                    if (chosen.TypeParamCount == 0) _pendingCallTypeArgs = null;
+                    return (chosen, resolved.Declaring, chosen.Access ?? AccessModifier.Public);
+                }
+                System.Threading.Interlocked.Increment(ref HintsMissed);
+            }
             var found = explicitCount > 0 || rc.IsTypeOverloaded(name, args.Length)
                 ? rc.FindMethodWithAccess(name, args, owner, _pendingCallTypeArgs, explicitCount)
                 : rc.FindMethodWithAccess(name, args.Length);
             if (found.Proto is { TypeParamCount: 0 }) _pendingCallTypeArgs = null;
             return found;
+        }
+
+        /// <summary>The overload the next call takes when its arguments meet the type checker's assumptions (OpCode.OverloadHint); FindOverload and
+        /// FindConstructorFor take it.</summary>
+        private OverloadHint? _pendingHint;
+        /// <summary>The hint the last FindOverload/FindConstructorFor took (null: it scored): the call site may cache its choice, guarded by the hint.</summary>
+        private OverloadHint? _hintTaken;
+
+        /// <summary>A cache hit of a site guarded by a hint (SiteCache.Guard): what the slow route would do with the pending prefixes.</summary>
+        private void TakeGuardedHit(FunctionProto proto)
+        {
+            _pendingHint = null;
+            _pendingExplicitTypeArgs = false;
+            if (proto.TypeParamCount == 0) _pendingCallTypeArgs = null;
+        }
+        /// <summary>How often a call took the overload of its hint, and how often its arguments did not meet the assumptions (all VMs; for tests).</summary>
+        public static long HintsTaken, HintsMissed;
+        private Func<string, RuntimeClass?>? _classByNameCache;
+        private Func<string, RuntimeClass?> _classByName => _classByNameCache ??= n => _classes.TryGetValue(n, out var c) ? c : null;
+
+        /// <summary>The constructor `new` runs for these arguments: the one the type checker chose (OverloadHint) when they meet its assumptions,
+        /// otherwise the one that fits them most closely.</summary>
+        private FunctionProto? FindConstructorFor(RuntimeClass rc, Value[] args)
+        {
+            var hint = _pendingHint;
+            _hintTaken = null;
+            if (hint != null)
+            {
+                _pendingHint = null;
+                if (hint.IsConstructor && hint.Holds(args) && hint.Resolve(rc, _classByName) is { Proto: { } chosen })
+                {
+                    System.Threading.Interlocked.Increment(ref HintsTaken);
+                    _hintTaken = hint;
+                    return chosen;
+                }
+                System.Threading.Interlocked.Increment(ref HintsMissed);
+            }
+            return rc.FindConstructor(args, null);
         }
 
         /// <summary>The type arguments the next lambda takes along (SetTypeArgs with `forCall` 2).</summary>
