@@ -439,7 +439,7 @@ namespace fire.Native
             foreach (var cls in _classList)
             {
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) cases.AppendLine($"        case {cls.Id}: return o->fields()[{index}];");
-                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
+                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}");
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{cases}        default: return Undef();\n    }}\n}}");
             sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{");

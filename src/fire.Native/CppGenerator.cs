@@ -1749,6 +1749,9 @@ namespace fire.Native
                     string cond = AllowedExpr(decl, access);
                     return isSetter ? $"if (!{cond}) {{ accessDenied({text}); return; }} " : $"if (!{cond}) return accessDenied({text}); ";
                 }
+                // (a class registered late in this round: its accessors are pulled in now and generated in the next round)
+                if (getter != null) GetFunc(getter, FuncKind.Method);
+                if (setter != null) GetFunc(setter, FuncKind.Method);
                 if (getter != null) get.AppendLine($"{label}{{ {AccessorGuard("get_" + name, getterDecl!, getterAccess, false)}Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
                 else if (setter != null) get.AppendLine($"{label}fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");");
                 if (setter != null) set.AppendLine($"{label}{{ {AccessorGuard("set_" + name, setterDecl!, setterAccess, true)}Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}");
