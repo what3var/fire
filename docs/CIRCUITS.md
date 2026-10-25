@@ -77,6 +77,8 @@ factorization run again with the same list of operations each iteration).
 | `Gate(kind, inputs = 2, supply = 5V)` | `In(i)`, `Out` | `"AND"`, `"OR"`, `"XOR"`, `"NAND"`, `"NOR"`, `"XNOR"`, `"NOT"`, `"BUFFER"`; `State` |
 | `FlipFlop(supply = 5V)` | `D`, `Clock`, `Q`, `NotQ` | takes D on the rising edge of the clock |
 | `LogicInput(high = false, supply = 5V)` | `A`, `B` | a source of 0 V or `supply`: `High`, `Toggle()` |
+| `Comparator(supply = 5V)` | `Plus`, `Minus`, `Out` | high while Plus is above Minus (analog inputs, logic output) |
+| `SRLatch(supply = 5V, withReset = false)` | `S`, `R`, `Q`, `NotQ`, `Reset` | S sets, R clears (R wins), Reset low clears |
 
 The logic parts read their inputs after every step (high above half the supply) and drive their outputs in the next one through a small resistance
 (10 Ohm), like the gates of Falstad's simulator: a gate delays by one time step.
@@ -122,6 +124,42 @@ var fast = Circuits.Models.Get("1N4148").With("1N4148-hot", 0, 0.000000005)   //
 print(Circuits.Models.Names("NPN").count)
 ```
 
+### Parts given by a formula
+
+`Formula(current, parameters)` is a part with two terminals whose current (from A through the part to B) is a formula of `V` = V(A) - V(B);
+`Formula3(current1, current2, parameters)` has three terminals X, Y, Ref with the currents into X and Y as formulas of `V1` = V(X) - V(Ref) and
+`V2` = V(Y) - V(Ref). The kernel compiles a formula once and derives it by itself (dual numbers): it runs as fast as a part of the package, the same
+in the virtual machine and in a native build.
+
+| In a formula | |
+|---|---|
+| names | the parameters (`"Is=1e-12 n=1.5"`, also with prefixes: `"R=4.7k"`), `V` or `V1`/`V2`, `t` (the time), `Vt` (thermal voltage), `pi`, `e` |
+| operators | `+ - * / ^` (power, right-associative), parentheses |
+| functions | `exp`, `log`, `sqrt`, `abs`, `sin`, `cos`, `tanh`, `atan`, `min`, `max`, `pow`, `if(c, a, b)` (a when c > 0), `limit(x, lo, hi)` |
+
+```fire
+#import "circuits"
+
+var c = new Circuits.Circuit()
+var source = c.Add(new Circuits.VoltageSource(5V))
+var r = c.Add(new Circuits.Resistor(1kOhm))
+var diode = c.Add(new Circuits.Formula("Is*(exp(V/(n*Vt))-1)", "Is=1e-14 n=1"))
+source.A.Connect(r.A)
+r.B.Connect(diode.A)
+diode.B.Connect(c.Ground)
+source.B.Connect(c.Ground)
+c.Step()
+print(diode.VoltageRaw())          // 0.693 - the same as Circuits.Diode()
+diode.Set("n=2")                   // other parameters: the circuit compiles again
+```
+
+A formula can also be a **model**: `Circuits.Model.Formula(name, current, parameters)` and `Circuits.Model.Formula3(...)`, kind `"FORMULA"` and
+`"FORMULA3"`. `new Circuits.Formula("tunnel", "Ip=8m")` takes the model and changes some of its parameters; `model.Evaluate(v)` gives the value
+of its formula, to look at its curve. The library has `tunnel` (a tunnel diode with its negative resistance), `varistor` and `lamp` (a filament
+that grows hotter with its voltage).
+
+A mistake in a formula is an `ArgumentException` when the part is made: `')' expected after the arguments of exp (at 19 of '...')`.
+
 The models of the library are approximations from the data sheets and the usual SPICE models, good for the behaviour of a circuit - not for the
 details of a data sheet (no capacitances of the junctions yet, no temperature).
 
@@ -162,6 +200,50 @@ print(output.Voltage)           // 5V
 
 Changing a value (`r.Resistance = 2kOhm`), switching, connecting or adding parts makes the circuit compile again on the next step; the capacitors keep their charge,
 the inductors their current and the scopes their samples. The level of a source (`Level`, `Amplitude`, `Frequency`) changes without a new plan.
+
+## Parameters and subcircuits
+
+A circuit can have **parameters**: `Parameter("R", 2kOhm)` sets one (in SI numbers), `Get("R")` reads it, `Value("1/(2*pi*R*C)")` computes an
+expression of them (with the functions of formulas). A nested circuit sees the parameters of the circuits around it, unless it has its own of the
+same name. `Bind(c => ...)` runs now and every time a parameter changes - it sets the parts from the parameters:
+
+```fire
+#import "circuits"
+
+class LowPass : Circuits.Circuit {
+    construct(float r : any, float cap : any) : base("lowpass") {
+        this.Parameter("R", r)
+        this.Parameter("C", cap)
+        var input = this.AddPort("in")
+        var output = this.AddPort("out")
+        var res = this.Add(new Circuits.Resistor(1))
+        var c = this.Add(new Circuits.Capacitor(1))
+        input.Connect(res.A)
+        res.B.Connect(c.A)
+        c.B.Connect(this.Ground)
+        output.Connect(res.B)
+        this.Bind((Circuits.Circuit p) => res.Resistance = p.Get("R"))
+        this.Bind((Circuits.Circuit p) => c.Capacitance = p.Get("C"))
+    }
+    float Cutoff() { return this.Value("1/(2*pi*R*C)") }
+}
+var filter = new LowPass(1kOhm, 1uF)
+print(Math.Round(filter.Cutoff()))     // 159
+filter.Parameter("R", 2kOhm)           // the resistor follows
+print(Math.Round(filter.Cutoff()))     // 80
+```
+
+### ICs
+
+ICs are circuits of the package made of its parts - subcircuits to use like any part:
+
+| IC | Ports | |
+|---|---|---|
+| `Timer555(supply = 5V)` | `Trigger`, `Threshold`, `Discharge`, `Output`, `Control`, `Reset` | divider, two comparators, SR latch, discharge transistor; powered inside at `supply` |
+| `Counter(bits = 4, supply = 5V)` | `Clock`, `Q(i)` | a ripple counter of D flip-flops; `Count` |
+
+A 555 as an astable multivibrator with RA = 1 kOhm, RB = 10 kOhm and C = 100 nF runs at 666 Hz (the formula 1.44 / ((RA + 2 RB) C) gives 686 Hz:
+the comparators react one time step late and the discharge transistor has a resistance), the capacitor swings between 1/3 and 2/3 of the supply.
 
 ## Instruments
 
@@ -243,5 +325,5 @@ A switch that opens while a current flows through a capacitor makes the trapezoi
 
 ## Coming next
 
-Parts given by a formula, the capacitances of junctions, binding parameters, parts attached to the devices of the program (`Attached`), simulated
+The capacitances of junctions, more ICs, parts attached to the devices of the program (`Attached`), simulated
 devices, a circuit control for the UI library and a circuit editor in the IDE with the import of Falstad files.

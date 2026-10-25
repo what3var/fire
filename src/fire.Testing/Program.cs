@@ -19549,6 +19549,146 @@ else
             print((th!Shop.Deep.Thing).n)
             print(th!Shop.Deep.Thing.n)
             """),
+        ("Circuits: Formel-Bauteile (Diode als Formel, Widerstand, Set, VCCS mit drei Anschluessen, Formel-Modelle, Fehlertexte)", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            // a diode written as a formula against the built-in one: the same operating point
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var d = c.Add(new Circuits.Formula("Is*(exp(V/(n*Vt))-1)", "Is=1e-14 n=1"))
+            v.A.Connect(r.A)
+            r.B.Connect(d.A)
+            d.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("formula diode " + H.R(d.VoltageRaw()) + " V " + H.R(d.CurrentRaw() * 1000) + " mA")
+            // a resistor as a formula: 1k
+            var c2 = new Circuits.Circuit()
+            var v2 = c2.Add(new Circuits.VoltageSource(10V))
+            var f = c2.Add(new Circuits.Formula("V/R", "R=2k"))
+            v2.A.Connect(f.A)
+            v2.B.Connect(c2.Ground)
+            f.B.Connect(c2.Ground)
+            c2.Step()
+            print("formula resistor " + H.R(f.CurrentRaw() * 1000) + " mA")
+            f.Set("R=500")
+            c2.Step()
+            print("after Set " + H.R(f.CurrentRaw() * 1000) + " mA")
+            // a voltage-controlled current source with three terminals: I(x) = gm * V2 (V2 is Y against Ref)
+            var c3 = new Circuits.Circuit()
+            var vin = c3.Add(new Circuits.VoltageSource(2V))
+            var vcc = c3.Add(new Circuits.VoltageSource(10V))
+            var rl = c3.Add(new Circuits.Resistor(1kOhm))
+            var g = c3.Add(new Circuits.Formula3("gm*V2", "", "gm=1m"))
+            vcc.A.Connect(rl.A)
+            rl.B.Connect(g.X)
+            vin.A.Connect(g.Y)
+            g.Ref.Connect(c3.Ground)
+            vin.B.Connect(c3.Ground)
+            vcc.B.Connect(c3.Ground)
+            c3.Step()
+            print("vccs out " + H.R(g.X.Raw()) + " V, ix " + H.R(g.CurrentX / 1mA) + " mA")
+            // models with formulas: the tunnel diode of the library, a model of one's own
+            var tm = Circuits.Models.Get("tunnel")
+            print("tunnel at 0.1V " + H.R(tm.Evaluate(0.1) * 1000) + " mA, at 0.3V " + H.R(tm.Evaluate(0.3) * 1000) + " mA")
+            Circuits.Models.Add(Circuits.Model.Formula("square-law", "k*V*abs(V)", "k=1m"))
+            var c4 = new Circuits.Circuit()
+            var v4 = c4.Add(new Circuits.VoltageSource(3V))
+            var sq = c4.Add(new Circuits.Formula("square-law", "k=2m"))
+            v4.A.Connect(sq.A)
+            v4.B.Connect(c4.Ground)
+            sq.B.Connect(c4.Ground)
+            c4.Step()
+            print("square-law " + H.R(sq.CurrentRaw() * 1000) + " mA")
+            try { new Circuits.Formula("Is*(exp(V/(n*Vt)-1", "Is=1e-14 n=1") } catch (ArgumentException e) { print(e.message) }
+            try { new Circuits.Formula("foo(V)") } catch (ArgumentException e) { print(e.message) }
+            try { new Circuits.Formula("V/R2", "R=1k") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Circuits: Timer555 astabil, Zaehler aus Flipflops, Parameter und Bindungen einer Teilschaltung (Value, Get, Vererbung)", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            // 555 astable: RA 1k, RB 10k, C 100nF -> f = 1.44 / ((RA + 2 RB) C) = 686 Hz
+            var c = new Circuits.Circuit()
+            var t = c.Add(new Circuits.Timer555(5V))
+            var ra = c.Add(new Circuits.Resistor(1kOhm))
+            var rb = c.Add(new Circuits.Resistor(10kOhm))
+            var cap = c.Add(new Circuits.Capacitor(100nF))
+            var vcc = c.Add(new Circuits.VoltageSource(5V))
+            vcc.B.Connect(c.Ground)
+            vcc.A.Connect(ra.A)
+            ra.B.Connect(t.Discharge)
+            t.Discharge.Connect(rb.A)
+            rb.B.Connect(t.Threshold)
+            t.Threshold.Connect(t.Trigger)
+            t.Trigger.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            c.TimeStep = 2us
+            var sc = new Circuits.Scope(c)
+            sc.Voltage("out", t.Output)
+            sc.Voltage("cap", cap.A)
+            c.Run(20ms)
+            var out = sc.Samples("out")
+            var rises = 0
+            var first = -1
+            var last = -1
+            for (int i = 1; i < out.length; i++) {
+                if (out[i] > 2.5 && out[i - 1] <= 2.5) {
+                    rises++
+                    if (first < 0) { first = i }
+                    last = i
+                }
+            }
+            var period = (last - first) * 2.0 / (rises - 1)
+            print("555 rises " + rises + " f " + Math.Round(1000000.0 / period) + " Hz")
+            var capv = sc.Samples("cap")
+            var lo = 10.0
+            var hi = 0.0
+            for (int i = out.length / 2; i < out.length; i++) {
+                if (capv[i] < lo) { lo = capv[i] }
+                if (capv[i] > hi) { hi = capv[i] }
+            }
+            print("cap between " + H.R(lo) + " and " + H.R(hi))
+            // counter on a 1 kHz clock: 10 rising edges in 10 ms
+            var k = new Circuits.Circuit()
+            var clk = k.Add(new Circuits.SquareSource(5V, 1kHz))
+            var cnt = k.Add(new Circuits.Counter(4))
+            clk.A.Connect(cnt.Clock)
+            clk.B.Connect(k.Ground)
+            k.TimeStep = 10us
+            k.Run(10.5ms)
+            print("counter " + cnt.Count + " q0 " + H.R(cnt.Q(0).Raw()) + " q1 " + H.R(cnt.Q(1).Raw()) + " q3 " + H.R(cnt.Q(3).Raw()))
+            // parameters and bindings: an RC low pass whose R and C come from parameters
+            class LowPass : Circuits.Circuit {
+                construct(float r : any, float cap : any) : base("lowpass") {
+                    this.Parameter("R", r)
+                    this.Parameter("C", cap)
+                    var input = this.AddPort("in")
+                    var output = this.AddPort("out")
+                    var res = this.Add(new Circuits.Resistor(1))
+                    var c = this.Add(new Circuits.Capacitor(1))
+                    input.Connect(res.A)
+                    res.B.Connect(c.A)
+                    c.B.Connect(this.Ground)
+                    output.Connect(res.B)
+                    this.Bind((Circuits.Circuit p) => res.Resistance = p.Get("R"))
+                    this.Bind((Circuits.Circuit p) => c.Capacitance = p.Get("C"))
+                }
+                float Cutoff() { return this.Value("1/(2*pi*R*C)") }
+            }
+            var top = new Circuits.Circuit()
+            var lp = top.Add(new LowPass(1kOhm, 1uF))
+            print("cutoff " + Math.Round(lp.Cutoff()) + " Hz")
+            lp.Parameter("R", 2kOhm)
+            print("cutoff " + Math.Round(lp.Cutoff()) + " Hz " + lp.Value("R*2") + " " + lp.HasParameter("C") + " " + top.HasParameter("R"))
+            top.Parameter("scale", 3)
+            print(lp.Value("scale*R") + " " + lp.Get("scale"))
+            try { lp.Get("nope") } catch (ArgumentException e) { print(e.message) }
+            """),
     }).ToArray();
 
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine

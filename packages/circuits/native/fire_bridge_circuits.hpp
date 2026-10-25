@@ -13,6 +13,10 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -22,6 +26,19 @@ namespace fire {
 namespace circuits {
 
 inline std::string& lastError() { static thread_local std::string e; return e; }
+
+/// A text of fire (UTF-16) as UTF-8 (the formulas and parameters are ASCII; other characters only show in messages).
+inline std::string toUtf8(Value v) {
+    const Str* s = strOf(v);
+    std::string out;
+    for (uint32_t i = 0; i < s->length; i++) {
+        uint32_t c = s->data[i];
+        if (c < 0x80) out.push_back((char)c);
+        else if (c < 0x800) { out.push_back((char)(0xC0 | (c >> 6))); out.push_back((char)(0x80 | (c & 0x3F))); }
+        else { out.push_back((char)(0xE0 | (c >> 12))); out.push_back((char)(0x80 | ((c >> 6) & 0x3F))); out.push_back((char)(0x80 | (c & 0x3F))); }
+    }
+    return out;
+}
 
 inline double D(Value v) { return v.kind == K_Float ? (double)v.f : (double)v.i; }
 
@@ -56,10 +73,228 @@ struct Source {
 
 struct Reactive { int a, b; double geq, vPrev, iPrev, ieq; };   // a capacitor (2C/dt) or an inductor (dt/2L), trapezoidal rule
 
-enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp = 5 };
+enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp = 5, NlFormula = 6 };
 
 constexpr double kVt = 0.025852;     // the thermal voltage at 27 degrees Celsius
 constexpr double kGmin = 1e-12;      // a conductance across every junction (keeps the matrix regular when a junction is off)
+
+inline double expl(double x, double& derivative);
+
+// ---- formulas ----------------------------------------------------------------------------------------------------------------------------
+// A part given by formulas for its currents (Circuits.Formula): `Is*(exp(V/(n*Vt))-1)`. The text is compiled once into a small stack program;
+// evaluating it on dual numbers gives the value and its derivatives by the controlling voltages at the same time - what Newton's method needs.
+
+/// A number with its derivatives by the two controlling voltages.
+struct Dual { double v, d1, d2; };
+
+enum FOp { FConst, FVar, FAdd, FSub, FMul, FDiv, FPow, FNeg, FCall };
+enum FFn { FnExp, FnLog, FnSqrt, FnAbs, FnSin, FnCos, FnTanh, FnMin, FnMax, FnIf, FnPow, FnAtan, FnLimit };
+struct FInstr { int op; double value; int arg; };   // FConst: value; FVar: arg 0 V1, 1 V2, 2 t; FCall: arg = function, value = argument count
+
+struct FormulaProgram {
+    std::vector<FInstr> code;
+    bool exponential = false;     // uses exp or pow: Newton's method moves its voltages carefully
+};
+
+struct FormulaCompiler {
+    const std::string& text;
+    const std::vector<std::pair<std::string, double>>& params;
+    bool threeTerminals;
+    size_t pos = 0;
+    FormulaProgram out;
+    std::string error;
+
+    FormulaCompiler(const std::string& t, const std::vector<std::pair<std::string, double>>& p, bool three) : text(t), params(p), threeTerminals(three) {}
+
+    void skip() { while (pos < text.size() && (text[pos] == ' ' || text[pos] == '\t')) pos++; }
+    bool eat(char c) { skip(); if (pos < text.size() && text[pos] == c) { pos++; return true; } return false; }
+    bool fail(const std::string& message) { if (error.empty()) error = message + " (at " + std::to_string(pos + 1) + " of '" + text + "')"; return false; }
+
+    bool expression() {
+        if (!term()) return false;
+        for (;;) {
+            if (eat('+')) { if (!term()) return false; out.code.push_back({FAdd, 0, 0}); }
+            else if (eat('-')) { if (!term()) return false; out.code.push_back({FSub, 0, 0}); }
+            else return true;
+        }
+    }
+    bool term() {
+        if (!unary()) return false;
+        for (;;) {
+            if (eat('*')) { if (!unary()) return false; out.code.push_back({FMul, 0, 0}); }
+            else if (eat('/')) { if (!unary()) return false; out.code.push_back({FDiv, 0, 0}); }
+            else return true;
+        }
+    }
+    bool unary() {
+        if (eat('-')) { if (!unary()) return false; out.code.push_back({FNeg, 0, 0}); return true; }
+        if (eat('+')) return unary();
+        return power();
+    }
+    bool power() {
+        if (!primary()) return false;
+        if (eat('^')) {   // right-associative, binds tighter than a sign on its left: -2^2 is -4
+            if (!unary()) return false;
+            out.code.push_back({FPow, 0, 0});
+            out.exponential = true;
+        }
+        return true;
+    }
+    bool primary() {
+        skip();
+        if (pos >= text.size()) return fail("An expression is missing");
+        char c = text[pos];
+        if (c == '(') { pos++; if (!expression()) return false; if (!eat(')')) return fail("')' expected"); return true; }
+        if ((c >= '0' && c <= '9') || c == '.') {
+            const char* start = text.c_str() + pos;
+            char* end = nullptr;
+            double v = std::strtod(start, &end);
+            if (end == start) return fail("A number expected");
+            pos += (size_t)(end - start);
+            out.code.push_back({FConst, v, 0});
+            return true;
+        }
+        if (std::isalpha((unsigned char)c) || c == '_') {
+            size_t start = pos;
+            while (pos < text.size() && (std::isalnum((unsigned char)text[pos]) || text[pos] == '_')) pos++;
+            std::string name = text.substr(start, pos - start);
+            skip();
+            if (pos < text.size() && text[pos] == '(') {
+                pos++;
+                static const char* names[] = {"exp", "log", "sqrt", "abs", "sin", "cos", "tanh", "min", "max", "if", "pow", "atan", "limit"};
+                static const int arity[] = {1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 2, 1, 3};
+                int fn = -1;
+                for (int i = 0; i < 13; i++) if (name == names[i]) fn = i;
+                if (fn < 0) return fail("Unknown function '" + name + "'");
+                int count = 0;
+                if (!eat(')')) {
+                    do { if (!expression()) return false; count++; } while (eat(','));
+                    if (!eat(')')) return fail("')' expected after the arguments of " + name);
+                }
+                if (count != arity[fn]) return fail(name + " takes " + std::to_string(arity[fn]) + " argument(s)");
+                if (fn == FnExp || fn == FnPow) out.exponential = true;
+                out.code.push_back({FCall, (double)count, fn});
+                return true;
+            }
+            for (const auto& prm : params) if (prm.first == name) { out.code.push_back({FConst, prm.second, 0}); return true; }
+            if (!threeTerminals && name == "V") { out.code.push_back({FVar, 0, 0}); return true; }
+            if (threeTerminals && name == "V1") { out.code.push_back({FVar, 0, 0}); return true; }
+            if (threeTerminals && name == "V2") { out.code.push_back({FVar, 0, 1}); return true; }
+            if (name == "t") { out.code.push_back({FVar, 0, 2}); return true; }
+            if (name == "Vt") { out.code.push_back({FConst, kVt, 0}); return true; }
+            if (name == "pi") { out.code.push_back({FConst, 3.14159265358979323846, 0}); return true; }
+            if (name == "e") { out.code.push_back({FConst, 2.718281828459045, 0}); return true; }
+            return fail("Unknown name '" + name + "'" + (threeTerminals ? " (the voltages are V1 and V2)" : " (the voltage is V)"));
+        }
+        return fail(std::string("Unexpected '") + c + "'");
+    }
+};
+
+/// "Is=1e-12 n=1.5" (also with commas or semicolons, and with the prefixes f p n u m k M G after a number) as names and values; false and a message on a mistake.
+inline bool parseParameters(const std::string& text, std::vector<std::pair<std::string, double>>& out, std::string& error) {
+    size_t i = 0;
+    auto sep = [&](char c) { return c == ' ' || c == '\t' || c == ',' || c == ';' || c == '\n'; };
+    while (i < text.size()) {
+        while (i < text.size() && sep(text[i])) i++;
+        if (i >= text.size()) break;
+        size_t start = i;
+        while (i < text.size() && (std::isalnum((unsigned char)text[i]) || text[i] == '_')) i++;
+        std::string name = text.substr(start, i - start);
+        while (i < text.size() && text[i] == ' ') i++;
+        if (name.empty() || i >= text.size() || text[i] != '=') { error = "Parameters are written name=value: '" + text + "'"; return false; }
+        i++;
+        while (i < text.size() && text[i] == ' ') i++;
+        const char* begin = text.c_str() + i;
+        char* end = nullptr;
+        double v = std::strtod(begin, &end);
+        if (end == begin) { error = "The value of '" + name + "' is not a number"; return false; }
+        i += (size_t)(end - begin);
+        if (i < text.size() && !sep(text[i])) {
+            static const char prefixes[] = "fpnumkMG";
+            static const double factors[] = {1e-15, 1e-12, 1e-9, 1e-6, 1e-3, 1e3, 1e6, 1e9};
+            const char* f = std::strchr(prefixes, text[i]);
+            if (!f || !*f) { error = "Unknown suffix after the value of '" + name + "'"; return false; }
+            v *= factors[f - prefixes];
+            i++;
+            while (i < text.size() && !sep(text[i])) i++;   // a unit after the prefix (5mA) is ignored
+        }
+        bool replaced = false;
+        for (auto& prm : out) if (prm.first == name) { prm.second = v; replaced = true; }
+        if (!replaced) out.push_back({name, v});
+    }
+    return true;
+}
+
+inline Dual fcall(int fn, const Dual* a) {
+    switch (fn) {
+        case FnExp: { double d, e = expl(a[0].v, d); return {e, d * a[0].d1, d * a[0].d2}; }
+        case FnLog: { double v = a[0].v > 1e-300 ? a[0].v : 1e-300; return {std::log(v), a[0].d1 / v, a[0].d2 / v}; }
+        case FnSqrt: { double r = std::sqrt(a[0].v > 0 ? a[0].v : 0); double k = r > 0 ? 0.5 / r : 0; return {r, k * a[0].d1, k * a[0].d2}; }
+        case FnAbs: { double s = a[0].v < 0 ? -1 : 1; return {std::fabs(a[0].v), s * a[0].d1, s * a[0].d2}; }
+        case FnSin: { double c = std::cos(a[0].v); return {std::sin(a[0].v), c * a[0].d1, c * a[0].d2}; }
+        case FnCos: { double s = -std::sin(a[0].v); return {std::cos(a[0].v), s * a[0].d1, s * a[0].d2}; }
+        case FnTanh: { double t = std::tanh(a[0].v), k = 1 - t * t; return {t, k * a[0].d1, k * a[0].d2}; }
+        case FnAtan: { double k = 1 / (1 + a[0].v * a[0].v); return {std::atan(a[0].v), k * a[0].d1, k * a[0].d2}; }
+        case FnMin: return a[0].v <= a[1].v ? a[0] : a[1];
+        case FnMax: return a[0].v >= a[1].v ? a[0] : a[1];
+        case FnIf: return a[0].v > 0 ? a[1] : a[2];
+        case FnLimit: { if (a[0].v < a[1].v) return {a[1].v, 0, 0}; if (a[0].v > a[2].v) return {a[2].v, 0, 0}; return a[0]; }
+        case FnPow: default: {
+            const Dual& x = a[0]; const Dual& y = a[1];
+            double v = std::pow(x.v, y.v);
+            double dx = x.v != 0 ? y.v * std::pow(x.v, y.v - 1) : 0;
+            double dy = x.v > 0 ? v * std::log(x.v) : 0;
+            return {v, dx * x.d1 + dy * y.d1, dx * x.d2 + dy * y.d2};
+        }
+    }
+}
+
+inline Dual evaluate(const FormulaProgram& prog, double v1, double v2, double t) {
+    Dual stack[64];
+    int sp = 0;
+    for (const FInstr& in : prog.code) {
+        switch (in.op) {
+            case FConst: stack[sp++] = {in.value, 0, 0}; break;
+            case FVar:
+                if (in.arg == 0) stack[sp++] = {v1, 1, 0};
+                else if (in.arg == 1) stack[sp++] = {v2, 0, 1};
+                else stack[sp++] = {t, 0, 0};
+                break;
+            case FNeg: stack[sp - 1] = {-stack[sp - 1].v, -stack[sp - 1].d1, -stack[sp - 1].d2}; break;
+            case FAdd: case FSub: case FMul: case FDiv: case FPow: {
+                Dual b = stack[--sp], a = stack[sp - 1], r;
+                if (in.op == FAdd) r = {a.v + b.v, a.d1 + b.d1, a.d2 + b.d2};
+                else if (in.op == FSub) r = {a.v - b.v, a.d1 - b.d1, a.d2 - b.d2};
+                else if (in.op == FMul) r = {a.v * b.v, a.d1 * b.v + a.v * b.d1, a.d2 * b.v + a.v * b.d2};
+                else if (in.op == FDiv) { double q = b.v != 0 ? b.v : 1e-300; r = {a.v / q, (a.d1 * q - a.v * b.d1) / (q * q), (a.d2 * q - a.v * b.d2) / (q * q)}; }
+                else { Dual args[2] = {a, b}; r = fcall(FnPow, args); }
+                stack[sp - 1] = r;
+                break;
+            }
+            case FCall: {
+                int n = (int)in.value;
+                sp -= n;
+                stack[sp] = fcall(in.arg, stack + sp);
+                sp++;
+                break;
+            }
+        }
+    }
+    return sp > 0 ? stack[sp - 1] : Dual{0, 0, 0};
+}
+
+/// The deepest the stack of a program gets (it must fit the 64 places of evaluate).
+inline int stackDepth(const FormulaProgram& prog) {
+    int sp = 0, most = 0;
+    for (const FInstr& in : prog.code) {
+        if (in.op == FConst || in.op == FVar) sp++;
+        else if (in.op == FNeg) {}
+        else if (in.op == FCall) sp -= (int)in.value - 1;
+        else sp--;
+        if (sp > most) most = sp;
+    }
+    return most;
+}
 
 /// A part that is not linear: a diode (nodes anode, cathode), a bipolar transistor (collector, base, emitter), a MOSFET (drain, gate, source) or an operational
 /// amplifier (in+, in-, out). Every
@@ -68,6 +303,7 @@ struct Nonlinear {
     int kind;
     int node[3];
     int terminals;
+    std::shared_ptr<FormulaProgram> f1, f2;   // a formula part: the current into terminal 0 (and into terminal 1)
     double p[4];                  // diode: Is, n, breakdown voltage, current at the breakdown voltage; bipolar: Is, beta forward, beta reverse, -; MOSFET: threshold, beta (A/V^2), lambda, -;
                                   // op amp: gain, lowest output, highest output, output resistance
     double lim[2] = {0, 0};       // the junction voltages of the last iteration (limited)
@@ -149,6 +385,35 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
         e.v0[1] = V(1);
         e.v0[2] = V(1) - pol * vbe;
         e.v0[0] = V(1) - pol * vbc;
+    } else if (e.kind == NlFormula) {
+        bool three = e.terminals == 3;
+        int ref = three ? 2 : 1;
+        double want1 = V(0) - V(ref), want2 = three ? V(1) - V(ref) : 0;
+        double v1 = want1, v2 = want2;
+        // a formula with exp or pow: the voltages move at most 0.5 V per iteration (like the limits of the junctions)
+        if (e.f1->exponential || (e.f2 && e.f2->exponential)) {
+            if (std::fabs(v1 - e.lim[0]) > 0.5) v1 = e.lim[0] + (v1 > e.lim[0] ? 0.5 : -0.5);
+            if (three && std::fabs(v2 - e.lim[1]) > 0.5) v2 = e.lim[1] + (v2 > e.lim[1] ? 0.5 : -0.5);
+        }
+        check(want1, v1);
+        check(want2, v2);
+        e.lim[0] = v1; e.lim[1] = v2;
+        double t = e.p[0];   // (the time of the step, set by the kernel before Newton's method)
+        Dual i1 = evaluate(*e.f1, v1, v2, t);
+        i1.v += kGmin * v1; i1.d1 += kGmin;
+        if (!three) {
+            e.i0[0] = i1.v; e.i0[1] = -i1.v;
+            e.j[0][0] = i1.d1; e.j[0][1] = -i1.d1; e.j[1][0] = -i1.d1; e.j[1][1] = i1.d1;
+            e.v0[0] = V(1) + v1;
+        } else {
+            Dual i2 = e.f2 ? evaluate(*e.f2, v1, v2, t) : Dual{0, 0, 0};
+            i2.v += kGmin * v2; i2.d2 += kGmin;
+            e.i0[0] = i1.v; e.i0[1] = i2.v; e.i0[2] = -(i1.v + i2.v);
+            double r0[3] = {i1.d1, i1.d2, -(i1.d1 + i1.d2)};
+            double r1[3] = {i2.d1, i2.d2, -(i2.d1 + i2.d2)};
+            for (int b = 0; b < 3; b++) { e.j[0][b] = r0[b]; e.j[1][b] = r1[b]; e.j[2][b] = -(r0[b] + r1[b]); }
+            e.v0[0] = V(2) + v1; e.v0[1] = V(2) + v2;
+        }
     } else if (e.kind == NlOpAmp) {
         // the output follows mid + swing * tanh(gain * (in+ - in-) / swing) through its output resistance: linear with a high gain, limited at the rails
         double gain = e.p[0], lo = e.p[1], hi = e.p[2], rout = e.p[3];
@@ -196,21 +461,32 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
     }
 }
 
-enum GateKind { GAnd = 0, GOr = 1, GXor = 2, GNand = 3, GNor = 4, GXnor = 5, GNot = 6, GBuffer = 7, GDFlipFlop = 8 };
+enum GateKind { GAnd = 0, GOr = 1, GXor = 2, GNand = 3, GNor = 4, GXnor = 5, GNot = 6, GBuffer = 7, GDFlipFlop = 8, GComparator = 9, GSRLatch = 10 };
 
 /// A logic part: it reads its inputs after every step (high above `threshold`) and drives its outputs for the next one through `rout` (high: `high` volts,
-/// low: 0 V). A D flip-flop has the inputs D and clock and the outputs Q and not Q; it takes D on the rising edge of the clock.
+/// low: 0 V). A D flip-flop has the inputs D and clock and the outputs Q and not Q; it takes D on the rising edge of the clock. A comparator is high
+/// while its first input is above its second (analog). An SR latch has the inputs S, R and (optional) a reset that is active low; R wins over S.
 struct Gate {
     int kind;
     std::vector<int> inputs;
     int out, outNot;
     double high, threshold, g;
     bool state = false, clock = false;
+    bool primed = false;   // a flip-flop has seen its clock once (the first step only notes it: no edge at power-on)
     bool eval(const std::vector<double>& x) {
-        auto in = [&](size_t i) { int n = inputs[i]; return (n < 0 ? 0.0 : x[(size_t)n]) > threshold; };
+        auto volts = [&](size_t i) { int n = inputs[i]; return n < 0 ? 0.0 : x[(size_t)n]; };
+        auto in = [&](size_t i) { return volts(i) > threshold; };
+        if (kind == GComparator) return inputs.size() > 1 && volts(0) > volts(1);
+        if (kind == GSRLatch) {
+            bool reset = inputs.size() > 2 && !in(2);
+            if (reset || (inputs.size() > 1 && in(1))) state = false;
+            else if (in(0)) state = true;
+            return state;
+        }
         if (kind == GDFlipFlop) {
             bool c = inputs.size() > 1 && in(1);
-            if (c && !clock) state = in(0);
+            if (primed && c && !clock) state = in(0);
+            primed = true;
             clock = c;
             return state;
         }
@@ -403,6 +679,68 @@ inline Value GateState(Value h, Value index) {
     return Bool(p->gates[(size_t)index.i].state);
 }
 
+/// A part given by formulas: the current into its first terminal as a function of V (two terminals: V = V(a) - V(b)), or the currents into the first and
+/// the second terminal as functions of V1 and V2 (three terminals: against the third); `parameters`: "name=value ...". Returns its index, -1 with LastError.
+inline Value AddFormula(Value h, Value n0, Value n1, Value n2, Value current1, Value current2, Value parameters) {
+    Plan* p = plan(h);
+    if (!p) return Int(-1);
+    std::vector<std::pair<std::string, double>> params;
+    std::string error;
+    if (!parseParameters(toUtf8(parameters), params, error)) { lastError() = error; return Int(-1); }
+    bool three = n2.i != -2;
+    auto compile = [&](const std::string& text, std::shared_ptr<FormulaProgram>& into) {
+        FormulaCompiler c(text, params, three);
+        bool ok = c.expression();
+        c.skip();
+        if (ok && c.pos < text.size()) ok = c.fail("Unexpected text");
+        if (!ok) { lastError() = c.error; return false; }
+        if (stackDepth(c.out) > 60) { lastError() = "The formula is too deeply nested: '" + text + "'"; return false; }
+        into = std::make_shared<FormulaProgram>(c.out);
+        return true;
+    };
+    Nonlinear e{};
+    e.kind = NlFormula;
+    e.terminals = three ? 3 : 2;
+    e.node[0] = (int)n0.i; e.node[1] = (int)n1.i; e.node[2] = three ? (int)n2.i : -1;
+    if (!compile(toUtf8(current1), e.f1)) return Int(-1);
+    if (three) {
+        std::string second = toUtf8(current2);
+        if (!second.empty() && !compile(second, e.f2)) return Int(-1);
+    }
+    for (int a = 0; a < e.terminals; a++)
+        for (int b = 0; b < e.terminals; b++) p->mark(e.node[a], e.node[b]);
+    for (int a = 1; a < e.terminals; a++) p->join(e.node[0], e.node[a]);
+    p->nonlinear.push_back(e);
+    return Int((int64_t)p->nonlinear.size() - 1);
+}
+
+/// Checks a formula without a circuit: "" when it compiles, else the message.
+inline Value CheckFormula(Value text, Value parameters, Value threeTerminals, OwnList* list) {
+    std::vector<std::pair<std::string, double>> params;
+    std::string error, t = toUtf8(text);
+    if (parseParameters(toUtf8(parameters), params, error)) {
+        FormulaCompiler c(t, params, threeTerminals.i != 0);
+        bool ok = c.expression();
+        c.skip();
+        if (ok && c.pos < t.size()) c.fail("Unexpected text");
+        error = c.error;
+    }
+    Str* s = allocStr((uint32_t)error.size(), list);
+    for (size_t i = 0; i < error.size(); i++) strChars(s)[i] = (char16_t)(uint8_t)error[i];
+    return StrV(s);
+}
+
+/// The value of a formula (two terminals: at V = v1; three: at V1, V2) - for tests and plots of a model.
+inline Value EvalFormula(Value text, Value parameters, Value v1, Value v2) {
+    std::vector<std::pair<std::string, double>> params;
+    std::string error, t = toUtf8(text);
+    if (!parseParameters(toUtf8(parameters), params, error)) return Float(0);
+    bool three = t.find("V1") != std::string::npos || t.find("V2") != std::string::npos;
+    FormulaCompiler c(t, params, three);
+    if (!c.expression()) return Float(0);
+    return Float((Real)evaluate(c.out, D(v1), D(v2), 0).v);
+}
+
 /// The currents into the terminals of a part that is not linear after the last step (what: terminal 0..2), or the voltage of a diode (what 3).
 inline Value NlState(Value h, Value index, Value what) {
     Plan* p = plan(h);
@@ -560,6 +898,12 @@ inline Value Compile(Value h, Value time) {
     if (!order(p, a)) { lastError() = unsolvable; return Bool(false); }
     p->rhsBase.assign((size_t)n, 0.0);
     p->xOld.assign((size_t)n, 0.0);
+    // the outputs of the logic parts start at their level (a counter must not see the outputs come up as edges at power-on); the voltages the circuit
+    // had before a change are set after this (SetNode)
+    for (const Gate& gate : p->gates) {
+        int node = gate.state ? gate.out : gate.outNot;
+        if (node >= 0) p->x[(size_t)node] = gate.high;
+    }
     if (p->nonlinear.empty()) {
         load(p);
         eliminate(p);
@@ -599,7 +943,7 @@ inline void begin(Plan* p) {
     }
     for (Gate& gate : p->gates) {
         bool high = gate.eval(p->x);
-        if (gate.kind != GDFlipFlop) gate.state = high;
+        if (gate.kind != GDFlipFlop && gate.kind != GSRLatch) gate.state = high;
         if (high) into(gate.out, gate.high * gate.g);
         else if (gate.outNot >= 0) into(gate.outNot, gate.high * gate.g);
     }
@@ -622,6 +966,7 @@ inline double probeValue(Plan* p, const Probe& pr) {
 inline void newton(Plan* p) {
     const int n = p->size;
     p->rhsBase = p->rhs;
+    for (Nonlinear& e : p->nonlinear) if (e.kind == NlFormula) e.p[0] = p->time + p->dt;
     bool converged = false;
     for (int it = 0; it < p->maxIterations && !converged; it++) {
         p->iterations++;

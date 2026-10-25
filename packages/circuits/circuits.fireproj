@@ -194,6 +194,23 @@
         "name": "__CirGateState",
         "arguments": 2,
         "cpp": "circuits::GateState"
+      },
+      {
+        "name": "__CirAddFormula",
+        "arguments": 7,
+        "cpp": "circuits::AddFormula"
+      },
+      {
+        "name": "__CirCheckFormula",
+        "arguments": 3,
+        "cpp": "circuits::CheckFormula",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirEvalFormula",
+        "arguments": 4,
+        "cpp": "circuits::EvalFormula"
       }
     ],
     "reset": "circuits::reset"

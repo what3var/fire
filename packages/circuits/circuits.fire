@@ -42,6 +42,17 @@ namespace Circuits {
             if (v is in unitless) { return v }
             throw new ArgumentException("Expected a frequency (Hz), not " + v + ".")
         }
+        /// <summary>The number of a value in the SI unit of its dimension (4.7kOhm is 4700, 10us is 0.00001); a plain number stays as it is.</summary>
+        static float Raw(float v : any) {
+            if (v is in V) { return v / 1V }
+            if (v is in A) { return v / 1A }
+            if (v is in Ohm) { return v / 1Ohm }
+            if (v is in F) { return v / 1F }
+            if (v is in H) { return v / 1H }
+            if (v is in Hz) { return v / 1Hz }
+            if (v is in s) { return v / 1s }
+            return v!float
+        }
         static float Seconds(float v : any) {
             if (v is in s) { return v / 1s }
             if (v is in unitless) { return v }
@@ -536,7 +547,8 @@ namespace Circuits {
 
     /// <summary>The numbers of a kind of part, like a .model line of SPICE: `kind` is "D" (diode), "NPN", "PNP", "NMOS", "PMOS" or "OPAMP".
     /// Diode: Is (saturation current, A), N (emission coefficient), BV (breakdown voltage, 0: none), IBV (the current at -BV, default 1 mA). Bipolar: Is, BF, BR (current gains forward and reverse).
-    /// MOSFET: VTO (threshold, V; positive also for PMOS), KP (beta, A/V^2), LAMBDA (1/V). Op amp: GAIN, VMIN and VMAX (the output range), ROUT (Ohm).</summary>
+    /// MOSFET: VTO (threshold, V; positive also for PMOS), KP (beta, A/V^2), LAMBDA (1/V). Op amp: GAIN, VMIN and VMAX (the output range), ROUT (Ohm).
+    /// "FORMULA" and "FORMULA3": formulas for the currents (Model.Formula, Model.Formula3).</summary>
     class Model {
         string name
         string kind
@@ -544,6 +556,10 @@ namespace Circuits {
         float p1 = 0.0
         float p2 = 0.0
         float p3 = 0.0
+        // a model of kind "FORMULA" or "FORMULA3": the formulas of the currents and their parameters ("name=value ...")
+        string current1 = ""
+        string current2 = ""
+        string parameters = ""
 
         construct(string name, string kind, float p0, float p1, float p2 = 0.0, float p3 = 0.0) {
             this.name = name
@@ -556,6 +572,36 @@ namespace Circuits {
 
         string Name { get { return this.name } }
         string Kind { get { return this.kind } }
+
+        /// <summary>A model of a part with two terminals given by a formula: the current from A through the part to B as a function of V (V(A) - V(B)).
+        /// `parameters` are its names and values ("Is=1e-12 n=1.5"); a part can change them.</summary>
+        static Circuits.Model Formula(string name, string current, string parameters = "") {
+            Circuits.Model.Check(current, parameters, false)
+            var m = new Circuits.Model(name, "FORMULA", 0.0, 0.0)
+            m.current1 = current
+            m.parameters = parameters
+            return m
+        }
+
+        /// <summary>A model of a part with three terminals given by formulas: the currents into its first and second terminal as functions of V1 and V2 (the
+        /// voltages of the first and the second terminal against the third).</summary>
+        static Circuits.Model Formula3(string name, string current1, string current2, string parameters = "") {
+            Circuits.Model.Check(current1, parameters, true)
+            if (current2 != "") { Circuits.Model.Check(current2, parameters, true) }
+            var m = new Circuits.Model(name, "FORMULA3", 0.0, 0.0)
+            m.current1 = current1
+            m.current2 = current2
+            m.parameters = parameters
+            return m
+        }
+
+        static undefined Check(string formula, string parameters, bool threeTerminals) {
+            string error = __CirCheckFormula(formula, parameters, threeTerminals)
+            if (error != "") { throw new ArgumentException(error) }
+        }
+
+        /// <summary>The value of the formula of the model at a voltage (V, or V1 and V2): to look at the curve of a model.</summary>
+        float Evaluate(float v1, float v2 = 0.0) { return __CirEvalFormula(this.current1, this.parameters, v1, v2) }
 
         /// <summary>A copy with another name and changed numbers (`Model.Get("1N4148").With("mine", 0, 3e-9)` - the index of the number and its value).</summary>
         Circuits.Model With(string name, int index, float value) {
@@ -607,6 +653,10 @@ namespace Circuits {
             Circuits.Models.Put(new Circuits.Model("BS250", "PMOS", 2.0, 0.2, 0.01))
             Circuits.Models.Put(new Circuits.Model("IRF540", "NMOS", 3.5, 20.0, 0.01))
             Circuits.Models.Put(new Circuits.Model("IRF9540", "PMOS", 3.5, 10.0, 0.01))
+            // parts given by formulas
+            Circuits.Models.Put(Circuits.Model.Formula("tunnel", "Ip*(V/Vp)*exp(1-V/Vp) + Is*(exp(V/(n*Vt))-1)", "Ip=5m Vp=0.1 Is=1e-12 n=1.5"))
+            Circuits.Models.Put(Circuits.Model.Formula("varistor", "I0*(V/V0)*pow(abs(V/V0), a-1)", "I0=1m V0=200 a=30"))
+            Circuits.Models.Put(Circuits.Model.Formula("lamp", "V/(R0*(1+k*sqrt(abs(V))))", "R0=10 k=0.5"))
             // op amps: GAIN, VMIN, VMAX, ROUT
             Circuits.Models.Put(new Circuits.Model("opamp", "OPAMP", 100000.0, -15.0, 15.0, 1.0))
             Circuits.Models.Put(new Circuits.Model("LM358", "OPAMP", 100000.0, 0.0, 3.5, 10.0))
@@ -821,6 +871,99 @@ namespace Circuits {
         }
     }
 
+    /// <summary>A part with two terminals given by a formula: the current from A through the part to B as a function of V = V(A) - V(B), with the names
+    /// and values of `parameters` ("Is=1e-12 n=1.5"), Vt (the thermal voltage), t (the time), pi and e. Functions: exp, log, sqrt, abs, sin, cos, tanh, atan,
+    /// min, max, pow, if(c, a, b) (a when c > 0), limit(x, lo, hi); operators + - * / ^. The kernel compiles it and derives it by itself.
+    /// `formula` may also be the name of a model of kind "FORMULA"; `parameters` then change the ones of the model.</summary>
+    class Formula : TwoTerminal {
+        string current
+        string parameters
+
+        construct(string formula, string parameters = "") : base("F") {
+            if (Circuits.Models.Has(formula)) {
+                var m = Circuits.Models.Of(formula, "FORMULA")
+                this.current = m.current1
+                this.parameters = m.parameters + " " + parameters
+            } else {
+                this.current = formula
+                this.parameters = parameters
+            }
+            Circuits.Model.Check(this.current, this.parameters, false)
+        }
+
+        string Text { get { return this.current } }
+
+        /// <summary>Changes parameters ("n=2"): the circuit compiles again.</summary>
+        undefined Set(string parameters) {
+            this.parameters = this.parameters + " " + parameters
+            Circuits.Model.Check(this.current, this.parameters, false)
+            this.Invalidate()
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddFormula(this.A, this.B, undefined, this.current, "", this.parameters)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 0)
+        }
+    }
+
+    /// <summary>A part with three terminals given by formulas: the currents into X and Y as functions of V1 = V(X) - V(Ref) and V2 = V(Y) - V(Ref); the
+    /// current into Ref is what X and Y give. Names, functions and models (kind "FORMULA3") as for Formula.</summary>
+    class Formula3 : Part {
+        string current1
+        string current2
+        string parameters
+        int index = -1
+
+        construct(string formula1, string formula2 = "", string parameters = "") : base("F3") {
+            if (Circuits.Models.Has(formula1)) {
+                var m = Circuits.Models.Of(formula1, "FORMULA3")
+                this.current1 = m.current1
+                this.current2 = m.current2
+                this.parameters = m.parameters + " " + parameters
+            } else {
+                this.current1 = formula1
+                this.current2 = formula2
+                this.parameters = parameters
+            }
+            Circuits.Model.Check(this.current1, this.parameters, true)
+            if (this.current2 != "") { Circuits.Model.Check(this.current2, this.parameters, true) }
+            this.AddPort("x")
+            this.AddPort("y")
+            this.AddPort("ref")
+        }
+
+        Port X { get { return this.ports[0] } }
+        Port Y { get { return this.ports[1] } }
+        Port Ref { get { return this.ports[2] } }
+
+        undefined Set(string parameters) {
+            this.parameters = this.parameters + " " + parameters
+            this.Invalidate()
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddFormula(this.X, this.Y, this.Ref, this.current1, this.current2, this.parameters)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+
+        float Terminal(int t) {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, t)
+        }
+        /// <summary>The currents into X and Y.</summary>
+        float:A CurrentX { get { return this.Terminal(0) * 1A } }
+        float:A CurrentY { get { return this.Terminal(1) * 1A } }
+        float CurrentRaw() { return this.Terminal(0) }
+    }
+
     /// <summary>A logic gate (or a D flip-flop): reads its inputs after every step (high above half the supply) and drives its output through a small resistance
     /// in the next one (high: `supply`, low: 0 V). Kinds: "AND", "OR", "XOR", "NAND", "NOR", "XNOR", "NOT", "BUFFER".</summary>
     class Gate : Part {
@@ -904,6 +1047,86 @@ namespace Circuits {
         }
     }
 
+    /// <summary>A comparator: Out is high (`supply`) while Plus is above Minus, else 0 V - read after every step, driven in the next one.</summary>
+    class Comparator : Part {
+        float supply
+        float rout
+        int index = -1
+
+        construct(float supply : any = 5, float outputResistance : any = 10) : base("CMP") {
+            this.supply = Circuits.Units.Volts(supply)
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            this.AddPort("plus")
+            this.AddPort("minus")
+            this.AddPort("out")
+        }
+
+        Port Plus { get { return this.ports[0] } }
+        Port Minus { get { return this.ports[1] } }
+        Port Out { get { return this.ports[2] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var nodes = new int[2]
+            nodes[0] = solver.Node(this.Plus)
+            nodes[1] = solver.Node(this.Minus)
+            this.index = solver.AddGate(9, nodes, solver.Node(this.Out), -1, this.supply, this.supply / 2, this.rout)
+            return true
+        }
+
+        bool State {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.GateState(this.index)
+            }
+        }
+    }
+
+    /// <summary>An SR latch: S high sets Q, R high clears it (R wins), Reset low clears it too (leave it high or open... it has no pull-up: tie it to the
+    /// supply when it is not used, or pass `withReset = false`).</summary>
+    class SRLatch : Part {
+        float supply
+        float rout
+        bool withReset
+        int index = -1
+
+        construct(float supply : any = 5, bool withReset = false, float outputResistance : any = 10) : base("SR") {
+            this.supply = Circuits.Units.Volts(supply)
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            this.withReset = withReset
+            this.AddPort("s")
+            this.AddPort("r")
+            this.AddPort("q")
+            this.AddPort("nq")
+            this.AddPort("reset")
+        }
+
+        Port S { get { return this.ports[0] } }
+        Port R { get { return this.ports[1] } }
+        Port Q { get { return this.ports[2] } }
+        Port NotQ { get { return this.ports[3] } }
+        Port Reset { get { return this.ports[4] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var count = 2
+            if (this.withReset) { count = 3 }
+            var nodes = new int[count]
+            nodes[0] = solver.Node(this.S)
+            nodes[1] = solver.Node(this.R)
+            if (this.withReset) { nodes[2] = solver.Node(this.Reset) }
+            this.index = solver.AddGate(10, nodes, solver.Node(this.Q), solver.Node(this.NotQ), this.supply, this.supply / 2, this.rout)
+            return true
+        }
+
+        bool State {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.GateState(this.index)
+            }
+        }
+    }
+
     /// <summary>A logic input: a voltage source that is 0 V or `supply` (High, Toggle()).</summary>
     class LogicInput : VoltageSource {
         float supply
@@ -936,11 +1159,18 @@ namespace Circuits {
         // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire)
         List external
         bool fireSteps = false
+        // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
+        List paramNames
+        List paramValues
+        List bindings
 
         construct(string name = "circuit") : base(name) {
             this.parts = new List()
             this.instruments = new List()
             this.external = new List()
+            this.paramNames = new List()
+            this.paramValues = new List()
+            this.bindings = new List()
             var g = new Port("gnd", this)
             g.TakeTo(this)
             this.ground = g
@@ -962,6 +1192,79 @@ namespace Circuits {
         List Parts() { return this.parts }
 
         bool Compile(Circuits.Solver solver) { return true }
+
+        // ---- parameters ----
+        /// <summary>Sets a parameter of the circuit (a value with a unit or a plain number): the bindings of this circuit and of the circuits in it run again.
+        /// A circuit in it sees the parameters of the circuits around it unless it has its own of the same name.</summary>
+        undefined Parameter(string name, float value : any) {
+            var raw = Circuits.Units.Raw(value)
+            var i = this.paramNames.IndexOf(name)
+            if (i < 0) {
+                this.paramNames.Add(name)
+                this.paramValues.Add(raw)
+            } else { this.paramValues[i] = raw }
+            this.ApplyBindings()
+        }
+
+        /// <summary>The value of a parameter (plain SI number), from this circuit or the nearest circuit around it that has it.</summary>
+        float Get(string name) {
+            Circuits.Circuit c = this
+            while (c != undefined) {
+                var i = c.paramNames.IndexOf(name)
+                if (i >= 0) { return c.paramValues[i] }
+                c = c.owner
+            }
+            throw new ArgumentException("The circuit '" + this.name + "' has no parameter '" + name + "'.")
+        }
+
+        bool HasParameter(string name) {
+            Circuits.Circuit c = this
+            while (c != undefined) {
+                if (c.paramNames.IndexOf(name) >= 0) { return true }
+                c = c.owner
+            }
+            return false
+        }
+
+        /// <summary>An expression of the parameters ("2*R + 1k", with the functions of Formula): its value.</summary>
+        float Value(string expression) {
+            var text = ""
+            var seen = new List()
+            Circuits.Circuit c = this
+            while (c != undefined) {
+                for (int i = 0; i < c.paramNames.count; i++) {
+                    if (seen.IndexOf(c.paramNames[i]) < 0) {
+                        seen.Add(c.paramNames[i])
+                        text = text + " " + c.paramNames[i] + "=" + c.paramValues[i]
+                    }
+                }
+                c = c.owner
+            }
+            string error = __CirCheckFormula(expression, text, false)
+            if (error != "") { throw new ArgumentException(error) }
+            return __CirEvalFormula(expression, text, 0.0, 0.0)
+        }
+
+        /// <summary>Binds parts to the parameters: `action(circuit)` runs now and whenever a parameter of this circuit or of a circuit around it changes
+        /// (`c.Bind(c => r.Resistance = c.Get("R") * 2)`).</summary>
+        undefined Bind(any action) {
+            this.bindings.Add(action)
+            var f = action
+            f(this)
+        }
+
+        undefined ApplyBindings() {
+            foreach (b in this.bindings) {
+                var f = b
+                f(this)
+            }
+            foreach (p in this.parts) {
+                if (p is of Circuit) {
+                    Circuit c = p!Circuit
+                    c.ApplyBindings()
+                }
+            }
+        }
 
         /// <summary>The time step of the simulation (default 10 us).</summary>
         float:any TimeStep {
@@ -1257,6 +1560,13 @@ namespace Circuits {
             return __CirAddNonlinear(this.handle, kind, n0.Root().node, n1.Root().node, n2.Root().node, p0, p1, p2, p3)
         }
         float NlState(int index, int what) { return __CirNlState(this.handle, index, what) }
+        int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
+            var n2 = -2
+            if (c != undefined) { n2 = c.Root().node }
+            var index = __CirAddFormula(this.handle, a.Root().node, b.Root().node, n2, current1, current2, parameters)
+            if (index < 0) { throw new ArgumentException(this.Error()) }
+            return index
+        }
         int AddGate(int kind, int inputs[], int out, int outNot, float high, float threshold, float rout) {
             return __CirAddGate(this.handle, kind, inputs, out, outNot, high, threshold, rout)
         }
@@ -1268,6 +1578,101 @@ namespace Circuits {
         undefined Run(int steps) { __CirRun(this.handle, steps) }
         float Time() { return __CirTime(this.handle) }
         int Info(int what) { return __CirInfo(this.handle, what) }
+    }
+
+    /// <summary>The timer 555 as a circuit: the divider of three 5 kOhm resistors (Control is its 2/3 tap), two comparators, an SR latch with Reset (active
+    /// low, pulled up inside), the output stage and the discharge transistor. It is powered inside at `supply` (the outputs are 0 V or `supply`);
+    /// Trigger below 1/3 sets the output, Threshold above 2/3 clears it and opens Discharge to ground.</summary>
+    class Timer555 : Circuit {
+        construct(float supply : any = 5) : base("555") {
+            var s = Circuits.Units.Volts(supply)
+            this.Parameter("supply", s)
+            var trigger = this.AddPort("trigger")
+            var threshold = this.AddPort("threshold")
+            var discharge = this.AddPort("discharge")
+            var output = this.AddPort("output")
+            var control = this.AddPort("control")
+            var reset = this.AddPort("reset")
+            var vcc = this.Add(new Circuits.VoltageSource(s))
+            vcc.B.Connect(this.Ground)
+            var r1 = this.Add(new Circuits.Resistor(5kOhm))
+            var r2 = this.Add(new Circuits.Resistor(5kOhm))
+            var r3 = this.Add(new Circuits.Resistor(5kOhm))
+            vcc.A.Connect(r1.A)
+            r1.B.Connect(r2.A)
+            r2.B.Connect(r3.A)
+            r3.B.Connect(this.Ground)
+            control.Connect(r1.B)
+            var high = this.Add(new Circuits.Comparator(s))
+            var low = this.Add(new Circuits.Comparator(s))
+            threshold.Connect(high.Plus)
+            high.Minus.Connect(r1.B)
+            low.Plus.Connect(r2.B)
+            low.Minus.Connect(trigger)
+            var latch = this.Add(new Circuits.SRLatch(s, true))
+            low.Out.Connect(latch.S)
+            high.Out.Connect(latch.R)
+            var pull = this.Add(new Circuits.Resistor(100kOhm))
+            vcc.A.Connect(pull.A)
+            pull.B.Connect(latch.Reset)
+            reset.Connect(latch.Reset)
+            output.Connect(latch.Q)
+            var dis = this.Add(new Circuits.Mosfet(Circuits.Timer555.DischargeModel()))
+            latch.NotQ.Connect(dis.G)
+            dis.D.Connect(discharge)
+            dis.S.Connect(this.Ground)
+        }
+
+        static Circuits.Model DischargeModel() {
+            if (!Circuits.Models.Has("555-discharge")) { Circuits.Models.Add(new Circuits.Model("555-discharge", "NMOS", 1.0, 1.0, 0.0)) }
+            return Circuits.Models.Get("555-discharge")
+        }
+
+        Port Trigger { get { return this.ports[0] } }
+        Port Threshold { get { return this.ports[1] } }
+        Port Discharge { get { return this.ports[2] } }
+        Port Output { get { return this.ports[3] } }
+        Port Control { get { return this.ports[4] } }
+        Port Reset { get { return this.ports[5] } }
+    }
+
+    /// <summary>A binary counter of `bits` D flip-flops (ripple): it counts the rising edges of Clock; Q(i) are the bits, Count the number.</summary>
+    class Counter : Circuit {
+        int bits
+        List flops
+
+        construct(int bits = 4, float supply : any = 5) : base("counter") {
+            if (bits < 1) { throw new ArgumentException("A counter needs a bit.") }
+            this.bits = bits
+            this.flops = new List()
+            var clock = this.AddPort("clock")
+            for (int i = 0; i < bits; i++) { this.AddPort("q" + i) }
+            Port previous = clock
+            for (int i = 0; i < bits; i++) {
+                var ff = this.Add(new Circuits.FlipFlop(supply))
+                this.flops.Add(ff)
+                ff.NotQ.Connect(ff.D)
+                previous.Connect(ff.Clock)
+                this.ports[i + 1].Connect(ff.Q)
+                previous = ff.NotQ
+            }
+        }
+
+        Port Clock { get { return this.ports[0] } }
+        /// <summary>The bit i (0: the lowest).</summary>
+        Port Q(int i) { return this.ports[i + 1] }
+
+        /// <summary>The number the counter holds now.</summary>
+        int Count {
+            get {
+                var n = 0
+                for (int i = this.bits - 1; i >= 0; i--) {
+                    n = n * 2
+                    if (this.flops[i].State) { n = n + 1 }
+                }
+                return n
+            }
+        }
     }
 
     /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.
