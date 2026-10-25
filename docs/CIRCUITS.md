@@ -1,8 +1,11 @@
 # Circuits (`#import "circuits"`)
 
-Circuit simulation after the model of Paul Falstad's circuit simulator, written in fire. A circuit is made of **parts** with **ports**; connected ports form a
-**node**. Every time step the circuit is solved (modified nodal analysis; capacitors and inductors with the trapezoidal rule), and every port knows the voltage of its
-node, every part its current. Instruments record and measure what happens.
+Circuit simulation after the model of Paul Falstad's circuit simulator. A circuit is made of **parts** with **ports**; connected ports form a **node**. Every
+time step the circuit is solved (modified nodal analysis; capacitors and inductors with the trapezoidal rule), and every port knows the voltage of its node, every
+part its current. Instruments record and measure what happens.
+
+The circuits and parts are written in fire; the steps run in a C++ kernel of the package. The first step after a change **compiles** the circuit into a plan for
+the kernel (see [Speed](#speed)): in the virtual machine a step of a circuit with 40 unknowns takes about 2 µs instead of more than a millisecond.
 
 ```fire
 #import "circuits"
@@ -51,6 +54,7 @@ methods ending in `Raw` give plain numbers (volts, amperes, seconds).
 | `VoltageSource(v)` | DC; `Level`. `A` is the positive pole, `Current` the current it drives out of `A` |
 | `SineSource(amplitude, frequency, offset = 0, phase = 0)` | `offset + amplitude * sin(2 pi f t + phase)` |
 | `SquareSource(high, frequency, low = 0, duty = 0.5)` | high for `duty` of every period |
+| `FunctionSource(t => volts)` | any function of the time (seconds); it is computed in fire every step |
 | `CurrentSource(i)` | drives `i` from `A` through itself to `B`; `Level` |
 | `Switch(closed = false)` | `Closed`, `Toggle()`; closed it is a wire (1 µOhm), open it is not there |
 | `Ground()` | ties its port `G` to ground |
@@ -68,6 +72,8 @@ Every two-terminal part has `Voltage` (from `A` to `B`), `Current` (from `A` thr
 | `Step()`, `Run(duration)` | one step; steps for `duration` (`Run(20ms)`) |
 | `Time`, `Reset()` | the time of the simulation; back to time 0 (the parts take their initial state) |
 | `Parts()` | the parts and nested circuits |
+| `IsCompiled` | is there a plan for the circuit as it is now? |
+| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire |
 
 A nested circuit is a part: give it ports with `AddPort`, connect them inside, and connect them outside like the ports of any part. Stepping a nested circuit steps the
 outermost one.
@@ -90,8 +96,8 @@ outer.Step()
 print(output.Voltage)           // 5V
 ```
 
-Changing a value (`r.Resistance = 2kOhm`), switching, connecting or adding parts makes the circuit build its equations again on the next step. Without a change
-they are solved with the same factorization every step.
+Changing a value (`r.Resistance = 2kOhm`), switching, connecting or adding parts makes the circuit compile again on the next step; the capacitors keep their charge,
+the inductors their current and the scopes their samples. The level of a source (`Level`, `Amplitude`, `Frequency`) changes without a new plan.
 
 ## Instruments
 
@@ -129,11 +135,15 @@ Derive from `Circuits.TwoTerminal` (or `Circuits.Part` with `AddPort`) and put t
 
 | Method of the part | When | Solver calls |
 |---|---|---|
-| `Stamp(solver)` | when the equations are built | `Conductance(p, q, g)`, `VoltageBranch(k, plus, minus)` |
+| `Stamp(solver)` | when the circuit is compiled | `Conductance(p, q, g)`, `VoltageBranch(k, plus, minus)` |
 | `StampStep(solver)` | every step | `CurrentInto(port, amps)`, `BranchValue(k, volts)` |
-| `Commit(solver)` | after every step | `BranchCurrent(k)`; `solver.time`, `solver.dt` |
+| `Commit(solver)` | after every step | `BranchCurrent(k)`, `NodeVoltage(node)`; `solver.time`, `solver.dt` |
 | `Branches()` | | the number of extra unknowns (1 for a voltage source; its index is `branch`) |
 | `Reset()`, `CurrentRaw()` | | back to time 0; the current of the part |
+
+A part of your own steps in fire: while a circuit has one with `StampStep` or `Commit`, every step goes through fire (still with the solving in the kernel). A part
+that only has `Stamp` - like the lamp below - costs nothing after the first step: the circuit notices that it has nothing to do in a step and lets the kernel run
+alone again. The same holds for instruments of your own (any object with `Record(circuit)` given to `Attach`) and for scope channels of the current of such a part.
 
 ```fire
 /// A lamp: a resistor that glows above 1 W.
@@ -145,12 +155,27 @@ class Lamp : Circuits.TwoTerminal {
 }
 ```
 
+## Speed
+
+The first step after a change compiles the circuit:
+
+1. **Plan.** Every node and branch gets its number; the parts of the package give their tables to the kernel (resistors and switches their conductance, capacitors
+   and inductors their companion conductance and state, sources their curve) instead of being called every step.
+2. **Sparse factorization.** The kernel decides the order of the pivots once and writes the elimination as a list of operations on the entries that are not zero
+   (including the ones that fill in). A step only walks that list: a chain of 200 resistors and capacitors (202 unknowns) has 802 entries instead of 40804.
+3. **Many steps in one call.** Without parts or instruments in fire, `Run(5ms)` is one call of the kernel; the scopes record into buffers of the kernel.
+
+A chain of 20 RC stages (41 unknowns), 5000 steps: 11 ms in the virtual machine (6.2 s before the kernel), 1.8 ms in a native build (166 ms before).
+
 ## Accuracy
 
 The trapezoidal rule follows oscillations well; its error shrinks with the square of the time step. A source that jumps at time 0 starts from a resting circuit, so the
 first step of an RC circuit is a little behind the exact curve (`5 * (1 - e^-1)` is 3.161, the simulation gives 3.151 with 100 steps). A node without a path to ground
 (it hangs in the air, or only current sources and open switches reach it) gets a tiny conductance to ground (1e-12 S), so that it does not stop the simulation. A loop of voltage sources cannot be solved
 (`ArgumentException`).
+
+A switch that opens while a current flows through a capacitor makes the trapezoidal rule take half a step of that current along (the voltage moves by
+`dt / 2C * i` once) - the same as in other simulators that use it.
 
 ## Coming next
 

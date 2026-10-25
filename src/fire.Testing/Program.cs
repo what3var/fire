@@ -19299,6 +19299,84 @@ else
             print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().count + " " + outer.Parts().count)
             try { new Circuits.Resistor(3V) } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Circuits: kompilierter Plan - eigene Bauteile in fire (nur Stamp / StampStep+Commit), FunctionSource, Scope auf eigenes Bauteil, Schalter und Pegel mitten im Lauf, PlanInfo", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            /// a lamp: only Stamp (the circuit stops calling it after the first step)
+            class Lamp : Circuits.TwoTerminal {
+                construct() : base("lamp") { }
+                undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
+                float CurrentRaw() { return this.VoltageRaw() / 50 }
+            }
+            /// a current source written in fire: StampStep every step
+            class Pump : Circuits.TwoTerminal {
+                float amps
+                int steps = 0
+                construct(float amps) : base("pump") { this.amps = amps }
+                undefined StampStep(Circuits.Solver solver) {
+                    solver.CurrentInto(this.A, -this.amps)
+                    solver.CurrentInto(this.B, this.amps)
+                }
+                undefined Commit(Circuits.Solver solver) { this.steps = this.steps + 1 }
+                float CurrentRaw() { return this.amps }
+            }
+            var c = new Circuits.Circuit()
+            var b = c.Add(new Circuits.VoltageSource(10V))
+            var lamp = c.Add(new Lamp())
+            b.A.Connect(lamp.A)
+            b.B.Connect(c.Ground)
+            lamp.B.Connect(c.Ground)
+            c.Run(1ms)
+            print(H.R(lamp.CurrentRaw()) + " " + c.PlanInfo(5) + " " + H.R(b.Current / 1A))
+            var p = new Circuits.Circuit()
+            var pump = p.Add(new Pump(0.002))
+            var r = p.Add(new Circuits.Resistor(1kOhm))
+            pump.A.Connect(p.Ground)
+            pump.B.Connect(r.A)
+            r.B.Connect(p.Ground)
+            var sc = new Circuits.Scope(p)
+            sc.Current("pump", pump)
+            sc.Voltage("v", r.A)
+            p.Run(1ms)
+            print(H.R(r.A.Raw()) + " " + pump.steps + " " + sc.Count + " " + H.R(sc.Last("pump") * 1000) + " " + H.R(sc.Last("v")))
+            var f = new Circuits.Circuit()
+            var fs = f.Add(new Circuits.FunctionSource((float t) => 3 + t * 1000))
+            var rf = f.Add(new Circuits.Resistor(1kOhm))
+            fs.A.Connect(rf.A)
+            fs.B.Connect(f.Ground)
+            rf.B.Connect(f.Ground)
+            f.TimeStep = 100us
+            f.Run(2ms)
+            print(H.R(rf.A.Raw()) + " " + H.R(f.Time / 1ms))
+            // changes in the middle of a run: the capacitor keeps its charge, the level changes without a new plan
+            var rc = new Circuits.Circuit()
+            var src = rc.Add(new Circuits.VoltageSource(5V))
+            var sw = rc.Add(new Circuits.Switch(true))
+            var res = rc.Add(new Circuits.Resistor(1kOhm))
+            var cap = rc.Add(new Circuits.Capacitor(1uF))
+            src.A.Connect(sw.A)
+            sw.B.Connect(res.A)
+            res.B.Connect(cap.A)
+            cap.B.Connect(rc.Ground)
+            src.B.Connect(rc.Ground)
+            var s2 = new Circuits.Scope(rc)
+            s2.Voltage("cap", cap.A)
+            rc.Run(1ms)
+            var before = cap.VoltageRaw()
+            sw.Closed = false
+            print(rc.IsCompiled)
+            rc.Run(1ms)
+            print(H.R(before) + " " + H.R(cap.VoltageRaw()) + " " + s2.Count + " " + rc.IsCompiled)
+            sw.Closed = true
+            rc.Run(1ms)
+            src.Level = 0V
+            print(rc.IsCompiled)
+            rc.Run(5ms)
+            print(H.R(cap.VoltageRaw()) + " " + s2.Count + " " + H.R(s2.Times()[0] * 1000000) + " " + H.R(rc.Time / 1ms))
+            print(rc.PlanInfo(0) + " " + rc.PlanInfo(1) + " " + rc.PlanInfo(3) + " " + rc.PlanInfo(4))
+            """),
     }).ToArray();
 
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine

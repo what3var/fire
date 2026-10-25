@@ -2449,7 +2449,8 @@ field can be left out (`[NonSerialized]`) or renamed (`[JsonName "x"]`). Errors 
 The package `fire-circuits` (docs/CIRCUITS.md is the reference), written in fire: `Circuits.Circuit` holds parts with ports (`Resistor`, `Capacitor`, `Inductor`,
 `VoltageSource`, `SineSource`, `SquareSource`, `CurrentSource`, `Switch`, `Ground`, own parts derived from `Part`/`TwoTerminal`) and nested circuits with ports of their
 own; `port.Connect(other)` joins two ports into one node. `Step()`/`Run(duration)` solve the circuit in time steps (modified nodal analysis, trapezoidal rule for `C` and
-`L`). `Scope`, `Multimeter` and `Fft` measure. The package declares the units `V`, `A`, `Ohm`, `F`, `H` and `Hz` (with prefixes); every value can also be a plain number in
+`L`). `Scope`, `Multimeter` and `Fft` measure. The first step after a change compiles the circuit into a plan that a C++ kernel of the package runs (a sparse
+LU factorization with a fixed list of operations, many steps per call); parts written in fire (`StampStep`, `Commit`) step in fire around it. The package declares the units `V`, `A`, `Ohm`, `F`, `H` and `Hz` (with prefixes); every value can also be a plain number in
 SI units.
 
 ### 8.20 Network (`#import "net"`)

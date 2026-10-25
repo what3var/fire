@@ -54,7 +54,7 @@ namespace Circuits {
         string name
         Part part
         Port link
-        // the node of the solver (-1: ground) and its voltage after the last step (in volts)
+        // the node of the plan (-1: ground, -2: none yet) and the voltage the node had when the circuit last changed (in volts)
         int node = -2
         float v = 0.0
 
@@ -76,11 +76,17 @@ namespace Circuits {
 
         /// <summary>Connects this port with another (a wire): both are one node from now on. Returns this port.</summary>
         Port Connect(Port other) {
-            var a = this.Root()
-            var b = other.Root()
-            if (a != b) { b.link = a }
+            // (the circuits keep the voltages of their nodes first: the nodes change now)
             var owner = this.Circuit()
             if (owner != undefined) { owner.Invalidate() }
+            var otherOwner = other.Circuit()
+            if (otherOwner != undefined) { otherOwner.Invalidate() }
+            var a = this.Root()
+            var b = other.Root()
+            if (a != b) {
+                b.link = a
+                if (a.v == 0.0) { a.v = b.v }
+            }
             return this
         }
 
@@ -95,17 +101,29 @@ namespace Circuits {
         bool IsConnected(Port other) { return this.Root() == other.Root() }
 
         /// <summary>The voltage of its node against ground after the last step.</summary>
-        float:V Voltage { get { return this.Root().v * 1V } }
+        float:V Voltage { get { return this.Raw() * 1V } }
 
-        float Raw() { return this.Root().v }
+        float Raw() {
+            var root = this.Root()
+            var c = this.Circuit()
+            if (c != undefined && root.node >= -1) {
+                var top = c.Top()
+                if (!top.dirty && top.solver != undefined) { return top.solver.NodeVoltage(root.node) }
+            }
+            return root.v
+        }
     }
 
-    /// <summary>A part of a circuit: it has ports and puts itself into the equations of the solver. Derive from it (or from TwoTerminal) for parts of your own:
-    /// Stamp for what stays the same while the time step stays, StampStep for what changes from step to step, Commit to keep the state after a step.</summary>
+    /// <summary>A part of a circuit: it has ports and puts itself into the equations of the solver. The parts of the package are compiled into the plan of the
+    /// circuit and stepped by its kernel. Derive from Part (or TwoTerminal) for parts of your own: Stamp for what stays the same while the circuit does not
+    /// change, StampStep for what changes from step to step, Commit to keep the state after a step - these run in fire every step.</summary>
     class Part {
         string name
         List ports
         Circuit owner
+        // false once the methods of Part ran: the part has nothing to do in a step (the circuit stops calling them)
+        bool stepsInFire = true
+        bool commitsInFire = true
 
         construct(string name) {
             this.name = name
@@ -136,9 +154,21 @@ namespace Circuits {
         // ---- the solver interface (plain SI numbers) ----
         /// <summary>How many extra unknowns (branch currents) the part needs: 1 for a voltage source.</summary>
         int Branches() { return 0 }
+        /// <summary>Puts the part into the plan. The parts of the package give their tables to the kernel and return true; the default calls Stamp and returns
+        /// false: the part steps in fire (StampStep, Commit).</summary>
+        bool Compile(Circuits.Solver solver) {
+            this.Stamp(solver)
+            this.stepsInFire = true
+            this.commitsInFire = true
+            return false
+        }
         undefined Stamp(Circuits.Solver solver) { }
-        undefined StampStep(Circuits.Solver solver) { }
-        undefined Commit(Circuits.Solver solver) { }
+        undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
+        undefined Commit(Circuits.Solver solver) { this.commitsInFire = false }
+        /// <summary>Keeps its state from the plan before the circuit is compiled again (a capacitor its voltage and current).</summary>
+        undefined Save(Circuits.Solver solver) { }
+        /// <summary>A probe of a scope for its current in the kernel; false: the scope asks CurrentRaw every step.</summary>
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return false }
         /// <summary>Back to the state at time 0.</summary>
         undefined Reset() { }
         /// <summary>The current through the part (from its first port to its second), in amperes.</summary>
@@ -146,15 +176,25 @@ namespace Circuits {
 
         float:A Current { get { return this.CurrentRaw() * 1A } }
 
-        /// <summary>Something changed that the matrix of the solver depends on (a switch, a value): the circuit builds it again.</summary>
+        /// <summary>Something changed that the plan depends on (a switch, a value): the circuit is compiled again before the next step.</summary>
         undefined Invalidate() {
             if (this.owner != undefined) { this.owner.Invalidate() }
+        }
+
+        // the plan of the circuit (undefined while it is not compiled)
+        Circuits.Solver Plan() {
+            if (this.owner == undefined) { return undefined }
+            var top = this.owner.Top()
+            if (top.dirty) { return undefined }
+            return top.solver
         }
     }
 
     /// <summary>A part with two ports, A and B (the positive side is A).</summary>
     class TwoTerminal : Part {
         int branch = -1
+        // its index in the tables of the kernel
+        int index = -1
 
         construct(string name) : base(name) {
             this.AddPort("a")
@@ -185,7 +225,11 @@ namespace Circuits {
             }
         }
 
-        undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / this.r) }
+        bool Compile(Circuits.Solver solver) {
+            solver.Conductance(this.A, this.B, 1.0 / this.r)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.r) }
         float CurrentRaw() { return this.VoltageRaw() / this.r }
     }
 
@@ -195,8 +239,6 @@ namespace Circuits {
         float initial
         float vPrev = 0.0
         float iPrev = 0.0
-        float geq = 0.0
-        float ieq = 0.0
 
         construct(float capacitance : any, float initial : any = 0) : base("C") {
             this.c = Circuits.Units.Farads(capacitance)
@@ -217,21 +259,20 @@ namespace Circuits {
             this.iPrev = 0.0
         }
 
-        undefined Stamp(Circuits.Solver solver) {
-            this.geq = 2.0 * this.c / solver.dt
-            solver.Conductance(this.A, this.B, this.geq)
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddReactive(0, this.A, this.B, this.c, this.vPrev, this.iPrev)
+            return true
         }
-        undefined StampStep(Circuits.Solver solver) {
-            this.ieq = this.geq * this.vPrev + this.iPrev
-            solver.CurrentInto(this.A, this.ieq)
-            solver.CurrentInto(this.B, -this.ieq)
+        undefined Save(Circuits.Solver solver) {
+            this.vPrev = solver.State(0, this.index, 0)
+            this.iPrev = solver.State(0, this.index, 1)
         }
-        undefined Commit(Circuits.Solver solver) {
-            var v = this.VoltageRaw()
-            this.iPrev = this.geq * v - this.ieq
-            this.vPrev = v
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 1, this.index, 0, 0.0) }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return this.iPrev }
+            return plan.State(0, this.index, 1)
         }
-        float CurrentRaw() { return this.iPrev }
     }
 
     /// <summary>An inductor (trapezoidal rule). `initial`: its current at time 0.</summary>
@@ -240,8 +281,6 @@ namespace Circuits {
         float initial
         float vPrev = 0.0
         float iPrev = 0.0
-        float geq = 0.0
-        float ieq = 0.0
 
         construct(float inductance : any, float initial : any = 0) : base("L") {
             this.l = Circuits.Units.Henries(inductance)
@@ -262,44 +301,71 @@ namespace Circuits {
             this.vPrev = 0.0
         }
 
-        undefined Stamp(Circuits.Solver solver) {
-            this.geq = solver.dt / (2.0 * this.l)
-            solver.Conductance(this.A, this.B, this.geq)
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddReactive(1, this.A, this.B, this.l, this.vPrev, this.iPrev)
+            return true
         }
-        undefined StampStep(Circuits.Solver solver) {
-            this.ieq = this.iPrev + this.geq * this.vPrev
-            solver.CurrentInto(this.A, -this.ieq)
-            solver.CurrentInto(this.B, this.ieq)
+        undefined Save(Circuits.Solver solver) {
+            this.vPrev = solver.State(1, this.index, 0)
+            this.iPrev = solver.State(1, this.index, 1)
         }
-        undefined Commit(Circuits.Solver solver) {
-            var v = this.VoltageRaw()
-            this.iPrev = this.geq * v + this.ieq
-            this.vPrev = v
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 2, this.index, 0, 0.0) }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return this.iPrev }
+            return plan.State(1, this.index, 1)
         }
-        float CurrentRaw() { return this.iPrev }
     }
 
-    /// <summary>A voltage source: A is the positive pole. The value may change with time (Value(t)); its current is the current it drives out of A.</summary>
+    /// <summary>A voltage source: A is the positive pole; its current is the current it drives out of A. VoltageSource is DC; SineSource and SquareSource
+    /// change with time; FunctionSource takes any function of the time.</summary>
     class VoltageSource : TwoTerminal {
         float volts
         float current = 0.0
+        // the curve for the kernel: 0 DC, 1 sine, 2 square, and its numbers
+        int wave = 0
+        float p0 = 0.0
+        float p1 = 0.0
+        float p2 = 0.0
+        float p3 = 0.0
 
-        construct(float voltage : any = 0) : base("V") { this.volts = Circuits.Units.Volts(voltage) }
+        construct(float voltage : any = 0) : base("V") {
+            this.volts = Circuits.Units.Volts(voltage)
+            this.p0 = this.volts
+        }
 
         /// <summary>The (DC) voltage.</summary>
         float:any Level {
             get { return this.volts * 1V }
-            set { this.volts = Circuits.Units.Volts(value) }
+            set {
+                this.volts = Circuits.Units.Volts(value)
+                if (this.wave == 0) { this.p0 = this.volts }
+                this.Update()
+            }
+        }
+
+        // new numbers for the curve: the plan takes them without being compiled again
+        undefined Update() {
+            var plan = this.Plan()
+            if (plan != undefined && this.index >= 0) { plan.SetSource(this.index, this.p0, this.p1, this.p2, this.p3) }
         }
 
         /// <summary>The voltage at time t (seconds).</summary>
         float Value(float t) { return this.volts }
 
         int Branches() { return 1 }
-        undefined Stamp(Circuits.Solver solver) { solver.VoltageBranch(this.branch, this.A, this.B) }
-        undefined StampStep(Circuits.Solver solver) { solver.BranchValue(this.branch, this.Value(solver.time + solver.dt)) }
-        undefined Commit(Circuits.Solver solver) { this.current = -solver.BranchCurrent(this.branch) }
-        float CurrentRaw() { return this.current }
+        bool Compile(Circuits.Solver solver) {
+            solver.VoltageBranch(this.branch, this.A, this.B)
+            this.index = solver.AddSource(this.A, this.B, this.branch, this.wave, this.p0, this.p1, this.p2, this.p3)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 3, this.branch, 0, 0.0) }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return this.current }
+            return -plan.BranchCurrent(this.branch)
+        }
+        undefined Save(Circuits.Solver solver) { this.current = -solver.BranchCurrent(this.branch) }
     }
 
     /// <summary>A sine voltage: offset + amplitude * sin(2 pi f t + phase).</summary>
@@ -314,6 +380,32 @@ namespace Circuits {
             this.frequency = Circuits.Units.Hertz(frequency)
             this.offset = Circuits.Units.Volts(offset)
             this.phase = phase
+            this.wave = 1
+            this.Numbers()
+        }
+
+        undefined Numbers() {
+            this.p0 = this.amplitude
+            this.p1 = this.frequency
+            this.p2 = this.offset
+            this.p3 = this.phase
+        }
+
+        float:any Amplitude {
+            get { return this.amplitude * 1V }
+            set {
+                this.amplitude = Circuits.Units.Volts(value)
+                this.Numbers()
+                this.Update()
+            }
+        }
+        float:any Frequency {
+            get { return this.frequency * 1Hz }
+            set {
+                this.frequency = Circuits.Units.Hertz(value)
+                this.Numbers()
+                this.Update()
+            }
         }
 
         float Value(float t) { return this.offset + this.amplitude * Math.Sin(2.0 * Math.PI * this.frequency * t + this.phase) }
@@ -331,6 +423,24 @@ namespace Circuits {
             this.low = Circuits.Units.Volts(low)
             this.frequency = Circuits.Units.Hertz(frequency)
             this.duty = duty
+            this.wave = 2
+            this.Numbers()
+        }
+
+        undefined Numbers() {
+            this.p0 = this.high
+            this.p1 = this.frequency
+            this.p2 = this.low
+            this.p3 = this.duty
+        }
+
+        float:any Frequency {
+            get { return this.frequency * 1Hz }
+            set {
+                this.frequency = Circuits.Units.Hertz(value)
+                this.Numbers()
+                this.Update()
+            }
         }
 
         float Value(float t) {
@@ -341,6 +451,25 @@ namespace Circuits {
         }
     }
 
+    /// <summary>A voltage given by a function of the time (seconds -> volts). It is computed in fire every step: a circuit with it runs step by step.</summary>
+    class FunctionSource : VoltageSource {
+        any function
+
+        construct(any function) : base(0) { this.function = function }
+
+        float Value(float t) {
+            var f = this.function
+            return Circuits.Units.Volts(f(t))
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            solver.VoltageBranch(this.branch, this.A, this.B)
+            this.stepsInFire = true
+            return false
+        }
+        undefined StampStep(Circuits.Solver solver) { solver.BranchValue(this.branch, this.Value(solver.time + solver.dt)) }
+    }
+
     /// <summary>A current source: drives `current` from A through the source to B (out of B into the circuit).</summary>
     class CurrentSource : TwoTerminal {
         float amps
@@ -349,16 +478,20 @@ namespace Circuits {
 
         float:any Level {
             get { return this.amps * 1A }
-            set { this.amps = Circuits.Units.Amps(value) }
+            set {
+                this.amps = Circuits.Units.Amps(value)
+                var plan = this.Plan()
+                if (plan != undefined && this.index >= 0) { plan.SetSource(this.index, this.amps, 0.0, 0.0, 0.0) }
+            }
         }
 
         float Value(float t) { return this.amps }
 
-        undefined StampStep(Circuits.Solver solver) {
-            var i = this.Value(solver.time + solver.dt)
-            solver.CurrentInto(this.A, -i)
-            solver.CurrentInto(this.B, i)
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddSource(this.A, this.B, -1, 0, this.amps, 0.0, 0.0, 0.0)
+            return true
         }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 5, this.index, 0, 0.0) }
         float CurrentRaw() { return this.amps }
     }
 
@@ -379,8 +512,14 @@ namespace Circuits {
 
         undefined Toggle() { this.Closed = !this.closed }
 
-        undefined Stamp(Circuits.Solver solver) {
+        bool Compile(Circuits.Solver solver) {
             if (this.closed) { solver.Conductance(this.A, this.B, 1000000.0) }
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) {
+            var g = 0.0
+            if (this.closed) { g = 1000000.0 }
+            return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), g)
         }
         float CurrentRaw() {
             if (this.closed) { return this.VoltageRaw() * 1000000.0 }
@@ -392,9 +531,11 @@ namespace Circuits {
     class Ground : Part {
         construct() : base("GND") { this.AddPort("g") }
         Port G { get { return this.ports[0] } }
+        bool Compile(Circuits.Solver solver) { return true }
     }
 
-    /// <summary>A circuit: parts and nested circuits, its own ports (to use it as a part of a larger one) and a ground. Run/Step simulate it in time steps.</summary>
+    /// <summary>A circuit: parts and nested circuits, its own ports (to use it as a part of a larger one) and a ground. Run/Step simulate it in time steps.
+    /// The first step after a change compiles the circuit into a plan for the kernel of the package.</summary>
     class Circuit : Part {
         List parts
         List instruments
@@ -403,10 +544,14 @@ namespace Circuits {
         float time = 0.0
         Circuits.Solver solver
         bool dirty = true
+        // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire)
+        List external
+        bool fireSteps = false
 
         construct(string name = "circuit") : base(name) {
             this.parts = new List()
             this.instruments = new List()
+            this.external = new List()
             var g = new Port("gnd", this)
             g.TakeTo(this)
             this.ground = g
@@ -418,14 +563,16 @@ namespace Circuits {
 
         /// <summary>Adds a part (or a nested circuit); it belongs to the circuit from now on. Returns it.</summary>
         any Add(Part part) {
+            this.Invalidate()
             part.TakeTo(this)
             part.owner = this
             this.parts.Add(part)
-            this.Invalidate()
             return part
         }
 
         List Parts() { return this.parts }
+
+        bool Compile(Circuits.Solver solver) { return true }
 
         /// <summary>The time step of the simulation (default 10 us).</summary>
         float:any TimeStep {
@@ -440,13 +587,37 @@ namespace Circuits {
         float:s Time { get { return this.time * 1s } }
         float TimeRaw() { return this.time }
 
+        /// <summary>Is the circuit compiled (since its last change)?</summary>
+        bool IsCompiled { get { return !this.Top().dirty } }
+
         undefined Invalidate() {
-            this.dirty = true
-            if (this.owner != undefined) { this.owner.Invalidate() }
+            var top = this.Top()
+            if (top.dirty) { return }
+            top.Release()
         }
 
-        /// <summary>Records every step (a Scope); Circuit.Run and Step call its Record(circuit).</summary>
-        undefined Attach(any instrument) { this.instruments.Add(instrument) }
+        // the outermost circuit: keeps the state of the parts and the voltages of the nodes, and drops the plan
+        undefined Release() {
+            this.dirty = true
+            var s = this.solver
+            if (s == undefined) { return }
+            this.time = s.Time()
+            var leaves = new List()
+            this.Collect(leaves)
+            foreach (p in leaves) { p.Save(s) }
+            foreach (port in this.AllPorts(leaves)) {
+                var root = port.Root()
+                if (root.node >= -1) { root.v = s.NodeVoltage(root.node) }
+            }
+            this.solver = undefined
+            delete s
+        }
+
+        /// <summary>Records every step: a Scope (in the kernel), or any object with Record(circuit) (in fire, every step).</summary>
+        undefined Attach(any instrument) {
+            this.instruments.Add(instrument)
+            this.Invalidate()
+        }
 
         // the outermost circuit runs the simulation
         Circuits.Circuit Top() {
@@ -457,11 +628,13 @@ namespace Circuits {
 
         /// <summary>Back to time 0 (the parts take their initial state).</summary>
         undefined Reset() {
-            this.time = 0.0
-            foreach (p in this.parts) { p.Reset() }
-            var all = new List()
-            this.Collect(all)
-            foreach (port in this.AllPorts(all)) { port.v = 0.0 }
+            var top = this.Top()
+            top.Invalidate()
+            top.time = 0.0
+            var leaves = new List()
+            top.Collect(leaves)
+            foreach (p in leaves) { p.Reset() }
+            foreach (port in top.AllPorts(leaves)) { port.Root().v = 0.0 }
         }
 
         // the parts that are not circuits, of the circuit and the nested ones
@@ -496,7 +669,9 @@ namespace Circuits {
         }
 
         undefined GroundAll(Port top) {
-            this.ground.Connect(top)
+            var a = top.Root()
+            var b = this.ground.Root()
+            if (a != b) { b.link = a }
             foreach (p in this.parts) {
                 if (p is of Circuit) {
                     Circuit c = p!Circuit
@@ -504,12 +679,13 @@ namespace Circuits {
                 }
                 if (p is of Ground) {
                     Ground g = p!Ground
-                    g.G.Connect(top)
+                    var r = g.G.Root()
+                    if (r != a) { r.link = a }
                 }
             }
         }
 
-        // the solver: nodes, branches, the matrix (again when something changed)
+        // compiles the circuit into a plan: nodes, branches, the parts in the kernel, the probes of the scopes
         undefined Build() {
             var leaves = new List()
             this.Collect(leaves)
@@ -536,11 +712,29 @@ namespace Circuits {
             }
             var s = new Circuits.Solver(nodes, branches, this.dt)
             s.TakeTo(this)
-            leaves.TakeTo(s)
-            s.parts = leaves
             s.time = this.time
-            foreach (p in leaves) { p.Stamp(s) }
-            s.Factor()
+            this.external.Clear()
+            foreach (p in leaves) {
+                if (!p.Compile(s)) { this.external.Add(p) }
+            }
+            var fireInstruments = false
+            foreach (inst in this.instruments) {
+                if (inst is of Scope) {
+                    Scope scope = inst!Scope
+                    if (!scope.Compile(s)) { fireInstruments = true }
+                } else { fireInstruments = true }
+            }
+            this.fireSteps = this.external.count > 0 || fireInstruments
+            if (!s.Compile(this.time)) {
+                var message = s.Error()
+                delete s
+                throw new ArgumentException(message)
+            }
+            // the voltages the nodes had before the change are where the new plan starts
+            foreach (port in ports) {
+                var root = port.Root()
+                if (root.node >= 0 && root.v != 0.0) { s.SetNode(root.node, root.v) }
+            }
             this.solver = s
             this.dirty = false
         }
@@ -553,205 +747,151 @@ namespace Circuits {
                 return
             }
             if (this.dirty || this.solver == undefined) { this.Build() }
-            var s = this.solver
-            s.time = this.time
-            s.ClearRight()
-            foreach (p in s.parts) { p.StampStep(s) }
-            s.Solve()
-            var leaves = s.parts
-            foreach (p in leaves) {
-                foreach (port in p.Ports()) {
-                    var root = port.Root()
-                    root.v = s.NodeVoltage(root.node)
-                }
-            }
-            var circuitPorts = new List()
-            this.CircuitPorts(circuitPorts)
-            foreach (port in circuitPorts) {
-                var root = port.Root()
-                root.v = s.NodeVoltage(root.node)
-            }
-            foreach (p in leaves) { p.Commit(s) }
-            this.time = this.time + this.dt
-            foreach (inst in this.instruments) { inst.Record(this) }
+            if (this.fireSteps) { this.FireStep() } else { this.solver.Run(1) }
+            this.time = this.solver.Time()
         }
 
-        /// <summary>Simulates for `duration` (a time like 10ms, or seconds).</summary>
+        // a step with parts or instruments in fire
+        undefined FireStep() {
+            var s = this.solver
+            s.time = s.Time()
+            s.Begin()
+            foreach (p in this.external) { p.StampStep(s) }
+            s.Finish()
+            foreach (p in this.external) { p.Commit(s) }
+            this.time = s.Time()
+            foreach (inst in this.instruments) { inst.Record(this) }
+            // parts whose StampStep and Commit are those of Part have nothing to do in a step
+            var i = 0
+            while (i < this.external.count) {
+                var p = this.external[i]
+                if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
+            }
+            if (this.external.count == 0) {
+                var fireInstruments = false
+                foreach (inst in this.instruments) {
+                    if (inst is of Scope) {
+                        Scope scope = inst!Scope
+                        if (scope.fireChannels > 0) { fireInstruments = true }
+                    } else { fireInstruments = true }
+                }
+                this.fireSteps = fireInstruments
+            }
+        }
+
+        /// <summary>Simulates for `duration` (a time like 10ms, or seconds). Without parts or instruments in fire, the kernel runs all steps in one go.</summary>
         undefined Run(float duration : any) {
-            var end = this.time + Circuits.Units.Seconds(duration) - this.dt * 0.5
-            while (this.time < end) { this.Step() }
+            var top = this.Top()
+            if (top != this) {
+                top.Run(duration)
+                return
+            }
+            var steps = Math.Round(Circuits.Units.Seconds(duration) / this.dt)!int
+            var done = 0
+            while (done < steps) {
+                if (this.dirty || this.solver == undefined) { this.Build() }
+                if (this.fireSteps) {
+                    this.FireStep()
+                    done = done + 1
+                } else {
+                    this.solver.Run(steps - done)
+                    done = steps
+                }
+            }
+            if (this.solver != undefined) { this.time = this.solver.Time() }
+        }
+
+        /// <summary>Numbers of the compiled plan (for tests and tools): 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization,
+        /// 3 capacitors and inductors, 4 sources, 5 parts that step in fire.</summary>
+        int PlanInfo(int what) {
+            var top = this.Top()
+            if (top.dirty || top.solver == undefined) { top.Build() }
+            if (what == 5) { return top.external.count }
+            return top.solver.Info(what)
         }
     }
 
-    /// <summary>The equations of a circuit (modified nodal analysis): A x = b with the node voltages and the branch currents as x. LU-factorized once while
-    /// the matrix stays the same; every step only the right side changes.</summary>
+    /// <summary>The plan of a circuit in the kernel of the package (modified nodal analysis: A x = b with the node voltages and the branch currents as x).
+    /// Parts written in fire use it in Stamp, StampStep and Commit.</summary>
     class Solver {
+        int handle
         int n
         int size
         float dt
         float time = 0.0
-        List parts
-        any a
-        any rhs
-        any x
-        any pivot
-        // groups of nodes joined by conductances and voltage sources (index 0: ground, node i: i + 1)
-        any group
 
         construct(int nodes, int branches, float dt) {
             this.n = nodes
             this.size = nodes + branches
             this.dt = dt
-            var sz = this.size
-            if (sz < 1) { sz = 1 }
-            this.a = new float[sz * sz]
-            this.rhs = new float[sz]
-            this.x = new float[sz]
-            this.pivot = new int[sz]
-            for (int i = 0; i < sz * sz; i++) { this.a[i] = 0.0 }
-            for (int i = 0; i < sz; i++) {
-                this.rhs[i] = 0.0
-                this.x[i] = 0.0
-            }
-            this.group = new int[nodes + 1]
-            for (int i = 0; i <= nodes; i++) { this.group[i] = i }
+            this.handle = __CirNew(nodes, branches, dt)
         }
 
-        int Group(int i) {
-            while (this.group[i] != i) {
-                this.group[i] = this.group[this.group[i]]
-                i = this.group[i]
-            }
-            return i
-        }
+        destruct() { __CirFree(this.handle) }
 
-        undefined Join(int i, int j) {
-            var a = this.Group(i + 1)
-            var b = this.Group(j + 1)
-            if (a != b) { this.group[a] = b }
-        }
+        /// <summary>The node of a port in the plan (-1: ground).</summary>
+        int Node(Port p) { return p.Root().node }
 
-        undefined Add(int row, int col, float value) {
-            if (row < 0 || col < 0) { return }
-            this.a[row * this.size + col] = this.a[row * this.size + col] + value
-        }
+        /// <summary>A conductance g between two ports (Stamp).</summary>
+        undefined Conductance(Port p, Port q, float g) { __CirConductance(this.handle, p.Root().node, q.Root().node, g) }
 
-        /// <summary>A conductance g between two ports.</summary>
-        undefined Conductance(Port p, Port q, float g) {
-            var i = p.Root().node
-            var j = q.Root().node
-            this.Add(i, i, g)
-            this.Add(j, j, g)
-            this.Add(i, j, -g)
-            this.Add(j, i, -g)
-            if (g != 0.0) { this.Join(i, j) }
-        }
+        /// <summary>A voltage source between plus and minus with the branch k (Stamp).</summary>
+        undefined VoltageBranch(int k, Port plus, Port minus) { __CirVoltageBranch(this.handle, k, plus.Root().node, minus.Root().node) }
 
-        /// <summary>A current flowing into the node of the port (right side).</summary>
+        /// <summary>A current flowing into the node of the port (StampStep).</summary>
         undefined CurrentInto(Port p, float amps) {
             var i = p.Root().node
-            if (i >= 0) { this.rhs[i] = this.rhs[i] + amps }
+            if (i >= 0) { __CirRhsAdd(this.handle, i, amps) }
         }
 
-        /// <summary>A voltage source between plus and minus with the branch k.</summary>
-        undefined VoltageBranch(int k, Port plus, Port minus) {
-            var i = plus.Root().node
-            var j = minus.Root().node
-            this.Add(i, k, 1.0)
-            this.Add(j, k, -1.0)
-            this.Add(k, i, 1.0)
-            this.Add(k, j, -1.0)
-            this.Join(i, j)
-        }
-
-        undefined BranchValue(int k, float volts) { this.rhs[k] = volts }
-        float BranchCurrent(int k) { return this.x[k] }
+        /// <summary>The voltage of the branch k (StampStep of a voltage source).</summary>
+        undefined BranchValue(int k, float volts) { __CirRhsSet(this.handle, k, volts) }
+        float BranchCurrent(int k) { return __CirUnknown(this.handle, k) }
 
         float NodeVoltage(int node) {
             if (node < 0) { return 0.0 }
-            return this.x[node]
+            return __CirNode(this.handle, node)
         }
 
-        undefined ClearRight() {
-            for (int i = 0; i < this.size; i++) { this.rhs[i] = 0.0 }
+        // the tables of the kernel
+        int AddReactive(int kind, Port a, Port b, float value, float vPrev, float iPrev) { return __CirAddReactive(this.handle, kind, a.Root().node, b.Root().node, value, vPrev, iPrev) }
+        int AddSource(Port a, Port b, int branch, int wave, float p0, float p1, float p2, float p3) {
+            return __CirAddSource(this.handle, a.Root().node, b.Root().node, branch, wave, p0, p1, p2, p3)
         }
+        undefined SetSource(int index, float p0, float p1, float p2, float p3) { __CirSetSource(this.handle, index, p0, p1, p2, p3) }
+        float State(int kind, int index, int what) { return __CirState(this.handle, kind, index, what) }
+        bool AddProbe(int recorder, int channel, int kind, int a, int b, float g) { return __CirAddProbe(this.handle, recorder, channel, kind, a, b, g) }
+        undefined SetNode(int node, float volts) { __CirSetNode(this.handle, node, volts) }
 
-        // LU with partial pivoting, in place
-        undefined Factor() {
-            var sz = this.size
-            var m = this.a
-            // a node without a path to ground (it hangs in the air, or only current sources and open switches reach it) gets a tiny conductance to
-            // ground: otherwise the matrix would be singular
-            var ground = this.Group(0)
-            for (int i = 0; i < this.n; i++) {
-                if (this.Group(i + 1) != ground) { m[i * sz + i] = m[i * sz + i] + 0.000000000001 }
-            }
-            for (int i = 0; i < sz; i++) { this.pivot[i] = i }
-            for (int k = 0; k < sz; k++) {
-                var best = k
-                var bestValue = Math.Abs(m[k * sz + k])
-                for (int r = k + 1; r < sz; r++) {
-                    var value = Math.Abs(m[r * sz + k])
-                    if (value > bestValue) {
-                        best = r
-                        bestValue = value
-                    }
-                }
-                if (bestValue == 0.0) { throw new ArgumentException("The circuit cannot be solved (a loop of voltage sources, or a source without a path).") }
-                if (best != k) {
-                    for (int c = 0; c < sz; c++) {
-                        var t = m[k * sz + c]
-                        m[k * sz + c] = m[best * sz + c]
-                        m[best * sz + c] = t
-                    }
-                    var tp = this.pivot[k]
-                    this.pivot[k] = this.pivot[best]
-                    this.pivot[best] = tp
-                }
-                var diag = m[k * sz + k]
-                for (int r = k + 1; r < sz; r++) {
-                    var f = m[r * sz + k] / diag
-                    m[r * sz + k] = f
-                    if (f != 0.0) {
-                        for (int c = k + 1; c < sz; c++) { m[r * sz + c] = m[r * sz + c] - f * m[k * sz + c] }
-                    }
-                }
-            }
-        }
-
-        undefined Solve() {
-            var sz = this.size
-            var m = this.a
-            var y = this.x
-            for (int i = 0; i < sz; i++) {
-                var sum = this.rhs[this.pivot[i]]
-                for (int c = 0; c < i; c++) { sum = sum - m[i * sz + c] * y[c] }
-                y[i] = sum
-            }
-            for (int i = sz - 1; i >= 0; i--) {
-                var sum = y[i]
-                for (int c = i + 1; c < sz; c++) { sum = sum - m[i * sz + c] * y[c] }
-                y[i] = sum / m[i * sz + i]
-            }
-        }
+        bool Compile(float time) { return __CirCompile(this.handle, time) }
+        string Error() { return __CirLastError() }
+        undefined Begin() { __CirBegin(this.handle) }
+        undefined Finish() { __CirFinish(this.handle) }
+        undefined Run(int steps) { __CirRun(this.handle, steps) }
+        float Time() { return __CirTime(this.handle) }
+        int Info(int what) { return __CirInfo(this.handle, what) }
     }
 
-    /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.</summary>
+    /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.
+    /// The kernel records them; the samples stay when the circuit is compiled again.</summary>
     class Scope {
         List names
         List sources
-        List seconds
-        List samples
-        int capacity
+        int recorder
+        // channels the kernel cannot record (the current of a part written in fire): the scope records them in fire
+        int fireChannels = 0
+        List inFire
+        bool kernelChannels = false
 
         construct(Circuit circuit, int capacity = 100000) {
             this.names = new List()
             this.sources = new List()
-            this.seconds = new List()
-            this.samples = new List()
-            this.capacity = capacity
+            this.inFire = new List()
+            this.recorder = __CirRecNew(capacity)
             circuit.Attach(this)
         }
+
+        destruct() { __CirRecFree(this.recorder) }
 
         /// <summary>A channel for the voltage of a port (against ground, or against `reference`).</summary>
         undefined Voltage(string name, Port port, Port reference = undefined) {
@@ -769,58 +909,69 @@ namespace Circuits {
         undefined AddChannel(string name, any source) {
             this.names.Add(name)
             this.sources.Add(source)
-            this.samples.Add(new List())
+            __CirRecChannel(this.recorder)
+            var c = Circuits.Scope.CircuitOf(source)
+            if (c != undefined) { c.Invalidate() }
+        }
+
+        static Circuit CircuitOf(any source) {
+            if (source is of List) { return source[0].Circuit() }
+            Part part = source!Part
+            return part.owner
+        }
+
+        // the probes of the channels in the plan; false if some channel is recorded in fire
+        bool Compile(Circuits.Solver solver) {
+            this.inFire.Clear()
+            this.fireChannels = 0
+            this.kernelChannels = false
+            for (int i = 0; i < this.sources.count; i++) {
+                var src = this.sources[i]
+                var done = false
+                if (src is of List) {
+                    var b = -1
+                    if (src[1] != undefined) { b = solver.Node(src[1]) }
+                    done = solver.AddProbe(this.recorder, i, 0, solver.Node(src[0]), b, 0.0)
+                } else {
+                    Part part = src!Part
+                    done = part.Probe(solver, this.recorder, i)
+                }
+                if (done) { this.kernelChannels = true } else {
+                    this.inFire.Add(i)
+                    this.fireChannels = this.fireChannels + 1
+                }
+            }
+            return this.fireChannels == 0
         }
 
         undefined Record(Circuit circuit) {
-            if (this.seconds.count >= this.capacity) { return }
-            this.seconds.Add(circuit.TimeRaw())
-            for (int i = 0; i < this.sources.count; i++) {
-                var src = this.sources[i]
-                float value = 0.0
-                if (src is of List) {
-                    value = src[0].Raw()
-                    if (src[1] != undefined) { value = value - src[1].Raw() }
-                } else { value = src.CurrentRaw() }
-                this.samples[i].Add(value)
+            if (this.fireChannels == 0) { return }
+            if (!this.kernelChannels) { __CirRecTime(this.recorder, circuit.TimeRaw()) }
+            foreach (i in this.inFire) {
+                Part part = this.sources[i]!Part
+                __CirRecPut(this.recorder, i, part.CurrentRaw())
             }
         }
 
-        int Count { get { return this.seconds.count } }
+        int Count { get { return __CirRecCount(this.recorder) } }
+
+        int ChannelOf(string name) {
+            for (int i = 0; i < this.names.count; i++) {
+                if (this.names[i] == name) { return i }
+            }
+            throw new ArgumentException("The scope has no channel '" + name + "'.")
+        }
 
         /// <summary>The times of the samples (seconds).</summary>
-        float[] Times() { return Circuits.Scope.ToArray(this.seconds) }
+        float[] Times() { return __CirRecSamples(this.recorder, -1) }
 
         /// <summary>The samples of a channel (volts or amperes).</summary>
-        float[] Samples(string name) {
-            for (int i = 0; i < this.names.count; i++) {
-                if (this.names[i] == name) { return Circuits.Scope.ToArray(this.samples[i]) }
-            }
-            throw new ArgumentException("The scope has no channel '" + name + "'.")
-        }
+        float[] Samples(string name) { return __CirRecSamples(this.recorder, this.ChannelOf(name)) }
 
         /// <summary>The last sample of a channel.</summary>
-        float Last(string name) {
-            for (int i = 0; i < this.names.count; i++) {
-                if (this.names[i] == name) {
-                    var list = this.samples[i]
-                    if (list.count == 0) { return 0.0 }
-                    return list[list.count - 1]
-                }
-            }
-            throw new ArgumentException("The scope has no channel '" + name + "'.")
-        }
+        float Last(string name) { return __CirRecLast(this.recorder, this.ChannelOf(name)) }
 
-        undefined Clear() {
-            this.seconds.Clear()
-            foreach (list in this.samples) { list.Clear() }
-        }
-
-        static float[] ToArray(List list) {
-            var result = new float[list.count]
-            for (int i = 0; i < list.count; i++) { result[i] = list[i] }
-            return result
-        }
+        undefined Clear() { __CirRecClear(this.recorder) }
     }
 
     /// <summary>A virtual multimeter.</summary>
