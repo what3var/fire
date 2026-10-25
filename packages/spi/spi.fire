@@ -101,6 +101,7 @@ namespace Spi {
 
         undefined Check() {
             if (this.closed) { throw new SpiException("The device is closed.", 2) }
+            if (this.name == "sim") { Simulation.Touch() }
         }
 
         // Changes the setup of the open device.
@@ -185,6 +186,11 @@ namespace Spi {
             if (!__SpiSimReply(data, 0, data.length)) { Spi.Errors.Throw() }
         }
 
+        // Like Reply, but the answers still queued are dropped first: the device answers with these bytes from now on (a shift register whose inputs change).
+        static undefined SetReply(byte data[]) {
+            if (!__SpiSimSetReply(data, 0, data.length)) { Spi.Errors.Throw() }
+        }
+
         // MISO is tied to MOSI again (what is sent comes back); queued answers are dropped.
         static undefined Loopback() { __SpiSimLoopback() }
 
@@ -204,6 +210,9 @@ namespace Spi {
         static int Speed() { return __SpiSimInfo(1) }
         static bool LsbFirst() { return __SpiSimInfo(2) == 1 }
         static int Transfers() { return __SpiSimInfo(3) }
+        // The last byte the program sent (-1: none yet), and how many it sent since the start (Clear does not change these).
+        static int LastSent() { return __SpiSimInfo(4) }
+        static int TotalSent() { return __SpiSimInfo(5) }
 
         // Forgets what was sent and the queued answers.
         static undefined Clear() { __SpiSimClear() }

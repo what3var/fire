@@ -76,12 +76,16 @@ struct Sim {
     int speed = 0;
     bool lsb = false;
     int64_t transfers = 0;
+    int64_t total = 0;      // bytes sent since the start (not limited like `sent`)
+    int last = -1;          // the last byte sent (-1: none yet)
 
     void run(const uint8_t* out, uint8_t* in, int n) {
         transfers++;
         for (int i = 0; i < n; i++) {
             uint8_t o = out ? out[i] : 0;
             if (sent.size() < SentLimit) sent.push_back(o);
+            total++;
+            last = o;
             uint8_t r = o;
             if (!loopback) {
                 r = 0;
@@ -272,6 +276,13 @@ inline Value SimReply(Value buffer, Value offset, Value count) {
     ok();
     return Bool(true);
 }
+/// Like SimReply, but drops the answers that are still queued first (a device whose answer changes all the time, like a shift register with inputs).
+inline Value SimSetReply(Value buffer, Value offset, Value count) {
+    if (!leafAlive(buffer)) return destroyedError(buffer);
+    if (!checkRange(buffer, offset.i, count.i)) return Bool(false);
+    sim().replies.clear();
+    return SimReply(buffer, offset, count);
+}
 /// The simulated device is a loopback again (MISO tied to MOSI); the queued answers are dropped.
 inline Value SimLoopback() {
     sim().loopback = true;
@@ -286,7 +297,7 @@ inline Value SimSentByte(Value index) {
     ok();
     return Int(sim().sent[(size_t)index.i]);
 }
-/// What was last set up on the simulated device: 0 the mode, 1 the speed, 2 the bit order (1: least significant first), 3 the number of transfers done.
+/// What was last set up on the simulated device: 0 the mode, 1 the speed, 2 the bit order (1: least significant first), 3 the number of transfers done, 4 the last byte sent (-1: none), 5 the bytes sent since the start (not limited).
 inline Value SimInfo(Value which) {
     ok();
     switch (which.i) {
@@ -294,6 +305,8 @@ inline Value SimInfo(Value which) {
         case 1: return Int(sim().speed);
         case 2: return Int(sim().lsb ? 1 : 0);
         case 3: return Int(sim().transfers);
+        case 4: return Int(sim().last);
+        case 5: return Int(sim().total);
         default: return Int(fail(InvalidArgument, "No such information."));
     }
 }

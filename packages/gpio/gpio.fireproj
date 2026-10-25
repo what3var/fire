@@ -101,6 +101,11 @@
         "cpp": "gpio::SimLevel"
       },
       {
+        "name": "__GpioSimOutput",
+        "arguments": 1,
+        "cpp": "gpio::SimOutput"
+      },
+      {
         "name": "__GpioSimReset",
         "arguments": 0,
         "cpp": "gpio::SimReset"

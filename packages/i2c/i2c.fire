@@ -109,6 +109,7 @@ namespace I2c {
 
         undefined Check() {
             if (this.closed) { throw new I2cException("The bus is closed.", 2) }
+            if (this.name == "sim") { Simulation.Touch() }
         }
 
         // Writes `count` bytes of the buffer (all of it from `offset` on without a count) to the device.

@@ -143,6 +143,11 @@ namespace Circuits {
             l.Add("Logic|SRLatch|supply:V=5;reset:bool=false")
             l.Add("Logic|Counter|bits:int=4;supply:V=5")
             l.Add("ICs|Timer555|supply:V=5")
+            l.Add("Devices|GpioLine|line:int=0;supply:V=3.3")
+            l.Add("Devices|I2cAdc|address:text=0x48;channels:int=4;reference:V=5;bits:int=8")
+            l.Add("Devices|I2cDac|address:text=0x60;channels:int=1;reference:V=5")
+            l.Add("Devices|SpiShiftOut|supply:V=5")
+            l.Add("Devices|SpiShiftIn|supply:V=5")
             l.Add("Display|LogicOutput|threshold:V=2.5")
             l.Add("Display|Probe|")
             l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current=voltage;range:V=0")
@@ -184,15 +189,18 @@ namespace Circuits {
 
         /// <summary>How an element is placed by default: the distance from its first point to its second (dx, dy).</summary>
         static int DefaultLength(string type) {
-            if (type == "Ground" || type == "Rail" || type == "LogicInput" || type == "LogicOutput" || type == "Label" || type == "Pin") { return 4 }
+            if (type == "Ground" || type == "Rail" || type == "LogicInput" || type == "LogicOutput" || type == "Label" || type == "Pin" || type == "GpioLine") { return 4 }
             if (type == "Text") { return 0 }
             if (type == "Scope") { return 16 }
-            if (type == "DFlipFlop" || type == "SRLatch" || type == "Counter" || type == "Timer555") { return 12 }
+            if (Circuits.Symbols.IsChip(type)) { return 12 }
             return 8
         }
 
         /// <summary>Is it a chip (a box with pins on both sides, whose second point only says how wide it is)?</summary>
-        static bool IsChip(string type) { return type == "DFlipFlop" || type == "SRLatch" || type == "Counter" || type == "Timer555" }
+        static bool IsChip(string type) {
+            if (type == "DFlipFlop" || type == "SRLatch" || type == "Counter" || type == "Timer555") { return true }
+            return type == "I2cAdc" || type == "I2cDac" || type == "SpiShiftOut" || type == "SpiShiftIn"
+        }
 
         /// <summary>The names of the pins of a chip: left side, then right side ("D,CLK|Q,/Q").</summary>
         static string ChipPins(Circuits.Element e) {
@@ -202,6 +210,10 @@ namespace Circuits {
                 return "S,R|Q,/Q"
             }
             if (e.type == "Timer555") { return "TRG,THR,RST,CTL|OUT,DIS" }
+            if (e.type == "I2cAdc") { return Circuits.Symbols.Row("IN", Circuits.Symbols.Channels(e, 4)) + "|" }
+            if (e.type == "I2cDac") { return "|" + Circuits.Symbols.Row("OUT", Circuits.Symbols.Channels(e, 1)) }
+            if (e.type == "SpiShiftOut") { return "|" + Circuits.Symbols.Row("Q", 8) }
+            if (e.type == "SpiShiftIn") { return Circuits.Symbols.Row("D", 8) + "|" }
             if (e.type == "Counter") {
                 var n = Circuits.Symbols.Bits(e)
                 var right = ""
@@ -212,6 +224,49 @@ namespace Circuits {
                 return "CLK|" + right
             }
             return "|"
+        }
+
+        // "IN0,IN1,..."
+        static string Row(string prefix, int n) {
+            var text = ""
+            for (int i = 0; i < n; i++) {
+                if (i > 0) { text = text + "," }
+                text = text + prefix + i
+            }
+            return text
+        }
+
+        static int Channels(Circuits.Element e, int fallback) {
+            var n = e.Get("channels").TryToInt()
+            if (n == undefined || n < 1) { return fallback }
+            if (n > 16) { return 16 }
+            return n
+        }
+
+        /// <summary>An I2C address of an element: "0x48", "72" (undefined if it is none).</summary>
+        static any Address(Circuits.Element e) {
+            var text = e.Get("address").Trim().ToLower()
+            var v = 0
+            if (text.StartsWith("0x")) {
+                if (text.Length < 3) { return undefined }
+                for (int i = 2; i < text.Length; i++) {
+                    var d = "0123456789abcdef".IndexOf(text.Substring(i, 1))
+                    if (d < 0) { return undefined }
+                    v = v * 16 + d
+                }
+            } else {
+                var n = text.TryToInt()
+                if (n == undefined) { return undefined }
+                v = n
+            }
+            if (v < 0 || v > 127) { return undefined }
+            return v
+        }
+
+        static int Line(Circuits.Element e) {
+            var n = e.Get("line").TryToInt()
+            if (n == undefined || n < 0) { return 0 }
+            return n
         }
 
         static int Bits(Circuits.Element e) {
@@ -260,7 +315,7 @@ namespace Circuits {
             e.pins.Clear()
             var t = e.type
             if (t == "Text" || t == "Scope") { return }
-            if (t == "Ground" || t == "Rail" || t == "LogicInput" || t == "LogicOutput" || t == "Label" || t == "Pin") {
+            if (t == "Ground" || t == "Rail" || t == "LogicInput" || t == "LogicOutput" || t == "Label" || t == "Pin" || t == "GpioLine") {
                 e.pins.Add(e.x1)
                 e.pins.Add(e.y1)
                 return
@@ -471,6 +526,20 @@ namespace Circuits {
             else if (t == "Timer555") { part = new Circuits.Timer555(Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "Counter") { part = new Circuits.Counter(Circuits.Symbols.Bits(e), Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "Ground") { part = new Circuits.Ground() }
+            else if (t == "GpioLine") { part = new Circuits.GpioLine(Circuits.Symbols.Line(e), Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "I2cAdc" || t == "I2cDac") {
+                var address = Circuits.Symbols.Address(e)
+                if (address == undefined) { throw new ArgumentException("'" + e.Get("address") + "' is no I2C address (0x08 to 0x77).") }
+                if (t == "I2cAdc") {
+                    var bits = e.Get("bits").TryToInt()
+                    if (bits == undefined || bits < 1 || bits > 16) { bits = 8 }
+                    part = new Circuits.I2cAdc(address, Circuits.Symbols.Channels(e, 4), Circuits.Symbols.Value(e, "reference", c), bits)
+                } else {
+                    part = new Circuits.I2cDac(address, Circuits.Symbols.Channels(e, 1), Circuits.Symbols.Value(e, "reference", c))
+                }
+            }
+            else if (t == "SpiShiftOut") { part = new Circuits.SpiShiftOut(Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "SpiShiftIn") { part = new Circuits.SpiShiftIn(Circuits.Symbols.Value(e, "supply", c)) }
             if (part == undefined) {
                 // no part: a pin of its own for every pin (wires, labels, displays)
                 for (int i = 0; i < e.pins.count / 2; i++) { e.pinPorts.Add(undefined) }

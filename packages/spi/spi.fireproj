@@ -81,6 +81,11 @@
         "cpp": "spi::SimReply"
       },
       {
+        "name": "__SpiSimSetReply",
+        "arguments": 3,
+        "cpp": "spi::SimSetReply"
+      },
+      {
         "name": "__SpiSimLoopback",
         "arguments": 0,
         "cpp": "spi::SimLoopback"

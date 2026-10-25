@@ -75,3 +75,9 @@ identifier starts with the driver's name.
 
 `Device.Default` and `DeviceManager.Default` give the device with the default identifier. A program (or a test) may set a host of its own:
 `DeviceManager.Host = new MyHost()`.
+
+## Simulations that run alongside
+
+`Simulation` is something simulated that runs next to the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (`circuit.RunAlongside()`,
+docs/CIRCUITS.md). `Simulation.Start(s)` makes an object of a class derived from it the one that runs, `Simulation.Stop()` ends it, `Simulation.Current()` gives it.
+The simulated devices call `Simulation.Touch()` before every access of the program; it calls `Advance()` of the running simulation, which catches up with the time.

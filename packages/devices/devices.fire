@@ -265,6 +265,34 @@ class DeviceHost {
     undefined DevicesChanged(List devices) { }
 }
 
+/// <summary>Something simulated that runs alongside the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (docs/CIRCUITS.md): every time
+/// the program uses one of the simulated devices, the simulation first catches up with the time (Advance). `Simulation.Start(s)` makes `s` the one that runs.</summary>
+class Simulation {
+    static Simulation current
+    static bool busy
+
+    construct() { }
+
+    /// <summary>Brings the simulation up to now (called before every access of the program to a simulated device).</summary>
+    undefined Advance() { }
+
+    /// <summary>The simulation that runs alongside the program (undefined: none).</summary>
+    static Simulation Current() { return Simulation.current }
+
+    /// <summary>Makes `s` the simulation that runs alongside the program (undefined: none any more).</summary>
+    static undefined Start(Simulation s) { Simulation.current = s }
+
+    static undefined Stop() { Simulation.current = undefined }
+
+    /// <summary>A simulated device is used: the running simulation catches up (not again while it is busy with that).</summary>
+    static undefined Touch() {
+        var s = Simulation.current
+        if (s == undefined || Simulation.busy == true) { return }
+        Simulation.busy = true
+        try { s.Advance() } finally { Simulation.busy = false }
+    }
+}
+
 /// <summary>The drivers of the program and their devices. Without a driver of its own the program gets the serial driver (`SerialDriver`) the first time it asks.</summary>
 class DeviceManager {
     static List drivers

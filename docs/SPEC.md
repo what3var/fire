@@ -2454,6 +2454,9 @@ LU factorization with a fixed list of operations, many steps per call); parts wr
 SI units. A circuit can be drawn instead: `circuit.Schematic` holds elements on a grid (each between two points, as in Falstad's simulator) that make the parts and connect
 them by where their pins are; a `.biscuit` file (JSON) is compiled - like `.fxml` - into one class deriving from `Circuits.Circuit` with a field per named element. The package
 `fire-circuits.ui` (`#import "circuits.ui"`) brings `UI.CircuitView`, the live schematic as a control of the UI library, editable unless `readOnly`.
+`Circuits.Attached` is a part made of fire code (pins it reads and drives every step in `Update`); `GpioLine`, `I2cAdc`, `I2cDac`, `SpiShiftOut` and `SpiShiftIn` are
+attached parts at the simulated devices of `gpio`, `i2c` and `spi` (the package imports them), and `circuit.RunAlongside()` makes a circuit run in real time next to the
+program through `Simulation` of the package `devices` (every access to a simulated device first catches the simulation up with the time).
 
 ### 8.20 Network (`#import "net"`)
 

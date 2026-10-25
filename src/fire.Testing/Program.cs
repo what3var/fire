@@ -19919,6 +19919,149 @@ else
             amp.Run(1ms)
             print("vin 1: " + H.R(amp.out.PinVoltage(0)))
             """),
+        ("Circuits: Attached-Bauteile in fire und Bauteile an den simulierten Geraeten (GPIO-Leitung, I2C-ADC/DAC, SPI-Schieberegister)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // a part in fire: drives its pin with a 1 kHz square wave
+            class Blinker : Circuits.Attached {
+                construct() : base("blink") { this.AddPin("out") }
+                undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
+            }
+            var c = new Circuits.Circuit()
+            var b = c.Add(new Blinker())
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            b.Pin(0).Connect(r.A)
+            r.B.Connect(c.Ground)
+            c.TimeStep = 10us
+            c.Run(0.1ms)
+            print("blink " + H.R(r.A.Raw()) + " V, " + H.R(b.CurrentAt(0) * 1000) + " mA")
+            c.Run(0.5ms)
+            print("blink " + H.R(r.A.Raw()) + " V")
+            // the program drives GPIO line 3, the circuit has an LED on it
+            var g = c.Add(new Circuits.GpioLine(3))
+            var led = c.Add(new Circuits.Led("red"))
+            var rl = c.Add(new Circuits.Resistor(100))
+            g.P.Connect(rl.A)
+            rl.B.Connect(led.A)
+            led.B.Connect(c.Ground)
+            var pin = new Gpio.Pin("sim", 3)
+            pin.Output(true)
+            c.Run(1ms)
+            print("led " + led.IsOn + " at " + H.R(g.P.Raw()) + " V")
+            pin.Write(false)
+            c.Run(1ms)
+            print("led " + led.IsOn)
+            // a button of the circuit at line 4
+            var g4 = c.Add(new Circuits.GpioLine(4))
+            var vs = c.Add(new Circuits.VoltageSource(3.3V))
+            var sw = c.Add(new Circuits.Switch(false))
+            var pd = c.Add(new Circuits.Resistor(10kOhm))
+            vs.B.Connect(c.Ground)
+            vs.A.Connect(sw.A)
+            sw.B.Connect(g4.P)
+            pd.A.Connect(g4.P)
+            pd.B.Connect(c.Ground)
+            var button = new Gpio.Pin("sim", 4)
+            button.Input()
+            c.Run(1ms)
+            print("button " + button.Read())
+            sw.Closed = true
+            c.Run(1ms)
+            print("button " + button.Read())
+            // I2C: an ADC measures a divider, a DAC puts out what the program writes
+            var adc = c.Add(new Circuits.I2cAdc(0x48, 2, 5V))
+            var adc16 = c.Add(new Circuits.I2cAdc(0x4A, 1, 5V, 12))
+            var d1 = c.Add(new Circuits.Resistor(1kOhm))
+            var d2 = c.Add(new Circuits.Resistor(1kOhm))
+            var v5 = c.Add(new Circuits.VoltageSource(5V))
+            v5.B.Connect(c.Ground)
+            v5.A.Connect(d1.A)
+            d1.B.Connect(d2.A)
+            d2.B.Connect(c.Ground)
+            d1.B.Connect(adc.In(1))
+            d1.B.Connect(adc16.In(0))
+            var dac = c.Add(new Circuits.I2cDac(0x60))
+            var bus = new I2c.Bus("sim")
+            bus.WriteRegister(0x60, 0, 51)
+            c.Run(1ms)
+            print("adc " + bus.ReadRegister(0x48, 0) + " " + bus.ReadRegister(0x48, 1) + " 12 bit " + (bus.ReadRegister(0x4A, 0) * 256 + bus.ReadRegister(0x4A, 1)))
+            print("dac " + H.R(dac.Out(0).Raw()) + " V")
+            // SPI: a shift register with outputs feeds one with inputs
+            var so = c.Add(new Circuits.SpiShiftOut())
+            var si = c.Add(new Circuits.SpiShiftIn())
+            so.Q(0).Connect(si.D(7))
+            so.Q(2).Connect(si.D(0))
+            var spi = new Spi.Device("sim")
+            var tx = new byte[1]
+            tx[0] = 0xA5
+            spi.Transfer(tx)
+            c.Run(1ms)
+            print("shift out " + so.Value + ", q0 " + H.R(so.Q(0).Raw()) + " V")
+            var rx = spi.Transfer(tx)
+            print("shift in " + rx[0])
+            // the same from a drawing
+            var d = new Circuits.Circuit("drawn")
+            var s = d.Schematic
+            s.Add("GpioLine", 0, 0, 4, 0, "line=7", "out7")
+            s.Add("Resistor", 0, 0, 0, 8, "resistance=220")
+            s.Add("Led", 0, 8, 0, 16, "", "d1")
+            s.Add("Ground", 0, 16, 0, 20)
+            s.Add("I2cAdc", 10, 0, 22, 0, "address=0x49;channels=2", "u1")
+            s.Add("Rail", 10, 0, 6, 0, "voltage=2.5")
+            var sr = s.Add("SpiShiftOut", 30, 0, 42, 0, "", "u2")
+            var bad = s.Add("I2cDac", 30, 20, 42, 20, "address=0x99")
+            d.TimeStep = 10us
+            var pin7 = new Gpio.Pin("sim", 7)
+            pin7.Output(true)
+            d.Run(1ms)
+            Circuits.Led d1led = s.Find("d1").part!Circuits.Led
+            print("drawn: led " + d1led.IsOn + ", adc " + bus.ReadRegister(0x49, 0) + ", pins " + sr.PinCount + ", bad: " + bad.Error)
+            """),
+        ("Circuits: eine Schaltung laeuft neben dem Programm her (Simulation.Touch bei jedem Zugriff auf ein simuliertes Geraet)", """
+            #import "circuits"
+            class Counting : Simulation {
+                int n = 0
+                construct() : base() { }
+                undefined Advance() { this.n = this.n + 1 }
+            }
+            var counting = new Counting()
+            Simulation.Start(counting)
+            var p = new Gpio.Pin("sim", 9)
+            p.Output(true)
+            p.Write(false)
+            var r = p.Read()
+            print("touched " + counting.n + " times")
+            Simulation.Stop()
+            p.Write(true)
+            print("after stop " + counting.n)
+            // an RC low pass behind line 5, read back at line 6: the circuit runs in real time while the program waits
+            var c = new Circuits.Circuit()
+            c.TimeStep = 100us
+            var out = c.Add(new Circuits.GpioLine(5))
+            var back = c.Add(new Circuits.GpioLine(6))
+            var res = c.Add(new Circuits.Resistor(10kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            out.P.Connect(res.A)
+            res.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            cap.A.Connect(back.P)
+            c.RunAlongside()
+            print("alongside " + c.IsAlongside)
+            var o = new Gpio.Pin("sim", 5)
+            var i = new Gpio.Pin("sim", 6)
+            o.Output(false)
+            i.Input()
+            Sleep(5)
+            print("low at first " + !i.Read())
+            o.Write(true)
+            var start = c.TimeRaw()
+            var t0 = DateTime.UtcNow.Ticks
+            while (!i.Read() && DateTime.UtcNow.Ticks - t0 < 20000000) { Sleep(1) }
+            var took = c.TimeRaw() - start
+            print("rose " + i.Read() + ", after RC*ln2 or a little more: " + (took > 0.004 && took < 0.05))
+            c.StopAlongside()
+            print("alongside " + c.IsAlongside)
+            """),
     }).ToArray();
 
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine

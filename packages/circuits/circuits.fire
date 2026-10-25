@@ -192,6 +192,13 @@ namespace Circuits {
             if (this.owner != undefined) { this.owner.Invalidate() }
         }
 
+        /// <summary>Like Invalidate, but in the middle of a step (in StampStep or Commit) the circuit is compiled again only after the step.</summary>
+        undefined InvalidateSoon() {
+            if (this.owner == undefined) { return }
+            var top = this.owner.Top()
+            if (top.stepping) { top.rebuild = true } else { top.Invalidate() }
+        }
+
         // the plan of the circuit (undefined while it is not compiled)
         Circuits.Solver Plan() {
             if (this.owner == undefined) { return undefined }
@@ -1205,6 +1212,9 @@ namespace Circuits {
         // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire)
         List external
         bool fireSteps = false
+        // in a step in fire, and whether the circuit is compiled again after it (Part.InvalidateSoon)
+        bool stepping = false
+        bool rebuild = false
         int clipped = 0
         // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
         List paramNames
@@ -1408,6 +1418,31 @@ namespace Circuits {
             return c
         }
 
+        /// <summary>Lets the circuit run alongside the program in real time (`speed` times as fast): whenever the program uses a simulated device (the GPIO chip,
+        /// the I2C bus or the SPI device "sim"), the circuit is first simulated up to now. A circuit that cannot keep up skips what it is behind by more than
+        /// `maxLag`. Only one circuit runs alongside at a time.</summary>
+        undefined RunAlongside(float speed = 1.0, float maxLag : any = 0.1) {
+            if (speed <= 0.0) { throw new ArgumentException("The speed must be more than 0.") }
+            var a = new Circuits.Alongside(this.Top(), speed, Circuits.Units.Seconds(maxLag))
+            a.TakeGlobal()
+            Simulation.Start(a)
+        }
+
+        /// <summary>Is this circuit the one that runs alongside the program?</summary>
+        bool IsAlongside {
+            get {
+                var s = Simulation.Current()
+                if (s == undefined || !(s is of Circuits.Alongside)) { return false }
+                Circuits.Alongside a = s!Circuits.Alongside
+                return a.circuit == this.Top()
+            }
+        }
+
+        /// <summary>Stops running alongside the program.</summary>
+        undefined StopAlongside() {
+            if (this.IsAlongside) { Simulation.Stop() }
+        }
+
         /// <summary>Back to time 0 (the parts take their initial state).</summary>
         undefined Reset() {
             var top = this.Top()
@@ -1530,17 +1565,21 @@ namespace Circuits {
             }
             if (this.dirty || this.solver == undefined) { this.Build() }
             if (this.fireSteps) { this.FireStep() } else { this.solver.Run(1) }
-            this.time = this.solver.Time()
+            // (a part may have asked for the circuit to be compiled again: then Release kept the time)
+            if (this.solver != undefined) { this.time = this.solver.Time() }
         }
 
         // a step with parts or instruments in fire
         undefined FireStep() {
             var s = this.solver
             s.time = s.Time()
-            s.Begin()
-            foreach (p in this.external) { p.StampStep(s) }
-            s.Finish()
-            foreach (p in this.external) { p.Commit(s) }
+            this.stepping = true
+            try {
+                s.Begin()
+                foreach (p in this.external) { p.StampStep(s) }
+                s.Finish()
+                foreach (p in this.external) { p.Commit(s) }
+            } finally { this.stepping = false }
             this.time = s.Time()
             foreach (inst in this.instruments) { inst.Record(this) }
             // parts whose StampStep and Commit are those of Part have nothing to do in a step
@@ -1558,6 +1597,10 @@ namespace Circuits {
                     } else { fireInstruments = true }
                 }
                 this.fireSteps = fireInstruments
+            }
+            if (this.rebuild) {
+                this.rebuild = false
+                this.Invalidate()
             }
         }
 

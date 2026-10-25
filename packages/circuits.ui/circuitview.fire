@@ -684,6 +684,17 @@ namespace UI {
                 var high = li != undefined && li.High
                 this.Box(root, L, 0.0, 1.0, c0)
                 if (high) { this.Text(root, L, 0.0, "H", white) } else { this.Text(root, L, 0.0, "L", white) }
+            } else if (t == "GpioLine") {
+                // the line of the simulated GPIO chip: a box with its number; filled while the program drives it
+                this.Seg(root, 0.0, 0.0, L - 1.0, 0.0, c0)
+                Circuits.GpioLine gl = undefined
+                if (e.part != undefined) { gl = e.part!Circuits.GpioLine }
+                if (gl != undefined && gl.IsDriven(0)) {
+                    this.Dot(root, L, 0.0, 1.0, c0)
+                } else {
+                    this.Box(root, L, 0.0, 1.0, c0)
+                }
+                this.EndText(root, L + 1.4, "GPIO" + Circuits.Symbols.Line(e), UI.Color.Rgb(120, 200, 230))
             } else if (t == "LogicOutput") {
                 this.Seg(root, 0.0, 0.0, L - 1.0, 0.0, c0)
                 var th = Circuits.Symbols.Number(e.Get("threshold"))
@@ -992,6 +1003,10 @@ namespace UI {
             if (title == "Timer555") { title = "555" }
             if (title == "DFlipFlop") { title = "D-FF" }
             if (title == "SRLatch") { title = "SR" }
+            if (title == "I2cAdc") { title = "ADC " + e.Get("address") }
+            if (title == "I2cDac") { title = "DAC " + e.Get("address") }
+            if (title == "SpiShiftOut") { title = "SPI 595" }
+            if (title == "SpiShiftIn") { title = "SPI 165" }
             if (e.type == "Counter" && e.part != undefined) {
                 Circuits.Counter counter = e.part!Circuits.Counter
                 title = "" + counter.Count
@@ -1608,6 +1623,7 @@ namespace UI {
             else if (t == "Transistor" || t == "Mosfet") { prefix = "Q" }
             else if (t == "OpAmp" || t == "Comparator" || Circuits.Symbols.IsChip(t)) { prefix = "U" }
             else if (t == "LogicInput") { prefix = "In" }
+            else if (t == "GpioLine") { prefix = "Gpio" }
             else if (t == "LogicOutput") { prefix = "Out" }
             else if (t == "Scope") { prefix = "Scope" }
             else if (t == "Pin") { prefix = "P" }

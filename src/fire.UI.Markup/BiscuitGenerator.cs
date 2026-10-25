@@ -45,7 +45,8 @@ namespace fire.UI.Markup
             ["Formula"] = "Circuits.Formula", ["OpAmp"] = "Circuits.OpAmp", ["Comparator"] = "Circuits.Comparator",
             ["And"] = "Circuits.Gate", ["Nand"] = "Circuits.Gate", ["Or"] = "Circuits.Gate", ["Nor"] = "Circuits.Gate", ["Xor"] = "Circuits.Gate", ["Xnor"] = "Circuits.Gate",
             ["Not"] = "Circuits.Gate", ["Buffer"] = "Circuits.Gate", ["DFlipFlop"] = "Circuits.FlipFlop", ["SRLatch"] = "Circuits.SRLatch", ["Counter"] = "Circuits.Counter",
-            ["Timer555"] = "Circuits.Timer555", ["LogicOutput"] = "Circuits.Element", ["Probe"] = "Circuits.Element", ["Scope"] = "Circuits.Scope",
+            ["Timer555"] = "Circuits.Timer555", ["GpioLine"] = "Circuits.GpioLine", ["I2cAdc"] = "Circuits.I2cAdc", ["I2cDac"] = "Circuits.I2cDac",
+            ["SpiShiftOut"] = "Circuits.SpiShiftOut", ["SpiShiftIn"] = "Circuits.SpiShiftIn", ["LogicOutput"] = "Circuits.Element", ["Probe"] = "Circuits.Element", ["Scope"] = "Circuits.Scope",
             ["Label"] = "Circuits.Element", ["Pin"] = "Circuits.Element", ["Text"] = "Circuits.Element",
         };
 

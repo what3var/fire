@@ -348,6 +348,104 @@ class Lamp : Circuits.TwoTerminal {
 }
 ```
 
+## Parts in fire (`Attached`)
+
+`Circuits.Attached` is a part made of fire code instead of a circuit: a **logical part** with pins. Every step it reads the voltages of its pins and drives the pins it
+wants to, through `outputResistance` like the output of a chip. With it a program puts its own logic into a circuit - a controller, a sensor model, a part of a protocol -
+and the parts at the simulated devices below are attached parts too.
+
+| | |
+|---|---|
+| `Attached(name, supply = 5V, outputResistance = 10 Ohm)` | the base class; `AddPin(name)` adds a pin (an input until it is driven) |
+| `Update(time)` | override it: called every step before the circuit is solved (`time` in seconds at the end of the step; the voltages are those of the step before) |
+| `VoltsAt(pin)`, `IsHigh(pin)` | the voltage of a pin, and whether it is above half the supply |
+| `Drive(pin, volts)`, `DriveHigh(pin, high)`, `Release(pin)` | drive a pin (0 V to the supply, or any voltage), or let go of it again; `IsDriven(pin)`, `CurrentAt(pin)` |
+| `Pin(name or number)`, `PinCount`, `Supply` | |
+
+```fire
+#import "circuits"
+
+/// A part in fire: drives its pin with a square wave of 1 kHz.
+class Blinker : Circuits.Attached {
+    construct() : base("blink") { this.AddPin("out") }
+    undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
+}
+
+var c = new Circuits.Circuit()
+var b = c.Add(new Blinker())
+var r = c.Add(new Circuits.Resistor(1kOhm))
+b.Pin(0).Connect(r.A)
+r.B.Connect(c.Ground)
+c.Run(0.1ms)
+print(r.A.Voltage)      // 4.95 V: 5 V through the 10 Ohm of the output
+```
+
+Changing the level of a driven pin costs nothing; starting or stopping to drive a pin compiles the circuit again after the step. A circuit with attached parts steps in
+fire (see [Speed](#speed)).
+
+## Parts at the simulated devices
+
+The GPIO, I2C and SPI packages have a simulated device each (the chip `"sim"`, the bus `"sim"`, the device `"sim"`; docs/DEVICES.md). These parts connect a circuit to
+them: a program that uses the simulated devices - directly or through the device framework (`gpio:gpiosim`, `i2c:sim`, `spi:sim`) - talks to the circuit, without a
+change in the program when it later runs on the board.
+
+| Part | Pins | |
+|---|---|---|
+| `GpioLine(line, supply = 3.3V, outputResistance = 25 Ohm)` | `P` | a line of the simulated GPIO chip: while the program has the line as an output, the pin drives the circuit with 0 V or the supply; otherwise the line follows the circuit (high above half the supply) - a button, a sensor, a signal for the program |
+| `I2cAdc(address = 0x48, channels = 4, reference = 5V, bits = 8)` | `In(k)` | an analog-to-digital converter on the simulated I2C bus: register k is the value of channel k (0 V is 0, `reference` the largest number); with more than 8 bits registers 2k (high byte) and 2k+1 (low byte) |
+| `I2cDac(address = 0x60, channels = 1, reference = 5V)` | `Out(k)` | a digital-to-analog converter: what the program writes into register k comes out as k / 255 of `reference` |
+| `SpiShiftOut(supply = 5V)` | `Q(0..7)` | a shift register with outputs (like a 74HC595): the last byte the program sent over SPI |
+| `SpiShiftIn(supply = 5V)` | `D(0..7)` | a shift register with inputs (like a 74HC165): the program reads the levels as the first byte of every transfer |
+
+```fire
+#import "circuits"
+
+var c = new Circuits.Circuit()
+var line = c.Add(new Circuits.GpioLine(3))          // GPIO line 3 of the chip "sim"
+var r = c.Add(new Circuits.Resistor(100))
+var led = c.Add(new Circuits.Led("red"))
+line.P.Connect(r.A)
+r.B.Connect(led.A)
+led.B.Connect(c.Ground)
+
+var pin = new Gpio.Pin("sim", 3)                    // the program: an output
+pin.Output(true)
+c.Run(1ms)
+print(led.IsOn)                                     // True
+```
+
+The schematic has them as elements too (the category Devices of the palette): `GpioLine` (`line`, `supply`), `I2cAdc` (`address` like `0x48`, `channels`,
+`reference`, `bits`), `I2cDac`, `SpiShiftOut` and `SpiShiftIn`.
+
+### A circuit that runs alongside the program
+
+`circuit.RunAlongside(speed = 1.0, maxLag = 0.1s)` lets the circuit run **in real time** next to the program: every time the program uses one of the simulated devices,
+the circuit is first simulated up to now. The program then sees the circuit as it would see the hardware - a pin it sets rises through an RC filter as fast as it would
+on the board. A circuit that cannot keep up skips what it is behind by more than `maxLag`. `StopAlongside()` ends it, `IsAlongside` tells. A time step of 100 µs or
+more keeps a circuit with attached parts in real time in the virtual machine (a step there takes some 20 to 50 µs).
+
+```fire
+var c = new Circuits.Circuit()
+c.TimeStep = 100us
+var out = c.Add(new Circuits.GpioLine(5))
+var back = c.Add(new Circuits.GpioLine(6))
+var r = c.Add(new Circuits.Resistor(10kOhm))
+var cap = c.Add(new Circuits.Capacitor(1uF))
+out.P.Connect(r.A)
+r.B.Connect(cap.A)
+cap.B.Connect(c.Ground)
+cap.A.Connect(back.P)
+c.RunAlongside()
+
+var o = new Gpio.Pin("sim", 5)
+var i = new Gpio.Pin("sim", 6)
+o.Output(true)
+while (!i.Read()) { Sleep(1) }      // about 7 ms later: RC * ln 2
+```
+
+This is the class `Simulation` of the package `devices`: `Simulation.Start(s)` makes any object of a class derived from it (with `Advance()`) the simulation that runs
+alongside the program; the simulated GPIO chip, I2C bus and SPI device call `Simulation.Touch()` before every access.
+
 ## Speed
 
 The first step after a change compiles the circuit:
@@ -395,7 +493,8 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
   a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, Counter, Timer555, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
-  voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text.
+  voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
+  I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
   emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart
   - all as in Falstad's simulator (a unit of the grid is 8 of its pixels). Chips (555, flip-flops, counter) are boxes with their pins down the left and right side.
@@ -469,4 +568,4 @@ LEDs, transistors, MOSFETs, op amps, comparators, gates, logic inputs and output
 
 ## Coming next
 
-More ICs, parts attached to the devices of the program (`Attached`), simulated devices, and more of Falstad's elements for the import.
+More ICs, more parts at the simulated devices (I2C sensors with their own registers, an SPI ADC), and more of Falstad's elements for the import.

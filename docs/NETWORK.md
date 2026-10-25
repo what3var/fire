@@ -157,7 +157,8 @@ button.Poll()                                              // hands every waitin
   work; `None` when the time ran out) and `Poll()`. `EdgeTime` is when the edge that was taken last happened (microseconds on a clock that only goes forward). At most 16 edges are kept per pin; when nobody takes them the oldest are lost (Linux: the kernel's queue).
   Nothing is debounced: a mechanical button needs a pause in the program.
 * **The simulated chip** has the lines 0..31. `Gpio.Sim.Wire(a, b)` / `Unwire(a, b)` connect two lines (what one drives, the other sees; two outputs that disagree: low wins), `Gpio.Sim.Drive(line, level)` / `Release(line)` drive a line from outside like a button or sensor
-  (`Gpio.Sim.Level(line)` looks at the level), pull resistors work on inputs, `Gpio.Sim.Reset()` removes wires and drives. Edges and busy-ness behave as on the real thing.
+  (`Gpio.Sim.Level(line)` looks at the level, `Gpio.Sim.Output(line)` what the program drives: 1/0, or -1 while the line is no output of it), pull resistors work on inputs, `Gpio.Sim.Reset()` removes wires and drives. Edges and busy-ness behave as on the real thing.
+  A circuit of the package `circuits` can sit on the lines (`Circuits.GpioLine`, docs/CIRCUITS.md).
 * Errors are `Gpio.GpioException` (with a `code`): `NotFoundException` (3: no such chip or line), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `gpio`) and `UnsupportedException` (6).
   Bad use (reading a pin that is not set up, writing an input, taking edges of an output) is code 1.
 * Not tried on hardware yet: the Linux and ESP32 backends are written against the documented interfaces; the ESP32 file compiles against a stand-in of `driver/gpio.h`, the Linux one against the kernel headers.
@@ -187,6 +188,7 @@ var r2 = bus.WriteRead(0x3C, command, 4)          // the general form: write, re
 * **Pins on the ESP32:** bus 0 uses GPIO 21 (SDA) and 22 (SCL), bus 1 uses 18 and 19; set `FIRE_I2C0_SDA`, `FIRE_I2C0_SCL`, `FIRE_I2C1_SDA`, `FIRE_I2C1_SCL` in the defines of the target to change them. The internal pull-ups are switched on (weak: use external ones for anything but short wires).
 * **The simulated bus:** `I2c.Sim.Add(address)` puts a device on it with 256 registers (all 0) that behaves like a typical sensor chip - the first byte of a write is the register, more bytes are stored from there on (the register counts up), a read returns bytes from the current register on
   (counting up). `I2c.Sim.SetRegister(address, register, value)` changes what it "measures", `GetRegister` shows what the program wrote, `Remove(address)` / `Reset()` take devices off. An address without a device does not answer (`NoAckException`), as on a real bus.
+  Converters of a circuit can sit on the bus (`Circuits.I2cAdc`/`I2cDac`, docs/CIRCUITS.md).
 * Errors are `I2c.I2cException` (with a `code`): `NotFoundException` (3: no such bus), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `i2c`), `UnsupportedException` (6), `NoAckException` (8: nobody answered - no device, no power, wrong wiring) and
   `TimeoutException` (9). Bad arguments (address, buffer range) are code 1.
 * Not tried on hardware yet: the Linux backend is written against the i2c-dev interface and compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver header (the mapping of the driver's error codes to NoAck is a best guess until it runs on a board).
@@ -216,7 +218,8 @@ chip.Mode = 3                                      // clock polarity and phase; 
   through a DMA buffer in pieces of 2048 bytes.
 * **The simulated device** is a loopback by default (MISO tied to MOSI: what is sent comes back - the usual wiring test). `Spi.Sim.Reply(bytes)` makes it a device that answers: one queued byte comes back per byte sent, starting with the first - so the answer to a command
   byte is in the bytes *after* it (queue a leading 0 for the command byte, as the data sheets draw it); when the queue is empty it answers 0. `Spi.Sim.Loopback()` turns the loopback on again. `Spi.Sim.Sent()` is everything the program sent (the first 65536 bytes),
-  `Mode()`, `Speed()`, `LsbFirst()` and `Transfers()` say what a chip would have seen, `Clear()` forgets it.
+  `Mode()`, `Speed()`, `LsbFirst()` and `Transfers()` say what a chip would have seen, `LastSent()` and `TotalSent()` the last byte and how many were sent since the start, `Clear()` forgets it.
+  `Spi.Sim.SetReply(bytes)` is `Reply` that drops the queued answers first. Shift registers of a circuit can sit on the device (`Circuits.SpiShiftOut`/`SpiShiftIn`, docs/CIRCUITS.md).
 * Errors are `Spi.SpiException` (with a `code`): `NotFoundException` (3), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `spi`), `UnsupportedException` (6) and `TimeoutException` (8). Bad arguments (mode, speed, buffer range) are code 1.
 * Not tried on hardware yet: the Linux backend compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver headers.
 

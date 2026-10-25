@@ -379,6 +379,14 @@ inline Value SimLevel(Value line) {
     ok();
     return Int(sim().line[line.i].level);
 }
+/// What the program drives on a line of the simulated chip: 0 or 1 while it is an output of the program, -1 while it is not (an input, or not open).
+inline Value SimOutput(Value line) {
+    if (!simLine(line.i)) return Int(-2);
+    ok();
+    const SimLine& l = sim().line[line.i];
+    if (!l.configured || l.direction != D_Output) return Int(-1);
+    return Int(l.out ? 1 : 0);
+}
 /// Takes all wires and drives away (the pins that are open stay open).
 inline Value SimReset() {
     Sim& s = sim();

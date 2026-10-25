@@ -126,6 +126,7 @@ namespace Gpio {
 
         undefined Check() {
             if (this.closed) { throw new GpioException("The pin is closed.", 2) }
+            if (this.chip == "sim") { Simulation.Touch() }
         }
 
         // Sets the line up as an input: `pull` is Gpio.Pull.None/Up/Down, `edge` which changes are reported (Gpio.Edge.None/Rising/Falling/Both). Returns the pin.
@@ -263,6 +264,13 @@ namespace Gpio {
             var v = __GpioSimLevel(line)
             if (v < 0) { Gpio.Errors.Throw() }
             return v == 1
+        }
+
+        // What the program drives on the line: 1 or 0 while the line is an output of the program, -1 while it is not.
+        static int Output(int line) {
+            var v = __GpioSimOutput(line)
+            if (v < -1) { Gpio.Errors.Throw() }
+            return v
         }
 
         // Removes all wires and drives (the open pins stay open).
