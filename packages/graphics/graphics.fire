@@ -383,6 +383,9 @@ class Fonts {
 // Everything is clipped at the edge of the framebuffer.
 class Renderer {
     int id
+    // Logical pixels -> pixels of the framebuffer (1.5 = 150 %): everything that is drawn, clipped or measured is scaled, TrueType text is drawn at the larger size
+    // (sharp, not stretched); the bitmap fonts keep their size. A UI.Root sets it from the system (Root.Scaling). 1 = no scaling (the default).
+    float scale = 1.0
 
     construct(Framebuffer framebuffer) {
         this.id = __GRPHRndCreate(framebuffer.id)
@@ -404,7 +407,47 @@ class Renderer {
 
     // Restricts drawing (fills, shapes, text, blit) to the rectangle (x, y, w, h) of the framebuffer; ResetClip lifts it (the whole framebuffer again).
     // It does not apply to Clear/ClearTo.
-    undefined SetClip(int x, int y, int w, int h) { __GRPHRndSetClip(this.id, x, y, w, h) }
+    undefined SetClip(int x, int y, int w, int h) {
+        if (this.scale == 1.0) { __GRPHRndSetClip(this.id, x, y, w, h) }
+        else { __GRPHRndSetClip(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y)) }
+    }
+
+    // A logical coordinate in pixels of the framebuffer (rounded).
+    int Px(float v) {
+        if (this.scale == 1.0) { return v!int }
+        return Math.Floor(v * this.scale + 0.5)!int
+    }
+    // A length (a radius, a width) in pixels of the framebuffer: at least 1 when the logical length is not 0.
+    int Len(float v) {
+        if (v == 0) { return 0 }
+        var n = Math.Floor(v * this.scale + 0.5)!int
+        if (n == 0) { return 1 }
+        return n
+    }
+    // Pixels of the framebuffer back to logical ones (rounded up: a measured text never comes out too small).
+    int Logical(int v) {
+        if (this.scale == 1.0) { return v }
+        return Math.Ceiling(v / this.scale)!int
+    }
+    // A point list in pixels of the framebuffer.
+    float[] Points(float points[]) {
+        var out = new float[points.length]
+        for (int i = 0; i < points.length; i++) { out[i] = points[i] * this.scale }
+        return out
+    }
+    // The size of TrueType text in pixels of the framebuffer (0 = 14).
+    int TextSize(int size) {
+        var s = size
+        if (s <= 0) { s = 14 }
+        if (this.scale == 1.0) { return size }
+        return this.Len(s)
+    }
+    // Draws with a pen of the scaled width (the pen keeps its own).
+    int PenOn(Pen pen) {
+        var w = pen.Width
+        if (this.scale != 1.0) { pen.Width = this.Len(w) }
+        return w
+    }
     undefined ResetClip() { __GRPHRndResetClip(this.id) }
 
     // ---- Terminal ----
@@ -418,11 +461,16 @@ class Renderer {
 
     // ---- Pixel ----
     // A pixel in the colour (a number as with the brush; blended if it is semi-transparent and AlphaBlending is on)
-    undefined SetPixel(int x, int y, int color) { __GRPHRndSetPixel(this.id, x, y, color) }
+    undefined SetPixel(int x, int y, int color) {
+        if (this.scale == 1.0) { __GRPHRndSetPixel(this.id, x, y, color) } else { __GRPHRndSetPixel(this.id, this.Px(x), this.Px(y), color) }
+    }
     // The colour of the pixel as a SIGNED 32-bit number (opaque colours are negative)
-    int GetPixel(int x, int y) { return __GRPHRndGetPixel(this.id, x, y) }
+    int GetPixel(int x, int y) {
+        if (this.scale == 1.0) { return __GRPHRndGetPixel(this.id, x, y) }
+        return __GRPHRndGetPixel(this.id, this.Px(x), this.Px(y))
+    }
     // The palette index of the pixel (RGBA framebuffer: the entry that comes closest to its colour)
-    int GetPixelIndex(int x, int y) { return __GRPHRndGetPixelIndex(this.id, x, y) }
+    int GetPixelIndex(int x, int y) { return __GRPHRndGetPixelIndex(this.id, this.Px(x), this.Px(y)) }
     int CellWidth() { return __GRPHRndCellWidth(this.id) }
     int CellHeight() { return __GRPHRndCellHeight(this.id) }
 
@@ -434,9 +482,9 @@ class Renderer {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
-            __GRPHRndDrawText(this.id, x, y, text, foreground.id, back)
+            __GRPHRndDrawText(this.id, this.Px(x), this.Px(y), text, foreground.id, back)
         } else {
-            __GRPHRndDrawTextFont(this.id, x, y, text, foreground.id, back, fontId, size)
+            __GRPHRndDrawTextFont(this.id, this.Px(x), this.Px(y), text, foreground.id, back, fontId, this.TextSize(size))
         }
     }
 
@@ -445,9 +493,9 @@ class Renderer {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
-            return text.Length * __GRPHRndCellWidth(this.id)
+            return this.Logical(text.Length * __GRPHRndCellWidth(this.id))
         }
-        return __GRPHFntMeasure(fontId, size, text)
+        return this.Logical(__GRPHFntMeasure(fontId, this.TextSize(size), text))
     }
 
     // Height of a line of text in pixels in the font.
@@ -455,9 +503,9 @@ class Renderer {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
-            return __GRPHRndCellHeight(this.id)
+            return this.Logical(__GRPHRndCellHeight(this.id))
         }
-        return __GRPHFntHeight(fontId, size)
+        return this.Logical(__GRPHFntHeight(fontId, this.TextSize(size)))
     }
 
     // Pixels from the top of a line of text to its baseline in the font (the console font: the height of a cell).
@@ -465,48 +513,94 @@ class Renderer {
         var fontId = 0
         if (font != undefined) { fontId = font.id }
         if (fontId == 0) {
-            return __GRPHRndCellHeight(this.id)
+            return this.Logical(__GRPHRndCellHeight(this.id))
         }
-        return __GRPHFntAscent(fontId, size)
+        return this.Logical(__GRPHFntAscent(fontId, this.TextSize(size)))
     }
 
     // ---- Fills (brush) ----
-    undefined FillRect(int x, int y, int w, int h, Brush brush) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
+    undefined FillRect(int x, int y, int w, int h, Brush brush) {
+        if (this.scale == 1.0) { __GRPHRndFillRect(this.id, x, y, w, h, brush.id) }
+        else { __GRPHRndFillRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), brush.id) }
+    }
     // Fills the whole framebuffer (blended if AlphaBlending is on; ClearTo sets without blending)
     undefined Fill(Brush brush) { __GRPHRndFill(this.id, brush.id) }
     // Circle around (cx, cy) with radius r, ellipse with the semi-axes rx (horizontal) and ry (vertical), including the edge
-    undefined FillCircle(int cx, int cy, int r, Brush brush) { __GRPHRndFillCircle(this.id, cx, cy, r, brush.id) }
-    undefined FillEllipse(int cx, int cy, int rx, int ry, Brush brush) { __GRPHRndFillEllipse(this.id, cx, cy, rx, ry, brush.id) }
-    undefined FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Brush brush) { __GRPHRndFillTriangle(this.id, x0, y0, x1, y1, x2, y2, brush.id) }
+    undefined FillCircle(int cx, int cy, int r, Brush brush) { __GRPHRndFillCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), brush.id) }
+    undefined FillEllipse(int cx, int cy, int rx, int ry, Brush brush) { __GRPHRndFillEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), brush.id) }
+    undefined FillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Brush brush) { __GRPHRndFillTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), brush.id) }
     // points: an array [x0, y0, x1, y1, ...]; filled by the even-odd rule (overlapping parts stay empty)
-    undefined FillPolygon(float points[], Brush brush) { __GRPHRndFillPolygon(this.id, points, brush.id) }
+    undefined FillPolygon(float points[], Brush brush) {
+        if (this.scale == 1.0) { __GRPHRndFillPolygon(this.id, points, brush.id) }
+        else { __GRPHRndFillPolygon(this.id, this.Points(points), brush.id) }
+    }
     // Fills the connected area with the colour of the pixel (x, y). With `border`, FloodFill instead fills up to pixels of that colour (like PAINT in QBasic).
-    undefined FloodFill(int x, int y, Brush brush) { __GRPHRndFloodFill(this.id, x, y, brush.id) }
-    undefined FloodFillBorder(int x, int y, Brush brush, int border) { __GRPHRndFloodFillBorder(this.id, x, y, brush.id, border) }
+    undefined FloodFill(int x, int y, Brush brush) { __GRPHRndFloodFill(this.id, this.Px(x), this.Px(y), brush.id) }
+    undefined FloodFillBorder(int x, int y, Brush brush, int border) { __GRPHRndFloodFillBorder(this.id, this.Px(x), this.Px(y), brush.id, border) }
 
     // ---- Zeichnen (Stift) ----
-    undefined DrawPoint(int x, int y, Pen pen) { __GRPHRndDrawPoint(this.id, x, y, pen.id) }
-    undefined DrawLine(int x0, int y0, int x1, int y1, Pen pen) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id) }
+    undefined DrawPoint(int x, int y, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawPoint(this.id, x, y, pen.id); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawPoint(this.id, this.Px(x), this.Px(y), pen.id)
+        pen.Width = w
+    }
+    undefined DrawLine(int x0, int y0, int x1, int y1, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawLine(this.id, x0, y0, x1, y1, pen.id); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawLine(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), pen.id)
+        pen.Width = w
+    }
     // A path through the points [x0, y0, x1, y1, ...]; closed connects the last to the first
-    undefined DrawPath(float points[], Pen pen, bool closed = false) { __GRPHRndDrawPath(this.id, points, pen.id, closed) }
+    undefined DrawPath(float points[], Pen pen, bool closed = false) {
+        if (this.scale == 1.0) { __GRPHRndDrawPath(this.id, points, pen.id, closed); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawPath(this.id, this.Points(points), pen.id, closed)
+        pen.Width = w
+    }
     // Outlines: paths made from the pixels of the shape
-    undefined DrawRect(int x, int y, int w, int h, Pen pen) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id) }
-    undefined DrawCircle(int cx, int cy, int r, Pen pen) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id) }
-    undefined DrawEllipse(int cx, int cy, int rx, int ry, Pen pen) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id) }
-    undefined DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Pen pen) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id) }
-    undefined DrawPolygon(float points[], Pen pen, bool closed = true) { __GRPHRndDrawPolygon(this.id, points, pen.id, closed) }
+    undefined DrawRect(int x, int y, int w, int h, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawRect(this.id, x, y, w, h, pen.id); return }
+        var pw = this.PenOn(pen)
+        __GRPHRndDrawRect(this.id, this.Px(x), this.Px(y), this.Px(x + w) - this.Px(x), this.Px(y + h) - this.Px(y), pen.id)
+        pen.Width = pw
+    }
+    undefined DrawCircle(int cx, int cy, int r, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawCircle(this.id, cx, cy, r, pen.id); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawCircle(this.id, this.Px(cx), this.Px(cy), this.Len(r), pen.id)
+        pen.Width = w
+    }
+    undefined DrawEllipse(int cx, int cy, int rx, int ry, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawEllipse(this.id, cx, cy, rx, ry, pen.id); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawEllipse(this.id, this.Px(cx), this.Px(cy), this.Len(rx), this.Len(ry), pen.id)
+        pen.Width = w
+    }
+    undefined DrawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, Pen pen) {
+        if (this.scale == 1.0) { __GRPHRndDrawTriangle(this.id, x0, y0, x1, y1, x2, y2, pen.id); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawTriangle(this.id, this.Px(x0), this.Px(y0), this.Px(x1), this.Px(y1), this.Px(x2), this.Px(y2), pen.id)
+        pen.Width = w
+    }
+    undefined DrawPolygon(float points[], Pen pen, bool closed = true) {
+        if (this.scale == 1.0) { __GRPHRndDrawPolygon(this.id, points, pen.id, closed); return }
+        var w = this.PenOn(pen)
+        __GRPHRndDrawPolygon(this.id, this.Points(points), pen.id, closed)
+        pen.Width = w
+    }
 
     // ---- Kopieren ----
     // Copies another framebuffer (e.g. a loaded image) here, also between the colour modes (see BlitMode; Blend only blends with AlphaBlending). Blit: the whole image
     // with its top left corner at (x, y); BlitRegion: the section (sx, sy, sw, sh) to (dx, dy); BlitScaled: additionally brought to the size dw x dh (nearest neighbour;
     // a NEGATIVE width/height mirrors). `key`: for a palette image the transparent index (-1 = its TransparentIndex).
     undefined Blit(Framebuffer source, int x, int y, int mode = 0, int key = -1) {
-        __GRPHRndBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), x, y, source.Width(), source.Height(), mode, key)
+        __GRPHRndBlit(this.id, source.id, 0, 0, source.Width(), source.Height(), this.Px(x), this.Px(y), this.Len(source.Width()), this.Len(source.Height()), mode, key)
     }
     undefined BlitRegion(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int mode = 0, int key = -1) {
-        __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, sw, sh, mode, key)
+        __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Len(sw), this.Len(sh), mode, key)
     }
     undefined BlitScaled(Framebuffer source, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int mode = 0, int key = -1) {
-        __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, dx, dy, dw, dh, mode, key)
+        __GRPHRndBlit(this.id, source.id, sx, sy, sw, sh, this.Px(dx), this.Px(dy), this.Px(dx + dw) - this.Px(dx), this.Px(dy + dh) - this.Px(dy), mode, key)
     }
 }

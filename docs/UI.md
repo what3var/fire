@@ -173,6 +173,31 @@ ordnet sich in der neuen Größe neu an und malt neu - Elemente mit `halign`/`va
 Elemente (Menüs) bleiben im Fenster. `ui.width` und `ui.height` sind immer die aktuelle Größe; `ui.onResize = func (int w, int h) => { ... }` wird danach gerufen (zum Beispiel für ein eigenes Bild in einem `Canvas`).
 Wer das Strecken des festen Bildes vorzieht, setzt `window.AutoResize = false`.
 
+## Systemaussehen: Skalierung, Dark/Light, Akzentfarbe, Systemschrift
+
+Jedes `UI.Root` sieht von sich aus aus wie die anderen Programme auf dem Rechner: Es fragt beim Start `SystemTheme.Current()` (`#import "windows"`) und übernimmt
+
+- die **Skalierung** des Bildschirms (Windows: DPI, GNOME: `scaling-factor` × `text-scaling-factor`, KDE/Qt/GDK über `QT_SCALE_FACTOR`/`GDK_SCALE`; macOS skaliert das Fenster selbst),
+- **Dark oder Light Mode** (Windows: `AppsUseLightTheme`, GNOME: `color-scheme`/GTK-Theme, KDE: Farbschema, macOS: `AppleInterfaceStyle`, Browser: `prefers-color-scheme`),
+- die **Akzentfarbe** (Fokus, Auswahl, überfahrene Knöpfe) und
+- die **Schrift der Oberfläche** samt Größe (z. B. Segoe UI, Cantarell, Noto Sans, SF Pro - die erste, die `Fonts.Has` findet; sonst bleibt die Konsolenschrift).
+
+Überschreiben lässt sich das am Root mit drei Properties:
+
+```
+ui.Scaling = 1.0        // 1.0 = 100 %: ohne Systemskalierung (1.5 = 150 %)
+ui.Dark = true          // dunkles Aussehen
+ui.Accent = 0x8854D0    // Akzentfarbe als 0xRRGGBB
+```
+
+Die Elemente rechnen weiter in **logischen Pixeln**: `x`, `y`, Breiten, Abstände, `ui.width`/`ui.height` und die Mauspositionen der Elemente bleiben gleich, der `Renderer` rechnet beim Zeichnen
+in Bildschirmpixel um (`root.renderer.scale`). TrueType-Text wird dabei in der größeren Größe gezeichnet und bleibt scharf; die Bitmap-Schriften behalten ihre Größe. Fenster und Framebuffer
+wachsen mit (`Window.SetSize`), ein 400×300-Framebuffer wird bei 150 % ein 600×450-Fenster. `Theme.SetColors(dark, accent)` setzt alle Farben eines Themes auf einmal - eigene Pinsel, die ein
+Programm ins Theme gesetzt hat, bleiben, solange sie kein `SolidBrush` sind.
+
+Auf einem **Board ohne Desktop** (ESP32, FreeRTOS: `SystemTheme.embedded`) gilt dagegen: dunkel mit violettem Akzent, die schnelle eingebaute Schrift und nur ganzzahlige Skalierung.
+Was nicht ermittelt werden kann, behält den Standard (100 %, hell, Akzent `0x0078D7`, Konsolenschrift); `FIRE_SYSTEM_THEME=off` in der Umgebung schaltet die Abfrage ganz ab (so laufen die Tests).
+
 ## Show, Run und der Fenster-Manager
 
 Die Fenster laufen über einen `WindowManager` (docs/CONSOLE.md, *Fenster-Manager*): der Root hängt sich an den Zyklus seines Fensters (`window.onCycle`) und verteilt dort die

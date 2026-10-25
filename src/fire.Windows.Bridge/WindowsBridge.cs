@@ -97,6 +97,10 @@ namespace fire.Windows.Bridge
                 // Window.AutoClose: a close request (the frame's button) closes the window
                 ["SetAutoClose"] = args => { mgr.SetAutoClose((int)args[0].AsInt(), args[1].AsBool()); return Value.MakeUndefined(); },
                 ["GetAutoClose"] = args => Value.MakeBool(mgr.GetAutoClose((int)args[0].AsInt())),
+                // Window.SetSize: the size of the window in pixels of the screen
+                ["SetSize"] = args => { if (args[1].AsInt() <= 0 || args[2].AsInt() <= 0) return Value.MakeBool(false); mgr.SetSize((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt()); return Value.MakeBool(true); },
+                // SystemTheme.Current(): what the desktop says about the look of programs
+                ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
             };
         }
         
@@ -127,6 +131,8 @@ namespace fire.Windows.Bridge
                 ["MgrServed"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetSize"] = args => Value.MakeBool(false) /*STUB*/,
+                ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
             };
         }
 

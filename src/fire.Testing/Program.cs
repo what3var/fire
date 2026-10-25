@@ -10,6 +10,8 @@ using fire.Values;
 
 // The standard libraries (time, io, graphics, ...): packed from their projects (Source next to the program, copied from packages/ of the repository) and installed into a store of their
 // own for this run (the C++ libraries of their natives are built on first use).
+// the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
+Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
 fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
 var standardInstalled = StandardSources.EnsureInstalled(m => Console.WriteLine(m), prebuiltFolder: null);
@@ -19110,6 +19112,37 @@ else
             try { Json.Parse("\"abc") } catch (JsonException e) { print(e.message) }
             try { Json.Parse("{\"a\":1} x") } catch (JsonException e) { print(e.message) }
             try { Json.Deserialize<Node>("{\"next\":{\"$ref\":9}}") } catch (JsonException e) { print(e.message) }
+            """),
+    }).ToArray();
+
+    // The look of the system (SystemTheme; the tests switch the query off: FIRE_SYSTEM_THEME=off) and its overrides Root.Scaling/Dark/Accent
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("UI: Systemaussehen - Scaling (logische Pixel, Fenster/Framebuffer wachsen, Maus umgerechnet), Dark, Accent", """
+            #import "ui"
+            var sys = SystemTheme.Current()
+            print("system " + sys.embedded + " " + sys.scale + " " + sys.dark + " " + sys.accent + " '" + sys.font + "' " + sys.fontSize)
+            var fb = new Framebuffer(200, 100)
+            var win = new Window(fb, "t")
+            var root = new UI.Root(fb, win)
+            print("start " + root.Scaling + " " + root.Dark + " " + root.Accent + " " + root.width + "x" + root.height)
+            var b = new UI.Button("Hi", 10, 10)
+            root.Add(b)
+            root.Draw()
+            print("light " + fb.Width() + "x" + fb.Height() + " " + root.renderer.GetPixel(150, 80))
+            root.Dark = true
+            root.Accent = 0xFF0000
+            root.Draw()
+            print("dark " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
+            root.Scaling = 2.0
+            root.Draw()
+            print("scaled " + root.Scaling + " fb " + fb.Width() + "x" + fb.Height() + " logical " + root.width + "x" + root.height + " button " + b.actualWidth + "x" + b.actualHeight)
+            print("pixels " + fb.Width() + " " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
+            root.Dispatch([8, 1, 30, 30])
+            print("pressed " + b.pressed)
+            root.Scaling = 1.0
+            root.Draw()
+            print("back " + fb.Width() + "x" + fb.Height())
             """),
     }).ToArray();
 

@@ -80,6 +80,12 @@ namespace fire.Terminal.Windows
 
         private bool _realized;
 
+        /// <summary>Window.SetSize: a window that is not open yet opens with the size of its framebuffer (the program resizes that), an open one gets the new size.</summary>
+        public void SetSize(int width, int height)
+        {
+            if (_realized && !_failed) _renderer.SetSize(width, height);
+        }
+
         /// <summary>Opens the OS window now, on the calling thread (once).</summary>
         public void Realize()
         {

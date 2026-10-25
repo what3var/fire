@@ -127,6 +127,12 @@ namespace fire.Terminal.Sdl
             SDL.StartTextInput(_window);
         }
 
+        /// <summary>Window.SetSize: the new size of the open window (no resize event comes back for it).</summary>
+        public void SetSize(int width, int height)
+        {
+            if (_window != IntPtr.Zero && width > 0 && height > 0) SDL.SetWindowSize(_window, width, height);
+        }
+
         public WindowPumpResult PumpEvents()
         {
             var resultEvents = new List<IEvent>();

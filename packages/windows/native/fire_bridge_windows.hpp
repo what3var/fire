@@ -43,6 +43,7 @@ struct Shared {
     int frontW = 0, frontH = 0;
     bool frontNew = false;
     int vsyncReq = -1, touchReq = -1; // settings for the thread
+    int sizeReqW = 0, sizeReqH = 0;   // a new size of the window for the thread (0: none)
     bool release = false;             // the window is gone: the thread closes it and frees this
     // the thread's own
     std::vector<uint32_t> shown;
@@ -290,6 +291,7 @@ inline void pumpThread(void* arg) {
             if (!ensureOpen(s, s->vsyncReq != 0)) { s->closed = true; s->m.unlock(); continue; }
             if (s->vsyncReq >= 0) { s->display.setVSync(s->vsyncReq != 0); s->vsyncReq = -1; }
             if (s->touchReq >= 0) { s->display.setTouchMouse(s->touchReq != 0); s->touchReq = -1; }
+            if (s->sizeReqW > 0) { s->display.setSize(s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             events.clear();
             int w = s->frontW > 0 ? s->frontW : s->width, h = s->frontH > 0 ? s->frontH : s->height;
             bool open = s->display.pump(events, w, h);
@@ -629,6 +631,28 @@ inline Value WinGetAutoResize(Value id) { return Bool(windowOf(id)->autoResize);
 inline Value WinSetAutoClose(Value id, Value on) { windowOf(id)->autoClose = on.i != 0; return Undef(); }
 inline Value WinGetAutoClose(Value id) { return Bool(windowOf(id)->autoClose); }
 inline Value WinSetBlocked(Value id, Value on) { windowOf(id)->blocked = on.i != 0; return Undef(); }
+/// Window.SetSize: the size of the window in pixels of the screen (before it opens: the size it opens with).
+inline Value WinSetSize(Value id, Value width, Value height) {
+    WindowState* w = windowOf(id);
+    int wd = (int)width.i, ht = (int)height.i;
+    if (wd <= 0 || ht <= 0) return Bool(false);
+    Shared* s = w->sh;
+    if (threaded(w)) {
+        s->m.lock();
+        if (!s->opened) { s->width = wd; s->height = ht; } else { s->sizeReqW = wd; s->sizeReqH = ht; }
+        s->m.unlock();
+    } else if (!s->opened) { s->width = wd; s->height = ht; }
+    else s->display.setSize(wd, ht);
+    return Bool(true);
+}
+/// SystemTheme.Current(): [embedded, scale, dark, accent 0xRRGGBB, font candidates "a;b;c", font size in logical pixels] (see fire_systheme.hpp).
+inline Value WinSystemTheme(OwnList* list) {
+    plat::disp::SystemTheme t = plat::disp::systemTheme();
+    Arr* a = allocArr(6, list);
+    Value items[6] = { Bool(t.embedded), Float((Real)t.scale), Bool(t.dark != 0), Int(t.accent), utf8Str(t.fonts.c_str(), list), Int(t.fontSize) };
+    for (int k = 0; k < 6; k++) { a->items()[k] = items[k]; retain(items[k]); }
+    return ArrV(a);
+}
 /// The program runs the cycle the manager's thread asked for: the next one may be asked for (also when that cycle does nothing, see RunModal).
 inline Value WinMgrServed(Value mgrId) { mgrOf(mgrId)->pending.store(0, std::memory_order_relaxed); return Undef(); }
 

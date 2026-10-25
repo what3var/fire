@@ -227,6 +227,9 @@ namespace fire.Terminal.Windows
 
         public void SetVSync(int id, bool enabled) { _windows.Get(id); OnOwner(id, w => w.VSync = enabled); }
 
+        /// <summary>Window.SetSize (on the thread that owns the OS window).</summary>
+        public void SetSize(int id, int width, int height) { _windows.Get(id); OnOwner(id, w => w.SetSize(width, height)); }
+
         /// <summary>A single cycle for ONE window (see
         /// ConsoleWindow.Tick) - returns false if the window was closed
         /// by the user (the caller should then usually

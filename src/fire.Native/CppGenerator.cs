@@ -204,7 +204,7 @@ namespace fire.Native
             ["Create"] = (2, false), ["Destroy"] = (1, false), ["Tick"] = (1, false), ["EnableEvents"] = (1, false), ["NextEvent"] = (1, true), ["RegisterEvent"] = (3, false),
             ["SetVSync"] = (2, false), ["GetVSync"] = (1, false), ["SetAutoResize"] = (2, false), ["GetAutoResize"] = (1, false), ["SetTouchMouse"] = (2, false), ["GetTouchMouse"] = (1, false),
             ["Pump"] = (1, false), ["Present"] = (1, false), ["MgrCreate"] = (0, false), ["MgrAttach"] = (2, false), ["MgrDetach"] = (2, false), ["MgrStart"] = (2, false), ["MgrWait"] = (2, false),
-            ["SetBlocked"] = (2, false), ["MgrServed"] = (1, false), ["SetAutoClose"] = (2, false), ["GetAutoClose"] = (1, false),
+            ["SetBlocked"] = (2, false), ["MgrServed"] = (1, false), ["SetAutoClose"] = (2, false), ["GetAutoClose"] = (1, false), ["SetSize"] = (3, false), ["SystemTheme"] = (0, true),
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName" };
@@ -3151,7 +3151,7 @@ namespace fire.Native
                             }
                             UseThreads();
                         }
-                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name == "WinNextEvent" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name is "WinNextEvent" or "WinSystemTheme" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         E($"{S(first)} = win::{name}({args});");
                         Check();
                         d = first + 1; SetR(first, winNative.Reference); return Next();

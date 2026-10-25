@@ -398,6 +398,12 @@ Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pi
 
 Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/UI.md, "Fenstergröße").
 
+
+`window.SetSize(breite, höhe)` gibt dem Fenster selbst eine neue Größe in Bildschirmpixeln (vor dem ersten Zeigen: die Größe, mit der es aufgeht); der Framebuffer behält seine, mit `AutoResize` folgt er.
+
+`SystemTheme.Current()` sagt, wie Programme auf dem Desktop aussehen sollen: `scale` (1.5 = 150 %), `dark`, `accent` (0xRRGGBB), `font` (die erste installierte Schrift der Oberfläche, `""` = keine),
+`fontSize` (logische Pixel) und `embedded` (ein Board ohne Desktop). Die UI-Bibliothek nutzt es von selbst (docs/UI.md "Systemaussehen"); `FIRE_SYSTEM_THEME=off` schaltet die Abfrage ab.
+
 ## Touchscreen und Joystick
 
 Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM und natives Backend gleich). Die Ereignisse kommen wie die anderen über die Warteschlange (`window.EnableEvents()`, `NextEvent()`) oder als Callback

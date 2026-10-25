@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstring>
 #include "fire_display_event.hpp"
+#include "fire_systheme.hpp"
 
 namespace fire { namespace plat { namespace disp {
 
@@ -62,6 +63,8 @@ public:
     }
 
     void setVSync(bool v) { vsync_ = v; if (renderer_) SDL_RenderSetVSync(renderer_, v ? 1 : 0); }
+    /// A new size of the window in pixels of the screen (the program asks for it: no resize event comes back).
+    void setSize(int w, int h) { if (window_ && w > 0 && h > 0) { SDL_SetWindowSize(window_, w, h); winW_ = w; winH_ = h; } }
     bool vsync() const { return vsync_; }
     /// true (the default): a finger also makes mouse events (as SDL does itself); false: only the touch events.
     void setTouchMouse(bool v) { touchMouse_ = v; SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, v ? "1" : "0"); }
