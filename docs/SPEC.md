@@ -215,6 +215,9 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
+- **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
+  argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
+  `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
 - A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
   `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner

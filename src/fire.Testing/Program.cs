@@ -6435,6 +6435,33 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         """, new[] { "offen", "1", "verweigert", "feld verweigert", "offen", "1", "verweigert", "feld verweigert" },
         new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
+    // Debug: a field or an array that was given only a reference to an object of a call is reported when the call ends (DanglingWatch)
+    const string danglingScript = """
+        class Item { int n; construct(int n) { this.n = n } }
+        class Shelf {
+            Item slots[] = new Item[2]
+            Item last
+            PutWrong(Item item) { this.slots[0] = item }
+            PutRight(Item item) { this.slots[1] = take item }
+            Remember() { Item local = new Item(7); this.last = local }
+            Fine() { Item tmp[] = new Item[1]; Item a = new Item(1); tmp[0] = a }
+        }
+        Shelf s = new Shelf()
+        s.PutWrong(take new Item(1))
+        s.PutRight(take new Item(2))
+        s.Remember()
+        s.Remember()
+        s.Fine()
+        print(s.slots[1].n)
+        """;
+    CheckPerf("Debug: Warnung, wenn ein Aufruf beim Ende ein Objekt zerstoert, auf das ein Feld oder Array noch zeigt", danglingScript, new[]
+        {
+            "warning (line 5): an Item is destroyed at the end of the call it belonged to, but the array in the field 'slots' of a Shelf still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).",
+            "warning (line 7): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).",
+            "2",
+        }, new[] { VmExecutionMode.Debug });
+    CheckPerf("Release: keine Warnung fuer Referenzen auf zerstoerte Objekte", danglingScript, new[] { "2" }, new[] { VmExecutionMode.Release, VmExecutionMode.Performance });
+
     CheckPerf("Feld mit Einheit: jede Zuweisung wird geprueft (auch nach dem ersten Erfolg)", """
         class M { int len : mm = 0mm; construct() { this.len = 1mm } }
         var m = new M()

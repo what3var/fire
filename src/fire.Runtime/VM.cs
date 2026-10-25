@@ -156,7 +156,7 @@ namespace fire.Runtime
         }
     }
 
-    public sealed partial class VM : IDestructRunner
+    public sealed partial class VM : IDestructRunner, IDanglingReporter
     {
         // The chunk currently running together with array copies of code/constants (see Chunk.CodeArray) - every
         // assignment to _currentChunk (call, return, exception jump, ...) updates them along.
@@ -726,6 +726,7 @@ namespace fire.Runtime
             _globalScope = globalScope;
             globalScope.EarlyAccess = true;   // (a global used before its declaration: see Scope.EarlyAccess)
             _natives = natives;
+            _watchDangling = executionMode == VmExecutionMode.Debug && natives.Has("print");
             _classes = classes ?? new Dictionary<string, RuntimeClass>();
             _externs = externs ?? new ExternRegistry();
             _externSignatures = externSignatures ?? new Dictionary<string, ExternSignature>();
@@ -2668,6 +2669,7 @@ namespace fire.Runtime
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
+                if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, cachedObj, _constants[fieldNameIdx].AsString());
                 _sp--;
                 _stack[_sp - 1] = assigned;
                 return;
@@ -2676,6 +2678,28 @@ namespace fire.Runtime
             OpSetFieldSlow(site, fieldNameIdx);
             return;
         }
+        }
+
+        // Debug mode: stores of objects that belong to a call are noted, their holders checked when they die (see DanglingWatch)
+        private readonly bool _watchDangling;
+        private HashSet<string>? _danglingReported;
+
+        private static void NoteStore(Value value, object holder, string? field)
+        {
+            if (value.AsObjectRef() is ObjectInstance target && target.Owner is Scope or ObjectInstance) DanglingWatch.Note(target, holder, field);
+        }
+
+        public void ReportDangling(ObjectInstance dying, object holder, string? field)
+        {
+            if (!_watchDangling) return;
+            // each place once (a loop would repeat it)
+            var (sourceIndex, line) = CurrentLocation;
+            string key = dying.ClassName + "|" + (holder is ObjectInstance o ? o.ClassName + "." + field : "[]") + "|" + sourceIndex + ":" + line;
+            if (!(_danglingReported ??= new HashSet<string>()).Add(key)) return;
+            int print = _natives.IndexOf("print");
+            if (print < 0) return;
+            try { _natives[print](new[] { Value.MakeString($"warning (line {line}): " + DanglingWatch.Describe(dying, holder, field)) }); }
+            catch (Exception) { /* a warning never stops the program */ }
         }
 
         private void OpSetFieldSlow(int site, int fieldNameIdx) => SetFieldSlow(_constants[fieldNameIdx].AsString(), site);
@@ -2742,6 +2766,7 @@ namespace fire.Runtime
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
                 obj.SetFieldLocked(fieldName, value);
+                if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
                 Push(value);
                 return true;
             }
@@ -2775,6 +2800,7 @@ namespace fire.Runtime
             // simply create a new field (dynamic language, no
             // up-front declaration obligation for fields).
             obj.SetFieldLocked(fieldName, value);
+            if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
             Push(value);
             return true;
         }
@@ -3618,6 +3644,7 @@ namespace fire.Runtime
                 {
                     var assigned = _stack[_sp - 1];
                     items[i] = assigned;
+                    if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, fastArray, null);
                     _sp -= 2;
                     _stack[_sp - 1] = assigned;
                     return;
@@ -3652,7 +3679,10 @@ namespace fire.Runtime
                 {
                     long idx = indexVal.AsInt();
                     if (target.AsArray().TrySet(idx, value))
+                    {
+                        if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, target.AsArray(), null);
                         Push(value);
+                    }
                     else
                         // No push here - ThrowIndexOutOfBounds has already
                         // redirected _currentChunk/_ip, an

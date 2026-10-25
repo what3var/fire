@@ -135,6 +135,17 @@ try {
 }
 ```
 
+In Debug mode (the default in spark, `forge run -m debug`) the VM warns about this when it happens - at the end of the call, not only at the
+next use:
+
+```
+warning (line 14): an Item is destroyed at the end of the call it belonged to, but the List in the field 'items' of a Shelf still points to it
+(it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+```
+
+It watches the objects that a field or an array is given while they belong to a call (or a block), and reports each place once. Release and
+Performance mode and native programs do not check.
+
 `List<T>.Add` keeps objects the same way (`list.Add(new Item("x"))` works). A last argument of the enum `Takes` decides what travels along:
 `Takes.This` (only the object), `Takes.Children` (also what it points to directly), `Takes.Locals` (everything reachable that belongs to the current
 call), `Takes.All` (everything reachable).
