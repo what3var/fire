@@ -423,20 +423,56 @@ namespace UI {
         int PX(float s, float t) { return Math.Round(this.fx + this.fdx * s + this.fnx * t)!int }
         int PY(float s, float t) { return Math.Round(this.fy + this.fdy * s + this.fny * t)!int }
 
+        // the area the lines of the element being drawn cover (screen pixels; the selection is drawn around it)
+        bool tracking = false
+        int tx0 = 0
+        int ty0 = 0
+        int tx1 = 0
+        int ty1 = 0
+        bool tracked = false
+        // the areas of the elements of the last picture: the elements and four numbers each
+        List areaElements
+        List areaValues
+
+        undefined Grow(int x, int y, int r) {
+            if (!this.tracking) { return }
+            if (!this.tracked) {
+                this.tx0 = x - r
+                this.ty0 = y - r
+                this.tx1 = x + r
+                this.ty1 = y + r
+                this.tracked = true
+                return
+            }
+            if (x - r < this.tx0) { this.tx0 = x - r }
+            if (y - r < this.ty0) { this.ty0 = y - r }
+            if (x + r > this.tx1) { this.tx1 = x + r }
+            if (y + r > this.ty1) { this.ty1 = y + r }
+        }
+
         undefined Seg(Root root, float s1, float t1, float s2, float t2, int color) {
             this.pen.Color = color
-            root.renderer.DrawLine(this.PX(s1, t1), this.PY(s1, t1), this.PX(s2, t2), this.PY(s2, t2), this.pen)
+            var x1 = this.PX(s1, t1)
+            var y1 = this.PY(s1, t1)
+            var x2 = this.PX(s2, t2)
+            var y2 = this.PY(s2, t2)
+            this.Grow(x1, y1, 0)
+            this.Grow(x2, y2, 0)
+            root.renderer.DrawLine(x1, y1, x2, y2, this.pen)
         }
 
         undefined Arc(Root root, float s, float t, float r, int color) {
             this.pen.Color = color
-            root.renderer.DrawCircle(this.PX(s, t), this.PY(s, t), Math.Round(r * this.scale)!int, this.pen)
+            var rr = Math.Round(r * this.scale)!int
+            this.Grow(this.PX(s, t), this.PY(s, t), rr)
+            root.renderer.DrawCircle(this.PX(s, t), this.PY(s, t), rr, this.pen)
         }
 
         undefined Dot(Root root, float s, float t, float r, int color) {
             this.brush.Color = color
             var rr = Math.Round(r * this.scale)!int
             if (rr < 1) { rr = 1 }
+            this.Grow(this.PX(s, t), this.PY(s, t), rr)
             root.renderer.FillCircle(this.PX(s, t), this.PY(s, t), rr, this.brush)
         }
 
@@ -514,7 +550,25 @@ namespace UI {
             if (this.showGrid && !this.readOnly && this.scale >= 5.0) { this.DrawGrid(root) }
             var s = this.Schematic
             if (this.graphVersion != s.Version) { this.Analyse() }
-            foreach (e in s.Elements()) { this.DrawElement(root, e) }
+            if (this.areaElements == undefined) {
+                this.areaElements = new List()
+                this.areaValues = new List()
+            }
+            this.areaElements.Clear()
+            this.areaValues.Clear()
+            foreach (e in s.Elements()) {
+                this.tracking = true
+                this.tracked = false
+                this.DrawElement(root, e)
+                this.tracking = false
+                if (this.tracked) {
+                    this.areaElements.Add(e)
+                    this.areaValues.Add(this.tx0)
+                    this.areaValues.Add(this.ty0)
+                    this.areaValues.Add(this.tx1)
+                    this.areaValues.Add(this.ty1)
+                }
+            }
             this.DrawDots(root)
             // the selection
             foreach (e in this.selection) { this.DrawSelection(root, e) }
@@ -580,6 +634,19 @@ namespace UI {
                 y0 = UI.M.Min(y0, this.SY(e.pins[i * 2 + 1]) - 4)
                 x1 = UI.M.Max(x1, this.SX(e.pins[i * 2]) + 4)
                 y1 = UI.M.Max(y1, this.SY(e.pins[i * 2 + 1]) + 4)
+            }
+            // and what was drawn of it (the body of a part is wider than its leads)
+            var k = -1
+            if (this.areaElements != undefined) { k = this.areaElements.IndexOf(e) }
+            if (k >= 0) {
+                int ax0 = this.areaValues[k * 4]
+                int ay0 = this.areaValues[k * 4 + 1]
+                int ax1 = this.areaValues[k * 4 + 2]
+                int ay1 = this.areaValues[k * 4 + 3]
+                x0 = UI.M.Min(x0, ax0 - 3)
+                y0 = UI.M.Min(y0, ay0 - 3)
+                x1 = UI.M.Max(x1, ax1 + 3)
+                y1 = UI.M.Max(y1, ay1 + 3)
             }
             root.renderer.DrawRect(x0, y0, x1 - x0, y1 - y0, this.thin)
             if (!this.readOnly && this.selection.count == 1 && !Circuits.Symbols.IsChip(e.type) && e.type != "Text") {
@@ -801,6 +868,7 @@ namespace UI {
         undefined Box(Root root, float s, float t, float half, int color) {
             this.thin.Color = color
             var r = Math.Round(half * this.scale)!int
+            this.Grow(this.PX(s, t), this.PY(s, t), r)
             root.renderer.DrawRect(this.PX(s, t) - r, this.PY(s, t) - r, 2 * r, 2 * r, this.thin)
         }
 

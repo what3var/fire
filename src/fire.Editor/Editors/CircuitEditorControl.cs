@@ -486,7 +486,10 @@ namespace fire.Editor
                 _palette.Children.Add(new TextBlock { Text = group.Key, Foreground = EditorTheme.TextDim, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 6, 0, 2) });
                 foreach (var (_, type, _) in group)
                 {
-                    var b = new ToggleButton { Content = Spaced(type), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Tag = type };
+                    var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                    content.Children.Add(CircuitIcons.Create(type, EditorTheme.Text));
+                    content.Children.Add(new TextBlock { Text = Spaced(type), VerticalAlignment = VerticalAlignment.Center });
+                    var b = new ToggleButton { Content = content, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Tag = type };
                     b.Classes.Add("tool");
                     ToolTip.SetTip(b, $"Place a {Spaced(type).ToLowerInvariant()}: click in the schematic, or drag for its length and direction");
                     b.Click += (_, _) =>
