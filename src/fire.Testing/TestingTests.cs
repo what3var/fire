@@ -76,9 +76,15 @@ static class TestingTests
         try
         {
             Parser.ParseMultiple(new[] { new ProcessedSource("class U {\n [Test]\n int x\n}", Array.Empty<string>()) });
-            Check("Attribute: nur vor Methoden", false);
+            Check("Attribute: auch vor Feldern", true);
         }
-        catch (Exception ex) { Check("Attribute: nur vor Methoden", ex.Message.Contains("can only stand before a method"), ex.Message); }
+        catch (Exception ex) { Check("Attribute: auch vor Feldern", false, ex.Message); }
+        try
+        {
+            Parser.ParseMultiple(new[] { new ProcessedSource("class U {\n [Test]\n construct() { }\n}", Array.Empty<string>()) });
+            Check("Attribute: nur vor Methoden, Feldern und Properties", false);
+        }
+        catch (Exception ex) { Check("Attribute: nur vor Methoden, Feldern und Properties", ex.Message.Contains("can only stand before a method, a field or a property"), ex.Message); }
     }
 
     private static void Files(string root)

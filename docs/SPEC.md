@@ -2308,8 +2308,27 @@ exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` th
 
 ### 8.16 Devices (`#import "devices"`)
 
-The extension controls devices via the **DeviceManager** (`src/fire.Device.Manager`: drivers, devices, handles; the package `fire-devices`: the fire classes and the C++ of `packages/devices/native/fire_bridge_devices.hpp`, which in the VM asks the host's device manager through the callbacks of the package ABI). A device has an identifier `driver:port`
-(`serial:COM3`, `loopback:echo`). The `serial` driver (115200 baud) is built in; `loopback` is a simulated echo device without hardware (everything you send comes back after a few milliseconds).
+The device framework is fire code (the package `fire-devices`; docs/DEVICES.md): every device is a `Device` with `Read()`/`Write(data)` - a device that cannot do one
+throws `NotSupportedException` - and comes from a `Driver`. `DeviceManager` holds the drivers of the program and finds devices by their identifier `driver:name`:
+
+```
+#import "devices"
+#import "gpio"
+DeviceManager.AddDriver(new SerialDriver())       // serial ports and the loopback device (also the default when no driver was added)
+DeviceManager.AddDriver(new GpioDriver())         // GPIO ports gpioa, gpiob, ... (#import "gpio"); I2cDriver, SpiDriver likewise
+var port = DeviceManager.Get("gpio:gpioa")         // or DeviceManager.Get("gpioa"); DeviceNotFoundException if there is none
+int levels = port.Read()                           // all lines of the port at once (or NotSupportedException)
+foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
+```
+
+Drivers of the standard libraries: `SerialDriver` (`serial:COM3`, `loopback:echo`; the C++ of `packages/devices/native/fire_bridge_devices.hpp`, which in the VM asks the host's device
+manager through the callbacks of the package ABI), `GpioDriver` (`gpio:gpioa`, `gpio:gpiosim`; Read/Write the whole port as an int, `PinAt(n)` for one line), `I2cDriver` (the buses `i2c:i2c-1`,
+`i2c:sim` - Read/Write are NotSupported - and the devices on them `i2c:i2c-1/0x48`, made with `bus.At(0x48)` or by `Get`), `SpiDriver` (`spi:spidev0.0`, `spi:sim`; `Transfer`, `WriteRead`).
+A driver of your own derives from `Driver` (`Refresh` adds its devices with `Add`, `Find` may make one on demand) and its devices from `Device`.
+
+What the host of the program offers comes in through `DeviceManager.Host` (a `DeviceHost`): `DefaultIdentifier()` (the editor's default device; a native build: `FIRE_DEFAULT_DEVICE`),
+`Trace(device, sent, data)` (the packets of the GPIO, I2C and SPI devices; the host's serial devices are traced by the host itself) and `DevicesChanged(list)`. A program may set its own.
+`Device.Default` / `DeviceManager.Default` is the device whose identifier the host chose, `Device.HasDefault` / `DeviceManager.HasDefault` whether there is one.
 
 You work at the **command level**: send text and bytes, wait for certain characters, execute commands as objects.
 
@@ -2348,8 +2367,8 @@ d.DoCommands([home, home])                   // several, stops at the first one 
 | `WriteString(text)` | writes exactly these characters, WITHOUT a line ending (one character = one byte, Latin1; for UTF-8 use `text.ToBytes()` and `Write`); `false` if not connected |
 | `Write(buffer)` | writes raw bytes; `false` if not connected |
 | `WaitForString(text, timeout)` / `WaitFor(buffer, timeout)` | see below |
-| `Identifier()`, `PortName()`, `Availability()`, `TestAvailability()` | identifier, port, availability (0 = unavailable, 1 = unchecked, 2 = available) |
-| `DeviceManagerFacade` | `Refresh(fastScan)`, `Count()`, `GetAt(i)`, `GetByHandle(h)`, `GetByIdentifier(id)`, `IsShared()` |
+| `Identifier()`, `Name`, `PortName()`, `Availability()`, `TestAvailability()` | identifier, name within the driver, port, availability (0 = unavailable, 1 = unchecked, 2 = available) |
+| `DeviceManager` | `AddDriver(d)`, `RemoveDriver(d)`, `Drivers()`, `Devices()`, `Refresh(fastScan)`, `Get(id)`, `Has(id)`, `Default`, `HasDefault`, `Host`, `IsShared()` |
 | `IDevice` | the interface that `Device` fulfills (type argument and parameter type for `Command<IDevice>`) |
 
 **`WaitForString` / `WaitFor`.** Wait until the characters or bytes are in the receive buffer - even if they arrive in several packets - and cut the buffer BEHIND the first match: everything before it and the match
@@ -2360,7 +2379,7 @@ sequence arrived, `false` after the wait time has expired, if the device is (or 
 **`#timeout value`** (top-level directive like `#nosync`, applies to the whole program): sets the default wait time of the wait functions. `value` is a time value (`10s`, `500ms`, `2min`) or a number in milliseconds; the expression is evaluated right at the start
 of the program (so it may not use variables) and also applies in the fire threads. A new program starts with 30 seconds again.
 
-**Shared DeviceManager.** If a script runs in the editor, it uses the editor's common manager (`DeviceManager.IsShared`): devices and open connections survive the run, several scripts one after the other work with
+**Shared devices.** If a script runs in the editor, its serial devices are those of the editor's common manager (`DeviceManager.IsShared()`): devices and open connections survive the run, several scripts one after the other work with
 the same devices. A script can destroy neither the manager nor a shared device (there is no function for it; `DeviceManager.Dispose()` has no effect on a shared manager, only the owner tears it down via `Shutdown()`).
 A standalone program (or `fire.Compiler run`) gets an own, non-shared manager with the built-in drivers, which is released (devices disconnected) after the run. Receive hooks of a run are released at the end.
 

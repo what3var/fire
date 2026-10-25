@@ -11805,15 +11805,13 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckDev("IsShared: Geraet und Manager eines geteilten Managers melden es, ein eigener Manager nicht", """
         #import "devices"
-        var m = new DeviceManagerFacade()
-        print(m.IsShared())
-        print(m.GetByIdentifier("loopback:echo").IsShared)
+        print(DeviceManager.IsShared())
+        print(DeviceManager.Get("loopback:echo").IsShared)
         """, new[] { "True", "True" }, shared: true);
     CheckDev("IsShared: ein nicht geteilter Manager meldet false", """
         #import "devices"
-        var m = new DeviceManagerFacade()
-        print(m.IsShared())
-        print(m.GetByIdentifier("loopback:echo").IsShared)
+        print(DeviceManager.IsShared())
+        print(DeviceManager.Get("loopback:echo").IsShared)
         """, new[] { "False", "False" }, shared: false);
 
     CheckDev("Geteilter Manager ueberlebt den Lauf: verbundenes Geraet bleibt verbunden, Manager ist nicht abgebaut", """
@@ -11830,7 +11828,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckDev("Eigener Manager wird nach dem Lauf freigegeben (Geraete getrennt)", """
         #import "devices"
-        var d = new DeviceManagerFacade().GetByIdentifier("loopback:echo")
+        var d = DeviceManager.Get("loopback:echo")
         d.EnsureConnected()
         print(d.IsConnected)
         """, new[] { "True" }, shared: false, after: m =>
@@ -12050,7 +12048,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(fb.Width() + "x" + fb.Height())
         print(DateTime.Now.Year > 2000)
         print(Type.Of(fb).Name)
-        print(new DeviceManagerFacade().Count())
+        print(DeviceManager.Devices().count)
         print(IO.File.Exists("/gibt/es/nicht"))
         var con = new Renderer(fb)
         con.AlphaBlending = false      // without blending the value including alpha 0 is simply copied

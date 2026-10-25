@@ -458,6 +458,18 @@ inline Value MgrDefaultHandle() {
     return Int(-1);
 }
 
+/// DeviceHost.DefaultIdentifier: the identifier of the device the host chose (the editor; a native build: FIRE_DEFAULT_DEVICE), "" when there is none. It may name a device of
+/// any driver of the program (`gpio:gpioa`), not only one of this manager.
+inline Value HostDefault(OwnList* list) {
+    init();
+#ifdef FIRE_LIBRARY
+    std::string id;
+    if (const fire_host* host = devHost()) { int32_t handle = host->dev_default(); if (handle >= 0) id = hostText(host->dev_identifier, handle); }
+#else
+    std::string id = FIRE_DEFAULT_DEVICE;
+#endif
+    return ascii(id, list);
+}
 inline Value Identifier(Value handle, OwnList* list) { init(); Slot* s = slotByHandle(handle.i); return ascii(s ? s->identifier : std::string(), list); }
 inline Value IsShared(Value handle) { Slot* s = resolve(handle); return Bool(s && s->device->shared()); }
 inline Value IsConnected(Value handle) { Slot* s = resolve(handle); return Bool(s && s->device->connected()); }

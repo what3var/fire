@@ -47,6 +47,13 @@
         "cpp": "dev::MgrDefaultHandle"
       },
       {
+        "name": "__DEVHostDefault",
+        "arguments": 0,
+        "cpp": "dev::HostDefault",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
         "name": "__DEVIdentifier",
         "arguments": 1,
         "cpp": "dev::Identifier",

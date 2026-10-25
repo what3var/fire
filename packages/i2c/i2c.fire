@@ -1,3 +1,4 @@
+#import "devices"
 namespace I2c {
     class I2cException : Exception {
         string message
@@ -224,5 +225,156 @@ namespace I2c {
 
         // Takes all devices off the bus.
         static undefined Reset() { __I2cSimReset() }
+    }
+}
+
+namespace I2c {
+    /// <summary>An I2C bus as a device of the device framework (`i2c:i2c-1`, `i2c:sim`). A bus has no data of its own (Read/Write throw NotSupportedException):
+    /// its devices are `At(address)` - each an I2c.Target with its own identifier (`i2c:i2c-1/0x48`).</summary>
+    class BusDevice : Device {
+        int speed
+        I2c.Bus bus
+
+        construct(Driver driver, string name, int speed = 100000) : base(driver, name) {
+            this.speed = speed
+            this.bus = undefined
+        }
+
+        /// <summary>The bus of the I2C library (opened on first use).</summary>
+        I2c.Bus Bus {
+            get {
+                if (this.bus == undefined || this.bus.IsClosed) {
+                    var opened = new I2c.Bus(this.name, this.speed)
+                    opened.TakeTo(this)
+                    this.bus = opened
+                }
+                return this.bus
+            }
+        }
+
+        bool Connected() { return this.bus != undefined && !this.bus.IsClosed }
+
+        bool Connect() {
+            try {
+                var b = this.Bus
+                return true
+            } catch (I2cException e) {
+                return false
+            }
+        }
+
+        undefined Disconnect() {
+            if (this.bus != undefined) { this.bus.Close() }
+        }
+
+        /// <summary>The device at this address on the bus (the same object for the same address).</summary>
+        I2c.Target At(int address) {
+            var name = this.name + "/0x" + I2c.Target.Hex(address)
+            var owner = this.owner
+            if (owner != undefined) {
+                foreach (d in owner.Devices()) {
+                    if (d.Name == name) { return d }
+                }
+            }
+            var target = new I2c.Target(owner, this, address)
+            if (owner != undefined) { owner.Add(target) } else { target.TakeTo(this) }
+            return target
+        }
+    }
+
+    /// <summary>A device at an address of an I2C bus (`i2c:i2c-1/0x48`): Read gives `ReadSize` bytes (Read(n): n bytes), Write sends a byte buffer; text and
+    /// waiting (WriteString, ReadString, WaitFor) work on them like on every device.</summary>
+    class Target : Device {
+        I2c.BusDevice busDevice
+        int address
+        // how many bytes Read() reads
+        int ReadSize = 1
+
+        construct(Driver driver, I2c.BusDevice bus, int address) : base(driver, bus.Name + "/0x" + I2c.Target.Hex(address)) {
+            this.busDevice = bus
+            this.address = address
+        }
+
+        int Address { get { return this.address } }
+        I2c.BusDevice OnBus { get { return this.busDevice } }
+
+        bool Connected() { return this.busDevice.Connected() }
+        bool Connect() { return this.busDevice.Connect() }
+
+        any Read() { return this.Read(this.ReadSize) }
+
+        byte[] Read(int count) {
+            var data = this.busDevice.Bus.Read(this.address, count)
+            DeviceManager.Host.Trace(this, false, data)
+            return data
+        }
+
+        bool Write(any data) {
+            this.busDevice.Bus.Write(this.address, data)
+            DeviceManager.Host.Trace(this, true, data)
+            return true
+        }
+
+        /// <summary>Writes the bytes, then reads `inCount` bytes with a repeated start in between.</summary>
+        byte[] WriteRead(byte data[], int inCount) {
+            DeviceManager.Host.Trace(this, true, data)
+            var result = this.busDevice.Bus.WriteRead(this.address, data, inCount)
+            DeviceManager.Host.Trace(this, false, result)
+            return result
+        }
+
+        int ReadRegister(int register) { return this.busDevice.Bus.ReadRegister(this.address, register) }
+        undefined WriteRegister(int register, int value) { this.busDevice.Bus.WriteRegister(this.address, register, value) }
+
+        // two hex digits (the address in an identifier)
+        static string Hex(int value) {
+            var digits = "0123456789abcdef"
+            return digits.Substring((value >> 4) & 15, 1) + digits.Substring(value & 15, 1)
+        }
+    }
+}
+
+/// <summary>The I2C buses of this machine for the device framework: `DeviceManager.AddDriver(new I2cDriver())`. Buses are `i2c:i2c-1`, `i2c:sim`; a device at an
+/// address is found by its identifier (`DeviceManager.Get("i2c:i2c-1/0x48")`) or made with `bus.At(0x48)`.</summary>
+class I2cDriver : Driver {
+    int speed
+
+    construct(int speed = 100000) : base("i2c") {
+        this.speed = speed
+    }
+
+    undefined Refresh(bool fastScan = true) {
+        foreach (name in I2c.Board.Buses()) {
+            if (this.Find(name) == undefined) { this.Add(new I2c.BusDevice(this, name, this.speed)) }
+        }
+    }
+
+    /// <summary>A bus by its name, or a device `bus/0x48` (also `bus/72`).</summary>
+    Device Find(string name) {
+        var slash = name.IndexOf("/")
+        if (slash < 0) {
+            foreach (d in this.devices) {
+                if (d.Name == name) { return d }
+            }
+            return undefined
+        }
+        var bus = this.Find(name.Substring(0, slash))
+        if (bus == undefined || !(bus is of I2c.BusDevice)) { return undefined }
+        var text = name.Substring(slash + 1)
+        var address = 0
+        var start = 0
+        var radix = 10
+        if (text.StartsWith("0x") || text.StartsWith("0X")) {
+            radix = 16
+            start = 2
+        }
+        if (start >= text.Length) { return undefined }
+        for (int i = start; i < text.Length; i++) {
+            var digit = "0123456789abcdef".IndexOf(text.Substring(i, 1).ToLower())
+            if (digit < 0 || digit >= radix) { return undefined }
+            address = address * radix + digit
+        }
+        any b = bus
+        return b.At(address)
     }
 }

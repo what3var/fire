@@ -1,4 +1,5 @@
 #import "time"
+#import "devices"
 
 namespace Gpio {
     enum Pull { None, Up, Down }
@@ -266,5 +267,109 @@ namespace Gpio {
 
         // Removes all wires and drives (the open pins stay open).
         static undefined Reset() { __GpioSimReset() }
+    }
+}
+
+namespace Gpio {
+    /// <summary>A GPIO chip as one device of the device framework (`gpio:gpioa`): Read gives the levels of all its lines as an int (bit n = line n), Write sets them.
+    /// The lines are claimed on first use (Read as inputs, Write as outputs); one that cannot be - a line that is missing, busy or of another direction - makes the
+    /// port-wide access throw NotSupportedException. Single lines: PinAt(n).</summary>
+    class Port : Device {
+        string chip
+        int width
+        List pins
+
+        construct(Driver driver, string name, string chip, int width) : base(driver, name) {
+            this.chip = chip
+            this.width = width
+            this.pins = new List()
+            for (int i = 0; i < width; i++) { this.pins.Add(undefined) }
+        }
+
+        /// <summary>The chip of the platform ("gpiochip0", "gpio", "sim").</summary>
+        string Chip { get { return this.chip } }
+
+        /// <summary>How many lines the port has.</summary>
+        int Lines { get { return this.width } }
+
+        /// <summary>The line `line` as a pin of this port (claimed on first use; the port gives it back on Disconnect).</summary>
+        Gpio.Pin PinAt(int line) {
+            if (line < 0 || line >= this.width) { throw new GpioException("The port '" + this.name + "' has no line " + line + ".", 3) }
+            var pin = this.pins[line]
+            if (pin == undefined) {
+                var made = new Gpio.Pin(this.chip, line)
+                made.TakeTo(this)
+                this.pins[line] = made
+                pin = made
+            }
+            return pin
+        }
+
+        /// <summary>The levels of all lines (bit n = line n). Throws NotSupportedException if the port cannot be read as a whole.</summary>
+        any Read() {
+            var value = 0
+            try {
+                for (int line = 0; line < this.width; line++) {
+                    var pin = this.PinAt(line)
+                    if (!pin.IsInput && !pin.IsOutput) { pin.Input() }
+                    if (pin.Read()) { value = value | (1 << line) }
+                }
+            } catch (GpioException e) {
+                throw new NotSupportedException("The port '" + this.Identifier() + "' cannot be read as a whole: " + e.message)
+            }
+            DeviceManager.Host.Trace(this, false, value)
+            return value
+        }
+
+        /// <summary>Sets all lines (bit n = line n) as outputs. Throws NotSupportedException if the port cannot be written as a whole.</summary>
+        bool Write(any data) {
+            int value = data
+            try {
+                for (int line = 0; line < this.width; line++) {
+                    var pin = this.PinAt(line)
+                    var high = ((value >> line) & 1) == 1
+                    if (!pin.IsOutput) { pin.Output(high) } else { pin.Write(high) }
+                }
+            } catch (GpioException e) {
+                throw new NotSupportedException("The port '" + this.Identifier() + "' cannot be written as a whole: " + e.message)
+            }
+            DeviceManager.Host.Trace(this, true, value)
+            return true
+        }
+
+        /// <summary>Gives all lines back.</summary>
+        undefined Disconnect() {
+            for (int i = 0; i < this.width; i++) {
+                var pin = this.pins[i]
+                if (pin != undefined) { pin.Close() }
+                this.pins[i] = undefined
+            }
+        }
+    }
+}
+
+/// <summary>The GPIO ports of this machine for the device framework: `DeviceManager.AddDriver(new GpioDriver())`. The chips of the platform become the ports `gpioa`,
+/// `gpiob`, ... (in the order of Gpio.Board.Chips()), the simulated chip is `gpiosim`.</summary>
+class GpioDriver : Driver {
+    int width
+
+    // `width`: the lines of a real port (the simulated one has Gpio.Sim.Lines())
+    construct(int width = 32) : base("gpio") {
+        this.width = width
+    }
+
+    undefined Refresh(bool fastScan = true) {
+        var chips = Gpio.Board.Chips()
+        var letter = 0
+        foreach (chip in chips) {
+            string name = "gpiosim"
+            int lines = Gpio.Sim.Lines()
+            if (chip != "sim") {
+                name = "gpio" + "abcdefghijklmnopqrstuvwxyz".Substring(letter, 1)
+                letter = letter + 1
+                lines = this.width
+            }
+            if (this.Find(name) == undefined) { this.Add(new Gpio.Port(this, name, chip, lines)) }
+        }
     }
 }

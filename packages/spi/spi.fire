@@ -1,3 +1,4 @@
+#import "devices"
 namespace Spi {
     class SpiException : Exception {
         string message
@@ -206,5 +207,112 @@ namespace Spi {
 
         // Forgets what was sent and the queued answers.
         static undefined Clear() { __SpiSimClear() }
+    }
+}
+
+/// <summary>An SPI device as a device of the device framework (`spi:spidev0.0`, `spi:sim`): Read gives `ReadSize` bytes (zeros are sent meanwhile; Read(n): n bytes),
+/// Write sends a byte buffer, Transfer does both at once. Mode, speed and bit order can be set before it is opened (on first use).</summary>
+class SpiDevice : Device {
+    Spi.Device device
+    int mode = 0
+    int speed = 1000000
+    bool lsbFirst = false
+    // how many bytes Read() reads
+    int ReadSize = 1
+
+    construct(Driver driver, string name) : base(driver, name) {
+        this.device = undefined
+    }
+
+    /// <summary>The device of the SPI library (opened on first use).</summary>
+    Spi.Device Port {
+        get {
+            if (this.device == undefined || this.device.IsClosed) {
+                var opened = new Spi.Device(this.name, this.mode, this.speed, this.lsbFirst)
+                opened.TakeTo(this)
+                this.device = opened
+            }
+            return this.device
+        }
+    }
+
+    int Mode {
+        get { return this.mode }
+        set {
+            this.mode = value
+            if (this.device != undefined && !this.device.IsClosed) { this.device.Mode = value }
+        }
+    }
+
+    int Speed {
+        get { return this.speed }
+        set {
+            this.speed = value
+            if (this.device != undefined && !this.device.IsClosed) { this.device.Speed = value }
+        }
+    }
+
+    bool LsbFirst {
+        get { return this.lsbFirst }
+        set {
+            this.lsbFirst = value
+            if (this.device != undefined && !this.device.IsClosed) { this.device.LsbFirst = value }
+        }
+    }
+
+    bool Connected() { return this.device != undefined && !this.device.IsClosed }
+
+    bool Connect() {
+        try {
+            var d = this.Port
+            return true
+        } catch (Spi.SpiException e) {
+            return false
+        }
+    }
+
+    undefined Disconnect() {
+        if (this.device != undefined) { this.device.Close() }
+    }
+
+    any Read() { return this.Read(this.ReadSize) }
+
+    byte[] Read(int count) {
+        var data = this.Port.Read(count)
+        DeviceManager.Host.Trace(this, false, data)
+        return data
+    }
+
+    bool Write(any data) {
+        this.Port.Write(data)
+        DeviceManager.Host.Trace(this, true, data)
+        return true
+    }
+
+    /// <summary>Sends the bytes and receives as many at the same time.</summary>
+    byte[] Transfer(byte data[]) {
+        DeviceManager.Host.Trace(this, true, data)
+        var result = this.Port.Transfer(data)
+        DeviceManager.Host.Trace(this, false, result)
+        return result
+    }
+
+    /// <summary>Sends the bytes, then receives `inCount` bytes in the same transfer.</summary>
+    byte[] WriteRead(byte data[], int inCount) {
+        DeviceManager.Host.Trace(this, true, data)
+        var result = this.Port.WriteRead(data, inCount)
+        DeviceManager.Host.Trace(this, false, result)
+        return result
+    }
+}
+
+/// <summary>The SPI devices of this machine for the device framework: `DeviceManager.AddDriver(new SpiDriver())` - `spi:spidev0.0`, ..., `spi:sim`.</summary>
+class SpiDriver : Driver {
+    construct() : base("spi") { }
+
+    undefined Refresh(bool fastScan = true) {
+        foreach (name in Spi.Board.Devices()) {
+            if (this.Find(name) == undefined) { this.Add(new SpiDevice(this, name)) }
+        }
     }
 }
