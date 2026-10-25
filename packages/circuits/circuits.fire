@@ -460,40 +460,37 @@ namespace Circuits {
             this.time = 0.0
             foreach (p in this.parts) { p.Reset() }
             var all = new List()
-            Circuits.Circuit.Collect(this, all)
-            foreach (port in Circuits.Circuit.AllPorts(this, all)) { port.v = 0.0 }
+            this.Collect(all)
+            foreach (port in this.AllPorts(all)) { port.v = 0.0 }
         }
 
-        // (The lists of parts and ports are made by static methods: a list keeps what belongs to its caller, and the parts belong to the circuit -
-        // in a method of the circuit a list would take them over.)
-
         // the parts that are not circuits, of the circuit and the nested ones
-        static undefined Collect(Circuit circuit, List into) {
-            foreach (p in circuit.parts) {
+        undefined Collect(List into) {
+            foreach (p in this.parts) {
                 if (p is of Circuit) {
                     Circuit c = p!Circuit
-                    Circuits.Circuit.Collect(c, into)
+                    c.Collect(into)
                 } else { into.Add(p) }
             }
         }
 
         // the ports of the parts, of the circuits and their grounds
-        static List AllPorts(Circuit circuit, List leaves) {
+        List AllPorts(List leaves) {
             var all = new List()
             foreach (p in leaves) {
                 foreach (port in p.Ports()) { all.Add(port) }
             }
-            Circuits.Circuit.CircuitPorts(circuit, all)
+            this.CircuitPorts(all)
             return all
         }
 
-        static undefined CircuitPorts(Circuit circuit, List into) {
-            into.Add(circuit.ground)
-            foreach (port in circuit.ports) { into.Add(port) }
-            foreach (p in circuit.parts) {
+        undefined CircuitPorts(List into) {
+            into.Add(this.ground)
+            foreach (port in this.ports) { into.Add(port) }
+            foreach (p in this.parts) {
                 if (p is of Circuit) {
                     Circuit c = p!Circuit
-                    Circuits.Circuit.CircuitPorts(c, into)
+                    c.CircuitPorts(into)
                 }
             }
         }
@@ -515,9 +512,9 @@ namespace Circuits {
         // the solver: nodes, branches, the matrix (again when something changed)
         undefined Build() {
             var leaves = new List()
-            Circuits.Circuit.Collect(this, leaves)
+            this.Collect(leaves)
             this.GroundAll(this.ground)
-            var ports = Circuits.Circuit.AllPorts(this, leaves)
+            var ports = this.AllPorts(leaves)
             var groundRoot = this.ground.Root()
             foreach (port in ports) { port.Root().node = -2 }
             groundRoot.node = -1
@@ -569,7 +566,7 @@ namespace Circuits {
                 }
             }
             var circuitPorts = new List()
-            Circuits.Circuit.CircuitPorts(this, circuitPorts)
+            this.CircuitPorts(circuitPorts)
             foreach (port in circuitPorts) {
                 var root = port.Root()
                 root.v = s.NodeVoltage(root.node)
@@ -761,6 +758,7 @@ namespace Circuits {
             var pair = new List()
             pair.Add(port)
             pair.Add(reference)
+            // (the channel list keeps the pair: `pair` belongs to this call, a list only keeps what is handed over to it)
             pair.TakeTo(this)
             this.AddChannel(name, pair)
         }

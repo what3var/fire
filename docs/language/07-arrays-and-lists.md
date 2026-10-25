@@ -115,7 +115,8 @@ names.Add("Grace")
 print(names[2])
 ```
 
-A list owns the objects that are added to it when they belong to the caller (see [Ownership](13-ownership.md)). `List<int>` and `List<string>` are
+A list owns the objects that are handed over to `Add`: one made in the argument (`list.Add(new Item())`) or given with `take` (`list.Add(take item)`).
+An object that `Add` only gets a reference to (`list.Add(item)`) keeps its owner and dies with it (see [Ownership](13-ownership.md)). `List<int>` and `List<string>` are
 checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new List()` without a type argument takes everything.
 
 ## Queries: `#import "linq"`
