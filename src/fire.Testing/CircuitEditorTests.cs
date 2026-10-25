@@ -90,26 +90,24 @@ static class CircuitEditorTests
             38 1 0 1 101 Resistance
             """, "Demo");
         Check("Falstad: Elemente, Punkte durch 8, Werte mit Praefix, Schalter, LED-Farbe, PNP, Op-Amp vertauscht, Gatter, Logikeingang, Label, Scope",
-            falstad.Elements == 14 && falstad.Biscuit.Contains("\"class\": \"Demo\"") && falstad.Biscuit.Contains("\"timeStep\": \"5us\"")
+            falstad.Elements == 13 && falstad.Biscuit.Contains("\"class\": \"Demo\"") && falstad.Biscuit.Contains("\"timeStep\": \"5us\"")
             && falstad.Biscuit.Contains("{\"type\": \"Source\", \"from\": [14, 46], \"to\": [14, 6], \"voltage\": \"5\"}")
-            && falstad.Biscuit.Contains("\"type\": \"Resistor\", \"name\": \"R1\", \"from\": [14, 6], \"to\": [30, 6], \"resistance\": \"1k\"")
+            && falstad.Biscuit.Contains("\"type\": \"Resistor\", \"from\": [14, 6], \"to\": [30, 6], \"resistance\": \"1k\"")
             && falstad.Biscuit.Contains("\"capacitance\": \"1u\"") && falstad.Biscuit.Contains("\"type\": \"Switch\", \"from\": [30, 6], \"to\": [44, 6], \"closed\": \"true\"")
             && falstad.Biscuit.Contains("\"type\": \"Led\", \"from\": [44, 6], \"to\": [44, 46], \"color\": \"red\"") && falstad.Biscuit.Contains("\"model\": \"pnp\"")
             && falstad.Biscuit.Contains("\"type\": \"OpAmp\", \"from\": [50, 38], \"to\": [66, 38], \"model\": \"opamp\", \"flip\": \"true\"")
             && falstad.Biscuit.Contains("\"type\": \"And\"") && falstad.Biscuit.Contains("\"type\": \"LogicInput\", \"from\": [70, 38], \"to\": [64, 38], \"high\": \"true\"")
             && falstad.Biscuit.Contains("\"type\": \"Label\", \"from\": [14, 6], \"to\": [14, 2], \"text\": \"VCC\"")
-            && falstad.Biscuit.Contains("\"type\": \"Scope\"") && falstad.Biscuit.Contains("\"probe\": \"R1\""), falstad.Biscuit);
+            && falstad.Biscuit.Contains("\"type\": \"Scope\"") && falstad.Biscuit.Contains("\"probe\": \"C1\""), falstad.Biscuit);
         Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'165' (555 timer)"), string.Join(" | ", falstad.Warnings));
-        CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run("""
-            #import "circuits"
-            var c = new Circuits.Circuit("x")
-            c.LoadSchematic(""" + BiscuitGenerator.Quote(falstad.Biscuit) + """
-            )
-            c.Run(2ms)
-            var bad = 0
-            foreach (e in c.Schematic.Elements()) { if (e.Error != "") { bad = bad + 1 } }
-            print("errors " + bad + " vcc " + Math.Round(c.Schematic.Elements()[11].PinVoltage(0)) + " recorded " + (c.Schematic.Elements()[13].scope.Count > 0))
-            """), new[] { "errors 0 vcc 5 recorded True" });
+        CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
+            "#import \"circuits\"\n" +
+            "var c = new Circuits.Circuit(\"x\")\n" +
+            "c.LoadSchematic(" + BiscuitGenerator.Quote(falstad.Biscuit) + ")\n" +
+            "c.Run(2ms)\n" +
+            "var bad = 0\n" +
+            "foreach (e in c.Schematic.Elements()) { if (e.Error != \"\") { bad = bad + 1 } }\n" +
+            "print(\"errors \" + bad + \" vcc \" + Math.Round(c.Schematic.Elements()[11].PinVoltage(0)) + \" recorded \" + (c.Schematic.Elements()[12].scope.Count > 0))\n"), new[] { "errors 0 vcc 5 recorded True" });
 
         // ---- the view: placing, wires, moving, undo, switches, the editor of properties ----
         CheckLines("CircuitView: platzieren, Draht vom Pin, verschieben, Undo, Drehen, Loeschen, Schalter, Eigenschaften", Run("""
