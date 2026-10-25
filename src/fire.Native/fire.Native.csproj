@@ -18,6 +18,8 @@
   <ItemGroup>
     <!-- The C++ runtime that the generated code includes; written next to the generated file (see NativeRuntimeFiles). -->
     <EmbeddedResource Include="..\..\native\runtime\fire_rt.hpp" LogicalName="fire_rt.hpp" />
+    <!-- JSON (`#import "json"`): put into the generated file when the program uses it. -->
+    <EmbeddedResource Include="..\..\native\runtime\fire_json.hpp" LogicalName="runtime/fire_json.hpp" />
     <!-- The C ABI between the virtual machine and the natives of packages, and its C++ wrapper (native/abi/). -->
     <EmbeddedResource Include="..\..\native\abi\*" LogicalName="abi/%(Filename)%(Extension)" />
     <!-- The platform packages (native/platform/<name>/): everything that depends on the operating system or the board. -->

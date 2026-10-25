@@ -651,6 +651,35 @@ namespace fire.Compiler
             _ => "public",
         };
 
+        /// <summary>The declared type of a field for JSON (FieldInfo.TypeText): basic types as written, classes resolved, `$k` for a type parameter of the class.</summary>
+        private string JsonTypeText(TypeRef? type, int extraArrayRank, ClassDecl? owner)
+        {
+            if (type == null || type.IsInferred || type.LambdaSignature != null || type.PointerDepth > 0) return "";
+            string arrays = string.Concat(Enumerable.Repeat("[]", type.ArrayRank + extraArrayRank));
+            string b = type.BaseName == "int" && type.BitWidth == 8 && type.Unsigned ? "byte" : type.BaseName;   // (`byte` is `int[8]`: a `byte[]` field is a buffer)
+            if (type.TypeArgs == null && owner?.TypeParams is { } typeParams && typeParams.ToList().FindIndex(tp => tp.Name == b) is var k and >= 0) return "$" + k + arrays;
+            switch (b)
+            {
+                case "int": case "float": case "bool": case "char": case "string": case "byte": case "class":
+                case "int8": case "int16": case "int32": case "int64": case "uint8": case "uint16": case "uint32": case "uint64": case "float32": case "float64":
+                    return b + arrays;
+                case "any": return arrays.Length > 0 ? "any" + arrays : "";
+            }
+            if (_knownClassNames == null) return "";
+            string name = ResolveTypeRef(type);
+            bool isClass = _knownClassNames.Contains(name), isInterface = !isClass && _refParams.InterfaceNames.Contains(type.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n)));
+            if (!isClass && !isInterface) return arrays.Length > 0 ? "any" + arrays : "";   // (an enum is an int at run time)
+            if (isInterface) name = type.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n));
+            if (type.TypeArgs is { Count: > 0 } args)
+                name = GenericClassNames.PlainName(name) + "<" + string.Join(",", args.Select(a => JsonTypeText(a, 0, owner))) + ">";
+            return name + arrays;
+        }
+
+        /// <summary>The attributes of a member for the runtime (names, argument texts and the values the compiler knows), null for none.</summary>
+        private static List<AttributeMeta>? AttributeMetas(IReadOnlyList<AttributeDecl>? attributes) =>
+            attributes is not { Count: > 0 } ? null
+            : attributes.Select(a => new AttributeMeta { Name = a.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = new System.Text.Json.Nodes.JsonArray(a.Args.Select(ConstantJson).ToArray()).ToJsonString() }).ToList();
+
         /// <summary>The reflection metadata of a class: what the runtime otherwise does not keep (type names, parameter names, `readonly`, property form).</summary>
         private static ClassMeta BuildClassMeta(ClassDecl cd)
         {
@@ -676,6 +705,7 @@ namespace fire.Compiler
                         {
                             Name = f.Name, Kind = "field", TypeName = TypeText(f.Type, f.ArrayRanks.Count), Access = AccessText(f.Access),
                             IsStatic = f.IsStatic, IsReadonly = f.IsReadonly, Unit = f.Type?.RequiredUnit ?? "",
+                            Attributes = AttributeMetas(f.Attributes) ?? new(),
                         });
                         break;
                     case PropertyDecl pd:
@@ -683,14 +713,14 @@ namespace fire.Compiler
                         {
                             Name = pd.Name, Kind = "property", TypeName = TypeText(pd.Type), Access = AccessText(pd.Access),
                             IsStatic = pd.IsStatic, CanRead = pd.Getter != null, CanWrite = pd.Setter != null, Unit = pd.Type?.RequiredUnit ?? "",
+                            Attributes = AttributeMetas(pd.Attributes) ?? new(),
                         });
                         break;
                     case MethodDecl md:
                         {
                             var m = new MemberMeta { Name = md.Name, Kind = "method", TypeName = TypeText(md.ReturnType), Access = AccessText(md.Access), IsStatic = md.IsStatic };
                             AddParams(m, md.Params);
-                            foreach (var a in md.Attributes ?? Array.Empty<AttributeDecl>())
-                                m.Attributes.Add(new AttributeMeta { Name = a.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = new System.Text.Json.Nodes.JsonArray(a.Args.Select(ConstantJson).ToArray()).ToJsonString() });
+                            m.Attributes = AttributeMetas(md.Attributes) ?? new();
                             meta.Members.Add(m);
                             break;
                         }
@@ -863,6 +893,8 @@ namespace fire.Compiler
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 IsStatic = fd.IsStatic,
+                                TypeText = JsonTypeText(fd.Type, fd.ArrayRanks.Count, rc.Decl),
+                                Attributes = AttributeMetas(fd.Attributes),
                             };
                             // SPEC "Static members": static fields end up
                             // NOT in Fields (the instance init list that EVERY

@@ -18958,6 +18958,161 @@ else
             """),
     }).ToArray();
 
+    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.hpp) write and read the same text
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler", """
+            #import "json"
+            class Point {
+                float x : cm
+                float y : cm
+                construct(float x : cm, float y : cm) { this.x = x; this.y = y }
+            }
+            class Person {
+                string name
+                int age
+                Person friend
+                List<Point> path
+                [NonSerialized]
+                int secret
+                [JsonName "nick"]
+                string nickname
+                any extra
+                construct() { }
+            }
+            var a = new Person()
+            a.name = "Ann \"A\"\n"
+            a.age = 41
+            a.secret = 7
+            a.nickname = "annie"
+            a.path = new List<Point>()
+            a.path.Add(new Point(1.5cm, 2cm))
+            a.path.Add(new Point(3cm, 4mm))
+            a.extra = [1, 2.5, "x", 'c', true, undefined, 5m]
+            var b = new Person()
+            b.name = "Bob"
+            b.friend = a
+            a.friend = b
+            string text = Json.Serialize(a)
+            print(text)
+            print(Json.Serialize(a, new JsonOptions(true)))
+            Person c = Json.Deserialize<Person>(text)
+            print(c.name + " " + c.age + " " + c.secret + " " + c.nickname + " " + c.friend.name + " " + (c.friend.friend == c))
+            print(c.path.count + " " + c.path[1].y + " " + c.path[0].x)
+            print(c.extra[1] + " " + c.extra[3] + " " + c.extra[6])
+            var tree = Json.Parse("{\"a\": [1, {\"b\": null}], \"c\": \"d\"}")
+            print(tree.Get("c") + " " + tree.Get("a")[0] + " " + tree.Get("a")[1].Has("b"))
+            print(Json.Serialize(tree))
+            try { Json.Parse("{\"a\": }") } catch (JsonException e) { print(e.message) }
+            """),
+        ("Json: generische Klasse, abgeleitete Klasse, geteilte Arrays, Puffer, char, NaN, OnDeserialized, ohne Typnamen, Fehlertexte", """
+            #import "json"
+
+            class Box<T> {
+                T value
+                construct() { }
+            }
+
+            class Shape {
+                string name
+                construct() { }
+            }
+
+            class Circle : Shape {
+                float : cm radius
+                construct() { }
+            }
+
+            class Node {
+                string label
+                Node next
+                int shared[]
+                int other[]
+                byte data[]
+                char mark
+                float ratio
+                construct() { }
+                undefined OnDeserialized() { print("hook " + this.label) }
+            }
+
+            class Pair {
+                any left
+                any right
+                construct() { }
+            }
+
+            // a generic class: the type argument travels in $type
+            var box = new Box<int>()
+            box.value = 42
+            string boxText = Json.Serialize(box)
+            print(boxText)
+            Box<int> box2 = Json.Deserialize<Box<int>>(boxText)
+            print(box2.value)
+
+            // a derived class in a slot of the base class
+            var c = new Circle()
+            c.name = "c1"
+            c.radius = 2.5cm
+            Shape s = c
+            var holder = new Pair()
+            holder.left = s
+            holder.right = [c, c]
+            string pairText = Json.Serialize(holder)
+            print(pairText)
+            Pair back = Json.Deserialize<Pair>(pairText)
+            print(back.left.name + " " + back.left.radius + " " + (back.right[0] == back.left) + " " + (back.right[1] == back.left))
+
+            // shared arrays, buffers, chars, NaN, hooks
+            var n1 = new Node()
+            n1.label = "one"
+            n1.shared = [1, 2, 3]
+            n1.other = n1.shared
+            n1.data = new byte[3]
+            n1.data[0] = 1
+            n1.data[1] = 200
+            n1.data[2] = 3
+            n1.mark = 'x'
+            n1.ratio = 0.0 / 0.0
+            var n2 = new Node()
+            n2.label = "two"
+            n2.ratio = 1000000000000000000000000000000.0
+            n1.next = n2
+            string nodeText = Json.Serialize(n1)
+            print(nodeText)
+            Node m = Json.Deserialize<Node>(nodeText)
+            print(m.label + " " + m.next.label + " " + m.shared[2] + " " + (m.shared == m.other) + " " + m.data[1] + " " + m.mark + " " + m.next.ratio)
+
+            // without type names: plain JSON for other programs
+            var plain = new JsonOptions()
+            plain.typeNames = false
+            print(Json.Serialize(n2, plain))
+            Node fromPlain = Json.Deserialize<Node>("{\"label\":\"p\",\"Next\":{\"label\":\"q\"},\"shared\":[5,6],\"data\":\"AQID\",\"unknown\":1}")
+            print(fromPlain.label + " " + fromPlain.next.label + " " + fromPlain.shared[1] + " " + fromPlain.data[2])
+
+            // by name, lists of lists, numbers
+            any byName = Json.Deserialize("{\"value\": 7}", "Box<int>")
+            print(Json.Serialize(byName))
+            var nested = new List<List<int>>()
+            var inner = new List<int>()
+            inner.Add(1)
+            inner.Add(2)
+            nested.Add(inner)
+            print(Json.Serialize(nested))
+            print(Json.Serialize([0.1, 1.0, -0.00000025, 123456789012, 3]))
+            any tree = Json.Parse("[1, 2.5, -3e2, \"a\\u0041\\n\", true, false, null, {}]")
+            print(Json.Serialize(tree))
+
+            // errors
+            try { Json.Deserialize<Box<int>>("{\"$type\":\"Nope\"}") } catch (JsonException e) { print(e.message) }
+            try { Json.Deserialize<Node>("{\"ratio\": \"x\"}") } catch (JsonException e) { print(e.message) }
+            try { Json.Deserialize("{\"value\": 1.5}", "Box<int>") } catch (JsonException e) { print(e.message) }
+            try { Json.Parse("[1, 2") } catch (JsonException e) { print(e.message) }
+            try { Json.Parse("\"abc") } catch (JsonException e) { print(e.message) }
+            try { Json.Parse("{\"a\":1} x") } catch (JsonException e) { print(e.message) }
+            try { Json.Deserialize<Node>("{\"next\":{\"$ref\":9}}") } catch (JsonException e) { print(e.message) }
+            """),
+    }).ToArray();
+
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
     {
         bool hasOpenSsl = new[] { "/usr/include/openssl/ssl.h", "/usr/local/include/openssl/ssl.h", "/opt/homebrew/include/openssl/ssl.h", "/usr/include/x86_64-linux-gnu/openssl/ssl.h" }.Any(File.Exists);

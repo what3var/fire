@@ -284,6 +284,19 @@ class CalcTests {
 
 The arguments are ordinary expressions; they are evaluated when a tool uses them (the test runner: when the test runs).
 
+Fields and properties can have attributes too. `#import "json"` reads two of them (docs/JSON.md):
+
+```fire
+class Account {
+    string owner
+    [JsonName "pin_hash"]
+    string pinHash
+    [NonSerialized]
+    int cachedBalance
+    construct() { }
+}
+```
+
 ## Static members and the top level
 
 Top-level code (outside of classes) runs from the top when the program starts; it can declare variables and use all classes, wherever they stand in the

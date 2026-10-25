@@ -24,6 +24,7 @@
     "wifi/wifi.fireproj",
     "audio/audio.fireproj",
     "tracker/tracker.fireproj",
-    "scene3d/scene3d.fireproj"
+    "scene3d/scene3d.fireproj",
+    "json/json.fireproj"
   ]
 }

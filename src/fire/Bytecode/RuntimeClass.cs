@@ -45,6 +45,13 @@ namespace fire.Bytecode
         /// (RuntimeClass.StaticFieldValues/StaticFields), NOT per instance
         /// (ObjectInstance.Fields, see RuntimeClass.Fields).</summary>
         public bool IsStatic { get; set; }
+
+        /// <summary>The declared type with resolved class names (`Geo.Point`, `List<Geo.Point>`, `int[]`, `$0` for the first type parameter of the class,
+        /// "" for `any`, an enum or nothing): what a value read from JSON becomes (fire.Standard.JsonMethods).</summary>
+        public string TypeText { get; set; } = "";
+
+        /// <summary>The attributes before the field (`[NonSerialized]`, `[JsonName "x"]`, SPEC 5.12), null when it has none.</summary>
+        public List<AttributeMeta>? Attributes { get; set; }
     }
 
     [MemoryPackable]

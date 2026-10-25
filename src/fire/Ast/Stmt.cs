@@ -243,7 +243,7 @@ namespace fire.Ast
     /// of this stage.</summary>
     public sealed record FieldDecl(
         int Source, int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
-        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false, IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Generics: Typ-Parameter mit Constraints ('where T is of X, is of Y')
@@ -355,7 +355,7 @@ namespace fire.Ast
     /// ObjectInstance.Fields entry of their own name.</summary>
     public sealed record PropertyDecl(
         int Source, int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
-        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false, IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
 
     /// <summary>`class extends Name { new members... }` - adds the
     /// members directly to the EXISTING class `Name` (Ruby-like

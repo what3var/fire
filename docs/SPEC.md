@@ -1054,9 +1054,10 @@ method infrastructure therefore works automatically.
 compiler keeps them with the method (and their source text) without evaluating them - a tool that reads the attribute evaluates them where it needs them.
 Reflection (`Member.Attributes`, section on reflection) gives every attribute with its name, the source texts of its arguments and the values of those
 that are constants (numbers, strings, `bool`, arrays of constants, ranges of `int` constants; otherwise `undefined`).
-Attributes stand only before methods. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
-declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md); other
-names are allowed and ignored.
+Attributes stand before methods, fields (`[NonSerialized] int secret`; before a declaration of several fields they belong to all of them) and properties - nowhere
+else. Reflection lists them for every member. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
+and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored.
 
 The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusive, descending when `b < a`; the unit of `a` stays on every element. In
 `[Parameters]` a range runs a test once per element.
@@ -2411,6 +2412,14 @@ same numbers in the virtual machine, in a native build and on every platform. It
 - `Pick(list)`: a random element (`undefined` for an empty list); `Shuffle(list)`: mixes the list in place (Fisher-Yates) and returns it; `Seed(seed)` starts the sequence again.
 
 Not for secrets: the sequence can be predicted from a few outputs.
+
+### 8.19a JSON (`#import "json"`)
+
+`Json.Serialize(value[, options])` writes objects, arrays, lists, numbers (with their units), strings, chars and buffers as JSON; `Json.Deserialize<T>(text)` (or
+`Json.Deserialize(text, "TypeName")`) reads them back without running constructors and calls `OnDeserialized()` afterwards; `Json.Parse(text)` reads JSON without
+classes into `JsonObject`s. Shared objects and cycles are kept with `"$id"`/`"$ref"`, the class travels as `"$type"` where the declared type does not give it, a
+field can be left out (`[NonSerialized]`) or renamed (`[JsonName "x"]`). Errors are a `JsonException` with line and column or the path of the value
+(`$.path[1].x`). The same text in the VM and in native builds; the details are in docs/JSON.md.
 
 ### 8.20 Network (`#import "net"`)
 

@@ -1219,6 +1219,7 @@ namespace fire.Native
                 sb.AppendLine(ReflectionCode());
             }
             sb.AppendLine(IndexHelpers());
+            if (_usesJson) sb.AppendLine(JsonCode());
             sb.AppendLine(RuntimeHooks());
 
             foreach (var f in _funcs) sb.AppendLine(f.Code);
@@ -1337,6 +1338,7 @@ namespace fire.Native
                     }
             }
             RegisterReflectionTargets();
+            RegisterJsonTargets();
             foreach (var cls in _classList.ToList())
                 for (var rc = cls.Rc; rc != null; rc = rc.Base)
                     if (rc.Destructor != null) GetFunc(rc.Destructor, FuncKind.Dtor);
@@ -3088,6 +3090,14 @@ namespace fire.Native
                         E($"{S(first)} = mathCall({S(first)}.i, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")});");
                         Check();
                         d = first + 1; SetR(first, false); return Next();
+                    }
+                    if (native == JsonMethods.NativeName && argc is 2 or 3)
+                    {
+                        UseJson();
+                        int first = d - argc;
+                        E($"{S(first)} = jsonCall({argc}, {S(first)}, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")}, {JsonCallType(f)}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
                     }
                     if (native == CharMethods.NativeName && argc == 2)
                     {

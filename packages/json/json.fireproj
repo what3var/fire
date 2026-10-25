@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-json",
+  "type": "library",
+  "import": "json",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'json' of fire: objects to JSON and back (references, cycles and the ownership tree kept), and free JSON as JsonObject."
+  }
+}

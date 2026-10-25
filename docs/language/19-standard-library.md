@@ -26,6 +26,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 |---|---|
 | `"time"` | `Sleep(duration)`, `DateTime` (`Now`, `UtcNow`, `Today`, `Parse`, arithmetic), `TimeSpan` |
 | `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array) |
+| `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields - see docs/JSON.md |
 | `"testing"` | namespace `Testing`: `Assert` (`AreEqual`, `IsTrue`, `Throws`, ...) for the tests that `forge test` runs - see docs/TESTING.md |
 | `"linq"` | queries over arrays, lists and `IEnumerable`s - see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq) |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |

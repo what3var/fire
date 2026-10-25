@@ -2689,9 +2689,16 @@ namespace fire.Compiler
             int line = Peek().Line;
             var result = ParseClassMemberAfterAttributes(line);
             if (attributes.Count == 0) return result;
-            if (result is not [MethodDecl method])
-                throw Error("Attributes ('[Name ...]') can only stand before a method", _tokens[Math.Max(0, _pos - 1)]);
-            return new List<Stmt> { method with { Attributes = attributes } };
+            // before a method, a field (every field of `int a, b`) or a property
+            if (result.Count == 0 || !result.All(m => m is MethodDecl or FieldDecl or PropertyDecl) || result.Count > 1 && result.Any(m => m is not FieldDecl))
+                throw Error("Attributes ('[Name ...]') can only stand before a method, a field or a property", _tokens[Math.Max(0, _pos - 1)]);
+            return result.Select(m => m switch
+            {
+                MethodDecl md => (Stmt)(md with { Attributes = attributes }),
+                FieldDecl fd => fd with { Attributes = attributes },
+                PropertyDecl pd => pd with { Attributes = attributes },
+                _ => m,
+            }).ToList();
         }
 
         private List<Stmt> ParseClassMemberAfterAttributes(int line)

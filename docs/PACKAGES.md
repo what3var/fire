@@ -79,7 +79,7 @@ A `.fpk` is a zip file with a `package.json` in its root and the files that it n
 }
 ```
 
-* `imports`: the names for `#import "name"` (letters, digits, `_`, parts may be joined by dots like `ui.docking`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time random net`).
+* `imports`: the names for `#import "name"` (letters, digits, `_`, parts may be joined by dots like `ui.docking`; not case sensitive; not one of the compiler: `print graphics windows devices io ui linq reflection time random json net`).
   A package can bring several. An import can have a **prelude**, **natives**, or both. A package that is only a prelude is allowed.
 * `requires`: other imports (of the compiler or of packages) that this one switches on, like `ui` switches on `graphics`.
 * `dependencies`: other *packages* that `ember install` installs too.
@@ -103,7 +103,7 @@ How to write a native, what crosses to the VM, prebuilt libraries and packed pro
 
 ## The standard libraries (`packages/`, `Source/`)
 
-The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
+The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `json`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
 `tracker`, `scene3d` - are ordinary **library projects** (docs/PROJECTS.md) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
 `Packages.firesln` with one project per import:
 

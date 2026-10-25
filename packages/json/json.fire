@@ -1,0 +1,133 @@
+// JSON (docs/JSON.md): objects to JSON text and back, and free JSON as JsonObject. The work is done by the runtime (__JsonCall).
+
+/// <summary>A JSON text that cannot be read (with line and column), or a value that does not fit the type it is read into.</summary>
+class JsonException : Exception {
+    construct(string message) { this.message = message }
+}
+
+/// <summary>How Json.Serialize writes.</summary>
+class JsonOptions {
+    /// <summary>Line breaks and two spaces per level (default: everything on one line).</summary>
+    bool indented
+    /// <summary>`"$type"` where the slot does not tell the class (the root, an `any` field, an object of a derived class). Off: plain JSON for other
+    /// programs - reading it back then needs the classes from the declared types (Json.Deserialize&lt;T&gt;).</summary>
+    bool typeNames
+
+    construct() {
+        this.indented = false
+        this.typeNames = true
+    }
+
+    construct(bool indented) {
+        this.indented = indented
+        this.typeNames = true
+    }
+
+    int Flags() {
+        int flags = 0
+        if (this.indented) { flags = flags + 1 }
+        if (!this.typeNames) { flags = flags + 2 }
+        return flags
+    }
+}
+
+/// <summary>A JSON object without a class (what Json.Parse gives, or an object without `$type` read into an `any` slot): its members by name, in order.</summary>
+class JsonObject {
+    any keys
+    any values
+    int count
+
+    construct() {
+        this.keys = new string[4]
+        this.values = new class[4]
+        this.count = 0
+    }
+
+    int Count() { return this.count }
+
+    int IndexOf(string key) {
+        for (int i = 0; i < this.count; i++) {
+            if (this.keys[i] == key) { return i }
+        }
+        return -1
+    }
+
+    bool Has(string key) { return this.IndexOf(key) >= 0 }
+
+    /// <summary>The value of a member (`undefined` when there is none): a number, a string, a bool, an array, a JsonObject.</summary>
+    any Get(string key) {
+        int i = this.IndexOf(key)
+        if (i < 0) { return undefined }
+        return this.values[i]
+    }
+
+    /// <summary>Sets a member (a new one goes to the end).</summary>
+    undefined Set(string key, any value) {
+        int i = this.IndexOf(key)
+        if (i >= 0) {
+            this.values[i] = value
+            return
+        }
+        if (this.count == this.keys.length) {
+            var newKeys = new string[this.count * 2]
+            var newValues = new class[this.count * 2]
+            for (int j = 0; j < this.count; j++) {
+                newKeys[j] = this.keys[j]
+                newValues[j] = this.values[j]
+            }
+            this.keys = newKeys
+            this.values = newValues
+        }
+        this.keys[this.count] = key
+        this.values[this.count] = value
+        this.count = this.count + 1
+    }
+
+    bool Remove(string key) {
+        int i = this.IndexOf(key)
+        if (i < 0) { return false }
+        for (int j = i; j < this.count - 1; j++) {
+            this.keys[j] = this.keys[j + 1]
+            this.values[j] = this.values[j + 1]
+        }
+        this.count = this.count - 1
+        this.keys[this.count] = undefined
+        this.values[this.count] = undefined
+        return true
+    }
+
+    /// <summary>The names of the members, in order.</summary>
+    any Keys() {
+        var result = new string[this.count]
+        for (int i = 0; i < this.count; i++) { result[i] = this.keys[i] }
+        return result
+    }
+}
+
+/// <summary>`Json.Serialize(value)` and `Json.Deserialize<T>(text)`; `Json.Parse(text)` for JSON without classes.</summary>
+class Json {
+    /// <summary>The value as JSON text: an object with its fields (references and cycles as `$id`/`$ref`), an array, a List, a number, a string ...</summary>
+    static string Serialize(any value) { return __JsonCall(1, value, 0) }
+
+    static string Serialize(any value, JsonOptions options) { return __JsonCall(1, value, options.Flags()) }
+
+    /// <summary>Reads JSON text into a value of type T (`Json.Deserialize<Person>(text)`): the classes come from `$type` or from the declared types.
+    /// Constructors do not run; a class with a method `OnDeserialized()` gets it called once everything is read.</summary>
+    static T Deserialize<T>(string text) {
+        var read = __JsonCall(2, text)
+        var hooks = read[1]
+        for (int i = 0; i < hooks.length; i++) { hooks[i].OnDeserialized() }
+        return read[0]
+    }
+
+    /// <summary>Like Deserialize<T>, with the class given by its name ("Person", "List<Point>").</summary>
+    static any Deserialize(string text, string typeName) {
+        var read = __JsonCall(2, text, typeName)
+        var hooks = read[1]
+        for (int i = 0; i < hooks.length; i++) { hooks[i].OnDeserialized() }
+        return read[0]
+    }
+
+    /// <summary>JSON without classes: an object is a JsonObject, an array an array, the rest numbers, strings, bools and `undefined` (null).</summary>
+    static any Parse(string text) { return __JsonCall(3, text) }
+}

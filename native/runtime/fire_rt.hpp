@@ -2329,25 +2329,24 @@ inline bool fitsTArg(Value& v, const TArg* ta) {
 }
 
 /// The type arguments of a `new` or a call that names a type parameter of the running code (`new Box<T>()`): the same list for the same arguments.
-inline TArgs internTArgs(std::initializer_list<const TArg*> items) {
+inline TArgs internTArgsN(const TArg* const* items, uint32_t n) {
     struct Entry { Entry* next; uint32_t n; const TArg* a[1]; };
     static Entry* s_head = nullptr;
-    uint32_t n = static_cast<uint32_t>(items.size());
     for (Entry* e = s_head; e; e = e->next) {
         if (e->n != n) continue;
         uint32_t i = 0;
-        for (const TArg* t : items) { if (e->a[i] != t) break; i++; }
+        while (i < n && e->a[i] == items[i]) i++;
         if (i == n) return e->a;
     }
     Entry* e = static_cast<Entry*>(std::malloc(sizeof(Entry) + (n > 0 ? n - 1 : 0) * sizeof(const TArg*)));
     if (FIRE_UNLIKELY(!e)) allocFailed();
     e->n = n;
-    uint32_t i = 0;
-    for (const TArg* t : items) e->a[i++] = t;
+    for (uint32_t i = 0; i < n; i++) e->a[i] = items[i];
     e->next = s_head;
     s_head = e;
     return e->a;
 }
+inline TArgs internTArgs(std::initializer_list<const TArg*> items) { return internTArgsN(items.begin(), static_cast<uint32_t>(items.size())); }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Exceptions (SPEC 7): throw, try/catch/finally and resume.
