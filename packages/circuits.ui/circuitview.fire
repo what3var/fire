@@ -33,9 +33,9 @@ namespace UI {
 
         /// <summary>Called with the view when the schematic was changed by the user (to save it), when the selection changes, and when an element should be
         /// edited (a double click; without onEdit the view shows its own editor).</summary>
-        lambda onChange
-        lambda onSelect
-        lambda onEdit
+        lambda<UI.CircuitView> onChange
+        lambda<UI.CircuitView> onSelect
+        lambda<Circuits.Element> onEdit
         /// <summary>A text for the status (what is under the pointer, the hint of the tool).</summary>
         string status = ""
 
