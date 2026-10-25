@@ -19144,6 +19144,56 @@ else
             """),
     }).ToArray();
 
+    // The device framework (docs/DEVICES.md): drivers of gpio, i2c and spi with their simulated devices
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Devices: DeviceManager.AddDriver/Get, GPIO-Port (ganzer Port, PinAt), I2C-Bus und Geraet an Adresse, SPI, NotSupportedException, eigener Treiber", """
+            #import "gpio"
+            #import "i2c"
+            #import "spi"
+            class Thermometer : Device {
+                construct(Driver driver) : base(driver, "thermo0") { }
+                any Read() { return 21 }
+            }
+            class ThermometerDriver : Driver {
+                construct() : base("thermo") { }
+                undefined Refresh(bool fastScan = true) {
+                    if (this.Find("thermo0") == undefined) { this.Add(new Thermometer(this)) }
+                }
+            }
+            DeviceManager.AddDriver(new GpioDriver())
+            DeviceManager.AddDriver(new I2cDriver())
+            DeviceManager.AddDriver(new SpiDriver())
+            DeviceManager.AddDriver(new ThermometerDriver())
+            DeviceManager.AddDriver(new GpioDriver())
+            foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
+            print(DeviceManager.Drivers().count)
+            any port = DeviceManager.Get("gpiosim")
+            print("port " + port.Identifier() + " " + port.Lines)
+            Gpio.Sim.Wire(0, 8)
+            port.PinAt(8).Input()
+            port.PinAt(0).Output(true)
+            print("pin8 " + port.PinAt(8).Read())
+            try { port.Write(5) } catch (NotSupportedException e) { print("write not supported") }
+            I2c.Sim.Add(0x48)
+            I2c.Sim.SetRegister(0x48, 1, 42)
+            any t = DeviceManager.Get("i2c:sim/0x48")
+            print("i2c " + t.Identifier() + " " + t.ReadRegister(1) + " " + (DeviceManager.Get("i2c:sim/72") == t))
+            var reg = new byte[1]
+            reg[0] = 1
+            t.Write(reg)
+            print("read " + t.Read(1)[0])
+            any spi = DeviceManager.Get("spi:sim")
+            Spi.Sim.Loopback()
+            print("spi " + spi.Transfer("ab".ToBytes())[1])
+            spi.WriteString("xyz")
+            print("thermo " + DeviceManager.Get("thermo:thermo0").Read() + " " + DeviceManager.Has("thermo0") + " " + DeviceManager.Has("nope"))
+            try { DeviceManager.Get("nope") } catch (DeviceNotFoundException e) { print(e.message) }
+            try { DeviceManager.Get("i2c:sim").Read() } catch (NotSupportedException e) { print(e.message) }
+            print("default " + DeviceManager.HasDefault)
+            """),
+    }).ToArray();
+
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
     {
         bool hasOpenSsl = new[] { "/usr/include/openssl/ssl.h", "/usr/local/include/openssl/ssl.h", "/opt/homebrew/include/openssl/ssl.h", "/usr/include/x86_64-linux-gnu/openssl/ssl.h" }.Any(File.Exists);
