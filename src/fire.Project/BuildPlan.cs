@@ -175,8 +175,7 @@ namespace fire.Projects
         }
 
         /// <summary>The script generated from the markup of a user interface (docs/UI_MARKUP.md); throws MarkupException when the markup is not valid.</summary>
-        public static string GenerateMarkupScript(string path, string markup) =>
-            fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), path);
+        public static string GenerateMarkupScript(string path, string markup) => fire.UI.Markup.MarkupFiles.GenerateScript(path, markup);
 
         private static ProjectSettings Merge(LoadedProject p, Workspace workspace)
         {

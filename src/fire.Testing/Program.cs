@@ -42,6 +42,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { Testin
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
@@ -14239,6 +14240,7 @@ TestingTests.Run();
 WindowManagerTests.Run();
 DialogTests.Run();
 DockingTests.Run();
+CircuitEditorTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -19821,6 +19823,101 @@ else
             var wav = filtered.ToWav()
             var back = Audio.Sound.FromWav(wav)
             print("wav " + wav.length + " bytes, " + back.Rate + " Hz, " + back.Channels + " channel, " + back.Frames + " frames")
+            """),
+        ("Circuits: Schaltplan (Elemente im Raster, Netze aus Punkten und Draehten, Speichern und Laden, Verschieben trennt, Zahlen mit Praefix)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var c = new Circuits.Circuit("rc")
+            var s = c.Schematic
+            s.Add("Source", 0, 8, 0, 0, "voltage=5V")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+            s.Add("Capacitor", 8, 0, 8, 8, "capacitance=1uF", "c1")
+            s.Add("Wire", 0, 8, 8, 8)
+            s.Add("Ground", 0, 8, 0, 12)
+            s.Add("Scope", 12, 0, 28, 8, "probe=c1")
+            c.TimeStep = 10us
+            c.Run(1ms)
+            var cap = s.Find("c1")
+            print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().count + " scope " + s.Elements()[5].scope.Count)
+            var text = s.ToText()
+            print(text)
+            var c2 = new Circuits.Circuit("copy")
+            c2.LoadSchematic(text)
+            c2.Run(1ms)
+            print("copy Vc " + H.R(c2.Schematic.Find("c1").PinVoltage(0)))
+            print(Circuits.Symbols.Number("4.7k") + " " + H.R(Circuits.Symbols.Number("10uF") * 1000000) + " " + Circuits.Symbols.Number("1meg") + " " + Circuits.Symbols.Number("5V") + " " + Circuits.Symbols.Number("1F") + " " + Circuits.Symbols.Number("x"))
+            s.Move(cap, 20, 0, 20, 8)
+            c.Run(1ms)
+            print("moved: r1 carries " + H.R(s.Find("r1").part.Current / 1mA) + " mA, version " + s.Version)
+            s.Remove(s.Find("r1"))
+            print("removed: " + s.Elements().count + " elements, " + c.Parts().count + " parts")
+            """),
+        ("Circuits: Schaltplan mit Op-Amp, Transistor, LED, Gattern und 555 (Pins wie bei Falstad)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var c = new Circuits.Circuit("amp")
+            var s = c.Schematic
+            s.Add("Rail", 0, 0, -4, 0, "voltage=0.5")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k")
+            var u = s.Add("OpAmp", 8, 2, 16, 2, "", "u1")
+            s.Add("Ground", 8, 4, 8, 8)
+            s.Add("Resistor", 8, 0, 8, -6, "resistance=10k")
+            s.Add("Wire", 8, -6, 16, -6)
+            s.Add("Wire", 16, -6, 16, 2)
+            c.Run(1ms)
+            print("op amp pins " + u.PinX(0) + "," + u.PinY(0) + " " + u.PinX(1) + "," + u.PinY(1) + " out " + H.R(u.PinVoltage(2)))
+            var d = new Circuits.Circuit("switch")
+            var t = d.Schematic
+            t.Add("Rail", 0, 0, 0, -4, "voltage=5")
+            t.Add("Resistor", 0, 0, 8, 0, "resistance=10k")
+            var q = t.Add("Transistor", 8, 0, 16, 0, "", "q1")
+            t.Add("Ground", 16, 2, 16, 6)
+            t.Add("Led", 16, -10, 16, -2, "", "led")
+            t.Add("Resistor", 16, -18, 16, -10, "resistance=330")
+            t.Add("Rail", 16, -18, 16, -22, "voltage=5")
+            d.Run(1ms)
+            Circuits.Led led = t.Find("led").part!Circuits.Led
+            print("transistor pins " + q.PinX(1) + "," + q.PinY(1) + " " + q.PinX(2) + "," + q.PinY(2) + " led " + led.IsOn + " " + Math.Round(led.Current / 1mA))
+            var g = new Circuits.Circuit("logic")
+            var l = g.Schematic
+            l.Add("LogicInput", 0, 0, -4, 0, "high=true")
+            l.Add("LogicInput", 0, 4, -4, 4, "high=true")
+            var gate = l.Add("And", 0, 2, 8, 2)
+            l.Add("LogicOutput", 8, 2, 12, 2, "", "y")
+            var tm = l.Add("Timer555", 20, 0, 32, 0)
+            g.Run(50us)
+            print("and pins " + gate.PinX(0) + "," + gate.PinY(0) + " " + gate.PinX(1) + "," + gate.PinY(1) + " y " + H.R(l.Find("y").PinVoltage(0)) + " 555 pins " + tm.PinCount + " '" + tm.Error + "'")
+            var bad = l.Add("Diode", 40, 0, 48, 0, "model=nosuch")
+            print("bad model: " + bad.Error)
+            """),
+        ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
+            {
+              "biscuit": 1,
+              "timeStep": "10us",
+              "parameters": {"gain": "10"},
+              "elements": [
+                {"type": "Rail", "name": "vin", "from": [0, 0], "to": [-4, 0], "voltage": "0.5"},
+                {"type": "Resistor", "name": "rin", "from": [0, 0], "to": [8, 0], "resistance": "1k"},
+                {"type": "OpAmp", "name": "u1", "from": [8, 2], "to": [16, 2]},
+                {"type": "Ground", "from": [8, 4], "to": [8, 8]},
+                {"type": "Resistor", "name": "rf", "from": [8, 0], "to": [8, -6], "resistance": "gain*1k"},
+                {"type": "Wire", "from": [8, -6], "to": [16, -6]},
+                {"type": "Wire", "from": [16, -6], "to": [16, 2]},
+                {"type": "LogicOutput", "name": "out", "from": [16, 2], "to": [20, 2]},
+                {"type": "Scope", "name": "sc", "from": [24, -6], "to": [40, 4], "probe": "out"}
+              ]
+            }
+            """, "Amp.biscuit") + """
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var amp = new Amp()
+            amp.Run(1ms)
+            print("out " + H.R(amp.out.PinVoltage(0)) + " rf " + amp.rf.Resistance + " scope " + H.R(amp.sc.Last("y")))
+            amp.Parameter("gain", 4)
+            amp.Run(1ms)
+            print("gain 4: out " + H.R(amp.out.PinVoltage(0)) + " rf " + amp.rf.Resistance)
+            amp.vin.Level = 1V
+            amp.Run(1ms)
+            print("vin 1: " + H.R(amp.out.PinVoltage(0)))
             """),
     }).ToArray();
 

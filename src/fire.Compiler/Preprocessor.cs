@@ -304,10 +304,10 @@ namespace fire.Compiler
                 throw new PreprocessorException($"'{fullPath}' could not be read: {ex.Message}", ex);
             }
 
-            // a markup file of a user interface (docs/UI_MARKUP.md) is included as the script generated from it
-            if (string.Equals(Path.GetExtension(fullPath), ".fxml", StringComparison.OrdinalIgnoreCase))
+            // a markup file of a user interface (docs/UI_MARKUP.md) or a schematic (`.biscuit`, docs/CIRCUITS.md) is included as the script generated from it
+            if (fire.UI.Markup.MarkupFiles.IsGenerated(fullPath))
             {
-                try { includedSource = fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(includedSource), fullPath); }
+                try { includedSource = fire.UI.Markup.MarkupFiles.GenerateScript(fullPath, includedSource); }
                 catch (fire.UI.Markup.MarkupException ex) { throw new PreprocessorException($"'{Path.GetFileName(fullPath)}': {ex.Message}", ex); }
             }
 

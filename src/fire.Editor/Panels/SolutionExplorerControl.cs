@@ -358,6 +358,7 @@ namespace fire.Editor
             ("Fire Class", "t:Fire Class"),
             ("FXML Window", "t:FXML Window"),
             ("FXML View", "t:FXML View"),
+            ("Circuit", "t:Circuit"),
             null,
             ("Markdown Document...", "markdown"),
             ("Raster Image...", "image"),

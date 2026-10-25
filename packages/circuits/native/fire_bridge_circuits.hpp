@@ -976,13 +976,14 @@ inline Value Compile(Value h, Value time) {
     for (int i = 0; i < p->nodes; i++)
         if (p->find(i + 1) != ground) p->add(i, i, 1e-12);
     for (int i = 0; i < n; i++) p->pattern[(size_t)i * n + i] = 1;
-    // the pivots are chosen with the parts that are not linear standing in as a conductance of 1 mS on their entries
+    // the pivots are chosen with the parts that are not linear standing in as conductances of 1 mS between their terminals and from each terminal to
+    // ground (without the ground ties, an op amp whose input is only fed by a current source would make the stand-in singular)
     std::vector<double> a = p->g;
     for (const Nonlinear& e : p->nonlinear)
         for (int x = 0; x < e.terminals; x++)
             for (int y = 0; y < e.terminals; y++) {
                 int r = e.node[x], c = e.node[y];
-                if (r >= 0 && c >= 0) a[(size_t)r * n + c] += x == y ? 1e-3 : -1e-3;
+                if (r >= 0 && c >= 0) a[(size_t)r * n + c] += x == y ? 1e-3 * e.terminals : -1e-3;
             }
     const char* unsolvable = "The circuit cannot be solved (a loop of voltage sources, or a source without a path).";
     if (!order(p, a)) { lastError() = unsolvable; return Bool(false); }

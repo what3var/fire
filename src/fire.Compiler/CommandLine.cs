@@ -75,6 +75,8 @@ namespace fire.Compiler
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
               fire.Compiler ui    <file.fxml> [-o <file>]
+              fire.Compiler biscuit <file.biscuit> [-o <file>]
+              fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
               fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64]
 
@@ -97,6 +99,8 @@ namespace fire.Compiler
                     project in the current folder (all projects of a solution, or -p <name>). The files in testing/ of a project belong to its tests; the top level of a program does not run.
                     --filter A.B,C runs only these tests (Class.Method, or a class for all its tests; * for any text). Exit code 0 when every test passed, 1 otherwise.
             ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
+            biscuit writes the script generated from the schematic of a circuit (docs/CIRCUITS.md) - `#include "x.biscuit"` does it on the fly as well.
+            falstad converts a circuit of Paul Falstad's simulator (File > Export As Text) into a schematic (.biscuit); what the package circuits has not got is named.
 
             A project (`.fireproj`) or a solution (`.firesln`, docs/PROJECTS.md) instead of the files: run runs the project (of a solution: the startup project, or -p <name>), build builds it -
             a program like above (the settings of the project decide: engine, target, mode, output), a library as a package (`name-version.fpk`, in the folder of -o, the project's `output` or `bin`).

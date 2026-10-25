@@ -18,7 +18,8 @@ namespace fire.Editor
         private static readonly FilePickerFileType PacketLogFiles = new("Packet logs") { Patterns = new[] { "*.fplog" } };
         private static readonly FilePickerFileType PictureFiles = new("Pictures (PNG, BMP)") { Patterns = new[] { "*.png", "*.bmp" } };
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
-        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
+        private static readonly FilePickerFileType CircuitFiles = new("Circuit") { Patterns = new[] { "*.biscuit" } };
+        private static readonly FilePickerFileType AllDocuments = new("All documents") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic", "*.md", "*.markdown", "*.fplog", "*.fxml", "*.biscuit", "*.h", "*.hpp", "*.cpp", "*.c", "*.txt", "*.png", "*.bmp", "*.gif", "*.jpg", "*" + FireProject.Extension, "*" + FireSolution.Extension } };
 
         private static string SafeFileName(string name) =>
             string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c == ' ' ? '-' : c));
@@ -197,7 +198,7 @@ namespace fire.Editor
 
         private async void Open_Click(object? sender, RoutedEventArgs e)
         {
-            var files = await PickFiles("Open", AllDocuments, ScriptFiles, MarkdownFiles, UiMarkupFiles, PacketLogFiles, AllFilesType);
+            var files = await PickFiles("Open", AllDocuments, ScriptFiles, MarkdownFiles, UiMarkupFiles, CircuitFiles, PacketLogFiles, AllFilesType);
             foreach (var file in files) OpenFile(file);
         }
 
@@ -300,6 +301,7 @@ namespace fire.Editor
             {
                 DocumentKind.Markdown => await PickSavePath("Save", suggested, "md", MarkdownFiles),
                 DocumentKind.UiMarkup => await PickSavePath("Save", suggested, "fxml", UiMarkupFiles),
+                DocumentKind.Circuit => await PickSavePath("Save", suggested, "biscuit", CircuitFiles),
                 DocumentKind.Text => await PickSavePath("Save", suggested, "txt"),
                 DocumentKind.Pixel => await PickSavePath("Save picture (PNG or BMP)", suggested, "png", PictureFiles),
                 DocumentKind.Hex => await PickSavePath("Save", suggested, "bin"),

@@ -419,7 +419,7 @@ namespace fire.Editor
                     string name = values.Expand(rel);
                     string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, rel.Replace('/', Path.DirectorySeparatorChar))));
                     string ext = Path.GetExtension(name).ToLowerInvariant();
-                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".biscuit" => DocumentKind.Circuit, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
                     CreateDocument(kind, text, null, untitledName: Path.GetFileName(name));
                 }
             }
@@ -477,7 +477,7 @@ namespace fire.Editor
         private async Task AddExistingFile(LoadedProject? project)
         {
             if (project == null) return;
-            foreach (var file in await PickFiles("Add Existing File", ScriptFiles, UiMarkupFiles))
+            foreach (var file in await PickFiles("Add Existing File", ScriptFiles, UiMarkupFiles, CircuitFiles))
             {
                 try { _workspace.AddFile(project, file); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, "Add Existing File"); }

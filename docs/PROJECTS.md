@@ -31,13 +31,13 @@ compiler (`fire run|build x.fireproj`), by the editor (spark) and by the tests.
 ```
 
 **Files.** `files` are paths and patterns relative to the project file (`*` any characters but `/`, `**` any folders, `?`, `{a,b}`); a pattern matches in name order, a path
-keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) and every UI markup file (`*.fxml`) below its folder - except `bin`, `obj`, hidden
+keeps its place. Without `files` the project takes every fire file (`*.fire`, `*.script`, `*.fi`, `*.fic`) every UI markup file (`*.fxml`) and every schematic of a circuit (`*.biscuit`, docs/CIRCUITS.md) below its folder - except `bin`, `obj`, hidden
 folders, the folder `templates/` (what the project offers as templates), the folder `testing/` (its tests: only `forge test` and the Test Explorer of spark compile them, see docs/TESTING.md) and the
 folders of *other* projects. A program runs its files one after the other as one program (top-level code in the order of the files), so the **entry file is put
 last**: what the other files declare is known by then.
 
 **The code of a project is included on its own** - for the build and for the editor (colours of classes, completion, tooltips, "go to definition", the errors that are underlined). No
-`#include` is needed to use what another file of the project declares. A **markup file** (`.fxml`, docs/UI_MARKUP.md) of the project counts as the script that is generated from it
+`#include` is needed to use what another file of the project declares. A **markup file** (`.fxml`, docs/UI_MARKUP.md) or a **schematic** (`.biscuit`, docs/CIRCUITS.md) of the project counts as the script that is generated from it
 (markup files come first, so that their classes are there before the scripts use them). An `#include` of a file that is part of the project adds nothing (it is there anyway), so nothing
 is declared twice. Files that are not code - pictures, data, C++ sources - are the **content** of the project: they live in its folder (shown by the editor, not compiled), see below.
 

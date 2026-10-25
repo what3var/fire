@@ -413,7 +413,7 @@ static class TypeTests
         }
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
-        foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
+        foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {
             Environment.SetEnvironmentVariable("FIRE_TYPECHECK_ALL", "1");
             try { Check($"Bibliothek {import}: strikt typgeprueft ohne Befund", Run($"#import \"{import}\"\nprint(1)", TypeCheckMode.Strict) == "|1"); }

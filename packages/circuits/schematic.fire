@@ -1,0 +1,970 @@
+#import "json"
+
+// Schematics (docs/CIRCUITS.md, "Schaltpläne"): a circuit drawn on a grid, the way Paul Falstad's simulator does it. Every element lies between two points of the
+// grid (a resistor from one end to the other, a transistor from its base to the line of collector and emitter); pins at the same point are connected, wires
+// connect their two ends. The schematic makes the parts of its circuit from the elements and connects their ports; a `.biscuit` file is a schematic as JSON.
+namespace Circuits {
+    /// <summary>One thing on a schematic: a part, a wire, a label, a scope, a text. It lies between (x1, y1) and (x2, y2) on the grid; its properties are texts
+    /// ("resistance" = "4.7k").</summary>
+    class Element {
+        string type
+        string name
+        int x1
+        int y1
+        int x2
+        int y2
+        List keys
+        List values
+        // made by the schematic: the part (it belongs to the circuit), the scope of a Scope element (it belongs to the element)
+        Part part
+        Circuits.Scope scope
+        // the points of the pins (x, y, x, y, ...), the port of the part at each pin (undefined: none), ports that go to ground
+        List pins
+        List pinPorts
+        List groundPorts
+        // a port on the node of each pin (to read its voltage; undefined: the pin is connected to nothing that has a port)
+        List nets
+        bool dirty = true
+        string error = ""
+
+        construct(string type, int x1, int y1, int x2, int y2) {
+            this.type = type
+            this.name = ""
+            this.x1 = x1
+            this.y1 = y1
+            this.x2 = x2
+            this.y2 = y2
+            this.keys = new List()
+            this.values = new List()
+            this.pins = new List()
+            this.pinPorts = new List()
+            this.groundPorts = new List()
+            this.nets = new List()
+            this.part = undefined
+            this.scope = undefined
+        }
+
+        string Type { get { return this.type } }
+        string Name { get { return this.name } }
+        Part Part { get { return this.part } }
+        /// <summary>Why the element has no part ("" if all is well).</summary>
+        string Error { get { return this.error } }
+
+        bool Has(string key) { return this.keys.IndexOf(key) >= 0 }
+
+        /// <summary>The text of a property ("" if it has none).</summary>
+        string Get(string key) {
+            var i = this.keys.IndexOf(key)
+            if (i < 0) { return "" }
+            return this.values[i]
+        }
+
+        /// <summary>Sets a property (the schematic makes the part again when it applies its changes).</summary>
+        undefined Set(string key, string value) {
+            var i = this.keys.IndexOf(key)
+            if (i < 0) {
+                this.keys.Add(key)
+                this.values.Add(value)
+            } else {
+                if (this.values[i] == value) { return }
+                this.values[i] = value
+            }
+            this.dirty = true
+        }
+
+        bool Flag(string key) {
+            var v = this.Get(key).ToLower()
+            return v == "true" || v == "1" || v == "yes" || v == "on"
+        }
+
+        /// <summary>The pins: the number of them, and where pin i is.</summary>
+        int PinCount { get { return this.pins.count / 2 } }
+        int PinX(int i) { return this.pins[i * 2] }
+        int PinY(int i) { return this.pins[i * 2 + 1] }
+
+        /// <summary>The voltage at pin i against ground (volts as a plain number).</summary>
+        float PinVoltage(int i) {
+            if (i >= this.nets.count) { return 0.0 }
+            Circuits.Port p = this.nets[i]
+            if (p == undefined) { return 0.0 }
+            return p.Raw()
+        }
+
+        /// <summary>The element as one line of the file (JSON).</summary>
+        string ToJson() {
+            var text = "{\"type\": " + Circuits.Schematic.Quote(this.type)
+            if (this.name != "") { text = text + ", \"name\": " + Circuits.Schematic.Quote(this.name) }
+            text = text + ", \"from\": [" + this.x1 + ", " + this.y1 + "], \"to\": [" + this.x2 + ", " + this.y2 + "]"
+            // only what differs from the defaults of the kind
+            var defaults = Circuits.Symbols.Make(this.type, 0, 0, 0, 0)
+            for (int i = 0; i < this.keys.count; i++) {
+                if (defaults.Get(this.keys[i]) != this.values[i] || !defaults.Has(this.keys[i])) {
+                    text = text + ", " + Circuits.Schematic.Quote(this.keys[i]) + ": " + Circuits.Schematic.Quote(this.values[i])
+                }
+            }
+            return text + "}"
+        }
+    }
+
+    /// <summary>The kinds of elements: their pins on the grid, their properties and the parts they make.</summary>
+    class Symbols {
+        /// <summary>All kinds, one per line: category|type|properties. The properties are `name:kind=default` separated by ';'; the kind is a unit (Ohm, F, H,
+        /// V, A, Hz, s or empty for a plain number), `bool`, `int`, `text`, `choice:a/b/c` or `model:NPN/PNP` (a model of these kinds).</summary>
+        static List Catalog() {
+            var l = new List()
+            l.Add("Basic|Wire|")
+            l.Add("Basic|Ground|")
+            l.Add("Basic|Resistor|resistance:Ohm=1k")
+            l.Add("Basic|Capacitor|capacitance:F=10u;initial:V=0")
+            l.Add("Basic|Inductor|inductance:H=1m;initial:A=0")
+            l.Add("Basic|Switch|closed:bool=false;momentary:bool=false")
+            l.Add("Sources|Source|waveform:choice:dc/sine/square=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
+            l.Add("Sources|Rail|waveform:choice:dc/sine/square=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
+            l.Add("Sources|CurrentSource|current:A=10m")
+            l.Add("Sources|AudioInput|amplitude:V=1")
+            l.Add("Sources|LogicInput|high:bool=false;supply:V=5")
+            l.Add("Semiconductors|Diode|model:model:D=1N4148")
+            l.Add("Semiconductors|Zener|voltage:V=5.6")
+            l.Add("Semiconductors|Led|color:choice:red/yellow/green/blue/white=red;rated:A=20m")
+            l.Add("Semiconductors|Transistor|model:model:NPN/PNP=2N3904;flip:bool=false")
+            l.Add("Semiconductors|Mosfet|model:model:NMOS/PMOS=2N7000;flip:bool=false")
+            l.Add("Semiconductors|Formula|formula:text=V/1k;parameters:text=")
+            l.Add("ICs|OpAmp|model:model:OPAMP=opamp;flip:bool=false")
+            l.Add("ICs|Comparator|supply:V=5;flip:bool=false")
+            l.Add("Logic|And|inputs:int=2;supply:V=5")
+            l.Add("Logic|Nand|inputs:int=2;supply:V=5")
+            l.Add("Logic|Or|inputs:int=2;supply:V=5")
+            l.Add("Logic|Nor|inputs:int=2;supply:V=5")
+            l.Add("Logic|Xor|inputs:int=2;supply:V=5")
+            l.Add("Logic|Xnor|inputs:int=2;supply:V=5")
+            l.Add("Logic|Not|supply:V=5")
+            l.Add("Logic|Buffer|supply:V=5")
+            l.Add("Logic|DFlipFlop|supply:V=5")
+            l.Add("Logic|SRLatch|supply:V=5;reset:bool=false")
+            l.Add("Logic|Counter|bits:int=4;supply:V=5")
+            l.Add("ICs|Timer555|supply:V=5")
+            l.Add("Display|LogicOutput|threshold:V=2.5")
+            l.Add("Display|Probe|")
+            l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current=voltage;range:V=0")
+            l.Add("Display|Label|text:text=A")
+            l.Add("Display|Pin|port:text=in")
+            l.Add("Display|Text|text:text=Text")
+            return l
+        }
+
+        /// <summary>The line of the catalog of a kind ("" if there is none).</summary>
+        static string Entry(string type) {
+            foreach (line in Circuits.Symbols.Catalog()) {
+                string s = line
+                var parts = s.Split("|")
+                if (parts[1] == type) { return s }
+            }
+            return ""
+        }
+
+        static bool Known(string type) { return Circuits.Symbols.Entry(type) != "" }
+
+        /// <summary>A new element of a kind with the default properties.</summary>
+        static Circuits.Element Make(string type, int x1, int y1, int x2, int y2) {
+            var entry = Circuits.Symbols.Entry(type)
+            if (entry == "") { throw new ArgumentException("There is no element '" + type + "' (see Circuits.Symbols.Catalog()).") }
+            var e = new Circuits.Element(type, x1, y1, x2, y2)
+            var props = entry.Split("|")[2]
+            if (props != "") {
+                foreach (p in props.Split(";")) {
+                    string prop = p
+                    var eq = prop.IndexOf("=")
+                    var colon = prop.IndexOf(":")
+                    e.keys.Add(prop.Substring(0, colon))
+                    e.values.Add(prop.Substring(eq + 1))
+                }
+            }
+            return e
+        }
+
+        /// <summary>How an element is placed by default: the distance from its first point to its second (dx, dy).</summary>
+        static int DefaultLength(string type) {
+            if (type == "Ground" || type == "Rail" || type == "LogicInput" || type == "LogicOutput" || type == "Label" || type == "Pin") { return 4 }
+            if (type == "Text") { return 0 }
+            if (type == "Scope") { return 16 }
+            if (type == "DFlipFlop" || type == "SRLatch" || type == "Counter" || type == "Timer555") { return 12 }
+            return 8
+        }
+
+        /// <summary>Is it a chip (a box with pins on both sides, whose second point only says how wide it is)?</summary>
+        static bool IsChip(string type) { return type == "DFlipFlop" || type == "SRLatch" || type == "Counter" || type == "Timer555" }
+
+        /// <summary>The names of the pins of a chip: left side, then right side ("D,CLK|Q,/Q").</summary>
+        static string ChipPins(Circuits.Element e) {
+            if (e.type == "DFlipFlop") { return "D,CLK|Q,/Q" }
+            if (e.type == "SRLatch") {
+                if (e.Flag("reset")) { return "S,R,RST|Q,/Q" }
+                return "S,R|Q,/Q"
+            }
+            if (e.type == "Timer555") { return "TRG,THR,RST,CTL|OUT,DIS" }
+            if (e.type == "Counter") {
+                var n = Circuits.Symbols.Bits(e)
+                var right = ""
+                for (int i = 0; i < n; i++) {
+                    if (i > 0) { right = right + "," }
+                    right = right + "Q" + i
+                }
+                return "CLK|" + right
+            }
+            return "|"
+        }
+
+        static int Bits(Circuits.Element e) {
+            var n = e.Get("bits").TryToInt()
+            if (n == undefined || n < 1) { return 4 }
+            if (n > 16) { return 16 }
+            return n
+        }
+
+        static int Inputs(Circuits.Element e) {
+            var n = e.Get("inputs").TryToInt()
+            if (n == undefined || n < 2) { return 2 }
+            if (n > 8) { return 8 }
+            return n
+        }
+
+        // sign as in Falstad's simulator: of dy, or of dx for a horizontal element
+        static int Dsign(Circuits.Element e) {
+            var dx = e.x2 - e.x1
+            var dy = e.y2 - e.y1
+            if (dy == 0) {
+                if (dx < 0) { return -1 }
+                return 1
+            }
+            if (dy < 0) { return -1 }
+            return 1
+        }
+
+        // a point at fraction f of the way from (x1, y1) to (x2, y2), moved g grid units sideways (to the right of the direction for g > 0)
+        static undefined Interp(Circuits.Element e, float f, float g, List into) {
+            float dx = e.x2 - e.x1
+            float dy = e.y2 - e.y1
+            var len = Math.Sqrt(dx * dx + dy * dy)
+            var px = 0.0
+            var py = 0.0
+            if (len > 0.0) {
+                px = dy / len
+                py = -dx / len
+            }
+            into.Add(Math.Floor(e.x1 + dx * f + g * px + 0.48)!int)
+            into.Add(Math.Floor(e.y1 + dy * f + g * py + 0.48)!int)
+        }
+
+        /// <summary>Works out where the pins of an element are (into e.pins).</summary>
+        static undefined Pins(Circuits.Element e) {
+            e.pins.Clear()
+            var t = e.type
+            if (t == "Text" || t == "Scope") { return }
+            if (t == "Ground" || t == "Rail" || t == "LogicInput" || t == "LogicOutput" || t == "Label" || t == "Pin") {
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                return
+            }
+            if (t == "Transistor") {
+                // the base at the first point; collector and emitter 2 units to the sides of the second (as in Falstad: their order depends on direction, flip and PNP)
+                var hs = 2 * Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { hs = -hs }
+                if (Circuits.Symbols.IsPnp(e)) { hs = -hs }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0, hs, e.pins)
+                Circuits.Symbols.Interp(e, 1.0, -hs, e.pins)
+                return
+            }
+            if (t == "Mosfet") {
+                // the gate at the first point; source and drain to the sides of the second
+                var hs = 2 * Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { hs = -hs }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0, -hs, e.pins)
+                Circuits.Symbols.Interp(e, 1.0, hs, e.pins)
+                return
+            }
+            if (t == "OpAmp" || t == "Comparator") {
+                // inverting and non-inverting input to the sides of the first point, the output at the second
+                var hs = 2 * Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { hs = -hs }
+                Circuits.Symbols.Interp(e, 0.0, hs, e.pins)
+                Circuits.Symbols.Interp(e, 0.0, -hs, e.pins)
+                e.pins.Add(e.x2)
+                e.pins.Add(e.y2)
+                return
+            }
+            if (t == "And" || t == "Nand" || t == "Or" || t == "Nor" || t == "Xor" || t == "Xnor") {
+                var n = Circuits.Symbols.Inputs(e)
+                var i0 = -(n / 2)
+                for (int i = 0; i < n; i++) {
+                    if (i0 == 0 && n % 2 == 0) { i0 = i0 + 1 }
+                    Circuits.Symbols.Interp(e, 0.0, 2.0 * i0, e.pins)
+                    i0 = i0 + 1
+                }
+                e.pins.Add(e.x2)
+                e.pins.Add(e.y2)
+                return
+            }
+            if (Circuits.Symbols.IsChip(t)) {
+                // a box: the pins of the left side go down from the first point, those of the right side from the point `width` to the right
+                var sides = Circuits.Symbols.ChipPins(e).Split("|")
+                var width = Circuits.Symbols.ChipWidth(e)
+                var left = Circuits.Symbols.Names(sides[0])
+                var right = Circuits.Symbols.Names(sides[1])
+                for (int i = 0; i < left.length; i++) {
+                    e.pins.Add(e.x1)
+                    e.pins.Add(e.y1 + i * 2)
+                }
+                for (int i = 0; i < right.length; i++) {
+                    e.pins.Add(e.x1 + width)
+                    e.pins.Add(e.y1 + i * 2)
+                }
+                return
+            }
+            // everything else has its two pins at its two points
+            e.pins.Add(e.x1)
+            e.pins.Add(e.y1)
+            e.pins.Add(e.x2)
+            e.pins.Add(e.y2)
+        }
+
+        static int ChipWidth(Circuits.Element e) {
+            var w = e.x2 - e.x1
+            if (w < 0) { w = -w }
+            if (w < 4) { return 12 }
+            return w
+        }
+
+        static any Names(string list) {
+            if (list == "") { return new string[0] }
+            return list.Split(",")
+        }
+
+        static bool IsPnp(Circuits.Element e) {
+            var m = e.Get("model")
+            if (m == "" || !Circuits.Models.Has(m)) { return false }
+            return Circuits.Models.Get(m).kind == "PNP"
+        }
+
+        /// <summary>A value of a property: a number with the prefixes f p n u µ m k M G T and a unit after it ("4.7kOhm", "10uF", "1meg"), or an expression of
+        /// the parameters of the circuit ("2*R").</summary>
+        static float Value(Circuits.Element e, string key, Circuits.Circuit circuit) {
+            var text = e.Get(key)
+            var v = Circuits.Symbols.Number(text)
+            if (v != undefined) { return v }
+            if (circuit != undefined) { return circuit.Value(Circuits.Symbols.Expand(text)) }
+            throw new ArgumentException("'" + text + "' is not a number.")
+        }
+
+        /// <summary>An expression with the numbers in it written out ("gain*1k" is "gain*1000"; "4.7kOhm" is "4700").</summary>
+        static string Expand(string text) {
+            var r = ""
+            var i = 0
+            var n = text.Length
+            while (i < n) {
+                var c = text.CharAt(i)
+                var startsNumber = c.IsDigit() || (c == '.' && i + 1 < n && text.CharAt(i + 1).IsDigit())
+                var afterName = i > 0 && (text.CharAt(i - 1).IsLetterOrDigit() || text.CharAt(i - 1) == '_')
+                if (startsNumber && !afterName) {
+                    var j = i
+                    while (j < n && (text.CharAt(j).IsDigit() || text.CharAt(j) == '.')) { j = j + 1 }
+                    var k = j
+                    while (k < n && (text.CharAt(k).IsLetter() || text.CharAt(k) == 'µ' || text.CharAt(k) == 'Ω')) { k = k + 1 }
+                    var v = Circuits.Symbols.Number(text.Substring(i, k - i))
+                    if (v != undefined && k > j) {
+                        r = r + v
+                        i = k
+                    } else {
+                        r = r + text.Substring(i, j - i)
+                        i = j
+                    }
+                } else {
+                    r = r + c
+                    i = i + 1
+                }
+            }
+            return r
+        }
+
+        /// <summary>A number with SI prefix and unit ("4.7k", "10uF", "2.2µH", "1meg", "-5V"); undefined if the text is not one.</summary>
+        static any Number(string text) {
+            var s = text.Trim()
+            if (s == "") { return undefined }
+            // the longest start that is a number
+            var end = 0
+            var n = s.Length
+            while (end < n) {
+                var c = s.CharAt(end)
+                if (c.IsDigit() || c == '.' || c == '-' || c == '+') { end = end + 1 }
+                else {
+                    if ((c == 'e' || c == 'E') && end + 1 < n && (s.CharAt(end + 1).IsDigit() || s.CharAt(end + 1) == '-' || s.CharAt(end + 1) == '+')) { end = end + 2 } else { break }
+                }
+            }
+            if (end == 0) { return undefined }
+            var number = s.Substring(0, end).TryToFloat()
+            if (number == undefined) { return undefined }
+            float v = number
+            var rest = s.Substring(end).Trim()
+            if (rest == "") { return v }
+            var lower = rest.ToLower()
+            if (lower.StartsWith("meg")) { return v * 1000000.0 }
+            var p = rest.CharAt(0)
+            var factor = 1.0
+            var prefixed = true
+            if (p == 'f') { factor = 0.000000000000001 }
+            else if (p == 'p') { factor = 0.000000000001 }
+            else if (p == 'n') { factor = 0.000000001 }
+            else if (p == 'u' || p == 'µ' || p == 'μ') { factor = 0.000001 }
+            else if (p == 'm') { factor = 0.001 }
+            else if (p == 'k' || p == 'K') { factor = 1000.0 }
+            else if (p == 'M') { factor = 1000000.0 }
+            else if (p == 'G') { factor = 1000000000.0 }
+            else if (p == 'T') { factor = 1000000000000.0 }
+            else { prefixed = false }
+            var unit = rest
+            if (prefixed) { unit = rest.Substring(1) }
+            // what is left must be a unit (or nothing): "F" alone is farad, not femto
+            if (!Circuits.Symbols.IsUnit(unit)) {
+                if (prefixed && Circuits.Symbols.IsUnit(rest)) { return v }
+                return undefined
+            }
+            return v * factor
+        }
+
+        static bool IsUnit(string u) {
+            var s = u.Trim()
+            return s == "" || s == "V" || s == "A" || s == "Ohm" || s == "ohm" || s == "Ω" || s == "R" || s == "F" || s == "H" || s == "Hz" || s == "s" || s == "W"
+        }
+
+        /// <summary>Makes the part of an element (into e.part, e.pinPorts, e.groundPorts; undefined for elements without one).</summary>
+        static undefined Create(Circuits.Element e, Circuits.Circuit c) {
+            e.pinPorts.Clear()
+            e.groundPorts.Clear()
+            e.part = undefined
+            var t = e.type
+            Part part = undefined
+            if (t == "Resistor") { part = new Circuits.Resistor(Circuits.Symbols.Value(e, "resistance", c)) }
+            else if (t == "Capacitor") { part = new Circuits.Capacitor(Circuits.Symbols.Value(e, "capacitance", c), Circuits.Symbols.Value(e, "initial", c)) }
+            else if (t == "Inductor") { part = new Circuits.Inductor(Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "initial", c)) }
+            else if (t == "Switch") { part = new Circuits.Switch(e.Flag("closed")) }
+            else if (t == "Source" || t == "Rail") { part = Circuits.Symbols.MakeSource(e, c) }
+            else if (t == "CurrentSource") { part = new Circuits.CurrentSource(Circuits.Symbols.Value(e, "current", c)) }
+            else if (t == "AudioInput") { part = new Circuits.AudioInput(Circuits.Symbols.Value(e, "amplitude", c)) }
+            else if (t == "LogicInput") { part = new Circuits.LogicInput(e.Flag("high"), Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "Diode") { part = new Circuits.Diode(e.Get("model")) }
+            else if (t == "Zener") { part = new Circuits.Zener(Circuits.Symbols.Value(e, "voltage", c)) }
+            else if (t == "Led") { part = new Circuits.Led(e.Get("color"), Circuits.Symbols.Value(e, "rated", c)) }
+            else if (t == "Formula") { part = new Circuits.Formula(e.Get("formula"), e.Get("parameters")) }
+            else if (t == "Transistor") { part = new Circuits.Transistor(e.Get("model")) }
+            else if (t == "Mosfet") { part = new Circuits.Mosfet(e.Get("model")) }
+            else if (t == "OpAmp") { part = new Circuits.OpAmp(e.Get("model")) }
+            else if (t == "Comparator") { part = new Circuits.Comparator(Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "And" || t == "Nand" || t == "Or" || t == "Nor" || t == "Xor" || t == "Xnor") {
+                part = new Circuits.Gate(t, Circuits.Symbols.Inputs(e), Circuits.Symbols.Value(e, "supply", c))
+            }
+            else if (t == "Not" || t == "Buffer") { part = new Circuits.Gate(t, 1, Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "DFlipFlop") { part = new Circuits.FlipFlop(Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "SRLatch") { part = new Circuits.SRLatch(Circuits.Symbols.Value(e, "supply", c), e.Flag("reset")) }
+            else if (t == "Timer555") { part = new Circuits.Timer555(Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "Counter") { part = new Circuits.Counter(Circuits.Symbols.Bits(e), Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "Ground") { part = new Circuits.Ground() }
+            if (part == undefined) {
+                // no part: a pin of its own for every pin (wires, labels, displays)
+                for (int i = 0; i < e.pins.count / 2; i++) { e.pinPorts.Add(undefined) }
+                return
+            }
+            if (e.name != "") { part.name = e.name }
+            c.Add(part)
+            e.part = part
+            var ports = part.Ports()
+            if (t == "Source") {
+                // from the first point (-) to the second (+), as in Falstad
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[0])
+            } else if (t == "Rail" || t == "LogicInput") {
+                e.pinPorts.Add(ports[0])
+                e.groundPorts.Add(ports[1])
+            } else if (t == "Transistor") {
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[2])
+            } else if (t == "Mosfet") {
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[0])
+            } else if (t == "OpAmp" || t == "Comparator") {
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[2])
+            } else if (t == "Timer555") {
+                // left TRG THR RST CTL, right OUT DIS; the ports are trigger, threshold, discharge, output, control, reset
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[5])
+                e.pinPorts.Add(ports[4])
+                e.pinPorts.Add(ports[3])
+                e.pinPorts.Add(ports[2])
+            } else {
+                foreach (p in ports) { e.pinPorts.Add(p) }
+            }
+            while (e.pinPorts.count < e.pins.count / 2) { e.pinPorts.Add(undefined) }
+        }
+
+        static Part MakeSource(Circuits.Element e, Circuits.Circuit c) {
+            var w = e.Get("waveform").ToLower()
+            var v = Circuits.Symbols.Value(e, "voltage", c)
+            if (w == "sine") {
+                return new Circuits.SineSource(v, Circuits.Symbols.Value(e, "frequency", c), Circuits.Symbols.Value(e, "offset", c), Circuits.Symbols.Value(e, "phase", c))
+            }
+            if (w == "square") {
+                return new Circuits.SquareSource(v, Circuits.Symbols.Value(e, "frequency", c), Circuits.Symbols.Value(e, "offset", c), Circuits.Symbols.Value(e, "duty", c))
+            }
+            return new Circuits.VoltageSource(v)
+        }
+    }
+
+    /// <summary>A circuit as a drawing: elements on a grid (circuit.Schematic(), or a `.biscuit` file). Every change is applied at once: the parts of changed
+    /// elements are made again, and when something moved, all ports are connected again from the drawing.</summary>
+    class Schematic {
+        Circuits.Circuit circuit
+        List elements
+        string className = ""
+        string namespaceName = ""
+        // counts the changes (an editor saves when it moved on)
+        int version = 0
+        bool reconnect = true
+        bool applying = false
+
+        construct(Circuits.Circuit circuit) {
+            this.circuit = circuit
+            this.elements = new List()
+        }
+
+        List Elements() { return this.elements }
+        Circuits.Circuit Circuit() { return this.circuit }
+        int Version { get { return this.version } }
+
+        /// <summary>Adds an element of a kind between two points of the grid, with properties "key=value;key=value" over the defaults. Returns it.</summary>
+        Circuits.Element Add(string type, int x1, int y1, int x2, int y2, string properties = "", string name = "") {
+            var e = Circuits.Symbols.Make(type, x1, y1, x2, y2)
+            e.name = name
+            Circuits.Schematic.SetAll(e, properties)
+            this.elements.Add(take e)
+            var added = this.elements[this.elements.count - 1]
+            this.Changed(true)
+            return added
+        }
+
+        static undefined SetAll(Circuits.Element e, string properties) {
+            if (properties == "") { return }
+            foreach (p in properties.Split(";")) {
+                string prop = p
+                var eq = prop.IndexOf("=")
+                if (eq > 0) { e.Set(prop.Substring(0, eq).Trim(), prop.Substring(eq + 1).Trim()) }
+            }
+        }
+
+        /// <summary>Takes an element out of the schematic (and its part out of the circuit).</summary>
+        undefined Remove(Circuits.Element e) {
+            var i = this.elements.IndexOf(e)
+            if (i < 0) { return }
+            this.Drop(e)
+            this.elements.RemoveAt(i)
+            this.Changed(true)
+        }
+
+        // takes the part and the scope of an element away
+        undefined Drop(Circuits.Element e) {
+            if (e.part != undefined) {
+                this.circuit.RemovePart(e.part)
+                e.part = undefined
+            }
+            if (e.scope != undefined) {
+                this.circuit.Top().Detach(e.scope)
+                var s = e.scope
+                e.scope = undefined
+                delete s
+            }
+        }
+
+        /// <summary>Removes all elements.</summary>
+        undefined Clear() {
+            foreach (e in this.elements) { this.Drop(e) }
+            this.elements.Clear()
+            this.Changed(true)
+        }
+
+        /// <summary>The element of this name (undefined if there is none).</summary>
+        Circuits.Element Find(string name) {
+            foreach (e in this.elements) {
+                if (e.name == name) { return e }
+            }
+            return undefined
+        }
+
+        /// <summary>The part of the element of this name.</summary>
+        Part PartOf(string name) {
+            var e = this.Find(name)
+            if (e == undefined) { throw new ArgumentException("The schematic has no element '" + name + "'.") }
+            return e.part
+        }
+
+        /// <summary>Moves an element to new points.</summary>
+        undefined Move(Circuits.Element e, int x1, int y1, int x2, int y2) {
+            if (e.x1 == x1 && e.y1 == y1 && e.x2 == x2 && e.y2 == y2) { return }
+            e.x1 = x1
+            e.y1 = y1
+            e.x2 = x2
+            e.y2 = y2
+            // the pins of a transistor and of gates depend on the direction: the part stays, the connections change
+            this.Changed(true)
+        }
+
+        /// <summary>Sets a property of an element and applies it.</summary>
+        undefined Set(Circuits.Element e, string key, string value) {
+            e.Set(key, value)
+            // the number of pins can change (inputs, bits, flip, model of a transistor)
+            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "text" || key == "port" || key == "probe" || key == "quantity")
+        }
+
+        /// <summary>Renames an element.</summary>
+        undefined Rename(Circuits.Element e, string name) {
+            if (e.name == name) { return }
+            e.name = name
+            e.dirty = true
+            this.Changed(true)
+        }
+
+        // the parameters of the circuit changed: elements whose values are expressions are made again
+        undefined ParametersChanged() {
+            var found = false
+            foreach (e in this.elements) {
+                foreach (v in e.values) {
+                    string text = v
+                    if (text != "" && Circuits.Symbols.Number(text) == undefined && text != "true" && text != "false" && e.type != "Formula" && e.type != "Label"
+                        && e.type != "Text" && e.type != "Pin" && e.type != "Scope" && e.keys[e.values.IndexOf(v)] != "model" && e.keys[e.values.IndexOf(v)] != "color"
+                        && e.keys[e.values.IndexOf(v)] != "waveform") {
+                        e.dirty = true
+                        found = true
+                    }
+                }
+            }
+            if (found) { this.Changed(false) }
+        }
+
+        undefined Changed(bool connections) {
+            this.version = this.version + 1
+            if (connections) { this.reconnect = true }
+            this.Apply()
+        }
+
+        /// <summary>Makes the parts of changed elements and connects everything again if needed. The changes of the methods above are applied at once; call it
+        /// after changing elements directly.</summary>
+        undefined Apply() {
+            if (this.applying) { return }
+            this.applying = true
+            try {
+                var c = this.circuit
+                foreach (e in this.elements) {
+                    Circuits.Symbols.Pins(e)
+                    // a chip is a circuit: its ports are wired inside, so it is made again when the connections change
+                    if (this.reconnect && e.part != undefined && e.part is of Circuit) { e.dirty = true }
+                    if (e.type == "Scope") { e.dirty = true }
+                    if (e.dirty) {
+                        this.Drop(e)
+                        e.error = ""
+                        try { Circuits.Symbols.Create(e, c) } catch (Exception ex) {
+                            e.error = ex.message
+                            e.pinPorts.Clear()
+                            for (int i = 0; i < e.pins.count / 2; i++) { e.pinPorts.Add(undefined) }
+                        }
+                        e.dirty = false
+                        this.reconnect = true
+                    }
+                }
+                if (this.reconnect) { this.Connect() }
+                foreach (e in this.elements) {
+                    if (e.type == "Scope") { this.MakeScope(e) }
+                }
+                this.reconnect = false
+                c.Invalidate()
+                c.OnBuilt()
+            } finally { this.applying = false }
+        }
+
+        // connects the ports of the parts from the drawing: pins at the same point, the ends of wires, labels of the same text, pins of the circuit
+        undefined Connect() {
+            var c = this.circuit
+            var top = c.Top() == c
+            // the connections of before go away
+            foreach (e in this.elements) {
+                foreach (p in e.pinPorts) {
+                    if (p != undefined) { p.link = undefined }
+                }
+                foreach (p in e.groundPorts) { p.link = undefined }
+            }
+            if (top) {
+                c.ground.link = undefined
+                foreach (p in c.ports) { p.link = undefined }
+            }
+            // every pin is a point; the points are joined in groups (union-find)
+            var xs = new List()
+            var ys = new List()
+            var owners = new List()
+            var slots = new List()
+            foreach (e in this.elements) {
+                for (int i = 0; i < e.pins.count / 2; i++) {
+                    xs.Add(e.pins[i * 2])
+                    ys.Add(e.pins[i * 2 + 1])
+                    owners.Add(e)
+                    slots.Add(i)
+                }
+            }
+            var n = xs.count
+            var parent = new int[n]
+            for (int i = 0; i < n; i++) { parent[i] = i }
+            // pins at the same point
+            for (int i = 0; i < n; i++) {
+                for (int j = i + 1; j < n; j++) {
+                    if (xs[i] == xs[j] && ys[i] == ys[j]) { Circuits.Schematic.Union(parent, i, j) }
+                }
+            }
+            // the two ends of a wire, the labels of the same text
+            var start = 0
+            foreach (e in this.elements) {
+                var count = e.pins.count / 2
+                if (e.type == "Wire" && count == 2) { Circuits.Schematic.Union(parent, start, start + 1) }
+                if (e.type == "Label") {
+                    var other = 0
+                    foreach (f in this.elements) {
+                        var fc = f.pins.count / 2
+                        if (f != e && f.type == "Label" && f.Get("text") == e.Get("text") && fc > 0) { Circuits.Schematic.Union(parent, start, other) }
+                        other = other + fc
+                    }
+                }
+                start = start + count
+            }
+            // the ports of each group become one node; a group with ground goes to the ground of the circuit
+            var first = new class[n]
+            var grounded = new bool[n]
+            for (int i = 0; i < n; i++) {
+                first[i] = undefined
+                grounded[i] = false
+            }
+            for (int i = 0; i < n; i++) {
+                Circuits.Element e = owners[i]
+                if (e.type == "Ground") { grounded[Circuits.Schematic.Root(parent, i)] = true }
+            }
+            for (int i = 0; i < n; i++) {
+                var r = Circuits.Schematic.Root(parent, i)
+                Circuits.Element e = owners[i]
+                Port port = undefined
+                if (slots[i] < e.pinPorts.count) { port = e.pinPorts[slots[i]] }
+                if (e.type == "Pin") { port = this.PortFor(e) }
+                if (port != undefined) {
+                    if (first[r] == undefined) {
+                        first[r] = port
+                        if (grounded[r]) { port.Connect(c.ground) }
+                    } else { port.Connect(first[r]) }
+                }
+            }
+            foreach (e in this.elements) {
+                foreach (p in e.groundPorts) { p.Connect(c.ground) }
+            }
+            // a port on the node of every pin (to read voltages)
+            var index = 0
+            foreach (e in this.elements) {
+                e.nets.Clear()
+                for (int i = 0; i < e.pins.count / 2; i++) {
+                    var r = Circuits.Schematic.Root(parent, index)
+                    if (first[r] != undefined) { e.nets.Add(first[r]) } else {
+                        if (grounded[r]) { e.nets.Add(c.ground) } else { e.nets.Add(undefined) }
+                    }
+                    index = index + 1
+                }
+            }
+        }
+
+        // the port of the circuit that a Pin element stands for (made on first use)
+        Port PortFor(Circuits.Element e) {
+            var name = e.Get("port")
+            if (name == "") { name = "pin" }
+            foreach (p in this.circuit.ports) {
+                if (p.name == name) { return p }
+            }
+            return this.circuit.AddPort(name)
+        }
+
+        // a scope for a Scope element: the voltage at the pins of the element named by "probe", or the current through its part
+        undefined MakeScope(Circuits.Element e) {
+            var target = this.Find(e.Get("probe"))
+            if (target == undefined) {
+                if (e.Get("probe") != "") { e.error = "There is no element '" + e.Get("probe") + "'." }
+                return
+            }
+            var scope = new Circuits.Scope(this.circuit.Top(), 20000)
+            if (e.Get("quantity") == "current") {
+                if (target.part == undefined) {
+                    e.error = "'" + target.name + "' has no current."
+                    delete scope
+                    return
+                }
+                scope.Current("y", target.part)
+            } else {
+                if (target.nets.count == 0 || target.nets[0] == undefined) {
+                    e.error = "'" + target.name + "' is not connected."
+                    delete scope
+                    return
+                }
+                Port b = undefined
+                if (target.nets.count > 1) { b = target.nets[1] }
+                if (target.nets.count > 1 && target.type != "Probe" && target.part == undefined) { b = undefined }
+                scope.Voltage("y", target.nets[0], b)
+            }
+            scope.TakeTo(e)
+            e.scope = scope
+        }
+
+        static int Root(any parent, int i) {
+            var r = i
+            while (parent[r] != r) { r = parent[r] }
+            var k = i
+            while (parent[k] != r) {
+                var next = parent[k]
+                parent[k] = r
+                k = next
+            }
+            return r
+        }
+
+        static undefined Union(any parent, int a, int b) {
+            var ra = Circuits.Schematic.Root(parent, a)
+            var rb = Circuits.Schematic.Root(parent, b)
+            if (ra != rb) { parent[rb] = ra }
+        }
+
+        // ---- the file ----
+        /// <summary>A text as a JSON string.</summary>
+        static string Quote(string s) {
+            var r = "\""
+            for (int i = 0; i < s.Length; i++) {
+                var c = s.CharAt(i)
+                if (c == '"') { r = r + "\\\"" }
+                else if (c == '\\') { r = r + "\\\\" }
+                else if (c == '\n') { r = r + "\\n" }
+                else if (c == '\r') { r = r + "\\r" }
+                else if (c == '\t') { r = r + "\\t" }
+                else { r = r + c }
+            }
+            return r + "\""
+        }
+
+        /// <summary>The schematic as the text of a `.biscuit` file.</summary>
+        string ToText() {
+            var c = this.circuit
+            var text = "{\n  \"biscuit\": 1"
+            if (this.className != "") { text = text + ",\n  \"class\": " + Circuits.Schematic.Quote(this.className) }
+            if (this.namespaceName != "") { text = text + ",\n  \"namespace\": " + Circuits.Schematic.Quote(this.namespaceName) }
+            text = text + ",\n  \"timeStep\": " + Circuits.Schematic.Quote(Circuits.Schematic.Format(c.dt) + "s")
+            if (c.paramNames.count > 0) {
+                text = text + ",\n  \"parameters\": {"
+                for (int i = 0; i < c.paramNames.count; i++) {
+                    if (i > 0) { text = text + ", " }
+                    text = text + Circuits.Schematic.Quote(c.paramNames[i]) + ": " + Circuits.Schematic.Quote(Circuits.Schematic.Format(c.paramValues[i]))
+                }
+                text = text + "}"
+            }
+            text = text + ",\n  \"elements\": ["
+            for (int i = 0; i < this.elements.count; i++) {
+                if (i > 0) { text = text + "," }
+                text = text + "\n    " + this.elements[i].ToJson()
+            }
+            return text + "\n  ]\n}\n"
+        }
+
+        /// <summary>A number with an SI prefix ("4.7k", "10u", "0").</summary>
+        static string Format(float v) {
+            if (v == 0.0) { return "0" }
+            var a = Math.Abs(v)
+            var prefixes = ["p", "n", "u", "m", "", "k", "M", "G"]
+            var factors = [0.000000000001, 0.000000001, 0.000001, 0.001, 1.0, 1000.0, 1000000.0, 1000000000.0]
+            var k = 4
+            for (int i = 0; i < 8; i++) {
+                if (a >= factors[i] * 0.9999999) { k = i }
+            }
+            var x = v / factors[k]
+            // up to 6 significant digits without trailing zeros
+            var s = Circuits.Schematic.Trim(x)
+            return s + prefixes[k]
+        }
+
+        static string Trim(float x) {
+            var r = Math.Round(x * 1000000.0) / 1000000.0
+            if (r == Math.Round(r)) { return "" + Math.Round(r)!int }
+            var s = "" + r
+            return s
+        }
+
+        /// <summary>Reads a `.biscuit` text: the elements, the parameters and the time step of the circuit. What was there before goes away.</summary>
+        undefined Load(string text) {
+            any doc = Json.Parse(text)
+            if (!(doc is of JsonObject)) { throw new ArgumentException("A .biscuit file is a JSON object.") }
+            JsonObject o = doc!JsonObject
+            this.applying = true
+            try {
+                foreach (e in this.elements) { this.Drop(e) }
+                this.elements.Clear()
+                var cls = o.Get("class")
+                if (cls != undefined) { this.className = "" + cls }
+                var ns = o.Get("namespace")
+                if (ns != undefined) { this.namespaceName = "" + ns }
+                var step = o.Get("timeStep")
+                if (step != undefined) {
+                    var dt = Circuits.Symbols.Number("" + step)
+                    if (dt != undefined && dt > 0.0) { this.circuit.dt = dt }
+                }
+                var prms = o.Get("parameters")
+                if (prms != undefined && prms is of JsonObject) {
+                    JsonObject po = prms!JsonObject
+                    foreach (k in po.Keys()) {
+                        var v = Circuits.Symbols.Number("" + po.Get(k))
+                        if (v == undefined) { throw new ArgumentException("The parameter '" + k + "' is not a number.") }
+                        var i = this.circuit.paramNames.IndexOf(k)
+                        if (i < 0) {
+                            this.circuit.paramNames.Add(k)
+                            this.circuit.paramValues.Add(v)
+                        } else { this.circuit.paramValues[i] = v }
+                    }
+                }
+                var list = o.Get("elements")
+                if (list != undefined) {
+                    for (int i = 0; i < list.length; i++) {
+                        if (!(list[i] is of JsonObject)) { throw new ArgumentException("Element " + i + " is not an object.") }
+                        JsonObject eo = list[i]!JsonObject
+                        var type = "" + eo.Get("type")
+                        if (!Circuits.Symbols.Known(type)) { throw new ArgumentException("Element " + i + ": there is no element '" + type + "'.") }
+                        var a = eo.Get("from")
+                        var b = eo.Get("to")
+                        if (a == undefined || b == undefined) { throw new ArgumentException("Element " + i + " (" + type + ") needs 'from' and 'to'.") }
+                        var e = Circuits.Symbols.Make(type, Math.Round(a[0])!int, Math.Round(a[1])!int, Math.Round(b[0])!int, Math.Round(b[1])!int)
+                        foreach (k in eo.Keys()) {
+                            string key = k
+                            if (key == "name") { e.name = "" + eo.Get(k) }
+                            else if (key != "type" && key != "from" && key != "to") {
+                                var value = eo.Get(k)
+                                if (value is of bool) {
+                                    if (value) { e.Set(key, "true") } else { e.Set(key, "false") }
+                                } else { e.Set(key, "" + value) }
+                            }
+                        }
+                        this.elements.Add(take e)
+                    }
+                }
+            } finally { this.applying = false }
+            this.Changed(true)
+        }
+    }
+}

@@ -14,13 +14,33 @@ if (args.Length >= 1 && args[0] == "install-standard")
     return 0;
 }
 
-// `ui <file.fxml> [-o <file>]`: writes the script generated from the markup of a user interface (docs/UI_MARKUP.md); without -o to the output.
-if (args.Length >= 2 && args[0] == "ui")
+// `falstad <circuit.txt> [-o <file.biscuit>]`: a circuit of Falstad's simulator (File > Export As Text) as a schematic (docs/CIRCUITS.md); without -o to the output.
+if (args.Length >= 2 && args[0] == "falstad")
+{
+    try
+    {
+        var result = fire.UI.Markup.FalstadImport.Convert(File.ReadAllText(args[1]));
+        foreach (var w in result.Warnings) Console.Error.WriteLine($"{Path.GetFileName(args[1])}: {w}");
+        int o = Array.IndexOf(args, "-o");
+        if (o >= 0 && o + 1 < args.Length) File.WriteAllText(args[o + 1], result.Biscuit);
+        else Console.Out.Write(result.Biscuit);
+        return 0;
+    }
+    catch (IOException ex)
+    {
+        Console.Error.WriteLine(ex.Message);
+        return 1;
+    }
+}
+
+// `ui <file.fxml> [-o <file>]` / `biscuit <file.biscuit> [-o <file>]`: writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) or from the
+// schematic of a circuit (docs/CIRCUITS.md); without -o to the output.
+if (args.Length >= 2 && (args[0] == "ui" || args[0] == "biscuit"))
 {
     try
     {
         string path = args[1];
-        string script = fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(File.ReadAllText(path)), path);
+        string script = fire.UI.Markup.MarkupFiles.GenerateScript(path, File.ReadAllText(path));
         int o = Array.IndexOf(args, "-o");
         if (o >= 0 && o + 1 < args.Length) File.WriteAllText(args[o + 1], script);
         else Console.Out.Write(script);

@@ -1210,6 +1210,8 @@ namespace Circuits {
         List paramNames
         List paramValues
         List bindings
+        // the drawing the circuit is made from (undefined: a circuit built in code)
+        Circuits.Schematic schematic
 
         construct(string name = "circuit") : base(name) {
             this.parts = new List()
@@ -1222,6 +1224,46 @@ namespace Circuits {
             g.TakeTo(this)
             this.ground = g
             this.solver = undefined
+            this.schematic = undefined
+        }
+
+        /// <summary>The drawing of the circuit (made on first use): elements on a grid that make the parts and their connections (docs/CIRCUITS.md).</summary>
+        Circuits.Schematic Schematic {
+            get {
+                if (this.schematic == undefined) {
+                    var s = new Circuits.Schematic(this)
+                    s.TakeTo(this)
+                    this.schematic = s
+                }
+                return this.schematic
+            }
+        }
+
+        /// <summary>Is the circuit made from a drawing?</summary>
+        bool HasSchematic { get { return this.schematic != undefined } }
+
+        /// <summary>Makes the circuit from the text of a `.biscuit` file.</summary>
+        undefined LoadSchematic(string text) { this.Schematic.Load(text) }
+
+        /// <summary>Called after the drawing made or connected the parts again (the class generated from a `.biscuit` file sets its fields here).</summary>
+        undefined OnBuilt() { }
+
+        /// <summary>Takes a part out of the circuit (its ports keep their connections to other ports: connect them again).</summary>
+        undefined RemovePart(Part part) {
+            var i = this.parts.IndexOf(part)
+            if (i < 0) { return }
+            this.Invalidate()
+            this.parts.RemoveAt(i)
+            part.owner = undefined
+            delete part
+        }
+
+        /// <summary>Stops recording with an instrument.</summary>
+        undefined Detach(any instrument) {
+            var i = this.instruments.IndexOf(instrument)
+            if (i < 0) { return }
+            this.instruments.RemoveAt(i)
+            this.Invalidate()
         }
 
         /// <summary>The ground (0 V) of the circuit; nested circuits share the ground of the outermost one.</summary>
@@ -1305,6 +1347,7 @@ namespace Circuits {
                 var f = b
                 f(this)
             }
+            if (this.schematic != undefined) { this.schematic.ParametersChanged() }
             foreach (p in this.parts) {
                 if (p is of Circuit) {
                     Circuit c = p!Circuit

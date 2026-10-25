@@ -370,7 +370,103 @@ first step of an RC circuit is a little behind the exact curve (`5 * (1 - e^-1)`
 A switch that opens while a current flows through a capacitor makes the trapezoidal rule take half a step of that current along (the voltage moves by
 `dt / 2C * i` once) - the same as in other simulators that use it.
 
+## Schematics (`.biscuit`)
+
+A circuit can also be **drawn**: a schematic is a list of elements on a grid, each between two points (the way Falstad's simulator places them). Pins at the same
+point are connected, a wire connects its two ends, labels of the same text are one node. The schematic makes the parts of its circuit and connects their ports; every
+change is applied at once.
+
+```fire
+#import "circuits"
+
+var c = new Circuits.Circuit("rc")
+var s = c.Schematic
+s.Add("Source", 0, 8, 0, 0, "voltage=5V")               // from (0,8) [-] to (0,0) [+]
+s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")    // properties, then a name
+s.Add("Capacitor", 8, 0, 8, 8, "capacitance=1uF", "c1")
+s.Add("Wire", 0, 8, 8, 8)
+s.Add("Ground", 0, 8, 0, 12)
+c.Run(1ms)
+print(s.Find("c1").PinVoltage(0))      // 3.15: the voltage at its first pin
+print(s.ToText())                      // the schematic as the text of a .biscuit file
+```
+
+- **Elements:** `Circuits.Symbols.Catalog()` lists them with their properties (`category|type|name:kind=default;...`):
+  Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
+  a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
+  And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, Counter, Timer555, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
+  voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text.
+- **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
+  emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart
+  - all as in Falstad's simulator (a unit of the grid is 8 of its pixels). Chips (555, flip-flops, counter) are boxes with their pins down the left and right side.
+- **Values** are numbers with an SI prefix and a unit after it (`4.7k`, `10uF`, `2.2µH`, `1meg`) or expressions of the parameters of the circuit (`2*R + 1k`): they are
+  worked out again when a parameter changes.
+- `s.Move(e, x1, y1, x2, y2)`, `s.Set(e, key, value)`, `s.Rename(e, name)`, `s.Remove(e)`, `s.Clear()`, `s.Find(name)`, `s.PartOf(name)`; an element tells `PinCount`,
+  `PinX(i)`/`PinY(i)`, `PinVoltage(i)`, its `Part` and an `Error` when its part could not be made (an unknown model).
+
+### The file and the generated class
+
+A `.biscuit` file is that text: JSON with the elements (`type`, `name`, `from`, `to` and the properties that differ from the defaults), optionally `class`, `namespace`,
+`timeStep` and `parameters`. Like a `.fxml` file (docs/UI_MARKUP.md) it is compiled into a script: **one class**, named like the file (or `class`), that derives from
+`Circuits.Circuit`, loads the schematic in its constructor and has a field for every named element, typed with its part.
+
+```fire
+#include "Amp.biscuit"          // in a project the file is compiled with the others, no #include
+
+var amp = new Amp()
+amp.Run(1ms)
+print(amp.out.PinVoltage(0))    // the LogicOutput "out"
+amp.rf.Resistance = 22kOhm      // the Resistor "rf"
+amp.Parameter("gain", 4)        // a value "gain*1k" follows
+```
+
+The fields are set again whenever the schematic makes its parts anew (`OnBuilt()`, which a derived class can override too). `fire.Compiler biscuit Amp.biscuit` shows the script.
+
+## The circuit view (`#import "circuits.ui"`)
+
+`UI.CircuitView` is a control of the UI library (docs/UI.md) that shows a circuit as a live schematic, like Falstad's simulator: wires and leads coloured by their voltage
+(green positive, red negative, grey 0 V; `voltageRange`), dots running with the current through the parts and the wires, LEDs that light up, logic outputs, probes,
+scopes drawn into the schematic. While `running` it simulates `stepsPerFrame` steps per cycle (Space pauses).
+
+```fire
+#import "circuits.ui"
+
+var fb = new Framebuffer(800, 500)
+var ui = new UI.Root(fb, new Window(fb, "Circuit"))
+var amp = new Amp()
+var view = new UI.CircuitView(amp, 0, 0, 800, 500)
+ui.Add(view)
+view.FitToView()
+ui.Run()
+```
+
+A click toggles switches (a `momentary` one while it is held) and logic inputs - also when the view is `readOnly`. Without `readOnly` the schematic is edited right in the view:
+
+| | |
+|---|---|
+| place | `view.BeginPlace("Resistor")` (from a palette, a menu, a toolstrip of the program); then a click places it with its default length, a drag gives length and direction; Esc stops |
+| wires | drag from a pin (or `BeginPlace("Wire")`, W); wires go along the grid |
+| select | click, a rectangle on empty space, Ctrl+A; `Selection()`, `SelectedElement`, `onSelect` |
+| move, stretch | drag the selection; drag an end of a selected element |
+| rotate, flip, copy, delete | R, F, Ctrl+D, Del (or `RotateSelection()`, ...) |
+| undo, redo | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (`Undo()`, `Redo()`) |
+| properties | double click or Enter: the view's own editor, or `onEdit` of the program |
+| zoom, pan | the wheel zooms at the pointer, the middle or right button pans; `FitToView()` |
+
+`onChange` (or `TakeChanged()`) reports every change - `view.Schematic.ToText()` is the file to save.
+
+## The circuit editor of spark
+
+spark opens `.biscuit` files in its circuit editor (Add > New > Circuit makes one). In the middle is the CircuitView itself, running live in a fire program of its own,
+so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`), the properties of the selected
+element (units, models of the library, choices) and the tools: run/pause, reset, speed, undo/redo, rotate, flip, duplicate, delete, wire, fit.
+
+**Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
+divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
+LEDs, transistors, MOSFETs, op amps, comparators, gates, logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got
+(transformers, flip-flops and the 555 of Falstad's chip layout, JFETs, ...) is listed. Of the 373 example circuits of the simulator, 194 come over completely and run.
+`fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
+
 ## Coming next
 
-More ICs, parts attached to the devices of the program (`Attached`), simulated
-devices, a circuit control for the UI library and a circuit editor in the IDE with the import of Falstad files.
+More ICs, parts attached to the devices of the program (`Attached`), simulated devices, and more of Falstad's elements for the import.

@@ -2451,7 +2451,9 @@ The package `fire-circuits` (docs/CIRCUITS.md is the reference), written in fire
 own; `port.Connect(other)` joins two ports into one node. `Step()`/`Run(duration)` solve the circuit in time steps (modified nodal analysis, trapezoidal rule for `C` and
 `L`). `Scope`, `Multimeter` and `Fft` measure. The first step after a change compiles the circuit into a plan that a C++ kernel of the package runs (a sparse
 LU factorization with a fixed list of operations, many steps per call); parts written in fire (`StampStep`, `Commit`) step in fire around it. The package declares the units `V`, `A`, `Ohm`, `F`, `H` and `Hz` (with prefixes); every value can also be a plain number in
-SI units.
+SI units. A circuit can be drawn instead: `circuit.Schematic` holds elements on a grid (each between two points, as in Falstad's simulator) that make the parts and connect
+them by where their pins are; a `.biscuit` file (JSON) is compiled - like `.fxml` - into one class deriving from `Circuits.Circuit` with a field per named element. The package
+`fire-circuits.ui` (`#import "circuits.ui"`) brings `UI.CircuitView`, the live schematic as a control of the UI library, editable unless `readOnly`.
 
 ### 8.20 Network (`#import "net"`)
 
