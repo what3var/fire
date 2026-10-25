@@ -81,7 +81,9 @@ namespace fire.Values
         {
             ['f'] = 1e-15,
             ['p'] = 1e-12,
-            ['µ'] = 1e-6,
+            ['µ'] = 1e-6,   // micro sign (U+00B5)
+            ['μ'] = 1e-6,   // Greek small mu (U+03BC), what many keyboards type
+            ['u'] = 1e-6,   // the ASCII spelling: 10uF, 5us
             ['m'] = 1e-3,
             ['c'] = 1e-2,
             ['k'] = 1e3,

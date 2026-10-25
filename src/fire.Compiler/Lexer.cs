@@ -319,7 +319,7 @@ namespace fire.Compiler
         }
 
         private static bool IsUnitSuffixChar(char c) =>
-            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == 'µ';
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == 'µ' || c == 'μ';
 
         // -----------------------------------------------------------
         // Identifier / Keywords

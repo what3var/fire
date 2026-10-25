@@ -12,7 +12,7 @@ namespace fire.Package.Manager
         public const string Prefix = "fire-";
 
         /// <summary>The standard libraries: the names of their imports.</summary>
-        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d", "ui.docking", "json" };
+        public static readonly IReadOnlyList<string> Bridges = new[] { "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d", "ui.docking", "json", "circuits" };
 
         public static string PackageNameOf(string bridge) => Prefix + bridge;
 

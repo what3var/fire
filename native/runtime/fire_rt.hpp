@@ -850,13 +850,41 @@ FIRE_COLD inline Value modUnits(Value a, Value b) {
     }
     return Float(std::fmod(toR(p.a), toR(p.b)), p.a.unit);
 }
+/// A product or quotient whose units cancel but leave a factor (`5cm / 1mm` is 50): like Value.FoldScale of the VM.
+FIRE_COLD inline Value foldScale(Value a, Value b, double scale, bool divide) {
+    scale = unitNiceFactor(scale);
+    if (a.kind == K_Int && b.kind == K_Int) {
+        int64_t x = a.i, y = b.i;
+        if (scale >= 1 && scale == std::floor(scale) && scale < 9.2e18) {
+            uint64_t s = (uint64_t)scale;
+            if (!divide) return Int((int64_t)((uint64_t)x * (uint64_t)y * s));
+            if (FIRE_UNLIKELY(y == 0)) return divideByZero();
+            int64_t xs = (int64_t)((uint64_t)x * s);
+            if (FIRE_UNLIKELY(y == -1)) return Int((int64_t)(0 - (uint64_t)xs));
+            return Int(xs / y);
+        }
+        double inv = unitNiceFactor(1.0 / scale);
+        if (inv >= 1 && inv == std::floor(inv) && inv < 9.2e18) {
+            uint64_t s = (uint64_t)inv;
+            if (!divide) return Int((int64_t)((uint64_t)x * (uint64_t)y) / (int64_t)s);
+            int64_t d = (int64_t)((uint64_t)y * s);
+            if (FIRE_UNLIKELY(d == 0)) return divideByZero();
+            if (FIRE_UNLIKELY(d == -1)) return Int((int64_t)(0 - (uint64_t)x));
+            return Int(x / d);
+        }
+    }
+    Real r = divide ? toR(a) / toR(b) : toR(a) * toR(b);
+    return Float((Real)(r * scale));
+}
 FIRE_COLD inline Value mulUnits(Value a, Value b) {
     uint32_t u = unitMul(a.unit, b.unit);
+    if (FIRE_UNLIKELY(unitIsUnitless(u) && g_ud[u].scale != 1.0)) return foldScale(a, b, g_ud[u].scale, false);
     if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i), u);
     return Float(toR(a) * toR(b), u);
 }
 FIRE_COLD inline Value divUnits(Value a, Value b) {
     uint32_t u = unitDiv(a.unit, b.unit);
+    if (FIRE_UNLIKELY(unitIsUnitless(u) && g_ud[u].scale != 1.0)) return foldScale(a, b, g_ud[u].scale, true);
     if (a.kind == K_Int && b.kind == K_Int) {
         if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
         if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i), u);

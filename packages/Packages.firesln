@@ -25,6 +25,7 @@
     "audio/audio.fireproj",
     "tracker/tracker.fireproj",
     "scene3d/scene3d.fireproj",
-    "json/json.fireproj"
+    "json/json.fireproj",
+    "circuits/circuits.fireproj"
   ]
 }

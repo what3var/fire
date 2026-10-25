@@ -356,7 +356,7 @@ Prefixes (decimal, implicitly coerced):
 | f      | femto | 1e-15  |
 | p      | pico  | 1e-12  |
 | n      | nano  | 1e-9   |
-| µ      | micro | 1e-6   |
+| µ, u   | micro | 1e-6   |
 | m      | milli | 1e-3   |
 | c      | centi | 1e-2   |
 | k      | kilo  | 1e3    |
@@ -374,6 +374,10 @@ Time units that do not accept prefixes but are dimension-compatible with `s`, wi
 | `d`     | 86400          |
 
 Any other, unrecognized suffix string on a literal is treated as an **atomic unit** (compatible only with itself), e.g. `5apples`.
+
+`u` is the ASCII spelling of `µ` (the micro sign, also the Greek `μ`): `5us` and `5µs` are the same. When the dimensions of a product or a quotient cancel, the
+factor of the units goes into the number and the result has no unit: `5cm / 1mm` is `50`, `1s / 1ms` is `1000`. Two `int`s stay an `int` when the factor is a
+whole number or its inverse is one (`1ms / 1s` is `0`, like `1 / 1000`); otherwise the result is a `float`.
 
 ### 3.3.1 Own units
 
@@ -2439,6 +2443,14 @@ Not for secrets: the sequence can be predicted from a few outputs.
 classes into `JsonObject`s. Shared objects and cycles are kept with `"$id"`/`"$ref"`, the class travels as `"$type"` where the declared type does not give it, a
 field can be left out (`[NonSerialized]`) or renamed (`[JsonName "x"]`). Errors are a `JsonException` with line and column or the path of the value
 (`$.path[1].x`). The same text in the VM and in native builds; the details are in docs/JSON.md.
+
+### 8.19b Circuit simulation (`#import "circuits"`)
+
+The package `fire-circuits` (docs/CIRCUITS.md is the reference), written in fire: `Circuits.Circuit` holds parts with ports (`Resistor`, `Capacitor`, `Inductor`,
+`VoltageSource`, `SineSource`, `SquareSource`, `CurrentSource`, `Switch`, `Ground`, own parts derived from `Part`/`TwoTerminal`) and nested circuits with ports of their
+own; `port.Connect(other)` joins two ports into one node. `Step()`/`Run(duration)` solve the circuit in time steps (modified nodal analysis, trapezoidal rule for `C` and
+`L`). `Scope`, `Multimeter` and `Fft` measure. The package declares the units `V`, `A`, `Ohm`, `F`, `H` and `Hz` (with prefixes); every value can also be a plain number in
+SI units.
 
 ### 8.20 Network (`#import "net"`)
 

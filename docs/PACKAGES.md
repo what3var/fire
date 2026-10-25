@@ -103,7 +103,7 @@ How to write a native, what crosses to the VM, prebuilt libraries and packed pro
 
 ## The standard libraries (`packages/`, `Source/`)
 
-The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `json`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
+The libraries of fire - `graphics`, `windows`, `devices`, `io`, `filesystem`, `dialogs`, `ui`, `ui.docking`, `linq`, `reflection`, `time`, `random`, `json`, `circuits`, `testing`, `net`, `tls`, `http`, `gpio`, `i2c`, `spi`, `wifi`, `audio`,
 `tracker`, `scene3d` - are ordinary **library projects** (docs/PROJECTS.md) that you can open, change and test like your own: the folder `packages/` of the repository holds the solution
 `Packages.firesln` with one project per import:
 

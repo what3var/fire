@@ -1,0 +1,926 @@
+// Circuit simulation (docs/CIRCUITS.md), after the model of Paul Falstad's circuit simulator: parts with ports, ports connected into nodes, a modified nodal
+// analysis solved every time step (trapezoidal rule for capacitors and inductors), instruments that record what happens (Scope, Multimeter, Fft).
+// The units of electricity are declared here: V, A, Ohm, F, H, Hz (with prefixes: 4.7kOhm, 10uF, 1mH, 2kHz). Every value may also be given as a plain number in SI units.
+
+prefixed unit Volt: V
+prefixed unit Ampere: A
+prefixed unit Ohm: Ohm { coerce V/A => 1 }
+prefixed unit Farad: F { coerce A*s/V => 1 }
+prefixed unit Henry: H { coerce V*s/A => 1 }
+prefixed unit Hertz: Hz
+
+namespace Circuits {
+    /// <summary>Values with a unit (or plain SI numbers) as plain numbers for the solver.</summary>
+    class Units {
+        static float Volts(float v : any) {
+            if (v is in V) { return v / 1V }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected a voltage (V), not " + v + ".")
+        }
+        static float Amps(float v : any) {
+            if (v is in A) { return v / 1A }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected a current (A), not " + v + ".")
+        }
+        static float Ohms(float v : any) {
+            if (v is in Ohm) { return v / 1Ohm }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected a resistance (Ohm), not " + v + ".")
+        }
+        static float Farads(float v : any) {
+            if (v is in F) { return v / 1F }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected a capacitance (F), not " + v + ".")
+        }
+        static float Henries(float v : any) {
+            if (v is in H) { return v / 1H }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected an inductance (H), not " + v + ".")
+        }
+        static float Hertz(float v : any) {
+            if (v is in Hz) { return v / 1Hz }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected a frequency (Hz), not " + v + ".")
+        }
+        static float Seconds(float v : any) {
+            if (v is in s) { return v / 1s }
+            if (v is in unitless) { return v }
+            throw new ArgumentException("Expected a time (s), not " + v + ".")
+        }
+    }
+
+    /// <summary>A connection point of a part or of a circuit. Connected ports form one node; after a step every port knows the voltage of its node.</summary>
+    class Port {
+        string name
+        Part part
+        Port link
+        // the node of the solver (-1: ground) and its voltage after the last step (in volts)
+        int node = -2
+        float v = 0.0
+
+        construct(string name, Part part) {
+            this.name = name
+            this.part = part
+            this.link = undefined
+        }
+
+        string Name { get { return this.name } }
+        Part Part() { return this.part }
+
+        // the port that stands for the whole node
+        Port Root() {
+            var p = this
+            while (p.link != undefined) { p = p.link }
+            return p
+        }
+
+        /// <summary>Connects this port with another (a wire): both are one node from now on. Returns this port.</summary>
+        Port Connect(Port other) {
+            var a = this.Root()
+            var b = other.Root()
+            if (a != b) { b.link = a }
+            var owner = this.Circuit()
+            if (owner != undefined) { owner.Invalidate() }
+            return this
+        }
+
+        Circuit Circuit() {
+            var p = this.part
+            if (p == undefined) { return undefined }
+            if (p is of Circuit) { return p!Circuit }
+            return p.owner
+        }
+
+        /// <summary>Is it on the same node as the other port?</summary>
+        bool IsConnected(Port other) { return this.Root() == other.Root() }
+
+        /// <summary>The voltage of its node against ground after the last step.</summary>
+        float:V Voltage { get { return this.Root().v * 1V } }
+
+        float Raw() { return this.Root().v }
+    }
+
+    /// <summary>A part of a circuit: it has ports and puts itself into the equations of the solver. Derive from it (or from TwoTerminal) for parts of your own:
+    /// Stamp for what stays the same while the time step stays, StampStep for what changes from step to step, Commit to keep the state after a step.</summary>
+    class Part {
+        string name
+        List ports
+        Circuit owner
+
+        construct(string name) {
+            this.name = name
+            this.ports = new List()
+            this.owner = undefined
+        }
+
+        string Name { get { return this.name } }
+
+        Port AddPort(string name) {
+            var p = new Port(name, this)
+            p.TakeTo(this)
+            this.ports.Add(p)
+            return p
+        }
+
+        /// <summary>The port with this name (or number).</summary>
+        Port PortAt(any key) {
+            if (key is of int) { return this.ports[key] }
+            foreach (p in this.ports) {
+                if (p.name == key) { return p }
+            }
+            throw new ArgumentException("The part '" + this.name + "' has no port '" + key + "'.")
+        }
+
+        List Ports() { return this.ports }
+
+        // ---- the solver interface (plain SI numbers) ----
+        /// <summary>How many extra unknowns (branch currents) the part needs: 1 for a voltage source.</summary>
+        int Branches() { return 0 }
+        undefined Stamp(Circuits.Solver solver) { }
+        undefined StampStep(Circuits.Solver solver) { }
+        undefined Commit(Circuits.Solver solver) { }
+        /// <summary>Back to the state at time 0.</summary>
+        undefined Reset() { }
+        /// <summary>The current through the part (from its first port to its second), in amperes.</summary>
+        float CurrentRaw() { return 0.0 }
+
+        float:A Current { get { return this.CurrentRaw() * 1A } }
+
+        /// <summary>Something changed that the matrix of the solver depends on (a switch, a value): the circuit builds it again.</summary>
+        undefined Invalidate() {
+            if (this.owner != undefined) { this.owner.Invalidate() }
+        }
+    }
+
+    /// <summary>A part with two ports, A and B (the positive side is A).</summary>
+    class TwoTerminal : Part {
+        int branch = -1
+
+        construct(string name) : base(name) {
+            this.AddPort("a")
+            this.AddPort("b")
+        }
+
+        Port A { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
+
+        /// <summary>The voltage from A to B.</summary>
+        float:V Voltage { get { return this.VoltageRaw() * 1V } }
+        float VoltageRaw() { return this.A.Raw() - this.B.Raw() }
+
+        /// <summary>The power the part takes (positive) or gives (negative), in watts.</summary>
+        float PowerRaw() { return this.VoltageRaw() * this.CurrentRaw() }
+    }
+
+    class Resistor : TwoTerminal {
+        float r
+
+        construct(float resistance : any) : base("R") { this.r = Circuits.Units.Ohms(resistance) }
+
+        float:any Resistance {
+            get { return this.r * 1Ohm }
+            set {
+                this.r = Circuits.Units.Ohms(value)
+                this.Invalidate()
+            }
+        }
+
+        undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / this.r) }
+        float CurrentRaw() { return this.VoltageRaw() / this.r }
+    }
+
+    /// <summary>A capacitor (trapezoidal rule). `initial`: its voltage at time 0.</summary>
+    class Capacitor : TwoTerminal {
+        float c
+        float initial
+        float vPrev = 0.0
+        float iPrev = 0.0
+        float geq = 0.0
+        float ieq = 0.0
+
+        construct(float capacitance : any, float initial : any = 0) : base("C") {
+            this.c = Circuits.Units.Farads(capacitance)
+            this.initial = Circuits.Units.Volts(initial)
+            this.vPrev = this.initial
+        }
+
+        float:any Capacitance {
+            get { return this.c * 1F }
+            set {
+                this.c = Circuits.Units.Farads(value)
+                this.Invalidate()
+            }
+        }
+
+        undefined Reset() {
+            this.vPrev = this.initial
+            this.iPrev = 0.0
+        }
+
+        undefined Stamp(Circuits.Solver solver) {
+            this.geq = 2.0 * this.c / solver.dt
+            solver.Conductance(this.A, this.B, this.geq)
+        }
+        undefined StampStep(Circuits.Solver solver) {
+            this.ieq = this.geq * this.vPrev + this.iPrev
+            solver.CurrentInto(this.A, this.ieq)
+            solver.CurrentInto(this.B, -this.ieq)
+        }
+        undefined Commit(Circuits.Solver solver) {
+            var v = this.VoltageRaw()
+            this.iPrev = this.geq * v - this.ieq
+            this.vPrev = v
+        }
+        float CurrentRaw() { return this.iPrev }
+    }
+
+    /// <summary>An inductor (trapezoidal rule). `initial`: its current at time 0.</summary>
+    class Inductor : TwoTerminal {
+        float l
+        float initial
+        float vPrev = 0.0
+        float iPrev = 0.0
+        float geq = 0.0
+        float ieq = 0.0
+
+        construct(float inductance : any, float initial : any = 0) : base("L") {
+            this.l = Circuits.Units.Henries(inductance)
+            this.initial = Circuits.Units.Amps(initial)
+            this.iPrev = this.initial
+        }
+
+        float:any Inductance {
+            get { return this.l * 1H }
+            set {
+                this.l = Circuits.Units.Henries(value)
+                this.Invalidate()
+            }
+        }
+
+        undefined Reset() {
+            this.iPrev = this.initial
+            this.vPrev = 0.0
+        }
+
+        undefined Stamp(Circuits.Solver solver) {
+            this.geq = solver.dt / (2.0 * this.l)
+            solver.Conductance(this.A, this.B, this.geq)
+        }
+        undefined StampStep(Circuits.Solver solver) {
+            this.ieq = this.iPrev + this.geq * this.vPrev
+            solver.CurrentInto(this.A, -this.ieq)
+            solver.CurrentInto(this.B, this.ieq)
+        }
+        undefined Commit(Circuits.Solver solver) {
+            var v = this.VoltageRaw()
+            this.iPrev = this.geq * v + this.ieq
+            this.vPrev = v
+        }
+        float CurrentRaw() { return this.iPrev }
+    }
+
+    /// <summary>A voltage source: A is the positive pole. The value may change with time (Value(t)); its current is the current it drives out of A.</summary>
+    class VoltageSource : TwoTerminal {
+        float volts
+        float current = 0.0
+
+        construct(float voltage : any = 0) : base("V") { this.volts = Circuits.Units.Volts(voltage) }
+
+        /// <summary>The (DC) voltage.</summary>
+        float:any Level {
+            get { return this.volts * 1V }
+            set { this.volts = Circuits.Units.Volts(value) }
+        }
+
+        /// <summary>The voltage at time t (seconds).</summary>
+        float Value(float t) { return this.volts }
+
+        int Branches() { return 1 }
+        undefined Stamp(Circuits.Solver solver) { solver.VoltageBranch(this.branch, this.A, this.B) }
+        undefined StampStep(Circuits.Solver solver) { solver.BranchValue(this.branch, this.Value(solver.time + solver.dt)) }
+        undefined Commit(Circuits.Solver solver) { this.current = -solver.BranchCurrent(this.branch) }
+        float CurrentRaw() { return this.current }
+    }
+
+    /// <summary>A sine voltage: offset + amplitude * sin(2 pi f t + phase).</summary>
+    class SineSource : VoltageSource {
+        float amplitude
+        float frequency
+        float offset
+        float phase
+
+        construct(float amplitude : any, float frequency : any, float offset : any = 0, float phase = 0.0) : base(0) {
+            this.amplitude = Circuits.Units.Volts(amplitude)
+            this.frequency = Circuits.Units.Hertz(frequency)
+            this.offset = Circuits.Units.Volts(offset)
+            this.phase = phase
+        }
+
+        float Value(float t) { return this.offset + this.amplitude * Math.Sin(2.0 * Math.PI * this.frequency * t + this.phase) }
+    }
+
+    /// <summary>A square voltage between `low` and `high`: high for `duty` of every period.</summary>
+    class SquareSource : VoltageSource {
+        float high
+        float low
+        float frequency
+        float duty
+
+        construct(float high : any, float frequency : any, float low : any = 0, float duty = 0.5) : base(0) {
+            this.high = Circuits.Units.Volts(high)
+            this.low = Circuits.Units.Volts(low)
+            this.frequency = Circuits.Units.Hertz(frequency)
+            this.duty = duty
+        }
+
+        float Value(float t) {
+            var cycles = t * this.frequency
+            var part = cycles - Math.Floor(cycles)
+            if (part < this.duty) { return this.high }
+            return this.low
+        }
+    }
+
+    /// <summary>A current source: drives `current` from A through the source to B (out of B into the circuit).</summary>
+    class CurrentSource : TwoTerminal {
+        float amps
+
+        construct(float current : any) : base("I") { this.amps = Circuits.Units.Amps(current) }
+
+        float:any Level {
+            get { return this.amps * 1A }
+            set { this.amps = Circuits.Units.Amps(value) }
+        }
+
+        float Value(float t) { return this.amps }
+
+        undefined StampStep(Circuits.Solver solver) {
+            var i = this.Value(solver.time + solver.dt)
+            solver.CurrentInto(this.A, -i)
+            solver.CurrentInto(this.B, i)
+        }
+        float CurrentRaw() { return this.amps }
+    }
+
+    /// <summary>A switch: closed it is a wire (a tiny resistance), open it is not there.</summary>
+    class Switch : TwoTerminal {
+        bool closed
+
+        construct(bool closed = false) : base("S") { this.closed = closed }
+
+        bool Closed {
+            get { return this.closed }
+            set {
+                if (this.closed == value) { return }
+                this.closed = value
+                this.Invalidate()
+            }
+        }
+
+        undefined Toggle() { this.Closed = !this.closed }
+
+        undefined Stamp(Circuits.Solver solver) {
+            if (this.closed) { solver.Conductance(this.A, this.B, 1000000.0) }
+        }
+        float CurrentRaw() {
+            if (this.closed) { return this.VoltageRaw() * 1000000.0 }
+            return 0.0
+        }
+    }
+
+    /// <summary>Ties its port to ground (0 V). Circuit.Ground is such a port already.</summary>
+    class Ground : Part {
+        construct() : base("GND") { this.AddPort("g") }
+        Port G { get { return this.ports[0] } }
+    }
+
+    /// <summary>A circuit: parts and nested circuits, its own ports (to use it as a part of a larger one) and a ground. Run/Step simulate it in time steps.</summary>
+    class Circuit : Part {
+        List parts
+        List instruments
+        Port ground
+        float dt = 0.00001
+        float time = 0.0
+        Circuits.Solver solver
+        bool dirty = true
+
+        construct(string name = "circuit") : base(name) {
+            this.parts = new List()
+            this.instruments = new List()
+            var g = new Port("gnd", this)
+            g.TakeTo(this)
+            this.ground = g
+            this.solver = undefined
+        }
+
+        /// <summary>The ground (0 V) of the circuit; nested circuits share the ground of the outermost one.</summary>
+        Port Ground { get { return this.ground } }
+
+        /// <summary>Adds a part (or a nested circuit); it belongs to the circuit from now on. Returns it.</summary>
+        any Add(Part part) {
+            part.TakeTo(this)
+            part.owner = this
+            this.parts.Add(part)
+            this.Invalidate()
+            return part
+        }
+
+        List Parts() { return this.parts }
+
+        /// <summary>The time step of the simulation (default 10 us).</summary>
+        float:any TimeStep {
+            get { return this.dt * 1s }
+            set {
+                this.dt = Circuits.Units.Seconds(value)
+                this.Invalidate()
+            }
+        }
+
+        /// <summary>The time of the simulation.</summary>
+        float:s Time { get { return this.time * 1s } }
+        float TimeRaw() { return this.time }
+
+        undefined Invalidate() {
+            this.dirty = true
+            if (this.owner != undefined) { this.owner.Invalidate() }
+        }
+
+        /// <summary>Records every step (a Scope); Circuit.Run and Step call its Record(circuit).</summary>
+        undefined Attach(any instrument) { this.instruments.Add(instrument) }
+
+        // the outermost circuit runs the simulation
+        Circuits.Circuit Top() {
+            var c = this
+            while (c.owner != undefined) { c = c.owner }
+            return c
+        }
+
+        /// <summary>Back to time 0 (the parts take their initial state).</summary>
+        undefined Reset() {
+            this.time = 0.0
+            foreach (p in this.parts) { p.Reset() }
+            var all = new List()
+            Circuits.Circuit.Collect(this, all)
+            foreach (port in Circuits.Circuit.AllPorts(this, all)) { port.v = 0.0 }
+        }
+
+        // (The lists of parts and ports are made by static methods: a list keeps what belongs to its caller, and the parts belong to the circuit -
+        // in a method of the circuit a list would take them over.)
+
+        // the parts that are not circuits, of the circuit and the nested ones
+        static undefined Collect(Circuit circuit, List into) {
+            foreach (p in circuit.parts) {
+                if (p is of Circuit) {
+                    Circuit c = p!Circuit
+                    Circuits.Circuit.Collect(c, into)
+                } else { into.Add(p) }
+            }
+        }
+
+        // the ports of the parts, of the circuits and their grounds
+        static List AllPorts(Circuit circuit, List leaves) {
+            var all = new List()
+            foreach (p in leaves) {
+                foreach (port in p.Ports()) { all.Add(port) }
+            }
+            Circuits.Circuit.CircuitPorts(circuit, all)
+            return all
+        }
+
+        static undefined CircuitPorts(Circuit circuit, List into) {
+            into.Add(circuit.ground)
+            foreach (port in circuit.ports) { into.Add(port) }
+            foreach (p in circuit.parts) {
+                if (p is of Circuit) {
+                    Circuit c = p!Circuit
+                    Circuits.Circuit.CircuitPorts(c, into)
+                }
+            }
+        }
+
+        undefined GroundAll(Port top) {
+            this.ground.Connect(top)
+            foreach (p in this.parts) {
+                if (p is of Circuit) {
+                    Circuit c = p!Circuit
+                    c.GroundAll(top)
+                }
+                if (p is of Ground) {
+                    Ground g = p!Ground
+                    g.G.Connect(top)
+                }
+            }
+        }
+
+        // the solver: nodes, branches, the matrix (again when something changed)
+        undefined Build() {
+            var leaves = new List()
+            Circuits.Circuit.Collect(this, leaves)
+            this.GroundAll(this.ground)
+            var ports = Circuits.Circuit.AllPorts(this, leaves)
+            var groundRoot = this.ground.Root()
+            foreach (port in ports) { port.Root().node = -2 }
+            groundRoot.node = -1
+            var nodes = 0
+            foreach (port in ports) {
+                var root = port.Root()
+                if (root.node == -2) {
+                    root.node = nodes
+                    nodes = nodes + 1
+                }
+            }
+            var branches = 0
+            foreach (p in leaves) {
+                if (p.Branches() > 0) {
+                    TwoTerminal t = p!TwoTerminal
+                    t.branch = nodes + branches
+                    branches = branches + p.Branches()
+                }
+            }
+            var s = new Circuits.Solver(nodes, branches, this.dt)
+            s.TakeTo(this)
+            leaves.TakeTo(s)
+            s.parts = leaves
+            s.time = this.time
+            foreach (p in leaves) { p.Stamp(s) }
+            s.Factor()
+            this.solver = s
+            this.dirty = false
+        }
+
+        /// <summary>One time step.</summary>
+        undefined Step() {
+            var top = this.Top()
+            if (top != this) {
+                top.Step()
+                return
+            }
+            if (this.dirty || this.solver == undefined) { this.Build() }
+            var s = this.solver
+            s.time = this.time
+            s.ClearRight()
+            foreach (p in s.parts) { p.StampStep(s) }
+            s.Solve()
+            var leaves = s.parts
+            foreach (p in leaves) {
+                foreach (port in p.Ports()) {
+                    var root = port.Root()
+                    root.v = s.NodeVoltage(root.node)
+                }
+            }
+            var circuitPorts = new List()
+            Circuits.Circuit.CircuitPorts(this, circuitPorts)
+            foreach (port in circuitPorts) {
+                var root = port.Root()
+                root.v = s.NodeVoltage(root.node)
+            }
+            foreach (p in leaves) { p.Commit(s) }
+            this.time = this.time + this.dt
+            foreach (inst in this.instruments) { inst.Record(this) }
+        }
+
+        /// <summary>Simulates for `duration` (a time like 10ms, or seconds).</summary>
+        undefined Run(float duration : any) {
+            var end = this.time + Circuits.Units.Seconds(duration) - this.dt * 0.5
+            while (this.time < end) { this.Step() }
+        }
+    }
+
+    /// <summary>The equations of a circuit (modified nodal analysis): A x = b with the node voltages and the branch currents as x. LU-factorized once while
+    /// the matrix stays the same; every step only the right side changes.</summary>
+    class Solver {
+        int n
+        int size
+        float dt
+        float time = 0.0
+        List parts
+        any a
+        any rhs
+        any x
+        any pivot
+        // groups of nodes joined by conductances and voltage sources (index 0: ground, node i: i + 1)
+        any group
+
+        construct(int nodes, int branches, float dt) {
+            this.n = nodes
+            this.size = nodes + branches
+            this.dt = dt
+            var sz = this.size
+            if (sz < 1) { sz = 1 }
+            this.a = new float[sz * sz]
+            this.rhs = new float[sz]
+            this.x = new float[sz]
+            this.pivot = new int[sz]
+            for (int i = 0; i < sz * sz; i++) { this.a[i] = 0.0 }
+            for (int i = 0; i < sz; i++) {
+                this.rhs[i] = 0.0
+                this.x[i] = 0.0
+            }
+            this.group = new int[nodes + 1]
+            for (int i = 0; i <= nodes; i++) { this.group[i] = i }
+        }
+
+        int Group(int i) {
+            while (this.group[i] != i) {
+                this.group[i] = this.group[this.group[i]]
+                i = this.group[i]
+            }
+            return i
+        }
+
+        undefined Join(int i, int j) {
+            var a = this.Group(i + 1)
+            var b = this.Group(j + 1)
+            if (a != b) { this.group[a] = b }
+        }
+
+        undefined Add(int row, int col, float value) {
+            if (row < 0 || col < 0) { return }
+            this.a[row * this.size + col] = this.a[row * this.size + col] + value
+        }
+
+        /// <summary>A conductance g between two ports.</summary>
+        undefined Conductance(Port p, Port q, float g) {
+            var i = p.Root().node
+            var j = q.Root().node
+            this.Add(i, i, g)
+            this.Add(j, j, g)
+            this.Add(i, j, -g)
+            this.Add(j, i, -g)
+            if (g != 0.0) { this.Join(i, j) }
+        }
+
+        /// <summary>A current flowing into the node of the port (right side).</summary>
+        undefined CurrentInto(Port p, float amps) {
+            var i = p.Root().node
+            if (i >= 0) { this.rhs[i] = this.rhs[i] + amps }
+        }
+
+        /// <summary>A voltage source between plus and minus with the branch k.</summary>
+        undefined VoltageBranch(int k, Port plus, Port minus) {
+            var i = plus.Root().node
+            var j = minus.Root().node
+            this.Add(i, k, 1.0)
+            this.Add(j, k, -1.0)
+            this.Add(k, i, 1.0)
+            this.Add(k, j, -1.0)
+            this.Join(i, j)
+        }
+
+        undefined BranchValue(int k, float volts) { this.rhs[k] = volts }
+        float BranchCurrent(int k) { return this.x[k] }
+
+        float NodeVoltage(int node) {
+            if (node < 0) { return 0.0 }
+            return this.x[node]
+        }
+
+        undefined ClearRight() {
+            for (int i = 0; i < this.size; i++) { this.rhs[i] = 0.0 }
+        }
+
+        // LU with partial pivoting, in place
+        undefined Factor() {
+            var sz = this.size
+            var m = this.a
+            // a node without a path to ground (it hangs in the air, or only current sources and open switches reach it) gets a tiny conductance to
+            // ground: otherwise the matrix would be singular
+            var ground = this.Group(0)
+            for (int i = 0; i < this.n; i++) {
+                if (this.Group(i + 1) != ground) { m[i * sz + i] = m[i * sz + i] + 0.000000000001 }
+            }
+            for (int i = 0; i < sz; i++) { this.pivot[i] = i }
+            for (int k = 0; k < sz; k++) {
+                var best = k
+                var bestValue = Math.Abs(m[k * sz + k])
+                for (int r = k + 1; r < sz; r++) {
+                    var value = Math.Abs(m[r * sz + k])
+                    if (value > bestValue) {
+                        best = r
+                        bestValue = value
+                    }
+                }
+                if (bestValue == 0.0) { throw new ArgumentException("The circuit cannot be solved (a loop of voltage sources, or a source without a path).") }
+                if (best != k) {
+                    for (int c = 0; c < sz; c++) {
+                        var t = m[k * sz + c]
+                        m[k * sz + c] = m[best * sz + c]
+                        m[best * sz + c] = t
+                    }
+                    var tp = this.pivot[k]
+                    this.pivot[k] = this.pivot[best]
+                    this.pivot[best] = tp
+                }
+                var diag = m[k * sz + k]
+                for (int r = k + 1; r < sz; r++) {
+                    var f = m[r * sz + k] / diag
+                    m[r * sz + k] = f
+                    if (f != 0.0) {
+                        for (int c = k + 1; c < sz; c++) { m[r * sz + c] = m[r * sz + c] - f * m[k * sz + c] }
+                    }
+                }
+            }
+        }
+
+        undefined Solve() {
+            var sz = this.size
+            var m = this.a
+            var y = this.x
+            for (int i = 0; i < sz; i++) {
+                var sum = this.rhs[this.pivot[i]]
+                for (int c = 0; c < i; c++) { sum = sum - m[i * sz + c] * y[c] }
+                y[i] = sum
+            }
+            for (int i = sz - 1; i >= 0; i--) {
+                var sum = y[i]
+                for (int c = i + 1; c < sz; c++) { sum = sum - m[i * sz + c] * y[c] }
+                y[i] = sum / m[i * sz + i]
+            }
+        }
+    }
+
+    /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.</summary>
+    class Scope {
+        List names
+        List sources
+        List seconds
+        List samples
+        int capacity
+
+        construct(Circuit circuit, int capacity = 100000) {
+            this.names = new List()
+            this.sources = new List()
+            this.seconds = new List()
+            this.samples = new List()
+            this.capacity = capacity
+            circuit.Attach(this)
+        }
+
+        /// <summary>A channel for the voltage of a port (against ground, or against `reference`).</summary>
+        undefined Voltage(string name, Port port, Port reference = undefined) {
+            var pair = new List()
+            pair.Add(port)
+            pair.Add(reference)
+            pair.TakeTo(this)
+            this.AddChannel(name, pair)
+        }
+
+        /// <summary>A channel for the current through a part.</summary>
+        undefined Current(string name, Part part) { this.AddChannel(name, part) }
+
+        undefined AddChannel(string name, any source) {
+            this.names.Add(name)
+            this.sources.Add(source)
+            this.samples.Add(new List())
+        }
+
+        undefined Record(Circuit circuit) {
+            if (this.seconds.count >= this.capacity) { return }
+            this.seconds.Add(circuit.TimeRaw())
+            for (int i = 0; i < this.sources.count; i++) {
+                var src = this.sources[i]
+                float value = 0.0
+                if (src is of List) {
+                    value = src[0].Raw()
+                    if (src[1] != undefined) { value = value - src[1].Raw() }
+                } else { value = src.CurrentRaw() }
+                this.samples[i].Add(value)
+            }
+        }
+
+        int Count { get { return this.seconds.count } }
+
+        /// <summary>The times of the samples (seconds).</summary>
+        float[] Times() { return Circuits.Scope.ToArray(this.seconds) }
+
+        /// <summary>The samples of a channel (volts or amperes).</summary>
+        float[] Samples(string name) {
+            for (int i = 0; i < this.names.count; i++) {
+                if (this.names[i] == name) { return Circuits.Scope.ToArray(this.samples[i]) }
+            }
+            throw new ArgumentException("The scope has no channel '" + name + "'.")
+        }
+
+        /// <summary>The last sample of a channel.</summary>
+        float Last(string name) {
+            for (int i = 0; i < this.names.count; i++) {
+                if (this.names[i] == name) {
+                    var list = this.samples[i]
+                    if (list.count == 0) { return 0.0 }
+                    return list[list.count - 1]
+                }
+            }
+            throw new ArgumentException("The scope has no channel '" + name + "'.")
+        }
+
+        undefined Clear() {
+            this.seconds.Clear()
+            foreach (list in this.samples) { list.Clear() }
+        }
+
+        static float[] ToArray(List list) {
+            var result = new float[list.count]
+            for (int i = 0; i < list.count; i++) { result[i] = list[i] }
+            return result
+        }
+    }
+
+    /// <summary>A virtual multimeter.</summary>
+    class Multimeter {
+        /// <summary>The voltage between two ports (b: ground when left out).</summary>
+        static float:V Volts(Port a, Port b = undefined) {
+            var v = a.Raw()
+            if (b != undefined) { v = v - b.Raw() }
+            return v * 1V
+        }
+
+        /// <summary>The current through a part.</summary>
+        static float:A Amps(Part part) { return part.CurrentRaw() * 1A }
+
+        /// <summary>The root mean square of samples (an AC voltage or current from a Scope).</summary>
+        static float Rms(float samples[]) {
+            if (samples.length == 0) { return 0.0 }
+            var sum = 0.0
+            for (int i = 0; i < samples.length; i++) { sum = sum + samples[i] * samples[i] }
+            return Math.Sqrt(sum / samples.length)
+        }
+    }
+
+    /// <summary>Frequency analysis of samples (from a Scope): a fast Fourier transform.</summary>
+    class Fft {
+        /// <summary>The amplitudes of the frequencies 0 .. sampleRate/2 (the samples are padded with zeros to a power of two; bin k is k * sampleRate / n).</summary>
+        static float[] Magnitudes(float samples[]) {
+            var n = 1
+            while (n < samples.length) { n = n * 2 }
+            var re = new float[n]
+            var im = new float[n]
+            for (int i = 0; i < n; i++) {
+                re[i] = 0.0
+                im[i] = 0.0
+                if (i < samples.length) { re[i] = samples[i] }
+            }
+            // bit reversal
+            var j = 0
+            for (int i = 1; i < n; i++) {
+                var bit = n >> 1
+                while ((j & bit) != 0) {
+                    j = j # bit
+                    bit = bit >> 1
+                }
+                j = j # bit
+                if (i < j) {
+                    var tr = re[i]
+                    re[i] = re[j]
+                    re[j] = tr
+                    var ti = im[i]
+                    im[i] = im[j]
+                    im[j] = ti
+                }
+            }
+            var len = 2
+            while (len <= n) {
+                var angle = -2.0 * Math.PI / len
+                var wr = Math.Cos(angle)
+                var wi = Math.Sin(angle)
+                for (int start = 0; start < n; start = start + len) {
+                    var cr = 1.0
+                    var ci = 0.0
+                    for (int k = 0; k < len / 2; k++) {
+                        var ar = re[start + k]
+                        var ai = im[start + k]
+                        var br = re[start + k + len / 2] * cr - im[start + k + len / 2] * ci
+                        var bi = re[start + k + len / 2] * ci + im[start + k + len / 2] * cr
+                        re[start + k] = ar + br
+                        im[start + k] = ai + bi
+                        re[start + k + len / 2] = ar - br
+                        im[start + k + len / 2] = ai - bi
+                        var ncr = cr * wr - ci * wi
+                        ci = cr * wi + ci * wr
+                        cr = ncr
+                    }
+                }
+                len = len * 2
+            }
+            var half = n / 2 + 1
+            var mags = new float[half]
+            for (int k = 0; k < half; k++) {
+                var m = Math.Sqrt(re[k] * re[k] + im[k] * im[k]) / samples.length
+                if (k > 0 && k < n / 2) { m = m * 2.0 }
+                mags[k] = m
+            }
+            return mags
+        }
+
+        /// <summary>The frequency of the strongest component other than DC (Hz).</summary>
+        static float:Hz Dominant(float samples[], float sampleRate : any) {
+            var rate = Circuits.Units.Hertz(sampleRate)
+            var mags = Circuits.Fft.Magnitudes(samples)
+            var n = (mags.length - 1) * 2
+            var best = 1
+            for (int k = 2; k < mags.length; k++) {
+                if (mags[k] > mags[best]) { best = k }
+            }
+            return best * rate / n * 1Hz
+        }
+    }
+}

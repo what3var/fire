@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-circuits",
+  "type": "library",
+  "import": "circuits",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'circuits' of fire: circuit simulation after Falstad - parts, nested circuits, sources, scope, multimeter and FFT."
+  }
+}
