@@ -534,6 +534,395 @@ namespace Circuits {
         bool Compile(Circuits.Solver solver) { return true }
     }
 
+    /// <summary>The numbers of a kind of part, like a .model line of SPICE: `kind` is "D" (diode), "NPN", "PNP", "NMOS", "PMOS" or "OPAMP".
+    /// Diode: Is (saturation current, A), N (emission coefficient), BV (breakdown voltage, 0: none), IBV (the current at -BV, default 1 mA). Bipolar: Is, BF, BR (current gains forward and reverse).
+    /// MOSFET: VTO (threshold, V; positive also for PMOS), KP (beta, A/V^2), LAMBDA (1/V). Op amp: GAIN, VMIN and VMAX (the output range), ROUT (Ohm).</summary>
+    class Model {
+        string name
+        string kind
+        float p0 = 0.0
+        float p1 = 0.0
+        float p2 = 0.0
+        float p3 = 0.0
+
+        construct(string name, string kind, float p0, float p1, float p2 = 0.0, float p3 = 0.0) {
+            this.name = name
+            this.kind = kind.ToUpper()
+            this.p0 = p0
+            this.p1 = p1
+            this.p2 = p2
+            this.p3 = p3
+        }
+
+        string Name { get { return this.name } }
+        string Kind { get { return this.kind } }
+
+        /// <summary>A copy with another name and changed numbers (`Model.Get("1N4148").With("mine", 0, 3e-9)` - the index of the number and its value).</summary>
+        Circuits.Model With(string name, int index, float value) {
+            var m = new Circuits.Model(name, this.kind, this.p0, this.p1, this.p2, this.p3)
+            if (index == 0) { m.p0 = value }
+            if (index == 1) { m.p1 = value }
+            if (index == 2) { m.p2 = value }
+            if (index == 3) { m.p3 = value }
+            return m
+        }
+    }
+
+    /// <summary>The library of models: the ones of the package (common diodes, LEDs, transistors, MOSFETs and op amps) and the ones a program adds.</summary>
+    class Models {
+        static List all
+
+        static undefined Fill() {
+            if (Circuits.Models.all != undefined) { return }
+            var l = new List()
+            l.TakeGlobal()
+            Circuits.Models.all = l
+            // diodes: Is, N, BV, IBV
+            Circuits.Models.Put(new Circuits.Model("diode", "D", 0.00000000000001, 1.0))
+            Circuits.Models.Put(new Circuits.Model("1N4148", "D", 0.00000000252, 1.752, 100.0))
+            Circuits.Models.Put(new Circuits.Model("1N4001", "D", 0.00000001411, 1.984, 50.0))
+            Circuits.Models.Put(new Circuits.Model("1N5817", "D", 0.0000317, 1.373, 20.0))
+            Circuits.Models.Put(new Circuits.Model("zener", "D", 0.00000000000001, 1.0, 5.6))
+            Circuits.Models.Put(new Circuits.Model("1N4733", "D", 0.00000000000001, 1.0, 5.1))
+            Circuits.Models.Put(new Circuits.Model("1N4742", "D", 0.00000000000001, 1.0, 12.0))
+            // LEDs (about 1.9 V red, 2.0 V yellow, 2.1 V green, 3.1 V blue and white at 20 mA)
+            Circuits.Models.Put(new Circuits.Model("led", "D", 0.0000000000000000022, 2.0))
+            Circuits.Models.Put(new Circuits.Model("red", "D", 0.0000000000000000022, 2.0))
+            Circuits.Models.Put(new Circuits.Model("yellow", "D", 0.00000000000000000032, 2.0))
+            Circuits.Models.Put(new Circuits.Model("green", "D", 0.000000000000000000045, 2.0))
+            Circuits.Models.Put(new Circuits.Model("blue", "D", 0.00000000000000000000000000017, 2.0))
+            Circuits.Models.Put(new Circuits.Model("white", "D", 0.00000000000000000000000000017, 2.0))
+            // bipolar transistors: Is, BF, BR
+            Circuits.Models.Put(new Circuits.Model("npn", "NPN", 0.00000000000001, 100.0, 1.0))
+            Circuits.Models.Put(new Circuits.Model("pnp", "PNP", 0.00000000000001, 100.0, 1.0))
+            Circuits.Models.Put(new Circuits.Model("2N3904", "NPN", 0.000000000000006734, 416.4, 0.7371))
+            Circuits.Models.Put(new Circuits.Model("2N3906", "PNP", 0.00000000000000141, 180.7, 4.977))
+            Circuits.Models.Put(new Circuits.Model("BC547", "NPN", 0.000000000000007049, 374.5, 1.0))
+            Circuits.Models.Put(new Circuits.Model("BC557", "PNP", 0.000000000000003834, 344.4, 1.0))
+            Circuits.Models.Put(new Circuits.Model("2N2222", "NPN", 0.0000000000000143, 255.9, 6.092))
+            // MOSFETs: VTO, KP, LAMBDA
+            Circuits.Models.Put(new Circuits.Model("nmos", "NMOS", 1.5, 0.02, 0.02))
+            Circuits.Models.Put(new Circuits.Model("pmos", "PMOS", 1.5, 0.02, 0.02))
+            Circuits.Models.Put(new Circuits.Model("2N7000", "NMOS", 2.1, 0.27, 0.01))
+            Circuits.Models.Put(new Circuits.Model("BS250", "PMOS", 2.0, 0.2, 0.01))
+            Circuits.Models.Put(new Circuits.Model("IRF540", "NMOS", 3.5, 20.0, 0.01))
+            Circuits.Models.Put(new Circuits.Model("IRF9540", "PMOS", 3.5, 10.0, 0.01))
+            // op amps: GAIN, VMIN, VMAX, ROUT
+            Circuits.Models.Put(new Circuits.Model("opamp", "OPAMP", 100000.0, -15.0, 15.0, 1.0))
+            Circuits.Models.Put(new Circuits.Model("LM358", "OPAMP", 100000.0, 0.0, 3.5, 10.0))
+            Circuits.Models.Put(new Circuits.Model("TL072", "OPAMP", 200000.0, -13.5, 13.5, 10.0))
+            Circuits.Models.Put(new Circuits.Model("LM741", "OPAMP", 200000.0, -13.0, 13.0, 75.0))
+        }
+
+        static undefined Put(Circuits.Model model) {
+            // a model of the same name is replaced
+            for (int i = 0; i < Circuits.Models.all.count; i++) {
+                if (Circuits.Models.all[i].name.ToUpper() == model.name.ToUpper()) {
+                    Circuits.Models.all.RemoveAt(i)
+                    break
+                }
+            }
+            Circuits.Models.all.Add(take model)
+        }
+
+        /// <summary>Adds a model of the program (or replaces the one of the same name). Returns it.</summary>
+        static Circuits.Model Add(Circuits.Model model) {
+            Circuits.Models.Fill()
+            model.TakeGlobal()
+            Circuits.Models.Put(model)
+            return model
+        }
+
+        /// <summary>The model of this name (not case sensitive).</summary>
+        static Circuits.Model Get(string name) {
+            Circuits.Models.Fill()
+            foreach (m in Circuits.Models.all) {
+                if (m.name.ToUpper() == name.ToUpper()) { return m }
+            }
+            throw new ArgumentException("There is no model '" + name + "'.")
+        }
+
+        static bool Has(string name) {
+            Circuits.Models.Fill()
+            foreach (m in Circuits.Models.all) {
+                if (m.name.ToUpper() == name.ToUpper()) { return true }
+            }
+            return false
+        }
+
+        /// <summary>The names of the models of a kind ("D", "NPN", ...; "" for all).</summary>
+        static List Names(string kind = "") {
+            Circuits.Models.Fill()
+            var names = new List()
+            foreach (m in Circuits.Models.all) {
+                if (kind == "" || m.kind == kind.ToUpper()) { names.Add(m.name) }
+            }
+            return names
+        }
+
+        // a model given by name or as a Model, checked against the kinds the part takes
+        static Circuits.Model Of(any model, string kinds) {
+            Circuits.Model m = undefined
+            if (model is of string) { m = Circuits.Models.Get(model) } else { m = model!Circuits.Model }
+            if (!("," + kinds + ",").Contains("," + m.kind + ",")) { throw new ArgumentException("The model '" + m.name + "' is a " + m.kind + ", not a " + kinds + ".") }
+            return m
+        }
+    }
+
+    /// <summary>A diode: A is the anode, B the cathode. `model`: a name of the library ("1N4148", "zener", "red", ...) or a Model.</summary>
+    class Diode : TwoTerminal {
+        Circuits.Model model
+
+        construct(any model = "diode") : base("D") {
+            this.model = Circuits.Models.Of(model, "D")
+        }
+
+        Circuits.Model Model { get { return this.model } }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddNonlinear(0, this.A, this.B, this.B, this.model.p0, this.model.p1, this.model.p2, this.model.p3)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 0)
+        }
+    }
+
+    /// <summary>A Zener diode: conducts backwards above `voltage` (B to A).</summary>
+    class Zener : Diode {
+        construct(float voltage : any = 5.6) : base(Circuits.Models.Get("zener").With("zener", 2, Circuits.Units.Volts(voltage))) { }
+    }
+
+    /// <summary>A light emitting diode: `color` is "red", "yellow", "green", "blue", "white" (or a model). Brightness is its current against `ratedCurrent`.</summary>
+    class Led : Diode {
+        float rated
+
+        construct(any color = "red", float ratedCurrent : any = 0.02) : base(color) { this.rated = Circuits.Units.Amps(ratedCurrent) }
+
+        /// <summary>0 (off) to 1 (at the rated current or more).</summary>
+        float Brightness {
+            get {
+                var b = this.CurrentRaw() / this.rated
+                if (b < 0.0) { return 0.0 }
+                if (b > 1.0) { return 1.0 }
+                return b
+            }
+        }
+
+        bool IsOn { get { return this.CurrentRaw() > this.rated * 0.05 } }
+    }
+
+    /// <summary>A bipolar transistor (Ebers-Moll): ports C, B, E. `model`: "npn", "pnp", "2N3904", "2N3906", "BC547", ... or a Model.</summary>
+    class Transistor : Part {
+        Circuits.Model model
+        int index = -1
+
+        construct(any model = "npn") : base("Q") {
+            this.model = Circuits.Models.Of(model, "NPN,PNP")
+            this.AddPort("c")
+            this.AddPort("b")
+            this.AddPort("e")
+        }
+
+        Port C { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
+        Port E { get { return this.ports[2] } }
+        Circuits.Model Model { get { return this.model } }
+        bool IsPnp { get { return this.model.kind == "PNP" } }
+
+        bool Compile(Circuits.Solver solver) {
+            var kind = 1
+            if (this.IsPnp) { kind = 2 }
+            this.index = solver.AddNonlinear(kind, this.C, this.B, this.E, this.model.p0, this.model.p1, this.model.p2, 0.0)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+
+        float Terminal(int t) {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, t)
+        }
+        /// <summary>The currents flowing into the collector, the base and the emitter.</summary>
+        float:A CollectorCurrent { get { return this.Terminal(0) * 1A } }
+        float:A BaseCurrent { get { return this.Terminal(1) * 1A } }
+        float:A EmitterCurrent { get { return this.Terminal(2) * 1A } }
+        float CurrentRaw() { return this.Terminal(0) }
+    }
+
+    /// <summary>A MOSFET (level 1): ports D, G, S. `model`: "nmos", "pmos", "2N7000", "BS250", "IRF540", ... or a Model.</summary>
+    class Mosfet : Part {
+        Circuits.Model model
+        int index = -1
+
+        construct(any model = "nmos") : base("M") {
+            this.model = Circuits.Models.Of(model, "NMOS,PMOS")
+            this.AddPort("d")
+            this.AddPort("g")
+            this.AddPort("s")
+        }
+
+        Port D { get { return this.ports[0] } }
+        Port G { get { return this.ports[1] } }
+        Port S { get { return this.ports[2] } }
+        Circuits.Model Model { get { return this.model } }
+        bool IsPChannel { get { return this.model.kind == "PMOS" } }
+
+        bool Compile(Circuits.Solver solver) {
+            var kind = 3
+            if (this.IsPChannel) { kind = 4 }
+            this.index = solver.AddNonlinear(kind, this.D, this.G, this.S, this.model.p0, this.model.p1, this.model.p2, 0.0)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+
+        /// <summary>The current flowing into the drain.</summary>
+        float:A DrainCurrent { get { return this.CurrentRaw() * 1A } }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 0)
+        }
+    }
+
+    /// <summary>An operational amplifier: ports Plus, Minus, Out. The output is gain * (plus - minus), limited to the output range of the model and driven
+    /// through its output resistance (the supply is not modelled: the range is given against ground). `model`: "opamp" (+-15 V), "LM358", "TL072", "LM741".</summary>
+    class OpAmp : Part {
+        Circuits.Model model
+        int index = -1
+
+        construct(any model = "opamp") : base("U") {
+            this.model = Circuits.Models.Of(model, "OPAMP")
+            this.AddPort("plus")
+            this.AddPort("minus")
+            this.AddPort("out")
+        }
+
+        Port Plus { get { return this.ports[0] } }
+        Port Minus { get { return this.ports[1] } }
+        Port Out { get { return this.ports[2] } }
+        Circuits.Model Model { get { return this.model } }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddNonlinear(5, this.Plus, this.Minus, this.Out, this.model.p0, this.model.p1, this.model.p2, this.model.p3)
+            if (this.index < 0) { throw new ArgumentException(solver.Error()) }
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 2, 0.0) }
+
+        /// <summary>The current flowing into the output (negative: the op amp drives current out).</summary>
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 2)
+        }
+    }
+
+    /// <summary>A logic gate (or a D flip-flop): reads its inputs after every step (high above half the supply) and drives its output through a small resistance
+    /// in the next one (high: `supply`, low: 0 V). Kinds: "AND", "OR", "XOR", "NAND", "NOR", "XNOR", "NOT", "BUFFER".</summary>
+    class Gate : Part {
+        int kind
+        int inputCount
+        float supply
+        float rout
+        int index = -1
+
+        construct(string kind, int inputs = 2, float supply : any = 5, float outputResistance : any = 10) : base(kind.ToUpper()) {
+            var names = ["AND", "OR", "XOR", "NAND", "NOR", "XNOR", "NOT", "BUFFER"]
+            this.kind = -1
+            for (int i = 0; i < names.length; i++) {
+                if (names[i] == kind.ToUpper()) { this.kind = i }
+            }
+            if (this.kind < 0) { throw new ArgumentException("There is no gate '" + kind + "'.") }
+            if (this.kind >= 6) { inputs = 1 }
+            if (inputs < 1) { throw new ArgumentException("A gate needs an input.") }
+            this.inputCount = inputs
+            this.supply = Circuits.Units.Volts(supply)
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            for (int i = 0; i < inputs; i++) { this.AddPort("in" + i) }
+            this.AddPort("out")
+        }
+
+        /// <summary>The input i (0, 1, ...).</summary>
+        Port In(int i) { return this.ports[i] }
+        Port Out { get { return this.ports[this.inputCount] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var nodes = new int[this.inputCount]
+            for (int i = 0; i < this.inputCount; i++) { nodes[i] = solver.Node(this.ports[i]) }
+            this.index = solver.AddGate(this.kind, nodes, solver.Node(this.Out), -1, this.supply, this.supply / 2, this.rout)
+            return true
+        }
+
+        /// <summary>Is the output high?</summary>
+        bool State {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.GateState(this.index)
+            }
+        }
+    }
+
+    /// <summary>A D flip-flop: takes D on the rising edge of Clock; outputs Q and NotQ.</summary>
+    class FlipFlop : Part {
+        float supply
+        float rout
+        int index = -1
+
+        construct(float supply : any = 5, float outputResistance : any = 10) : base("DFF") {
+            this.supply = Circuits.Units.Volts(supply)
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            this.AddPort("d")
+            this.AddPort("clk")
+            this.AddPort("q")
+            this.AddPort("nq")
+        }
+
+        Port D { get { return this.ports[0] } }
+        Port Clock { get { return this.ports[1] } }
+        Port Q { get { return this.ports[2] } }
+        Port NotQ { get { return this.ports[3] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var nodes = new int[2]
+            nodes[0] = solver.Node(this.D)
+            nodes[1] = solver.Node(this.Clock)
+            this.index = solver.AddGate(8, nodes, solver.Node(this.Q), solver.Node(this.NotQ), this.supply, this.supply / 2, this.rout)
+            return true
+        }
+
+        bool State {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.GateState(this.index)
+            }
+        }
+    }
+
+    /// <summary>A logic input: a voltage source that is 0 V or `supply` (High, Toggle()).</summary>
+    class LogicInput : VoltageSource {
+        float supply
+
+        construct(bool high = false, float supply : any = 5) : base(0) {
+            this.supply = Circuits.Units.Volts(supply)
+            this.High = high
+        }
+
+        bool High {
+            get { return this.volts > this.supply / 2 }
+            set {
+                if (value) { this.Level = this.supply } else { this.Level = 0 }
+            }
+        }
+
+        undefined Toggle() { this.High = !this.High }
+    }
+
     /// <summary>A circuit: parts and nested circuits, its own ports (to use it as a part of a larger one) and a ground. Run/Step simulate it in time steps.
     /// The first step after a change compiles the circuit into a plan for the kernel of the package.</summary>
     class Circuit : Part {
@@ -802,7 +1191,8 @@ namespace Circuits {
         }
 
         /// <summary>Numbers of the compiled plan (for tests and tools): 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization,
-        /// 3 capacitors and inductors, 4 sources, 5 parts that step in fire.</summary>
+        /// 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear (and logic parts), 7 iterations of Newton's method
+        /// so far, 8 steps in which it did not converge.</summary>
         int PlanInfo(int what) {
             var top = this.Top()
             if (top.dirty || top.solver == undefined) { top.Build() }
@@ -863,6 +1253,14 @@ namespace Circuits {
         bool AddProbe(int recorder, int channel, int kind, int a, int b, float g) { return __CirAddProbe(this.handle, recorder, channel, kind, a, b, g) }
         undefined SetNode(int node, float volts) { __CirSetNode(this.handle, node, volts) }
 
+        int AddNonlinear(int kind, Port n0, Port n1, Port n2, float p0, float p1, float p2, float p3) {
+            return __CirAddNonlinear(this.handle, kind, n0.Root().node, n1.Root().node, n2.Root().node, p0, p1, p2, p3)
+        }
+        float NlState(int index, int what) { return __CirNlState(this.handle, index, what) }
+        int AddGate(int kind, int inputs[], int out, int outNot, float high, float threshold, float rout) {
+            return __CirAddGate(this.handle, kind, inputs, out, outNot, high, threshold, rout)
+        }
+        bool GateState(int index) { return __CirGateState(this.handle, index) }
         bool Compile(float time) { return __CirCompile(this.handle, time) }
         string Error() { return __CirLastError() }
         undefined Begin() { __CirBegin(this.handle) }

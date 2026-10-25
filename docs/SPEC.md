@@ -295,7 +295,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   - `value!` (without an argument) → the type is derived from the context.
   - `value!type` → the type is explicitly forced.
   - Targets: `int`, `float`, `bool`, `string`, `char` (from/to the character code; a float is rounded), a bit width `int[8|16|32|64]` (signed two's complement), `byte` (unsigned 8 bits), `float[32|64]` (`float[32]` rounds to single precision).
-  - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged.
+  - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged. A class of a namespace is named with it (`value!Shop.Item`, relative names as everywhere): after `!` a dot goes on with the type name while the name so far is a namespace of the program (all files are scanned for `namespace` declarations before parsing); otherwise the dot is a member of the result (`value!Dog.Bark()`).
 - `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`.
 
 ### 3.1.1 `!` depends on the context by position (prefix vs. suffix)

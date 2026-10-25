@@ -61,6 +61,70 @@ methods ending in `Raw` give plain numbers (volts, amperes, seconds).
 
 Every two-terminal part has `Voltage` (from `A` to `B`), `Current` (from `A` through the part to `B`) and `PowerRaw()`.
 
+## Semiconductors, op amps and logic
+
+These parts are not linear: every step solves the circuit with Newton's method in the kernel (the junction voltages limited like SPICE does, the
+factorization run again with the same list of operations each iteration).
+
+| Part | Ports | |
+|---|---|---|
+| `Diode(model = "diode")` | `A` anode, `B` cathode | the Shockley equation with emission coefficient and breakdown |
+| `Zener(voltage = 5.6V)` | `A`, `B` | a diode that conducts backwards above `voltage` |
+| `Led(color = "red", ratedCurrent = 20mA)` | `A`, `B` | `Brightness` (0 to 1 at the rated current), `IsOn` |
+| `Transistor(model = "npn")` | `C`, `B`, `E` | bipolar (Ebers-Moll): `CollectorCurrent`, `BaseCurrent`, `EmitterCurrent` |
+| `Mosfet(model = "nmos")` | `D`, `G`, `S` | level 1 (Shichman-Hodges), drain and source swap when the voltage turns: `DrainCurrent` |
+| `OpAmp(model = "opamp")` | `Plus`, `Minus`, `Out` | gain * (plus - minus), limited smoothly to the output range of the model, through its output resistance |
+| `Gate(kind, inputs = 2, supply = 5V)` | `In(i)`, `Out` | `"AND"`, `"OR"`, `"XOR"`, `"NAND"`, `"NOR"`, `"XNOR"`, `"NOT"`, `"BUFFER"`; `State` |
+| `FlipFlop(supply = 5V)` | `D`, `Clock`, `Q`, `NotQ` | takes D on the rising edge of the clock |
+| `LogicInput(high = false, supply = 5V)` | `A`, `B` | a source of 0 V or `supply`: `High`, `Toggle()` |
+
+The logic parts read their inputs after every step (high above half the supply) and drive their outputs in the next one through a small resistance
+(10 Ohm), like the gates of Falstad's simulator: a gate delays by one time step.
+
+```fire
+#import "circuits"
+
+var c = new Circuits.Circuit()
+var vcc = c.Add(new Circuits.VoltageSource(5V))
+var rb = c.Add(new Circuits.Resistor(10kOhm))
+var led = c.Add(new Circuits.Led("green"))
+var rc = c.Add(new Circuits.Resistor(220))
+var q = c.Add(new Circuits.Transistor("2N3904"))
+vcc.A.Connect(rb.A)
+rb.B.Connect(q.B)
+vcc.A.Connect(rc.A)
+rc.B.Connect(led.A)
+led.B.Connect(q.C)
+q.E.Connect(c.Ground)
+vcc.B.Connect(c.Ground)
+c.Step()
+print(led.IsOn)                     // True: the transistor switches the LED on
+```
+
+### Models
+
+A semiconductor or op amp takes a **model** - the numbers of a kind of part, like a `.model` line of SPICE: a name of the library or a
+`Circuits.Model`. `Circuits.Models.Names(kind)` lists them, `Circuits.Models.Add(model)` adds one of your own.
+
+| Kind | Numbers (p0, p1, p2, p3) | In the library |
+|---|---|---|
+| `"D"` | IS, N, BV, IBV | `diode`, `1N4148`, `1N4001`, `1N5817`, `zener`, `1N4733` (5.1 V), `1N4742` (12 V), `led`/`red`, `yellow`, `green`, `blue`, `white` |
+| `"NPN"`, `"PNP"` | IS, BF, BR | `npn`, `pnp`, `2N3904`, `2N3906`, `BC547`, `BC557`, `2N2222` |
+| `"NMOS"`, `"PMOS"` | VTO, KP, LAMBDA | `nmos`, `pmos`, `2N7000`, `BS250`, `IRF540`, `IRF9540` |
+| `"OPAMP"` | GAIN, VMIN, VMAX, ROUT | `opamp` (+-15 V), `LM358` (0 to 3.5 V), `TL072`, `LM741` |
+
+```fire
+#import "circuits"
+
+Circuits.Models.Add(new Circuits.Model("BAT54", "D", 0.0000002, 1.0, 30.0))
+var d = new Circuits.Diode("BAT54")
+var fast = Circuits.Models.Get("1N4148").With("1N4148-hot", 0, 0.000000005)   // a copy with another IS
+print(Circuits.Models.Names("NPN").count)
+```
+
+The models of the library are approximations from the data sheets and the usual SPICE models, good for the behaviour of a circuit - not for the
+details of a data sheet (no capacitances of the junctions yet, no temperature).
+
 ## Circuits
 
 | | |
@@ -179,5 +243,5 @@ A switch that opens while a current flows through a capacitor makes the trapezoi
 
 ## Coming next
 
-Diodes, transistors and other non-linear parts (Newton iteration), binding parameters, parts attached to the devices of the program (`Attached`), simulated
+Parts given by a formula, the capacitances of junctions, binding parameters, parts attached to the devices of the program (`Attached`), simulated
 devices, a circuit control for the UI library and a circuit editor in the IDE with the import of Falstad files.

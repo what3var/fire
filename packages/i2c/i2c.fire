@@ -374,7 +374,7 @@ class I2cDriver : Driver {
             if (digit < 0 || digit >= radix) { return undefined }
             address = address * radix + digit
         }
-        any b = bus
+        I2c.BusDevice b = bus!I2c.BusDevice
         return b.At(address)
     }
 }

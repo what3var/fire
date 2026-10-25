@@ -19377,6 +19377,178 @@ else
             print(H.R(cap.VoltageRaw()) + " " + s2.Count + " " + H.R(s2.Times()[0] * 1000000) + " " + H.R(rc.Time / 1ms))
             print(rc.PlanInfo(0) + " " + rc.PlanInfo(1) + " " + rc.PlanInfo(3) + " " + rc.PlanInfo(4))
             """),
+        ("Circuits: Dioden (Modelle 1N4148/Zener/LED), Transistor (Saettigung, aktiv), MOSFET, OpAmp (Verstaerker, Begrenzung), Gatter, D-Flipflop, Modellbibliothek", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            // diode + resistor: 5V, 1k
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var d = c.Add(new Circuits.Diode())
+            v.A.Connect(r.A)
+            r.B.Connect(d.A)
+            d.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("diode " + H.R(d.VoltageRaw()) + " V " + H.R(d.CurrentRaw() * 1000) + " mA it " + c.PlanInfo(7) + " bad " + c.PlanInfo(8))
+            // LED red with 330 Ohm from 5V
+            var l = new Circuits.Circuit()
+            var v2 = l.Add(new Circuits.VoltageSource(5V))
+            var r2 = l.Add(new Circuits.Resistor(330))
+            var led = l.Add(new Circuits.Led("red"))
+            v2.A.Connect(r2.A)
+            r2.B.Connect(led.A)
+            led.B.Connect(l.Ground)
+            v2.B.Connect(l.Ground)
+            l.Step()
+            print("led " + H.R(led.VoltageRaw()) + " V " + H.R(led.CurrentRaw() * 1000) + " mA " + H.R(led.Brightness) + " " + led.IsOn)
+            // zener regulator 12V -> 1k -> 5.1V zener
+            var z = new Circuits.Circuit()
+            var v3 = z.Add(new Circuits.VoltageSource(12V))
+            var r3 = z.Add(new Circuits.Resistor(1kOhm))
+            var zd = z.Add(new Circuits.Diode("1N4733"))
+            v3.A.Connect(r3.A)
+            r3.B.Connect(zd.B)
+            zd.A.Connect(z.Ground)
+            v3.B.Connect(z.Ground)
+            z.Step()
+            print("zener " + H.R(-zd.VoltageRaw()) + " V")
+            // NPN switch: 5V, Rb 10k from 5V, Rc 1k
+            var q = new Circuits.Circuit()
+            var vcc = q.Add(new Circuits.VoltageSource(5V))
+            var rb = q.Add(new Circuits.Resistor(10kOhm))
+            var rc = q.Add(new Circuits.Resistor(1kOhm))
+            var t = q.Add(new Circuits.Transistor("2N3904"))
+            vcc.A.Connect(rb.A)
+            vcc.A.Connect(rc.A)
+            rb.B.Connect(t.B)
+            rc.B.Connect(t.C)
+            t.E.Connect(q.Ground)
+            vcc.B.Connect(q.Ground)
+            q.Step()
+            print("npn vce " + H.R(t.C.Raw()) + " vbe " + H.R(t.B.Raw()) + " ic " + H.R(t.CollectorCurrent / 1mA) + " ib " + H.R(t.BaseCurrent / 1uA) + " ie " + H.R(t.EmitterCurrent / 1mA))
+            // NPN in the active region: Rb 1M
+            rb.Resistance = 1MOhm
+            q.Step()
+            print("active ic " + H.R(t.CollectorCurrent / 1mA) + " beta " + Math.Round(t.CollectorCurrent / t.BaseCurrent))
+            // NMOS: 2N7000, gate 5V, drain via 100 Ohm from 5V
+            var m = new Circuits.Circuit()
+            var vd = m.Add(new Circuits.VoltageSource(5V))
+            var vg = m.Add(new Circuits.VoltageSource(5V))
+            var rd = m.Add(new Circuits.Resistor(100))
+            var fet = m.Add(new Circuits.Mosfet("2N7000"))
+            vd.A.Connect(rd.A)
+            rd.B.Connect(fet.D)
+            vg.A.Connect(fet.G)
+            fet.S.Connect(m.Ground)
+            vd.B.Connect(m.Ground)
+            vg.B.Connect(m.Ground)
+            m.Step()
+            print("nmos vds " + H.R(fet.D.Raw()) + " id " + H.R(fet.DrainCurrent / 1mA))
+            vg.Level = 0V
+            m.Step()
+            print("nmos off vds " + H.R(fet.D.Raw()))
+            // op amp: non-inverting amplifier gain 1 + 9k/1k = 10, input 0.5V sine
+            var o = new Circuits.Circuit()
+            var vin = o.Add(new Circuits.VoltageSource(0.5V))
+            var op = o.Add(new Circuits.OpAmp())
+            var rf = o.Add(new Circuits.Resistor(9kOhm))
+            var rg = o.Add(new Circuits.Resistor(1kOhm))
+            vin.A.Connect(op.Plus)
+            vin.B.Connect(o.Ground)
+            op.Out.Connect(rf.A)
+            rf.B.Connect(op.Minus)
+            rg.A.Connect(op.Minus)
+            rg.B.Connect(o.Ground)
+            o.Step()
+            print("opamp out " + H.R(op.Out.Raw()))
+            vin.Level = 3V
+            o.Step()
+            print("opamp clipped " + H.R(op.Out.Raw()))
+            // gates: NAND of two logic inputs, D flip-flop as toggle with a square clock
+            var g = new Circuits.Circuit()
+            var a = g.Add(new Circuits.LogicInput(true))
+            var b = g.Add(new Circuits.LogicInput(false))
+            var nand = g.Add(new Circuits.Gate("NAND"))
+            var load = g.Add(new Circuits.Resistor(10kOhm))
+            a.A.Connect(nand.In(0))
+            b.A.Connect(nand.In(1))
+            a.B.Connect(g.Ground)
+            b.B.Connect(g.Ground)
+            nand.Out.Connect(load.A)
+            load.B.Connect(g.Ground)
+            g.Step()
+            g.Step()
+            print("nand(1,0) " + nand.State + " " + H.R(nand.Out.Raw()))
+            b.High = true
+            g.Step()
+            g.Step()
+            print("nand(1,1) " + nand.State + " " + H.R(nand.Out.Raw()))
+            var ff = new Circuits.Circuit()
+            var clk = ff.Add(new Circuits.SquareSource(5V, 1kHz))
+            var dff = ff.Add(new Circuits.FlipFlop())
+            clk.A.Connect(dff.Clock)
+            clk.B.Connect(ff.Ground)
+            dff.NotQ.Connect(dff.D)
+            ff.TimeStep = 10us
+            var sc = new Circuits.Scope(ff)
+            sc.Voltage("q", dff.Q)
+            ff.Run(10ms)
+            var changes = 0
+            var qs = sc.Samples("q")
+            for (int i = 1; i < qs.length; i++) {
+                if ((qs[i] > 2.5) != (qs[i - 1] > 2.5)) { changes++ }
+            }
+            print("toggle changes " + changes)
+            print(Circuits.Models.Names("NPN").count + " " + Circuits.Models.Get("1n4148").Name)
+            Circuits.Models.Add(new Circuits.Model("mydiode", "D", 0.000000001, 1.5))
+            var c2 = new Circuits.Circuit()
+            var d2 = c2.Add(new Circuits.Diode("mydiode"))
+            try { new Circuits.Transistor("1N4148") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Casts mit Namespace: x!Shop.Item, relativ im Namespace (x!Deep.Thing), verschachtelt; x!Dog.Bark() bleibt Aufruf auf dem Ergebnis", """
+            namespace Shop {
+                class Item {
+                    string n
+                    construct(string n) { this.n = n }
+                }
+                class Box {
+                    static Shop.Item Take(any x) {
+                        Shop.Item i = x!Shop.Item
+                        return i
+                    }
+                }
+            }
+            any a = new Shop.Item("apple")
+            Shop.Item b = a!Shop.Item
+            print(b.n)
+            print(Shop.Box.Take(a).n)
+            print((a!Shop.Item).n)
+            class Dog {
+                string name = "rex"
+                string Bark() { return "wuff " + this.name }
+            }
+            any d = new Dog()
+            print(d!Dog.Bark())
+            print(d!Dog.name)
+            try { var bad = a!Dog } catch (Exception e) { print("cast failed") }
+            namespace Shop {
+                namespace Deep {
+                    class Thing {
+                        int n = 7
+                    }
+                }
+                class User {
+                    static int Get(any x) { return (x!Deep.Thing).n }
+                }
+            }
+            any th = new Shop.Deep.Thing()
+            print(Shop.User.Get(th))
+            print((th!Shop.Deep.Thing).n)
+            print(th!Shop.Deep.Thing.n)
+            """),
     }).ToArray();
 
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine

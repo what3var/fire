@@ -67,6 +67,59 @@ namespace fire.Compiler
         /// where it comes from.</summary>
         private IReadOnlyList<string> _usingNamespaces = Array.Empty<string>();
 
+        // The namespaces the program declares (all its sources, read before parsing): `x!Shop.Item` is a cast to the class Item of the namespace Shop,
+        // `x!Dog.Bark()` a call on the cast - only a namespace name lets the cast go on after a dot.
+        [ThreadStatic] private static HashSet<string>? _declaredNamespaces;
+
+        /// <summary>The names of the namespaces declared in the tokens (`namespace A.B { namespace C { ...` gives A, A.B and A.B.C).</summary>
+        private static void FindNamespaces(List<Token> tokens, HashSet<string> into)
+        {
+            var open = new Stack<(int Depth, string Name)>();
+            int depth = 0;
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                var t = tokens[i];
+                if (t.Type == TokenType.LBrace) { depth++; continue; }
+                if (t.Type == TokenType.RBrace)
+                {
+                    depth--;
+                    while (open.Count > 0 && open.Peek().Depth > depth) open.Pop();
+                    continue;
+                }
+                if (t.Type != TokenType.Namespace) continue;
+                var parts = new List<string>();
+                int j = i + 1;
+                while (j < tokens.Count && tokens[j].Type == TokenType.Identifier)
+                {
+                    parts.Add(tokens[j].Lexeme);
+                    if (j + 1 < tokens.Count && tokens[j + 1].Type == TokenType.Dot) j += 2; else { j++; break; }
+                }
+                if (parts.Count == 0 || j >= tokens.Count || tokens[j].Type != TokenType.LBrace) continue;
+                string prefix = open.Count > 0 ? open.Peek().Name + "." : "";
+                string full = "";
+                foreach (var part in parts)
+                {
+                    full = full.Length == 0 ? part : full + "." + part;
+                    into.Add(prefix + full);
+                }
+                open.Push((depth + 1, prefix + full));
+                i = j - 1;
+            }
+        }
+
+        /// <summary>Is `name` (as written at this point, relative to the current namespace and the `#using`s) a namespace of the program?</summary>
+        private bool IsNamespaceName(string name)
+        {
+            var known = _declaredNamespaces;
+            if (known == null || known.Count == 0) return false;
+            if (known.Contains(name)) return true;
+            for (string? ns = _currentNamespace; !string.IsNullOrEmpty(ns); ns = ns.Contains('.') ? ns.Substring(0, ns.LastIndexOf('.')) : null)
+                if (known.Contains(ns + "." + name)) return true;
+            foreach (var u in _usingNamespaces)
+                if (known.Contains(u + "." + name)) return true;
+            return false;
+        }
+
         /// <summary>The namespace in which parsing is CURRENTLY taking place (SPEC
         /// "Namespaces") - `null` outside any `namespace` block.
         /// Nested blocks append with '.' (see
@@ -177,7 +230,10 @@ namespace fire.Compiler
         /// <summary>One more source after <see cref="ParseMultiple"/> (the units are known by then): a generated one such as the driver of `forge test`.</summary>
         public static List<Stmt> ParseSource(ProcessedSource src, int sourceIndex)
         {
-            var parser = new Parser(new Lexer(src.Source).Tokenize());
+            var tokens = new Lexer(src.Source).Tokenize();
+            _declaredNamespaces ??= new HashSet<string>(StringComparer.Ordinal);
+            FindNamespaces(tokens, _declaredNamespaces);
+            var parser = new Parser(tokens);
             parser._usingNamespaces = src.Usings;
             parser._sourceIndex = sourceIndex;
             parser._fileName = src.Name;
@@ -190,6 +246,8 @@ namespace fire.Compiler
             // The units the sources declare come first (`5in` in one file may use the `unit Inch: in` of another, or of a line further down)
             var tokenLists = new List<Token>[sources.Count];
             var unitDecls = new List<(UnitDeclStmt Decl, string? File)>();
+            var namespaces = new HashSet<string>(StringComparer.Ordinal);
+            _declaredNamespaces = namespaces;
             for (int i = 0; i < sources.Count; i++)
             {
                 var src = sources[i];
@@ -197,6 +255,7 @@ namespace fire.Compiler
                 {
                     tokenLists[i] = new Lexer(src.Source).Tokenize();
                     foreach (var decl in FindUnitDecls(tokenLists[i], i)) unitDecls.Add((decl, src.Name));
+                    FindNamespaces(tokenLists[i], namespaces);
                 }
                 catch (ParseException ex) when (src.Name != null && ex.FileName == null)
                 {
@@ -3439,6 +3498,12 @@ namespace fire.Compiler
                     if (LineContinues() && Check(TokenType.Identifier))
                     {
                         string className = Advance().Lexeme;
+                        // `x!Shop.Item`: a dot goes on with the type name as long as the name so far is a namespace
+                        while (Check(TokenType.Dot) && PeekAt(1).Type == TokenType.Identifier && IsNamespaceName(className))
+                        {
+                            Advance();
+                            className += "." + Advance().Lexeme;
+                        }
                         expr = new TypeCoerceExpr(line, expr, null, TargetClass: new TypeRef(className, null, 0, Namespaces: CurrentNamespaces()));
                         continue;
                     }

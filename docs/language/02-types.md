@@ -148,6 +148,10 @@ print(66.4!char)        // B (rounded)
 `value!ClassName` tells the compiler "I know this is a `ClassName`": the result has that type, so its members can be used. At run time the cast
 is checked: an object of another class throws an `ArgumentException`. `undefined` passes unchanged.
 
+A class in a namespace is written with it: `value!Shop.Item` (inside `namespace Shop` also `value!Item`, and `value!Deep.Thing` for a namespace
+nested in it). After the class name a dot goes on with a member of the result: `value!Dog.Bark()` calls `Bark` - a name before the dot that is a
+namespace belongs to the type, any other name is the class.
+
 ```fire
 interface IAnimal { string Name() }
 class Dog : IAnimal {
