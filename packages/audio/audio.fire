@@ -96,6 +96,33 @@ namespace Audio {
         // How long it plays, in milliseconds.
         int Milliseconds { get { return this.Frames * 1000 / this.rate } }
 
+        // The sound as a WAV file (PCM, 16 bit): the bytes to write to a file.
+        byte[] ToWav() {
+            var n = this.length
+            var wav = new byte[44 + n]
+            var head = "RIFF"
+            for (var i = 0; i < 4; i++) { wav[i] = head.ToBytes()[i] }
+            Audio.Sound.PutInt(wav, 4, 36 + n, 4)
+            var wave = "WAVEfmt "
+            for (var i = 0; i < 8; i++) { wav[8 + i] = wave.ToBytes()[i] }
+            Audio.Sound.PutInt(wav, 16, 16, 4)
+            Audio.Sound.PutInt(wav, 20, 1, 2)
+            Audio.Sound.PutInt(wav, 22, this.channels, 2)
+            Audio.Sound.PutInt(wav, 24, this.rate, 4)
+            Audio.Sound.PutInt(wav, 28, this.rate * this.channels * 2, 4)
+            Audio.Sound.PutInt(wav, 32, this.channels * 2, 2)
+            Audio.Sound.PutInt(wav, 34, 16, 2)
+            var data = "data"
+            for (var i = 0; i < 4; i++) { wav[36 + i] = data.ToBytes()[i] }
+            Audio.Sound.PutInt(wav, 40, n, 4)
+            for (var i = 0; i < n; i++) { wav[44 + i] = this.data[this.offset + i] }
+            return wav
+        }
+
+        static undefined PutInt(byte bytes[], int at, int value, int count) {
+            for (var i = 0; i < count; i++) { bytes[at + i] = (value >> (8 * i)) & 255 }
+        }
+
         // An output that fits the sound (its rate and channels) on the device.
         Audio.Output Open(string device = "default") {
             return new Output(device, this.rate, this.channels)

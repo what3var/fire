@@ -59,6 +59,8 @@ struct Source {
     int a, b, branch;      // branch >= 0: a voltage source (row of its branch), else a current source from a through it to b
     int wave;
     double p0, p1, p2, p3;  // DC: level; sine: amplitude, frequency, offset, phase; square: high, frequency, low, duty
+    bool fed = false;       // driven by Process before: the next piece of sound goes on from its last sample
+    double lastSample = 0;
     double value(double t) const {
         switch (wave) {
             case WSine: return p2 + p0 * std::sin(2.0 * 3.14159265358979323846 * p1 * t + p3);
@@ -304,6 +306,18 @@ struct Nonlinear {
     int node[3];
     int terminals;
     std::shared_ptr<FormulaProgram> f1, f2;   // a formula part: the current into terminal 0 (and into terminal 1)
+    // the capacitances: a junction between the terminals a and b with the depletion capacitance of SPICE (cj0, vj, m; fc = 0.5) and a diffusion charge
+    // tt * (the current of the junction); integrated with the trapezoidal rule. Diode: anode-cathode; bipolar: base-emitter (TF), base-collector;
+    // MOSFET: gate-source and gate-drain (m = 0: linear)
+    struct Junction {
+        int a = 0, b = 0;
+        double cj0 = 0, vj = 0.7, m = 0.5, tt = 0;
+        double id = 0, gd = 0;            // the current of the junction and its derivative (for the diffusion charge), set by the model
+        double qPrev = 0, iPrev = 0;      // after the last step
+        bool started = false;
+        double v = 0, q = 0, c = 0;       // at the linearization of the last iteration
+    } junction[2];
+    int junctions = 0;
     double p[4];                  // diode: Is, n, breakdown voltage, current at the breakdown voltage; bipolar: Is, beta forward, beta reverse, -; MOSFET: threshold, beta (A/V^2), lambda, -;
                                   // op amp: gain, lowest output, highest output, output resistance
     double lim[2] = {0, 0};       // the junction voltages of the last iteration (limited)
@@ -332,6 +346,58 @@ inline double expl(double x, double& derivative) {
     return e;
 }
 
+/// The depletion charge of SPICE (cj0, vj, m, fc = 0.5) at the junction voltage v, and its capacitance.
+inline void depletion(double cj0, double vj, double m, double v, double& q, double& c) {
+    const double fc = 0.5;
+    if (cj0 == 0) { q = 0; c = 0; return; }
+    if (m >= 0.999) m = 0.999;
+    if (v < fc * vj) {
+        double r = 1 - v / vj;
+        q = cj0 * vj * (1 - std::pow(r, 1 - m)) / (1 - m);
+        c = cj0 * std::pow(r, -m);
+    } else {
+        double f1 = vj * (1 - std::pow(1 - fc, 1 - m)) / (1 - m), f2 = std::pow(1 - fc, 1 + m), f3 = 1 - fc * (1 + m);
+        double v1 = fc * vj;
+        q = cj0 * (f1 + (f3 * (v - v1) + m / (2 * vj) * (v * v - v1 * v1)) / f2);
+        c = cj0 / f2 * (f3 + m * v / vj);
+    }
+}
+
+/// The polarity of a part for its junctions (1, or -1 for PNP and PMOS).
+inline double polarity(const Nonlinear& e) { return e.kind == NlPnp || e.kind == NlPmos ? -1.0 : 1.0; }
+
+/// Adds the currents of the capacitances to the linearization: i = (q(v) - q before) / dt, di/dv = C(v) / dt - backward Euler: the charges of the junctions
+/// are stiff (a stored charge leaves within nanoseconds), the trapezoidal rule would make them ring from step to step.
+inline void stampCharges(Nonlinear& e, double dt) {
+    double pol = polarity(e);
+    for (int k = 0; k < e.junctions; k++) {
+        auto& j = e.junction[k];
+        double v = pol * (e.v0[j.a] - e.v0[j.b]);
+        double q, c;
+        depletion(j.cj0, j.vj, j.m, v, q, c);
+        q += j.tt * j.id;
+        c += j.tt * j.gd;
+        if (!j.started) { j.qPrev = q; j.iPrev = 0; j.started = true; }
+        j.v = v; j.q = q; j.c = c;
+        double ic = (q - j.qPrev) / dt, gc = c / dt;
+        e.i0[j.a] += pol * ic; e.i0[j.b] -= pol * ic;
+        e.j[j.a][j.a] += gc; e.j[j.a][j.b] -= gc; e.j[j.b][j.a] -= gc; e.j[j.b][j.b] += gc;
+    }
+}
+
+/// After a step: the charges and currents of the capacitances at the voltages found (from the linearization of the last iteration).
+inline void commitCharges(Nonlinear& e, const std::vector<double>& x, double dt) {
+    double pol = polarity(e);
+    auto V = [&](int t) { int n = e.node[t]; return n < 0 ? 0.0 : x[(size_t)n]; };
+    for (int k = 0; k < e.junctions; k++) {
+        auto& j = e.junction[k];
+        double v = pol * (V(j.a) - V(j.b));
+        double q = j.q + j.c * (v - j.v);
+        j.iPrev = (q - j.qPrev) / dt;
+        j.qPrev = q;
+    }
+}
+
 /// Linearizes the part at the node voltages x (with limited junctions).
 inline void linearize(Nonlinear& e, const std::vector<double>& x) {
     auto V = [&](int t) { int n = e.node[t]; return n < 0 ? 0.0 : x[(size_t)n]; };
@@ -358,6 +424,7 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
             i -= ibv * ez;
             g += ibv / nvt * d2;
         }
+        if (e.junctions > 0) { e.junction[0].id = i; e.junction[0].gd = g; }
         i += kGmin * vl;
         g += kGmin;
         e.v0[0] = V(1) + vl;
@@ -376,6 +443,8 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
         double iF = is * (ef - 1) + kGmin * vbe, iR = is * (er - 1) + kGmin * vbc;
         double gf = is / kVt * df + kGmin, gr = is / kVt * dr + kGmin;
         double ic = iF - iR - iR / br, ib = iF / bf + iR / br;
+        if (e.junctions > 0) { e.junction[0].id = iF; e.junction[0].gd = gf; }
+        if (e.junctions > 1) { e.junction[1].id = iR; e.junction[1].gd = gr; }
         double dicBe = gf, dicBc = -gr * (1 + 1 / br), dibBe = gf / bf, dibBc = gr / br;
         // currents into the terminals (collector, base, emitter) and their derivatives by the node voltages (the polarity cancels: pol * pol = 1)
         e.i0[0] = pol * ic; e.i0[1] = pol * ib; e.i0[2] = -pol * (ic + ib);
@@ -679,6 +748,26 @@ inline Value GateState(Value h, Value index) {
     return Bool(p->gates[(size_t)index.i].state);
 }
 
+/// The capacitances of a part that is not linear: cjA for the diode, the base-emitter junction or gate-source; cjB for base-collector or gate-drain;
+/// vj and m of the depletion (m = 0: linear, the MOSFETs); tt the transit time of the diode or the forward one of the bipolar transistor, tr the
+/// reverse one (the diffusion charges; tr makes the storage time of a saturated transistor).
+inline Value SetCaps(Value h, Value index, Value cjA, Value cjB, Value vj, Value m, Value tt, Value tr) {
+    Plan* p = plan(h);
+    if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size()) return Bool(false);
+    Nonlinear& e = p->nonlinear[(size_t)index.i];
+    double a = D(cjA), b = D(cjB), t = D(tt);
+    e.junctions = 0;
+    auto add = [&](int ta, int tb, double cj, double transit, double mm) {
+        if (cj <= 0 && transit <= 0) return;
+        auto& j = e.junction[e.junctions++];
+        j.a = ta; j.b = tb; j.cj0 = cj; j.vj = D(vj) > 0 ? D(vj) : 0.7; j.m = mm; j.tt = transit;
+    };
+    if (e.kind == NlDiode) add(0, 1, a, t, D(m));
+    else if (e.kind == NlNpn || e.kind == NlPnp) { add(1, 2, a, t, D(m)); add(1, 0, b, D(tr), D(m)); }
+    else if (e.kind == NlNmos || e.kind == NlPmos) { add(1, 2, a, 0, 0); add(1, 0, b, 0, 0); }
+    return Bool(true);
+}
+
 /// A part given by formulas: the current into its first terminal as a function of V (two terminals: V = V(a) - V(b)), or the currents into the first and
 /// the second terminal as functions of V1 and V2 (three terminals: against the third); `parameters`: "name=value ...". Returns its index, -1 with LastError.
 inline Value AddFormula(Value h, Value n0, Value n1, Value n2, Value current1, Value current2, Value parameters) {
@@ -859,6 +948,7 @@ inline void stampNonlinear(Plan* p, std::vector<double>* dense) {
     const int n = p->size;
     for (Nonlinear& e : p->nonlinear) {
         linearize(e, p->x);
+        if (e.junctions > 0) stampCharges(e, p->dt);
         for (int a = 0; a < e.terminals; a++) {
             int r = e.node[a];
             if (r < 0) continue;
@@ -997,6 +1087,7 @@ inline void newton(Plan* p) {
     if (!converged) p->unconverged++;
     p->rhs = p->rhsBase;
     for (Nonlinear& e : p->nonlinear) {
+        if (e.junctions > 0) commitCharges(e, p->x, p->dt);
         // the currents at the solution (the linearization of the last iteration, at the node voltages found)
         for (int a = 0; a < e.terminals; a++) {
             double c = e.i0[a];
@@ -1038,6 +1129,58 @@ inline Value RhsSet(Value h, Value row, Value value) {
     return Undef();
 }
 inline Value Finish(Value h) { Plan* p = plan(h); if (p && p->compiled) finish(p); return Undef(); }
+
+/// Sends sound through the plan: `frames` frames of 16 bit samples (little endian, `channels` interleaved; stereo is mixed to mono) from `inOffset` of the
+/// buffer `in` drive the source `source` (a sample of 1.0 is `amplitude` volts, linear in between), `oversample` steps per sample (the time step of the
+/// plan must be 1 / (rate * oversample)); after each sample the voltage between the nodes `out` and `ref`, divided by `scale`, goes as a 16 bit sample
+/// into the buffer `outBuf` from `outOffset` (clipped at full scale). Returns the number of samples clipped, -1 on an error.
+inline Value Process(Value h, Value source, Value in, Value inOffset, Value frames, Value channels, Value amplitude, Value oversample, Value out, Value ref,
+                     Value scale, Value outBuf, Value outOffset) {
+    Plan* p = plan(h);
+    if (!p || !p->compiled || source.i < 0 || (size_t)source.i >= p->sources.size()) { lastError() = "The circuit is not compiled or the input is not in it."; return Int(-1); }
+    if (!leafAlive(in) || !leafAlive(outBuf)) return destroyedError(in);
+    int ch = (int)channels.i, n = (int)oversample.i;
+    int64_t count = frames.i;
+    if (ch < 1 || ch > 2 || n < 1 || count < 0) { lastError() = "channels 1 or 2, oversample 1 or more."; return Int(-1); }
+    if (inOffset.i < 0 || inOffset.i + count * ch * 2 > (int64_t)bufOf(in)->length || outOffset.i < 0 || outOffset.i + count * 2 > (int64_t)bufOf(outBuf)->length) {
+        lastError() = "The frames do not fit into the buffers.";
+        return Int(-1);
+    }
+    const uint8_t* src = bufOf(in)->bytes() + inOffset.i;
+    uint8_t* dst = bufOf(outBuf)->bytes() + outOffset.i;
+    auto sample = [&](int64_t i) {
+        if (i >= count) i = count - 1;
+        double sum = 0;
+        for (int c = 0; c < ch; c++) {
+            const uint8_t* b = src + (i * ch + c) * 2;
+            sum += (int16_t)(uint16_t)(b[0] | (b[1] << 8)) / 32768.0;
+        }
+        return sum / ch;
+    };
+    Source& s = p->sources[(size_t)source.i];
+    double amp = D(amplitude), k = D(scale) != 0 ? 1.0 / D(scale) : 1.0;
+    int outNode = (int)out.i, refNode = (int)ref.i;
+    int64_t clipped = 0;
+    double previous = s.fed ? s.lastSample : count > 0 ? sample(0) : 0;
+    for (int64_t i = 0; i < count; i++) {
+        double next = sample(i);
+        for (int step = 1; step <= n; step++) {
+            s.wave = WDc;
+            s.p0 = amp * (previous + (next - previous) * step / n);
+            begin(p);
+            finish(p);
+        }
+        previous = next;
+        s.fed = true;
+        s.lastSample = next;
+        double y = (p->node(outNode) - p->node(refNode)) * k;
+        if (y > 1) { y = 1; clipped++; } else if (y < -1) { y = -1; clipped++; }
+        int v = (int)std::lround(y * 32767);
+        dst[i * 2] = (uint8_t)(v & 255);
+        dst[i * 2 + 1] = (uint8_t)((v >> 8) & 255);
+    }
+    return Int(clipped);
+}
 
 /// `steps` time steps of a plan without parts written in fire.
 inline Value Run(Value h, Value steps) {

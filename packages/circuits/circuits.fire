@@ -462,6 +462,18 @@ namespace Circuits {
         }
     }
 
+    /// <summary>The input of sound into a circuit: a voltage source that Circuit.ProcessAudio drives with the samples (a full-scale sample is `amplitude`).</summary>
+    class AudioInput : VoltageSource {
+        float amplitude
+
+        construct(float amplitude : any = 1) : base(0) { this.amplitude = Circuits.Units.Volts(amplitude) }
+
+        float:any Amplitude {
+            get { return this.amplitude * 1V }
+            set { this.amplitude = Circuits.Units.Volts(value) }
+        }
+    }
+
     /// <summary>A voltage given by a function of the time (seconds -> volts). It is computed in fire every step: a circuit with it runs step by step.</summary>
     class FunctionSource : VoltageSource {
         any function
@@ -560,6 +572,9 @@ namespace Circuits {
         string current1 = ""
         string current2 = ""
         string parameters = ""
+        // more numbers by name: the capacitances (CJO VJ M TT of a diode, CJE CJC VJ M TF TR of a bipolar transistor, CGS CGD of a MOSFET)
+        List extraNames
+        List extraValues
 
         construct(string name, string kind, float p0, float p1, float p2 = 0.0, float p3 = 0.0) {
             this.name = name
@@ -568,6 +583,27 @@ namespace Circuits {
             this.p1 = p1
             this.p2 = p2
             this.p3 = p3
+            this.extraNames = new List()
+            this.extraValues = new List()
+        }
+
+        /// <summary>Sets a number by name (`Model.Get("1N4148").With("mine", 0, 3e-9).Set("CJO", 2e-12)`); returns the model.</summary>
+        Circuits.Model Set(string name, float value : any) {
+            var raw = Circuits.Units.Raw(value)
+            var key = name.ToUpper()
+            var i = this.extraNames.IndexOf(key)
+            if (i < 0) {
+                this.extraNames.Add(key)
+                this.extraValues.Add(raw)
+            } else { this.extraValues[i] = raw }
+            return this
+        }
+
+        /// <summary>A number by name (or `fallback` when the model does not have it).</summary>
+        float Param(string name, float fallback = 0.0) {
+            var i = this.extraNames.IndexOf(name.ToUpper())
+            if (i < 0) { return fallback }
+            return this.extraValues[i]
         }
 
         string Name { get { return this.name } }
@@ -606,6 +642,10 @@ namespace Circuits {
         /// <summary>A copy with another name and changed numbers (`Model.Get("1N4148").With("mine", 0, 3e-9)` - the index of the number and its value).</summary>
         Circuits.Model With(string name, int index, float value) {
             var m = new Circuits.Model(name, this.kind, this.p0, this.p1, this.p2, this.p3)
+            for (int i = 0; i < this.extraNames.count; i++) { m.Set(this.extraNames[i], this.extraValues[i]) }
+            m.current1 = this.current1
+            m.current2 = this.current2
+            m.parameters = this.parameters
             if (index == 0) { m.p0 = value }
             if (index == 1) { m.p1 = value }
             if (index == 2) { m.p2 = value }
@@ -625,34 +665,34 @@ namespace Circuits {
             Circuits.Models.all = l
             // diodes: Is, N, BV, IBV
             Circuits.Models.Put(new Circuits.Model("diode", "D", 0.00000000000001, 1.0))
-            Circuits.Models.Put(new Circuits.Model("1N4148", "D", 0.00000000252, 1.752, 100.0))
-            Circuits.Models.Put(new Circuits.Model("1N4001", "D", 0.00000001411, 1.984, 50.0))
-            Circuits.Models.Put(new Circuits.Model("1N5817", "D", 0.0000317, 1.373, 20.0))
+            Circuits.Models.Put(new Circuits.Model("1N4148", "D", 0.00000000252, 1.752, 100.0).Set("CJO", 4pF).Set("M", 0.333).Set("VJ", 0.5).Set("TT", 11.5ns))
+            Circuits.Models.Put(new Circuits.Model("1N4001", "D", 0.00000001411, 1.984, 50.0).Set("CJO", 25.9pF).Set("M", 0.44).Set("TT", 5.7us))
+            Circuits.Models.Put(new Circuits.Model("1N5817", "D", 0.0000317, 1.373, 20.0).Set("CJO", 190pF).Set("M", 0.5))
             Circuits.Models.Put(new Circuits.Model("zener", "D", 0.00000000000001, 1.0, 5.6))
             Circuits.Models.Put(new Circuits.Model("1N4733", "D", 0.00000000000001, 1.0, 5.1))
             Circuits.Models.Put(new Circuits.Model("1N4742", "D", 0.00000000000001, 1.0, 12.0))
             // LEDs (about 1.9 V red, 2.0 V yellow, 2.1 V green, 3.1 V blue and white at 20 mA)
-            Circuits.Models.Put(new Circuits.Model("led", "D", 0.0000000000000000022, 2.0))
-            Circuits.Models.Put(new Circuits.Model("red", "D", 0.0000000000000000022, 2.0))
-            Circuits.Models.Put(new Circuits.Model("yellow", "D", 0.00000000000000000032, 2.0))
-            Circuits.Models.Put(new Circuits.Model("green", "D", 0.000000000000000000045, 2.0))
-            Circuits.Models.Put(new Circuits.Model("blue", "D", 0.00000000000000000000000000017, 2.0))
-            Circuits.Models.Put(new Circuits.Model("white", "D", 0.00000000000000000000000000017, 2.0))
+            Circuits.Models.Put(new Circuits.Model("led", "D", 0.0000000000000000022, 2.0).Set("CJO", 40pF).Set("M", 0.33))
+            Circuits.Models.Put(new Circuits.Model("red", "D", 0.0000000000000000022, 2.0).Set("CJO", 40pF).Set("M", 0.33))
+            Circuits.Models.Put(new Circuits.Model("yellow", "D", 0.00000000000000000032, 2.0).Set("CJO", 40pF).Set("M", 0.33))
+            Circuits.Models.Put(new Circuits.Model("green", "D", 0.000000000000000000045, 2.0).Set("CJO", 40pF).Set("M", 0.33))
+            Circuits.Models.Put(new Circuits.Model("blue", "D", 0.00000000000000000000000000017, 2.0).Set("CJO", 40pF).Set("M", 0.33))
+            Circuits.Models.Put(new Circuits.Model("white", "D", 0.00000000000000000000000000017, 2.0).Set("CJO", 40pF).Set("M", 0.33))
             // bipolar transistors: Is, BF, BR
             Circuits.Models.Put(new Circuits.Model("npn", "NPN", 0.00000000000001, 100.0, 1.0))
             Circuits.Models.Put(new Circuits.Model("pnp", "PNP", 0.00000000000001, 100.0, 1.0))
-            Circuits.Models.Put(new Circuits.Model("2N3904", "NPN", 0.000000000000006734, 416.4, 0.7371))
-            Circuits.Models.Put(new Circuits.Model("2N3906", "PNP", 0.00000000000000141, 180.7, 4.977))
-            Circuits.Models.Put(new Circuits.Model("BC547", "NPN", 0.000000000000007049, 374.5, 1.0))
-            Circuits.Models.Put(new Circuits.Model("BC557", "PNP", 0.000000000000003834, 344.4, 1.0))
-            Circuits.Models.Put(new Circuits.Model("2N2222", "NPN", 0.0000000000000143, 255.9, 6.092))
+            Circuits.Models.Put(new Circuits.Model("2N3904", "NPN", 0.000000000000006734, 416.4, 0.7371).Set("CJE", 4.5pF).Set("CJC", 3.6pF).Set("M", 0.3).Set("VJ", 0.75).Set("TF", 301ps).Set("TR", 239.5ns))
+            Circuits.Models.Put(new Circuits.Model("2N3906", "PNP", 0.00000000000000141, 180.7, 4.977).Set("CJE", 8.1pF).Set("CJC", 9.7pF).Set("M", 0.33).Set("VJ", 0.75).Set("TF", 513ps).Set("TR", 33.4ns))
+            Circuits.Models.Put(new Circuits.Model("BC547", "NPN", 0.000000000000007049, 374.5, 1.0).Set("CJE", 11.5pF).Set("CJC", 5.25pF).Set("M", 0.33).Set("VJ", 0.75).Set("TF", 410ps).Set("TR", 10ns))
+            Circuits.Models.Put(new Circuits.Model("BC557", "PNP", 0.000000000000003834, 344.4, 1.0).Set("CJE", 12pF).Set("CJC", 9.8pF).Set("M", 0.33).Set("VJ", 0.75).Set("TF", 600ps).Set("TR", 10ns))
+            Circuits.Models.Put(new Circuits.Model("2N2222", "NPN", 0.0000000000000143, 255.9, 6.092).Set("CJE", 22pF).Set("CJC", 7.3pF).Set("M", 0.33).Set("VJ", 0.75).Set("TF", 411ps).Set("TR", 46.9ns))
             // MOSFETs: VTO, KP, LAMBDA
             Circuits.Models.Put(new Circuits.Model("nmos", "NMOS", 1.5, 0.02, 0.02))
             Circuits.Models.Put(new Circuits.Model("pmos", "PMOS", 1.5, 0.02, 0.02))
-            Circuits.Models.Put(new Circuits.Model("2N7000", "NMOS", 2.1, 0.27, 0.01))
-            Circuits.Models.Put(new Circuits.Model("BS250", "PMOS", 2.0, 0.2, 0.01))
-            Circuits.Models.Put(new Circuits.Model("IRF540", "NMOS", 3.5, 20.0, 0.01))
-            Circuits.Models.Put(new Circuits.Model("IRF9540", "PMOS", 3.5, 10.0, 0.01))
+            Circuits.Models.Put(new Circuits.Model("2N7000", "NMOS", 2.1, 0.27, 0.01).Set("CGS", 20pF).Set("CGD", 5pF))
+            Circuits.Models.Put(new Circuits.Model("BS250", "PMOS", 2.0, 0.2, 0.01).Set("CGS", 50pF).Set("CGD", 10pF))
+            Circuits.Models.Put(new Circuits.Model("IRF540", "NMOS", 3.5, 20.0, 0.01).Set("CGS", 1.7nF).Set("CGD", 100pF))
+            Circuits.Models.Put(new Circuits.Model("IRF9540", "PMOS", 3.5, 10.0, 0.01).Set("CGS", 1.3nF).Set("CGD", 140pF))
             // parts given by formulas
             Circuits.Models.Put(Circuits.Model.Formula("tunnel", "Ip*(V/Vp)*exp(1-V/Vp) + Is*(exp(V/(n*Vt))-1)", "Ip=5m Vp=0.1 Is=1e-12 n=1.5"))
             Circuits.Models.Put(Circuits.Model.Formula("varistor", "I0*(V/V0)*pow(abs(V/V0), a-1)", "I0=1m V0=200 a=30"))
@@ -731,6 +771,8 @@ namespace Circuits {
 
         bool Compile(Circuits.Solver solver) {
             this.index = solver.AddNonlinear(0, this.A, this.B, this.B, this.model.p0, this.model.p1, this.model.p2, this.model.p3)
+            var m = this.model
+            solver.SetCaps(this.index, m.Param("CJO"), 0.0, m.Param("VJ", 0.7), m.Param("M", 0.5), m.Param("TT"))
             return true
         }
         bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
@@ -787,6 +829,8 @@ namespace Circuits {
             var kind = 1
             if (this.IsPnp) { kind = 2 }
             this.index = solver.AddNonlinear(kind, this.C, this.B, this.E, this.model.p0, this.model.p1, this.model.p2, 0.0)
+            var m = this.model
+            solver.SetCaps(this.index, m.Param("CJE"), m.Param("CJC"), m.Param("VJ", 0.75), m.Param("M", 0.33), m.Param("TF"), m.Param("TR"))
             return true
         }
         bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
@@ -825,6 +869,8 @@ namespace Circuits {
             var kind = 3
             if (this.IsPChannel) { kind = 4 }
             this.index = solver.AddNonlinear(kind, this.D, this.G, this.S, this.model.p0, this.model.p1, this.model.p2, 0.0)
+            var m = this.model
+            solver.SetCaps(this.index, m.Param("CGS"), m.Param("CGD"), 0.7, 0.0, 0.0)
             return true
         }
         bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
@@ -1159,6 +1205,7 @@ namespace Circuits {
         // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire)
         List external
         bool fireSteps = false
+        int clipped = 0
         // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
         List paramNames
         List paramValues
@@ -1493,6 +1540,80 @@ namespace Circuits {
             if (this.solver != undefined) { this.time = this.solver.Time() }
         }
 
+        // ---- sound ----
+        /// <summary>Sends sound through the circuit: the 16 bit samples (`frames` frames of `channels` interleaved, from `offset` of `data`; stereo is
+        /// mixed) drive `input`, the voltage at `output` (against ground or `reference`) is the sound that comes out - mono, 16 bit, as many frames, a
+        /// full-scale sample at `outputScale` (default: the amplitude of the input). The time step becomes 1 / (rate * oversample). The circuit keeps its
+        /// state: a long sound can go through in pieces. Without parts in fire the kernel does it in one call.</summary>
+        byte[] ProcessSamples(Circuits.AudioInput input, Circuits.Port output, byte data[], int offset, int frames, int channels, int rate,
+                              Circuits.Port reference = undefined, float outputScale : any = 0, int oversample = 4) {
+            if (rate < 1000 || oversample < 1) { throw new ArgumentException("A rate of 1000 Hz or more and an oversample of 1 or more.") }
+            var top = this.Top()
+            var dt = 1.0 / (rate * oversample)
+            if (Math.Abs(top.dt - dt) > dt * 0.000001) { top.TimeStep = dt }
+            var scale = Circuits.Units.Volts(outputScale)
+            if (scale == 0.0) { scale = input.amplitude }
+            var result = new byte[frames * 2]
+            if (top.dirty || top.solver == undefined) { top.Build() }
+            if (!top.fireSteps) {
+                var refNode = -1
+                if (reference != undefined) { refNode = reference.Root().node }
+                var clipped = __CirProcess(top.solver.handle, input.index, data, offset, frames, channels, input.amplitude, oversample, output.Root().node, refNode,
+                                           scale, result, 0)
+                if (clipped < 0) { throw new ArgumentException(top.solver.Error()) }
+                this.clipped = clipped
+                top.time = top.solver.Time()
+                return result
+            }
+            // with parts in fire: step by step
+            this.clipped = 0
+            var previous = Circuits.Circuit.SampleAt(data, offset, 0, channels)
+            for (int i = 0; i < frames; i++) {
+                var next = Circuits.Circuit.SampleAt(data, offset, i, channels)
+                for (int k = 1; k <= oversample; k++) {
+                    input.Level = input.amplitude * (previous + (next - previous) * k / oversample)
+                    top.Step()
+                }
+                previous = next
+                var y = output.Raw()
+                if (reference != undefined) { y = y - reference.Raw() }
+                y = y / scale
+                if (y > 1.0) {
+                    y = 1.0
+                    this.clipped = this.clipped + 1
+                }
+                if (y < -1.0) {
+                    y = -1.0
+                    this.clipped = this.clipped + 1
+                }
+                var v = Math.Round(y * 32767)!int
+                result[i * 2] = v & 255
+                result[i * 2 + 1] = (v >> 8) & 255
+            }
+            return result
+        }
+
+        static float SampleAt(byte data[], int offset, int frame, int channels) {
+            var sum = 0.0
+            for (int c = 0; c < channels; c++) {
+                var at = offset + (frame * channels + c) * 2
+                var v = data[at] + (data[at + 1] << 8)
+                if (v >= 32768) { v = v - 65536 }
+                sum = sum + v / 32768.0
+            }
+            return sum / channels
+        }
+
+        /// <summary>Sends a sound (an Audio.Sound of `#import "audio"`, or anything with Data, Offset, Frames, Channels and Rate) through the circuit; the
+        /// samples that come out (mono, 16 bit) - `new Audio.Sound(sound.Rate, 1, result)` plays them or saves them (ToWav).</summary>
+        byte[] ProcessAudio(any sound, Circuits.AudioInput input, Circuits.Port output, Circuits.Port reference = undefined, float outputScale : any = 0,
+                            int oversample = 4) {
+            return this.ProcessSamples(input, output, sound.Data, sound.Offset, sound.Frames, sound.Channels, sound.Rate, reference, outputScale, oversample)
+        }
+
+        /// <summary>How many samples of the last ProcessSamples/ProcessAudio were clipped (louder than full scale).</summary>
+        int Clipped { get { return this.clipped } }
+
         /// <summary>Numbers of the compiled plan (for tests and tools): 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization,
         /// 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear (and logic parts), 7 iterations of Newton's method
         /// so far, 8 steps in which it did not converge.</summary>
@@ -1560,6 +1681,7 @@ namespace Circuits {
             return __CirAddNonlinear(this.handle, kind, n0.Root().node, n1.Root().node, n2.Root().node, p0, p1, p2, p3)
         }
         float NlState(int index, int what) { return __CirNlState(this.handle, index, what) }
+        undefined SetCaps(int index, float cjA, float cjB, float vj, float m, float tt, float tr = 0.0) { __CirSetCaps(this.handle, index, cjA, cjB, vj, m, tt, tr) }
         int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
             var n2 = -2
             if (c != undefined) { n2 = c.Root().node }

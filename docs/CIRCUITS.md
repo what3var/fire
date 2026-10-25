@@ -160,8 +160,22 @@ that grows hotter with its voltage).
 
 A mistake in a formula is an `ArgumentException` when the part is made: `')' expected after the arguments of exp (at 19 of '...')`.
 
+### Capacitances
+
+The models also carry the capacitances of the parts, by name (`model.Set("CJO", 4pF)`, `model.Param("CJO")`):
+
+| Kind | Numbers | |
+|---|---|---|
+| `"D"` | `CJO`, `VJ`, `M`, `TT` | the depletion capacitance of the junction (SPICE, FC = 0.5) and the diffusion charge TT * current: the reverse recovery |
+| `"NPN"`, `"PNP"` | `CJE`, `CJC`, `VJ`, `M`, `TF`, `TR` | base-emitter and base-collector junction; TF the forward, TR the reverse transit time (the storage time when a saturated transistor turns off) |
+| `"NMOS"`, `"PMOS"` | `CGS`, `CGD` | gate-source and gate-drain (linear) |
+
+The parts of the library have the values of their SPICE models (a 1N4001 recovers in about 3 µs, a 1N4148 in about 10 ns, a 2N3904 in saturation
+needs about half a microsecond to turn off). The charges are integrated with backward Euler: a stored charge leaves without ringing. An effect shorter
+than the time step is not seen - a 1N4148 needs a step of a few nanoseconds to show its recovery.
+
 The models of the library are approximations from the data sheets and the usual SPICE models, good for the behaviour of a circuit - not for the
-details of a data sheet (no capacitances of the junctions yet, no temperature).
+details of a data sheet (no temperature).
 
 ## Circuits
 
@@ -245,6 +259,39 @@ ICs are circuits of the package made of its parts - subcircuits to use like any 
 A 555 as an astable multivibrator with RA = 1 kOhm, RB = 10 kOhm and C = 100 nF runs at 666 Hz (the formula 1.44 / ((RA + 2 RB) C) gives 686 Hz:
 the comparators react one time step late and the discharge transistor has a resistance), the capacitor swings between 1/3 and 2/3 of the supply.
 
+## Sound through a circuit
+
+`AudioInput(amplitude = 1V)` is the input of sound: a voltage source that `ProcessAudio` drives with the samples (full scale is `amplitude`).
+`circuit.ProcessAudio(sound, input, output, reference = undefined, outputScale = amplitude, oversample = 4)` sends an `Audio.Sound` of
+`#import "audio"` (or any object with Data, Offset, Frames, Channels and Rate) through the circuit and returns the samples at `output` - mono,
+16 bit, full scale at `outputScale`. The time step becomes 1 / (rate * oversample); the kernel does the whole sound in one call (a circuit with
+parts in fire goes step by step). `Clipped` says how many samples were louder than full scale. `ProcessSamples(input, output, data, offset,
+frames, channels, rate, ...)` takes raw 16 bit samples; the circuit keeps its state, so a long sound - or a stream - can go through in pieces.
+
+```fire
+#import "circuits"
+#import "audio"
+
+var tone = Audio.Sound.Tone(1000, 100, 0, 100, 22050)        // or Audio.Sound.FromWav(bytes of a .wav file)
+var c = new Circuits.Circuit()
+var input = c.Add(new Circuits.AudioInput(3V))
+var r = c.Add(new Circuits.Resistor(1kOhm))
+var d1 = c.Add(new Circuits.Diode("1N4148"))
+var d2 = c.Add(new Circuits.Diode("1N4148"))
+input.A.Connect(r.A)
+input.B.Connect(c.Ground)
+r.B.Connect(d1.A)
+d1.B.Connect(c.Ground)
+d2.A.Connect(c.Ground)
+d2.B.Connect(r.B)
+var samples = c.ProcessAudio(tone, input, r.B, undefined, 1V)   // a diode clipper: distortion
+var result = new Audio.Sound(tone.Rate, 1, samples)
+print(result.ToWav().length)                                  // the bytes of a .wav file (write them with #import "filesystem")
+// result.Open().Play(result) plays it on the sound device
+```
+
+`Audio.Sound.ToWav()` (in `#import "audio"`) gives the bytes of a WAV file of a sound.
+
 ## Instruments
 
 **`Scope(circuit, capacity = 100000)`** records every step of the circuit:
@@ -325,5 +372,5 @@ A switch that opens while a current flows through a capacitor makes the trapezoi
 
 ## Coming next
 
-The capacitances of junctions, more ICs, parts attached to the devices of the program (`Attached`), simulated
+More ICs, parts attached to the devices of the program (`Attached`), simulated
 devices, a circuit control for the UI library and a circuit editor in the IDE with the import of Falstad files.

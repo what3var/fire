@@ -19689,6 +19689,139 @@ else
             print(lp.Value("scale*R") + " " + lp.Get("scale"))
             try { lp.Get("nope") } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Circuits: Kapazitaeten der Halbleiter (Sperrverzug 1N4001/1N4148, Schaltzeiten 2N3904)", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+                // the most negative current after the source turns negative at 50 us, and how long it stays below -0.5 mA
+                static string Recovery(string model) {
+                    var c = new Circuits.Circuit()
+                    var src = c.Add(new Circuits.SquareSource(5V, 10kHz, -5V))
+                    var r = c.Add(new Circuits.Resistor(1kOhm))
+                    var d = c.Add(new Circuits.Diode(model))
+                    src.A.Connect(r.A)
+                    r.B.Connect(d.A)
+                    d.B.Connect(c.Ground)
+                    src.B.Connect(c.Ground)
+                    c.TimeStep = 50ns
+                    var sc = new Circuits.Scope(c)
+                    sc.Current("i", d)
+                    c.Run(100us)
+                    var i = sc.Samples("i")
+                    var lowest = 0.0
+                    var below = 0
+                    for (int k = 1000; k < i.length; k++) {
+                        if (i[k] < lowest) { lowest = i[k] }
+                        if (i[k] < -0.0005) { below++ }
+                    }
+                    return model + " peak " + H.R(lowest * 1000) + " mA for " + H.R(below * 0.05) + " us, it " + c.PlanInfo(7) + " bad " + c.PlanInfo(8)
+                }
+            }
+            print(H.Recovery("1N4001"))
+            print(H.Recovery("1N4148"))
+            print(H.Recovery("diode"))
+            // NPN switch: input steps to 5V at t=0 through 10k; collector through 1k; the time until the collector falls below 1 V
+            var q = new Circuits.Circuit()
+            var vin = q.Add(new Circuits.SquareSource(5V, 50kHz))
+            var vcc = q.Add(new Circuits.VoltageSource(5V))
+            var rb = q.Add(new Circuits.Resistor(10kOhm))
+            var rc = q.Add(new Circuits.Resistor(1kOhm))
+            var t = q.Add(new Circuits.Transistor("2N3904"))
+            vin.A.Connect(rb.A)
+            rb.B.Connect(t.B)
+            vcc.A.Connect(rc.A)
+            rc.B.Connect(t.C)
+            t.E.Connect(q.Ground)
+            vin.B.Connect(q.Ground)
+            vcc.B.Connect(q.Ground)
+            q.TimeStep = 5ns
+            var sc = new Circuits.Scope(q)
+            sc.Voltage("c", t.C)
+            q.Run(20us)
+            var vc = sc.Samples("c")
+            var tOn = -1
+            var tOff = -1
+            for (int k = 1; k < vc.length; k++) {
+                if (tOn < 0 && vc[k] < 1.0) { tOn = k }
+                if (tOn >= 0 && tOff < 0 && k * 5 > 10000 && vc[k] > 4.0) { tOff = k }
+            }
+            print("npn on after " + H.R(tOn * 0.005) + " us, off after " + H.R(tOff * 0.005 - 10) + " us")
+            """),
+        ("Circuits: Audio durch die Schaltung (Tiefpass, Dioden-Clipper, in Stuecken, WAV hin und zurueck)", """
+            #import "circuits"
+            #import "audio"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+                static float Rms(byte data[], int offset, int frames) {
+                    var sum = 0.0
+                    for (int i = frames / 2; i < frames; i++) {
+                        var v = data[offset + i * 2] + (data[offset + i * 2 + 1] << 8)
+                        if (v >= 32768) { v = v - 65536 }
+                        sum = sum + (v / 32768.0) * (v / 32768.0)
+                    }
+                    return Math.Sqrt(sum / (frames - frames / 2))
+                }
+            }
+            // a 1 kHz tone through an RC low pass (1k, 1uF: 159 Hz) - about 0.157 of the input is left
+            var tone = Audio.Sound.Tone(1000, 100, 0, 100, 22050)
+            print("tone " + tone.Frames + " frames, rms " + H.R(H.Rms(tone.Data, tone.Offset, tone.Frames)))
+            var c = new Circuits.Circuit()
+            var input = c.Add(new Circuits.AudioInput(1V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            input.A.Connect(r.A)
+            input.B.Connect(c.Ground)
+            r.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            var out = c.ProcessAudio(tone, input, cap.A)
+            var filtered = new Audio.Sound(tone.Rate, 1, out)
+            var ratio = H.Rms(out, 0, filtered.Frames) / H.Rms(tone.Data, tone.Offset, tone.Frames)
+            print("low pass ratio " + H.R(ratio) + " clipped " + c.Clipped + " time " + H.R(c.Time / 1ms) + " ms")
+            // a diode clipper: 3V amplitude, two antiparallel 1N4148 after 1k - the output stays below about 0.7 V
+            var d = new Circuits.Circuit()
+            var inp = d.Add(new Circuits.AudioInput(3V))
+            var rs = d.Add(new Circuits.Resistor(1kOhm))
+            var d1 = d.Add(new Circuits.Diode("1N4148"))
+            var d2 = d.Add(new Circuits.Diode("1N4148"))
+            inp.A.Connect(rs.A)
+            inp.B.Connect(d.Ground)
+            rs.B.Connect(d1.A)
+            d1.B.Connect(d.Ground)
+            d2.A.Connect(d.Ground)
+            d2.B.Connect(rs.B)
+            var clippedOut = d.ProcessAudio(tone, inp, rs.B, undefined, 1V)
+            var peak = 0.0
+            for (int i = 0; i < tone.Frames; i++) {
+                var v = clippedOut[i * 2] + (clippedOut[i * 2 + 1] << 8)
+                if (v >= 32768) { v = v - 65536 }
+                if (Math.Abs(v / 32768.0) > peak) { peak = Math.Abs(v / 32768.0) }
+            }
+            print("clipper peak " + H.R(peak) + " V, iterations " + d.PlanInfo(7))
+            // in two pieces: the circuit keeps its state
+            var c2 = new Circuits.Circuit()
+            var in2 = c2.Add(new Circuits.AudioInput(1V))
+            var r2 = c2.Add(new Circuits.Resistor(1kOhm))
+            var cap2 = c2.Add(new Circuits.Capacitor(1uF))
+            in2.A.Connect(r2.A)
+            in2.B.Connect(c2.Ground)
+            r2.B.Connect(cap2.A)
+            cap2.B.Connect(c2.Ground)
+            var half = tone.Frames / 2
+            var a = c2.ProcessSamples(in2, cap2.A, tone.Data, tone.Offset, half, 1, tone.Rate)
+            var b = c2.ProcessSamples(in2, cap2.A, tone.Data, tone.Offset + half * 2, tone.Frames - half, 1, tone.Rate)
+            var same = true
+            for (int i = 0; i < half * 2; i++) {
+                if (a[i] != out[i]) { same = false }
+            }
+            for (int i = 0; i < (tone.Frames - half) * 2; i++) {
+                if (b[i] != out[half * 2 + i]) { same = false }
+            }
+            print("in pieces the same: " + same)
+            // WAV out and back in
+            var wav = filtered.ToWav()
+            var back = Audio.Sound.FromWav(wav)
+            print("wav " + wav.length + " bytes, " + back.Rate + " Hz, " + back.Channels + " channel, " + back.Frames + " frames")
+            """),
     }).ToArray();
 
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine

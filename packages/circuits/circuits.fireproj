@@ -211,6 +211,16 @@
         "name": "__CirEvalFormula",
         "arguments": 4,
         "cpp": "circuits::EvalFormula"
+      },
+      {
+        "name": "__CirSetCaps",
+        "arguments": 8,
+        "cpp": "circuits::SetCaps"
+      },
+      {
+        "name": "__CirProcess",
+        "arguments": 13,
+        "cpp": "circuits::Process"
       }
     ],
     "reset": "circuits::reset"
