@@ -43,7 +43,8 @@ struct Shared {
     int frontW = 0, frontH = 0;
     bool frontNew = false;
     int vsyncReq = -1, touchReq = -1; // settings for the thread
-    int sizeReqW = 0, sizeReqH = 0;   // a new size of the window for the thread (0: none)
+    int sizeReqW = 0, sizeReqH = 0;
+    int cursorReq = -1;               // a new cursor for the thread (-1: none)   // a new size of the window for the thread (0: none)
     bool release = false;             // the window is gone: the thread closes it and frees this
     // the thread's own
     std::vector<uint32_t> shown;
@@ -292,6 +293,7 @@ inline void pumpThread(void* arg) {
             if (s->vsyncReq >= 0) { s->display.setVSync(s->vsyncReq != 0); s->vsyncReq = -1; }
             if (s->touchReq >= 0) { s->display.setTouchMouse(s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { s->display.setSize(s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
+            if (s->cursorReq >= 0) { s->display.setCursor(s->cursorReq); s->cursorReq = -1; }
             events.clear();
             int w = s->frontW > 0 ? s->frontW : s->width, h = s->frontH > 0 ? s->frontH : s->height;
             bool open = s->display.pump(events, w, h);
@@ -644,6 +646,18 @@ inline Value WinSetSize(Value id, Value width, Value height) {
     } else if (!s->opened) { s->width = wd; s->height = ht; }
     else s->display.setSize(wd, ht);
     return Bool(true);
+}
+/// Window.Cursor: the system cursor over the window (SDL numbering; the thread of a managed window sets it at its next cycle).
+inline Value WinSetCursor(Value id, Value cursor) {
+    WindowState* w = windowOf(id);
+    Shared* s = w->sh;
+    int c = (int)cursor.i;
+    if (threaded(w)) {
+        s->m.lock();
+        s->cursorReq = c;
+        s->m.unlock();
+    } else if (s->opened) s->display.setCursor(c);
+    return Undef();
 }
 /// SystemTheme.Current(): [embedded, scale, dark, accent 0xRRGGBB, font candidates "a;b;c", font size in logical pixels] (see fire_systheme.hpp).
 inline Value WinSystemTheme(OwnList* list) {

@@ -246,6 +246,7 @@ namespace UI {
         bool entered = false
 
         construct(string text, int x = 0, int y = 0, int width = 160, int height = 24) : base(x, y, width, height) {
+            this.cursor = UI.Cursor.IBeam
             this.text = text
             this.caret = text.Length
         }

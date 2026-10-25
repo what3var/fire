@@ -466,6 +466,8 @@ namespace UI.Docking {
     // into the menu of the » button at its end (`canOverflow`, the `overflow` of an item). `text` is its title while it floats.
     class ToolStrip : UI.Panel {
         bool horizontal = true
+        /// <summary>false (default): the items are centred across the strip at their own size; true: they fill it.</summary>
+        bool stretchItems = false
         string text = ""
         bool showGrip = true
         bool canOverflow = true
@@ -685,8 +687,18 @@ namespace UI.Docking {
                     if (given == springs) { share = extra - share * (springs - 1) }
                     len = len + share
                 }
-                if (this.horizontal) { c.Arrange(root, pos, 2, len, across - 4) }
-                else { c.Arrange(root, 2, pos, across - 4, len) }
+                // items sit in the middle across the strip (their own height in a horizontal strip, width in a vertical one), unless they say otherwise or
+                // the strip stretches them
+                var room2 = across - 4
+                var off = 2
+                var size = room2
+                if (!this.stretchItems && !(c is of UI.Docking.ToolStripSeparator)) {
+                    if (this.horizontal && c.valign == UI.VAlign.Stretch) { size = UI.M.Min(room2, c.dh) }
+                    if (!this.horizontal && c.halign == UI.HAlign.Stretch) { size = UI.M.Min(room2, c.dw) }
+                    off = 2 + (room2 - size) / 2
+                }
+                if (this.horizontal) { c.Arrange(root, pos, off, len, size) }
+                else { c.Arrange(root, off, pos, size, len) }
                 pos = pos + len + this.spacing
             }
         }
@@ -696,6 +708,12 @@ namespace UI.Docking {
         bool OverflowOpen() {
             var root = this.host
             return root != undefined && root.IsPopup(this.overflowPopup)
+        }
+
+        // the grip moves the strip
+        int CursorAt(UI.Root root, int px, int py) {
+            if (this.OverGrip(px, py)) { return UI.Cursor.SizeAll }
+            return this.cursor
         }
 
         bool OverGrip(int px, int py) {

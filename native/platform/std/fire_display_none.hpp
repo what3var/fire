@@ -25,6 +25,7 @@ public:
     bool open(const std::string&, int, int, bool) { return false; }
     void setVSync(bool v) { vsync_ = v; }
     void setSize(int, int) {}
+    void setCursor(int) {}
     bool vsync() const { return vsync_; }
     void setTouchMouse(bool v) { touchMouse_ = v; }
     bool touchMouse() const { return touchMouse_; }

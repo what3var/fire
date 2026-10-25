@@ -1508,6 +1508,25 @@ namespace UI {
             }
         }
 
+        // the pointer: a cross while placing or over a pin (a wire starts there), a hand over a switch, arrows over what can be moved
+        int CursorAt(Root root, int px, int py) {
+            if (this.cursor >= 0) { return this.cursor }
+            if (this.placeType != "") { return UI.Cursor.Cross }
+            // pressed: moving (1), placing or drawing a wire (3, 4), stretching (6), the rectangle (2), panning (5), a switch held (7)
+            if (this.mode == 1 || this.mode == 5) { return UI.Cursor.SizeAll }
+            if (this.mode == 3 || this.mode == 4 || this.mode == 6 || this.mode == 2) { return UI.Cursor.Cross }
+            if (this.mode == 7) { return UI.Cursor.Hand }
+            var ux = this.ToUnitX(px - this.ax + 0.0)
+            var uy = this.ToUnitY(py - this.ay + 0.0)
+            var hit = this.ElementAt(ux, uy)
+            if (hit != undefined && this.IsInteractive(hit)) { return UI.Cursor.Hand }
+            if (this.readOnly) { return UI.Cursor.Arrow }
+            if (this.NearPin(ux, uy)) { return UI.Cursor.Cross }
+            if (this.selection.count == 1 && this.EndAt(this.selection[0], ux, uy) > 0) { return UI.Cursor.Cross }
+            if (hit != undefined && this.selection.IndexOf(hit) >= 0) { return UI.Cursor.SizeAll }
+            return UI.Cursor.Arrow
+        }
+
         undefined Hover(Root root, int px, int py) {
             var ux = this.ToUnitX(px - this.ax + 0.0)
             var uy = this.ToUnitY(py - this.ay + 0.0)

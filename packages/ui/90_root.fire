@@ -503,7 +503,7 @@ namespace UI {
             if (type == 8) { this.MouseDown(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 11) { this.MouseUp(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
             else if (type == 9) { this.MouseMove(this.ToLogical(e[1]), this.ToLogical(e[2])) }
-            else if (type == 12) { this.MouseWheel(e[1], e[2], this.ToLogical(e[3]), this.ToLogical(e[4])) }
+            else if (type == 12) { this.WheelEvent(e[1], e[2], this.ToLogical(e[3]), this.ToLogical(e[4])) }
             else if (type == 24) { this.KeyDown(e[1], e[3]) }
             else if (type == 3) { this.TextInput(e[1]) }
             else if (type == 16) { this.TouchDown(e[1], this.ToLogical(e[2]), this.ToLogical(e[3])) }
@@ -802,6 +802,30 @@ namespace UI {
             this.SetFocus(list[index])
         }
 
+        // what the wheel moved that is not a whole notch yet (a touchpad gives fractions: they add up)
+        float wheelRestX = 0.0
+        float wheelRestY = 0.0
+
+        // A wheel event of the window: the distances may be fractions (touchpads, high resolution wheels); whole notches go to MouseWheel.
+        undefined WheelEvent(any rawX, any rawY, int px, int py) {
+            float x = rawX
+            float y = rawY
+            this.wheelRestX = this.wheelRestX + x
+            this.wheelRestY = this.wheelRestY + y
+            var dx = UI.Root.Whole(this.wheelRestX)
+            var dy = UI.Root.Whole(this.wheelRestY)
+            this.wheelRestX = this.wheelRestX - dx
+            this.wheelRestY = this.wheelRestY - dy
+            if (dx == 0 && dy == 0) { return }
+            this.MouseWheel(dx, dy, px, py)
+        }
+
+        // the whole part (towards 0)
+        static int Whole(float v) {
+            if (v >= 0.0) { return Math.Floor(v)!int }
+            return Math.Ceiling(v)!int
+        }
+
         undefined MouseWheel(int dx, int dy, int px, int py) {
             this.mouseX = px
             this.mouseY = py
@@ -813,6 +837,11 @@ namespace UI {
         }
 
         undefined MouseDown(int button, int px, int py) {
+            this.MouseDownCore(button, px, py)
+            this.UpdateCursor(px, py)
+        }
+
+        undefined MouseDownCore(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
             // a click next to the floating elements: the topmost says whether it closes and whether the click is thereby consumed
@@ -856,6 +885,11 @@ namespace UI {
         }
 
         undefined MouseUp(int button, int px, int py) {
+            this.MouseUpCore(button, px, py)
+            this.UpdateCursor(px, py)
+        }
+
+        undefined MouseUpCore(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
             var target = this.pressedElement
@@ -876,6 +910,29 @@ namespace UI {
             var target = this.pressedElement
             if (target != undefined) { target.MouseMove(this, px, py) }
             else if (hit != undefined) { hit.Hover(this, px, py) }
+            this.UpdateCursor(px, py)
+        }
+
+        // the cursor the window shows now (-1: not set yet)
+        int shownCursor = -1
+
+        /// <summary>The mouse pointer at (px, py): the element that holds the mouse, else the one below it, asks itself and the elements around it (CursorAt).</summary>
+        int CursorFor(int px, int py) {
+            Element e = this.pressedElement
+            if (e == undefined) { e = this.Hit(px, py) }
+            while (e != undefined) {
+                var c = e.CursorAt(this, px, py)
+                if (c >= 0) { return c }
+                e = e.parent
+            }
+            return UI.Cursor.Arrow
+        }
+
+        undefined UpdateCursor(int px, int py) {
+            var c = this.CursorFor(px, py)
+            if (c == this.shownCursor) { return }
+            this.shownCursor = c
+            if (this.window != undefined) { this.window.Cursor = c }
         }
 
         undefined KeyDown(int key, int mod) {

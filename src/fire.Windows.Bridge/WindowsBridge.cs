@@ -101,6 +101,8 @@ namespace fire.Windows.Bridge
                 ["SetSize"] = args => { if (args[1].AsInt() <= 0 || args[2].AsInt() <= 0) return Value.MakeBool(false); mgr.SetSize((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt()); return Value.MakeBool(true); },
                 // SystemTheme.Current(): what the desktop says about the look of programs
                 ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
+                // Window.Cursor: the system cursor over the window
+                ["SetCursor"] = args => { mgr.SetCursor((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
             };
         }
         
@@ -133,6 +135,7 @@ namespace fire.Windows.Bridge
                 ["GetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetSize"] = args => Value.MakeBool(false) /*STUB*/,
                 ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
+                ["SetCursor"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 

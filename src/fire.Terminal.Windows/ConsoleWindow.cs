@@ -86,6 +86,12 @@ namespace fire.Terminal.Windows
             if (_realized && !_failed) _renderer.SetSize(width, height);
         }
 
+        /// <summary>Window.Cursor: the system cursor over the window (SDL numbering, see IFramebufferRenderer.SetCursor).</summary>
+        public void SetCursor(int cursor)
+        {
+            if (_realized && !_failed) _renderer.SetCursor(cursor);
+        }
+
         /// <summary>Opens the OS window now, on the calling thread (once).</summary>
         public void Realize()
         {

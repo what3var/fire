@@ -358,6 +358,23 @@ namespace fire.Editor
             }
             """;
 
+        /// <summary>The Avalonia pointer for a cursor of the program (UI.Cursor / SDL numbering).</summary>
+        internal static Cursor PointerFor(int cursor) => new(cursor switch
+        {
+            1 => StandardCursorType.Ibeam,
+            2 => StandardCursorType.Wait,
+            3 => StandardCursorType.Cross,
+            4 => StandardCursorType.AppStarting,
+            5 => StandardCursorType.TopLeftCorner,
+            6 => StandardCursorType.TopRightCorner,
+            7 => StandardCursorType.SizeWestEast,
+            8 => StandardCursorType.SizeNorthSouth,
+            9 => StandardCursorType.SizeAll,
+            10 => StandardCursorType.No,
+            11 => StandardCursorType.Hand,
+            _ => StandardCursorType.Arrow,
+        });
+
         private void StartSession(string text)
         {
             _session?.Stop();
@@ -373,6 +390,7 @@ namespace fire.Editor
                 _framePending = true;
                 Dispatcher.UIThread.Post(() => { _framePending = false; if (ReferenceEquals(session, _session)) _surface.TakeFrame(); }, DispatcherPriority.Render);
             };
+            session.CursorChanged += cursor => Dispatcher.UIThread.Post(() => { if (ReferenceEquals(session, _session)) _surface.Cursor = PointerFor(cursor); });
             session.Ended += error => Dispatcher.UIThread.Post(() =>
             {
                 if (!ReferenceEquals(session, _session)) return;

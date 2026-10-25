@@ -57,6 +57,14 @@ namespace fire.Compiler
                 _lastPresent = Environment.TickCount64;
             }
 
+            /// <summary>Window.Cursor of the program: the host shows that pointer over the picture.</summary>
+            public void SetCursor(int cursor)
+            {
+                if (cursor == _owner.Cursor) return;
+                _owner.Cursor = cursor;
+                _owner.CursorChanged?.Invoke(cursor);
+            }
+
             public void Dispose() { }
         }
 
@@ -74,6 +82,12 @@ namespace fire.Compiler
         public event Action<string>? Message;
         /// <summary>A new picture is there (on the thread of the program): take it with <see cref="CopyFrame"/>.</summary>
         public event Action? FrameReady;
+        /// <summary>The program wants another mouse pointer over its picture (SDL numbering: 0 arrow, 1 text, ... 11 hand, see UI.Cursor); on the thread of the program.</summary>
+        public event Action<int>? CursorChanged;
+
+        /// <summary>The mouse pointer the program wants now.</summary>
+        public int Cursor { get; private set; }
+
         /// <summary>The program ended (null) or failed (the message); on the thread of the program.</summary>
         public event Action<string?>? Ended;
 

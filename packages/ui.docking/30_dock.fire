@@ -645,6 +645,21 @@ namespace UI.Docking {
         }
 
         // The edges of a pane frame under the screen position (see resizing).
+        // the edges of a floating window resize it
+        int CursorAt(UI.Root root, int px, int py) {
+            var edges = this.resizing
+            if (edges == 0) { edges = this.EdgesAt(px, py) }
+            var left = edges % 2 == 1
+            var top = (edges / 2) % 2 == 1
+            var right = (edges / 4) % 2 == 1
+            var bottom = (edges / 8) % 2 == 1
+            if ((left && top) || (right && bottom)) { return UI.Cursor.SizeNWSE }
+            if ((right && top) || (left && bottom)) { return UI.Cursor.SizeNESW }
+            if (left || right) { return UI.Cursor.SizeWE }
+            if (top || bottom) { return UI.Cursor.SizeNS }
+            return this.cursor
+        }
+
         int EdgesAt(int px, int py) {
             if (this.HoldsStrip()) { return 0 }
             var grip = this.border + 2
@@ -1489,6 +1504,36 @@ namespace UI.Docking {
         // ---- splitters ----
 
         // The splitter at the position relative to the manager: sets dragKind (3 edge, 4 between panes), dragSide and dragIndex; false if there is none.
+        // over a splitter (or while one is dragged): the arrows of its direction
+        int CursorAt(UI.Root root, int px, int py) {
+            var kind = this.dragKind
+            var side = this.dragSide
+            var index = this.dragIndex
+            var over = kind == 3 || kind == 4
+            if (!over) {
+                over = this.SplitterAt(px - this.ax, py - this.ay)
+                if (over) {
+                    // (only looking: what a press would drag stays as it was)
+                    var k2 = this.dragKind
+                    var s2 = this.dragSide
+                    this.dragKind = kind
+                    this.dragSide = side
+                    this.dragIndex = index
+                    kind = k2
+                    side = s2
+                }
+            }
+            if (!over) { return this.cursor }
+            var vertical = side == UI.Dock.Left || side == UI.Dock.Right
+            // the edge of a side moves across it, the splitter between two panes along it
+            if (kind == 3) {
+                if (vertical) { return UI.Cursor.SizeWE }
+                return UI.Cursor.SizeNS
+            }
+            if (vertical) { return UI.Cursor.SizeNS }
+            return UI.Cursor.SizeWE
+        }
+
         bool SplitterAt(int x, int y) {
             var s = this.splitter
             for (var side = 0; side < 4; side = side + 1) {

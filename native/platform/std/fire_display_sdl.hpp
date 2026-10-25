@@ -65,6 +65,14 @@ public:
     void setVSync(bool v) { vsync_ = v; if (renderer_) SDL_RenderSetVSync(renderer_, v ? 1 : 0); }
     /// A new size of the window in pixels of the screen (the program asks for it: no resize event comes back).
     void setSize(int w, int h) { if (window_ && w > 0 && h > 0) { SDL_SetWindowSize(window_, w, h); winW_ = w; winH_ = h; } }
+    /// The mouse pointer over the window: a system cursor (SDL_SystemCursor: 0 arrow, 1 text, ... 11 hand), made once per kind.
+    void setCursor(int c) {
+        if (!window_ || c < 0 || c >= 12 || c == cursor_) return;
+        if (!cursors_[c]) cursors_[c] = SDL_CreateSystemCursor((SDL_SystemCursor)c);
+        if (!cursors_[c]) return;
+        SDL_SetCursor(cursors_[c]);
+        cursor_ = c;
+    }
     bool vsync() const { return vsync_; }
     /// true (the default): a finger also makes mouse events (as SDL does itself); false: only the touch events.
     void setTouchMouse(bool v) { touchMouse_ = v; SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, v ? "1" : "0"); }
@@ -176,6 +184,8 @@ public:
     }
 
     void close() {
+        for (int k = 0; k < 12; k++) if (cursors_[k]) { SDL_FreeCursor(cursors_[k]); cursors_[k] = nullptr; }
+        cursor_ = -1;
         if (texture_) { SDL_DestroyTexture(texture_); texture_ = nullptr; }
         for (SDL_Joystick* js : joysticks_) SDL_JoystickClose(js);
         joysticks_.clear();
@@ -226,6 +236,8 @@ private:
     }
 
     SDL_Window* window_ = nullptr;
+    SDL_Cursor* cursors_[12] = {};
+    int cursor_ = -1;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
     int winW_ = 0, winH_ = 0, texW_ = 0, texH_ = 0, fbWidth_ = 0, fbHeight_ = 0;

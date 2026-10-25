@@ -227,6 +227,9 @@ namespace fire.Terminal.Windows
 
         public void SetVSync(int id, bool enabled) { _windows.Get(id); OnOwner(id, w => w.VSync = enabled); }
 
+        /// <summary>Window.Cursor (on the thread that owns the OS window).</summary>
+        public void SetCursor(int id, int cursor) { _windows.Get(id); OnOwner(id, w => w.SetCursor(cursor)); }
+
         /// <summary>Window.SetSize (on the thread that owns the OS window).</summary>
         public void SetSize(int id, int width, int height) { _windows.Get(id); OnOwner(id, w => w.SetSize(width, height)); }
 

@@ -128,6 +128,19 @@ namespace fire.Terminal.Sdl
         }
 
         /// <summary>Window.SetSize: the new size of the open window (no resize event comes back for it).</summary>
+        private readonly IntPtr[] _cursors = new IntPtr[12];
+        private int _cursor = -1;
+
+        /// <summary>The system cursor over the window (SDL_SystemCursor; made once per kind).</summary>
+        public void SetCursor(int cursor)
+        {
+            if (cursor < 0 || cursor >= _cursors.Length || cursor == _cursor || _window == IntPtr.Zero) return;
+            if (_cursors[cursor] == IntPtr.Zero) _cursors[cursor] = SDL.CreateSystemCursor((SDL.SystemCursor)cursor);
+            if (_cursors[cursor] == IntPtr.Zero) return;
+            SDL.SetCursor(_cursors[cursor]);
+            _cursor = cursor;
+        }
+
         public void SetSize(int width, int height)
         {
             if (_window != IntPtr.Zero && width > 0 && height > 0) SDL.SetWindowSize(_window, width, height);

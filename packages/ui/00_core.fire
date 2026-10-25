@@ -14,6 +14,8 @@ namespace UI {
     enum VAlign { Stretch = 0, Top = 1, Center = 2, Bottom = 3 }
     // Where a child of a DockPanel sits (the last child fills what is left, unless lastChildFill is off)
     enum Dock { Left = 0, Top = 1, Right = 2, Bottom = 3 }
+    /// <summary>The mouse pointers of the system (Element.Cursor; -1 there: the element takes the one of the element around it).</summary>
+    enum Cursor { Arrow = 0, IBeam = 1, Wait = 2, Cross = 3, Progress = 4, SizeNWSE = 5, SizeNESW = 6, SizeWE = 7, SizeNS = 8, SizeAll = 9, No = 10, Hand = 11 }
 
     // The space around an element (margin) or inside it (padding): `new UI.Thickness(4)`, `new UI.Thickness(8, 4)` (horizontal, vertical) or all four sides.
     class Thickness {

@@ -29,6 +29,8 @@ namespace UI {
         int gridColumnSpan = 1
         bool visible = true
         bool enabled = true
+        // the mouse pointer over the element (UI.Cursor; -1: that of the element around it)
+        int cursor = -1
         bool hover = false
         bool pressed = false
         bool focused = false
@@ -415,6 +417,16 @@ namespace UI {
 
         // The mouse wheel: dy > 0 means up. Returns true if the element consumed it (otherwise the root asks the container).
         bool MouseWheel(Root root, int dx, int dy) { return false }
+
+        /// <summary>The mouse pointer over the element (UI.Cursor.Arrow, IBeam, Hand, SizeWE, ...; -1: that of the element around it).</summary>
+        int Cursor {
+            get { return this.cursor }
+            set { this.cursor = value }
+        }
+
+        /// <summary>The mouse pointer at (px, py) over the element (or while it holds the mouse): Cursor; an element whose parts want different ones (a
+        /// splitter, a grip) overrides it. -1: the element around it decides.</summary>
+        int CursorAt(Root root, int px, int py) { return this.cursor }
 
         // For a floating element: a click outside. It closes (and consumes the click if it hit its owner `owner`).
         bool PopupOutside(Root root, int px, int py) {
