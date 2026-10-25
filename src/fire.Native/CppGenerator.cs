@@ -1075,7 +1075,8 @@ namespace fire.Native
                 var dims = dimNames.Count == 0 ? "0" : string.Join(", ", dimNames.Select(n => u.Dimensions.TryGetValue(n, out int e) ? e.ToString(CultureInfo.InvariantCulture) : "0"));
                 string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "nullptr";
                 int conv = u.Converter is { } converter ? _unitConverters[converter].Index : -1;
-                sb.AppendLine($"    {{{{{dims}}}, {DoubleLiteral(u.Scale, false)}, {display}, {DoubleLiteral(u.Offset, false)}, {conv}}},");
+                int ulconv = u.UnitlessConverter is { } plainConverter ? _unitConverters[plainConverter].Index : -1;
+                sb.AppendLine($"    {{{{{dims}}}, {DoubleLiteral(u.Scale, false)}, {display}, {DoubleLiteral(u.Offset, false)}, {conv}, {ulconv}}},");
             }
             sb.AppendLine("};");
             if (_unitConverters.Count > 0)
@@ -4308,7 +4309,7 @@ namespace fire.Native
             if (unit == null || unit.IsUnitless) return 0;
             for (int i = 1; i < _units.Count; i++) if (_units[i].Equals(unit)) return i;
             _units.Add(unit);
-            if (unit.Converter is { } converter && !_unitConverters.ContainsKey(converter))
+            if ((unit.Converter ?? unit.UnitlessConverter) is { } converter && !_unitConverters.ContainsKey(converter))
             {
                 // the conversion functions of the unit (static To and From of its hidden class) are called by the runtime: they are generated
                 var rc = FindClass(converter);

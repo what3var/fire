@@ -396,6 +396,18 @@ namespace fire.Compiler
             if (d.Coerces.Count == 0)
                 return new CustomUnit(d.Name, d.Symbol, d.Prefixed, new Dictionary<string, int> { [d.Symbol] = 1 }, 1.0);
             var ic = System.Globalization.CultureInfo.InvariantCulture;
+            // `coerce to unitless => ...` and `coerce from unitless => ...`: a dimension of its own whose values become plain numbers by functions (dB)
+            if (d.Coerces.Any(c => Unit.Parse(c.TargetUnit).IsUnitless))
+            {
+                if (d.Coerces.Any(c => !Unit.Parse(c.TargetUnit).IsUnitless))
+                    throw fail(d, file, $"A unit that converts into a plain number ('coerce to unitless') converts into nothing else", d.Line);
+                var toPlain = d.Coerces.FirstOrDefault(c => c.Direction == CoerceDirection.To);
+                var fromPlain = d.Coerces.FirstOrDefault(c => c.Direction == CoerceDirection.From);
+                if (toPlain == null || fromPlain == null || d.Coerces.Count != 2)
+                    throw fail(d, file, $"A unit that becomes a plain number needs exactly 'coerce to unitless => ...' and 'coerce from unitless => ...'", d.Coerces[0].Line);
+                if (d.Prefixed) throw fail(d, file, $"A unit that becomes a plain number takes no prefixes - declare '{d.Symbol}' without 'prefixed'", d.Line);
+                return new CustomUnit(d.Name, d.Symbol, false, new Dictionary<string, int> { [d.Symbol] = 1 }, 1.0, 0, null, UnitConverterClassName(d.Symbol));
+            }
             Dictionary<string, int>? dims = null;
             double scale = 0, offset = 0;
             CoerceDirection? functions = null;
@@ -452,7 +464,8 @@ namespace fire.Compiler
         {
             foreach (var d in decls)
             {
-                if (Unit.CustomUnits.FirstOrDefault(u => u.Symbol == d.Symbol) is not { Converter: { } className }) continue;
+                var own = Unit.CustomUnits.FirstOrDefault(u => u.Symbol == d.Symbol);
+                if ((own?.Converter ?? own?.UnitlessConverter) is not { } className) continue;
                 var floatType = new TypeRef("float", null, 0);
                 MethodDecl Method(string name, UnitCoerce c) => new(d.Source, c.Line, floatType, name,
                     new[] { new LambdaParam("value", floatType, Array.Empty<Expr?>()) },

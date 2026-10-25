@@ -409,6 +409,11 @@ unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
   conversion functions), they become the static methods `To` and `From` of a hidden class and are called at run time (VM and native) - in the VM
   nested on the VM that converts, like a getter or setter (with the globals of the program). An exception in them is thrown where the conversion
   happens (the same exception object).
+- `coerce to unitless => expression` with `coerce from unitless => expression` makes a unit of a **dimension of its own whose values become plain numbers**
+  (`unit Decibel: dB { coerce to unitless => 10 ^ (value / 20); coerce from unitless => 20 * Math.Log10(value) }`): multiplied or divided
+  such a value is its number (`1V * 6dB` is `1.995V`, `10V / 20dB` is `1V`), stored in a declaration without a unit (a parameter, a field, `float k : unitless`)
+  and coerced with `:unitless` it becomes the number too, a plain number stored in a declaration of the unit is converted back (`float:dB g = 2` is
+  `6.02dB`); added, subtracted and compared it stays in its unit (`3dB + 3dB` is `6dB`). Both directions are needed, no prefixes; VM and native.
 - A unit with an offset or conversion functions takes no prefixes. Converting it into another unit of the same dimension goes through the base unit
   (`to(value) * scale + offset` and back); adding, subtracting and comparing convert the right operand into the unit of the left one. Multiplied or
   divided by another unit it counts as its reference unit (the offset and the functions do not take part: `20C * 2s` is `40K*s`), by a number it

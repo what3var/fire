@@ -236,6 +236,16 @@ namespace fire.Values
                 if (!dimensionOnly) value = MakeUndefined(target);
                 return UnitAdaptation.Ok;
             }
+            // a unit that becomes a plain number (dB) stored without a unit, and a plain number stored in such a unit
+            if (!dimensionOnly && (target.IsUnitless && actual.UnitlessConverter != null || actual.IsUnitless && target.UnitlessConverter != null))
+            {
+                double plain = value.Kind == ValueKind.Float ? value._floatValue : value._intValue;
+                double result = target.IsUnitless ? actual.ToUnitless(plain) : target.FromUnitless(plain);
+                if (value.Kind == ValueKind.Float) { value = MakeFloat(result, target, value.Width); return UnitAdaptation.Ok; }
+                if (Math.Abs(Math.Round(result)) >= 9.2e18) return UnitAdaptation.Overflow;
+                value = MakeInt((long)Math.Round(result), target, value.Width);
+                return UnitAdaptation.Ok;
+            }
             if (!actual.IsCompatibleWith(target)) return UnitAdaptation.Mismatch;
             if (dimensionOnly) return UnitAdaptation.Ok;
             if (!actual.IsLinear || !target.IsLinear)
@@ -468,6 +478,8 @@ namespace fire.Values
 
         public static Value Divide(Value a, Value b)
         {
+            if (a._ref is Values.Unit { UnitlessConverter: not null } ua) a = MakeFloat(ua.ToUnitless(a.ToDouble()));
+            if (b._ref is Values.Unit { UnitlessConverter: not null } ub) b = MakeFloat(ub.ToUnitless(b.ToDouble()));
             // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Divide.
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
@@ -487,6 +499,8 @@ namespace fire.Values
 
         public static Value Multiply(Value a, Value b)
         {
+            if (a._ref is Values.Unit { UnitlessConverter: not null } ua) a = MakeFloat(ua.ToUnitless(a.ToDouble()));
+            if (b._ref is Values.Unit { UnitlessConverter: not null } ub) b = MakeFloat(ub.ToUnitless(b.ToDouble()));
             // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Multiply.
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {

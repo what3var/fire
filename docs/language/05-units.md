@@ -92,6 +92,24 @@ print(level)           // 3.010299956639812dBm
   A number keeps the unit (`20C * 2` is `40C`).
 - An exception in a conversion function is thrown where the conversion happens.
 
+### Units that become a plain number
+
+`coerce to unitless` and `coerce from unitless` make a unit of its own that **stands for a plain number**, like decibels for a ratio (the package
+`circuits` declares `dB` this way):
+
+```fire
+unit Decibel: dB {
+    coerce to unitless => 10 ^ (value / 20)
+    coerce from unitless => 20 * Math.Log10(value)
+}
+
+print(1V * 6dB)               // 1.9952623149688795V: multiplied it is the factor
+print(3dB + 3dB)              // 6dB: added it stays in decibels
+float k : unitless = 20dB     // 10 - a declaration without a unit (a parameter, a field) takes the factor
+print(20dB:unitless)          // 10
+float:dB g = 2                // a plain number goes the other way: 6.020599913279624dB
+```
+
 ## Calculating with units
 
 - `+`, `-`, `%` and the comparisons need the **same dimension**. Different scales are converted automatically: two `int`s are converted into the **finer** unit

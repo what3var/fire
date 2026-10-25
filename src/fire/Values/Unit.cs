@@ -51,17 +51,33 @@ namespace fire.Values
         /// other unit.</summary>
         public string? Converter { get; }
 
+        /// <summary>A unit of its own dimension that becomes a plain number by functions (`unit Decibel: dB { coerce to unitless => 10 ^ (value / 20);
+        /// coerce from unitless => 20 * Math.Log10(value) }`): the name of the hidden class with To and From. Such a value is converted into its number when
+        /// it is multiplied or divided, stored without a unit or coerced to unitless; added to and compared with its own unit it stays as it is. Null for
+        /// every other unit.</summary>
+        public string? UnitlessConverter { get; }
+
         [MemoryPackConstructor]
-        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter)
+        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter, string? unitlessConverter)
         {
             Dimensions = dimensions;
             Scale = scale;
             _displaySymbol = displaySymbol;
             Offset = offset;
             Converter = converter;
+            UnitlessConverter = unitlessConverter;
         }
 
-        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol) : this(dimensions, scale, displaySymbol, 0, null) { }
+        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol, double offset, string? converter)
+            : this(dimensions, scale, displaySymbol, offset, converter, null) { }
+
+        private Unit(IReadOnlyDictionary<string, int> dimensions, double scale, string? displaySymbol) : this(dimensions, scale, displaySymbol, 0, null, null) { }
+
+        /// <summary>The plain number of a value of a unit with UnitlessConverter (`6dB` is 1.995...).</summary>
+        public double ToUnitless(double value) => UnitlessConverter != null ? CallConverter(UnitlessConverter, "To", value) : value;
+
+        /// <summary>A plain number as a value of a unit with UnitlessConverter (2 is 6.02dB).</summary>
+        public double FromUnitless(double value) => UnitlessConverter != null ? CallConverter(UnitlessConverter, "From", value) : value;
 
         /// <summary>A unit that is only a factor of its base unit (all units of fire, `unit Inch: in { coerce m => 0.0254 }`) - not one with an offset or
         /// conversion functions.</summary>
@@ -142,7 +158,7 @@ namespace fire.Values
 
             // 1b) A unit of the program (`unit Inch: in { ... }`), by its symbol or its name
             if (custom.Count > 0 && custom.TryGetValue(symbol, out var own))
-                return new Unit(own.DimensionTable, own.Scale, own.Symbol, own.Offset, own.Converter);
+                return new Unit(own.DimensionTable, own.Scale, own.Symbol, own.Offset, own.Converter, own.UnitlessConverter);
 
             // 2) Prefix + prefixable base unit, e.g. "mm" = 'm'(milli) + "m"(metre)
             if (symbol.Length >= 2)
@@ -212,7 +228,7 @@ namespace fire.Values
             if (!unitText.Split(CombiningChars).Any(IsCustomUnitWord)) return unitText;
             var u = Parse(unitText);
             string dims = string.Join(",", u.Dimensions.OrderBy(d => d.Key, StringComparer.Ordinal).Select(d => d.Key + ":" + d.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-            return $"{DemandMark}{u}{DemandMark}{dims}{DemandMark}{u.Scale.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}{DemandMark}{u.Offset.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}{DemandMark}{u.Converter}";
+            return $"{DemandMark}{u}{DemandMark}{dims}{DemandMark}{u.Scale.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}{DemandMark}{u.Offset.ToString("R", System.Globalization.CultureInfo.InvariantCulture)}{DemandMark}{u.Converter}{DemandMark}{u.UnitlessConverter}";
         }
 
         /// <summary>The unit of a demand as the user wrote it (for messages): `#§in§m:1§0.0254` is `in`, `any §in§...` is `any in`.</summary>
@@ -225,7 +241,7 @@ namespace fire.Values
 
         private static Unit DecodeDemand(string text)
         {
-            var parts = text.Split(DemandMark);   // "", symbol, dimensions, scale, offset, converter
+            var parts = text.Split(DemandMark);   // "", symbol, dimensions, scale, offset, converter, unitless converter
             var dims = new Dictionary<string, int>();
             foreach (var entry in parts[2].Split(',', StringSplitOptions.RemoveEmptyEntries))
             {
@@ -233,7 +249,8 @@ namespace fire.Values
                 dims[entry.Substring(0, colon)] = int.Parse(entry.Substring(colon + 1), System.Globalization.CultureInfo.InvariantCulture);
             }
             return new Unit(dims, double.Parse(parts[3], System.Globalization.CultureInfo.InvariantCulture), parts[1],
-                double.Parse(parts[4], System.Globalization.CultureInfo.InvariantCulture), parts[5].Length == 0 ? null : parts[5]);
+                double.Parse(parts[4], System.Globalization.CultureInfo.InvariantCulture), parts[5].Length == 0 ? null : parts[5],
+                parts.Length > 6 && parts[6].Length > 0 ? parts[6] : null);
         }
 
         /// <summary>A unit symbol that only a unit of the program defines (a word the lexer reads as a keyword, `in`, can still be a unit then).</summary>
@@ -305,7 +322,8 @@ namespace fire.Values
         }
 
         /// <summary>The number in the base unit (`5mm` is 0.005, `20C` is 293.15) - for `x:unitless`.</summary>
-        public double ToBase(double value) => (Converter != null ? CallConverter(Converter, "To", value) : value) * Scale + Offset;
+        public double ToBase(double value) => UnitlessConverter != null ? CallConverter(UnitlessConverter, "To", value)
+            : (Converter != null ? CallConverter(Converter, "To", value) : value) * Scale + Offset;
 
         private static double CallConverter(string converter, string method, double value) =>
             (ConverterCall ?? throw new InvalidOperationException("The units of this program need the VM to be converted."))(converter, method, value);
@@ -383,6 +401,9 @@ namespace fire.Values
             // (ToString() shows only the bare base dimension for unnamed units,
             // while ignoring their scale factor - see
             // ToString() comment below).
+            // a unit that becomes a plain number (dB) takes part as that number
+            if (a.UnitlessConverter != null) a = Unitless;
+            if (b.UnitlessConverter != null) b = Unitless;
             if (b.IsUnitless) return a;
             if (a.IsUnitless) return b;
             a = a.LinearPart;
@@ -420,6 +441,8 @@ namespace fire.Values
             // `a` is unitless (e.g. `2 / 20mm`), the result is
             // dimensionally something GENUINELY NEW (1/length) - deliberately NO
             // special case for that, it must go through the normal dimension construction.
+            if (a.UnitlessConverter != null) a = Unitless;
+            if (b.UnitlessConverter != null) b = Unitless;
             if (b.IsUnitless) return a;
             a = a.LinearPart;
             b = b.LinearPart;
@@ -438,7 +461,7 @@ namespace fire.Values
             if (other is null) return false;
             if (ReferenceEquals(this, other)) return true; // the most common case: the same unit (usually `Unitless`)
             if (!IsCompatibleWith(other)) return false;
-            return Math.Abs(Scale - other.Scale) < 1e-12 && Offset == other.Offset && Converter == other.Converter;
+            return Math.Abs(Scale - other.Scale) < 1e-12 && Offset == other.Offset && Converter == other.Converter && UnitlessConverter == other.UnitlessConverter;
         }
 
         public override bool Equals(object? obj) => obj is Unit u && Equals(u);
@@ -498,14 +521,15 @@ namespace fire.Values
     /// <summary>A unit the program declares: `prefixed unit Volt: V` (a new dimension `V`, `mV`, `kV`, ...) or `unit Inch: in { coerce m => 0.0254 }`
     /// (the dimension of `m`, 1in = 0.0254m). <see cref="Dimensions"/> and <see cref="Scale"/> are those of a parsed unit (value_in_base = value * Scale).</summary>
     [MemoryPackable]
-    public sealed partial record CustomUnit(string Name, string Symbol, bool Prefixed, Dictionary<string, int> Dimensions, double Scale, double Offset = 0, string? Converter = null)
+    public sealed partial record CustomUnit(string Name, string Symbol, bool Prefixed, Dictionary<string, int> Dimensions, double Scale, double Offset = 0, string? Converter = null,
+        string? UnitlessConverter = null)
     {
         [MemoryPackIgnore]
         internal IReadOnlyDictionary<string, int> DimensionTable => Dimensions;
 
         public bool Equals(CustomUnit? other) =>
             other is not null && Name == other.Name && Symbol == other.Symbol && Prefixed == other.Prefixed && Scale.Equals(other.Scale) && Offset.Equals(other.Offset) && Converter == other.Converter
-            && Dimensions.Count == other.Dimensions.Count && Dimensions.All(d => other.Dimensions.TryGetValue(d.Key, out int e) && e == d.Value);
+            && UnitlessConverter == other.UnitlessConverter && Dimensions.Count == other.Dimensions.Count && Dimensions.All(d => other.Dimensions.TryGetValue(d.Key, out int e) && e == d.Value);
 
         public override int GetHashCode() => HashCode.Combine(Name, Symbol, Prefixed, Scale);
     }

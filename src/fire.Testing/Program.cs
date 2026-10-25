@@ -20062,6 +20062,26 @@ else
             c.StopAlongside()
             print("alongside " + c.IsAlongside)
             """),
+        ("Einheiten: eine Einheit, die eine reine Zahl wird (coerce to/from unitless, dB): mal/durch als Faktor, plus in dB, ohne Einheit gespeichert", """
+            unit Decibel: dB {
+                coerce to unitless => 10 ^ (value / 20)
+                coerce from unitless => 20 * Math.Log10(value)
+            }
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            class Box { float k
+                construct(any v) { this.k = v } }
+            var g = 6dB
+            print(g)
+            print(1V * g)
+            print(10V / 20dB)
+            print(3dB + 3dB)
+            print(H.R(3dB * 1))
+            float k : unitless = 20dB
+            print(k + " " + 20dB:unitless + " " + new Box(40dB).k + " " + H.R(6dB))
+            float:dB back = 2
+            print(H.R(back / 1dB * 1))
+            print(20dB > 6dB)
+            """),
     }).ToArray();
 
     // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine

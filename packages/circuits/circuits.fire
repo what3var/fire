@@ -1,6 +1,6 @@
 // Circuit simulation (docs/CIRCUITS.md), after the model of Paul Falstad's circuit simulator: parts with ports, ports connected into nodes, a modified nodal
 // analysis solved every time step (trapezoidal rule for capacitors and inductors), instruments that record what happens (Scope, Multimeter, Fft).
-// The units of electricity are declared here: V, A, Ohm, F, H, Hz (with prefixes: 4.7kOhm, 10uF, 1mH, 2kHz). Every value may also be given as a plain number in SI units.
+// The units of electricity are declared here: V, A, Ohm, F, H, Hz (with prefixes: 4.7kOhm, 10uF, 1mH, 2kHz) and dB. Every value may also be given as a plain number in SI units.
 
 prefixed unit Volt: V
 prefixed unit Ampere: A
@@ -8,6 +8,12 @@ prefixed unit Ohm: Ohm { coerce V/A => 1 }
 prefixed unit Farad: F { coerce A*s/V => 1 }
 prefixed unit Henry: H { coerce V*s/A => 1 }
 prefixed unit Hertz: Hz
+// A ratio of amplitudes in decibels: 6dB is a factor of about 2, 20dB of 10 (-3dB: 1/sqrt 2). Multiplied with a value it is that factor (`1V * 6dB` is
+// 2V), decibels add (`3dB + 3dB` is 6dB), a declaration without a unit takes the factor (`float k : unitless = 20dB` and `20dB:unitless` are 10).
+unit Decibel: dB {
+    coerce to unitless => 10 ^ (value / 20)
+    coerce from unitless => 20 * Math.Log10(value)
+}
 
 namespace Circuits {
     /// <summary>Values with a unit (or plain SI numbers) as plain numbers for the solver.</summary>

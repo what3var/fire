@@ -209,6 +209,8 @@ namespace fire.Compiler
                 && (value.IsDynamic || value.IsNumber && !targetUnit.Equals(value.Unit)) && DemandText(targetUnit) is { } demand)
                 _unitChecks[valueExpr] = (target.Kind == StaticKind.Float ? "#" : "") + demand;
             if (!value.IsNumber || !target.IsNumber || value.Unit is not { } from || target.Unit is not { } to) return;
+            // a unit that becomes a plain number (dB) and a plain number go into each other (by its functions, at runtime)
+            if (from.IsUnitless && to.UnitlessConverter != null || to.IsUnitless && from.UnitlessConverter != null) return;
             if (!from.IsCompatibleWith(to))
             {
                 Report(UnitCode, $"A value in '{UnitText(from)}' does not fit {what} in '{(target.UnitIsDimension ? "any " : "")}{UnitText(to)}'", line);
