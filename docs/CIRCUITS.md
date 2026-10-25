@@ -557,8 +557,10 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 ## The circuit editor of spark
 
 spark opens `.biscuit` files in its circuit editor (Add > New > Circuit makes one). In the middle is the CircuitView itself, running live in a fire program of its own,
-so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`), the properties of the selected
-element (units, models of the library, choices) and the tools: run/pause, reset, speed, undo/redo, rotate, flip, duplicate, delete, wire, fit.
+so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`, each with a small picture of its
+symbol) and the tools: run/pause, reset, speed, undo/redo, rotate, flip, duplicate, delete, wire, fit. The properties of the selected element (name, values with
+units, models of the library, choices) are edited in the tool window **Properties** of spark (View > Properties; by default under the Solution Explorer), the same
+window the UI markup editor uses; double click or Enter on an element puts the focus into its first field.
 
 **Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,

@@ -233,5 +233,9 @@ or, with `ElementName`, to a property of another named element. It is built on `
 
 `.fxml` files open in a markup editor (File > New > Script... > FXML Window or FXML View): XML with colours, next to it the **design view** - the picture of the interface drawn by the library `ui` itself (the same code that runs in your program, so sizes,
 layout, styles and templates are exact; the markup is translated into a script that only draws and is run in the background - no handler and none of your own code runs, `{Enum ...}` and `{Expr ...}` values are left out and a bound text
-is shown as `‹Path›`). It is only for looking; nothing in it reacts to the mouse. The element at the caret is outlined and mistakes of the markup are listed under the picture and underlined in the text (the last good picture stays
+is shown as `‹Path›`). A click on an element in the picture puts the caret into it; nothing else in it reacts to the mouse. The element at the caret is outlined and mistakes of the markup are listed under the picture and underlined in the text (the last good picture stays
 while there are mistakes). Image files (`<Image source="logo.png"/>`) are looked for next to the markup file. *Insert* adds a snippet at the caret, *Generated script* opens the script that the markup becomes.
+
+The tool window **Properties** (View > Properties) lists the attributes the element at the caret can have - its own properties, the ones all elements share, the attached
+properties of the containers and the events - with the ones it has in white. Changing a value writes the attribute into the text (one step of Undo; the rest of the
+file stays as it is), choosing *(default)* or emptying a field removes it. Choices (`halign`, `true`/`false`, enums) are lists, colours show a swatch.

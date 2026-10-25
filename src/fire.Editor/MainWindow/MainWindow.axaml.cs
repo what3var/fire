@@ -44,6 +44,7 @@ namespace fire.Editor
         private readonly StackPanelControl _stackPanel = new();
         private readonly DevicesPanelControl _devicesPanel = new();
         private readonly SolutionExplorerControl _solutionPanel = new();
+        private readonly PropertiesPanelControl _propertiesPanel = new();
 
         private AssemblyInfo _scriptAssemblyInfo = new();
 
@@ -55,7 +56,7 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
-            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer",
+            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["properties"] = "Properties",
         };
 
         /// <summary>What kind of document a tab holds.</summary>
@@ -176,7 +177,8 @@ namespace fire.Editor
                     ("scope", PanelTitles["scope"], _scopePanel),
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
-                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("devices", PanelTitles["devices"], _devicesPanel) });
+                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("devices", PanelTitles["devices"], _devicesPanel) },
+                new() { ("properties", PanelTitles["properties"], _propertiesPanel) });
             var layout = _factory.CreateLayout();
             _factory.InitLayout(layout);
             DockHost.Factory = _factory;
@@ -389,7 +391,7 @@ namespace fire.Editor
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
             {
-                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer,
+                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["properties"] = _propertiesPanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
             _factory.InitLayout(layout);
@@ -403,6 +405,7 @@ namespace fire.Editor
             }
             EnsureBuildLogTool(layout, contents["buildlog"]);
             EnsureTool(layout, "tests", contents["tests"], "solution");
+            EnsureTool(layout, "properties", contents["properties"], "solution");
             DockHost.Layout = layout;
 
             var documentDock = DocumentDock as Dock.Model.Avalonia.Controls.DocumentDock
@@ -820,6 +823,7 @@ namespace fire.Editor
         private void RefreshActiveUi()
         {
             var doc = ActiveDocument;
+            _propertiesPanel.Attach(doc?.View as IPropertyHost);
             UpdateWindowTitle(WindowTitle(doc));
             CaretText.Text = doc == null ? "" : $"Line {doc.View.GetCaretLine()}";
             UpdateErrorPanel();

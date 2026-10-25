@@ -13,6 +13,9 @@ namespace fire.UI.Markup
     }
 
     /// <summary>The suggestions at a caret: what they replace (from <see cref="ReplaceStart"/> to the caret) and the items, the best first.</summary>
+    /// <summary>An attribute an element can have: its name, a short description, the property of the schema behind it (null for the special attributes) and whether it names a handler.</summary>
+    public sealed record MarkupAttributeInfo(string Name, string? Detail, PropertyDef? Property, bool IsEvent);
+
     public sealed record MarkupCompletionResult(int ReplaceStart, IReadOnlyList<MarkupCompletionItem> Items)
     {
         public static readonly MarkupCompletionResult None = new(0, Array.Empty<MarkupCompletionItem>());
@@ -188,19 +191,31 @@ namespace fire.UI.Markup
         private static IEnumerable<MarkupCompletionItem> AttributesOf(Open tag, List<Open> stack, DocumentInfo info)
         {
             var items = new List<MarkupCompletionItem>();
-            string t = tag.Tag;
-            bool inTemplate = stack.Any(o => o.Tag.Equals("ControlTemplate", StringComparison.OrdinalIgnoreCase));
-            void Add(string name, string? detail) { if (!tag.Attributes.ContainsKey(name)) items.Add(Attribute(name, detail)); }
+            foreach (var a in AttributesFor(tag.Tag, stack.Select(o => o.Tag)))
+            {
+                if (tag.Attributes.ContainsKey(a.Name)) continue;
+                items.Add(Attribute(a.Name, a.Detail));
+                if (a.Name == "namespace") items.Add(new MarkupCompletionItem("namespace:", MarkupCompletionKind.Namespace, "binds another namespace to a prefix: namespace:m=\"App.Models\"", 0, "namespace:prefix"));
+            }
+            return items;
+        }
+
+        /// <summary>The attributes an element of this tag can have (inside the elements `ancestors`, outermost first): the properties of the schema, the events and the
+        /// attributes of the special elements (Window, Style, Setter, ...). Unknown tags have none. The completion and the property window of the editor list these.</summary>
+        public static IReadOnlyList<MarkupAttributeInfo> AttributesFor(string t, IEnumerable<string> ancestors)
+        {
+            var items = new List<MarkupAttributeInfo>();
+            bool inTemplate = ancestors.Any(o => o.Equals("ControlTemplate", StringComparison.OrdinalIgnoreCase));
+            void Add(string name, string? detail) => items.Add(new MarkupAttributeInfo(name, detail, null, false));
 
             if (t.Equals("Window", StringComparison.OrdinalIgnoreCase) || t.Equals("View", StringComparison.OrdinalIgnoreCase))
             {
                 Add("class", "the class of the code-behind");
                 Add("base", "the name of the generated base class");
                 Add("namespace", "the namespace of the markup (local:)");
-                items.Add(new MarkupCompletionItem("namespace:", MarkupCompletionKind.Namespace, "binds another namespace to a prefix: namespace:m=\"App.Models\"", 0, "namespace:prefix"));
                 if (t.Equals("Window", StringComparison.OrdinalIgnoreCase)) Add("title", "the title of the window");
-                Add("width", "pixels");
-                Add("height", "pixels");
+                items.Add(new MarkupAttributeInfo("width", "pixels", new PropertyDef("width", PropertyKind.Int), false));
+                items.Add(new MarkupAttributeInfo("height", "pixels", new PropertyDef("height", PropertyKind.Int), false));
                 return items;
             }
             string[]? fixedAttributes = t.ToLowerInvariant() switch
@@ -215,7 +230,11 @@ namespace fire.UI.Markup
                 _ => null,
             };
             if (t.Equals("CollectionView", StringComparison.OrdinalIgnoreCase))
-                fixedAttributes = MarkupSchema.CollectionViewDef.Properties.Select(p => p.Name).Prepend("key").ToArray();
+            {
+                Add("key", null);
+                foreach (var p in MarkupSchema.CollectionViewDef.Properties) items.Add(new MarkupAttributeInfo(p.Name, Describe(p), p, false));
+                return items;
+            }
             if (fixedAttributes != null)
             {
                 foreach (var a in fixedAttributes) Add(a, null);
@@ -223,8 +242,8 @@ namespace fire.UI.Markup
             }
             if (MarkupSchema.Find(t) is not { } def) return items;
             if (def.Class.Length > 0) Add("name", "a field of the generated class");
-            foreach (var p in def.Properties) Add(p.Name, Describe(p));
-            foreach (var e in def.Events) Add(e.Name, "event: the name of a method" + (e.Args.Length > 0 ? " (sender, " + string.Join(", ", e.Args) + ")" : " (sender)"));
+            foreach (var p in def.Properties) items.Add(new MarkupAttributeInfo(p.Name, Describe(p), p, false));
+            foreach (var e in def.Events) items.Add(new MarkupAttributeInfo(e.Name, "event: the name of a method" + (e.Args.Length > 0 ? " (sender, " + string.Join(", ", e.Args) + ")" : " (sender)"), null, true));
             return items;
         }
 

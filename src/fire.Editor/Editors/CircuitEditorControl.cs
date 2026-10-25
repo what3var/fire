@@ -27,7 +27,7 @@ namespace fire.Editor
     /// rotate, delete, undo). Around it, in Avalonia: the palette of parts (a click places the next one in the view), the properties of the selected element,
     /// the tools and the import of Falstad circuits. The text of the file is what the view reports after every change.
     /// </summary>
-    public sealed class CircuitEditorControl : UserControl, IDocumentView
+    public sealed class CircuitEditorControl : UserControl, IDocumentView, IPropertyHost
     {
         // ---- the picture of the program -----------------------------------------------------------------------------------------------------------
         private sealed class Surface : Control
@@ -167,7 +167,6 @@ namespace fire.Editor
         // ---- the control ----------------------------------------------------------------------------------------------------------------------
         private readonly Surface _surface = new();
         private readonly StackPanel _palette = new() { Spacing = 2, Margin = new Thickness(6) };
-        private readonly StackPanel _properties = new() { Spacing = 6, Margin = new Thickness(8) };
         private readonly TextBlock _status = new() { Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0), TextTrimming = TextTrimming.CharacterEllipsis };
         private readonly ToggleButton _run = new() { Content = "Pause", IsChecked = true };
         private readonly ComboBox _speed = new() { Width = 120 };
@@ -236,15 +235,12 @@ namespace fire.Editor
 
             var paletteScroll = new ScrollViewer { Content = _palette, Width = 150 };
             var paletteBorder = new Border { Child = paletteScroll, BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(0, 0, 1, 0) };
-            var propertiesBorder = new Border { Child = new ScrollViewer { Content = _properties }, Width = 230, BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(1, 0, 0, 0) };
 
             var dock = new DockPanel();
             DockPanel.SetDock(bar, Avalonia.Controls.Dock.Top);
             DockPanel.SetDock(paletteBorder, Avalonia.Controls.Dock.Left);
-            DockPanel.SetDock(propertiesBorder, Avalonia.Controls.Dock.Right);
             dock.Children.Add(bar);
             dock.Children.Add(paletteBorder);
-            dock.Children.Add(propertiesBorder);
             dock.Children.Add(_surface);
             Content = dock;
             ShowProperties(new List<string>());
@@ -471,7 +467,7 @@ namespace fire.Editor
                     _status.Text = "The schematic could not be read: " + rest;
                     break;
                 case "@edit":
-                    _properties.Children.OfType<TextBox>().FirstOrDefault()?.Focus();
+                    PropertiesChanged?.Invoke(true);
                     break;
             }
         }
@@ -517,24 +513,24 @@ namespace fire.Editor
             return sb.ToString();
         }
 
-        // ---- the properties --------------------------------------------------------------------------------------------------------------------------
+        // ---- the properties (shown in the tool window "Properties", see PropertiesPanelControl) --------------------------------------------------------
+        public PropertySet? Properties { get; private set; }
+        public event Action<bool>? PropertiesChanged;
+
+        private const string Hint =
+            "Place parts from the palette on the left. Drag from a pin to draw a wire. Drag elements to move them, or their ends to stretch them. " +
+            "Click switches and logic inputs to flip them.\n\nR rotates, F flips, Del deletes, Ctrl+Z undoes, Space pauses, the wheel zooms, the middle button pans.";
+
         private void ShowProperties(List<string> report)
         {
-            _properties.Children.Clear();
             // a new element was placed: the palette button lets go
             foreach (var b in _placeButtons) b.IsChecked = false;
             if (report.Count < 5)
             {
                 _selectedIndex = -1;
                 _selectedType = "";
-                _properties.Children.Add(new TextBlock { Text = "Properties", FontWeight = FontWeight.SemiBold });
-                _properties.Children.Add(new TextBlock
-                {
-                    Text = "Select an element in the schematic to see its properties.\n\nPlace parts from the palette on the left. Drag from a pin to draw a wire. " +
-                           "Drag elements to move them, or their ends to stretch them. Click switches and logic inputs to flip them.\n\nR rotates, F flips, Del deletes, " +
-                           "Ctrl+Z undoes, Space pauses, the wheel zooms, the middle button pans.",
-                    Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap,
-                });
+                Properties = new PropertySet { Title = "Nothing selected", Hint = "Select an element in the schematic to see its properties.\n\n" + Hint };
+                PropertiesChanged?.Invoke(false);
                 return;
             }
             int.TryParse(report[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out _selectedIndex);
@@ -548,17 +544,11 @@ namespace fire.Editor
                 int eq = kv.IndexOf('=');
                 if (eq > 0) values[kv.Substring(0, eq)] = kv.Substring(eq + 1);
             }
-            _properties.Children.Add(new TextBlock { Text = Spaced(_selectedType) + (count > 1 ? $"  (+{count - 1} more selected)" : ""), FontWeight = FontWeight.SemiBold });
-            if (error != "") _properties.Children.Add(new TextBlock { Text = error, Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap });
 
-            int index = _selectedIndex;
-            var nameBox = new TextBox { Text = name, Watermark = "(no name)" };
-            ToolTip.SetTip(nameBox, "The name of the element: the class generated from the file gets a field of this name");
-            void ApplyName() { if (nameBox.Text != name) Send($"rename\t{index}\t{(nameBox.Text ?? "").Trim()}"); }
-            nameBox.LostFocus += (_, _) => ApplyName();
-            nameBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) { ApplyName(); _surface.Focus(); } };
-            _properties.Children.Add(Row("name", nameBox));
-
+            var entries = new List<PropertyEntry>
+            {
+                new("name", PropertyEditKind.Text, name) { Tip = "The name of the element: the class generated from the file gets a field of this name" },
+            };
             var entry = _catalog.FirstOrDefault(x => x.Type == _selectedType);
             if (entry.Properties is { Length: > 0 } props)
             {
@@ -570,49 +560,36 @@ namespace fire.Editor
                     string key = prop.Substring(0, colon);
                     string kind = prop.Substring(colon + 1, eq - colon - 1);
                     string value = values.TryGetValue(key, out var v) ? v : prop.Substring(eq + 1);
-                    _properties.Children.Add(Row(key, Field(index, key, kind, value)));
+                    entries.Add(Entry(key, kind, value));
                 }
             }
+            int index = _selectedIndex;
+            Properties = new PropertySet
+            {
+                Title = Spaced(_selectedType) + (count > 1 ? $"  (+{count - 1} more selected)" : ""),
+                Error = error == "" ? null : error,
+                Entries = entries,
+                Set = (key, value) => Send(key == "name" ? $"rename\t{index}\t{value.Trim()}" : $"set\t{index}\t{key}\t{value}"),
+            };
+            PropertiesChanged?.Invoke(false);
         }
 
-        private Control Field(int index, string key, string kind, string value)
+        private PropertyEntry Entry(string key, string kind, string value)
         {
-            void Set(string v) { if (v != value) Send($"set\t{index}\t{key}\t{v}"); }
-            if (kind == "bool")
-            {
-                var check = new CheckBox { IsChecked = value == "true" };
-                check.Click += (_, _) => Set(check.IsChecked == true ? "true" : "false");
-                return check;
-            }
+            if (kind == "bool") return new PropertyEntry(key, PropertyEditKind.Bool, value);
             if (kind.StartsWith("choice:") || kind.StartsWith("model:"))
             {
                 var options = new List<string>();
                 if (kind.StartsWith("choice:")) options.AddRange(kind.Substring(7).Split('/'));
                 else foreach (var k in kind.Substring(6).Split('/')) if (_models.TryGetValue(k, out var names)) options.AddRange(names);
-                if (!options.Contains(value)) options.Insert(0, value);
-                var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-                foreach (var o in options) combo.Items.Add(o);
-                combo.SelectedItem = value;
-                combo.SelectionChanged += (_, _) => { if (combo.SelectedItem is string s) Set(s); };
-                return combo;
+                return new PropertyEntry(key, PropertyEditKind.Choice, value) { Choices = options };
             }
-            var box = new TextBox { Text = value };
-            string unit = kind is "text" or "int" ? "" : kind;
-            if (unit != "") box.InnerRightContent = new TextBlock { Text = unit == "Ohm" ? "Ω" : unit, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0) };
-            ToolTip.SetTip(box, kind == "text" ? "Text" : "A number with an SI prefix (4.7k, 10u, 2.2M) or an expression of the parameters of the circuit");
-            box.LostFocus += (_, _) => Set(box.Text ?? "");
-            box.KeyDown += (_, e) => { if (e.Key == Key.Enter) { Set(box.Text ?? ""); _surface.Focus(); } };
-            return box;
-        }
-
-        private static Control Row(string label, Control field)
-        {
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("80,*") };
-            var text = new TextBlock { Text = label, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(field, 1);
-            grid.Children.Add(text);
-            grid.Children.Add(field);
-            return grid;
+            string unit = kind is "text" or "int" ? "" : kind == "Ohm" ? "Ω" : kind;
+            return new PropertyEntry(key, PropertyEditKind.Text, value)
+            {
+                Unit = unit,
+                Tip = kind == "text" ? "Text" : "A number with an SI prefix (4.7k, 10u, 2.2M) or an expression of the parameters of the circuit",
+            };
         }
 
         // ---- import ------------------------------------------------------------------------------------------------------------------------------

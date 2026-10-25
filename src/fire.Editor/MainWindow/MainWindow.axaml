@@ -212,6 +212,7 @@
 					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Sol_ution Explorer" Tag="solution" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Test E_xplorer" Tag="tests" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Properties" Tag="properties" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<Separator/>
 					<!-- the tool strips: filled in MainWindow (BuildToolbarsMenu) -->
 					<MenuItem Header="Tool_bars" x:Name="mnuToolbars" SubmenuOpened="ToolbarsMenu_SubmenuOpened"/>

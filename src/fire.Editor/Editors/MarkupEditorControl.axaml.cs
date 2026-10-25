@@ -17,7 +17,7 @@ namespace fire.Editor
 {
     /// <summary>Editor of a UI markup file (.fxml, docs/UI_MARKUP.md): the XML text with colours, and next to it the design view - a picture of the interface (only to look at,
     /// see <see cref="MarkupPreviewControl"/>) that follows the text while it is typed; mistakes of the markup are listed under the picture and underlined in the text.</summary>
-    public partial class MarkupEditorControl : UserControl, IDocumentView
+    public partial class MarkupEditorControl : UserControl, IDocumentView, IPropertyHost
     {
         public string? FilePath { get; set; }
         public bool IsModified { get; private set; }
@@ -65,7 +65,9 @@ namespace fire.Editor
                 int line = GetCaretLine();
                 Preview.HighlightLine = line;
                 CaretLineChanged?.Invoke(line);
+                UpdateProperties();
             };
+            Preview.ElementClicked += SelectElementAtLine;
             Editor.AddHandler(PointerPressedEvent, (object? _, PointerPressedEventArgs e) =>
             {
                 if (e.GetCurrentPoint(Editor).Properties.IsRightButtonPressed) Editor.PlaceCaretForContextMenu(e);
@@ -76,7 +78,7 @@ namespace fire.Editor
             Editor.ContextMenu = EditorCommands.BuildMenu(EditorCommands.StandardEntries(Editor, Find).ToList());
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-            _timer.Tick += (_, _) => { _timer.Stop(); Refresh(); };
+            _timer.Tick += (_, _) => { _timer.Stop(); Refresh(); UpdateProperties(); };
             Refresh();
         }
 
@@ -191,6 +193,104 @@ namespace fire.Editor
         }
 
         private void Script_Click(object? sender, RoutedEventArgs e) => ShowScriptRequested?.Invoke();
+
+        // -----------------------------------------------------------
+        // Properties: the element at the caret in the tool window "Properties"; changing a value changes its attribute in the text
+        // -----------------------------------------------------------
+
+        public PropertySet? Properties { get; private set; }
+        public event Action<bool>? PropertiesChanged;
+        // what the shown properties were built from (the window is only rebuilt when it changes)
+        private string _propertiesKey = "\0";
+
+        private void UpdateProperties()
+        {
+            string text = Editor.Text;
+            var element = MarkupText.ElementAt(text, Editor.CaretOffset);
+            string key = element == null ? "" : element.Tag + "\u0001" + element.Start + "\u0001" + string.Join("\u0001", element.Ancestors) + "\u0001" +
+                string.Join("\u0001", element.Attributes.Select(a => a.Name + "=" + a.Value));
+            if (key == _propertiesKey) return;
+            _propertiesKey = key;
+            Properties = element == null ? new PropertySet
+            {
+                Title = "No element",
+                Hint = "Put the caret into an element of the markup, or click an element in the design view, to see and change its attributes.",
+            } : BuildProperties(element);
+            PropertiesChanged?.Invoke(false);
+        }
+
+        private PropertySet BuildProperties(MarkupTextElement element)
+        {
+            var entries = new List<PropertyEntry>();
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string? Present(string name) => element.Attributes.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
+            foreach (var info in MarkupCompletion.AttributesFor(element.Tag, element.Ancestors))
+            {
+                known.Add(info.Name);
+                string? value = Present(info.Name);
+                var (kind, choices) = info.Property?.Kind switch
+                {
+                    PropertyKind.Bool => (PropertyEditKind.Choice, new[] { "true", "false" }),
+                    PropertyKind.Orientation => (PropertyEditKind.Choice, new[] { "Horizontal", "Vertical" }),
+                    PropertyKind.Enum => (PropertyEditKind.Choice, info.Property.Choices ?? Array.Empty<string>()),
+                    PropertyKind.Color => (PropertyEditKind.Color, null),
+                    _ => (PropertyEditKind.Text, (string[]?)null),
+                };
+                entries.Add(new PropertyEntry(info.Name, kind, value ?? "")
+                {
+                    IsSet = value != null, CanClear = true, Choices = choices, Tip = info.Detail,
+                    Category = info.IsEvent ? "Events" : info.Name.Contains('.') ? "Layout in the container" : "",
+                });
+            }
+            // attributes the schema does not know (namespaces, misspelt names): they can be changed or removed too
+            foreach (var a in element.Attributes.Where(a => !known.Contains(a.Name)))
+                entries.Add(new PropertyEntry(a.Name, PropertyEditKind.Text, a.Value) { CanClear = true, Category = "Other" });
+            // the groups after each other (the order of the schema inside a group)
+            string[] order = { "", "Layout in the container", "Events", "Other" };
+            entries = entries.OrderBy(e => Array.IndexOf(order, e.Category)).ToList();
+
+            string? name = Present("name") ?? Present("key");
+            int start = element.Start;
+            string tag = element.Tag;
+            return new PropertySet
+            {
+                Title = "<" + tag + ">" + (name != null ? "  " + name : ""),
+                Error = known.Count == 0 && !IsSpecialTag(tag) ? $"'{tag}' is no element of the library ui." : null,
+                Entries = entries,
+                Set = (attribute, value) => SetAttribute(start, tag, attribute, value),
+            };
+        }
+
+        private static bool IsSpecialTag(string tag) =>
+            new[] { "Window", "View", "Resources", "Converter", "Style", "Setter", "Trigger", "Condition", "ControlTemplate", "DataTemplate", "CollectionView", "Item", "Suggestion", "Column", "TreeNode" }
+                .Contains(tag, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Sets (an empty value: removes) an attribute of the element that starts at `start`, as an edit of the text (one undo step).</summary>
+        private void SetAttribute(int start, string tag, string attribute, string value)
+        {
+            string text = Editor.Text;
+            var element = MarkupText.Elements(text).FirstOrDefault(e => e.Start == start && e.Tag == tag);
+            if (element == null) return;
+            var change = MarkupText.SetAttribute(text, element, attribute, value == "" ? null : value);
+            if (change is not { } c) return;
+            int caret = Editor.CaretOffset;
+            Editor.Document.Replace(c.Start, c.End - c.Start, c.Text);
+            // the caret stays in the element (a caret behind the change moves with it)
+            if (caret > c.Start) Editor.CaretOffset = Math.Max(c.Start, Math.Min(Editor.Document.TextLength, caret + c.Text.Length - (c.End - c.Start)));
+            UpdateProperties();
+        }
+
+        /// <summary>A click on an element in the design view: the caret goes into its start tag.</summary>
+        private void SelectElementAtLine(int line)
+        {
+            if (line < 1 || line > Editor.Document.LineCount) return;
+            var l = Editor.Document.GetLineByNumber(line);
+            string text = Editor.Document.GetText(l);
+            int lt = text.IndexOf('<');
+            Editor.CaretOffset = l.Offset + (lt < 0 ? 0 : lt + 1);
+            Editor.TextArea.Caret.BringCaretToView();
+            UpdateProperties();
+        }
 
         // -----------------------------------------------------------
         // IntelliSense: the logic is MarkupCompletion (fire.UI.Markup), here only the list of AvaloniaEdit
@@ -338,6 +438,7 @@ namespace fire.Editor
             Editor.CaretOffset = 0;
             Editor.ScrollToHome();
             Refresh();
+            UpdateProperties();
             SetModified(false);
         }
 

@@ -8,7 +8,7 @@ using Dock.Model.Core;
 
 namespace fire.Editor
 {
-    /// <summary>Builds the default layout of the editor: the documents in the middle, the output and the debugger panels below, the solution explorer and the devices on the right.
+    /// <summary>Builds the default layout of the editor: the documents in the middle, the output and the debugger panels below, the solution explorer and the devices on the right, the properties under them.
     /// The ids are the keys under which a saved layout finds its panels again (see MainWindow.LoadLayout).</summary>
     internal sealed class SparkFactory : Factory
     {
@@ -19,11 +19,16 @@ namespace fire.Editor
         /// <summary>The areas in the order of the bottom tool dock: id, title, content (the right dock gets "devices").</summary>
         private readonly List<(string Id, string Title, Control Content)> _bottom;
         private readonly List<(string Id, string Title, Control Content)> _right;
+        // under the right tool dock (the properties)
+        private readonly List<(string Id, string Title, Control Content)> _rightBottom;
 
-        public SparkFactory(List<(string Id, string Title, Control Content)> bottom, List<(string Id, string Title, Control Content)> right)
+        public const string RightBottomToolsId = "tools-right-bottom";
+
+        public SparkFactory(List<(string Id, string Title, Control Content)> bottom, List<(string Id, string Title, Control Content)> right, List<(string Id, string Title, Control Content)> rightBottom)
         {
             _bottom = bottom;
             _right = right;
+            _rightBottom = rightBottom;
         }
 
         public override IRootDock CreateLayout()
@@ -59,13 +64,31 @@ namespace fire.Editor
 
             var rightTools = new List<IDockable>();
             foreach (var (id, title, content) in _right) rightTools.Add(NewTool(id, title, content));
-            var right = new ToolDock
+            var rightTop = new ToolDock
             {
                 Id = RightToolsId,
-                Proportion = 0.2,
+                Proportion = 0.55,
                 Alignment = Alignment.Right,
                 VisibleDockables = CreateList(rightTools.ToArray()),
                 ActiveDockable = rightTools[0],
+            };
+            var rightBottomTools = new List<IDockable>();
+            foreach (var (id, title, content) in _rightBottom) rightBottomTools.Add(NewTool(id, title, content));
+            var rightBottom = new ToolDock
+            {
+                Id = RightBottomToolsId,
+                Proportion = 0.45,
+                Alignment = Alignment.Right,
+                VisibleDockables = CreateList(rightBottomTools.ToArray()),
+                ActiveDockable = rightBottomTools[0],
+            };
+            var right = new ProportionalDock
+            {
+                Id = "right",
+                Proportion = 0.2,
+                Orientation = Orientation.Vertical,
+                VisibleDockables = CreateList<IDockable>(rightTop, new ProportionalDockSplitter { Id = "split-right-bottom" }, rightBottom),
+                ActiveDockable = rightTop,
             };
 
             var main = new ProportionalDock
