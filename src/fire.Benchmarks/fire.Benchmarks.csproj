@@ -9,6 +9,7 @@
     <ServerGarbageCollector>false</ServerGarbageCollector>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <TieredPGO>true</TieredPGO>
+	<SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
