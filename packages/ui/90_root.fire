@@ -438,11 +438,7 @@ namespace UI {
         // (only what has changed is painted) and call onTick. The manager then shows the frame.
         undefined Cycle() {
             this.cycles = this.cycles + 1
-            while (true) {
-                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
-                if (e == undefined) { break }
-                this.Dispatch(e)
-            }
+            this.DispatchEvents()
             if (this.window.IsClosed) { this.closed = true }
             this.JoyRepeat()
             this.Update()
@@ -460,11 +456,7 @@ namespace UI {
             this.JoyRepeat()
             this.Update()
             var open = this.window.Tick()
-            while (true) {
-                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
-                if (e == undefined) { break }
-                this.Dispatch(e)
-            }
+            this.DispatchEvents()
             if (!open) { this.closed = true }
             var callback = this.onTick
             if (callback != undefined) { callback() }
@@ -495,6 +487,30 @@ namespace UI {
                     return
                 }
             }
+        }
+
+        // Distributes the events that came in. Moves of the mouse in a row count as one (the last position): a pointer that is moved fast delivers many
+        // of them per cycle, and each one asks the elements below it (hover, cursor) - that would take the time of the program.
+        undefined DispatchEvents() {
+            bool moved = false
+            int mx = 0
+            int my = 0
+            while (true) {
+                var e = this.window.NextEvent()   // (declared in the loop: the event array belongs to this iteration)
+                if (e == undefined) { break }
+                if (e[0] == 9) {
+                    moved = true
+                    mx = e[1]
+                    my = e[2]
+                    continue
+                }
+                if (moved) {
+                    moved = false
+                    this.MouseMove(this.ToLogical(mx), this.ToLogical(my))
+                }
+                this.Dispatch(e)
+            }
+            if (moved) { this.MouseMove(this.ToLogical(mx), this.ToLogical(my)) }
         }
 
         // Distributes an event of the window (structure see Window.NextEvent) to the element below it or the one with focus.

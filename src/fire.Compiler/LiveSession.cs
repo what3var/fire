@@ -133,7 +133,12 @@ namespace fire.Compiler
 
         private void Post(IEvent e)
         {
-            lock (_lock) _events.Add(e);
+            lock (_lock)
+            {
+                // a move right after a move replaces it: the program only needs the last position (a fast pointer would flood it)
+                if (e is MotionEvent && _events.Count > 0 && _events[^1] is MotionEvent) _events[^1] = e;
+                else _events.Add(e);
+            }
         }
 
         /// <summary>Mouse button pressed / released at (x, y) in pixels of the picture (1 left, 2 middle, 3 right).</summary>
