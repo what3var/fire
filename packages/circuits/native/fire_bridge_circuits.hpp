@@ -721,6 +721,17 @@ struct Gate {
     }
 };
 
+/// The state of a plan between two steps: what a step changes, so that a step that does not converge can be done again in smaller steps.
+struct Snapshot {
+    double time = 0;
+    std::vector<double> x;
+    std::vector<Reactive> capacitors, inductors;
+    std::vector<Coupled> coupled;
+    std::vector<Source> sources;
+    std::vector<char> gates;      // per gate: state, clock, primed
+    std::vector<Nonlinear> nonlinear;
+};
+
 struct Plan {
     int nodes = 0, size = 0;
     double dt = 1e-5, time = 0;
@@ -734,6 +745,12 @@ struct Plan {
     std::vector<Gate> gates;
     int64_t iterations = 0, unconverged = 0;
     int maxIterations = 100;
+    // a step whose Newton's method does not converge is done again in steps of half the time step, down to dt / 2^maxHalvings
+    int maxHalvings = 6;
+    int64_t retried = 0;
+    bool retrying = false;
+    Snapshot stepStart, subStart;
+    std::vector<double> rhsBegun, gFull;
     std::vector<int> group;           // nodes joined by conductances and voltage sources (0: ground, node i: i + 1)
     // the elimination as a list: factor (index of m[r][k], index of m[k][k]) and update (m[r][c] -= m[r][k] * m[k][c])
     std::vector<int> factorOps, updateOps;
@@ -1228,7 +1245,66 @@ inline void solve(Plan* p) {
     }
 }
 
+inline bool canRetry(const Plan* p) { return !p->nonlinear.empty() && p->lines.empty() && p->maxHalvings > 0 && !p->retrying; }
+
+inline void save(const Plan* p, Snapshot& s) {
+    s.time = p->time;
+    s.x = p->x;
+    s.capacitors = p->capacitors;
+    s.inductors = p->inductors;
+    s.coupled = p->coupled;
+    s.sources = p->sources;
+    s.gates.resize(p->gates.size() * 3);
+    for (size_t i = 0; i < p->gates.size(); i++) {
+        s.gates[i * 3] = p->gates[i].state; s.gates[i * 3 + 1] = p->gates[i].clock; s.gates[i * 3 + 2] = p->gates[i].primed;
+    }
+    s.nonlinear = p->nonlinear;
+}
+
+inline void restore(Plan* p, const Snapshot& s) {
+    p->time = s.time;
+    p->x = s.x;
+    p->capacitors = s.capacitors;
+    p->inductors = s.inductors;
+    p->coupled = s.coupled;
+    p->sources = s.sources;
+    for (size_t i = 0; i < p->gates.size(); i++) {
+        p->gates[i].state = s.gates[i * 3] != 0; p->gates[i].clock = s.gates[i * 3 + 1] != 0; p->gates[i].primed = s.gates[i * 3 + 2] != 0;
+    }
+    p->nonlinear = s.nonlinear;
+}
+
+/// Sets the time step to h for the steps of a retry: the conductances of the capacitors and inductors (made for `full`, as in stepStart) change with it.
+inline void setDt(Plan* p, double h, double full) {
+    if (p->dt == h) return;
+    p->dt = h;
+    p->g = p->gFull;
+    double f = full / h;
+    auto cond = [p](int i, int j, double v) { p->add(i, i, v); p->add(j, j, v); p->add(i, j, -v); p->add(j, i, -v); };
+    for (size_t i = 0; i < p->capacitors.size(); i++) {
+        double g0 = p->stepStart.capacitors[i].geq;
+        p->capacitors[i].geq = g0 * f;
+        cond(p->capacitors[i].a, p->capacitors[i].b, g0 * f - g0);
+    }
+    for (size_t i = 0; i < p->inductors.size(); i++) {
+        double g0 = p->stepStart.inductors[i].geq;
+        p->inductors[i].geq = g0 / f;
+        cond(p->inductors[i].a, p->inductors[i].b, g0 / f - g0);
+    }
+    for (size_t i = 0; i < p->coupled.size(); i++) {
+        const Coupled& c0 = p->stepStart.coupled[i];
+        Coupled& c = p->coupled[i];
+        c.g11 = c0.g11 / f; c.g12 = c0.g12 / f; c.g22 = c0.g22 / f;
+        cond(c.a1, c.b1, c.g11 - c0.g11);
+        cond(c.a2, c.b2, c.g22 - c0.g22);
+        double d = c.g12 - c0.g12;
+        p->add(c.a1, c.a2, d); p->add(c.a1, c.b2, -d); p->add(c.b1, c.a2, -d); p->add(c.b1, c.b2, d);
+        p->add(c.a2, c.a1, d); p->add(c.a2, c.b1, -d); p->add(c.b2, c.a1, -d); p->add(c.b2, c.b1, d);
+    }
+}
+
 inline void begin(Plan* p) {
+    if (canRetry(p)) save(p, p->stepStart);
     std::fill(p->rhs.begin(), p->rhs.end(), 0.0);
     double t = p->time + p->dt;
     auto into = [p](int node, double amps) { if (node >= 0) p->rhs[(size_t)node] += amps; };
@@ -1255,6 +1331,8 @@ inline void begin(Plan* p) {
         if (high) into(gate.out, gate.high * gate.g);
         else if (gate.outNot >= 0) into(gate.outNot, gate.high * gate.g);
     }
+    // (what parts in fire add between Begin and Finish is the difference to this)
+    if (canRetry(p)) p->rhsBegun = p->rhs;
 }
 
 inline double probeValue(Plan* p, const Probe& pr) {
@@ -1272,7 +1350,7 @@ inline double probeValue(Plan* p, const Probe& pr) {
 }
 
 /// Newton's method for a step with parts that are not linear: load, linearize, factorize, solve - until the node voltages stop moving.
-inline void newton(Plan* p) {
+inline bool newton(Plan* p) {
     const int n = p->size;
     p->rhsBase = p->rhs;
     for (Nonlinear& e : p->nonlinear) {
@@ -1294,7 +1372,7 @@ inline void newton(Plan* p) {
             std::vector<double> dense = p->g;
             p->rhs = p->rhsBase;
             stampNonlinear(p, &dense);
-            if (!order(p, dense)) { p->unconverged++; return; }
+            if (!order(p, dense)) return false;
             p->rhs = p->rhsBase;
             load(p);
             stampNonlinear(p, nullptr);
@@ -1309,7 +1387,6 @@ inline void newton(Plan* p) {
             if (!(dx <= 1e-6 + 1e-4 * std::fabs(p->x[(size_t)i]))) converged = false;
         }
     }
-    if (!converged) p->unconverged++;
     p->rhs = p->rhsBase;
     for (Nonlinear& e : p->nonlinear) {
         if (e.junctions > 0) commitCharges(e, p->x, p->dt);
@@ -1320,10 +1397,11 @@ inline void newton(Plan* p) {
             e.cur[a] = c;
         }
     }
+    return converged;
 }
 
-inline void finish(Plan* p) {
-    if (p->nonlinear.empty()) solve(p); else newton(p);
+/// After the solution of a step: the capacitors, inductors and lines take their new state, the time moves on.
+inline void settle(Plan* p) {
     for (Reactive& c : p->capacitors) { double v = p->node(c.a) - p->node(c.b); c.iPrev = c.geq * v - c.ieq; c.vPrev = v; }
     for (Reactive& l : p->inductors) { double v = p->node(l.a) - p->node(l.b); l.iPrev = l.geq * v + l.ieq; l.vPrev = v; }
     for (Coupled& c : p->coupled) {
@@ -1340,6 +1418,46 @@ inline void finish(Plan* p) {
         l.ptr = (l.ptr + 1) % l.steps;
     }
     p->time += p->dt;
+}
+
+/// The step did not converge: back to its start and again in steps of half the time step (halved again where one does not converge, and doubled
+/// again up to dt / 2 after one that did). What parts in fire added to the right side stays for all of them.
+inline void substeps(Plan* p) {
+    p->retried++;
+    const int n = p->size;
+    std::vector<double> extra((size_t)n);
+    for (int i = 0; i < n; i++) extra[(size_t)i] = p->rhsBase[(size_t)i] - p->rhsBegun[(size_t)i];
+    const double full = p->dt, end = p->stepStart.time + full, minStep = full / (double)(1 << p->maxHalvings);
+    restore(p, p->stepStart);
+    p->gFull = p->g;
+    p->retrying = true;
+    double h = full / 2;
+    while (p->time < end - full * 1e-9) {
+        double step = std::min(h, end - p->time);
+        setDt(p, step, full);
+        save(p, p->subStart);
+        begin(p);
+        for (int i = 0; i < n; i++) p->rhs[(size_t)i] += extra[(size_t)i];
+        bool ok = newton(p);
+        if (!ok && step > minStep * 1.5) { restore(p, p->subStart); h = step / 2; continue; }
+        if (!ok) p->unconverged++;
+        settle(p);
+        if (ok) h = std::min(full / 2, h * 2);
+    }
+    setDt(p, full, full);
+    p->g = p->gFull;
+    p->time = end;
+    p->retrying = false;
+}
+
+inline void finish(Plan* p) {
+    bool done = false;
+    if (p->nonlinear.empty()) solve(p);
+    else if (!newton(p)) {
+        if (canRetry(p)) { substeps(p); done = true; }
+        else p->unconverged++;
+    }
+    if (!done) settle(p);
     Recorder* last = nullptr;
     bool full = false;
     for (const Probe& pr : p->probes) {
@@ -1513,6 +1631,7 @@ inline Value Info(Value h, Value what) {
         case 6: return Int((int64_t)(p->nonlinear.size() + p->gates.size()));
         case 7: return Int(p->iterations);
         case 8: return Int(p->unconverged);
+        case 9: return Int(p->retried);
         default: return Int(-1);
     }
 }

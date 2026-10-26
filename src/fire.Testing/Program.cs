@@ -20462,6 +20462,17 @@ else
                 uprev = vc
             }
             print("ujt oscillator fires " + fired + " times in 20 ms, peak " + H.R(peak) + " V")
+            // with 1 us the step at the peak point does not converge: it is done again in smaller steps, the oscillator goes on
+            uo.TimeStep = 1us
+            var high = false
+            var fires1 = 0
+            for (int k = 0; k < 20000; k++) {
+                uo.Step()
+                var ve1 = uj.E.Raw()
+                if (ve1 > 5.0) { high = true }
+                if (high && ve1 < 3.0) { high = false; fires1++ }
+            }
+            print("ujt oscillator at 1 us fires " + fires1 + " times in 20 ms, steps done again: " + (uo.PlanInfo(9) > 0))
             """),
         ("Circuits: die aktiven Bauteile im Schaltplan (Pins wie bei Falstad, Gate auf Falstads Raster)", """
             #import "circuits"

@@ -78,7 +78,10 @@ Every two-terminal part has `Voltage` (from `A` to `B`), `Current` (from `A` thr
 ## Semiconductors, op amps and logic
 
 These parts are not linear: every step solves the circuit with Newton's method in the kernel (the junction voltages limited like SPICE does, the
-factorization run again with the same list of operations each iteration).
+factorization run again with the same list of operations each iteration). A step whose Newton's method does not converge (a negative resistance
+such as the one of a UJT at its peak point, a tunnel diode, a diac) is done again from its start in steps of half the time step - halved again
+where one does not converge, down to 1/64, and doubled again after one that did. Scopes and recordings keep the time step of the circuit; a circuit
+with a transmission line keeps its steps (the line needs whole steps).
 
 | Part | Ports | |
 |---|---|---|
@@ -219,7 +222,7 @@ details of a data sheet (no temperature).
 | `Time`, `Reset()` | the time of the simulation; back to time 0 (the parts take their initial state) |
 | `Parts()` | the parts and nested circuits |
 | `IsCompiled` | is there a plan for the circuit as it is now? |
-| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire |
+| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear, 7 Newton iterations, 8 steps that did not converge (also at 1/64), 9 steps done again in smaller steps |
 
 A nested circuit is a part: give it ports with `AddPort`, connect them inside, and connect them outside like the ports of any part. Stepping a nested circuit steps the
 outermost one.

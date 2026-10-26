@@ -2906,7 +2906,7 @@ namespace Circuits {
 
         /// <summary>Numbers of the compiled plan (for tests and tools): 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization,
         /// 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear (and logic parts), 7 iterations of Newton's method
-        /// so far, 8 steps in which it did not converge.</summary>
+        /// so far, 8 steps in which it did not converge (also in the smallest steps), 9 steps done again in steps of half the time step.</summary>
         int PlanInfo(int what) {
             var top = this.Top()
             if (top.dirty || top.solver == undefined) { top.Build() }
