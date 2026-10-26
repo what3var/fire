@@ -50,6 +50,11 @@
     <None Remove="Assets\splash.png" />
     <None Remove="fileicons.res" />
     <AvaloniaResource Include="Assets\Logo-64.png" />
+    <!-- the license texts the About window shows (the ones of the repository linked in) -->
+    <AvaloniaResource Include="Assets\Licenses\*.txt" />
+    <AvaloniaResource Include="..\..\LICENSE" Link="Assets\Licenses\LICENSE-fire.txt" />
+    <AvaloniaResource Include="..\fire.Terminal\LICENSE-pcface.md" Link="Assets\Licenses\LICENSE-pcface.txt" />
+    <AvaloniaResource Include="..\fire.Terminal\TrueType\LICENSE-libschrift.md" Link="Assets\Licenses\LICENSE-libschrift.txt" />
     <AvaloniaResource Include="Assets\splash.png" />
   </ItemGroup>
 

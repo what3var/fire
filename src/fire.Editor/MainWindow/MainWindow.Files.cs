@@ -85,6 +85,8 @@ namespace fire.Editor
         private void HelpFirstSteps_Click(object? sender, RoutedEventArgs e) => OpenHelp("First Steps.md");
 
         /// <summary>Help > Samples: copies a sample project that ships with fire into a folder of the user's choice and opens it.</summary>
+        private async void HelpAbout_Click(object? sender, RoutedEventArgs e) => await new AboutWindow().ShowDialog(this);
+
         private async void HelpSamples_Click(object? sender, RoutedEventArgs e)
         {
             var samples = SampleCatalog.Load();

@@ -229,6 +229,8 @@
 					<MenuItem Header="The fire _Language" x:Name="mnuLanguage"/>
 					<Separator/>
 					<MenuItem Header="_Samples..." Click="HelpSamples_Click"/>
+					<Separator/>
+					<MenuItem Header="_About spark..." Click="HelpAbout_Click"/>
 				</MenuItem>
 			</Menu>
 				<!-- the tool strips (ToolStrips/): each can be dragged by its grip to another place in the tray, into another tray at a window edge or out of the window (floating) -->
