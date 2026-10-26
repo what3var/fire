@@ -152,6 +152,7 @@ namespace Circuits {
             l.Add("Semiconductors|Varactor|capacitance:F=4p")
             l.Add("Semiconductors|TunnelDiode|")
             l.Add("Semiconductors|Triode|mu:=93;kg1:=680;flip:bool=false")
+            l.Add("Semiconductors|Unijunction|flip:bool=false")
             l.Add("ICs|OpAmp|model:model:OPAMP=opamp;flip:bool=false")
             l.Add("ICs|AnalogSwitch|threshold:V=2.5;inverting:bool=false;onResistance:Ohm=20;offResistance:Ohm=10G;flip:bool=false")
             l.Add("ICs|AnalogSwitch2|threshold:V=2.5;onResistance:Ohm=20;offResistance:Ohm=10G;swap:bool=false;flip:bool=false")
@@ -413,6 +414,17 @@ namespace Circuits {
             }
             if (t == "Thyristor" || t == "Triac") {
                 Circuits.Symbols.GatePins(e)
+                return
+            }
+            if (t == "Unijunction") {
+                // the emitter at the first point, B2 at the second, B1 4 units beside it (Falstad's)
+                var hu = Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { hu = -hu }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0, -4.0 * hu, e.pins)
+                e.pins.Add(e.x2)
+                e.pins.Add(e.y2)
                 return
             }
             if (t == "Ota") {
@@ -921,6 +933,7 @@ namespace Circuits {
             else if (t == "CCCS") { part = new Circuits.CCCS(Circuits.Symbols.Value(e, "gain", c)) }
             else if (t == "CCVS") { part = new Circuits.CCVS(Circuits.Symbols.Value(e, "gain", c)) }
             else if (t == "CurrentConveyor") { part = new Circuits.CurrentConveyor(Circuits.Symbols.Value(e, "gain", c)) }
+            else if (t == "Unijunction") { part = new Circuits.Unijunction() }
             else if (t == "Ota") { part = new Circuits.Ota(Circuits.Symbols.Value(e, "positive", c), Circuits.Symbols.Value(e, "negative", c)) }
             else if (t == "Optocoupler") { part = new Circuits.Optocoupler(Circuits.Symbols.Value(e, "ctr", c)) }
             else if (t == "OpAmp") { part = new Circuits.OpAmp(e.Get("model")) }

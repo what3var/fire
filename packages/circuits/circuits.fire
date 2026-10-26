@@ -2085,6 +2085,37 @@ namespace Circuits {
         Port Emitter { get { return this.ports[3] } }
     }
 
+    /// <summary>A unijunction transistor as Falstad's (a 2N2646): the emitter diode feeds the lower base region, whose conductance grows with the emitter
+    /// current; the interbase resistance is about 2.5 kOhm. Ports E, B1, B2. (Falstad's 35 pF inside are left out: far too fast for the time steps.)</summary>
+    class Unijunction : Circuit {
+        construct() : base("ujt") {
+            var e = this.AddPort("e")
+            var b1 = this.AddPort("b1")
+            var b2 = this.AddPort("b2")
+            if (!Circuits.Models.Has("ujt-emitter")) { Circuits.Models.Put(new Circuits.Model("ujt-emitter", "D", 0.0000000000213, 1.8)) }
+            // as Falstad's netlist: the emitter diode into the inner node x, its current sensed (1000 V per ampere on the node ctl against ref), and
+            // the conductance from x to ref (the foot of B1) growing with it
+            var d = this.Add(new Circuits.Diode("ujt-emitter"))
+            var sense = this.Add(new Circuits.CCVS(1000))
+            var core = this.Add(new Circuits.Formula3("(g0 + k*V2)*V1", "0", "g0=0.00028 k=0.00575"))
+            var rb1 = this.Add(new Circuits.Resistor(38.15Ohm))
+            var rb2 = this.Add(new Circuits.Resistor(2518Ohm))
+            e.Connect(d.A)
+            d.B.Connect(sense.InPlus)
+            sense.InMinus.Connect(core.ports[0])
+            sense.A.Connect(core.ports[1])
+            sense.B.Connect(core.ports[2])
+            b2.Connect(rb2.A)
+            rb2.B.Connect(core.ports[0])
+            core.ports[2].Connect(rb1.A)
+            rb1.B.Connect(b1)
+        }
+
+        Port E { get { return this.ports[0] } }
+        Port B1 { get { return this.ports[1] } }
+        Port B2 { get { return this.ports[2] } }
+    }
+
     /// <summary>A vacuum triode (Falstad's): the plate current (mu `mu`, kg1 `kg1`) and the grid current, against the cathode; ports Plate, Grid, Cathode.</summary>
     class Triode : Formula3 {
         construct(float mu = 93.0, float kg1 = 680.0) : base("if(V2 + V1/mu, pow(max(V2 + V1/mu, 0), 1.5)/kg1, 0.00000001*V1)", "if(V2 - 0.01, V2/6000, 0.00000001*V2)",

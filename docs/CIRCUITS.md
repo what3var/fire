@@ -102,6 +102,7 @@ factorization run again with the same list of operations each iteration).
 | `Diac(breakdown = 30V, holdCurrent = 10mA, onResistance = 500, offResistance = 100M)` | `A`, `B` | conducts both ways above `breakdown` until the current falls below `holdCurrent` |
 | `Varactor(capacitance = 4pF)` | `A`, `B` | a diode whose junction capacitance falls with the reverse voltage |
 | `TunnelDiode()` | `A`, `B` | Falstad's model: 4.7 mA at 0.1 V, a valley near 0.37 V (negative resistance between) |
+| `Unijunction()` | `E`, `B1`, `B2` | Falstad's 2N2646: the emitter diode, its current makes the lower base region conduct (relaxation oscillators) |
 | `Triode(mu = 93, kg1 = 680)` | `Plate`, `Grid`, `Cathode` | a vacuum triode (Koren's 3/2 law, grid current above 0 V) |
 | `VCVS(gain = 1)`, `VCCS(gain = 1mS)` | `A`, `B`, `InPlus`, `InMinus` | V(A) - V(B) = gain · (V(InPlus) - V(InMinus)); or that many amperes from A through the source to B |
 | `CCCS(gain = 1)`, `CCVS(gain = 1kOhm)` | `A`, `B`, `InPlus`, `InMinus` | controlled by the current from InPlus to InMinus (a short between them) |
@@ -527,7 +528,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   `inverting`), Counter, Timer555, Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
   Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
   LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail), RelayCoil and RelayContact (`label`), Jfet (`pChannel`, `flip`),
-  Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), VCVS, VCCS, CCCS, CCVS,
+  Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), Unijunction (`flip`), VCVS, VCCS, CCCS, CCVS,
   CurrentConveyor, Ota, Optocoupler; sources and rails also have the waveforms triangle,
   sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
   voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
@@ -606,7 +607,7 @@ window the UI markup editor uses; double click or Enter on an element puts the f
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and
 analog switches, lamps, fuses, memristors, spark gaps, LDRs, thermistors, transmission lines, sweeps, noise, triangle and sawtooth sources, rails with a slider,
-relay coils and contacts, JFETs, Darlingtons, thyristors, triacs, diacs, varactors, tunnel diodes, triodes, current conveyors, OTAs, optocouplers, the controlled
+relay coils and contacts, JFETs, Darlingtons, thyristors, triacs, diacs, unijunction transistors, varactors, tunnel diodes, triodes, current conveyors, OTAs, optocouplers, the controlled
 sources whose expression is linear, logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the
 555 of Falstad's chip layout, nonlinear controlled sources, saturation of a transformer, ...) is listed. Of the 373 example circuits in text form, 311 come over
 without leaving an element out.

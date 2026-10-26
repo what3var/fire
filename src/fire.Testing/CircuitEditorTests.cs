@@ -156,9 +156,10 @@ static class CircuitEditorTests
             213 976 528 1008 528 0 2 a*b*2/1000
             402 512 528 624 528 0 0_0_40_-12_0_0_0.5 0_0_40_12_0_0_0.5
             407 288 192 320 192 1
+            417 416 176 496 176 1
             """);
         Check("Falstad: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, Tunneldiode, Stromkonverter, gesteuerte Quelle, OTA, Optokoppler",
-            falstad7.Elements == 12 && falstad7.Warnings.Count == 1 && falstad7.Warnings[0].Contains("'a*b*2/1000' is not linear")
+            falstad7.Elements == 13 && falstad7.Warnings.Count == 1 && falstad7.Warnings[0].Contains("'a*b*2/1000' is not linear")
             && falstad7.Biscuit.Contains("{\"type\": \"Thyristor\", \"from\": [48, 20], \"to\": [46, 36], \"legacy\": \"true\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"Triac\", \"from\": [170, 34], \"to\": [164, 66], \"triggerCurrent\": \"11m\", \"holdingCurrent\": \"8m\"}")
             && falstad7.Biscuit.Contains("\"type\": \"Diac\", \"from\": [158, 54], \"to\": [166, 54], \"onResistance\": \"500\"")
@@ -170,7 +171,8 @@ static class CircuitEditorTests
             && falstad7.Biscuit.Contains("{\"type\": \"CurrentConveyor\", \"from\": [34, 28], \"to\": [46, 28], \"gain\": \"-1\", \"spacing\": \"4\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"VCVS\", \"from\": [182, 40], \"to\": [194, 40], \"gain\": \"10\", \"spacing\": \"4\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"Ota\", \"from\": [64, 66], \"to\": [78, 66], \"positive\": \"12\", \"negative\": \"-12\"}")
-            && falstad7.Biscuit.Contains("{\"type\": \"Optocoupler\", \"from\": [36, 24], \"to\": [48, 24]}"), falstad7.Biscuit + string.Join(" | ", falstad7.Warnings));
+            && falstad7.Biscuit.Contains("{\"type\": \"Optocoupler\", \"from\": [36, 24], \"to\": [48, 24]}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Unijunction\", \"from\": [52, 22], \"to\": [62, 22]}"), falstad7.Biscuit + string.Join(" | ", falstad7.Warnings));
         Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'165' (555 timer)"), string.Join(" | ", falstad.Warnings));
         CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
             "#import \"circuits\"\n" +

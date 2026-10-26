@@ -577,6 +577,12 @@ namespace fire.UI.Markup
                     if (neg != -9) e.Set("negative", Format(neg));
                     return e;
                 }
+                case "417":
+                {
+                    var e = new Element { Type = "Unijunction" };
+                    if ((flags & 2) != 0) e.Set("flip", "true");
+                    return e;
+                }
                 case "407":
                 {
                     var e = new Element { Type = "Optocoupler" };
@@ -614,7 +620,7 @@ namespace fire.UI.Markup
             "419" => "decimal display", "403" => "scope", "176" => "varactor", "402" => "OTA", "184" => "multiplexer", "167" => "ADC", "166" => "DAC",
             "163" => "ring counter", "168" => "latch", "212" => "voltage-controlled voltage source", "213" => "voltage-controlled current source", "175" => "tunnel diode",
             "400" => "Darlington", "177" => "SCR", "173" => "triode", "423" => "line", "185" => "seven segment", "193" => "T flip-flop", "203" => "diac", "206" => "triac",
-            "208" => "custom logic", "430" => "time delay relay", "417" => "optocoupler", "405" => "LED array", "370" => "ammeter",
+            "208" => "custom logic", "430" => "time delay relay", "417" => "unijunction", "407" => "optocoupler", "405" => "LED array", "370" => "ammeter",
             _ => "unknown",
         };
 
@@ -665,7 +671,7 @@ namespace fire.UI.Markup
             "Potentiometer" => "RV", "Transformer" => "T", "Relay" => "K", "Switch2" => "S", "Lamp" => "LA", "Fuse" => "F",
             "LightResistor" or "Thermistor" or "Memristor" => "R", "SparkGap" => "E", "TransmissionLine" => "TL", "AnalogSwitch" or "AnalogSwitch2" => "U",
             "Sweep" => "V", "RelayCoil" => "K", "RelayContact" => "S", "Jfet" or "Darlington" => "Q", "Thyristor" or "Triac" or "Diac" or "Varactor" or "TunnelDiode" => "D",
-            "Triode" => "V", "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Ota" or "Optocoupler" => "U", _ => "X",
+            "Triode" => "V", "Unijunction" => "Q", "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Ota" or "Optocoupler" => "U", _ => "X",
         };
 
         private static string UniqueName(List<Element> elements, string prefix)

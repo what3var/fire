@@ -831,6 +831,8 @@ namespace UI {
                 this.DrawTriode(root, e, L)
             } else if (t == "Ota") {
                 this.DrawOta(root, e)
+            } else if (t == "Unijunction") {
+                this.DrawUjt(root, e, L)
             } else if (t == "Diac" || t == "Varactor" || t == "TunnelDiode") {
                 this.DrawDiodeLike(root, e, L)
             } else if (t == "OpAmp" || t == "Comparator") {
@@ -1148,6 +1150,26 @@ namespace UI {
         float Sign(float v) {
             if (v < 0.0) { return -1.0 }
             return 1.0
+        }
+
+        // a unijunction transistor: the base bar beside the second point with B1 and B2 at its ends, the emitter slanting into it
+        undefined DrawUjt(Root root, Circuits.Element e, float L) {
+            var h = 1.0 * Circuits.Symbols.Dsign(e)
+            if (e.Flag("flip")) { h = -h }
+            var ce = this.VoltageColor(e.PinVoltage(0))
+            var c1 = this.VoltageColor(e.PinVoltage(1))
+            var c2 = this.VoltageColor(e.PinVoltage(2))
+            var bar = L - 1.2
+            this.Seg(root, bar, -0.6 * h, bar, -3.4 * h, UI.Color.Rgb(200, 200, 200))
+            this.Seg(root, L, 0.0, L, -1.0 * h, c2)
+            this.Seg(root, L, -1.0 * h, bar, -1.0 * h, c2)
+            this.Seg(root, L, -4.0 * h, L, -3.0 * h, c1)
+            this.Seg(root, L, -3.0 * h, bar, -3.0 * h, c1)
+            this.Seg(root, 0.0, 0.0, L - 3.4, 0.0, ce)
+            this.Seg(root, L - 3.4, 0.0, bar, -1.8 * h, ce)
+            // the arrow into the bar
+            this.Seg(root, bar, -1.8 * h, bar - 0.8, -1.8 * h + 0.1 * h, ce)
+            this.Seg(root, bar, -1.8 * h, bar - 0.4, -1.1 * h, ce)
         }
 
         // an OTA: a triangle with the inputs, the bias and Iabc pins and the output
@@ -2329,6 +2351,7 @@ namespace UI {
             else if (t == "Transistor" || t == "Mosfet" || t == "Jfet" || t == "Darlington") { prefix = "Q" }
             else if (t == "Diac" || t == "Varactor" || t == "TunnelDiode" || t == "Thyristor" || t == "Triac") { prefix = "D" }
             else if (t == "Triode") { prefix = "V" }
+            else if (t == "Unijunction") { prefix = "Q" }
             else if (t == "Ota" || t == "Optocoupler") { prefix = "U" }
             else if (t == "OpAmp" || t == "Comparator" || Circuits.Symbols.IsChip(t)) { prefix = "U" }
             else if (t == "LogicInput") { prefix = "In" }

@@ -44,7 +44,7 @@ namespace fire.UI.Markup
             ["Diode"] = "Circuits.Diode", ["Zener"] = "Circuits.Zener", ["Led"] = "Circuits.Led", ["Transistor"] = "Circuits.Transistor", ["Mosfet"] = "Circuits.Mosfet",
             ["Formula"] = "Circuits.Formula", ["Jfet"] = "Circuits.Jfet", ["Darlington"] = "Circuits.Darlington", ["Thyristor"] = "Circuits.Thyristor", ["Triac"] = "Circuits.Triac", ["Diac"] = "Circuits.Diac",
             ["Varactor"] = "Circuits.Varactor", ["TunnelDiode"] = "Circuits.TunnelDiode", ["Triode"] = "Circuits.Triode", ["VCVS"] = "Circuits.VCVS", ["VCCS"] = "Circuits.VCCS",
-            ["CCCS"] = "Circuits.CCCS", ["CCVS"] = "Circuits.CCVS", ["CurrentConveyor"] = "Circuits.CurrentConveyor", ["Ota"] = "Circuits.Ota", ["Optocoupler"] = "Circuits.Optocoupler", ["OpAmp"] = "Circuits.OpAmp", ["Comparator"] = "Circuits.Comparator",
+            ["CCCS"] = "Circuits.CCCS", ["CCVS"] = "Circuits.CCVS", ["CurrentConveyor"] = "Circuits.CurrentConveyor", ["Ota"] = "Circuits.Ota", ["Unijunction"] = "Circuits.Unijunction", ["Optocoupler"] = "Circuits.Optocoupler", ["OpAmp"] = "Circuits.OpAmp", ["Comparator"] = "Circuits.Comparator",
             ["And"] = "Circuits.Gate", ["Nand"] = "Circuits.Gate", ["Or"] = "Circuits.Gate", ["Nor"] = "Circuits.Gate", ["Xor"] = "Circuits.Gate", ["Xnor"] = "Circuits.Gate",
             ["Not"] = "Circuits.Gate", ["Buffer"] = "Circuits.Gate", ["DFlipFlop"] = "Circuits.FlipFlop", ["SRLatch"] = "Circuits.SRLatch", ["Counter"] = "Circuits.Counter",
             ["Timer555"] = "Circuits.Timer555", ["GpioLine"] = "Circuits.GpioLine", ["I2cAdc"] = "Circuits.I2cAdc", ["I2cDac"] = "Circuits.I2cDac",

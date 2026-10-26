@@ -20193,7 +20193,7 @@ else
                 print(e.Type + pins + " '" + e.Error + "'")
             }
             """),
-        ("Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter, OTA, Optokoppler", """
+        ("Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter, OTA, Optokoppler, UJT", """
             #import "circuits"
             class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
             // SCR: 12 V through 100 Ohm; a gate pulse fires it, it stays on, the supply going down puts it out
@@ -20374,45 +20374,94 @@ else
             print("vcvs " + H.R(e.A.Voltage / 1V) + " vccs " + H.R(gs.B.Voltage / 1V) + " cccs " + H.R(f.B.Voltage / 1V) + " ccvs " + H.R(h.A.Voltage / 1V))
             print("cc2 x " + H.R(cv.X.Voltage / 1V) + " z " + H.R(cv.Z.Voltage / 1V) + " y current " + H.R(rsn.Current / 1mA))
             // OTA: Iabc 100 uA from +9 V through a resistor into the Iabc pin (it sits near -9 V + 2 Vbe), output into 10 kOhm
-            var c = new Circuits.Circuit()
-            var ota = c.Add(new Circuits.Ota())
-            var vin = c.Add(new Circuits.VoltageSource(0.01V))
-            var rabc = c.Add(new Circuits.Resistor(166kOhm))
-            var vplus = c.Add(new Circuits.VoltageSource(9V))
-            var rl = c.Add(new Circuits.Resistor(10kOhm))
-            vin.A.Connect(ota.InPlus)
-            vin.B.Connect(c.Ground)
-            ota.InMinus.Connect(c.Ground)
-            vplus.B.Connect(c.Ground)
+            var oc = new Circuits.Circuit()
+            var ota = oc.Add(new Circuits.Ota())
+            var ovin = oc.Add(new Circuits.VoltageSource(0.01V))
+            var rabc = oc.Add(new Circuits.Resistor(166kOhm))
+            var vplus = oc.Add(new Circuits.VoltageSource(9V))
+            var orl = oc.Add(new Circuits.Resistor(10kOhm))
+            ovin.A.Connect(ota.InPlus)
+            ovin.B.Connect(oc.Ground)
+            ota.InMinus.Connect(oc.Ground)
+            vplus.B.Connect(oc.Ground)
             vplus.A.Connect(rabc.A)
             rabc.B.Connect(ota.Iabc)
-            ota.Out.Connect(rl.A)
-            rl.B.Connect(c.Ground)
-            c.Step()
+            ota.Out.Connect(orl.A)
+            orl.B.Connect(oc.Ground)
+            oc.Step()
             print("ota out " + H.R(ota.Out.Voltage / 1V) + " V, iabc " + H.R(rabc.Current / 1uA) + " uA")
-            vin.Level = -0.01V
-            c.Step()
+            ovin.Level = -0.01V
+            oc.Step()
             print("ota out " + H.R(ota.Out.Voltage / 1V) + " V")
             // optocoupler: 10 mA through the LED, the transistor from 5 V through 1 kOhm
-            var o = new Circuits.Circuit()
-            var opto = o.Add(new Circuits.Optocoupler())
-            var vled = o.Add(new Circuits.VoltageSource(5V))
-            var rled = o.Add(new Circuits.Resistor(330Ohm))
-            var vcc = o.Add(new Circuits.VoltageSource(5V))
-            var rc = o.Add(new Circuits.Resistor(1kOhm))
+            var oo = new Circuits.Circuit()
+            var opto = oo.Add(new Circuits.Optocoupler())
+            var vled = oo.Add(new Circuits.VoltageSource(5V))
+            var rled = oo.Add(new Circuits.Resistor(330Ohm))
+            var ovcc = oo.Add(new Circuits.VoltageSource(5V))
+            var orc = oo.Add(new Circuits.Resistor(1kOhm))
             vled.A.Connect(rled.A)
             rled.B.Connect(opto.Anode)
-            opto.Cathode.Connect(o.Ground)
-            vled.B.Connect(o.Ground)
-            vcc.A.Connect(rc.A)
-            rc.B.Connect(opto.Collector)
-            opto.Emitter.Connect(o.Ground)
-            vcc.B.Connect(o.Ground)
-            o.Step()
-            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(rc.Current / 1mA) + " mA")
+            opto.Cathode.Connect(oo.Ground)
+            vled.B.Connect(oo.Ground)
+            ovcc.A.Connect(orc.A)
+            orc.B.Connect(opto.Collector)
+            opto.Emitter.Connect(oo.Ground)
+            ovcc.B.Connect(oo.Ground)
+            oo.Step()
+            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(orc.Current / 1mA) + " mA")
             vled.Level = 1.5V
-            o.Step()
-            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(rc.Current / 1mA) + " mA")
+            oo.Step()
+            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(orc.Current / 1mA) + " mA")
+            // UJT: the emitter through 1 kOhm, B2 through 470 Ohm from 10 V, B1 through 47 Ohm; it fires between 5 and 7 V
+            foreach (ve in [5.0, 7.0]) {
+                var ucc = new Circuits.Circuit()
+                var u = ucc.Add(new Circuits.Unijunction())
+                var v10 = ucc.Add(new Circuits.VoltageSource(10V))
+                var vu = ucc.Add(new Circuits.VoltageSource(ve * 1V))
+                var ru = ucc.Add(new Circuits.Resistor(1kOhm))
+                var r2 = ucc.Add(new Circuits.Resistor(470Ohm))
+                var r1 = ucc.Add(new Circuits.Resistor(47Ohm))
+                v10.B.Connect(ucc.Ground)
+                vu.B.Connect(ucc.Ground)
+                vu.A.Connect(ru.A)
+                ru.B.Connect(u.E)
+                v10.A.Connect(r2.A)
+                r2.B.Connect(u.B2)
+                u.B1.Connect(r1.A)
+                r1.B.Connect(ucc.Ground)
+                for (int k = 0; k < 50; k++) { ucc.Step() }
+                print("ujt at " + ve + " V: ie " + Math.Round(ru.Current / 1uA) + " uA, ib2 " + Math.Round(r2.Current / 1uA) + " uA")
+            }
+            // the relaxation oscillator of the UJT: 10 V through 100 kOhm on 10 nF at the emitter
+            var uo = new Circuits.Circuit()
+            uo.TimeStep = 5us
+            var uj = uo.Add(new Circuits.Unijunction())
+            var uv = uo.Add(new Circuits.VoltageSource(10V))
+            var ur = uo.Add(new Circuits.Resistor(100kOhm))
+            var uc = uo.Add(new Circuits.Capacitor(10nF))
+            var ub2 = uo.Add(new Circuits.Resistor(470Ohm))
+            var ub1 = uo.Add(new Circuits.Resistor(47Ohm))
+            uv.B.Connect(uo.Ground)
+            uv.A.Connect(ur.A)
+            ur.B.Connect(uj.E)
+            uc.A.Connect(uj.E)
+            uc.B.Connect(uo.Ground)
+            uv.A.Connect(ub2.A)
+            ub2.B.Connect(uj.B2)
+            uj.B1.Connect(ub1.A)
+            ub1.B.Connect(uo.Ground)
+            var peak = 0.0
+            var fired = 0
+            var uprev = 0.0
+            for (int k = 0; k < 4000; k++) {
+                uo.Step()
+                var vc = uj.E.Raw()
+                if (vc > peak) { peak = vc }
+                if (uprev - vc > 2.0) { fired++ }
+                uprev = vc
+            }
+            print("ujt oscillator fires " + fired + " times in 20 ms, peak " + H.R(peak) + " V")
             """),
         ("Circuits: die aktiven Bauteile im Schaltplan (Pins wie bei Falstad, Gate auf Falstads Raster)", """
             #import "circuits"
@@ -20433,7 +20482,7 @@ else
             // every new kind: where its pins are
             var l = new Circuits.Circuit()
             var s2 = l.Schematic
-            var kinds = ["Jfet", "Darlington", "Thyristor", "Triac", "Diac", "Varactor", "TunnelDiode", "Triode", "VCVS", "VCCS", "CCCS", "CCVS", "CurrentConveyor", "Ota", "Optocoupler"]
+            var kinds = ["Jfet", "Darlington", "Thyristor", "Triac", "Diac", "Varactor", "TunnelDiode", "Triode", "VCVS", "VCCS", "CCCS", "CCVS", "CurrentConveyor", "Ota", "Optocoupler", "Unijunction"]
             var x = 0
             foreach (k in kinds) {
                 s2.Add(k, x, 0, x + 8, 0)
