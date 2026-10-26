@@ -331,7 +331,7 @@ namespace fire.UI.Markup
             IEnumerable<MarkupCompletionItem> Words(IEnumerable<string> words, string? detail = null) => words.Select(w => new MarkupCompletionItem(w, MarkupCompletionKind.Value, detail));
             var plain = property.Kind switch
             {
-                PropertyKind.Bool => Words(new[] { "True", "False" }),
+                PropertyKind.Bool => Words(new[] { "true", "false" }),
                 PropertyKind.Orientation => Words(new[] { "Horizontal", "Vertical" }),
                 PropertyKind.Enum => Words(property.Choices ?? Array.Empty<string>()),
                 PropertyKind.StyleRef => Words(info.Styles, "style"),
