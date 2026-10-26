@@ -1325,7 +1325,57 @@ namespace UI {
             }
         }
 
+        // a chip in Falstad's layout: the box between the pins of all four sides
+        undefined DrawFalstadChip(Root root, Circuits.Element e) {
+            var parts = Circuits.Symbols.FalstadLayout(e).Split("|")
+            var size = parts[0].Split(",")
+            var sx = Circuits.Symbols.Int(size[0])
+            var sy = Circuits.Symbols.Int(size[1])
+            float cs = Circuits.Symbols.FalstadCell(e)
+            var white = UI.Color.Rgb(220, 220, 220)
+            var left = e.x1 + cs / 2.0
+            var top = e.y1 - cs / 2.0
+            var right = left + sx * cs
+            var bottom = top + sy * cs
+            this.thin.Color = white
+            root.renderer.DrawRect(this.SX(left), this.SY(top), this.SX(right) - this.SX(left), this.SY(bottom) - this.SY(top), this.thin)
+            var i = 0
+            foreach (p in parts[1].Split(";")) {
+                string pin = p
+                var f = pin.Split(":")
+                float px = e.PinX(i)
+                float py = e.PinY(i)
+                this.pen.Color = this.VoltageColor(e.PinVoltage(i))
+                var ex = px
+                var ey = py
+                if (f[0] == "W") { ex = left } else if (f[0] == "E") { ex = right } else if (f[0] == "N") { ey = top } else { ey = bottom }
+                root.renderer.DrawLine(this.SX(px), this.SY(py), this.SX(ex), this.SY(ey), this.pen)
+                this.textBrush.Color = UI.Color.Rgb(170, 170, 170)
+                var name = f[2]
+                var tw = this.TextWidth(root, name)
+                var th = this.TextHeight(root)
+                if (f[0] == "W") { this.DrawString(root, this.SX(ex) + 3, this.SY(ey) - th / 2, name, this.textBrush) }
+                else if (f[0] == "E") { this.DrawString(root, this.SX(ex) - 3 - tw, this.SY(ey) - th / 2, name, this.textBrush) }
+                else if (f[0] == "N") { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) + 2, name, this.textBrush) }
+                else { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) - 2 - th, name, this.textBrush) }
+                i = i + 1
+            }
+            var title = e.type
+            if (title == "Timer555") { title = "555" }
+            if (title == "DFlipFlop") { title = "D-FF" }
+            if (e.type == "Counter" && e.part != undefined) {
+                Circuits.Counter counter = e.part!Circuits.Counter
+                title = "" + counter.Count
+            }
+            this.textBrush.Color = white
+            this.DrawString(root, (this.SX(left) + this.SX(right)) / 2 - this.TextWidth(root, title) / 2, (this.SY(top) + this.SY(bottom)) / 2 - this.TextHeight(root) / 2, title, this.textBrush)
+        }
+
         undefined DrawChip(Root root, Circuits.Element e) {
+            if (Circuits.Symbols.IsFalstadChip(e)) {
+                this.DrawFalstadChip(root, e)
+                return
+            }
             var sides = Circuits.Symbols.ChipPins(e).Split("|")
             var left = Circuits.Symbols.Names(sides[0])
             var right = Circuits.Symbols.Names(sides[1])

@@ -283,7 +283,7 @@ ICs are circuits of the package made of its parts - subcircuits to use like any 
 
 | IC | Ports | |
 |---|---|---|
-| `Timer555(supply = 5V)` | `Trigger`, `Threshold`, `Discharge`, `Output`, `Control`, `Reset` | divider, two comparators, SR latch, discharge transistor; powered inside at `supply` |
+| `Timer555(supply = 5V, vccPin = false)` | `Trigger`, `Threshold`, `Discharge`, `Output`, `Control`, `Reset` (`Vcc`) | divider, two comparators, SR latch, discharge transistor; powered inside at `supply`, or with `vccPin` at the port `Vcc` (the output swings up to it) |
 | `Counter(bits = 4, supply = 5V)` | `Clock`, `Q(i)` | a ripple counter of D flip-flops; `Count` |
 | `Crystal(seriesCapacitance = 0.1pF, parallelCapacitance = 28.7pF, inductance = 2.5mH, resistance = 6.4)` | `A`, `B` | a quartz: series R-L-C with the holder's capacitance in parallel (about 10 MHz) |
 | `Relay(inductance = 0.2H, coilResistance = 20, onCurrent = 20mA, offCurrent = 15mA, onResistance = 0.05)` | `Coil1`, `Coil2`, `Common`, `NormallyClosed`, `NormallyOpen` | a coil (inductor and resistor) and a changeover contact: it pulls in when the coil current reaches `onCurrent` and drops out below `offCurrent`; `Energized`, `CoilCurrent` |
@@ -525,7 +525,8 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
   a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
-  `inverting`), Counter, Timer555, Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
+  `inverting`), Counter, Timer555 (DFlipFlop, Counter and Timer555 also in Falstad's chip layout: `layout` = falstad puts their pins on all four sides as there,
+  `spacing` 4 or 2; the 555 then takes its supply at the Vcc pin, `groundPin`), Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
   Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
   LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail), RelayCoil and RelayContact (`label`), Jfet (`pChannel`, `flip`),
   Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), Unijunction (`flip`), VCVS, VCCS, CCCS, CCVS,
@@ -608,9 +609,9 @@ divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, si
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and
 analog switches, lamps, fuses, memristors, spark gaps, LDRs, thermistors, transmission lines, sweeps, noise, triangle and sawtooth sources, rails with a slider,
 relay coils and contacts, JFETs, Darlingtons, thyristors, triacs, diacs, unijunction transistors, varactors, tunnel diodes, triodes, current conveyors, OTAs, optocouplers, the controlled
-sources whose expression is linear, logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the
-555 of Falstad's chip layout, nonlinear controlled sources, saturation of a transformer, ...) is listed. Of the 373 example circuits in text form, 311 come over
-without leaving an element out.
+sources whose expression is linear, D flip-flops, 555 timers and counters (in Falstad's chip layout, `layout` = falstad), logic inputs and outputs, probes,
+labels, texts and scopes become elements. What the package has not got (multiplexers, ADCs, nonlinear controlled sources, saturation of a transformer, ...) is
+listed. Of the 373 example circuits in text form, 328 come over without leaving an element out.
 `fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
 
 ## Coming next

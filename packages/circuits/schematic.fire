@@ -172,12 +172,12 @@ namespace Circuits {
             l.Add("Logic|Xnor|inputs:int=2;supply:V=5")
             l.Add("Logic|Not|supply:V=5")
             l.Add("Logic|Buffer|supply:V=5")
-            l.Add("Logic|DFlipFlop|supply:V=5")
+            l.Add("Logic|DFlipFlop|supply:V=5;layout:choice:fire/falstad=fire;resetPin:bool=false")
             l.Add("Logic|SRLatch|supply:V=5;reset:bool=false")
             l.Add("Logic|JKFlipFlop|supply:V=5;falling:bool=false;reset:bool=false;spacing:int=2")
             l.Add("Logic|SchmittTrigger|lower:V=1.66;upper:V=3.33;supply:V=5;inverting:bool=false")
-            l.Add("Logic|Counter|bits:int=4;supply:V=5")
-            l.Add("ICs|Timer555|supply:V=5")
+            l.Add("Logic|Counter|bits:int=4;supply:V=5;layout:choice:fire/falstad=fire")
+            l.Add("ICs|Timer555|supply:V=5;layout:choice:fire/falstad=fire;groundPin:bool=false")
             l.Add("Devices|GpioLine|line:int=0;supply:V=3.3")
             l.Add("Devices|I2cAdc|address:text=0x48;channels:int=4;reference:V=5;bits:int=8")
             l.Add("Devices|I2cDac|address:text=0x60;channels:int=1;reference:V=5")
@@ -467,6 +467,10 @@ namespace Circuits {
                 e.pins.Add(e.y2)
                 return
             }
+            if (Circuits.Symbols.IsFalstadChip(e)) {
+                Circuits.Symbols.FalstadChipPins(e)
+                return
+            }
             if (Circuits.Symbols.IsChip(t)) {
                 // a box: the pins of the left side go down from the first point, those of the right side from the point `width` to the right (`spacing`
                 // apart; an empty name is a gap)
@@ -723,6 +727,73 @@ namespace Circuits {
             }
         }
 
+        /// <summary>Is it a chip in the layout of Falstad's simulator (pins on all four sides)?</summary>
+        static bool IsFalstadChip(Circuits.Element e) {
+            return e.Get("layout") == "falstad" && (e.type == "DFlipFlop" || e.type == "Timer555" || e.type == "Counter")
+        }
+
+        /// <summary>A chip as Falstad lays it out: "sizeX,sizeY|side:pos:name:port;..." (side W, E, N or S; port the index of the port of the part, -1
+        /// for a pin without one).</summary>
+        static string FalstadLayout(Circuits.Element e) {
+            var t = e.type
+            if (t == "DFlipFlop") {
+                var l = "2,3|W:0:D:0;E:0:Q:2;E:2:/Q:3;W:1:>:1"
+                if (e.Flag("resetPin")) { l = l + ";W:2:R:-1" }
+                return l
+            }
+            if (t == "Timer555") {
+                var l = "3,5|W:1:dis:2;W:3:tr:0;W:4:th:1;N:1:Vcc:6;S:1:ctl:4;E:2:out:3;E:1:rst:5"
+                if (e.Flag("groundPin")) { l = l + ";S:2:gnd:-1" }
+                return l
+            }
+            if (t == "Counter") {
+                var n = Circuits.Symbols.Bits(e)
+                var l = "2," + n + "|W:0:>:0"
+                for (int i = 0; i < n; i++) { l = l + ";E:" + (n - 1 - i) + ":Q" + i + ":" + (i + 1) }
+                return l + ";W:" + (n - 1) + ":R:-1"
+            }
+            return "2,2|"
+        }
+
+        // the size of a cell of a Falstad chip in grid units (4, or 2 for a small one)
+        static int FalstadCell(Circuits.Element e) {
+            var n = e.Get("spacing").TryToInt()
+            if (n == undefined || n < 1) { return 4 }
+            return n
+        }
+
+        static int Int(string text) {
+            var n = text.TryToInt()
+            if (n == undefined) { return 0 }
+            return n
+        }
+
+        static undefined FalstadChipPins(Circuits.Element e) {
+            var parts = Circuits.Symbols.FalstadLayout(e).Split("|")
+            var size = parts[0].Split(",")
+            var sx = Circuits.Symbols.Int(size[0])
+            var sy = Circuits.Symbols.Int(size[1])
+            var cs = Circuits.Symbols.FalstadCell(e)
+            foreach (p in parts[1].Split(";")) {
+                string pin = p
+                var f = pin.Split(":")
+                var pos = Circuits.Symbols.Int(f[1])
+                if (f[0] == "W") {
+                    e.pins.Add(e.x1)
+                    e.pins.Add(e.y1 + pos * cs)
+                } else if (f[0] == "E") {
+                    e.pins.Add(e.x1 + (sx + 1) * cs)
+                    e.pins.Add(e.y1 + pos * cs)
+                } else if (f[0] == "N") {
+                    e.pins.Add(e.x1 + (pos + 1) * cs)
+                    e.pins.Add(e.y1 - cs)
+                } else {
+                    e.pins.Add(e.x1 + (pos + 1) * cs)
+                    e.pins.Add(e.y1 + sy * cs)
+                }
+            }
+        }
+
         static int ChipWidth(Circuits.Element e) {
             var w = e.x2 - e.x1
             if (w < 0) { w = -w }
@@ -948,7 +1019,7 @@ namespace Circuits {
             else if (t == "SchmittTrigger") {
                 part = new Circuits.SchmittTrigger(Circuits.Symbols.Value(e, "lower", c), Circuits.Symbols.Value(e, "upper", c), Circuits.Symbols.Value(e, "supply", c), e.Flag("inverting"))
             }
-            else if (t == "Timer555") { part = new Circuits.Timer555(Circuits.Symbols.Value(e, "supply", c)) }
+            else if (t == "Timer555") { part = new Circuits.Timer555(Circuits.Symbols.Value(e, "supply", c), Circuits.Symbols.IsFalstadChip(e)) }
             else if (t == "Counter") { part = new Circuits.Counter(Circuits.Symbols.Bits(e), Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "Ground") { part = new Circuits.Ground() }
             else if (t == "GpioLine") { part = new Circuits.GpioLine(Circuits.Symbols.Line(e), Circuits.Symbols.Value(e, "supply", c)) }
@@ -974,7 +1045,14 @@ namespace Circuits {
             c.Add(part)
             e.part = part
             var ports = part.Ports()
-            if (t == "Source") {
+            if (Circuits.Symbols.IsFalstadChip(e)) {
+                // the pins in the order of the layout, each on the port it names
+                foreach (p in Circuits.Symbols.FalstadLayout(e).Split("|")[1].Split(";")) {
+                    string pin = p
+                    var k = Circuits.Symbols.Int(pin.Split(":")[3])
+                    if (k >= 0 && k < ports.count) { e.pinPorts.Add(ports[k]) } else { e.pinPorts.Add(undefined) }
+                }
+            } else if (t == "Source") {
                 // from the first point (-) to the second (+), as in Falstad
                 e.pinPorts.Add(ports[1])
                 e.pinPorts.Add(ports[0])
@@ -1169,7 +1247,7 @@ namespace Circuits {
         undefined Set(Circuits.Element e, string key, string value) {
             e.Set(key, value)
             // the number of pins can change (inputs, bits, flip, model of a transistor)
-            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity" || key == "smallGrid" || key == "legacy")
+            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity" || key == "smallGrid" || key == "legacy" || key == "layout" || key == "resetPin" || key == "groundPin" || key == "spacing")
         }
 
         /// <summary>Renames an element.</summary>

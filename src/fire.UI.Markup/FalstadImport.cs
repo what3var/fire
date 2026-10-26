@@ -71,7 +71,7 @@ namespace fire.UI.Markup
                         if (smallGrid && e.Type is "Thyristor" or "Triac") e.Set("smallGrid", "true");
                         if (e.Fix is { } fix)
                         {
-                            if (e.Type is "JKFlipFlop" or "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Optocoupler") { e.X2 = x1 + fix.X; e.Y2 = y1; }
+                            if (e.Type is "JKFlipFlop" or "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Optocoupler" or "DFlipFlop" or "Timer555" or "Counter") { e.X2 = x1 + fix.X; e.Y2 = y1; }
                             else if (e.Type == "Triode")
                             {
                                 // Falstad's side of plate and cathode, against the one the package takes from the direction
@@ -561,6 +561,40 @@ namespace fire.UI.Markup
                     double gain = Num(6, 1);
                     if (gain != 1) e.Set("gain", Format(gain));
                     ChipLayout(e, flags);
+                    return e;
+                }
+                case "155":
+                case "165":
+                case "164":
+                {
+                    // chips in Falstad's layout (pins on all four sides, a cell of 32 pixels or 16 for a small one)
+                    string kind = type switch { "155" => "DFlipFlop", "165" => "Timer555", _ => "Counter" };
+                    var e = new Element { Type = kind };
+                    e.Set("layout", "falstad");
+                    bool small = (flags & 1) != 0;
+                    if (small) e.Set("spacing", "2");
+                    int next = 6;
+                    int sizeX = 2;
+                    if (kind == "Counter")
+                    {
+                        int bits = (int)Num(6, 4);
+                        if (bits != 4) e.Set("bits", bits.ToString(CultureInfo.InvariantCulture));
+                        next = 7;
+                        if ((flags & 4) != 0) warnings.Add($"Line {lineNo}: an up/down counter is imported counting up.");
+                    }
+                    if ((flags & (1 << 13)) != 0) { double hv = Num(next, 5); if (hv != 5) e.Set("supply", Format(hv)); }
+                    if (kind == "DFlipFlop")
+                    {
+                        if ((flags & 4) != 0) warnings.Add($"Line {lineNo}: the set and reset of a D flip-flop are not simulated; check its connections.");
+                        else if ((flags & 2) != 0) { e.Set("resetPin", "true"); warnings.Add($"Line {lineNo}: the reset of a D flip-flop is not simulated."); }
+                    }
+                    if (kind == "Timer555")
+                    {
+                        sizeX = 3;
+                        if ((flags & 4) != 0) e.Set("groundPin", "true");
+                    }
+                    if ((flags & (7 << 10)) != 0) warnings.Add($"Line {lineNo}: a flipped chip is imported unflipped; check its connections.");
+                    e.Fix = ((sizeX + 1) * (small ? 2 : 4), 0);
                     return e;
                 }
                 case "402":

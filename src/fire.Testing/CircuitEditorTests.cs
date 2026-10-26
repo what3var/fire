@@ -85,7 +85,7 @@ static class CircuitEditorTests
             150 560 208 672 208 0 2 0 5
             L 560 304 512 304 0 1 false 5 0
             207 112 48 112 16 4 VCC
-            165 600 400 664 400 2 5
+            184 600 400 664 400 2 2
             o 2 64 0 4099 5 0.1 0 2 2 3
             38 1 0 1 101 Resistance
             """, "Demo");
@@ -173,7 +173,18 @@ static class CircuitEditorTests
             && falstad7.Biscuit.Contains("{\"type\": \"Ota\", \"from\": [64, 66], \"to\": [78, 66], \"positive\": \"12\", \"negative\": \"-12\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"Optocoupler\", \"from\": [36, 24], \"to\": [48, 24]}")
             && falstad7.Biscuit.Contains("{\"type\": \"Unijunction\", \"from\": [52, 22], \"to\": [62, 22]}"), falstad7.Biscuit + string.Join(" | ", falstad7.Warnings));
-        Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'165' (555 timer)"), string.Join(" | ", falstad.Warnings));
+        var falstad8 = FalstadImport.Convert("""
+            $ 1 0.000005 10.2 50 5 50
+            165 176 96 192 96 6 0
+            155 272 96 320 96 0 0.0
+            164 144 152 224 152 0 4 0.0 5.0 0.0 0.0
+            """);
+        Check("Falstad: 555, D-Flipflop und Zaehler im Chip-Layout von Falstad",
+            falstad8.Elements == 3 && falstad8.Warnings.Count == 0
+            && falstad8.Biscuit.Contains("{\"type\": \"Timer555\", \"from\": [22, 12], \"to\": [38, 12], \"layout\": \"falstad\", \"groundPin\": \"true\"}")
+            && falstad8.Biscuit.Contains("{\"type\": \"DFlipFlop\", \"from\": [34, 12], \"to\": [46, 12], \"layout\": \"falstad\"}")
+            && falstad8.Biscuit.Contains("{\"type\": \"Counter\", \"from\": [18, 19], \"to\": [30, 19], \"layout\": \"falstad\"}"), falstad8.Biscuit + string.Join(" | ", falstad8.Warnings));
+        Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'184' (multiplexer)"), string.Join(" | ", falstad.Warnings));
         CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
             "#import \"circuits\"\n" +
             "var c = new Circuits.Circuit(\"x\")\n" +

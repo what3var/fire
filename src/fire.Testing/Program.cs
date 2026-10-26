@@ -20498,6 +20498,54 @@ else
                 print(e.Type + pins + " '" + e.Error + "'")
             }
             """),
+        ("Circuits: 555, D-Flipflop und Zaehler im Chip-Layout von Falstad, 555 mit Vcc-Pin", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // the pins of the chips in Falstad's layout
+            var sc = new Circuits.Circuit()
+            var sm = sc.Schematic
+            sm.Add("Timer555", 0, 0, 16, 0, "layout=falstad;groundPin=true")
+            sm.Add("DFlipFlop", 30, 0, 42, 0, "layout=falstad;resetPin=true")
+            sm.Add("Counter", 50, 0, 56, 0, "layout=falstad;bits=3;spacing=2")
+            foreach (e in sm.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            // a 555 astable powered at its Vcc pin from 9 V: 1k, 10k, 100 nF; the output swings up to Vcc
+            var c = new Circuits.Circuit()
+            c.TimeStep = 20us
+            var t = c.Add(new Circuits.Timer555(5V, true))
+            var v = c.Add(new Circuits.VoltageSource(9V))
+            var ra = c.Add(new Circuits.Resistor(1kOhm))
+            var rb = c.Add(new Circuits.Resistor(10kOhm))
+            var ct = c.Add(new Circuits.Capacitor(100nF))
+            var rl = c.Add(new Circuits.Resistor(10kOhm))
+            v.B.Connect(c.Ground)
+            v.A.Connect(t.Vcc)
+            v.A.Connect(t.Reset)
+            v.A.Connect(ra.A)
+            ra.B.Connect(t.Discharge)
+            t.Discharge.Connect(rb.A)
+            rb.B.Connect(t.Threshold)
+            t.Threshold.Connect(t.Trigger)
+            t.Trigger.Connect(ct.A)
+            ct.B.Connect(c.Ground)
+            t.Output.Connect(rl.A)
+            rl.B.Connect(c.Ground)
+            var edges = 0
+            var last = false
+            var top = 0.0
+            for (int i = 0; i < 2500; i++) {
+                c.Step()
+                var vo = t.Output.Raw()
+                if (vo > top) { top = vo }
+                var h = vo > 4.5
+                if (h && !last) { edges++ }
+                last = h
+            }
+            print("555 at 9 V: " + edges + " periods in 50 ms (about 34: a period is 0.693 * 21k * 100n), output up to " + H.R(top) + " V")
+            """),
         ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
             {
               "biscuit": 1,
