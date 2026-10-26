@@ -380,7 +380,7 @@ static class ProjectTests
         foreach (var f in winFiles.Concat(viewFiles)) terminal.AddFile(winProject, f);
         var winPlan = BuildPlan.Create(terminal, terminal.Projects[0]);
         string winMarkup = winFiles.First(f => f.EndsWith(".fxml")), viewMarkup = viewFiles.First(f => f.EndsWith(".fxml"));
-        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View Class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window Class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View Class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
         Check("Vorlagen: FXML-Fenster und -View bringen den Code-behind gleichen Namens mit (class Name : NameBase), geoeffnet wird das Markup",
             winFiles.Count == 2 && viewFiles.Count == 2 && File.ReadAllText(Path.ChangeExtension(winMarkup, ".fire")).Contains("class Main : MainBase {") && File.ReadAllText(Path.ChangeExtension(viewMarkup, ".fire")).Contains("class SettingsView : SettingsViewBase {")
             && TemplateInstaller.FilesToOpen(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name), winFiles).SequenceEqual(new[] { winMarkup }), string.Join(", ", winFiles.Concat(viewFiles)));

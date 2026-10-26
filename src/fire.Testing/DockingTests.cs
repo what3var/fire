@@ -234,7 +234,7 @@ static class DockingTests
             ui.MouseMove(200, 150)
             ui.Draw()
             var f = b.parent
-            print("float " + b.floating + " " + dm.floats.count + " " + f.x + "," + f.y + " " + b.Horizontal)
+            print("float " + b.floating + " " + dm.floats.count + " " + f.Left + "," + f.Top + " " + b.Horizontal)
             ui.MouseUp(1, 200, 150)
             ui.Draw()
             __Shot(fb.id, "floatstrip")
@@ -286,7 +286,7 @@ static class DockingTests
             ui.KeyDown(1073741905, 0)
             ui.KeyDown(13, 0)
             ui.Draw()
-            print("combo " + combo.text)
+            print("combo " + combo.Text)
             ui.MouseDown(1, box.ax + 5, box.ay + 5)
             ui.MouseUp(1, box.ax + 5, box.ay + 5)
             ui.TextInput("abc")
@@ -366,15 +366,15 @@ static class DockingTests
             ui.MouseUp(1, po.ax + 30, po.ay + 6)
             ui.Draw()
             var f = po.parent
-            print("float " + output.isFloating + " " + dm.floats.count + " " + dm.bottomPanes.count + " " + f.width + "x" + f.height)
+            print("float " + output.isFloating + " " + dm.floats.count + " " + dm.bottomPanes.count + " " + f.Width + "x" + f.Height)
             // resize at the right bottom corner
-            var w0 = f.width
-            var h0 = f.height
+            var w0 = f.Width
+            var h0 = f.Height
             ui.MouseDown(1, f.ax + f.actualWidth - 2, f.ay + f.actualHeight - 2)
             ui.MouseMove(f.ax + f.actualWidth + 18, f.ay + f.actualHeight + 8)
             ui.MouseUp(1, f.ax + f.actualWidth + 18, f.ay + f.actualHeight + 8)
             ui.Draw()
-            print("resized " + (f.width - w0) + " " + (f.height - h0))
+            print("resized " + (f.Width - w0) + " " + (f.Height - h0))
             __Shot(fb.id, "floating")
             ui.cycles = ui.cycles + 100
             ui.MouseDown(1, po.ax + 30, po.ay + 6)
@@ -385,7 +385,7 @@ static class DockingTests
             print("docked " + output.isDocked + " side " + output.side + " " + dm.floats.count)
             output.Float(50, 60)
             ui.Draw()
-            print("Float() " + output.isFloating + " " + po.parent.x + "," + po.parent.y)
+            print("Float() " + output.isFloating + " " + po.parent.Left + "," + po.parent.Top)
             output.DockTo(UI.Dock.Right)
             ui.Draw()
             print("DockTo " + output.side + " " + dm.rightPanes.count + " " + dm.floats.count + " " + dm.ToolWindows().count + " " + dm.FindToolWindow("Output").title)
@@ -448,7 +448,7 @@ static class DockingTests
             ui.MouseMove(300, 120)
             ui.MouseUp(1, 300, 120)
             ui.Draw()
-            print("floating " + output.isFloating + " " + dm.leftPanes.count + " at " + (po.parent.x + 30 - 10) + "," + po.parent.y)
+            print("floating " + output.isFloating + " " + dm.leftPanes.count + " at " + (po.parent.Left + 30 - 10) + "," + po.parent.Top)
             """, new[] { "drag True drop 1 side 2 preview 200,0 200x300", "right 2 1 0 0", "compass True drop 2", "tab True 2 active Output right 0 spare 1", "after drop 4 explorer tabs 1",
                 "after 3 2 0", "floating True 2 at 220,114" });
 
@@ -503,11 +503,11 @@ static class DockingTests
             Check("ComboBox im Markup: Item-Teile, selectedIndex, onSelect", $$"""
                 #include "{{fxml}}"
                 class PickApp : PickBase {
-                    Picked(sender) { print("picked " + sender.text) }
+                    Picked(sender) { print("picked " + sender.Text) }
                 }
                 var app = new PickApp()
                 app.ui.Draw()
-                print(app.choice.count + " " + app.choice.text)
+                print(app.choice.count + " " + app.choice.Text)
                 app.choice.Select(2)
                 """, new[] { "picked Two", "3 Two", "picked Three" }, docking: false);
         }

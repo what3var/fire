@@ -304,8 +304,8 @@ namespace UI {
                 var popup = this.popups[i]
                 popup.Measure(this, -1, -1)
                 // not beyond the edge
-                if (popup.x + popup.dw > this.width) { popup.x = UI.M.Max(0, this.width - popup.dw) }
-                if (popup.y + popup.dh > this.height) { popup.y = UI.M.Max(0, this.height - popup.dh) }
+                if (popup.Left + popup.dw > this.width) { popup.Left = UI.M.Max(0, this.width - popup.dw) }
+                if (popup.Top + popup.dh > this.height) { popup.Top = UI.M.Max(0, this.height - popup.dh) }
                 var moved = this.layoutMoved
                 this.layoutMoved = false
                 popup.Arrange(this, popup.Left, popup.Top, popup.dw, popup.dh)

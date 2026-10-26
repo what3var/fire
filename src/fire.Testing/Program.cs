@@ -9177,7 +9177,7 @@ string uiDrawScript = """
     ui.Add(lay)
     // styles and templates: an implicit style for labels, a button whose look is a template with a part bound to its text and a hover trigger
     var sty = new UI.Style("Label")
-    sty.Set("brush", new SolidBrush(UI.Color.Rgb(0, 0, 200)))
+    sty.Set("Color", new SolidBrush(UI.Color.Rgb(0, 0, 200)))
     ui.resources.AddStyle(sty)
     var tpl = new UI.ControlTemplate(func (owner) => {
         var tb = new UI.Border()
@@ -9189,9 +9189,9 @@ string uiDrawScript = """
         tb.SetChild(tl)
         return tb
     })
-    tpl.Bind("tl", "text", "text")
-    var tt = new UI.Trigger("hover", true)
-    tt.Set("background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
+    tpl.Bind("tl", "Text", "Text")
+    var tt = new UI.Trigger("Hover", true)
+    tt.Set("Background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
     tpl.AddTrigger(tt)
     var tbtn = new UI.Button("tpl", 200, 100, -1, -1)
     tbtn.Template = tpl
@@ -9853,7 +9853,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         Helper.Build(ui)
         ui.Draw()
         var first = ui.content.children[0]
-        print(first.text + " " + first.ax)
+        print(first.Text + " " + first.ax)
         print(ui.content.children[1].actualWidth)
         """, new[] { "Lokal 10", "32" });
 
@@ -10007,12 +10007,12 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Styles: impliziter Style (Setter, Trigger mit Zurueckstellen, basedOn), expliziter Style, Gueltigkeitsbereich", uiHead + """
         var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
         var baseStyle = new UI.Style("Button")
-        baseStyle.Set("margin", new UI.Thickness(3))
+        baseStyle.Set("Margin", new UI.Thickness(3))
         var st = new UI.Style("Button")
         st.basedOn = baseStyle
-        st.Set("background", red)
-        var tr = new UI.Trigger("hover", true)
-        tr.Set("width", 150)
+        st.Set("Background", red)
+        var tr = new UI.Trigger("Hover", true)
+        tr.Set("Width", 150)
         st.AddTrigger(tr)
         ui.resources.AddStyle(st)
         var sp = new UI.StackPanel(0, 0, 300, 200)
@@ -10030,7 +10030,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         // a style in the panel only applies below it and before that of the root
         var inner = new UI.StackPanel(0, 100, 300, 100)
         var local = new UI.Style("Button")
-        local.Set("margin", new UI.Thickness(7))
+        local.Set("Margin", new UI.Thickness(7))
         inner.Resources().AddStyle(local)
         var b2 = new UI.Button("two", 0, 0, 100, 20)
         inner.Add(b2)
@@ -10038,7 +10038,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         print("inner " + b2.Margin.left + " " + (b2.Background == red) + " " + b2.ry)
         var s2 = new UI.Style()
-        s2.Set("margin", new UI.Thickness(9))
+        s2.Set("Margin", new UI.Thickness(9))
         s2.Set("nichtda", 1)
         b1.Style = s2
         ui.Draw()
@@ -10057,9 +10057,9 @@ string[] uiDrawExpected = Array.Empty<string>();
             bd.SetChild(t)
             return bd
         })
-        tpl.Bind("txt", "text", "text")
-        var tr = new UI.Trigger("pressed", true)
-        tr.Set("background", red, "bd")
+        tpl.Bind("txt", "Text", "Text")
+        var tr = new UI.Trigger("Pressed", true)
+        tr.Set("Background", red, "bd")
         tpl.AddTrigger(tr)
         var sp = new UI.StackPanel(0, 0, 300, 200)
         var b = new UI.Button("hello", 0, 0, -1, -1)
@@ -10087,8 +10087,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         sp.Add(tb)
         sp.Add(l2)
         sp.Add(l3)
-        l2.Bind("text", tb, "text")
-        l3.Bind("text", tb, "text", true)
+        l2.Bind("Text", tb, "Text")
+        l3.Bind("Text", tb, "Text", true)
         ui.Draw()
         print("bindung " + l2.Text + " " + l3.Text)
         tb.Text = "xyz"
@@ -10099,7 +10099,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         print("ziel " + tb.Text + " " + l2.Text)
         var tplStyle = new UI.Style("CheckBox")
-        tplStyle.Set("template", tpl)
+        tplStyle.Set("Template", tpl)
         ui.resources.AddStyle(tplStyle)
         var cb = new UI.CheckBox("kaestchen")
         cb.HorizontalAlign = UI.HAlign.Left
@@ -10279,12 +10279,12 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 80, 36)
         ui.MouseUp(1, 80, 36)
         ui.Draw()
-        print("gewaehlt " + tv.selected.text + " " + tv.TakeChanged())
+        print("gewaehlt " + tv.selected.Text + " " + tv.TakeChanged())
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
-        print("Pfeil ab " + tv.selected.text)
+        print("Pfeil ab " + tv.selected.Text)
         ui.KeyDown(1073741904, 0)
-        print("Links zum Eltern " + tv.selected.text)
+        print("Links zum Eltern " + tv.selected.Text)
         ui.KeyDown(1073741904, 0)
         ui.Draw()
         print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.count)
@@ -10292,7 +10292,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.KeyDown(1073741903, 0)
         print("Rechts klappt auf, dann zum Kind " + d.Expanded + " " + tv.selected.Text)
         ui.KeyDown(1073741898, 0)
-        print("Pos1 " + tv.selected.text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
+        print("Pos1 " + tv.selected.Text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
         ui.KeyDown(13, 0)
         ui.Draw()
         print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.count)
@@ -10569,7 +10569,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         lb.Add("three")
         ui.Add(lb)
         ui.Draw()
-        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].text)
+        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].Text)
         ui.renderer.SetClip(150, 20, 10, 10)
         ui.renderer.FillRect(100, 0, 100, 100, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
         ui.renderer.DrawText(148, 20, "AB", new SolidBrush(UI.Color.Rgb(0, 255, 0)))
@@ -10712,7 +10712,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         string script = Generate("<Window Class=\"Settings\" Title=\"Hi &quot;you&quot;\" Width=\"200\" Height=\"100\"><Button Name=\"ok\" Text=\"OK\" OnClick=\"Save\" Left=\"0x10\"/></Window>");
         CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
             script.Contains("class SettingsBase {") && script.Contains("undefined Save(any sender) { }") && script.Contains("new Framebuffer(200, 100)")
-            && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
+            && script.Contains("UI.Button ok") && script.Contains("e0.Left = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
             Generate("<View Class=\"V\" Base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
 
@@ -10737,7 +10737,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 class MyForm : FormBase {
                     int clicks = 0
                     Go(sender) { this.clicks = this.clicks + 1 }
-                    FieldChanged(sender) { print("text " + sender.text) }
+                    FieldChanged(sender) { print("text " + sender.Text) }
                     FlagChanged(sender) { print("flag " + sender.IsChecked) }
                 }
                 var f = new MyForm()
@@ -10759,7 +10759,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 __TestEvent(3, "h")
                 __TestEvent(3, "i")
                 f.ui.Tick()
-                print("field " + f.field.text)
+                print("field " + f.field.Text)
                 f.flag.Toggle()
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
 
@@ -10791,27 +10791,27 @@ string[] uiDrawExpected = Array.Empty<string>();
                 m.Player = new Player()
                 d.SetDataContext(m)
                 print(d.mirror.Text + " " + d.player.Text + " " + d.once.Text + " " + d.edit.Text + " " + d.shout.Text + " " + d.cb.Text + " " + d.cb.IsChecked + " " + d.empty.Visible + " " + d.empty.Color.Color)
-                d.src.text = "xyz"
-                print(d.mirror.text)
+                d.src.Text = "xyz"
+                print(d.mirror.Text)
                 m.Player.Name = "p2"
-                print(d.player.text + " " + d.edit.text + " " + d.shout.text)
-                d.edit.text = "p3"
-                print(m.Player.Name + " " + d.player.text + " " + d.shout.text)
+                print(d.player.Text + " " + d.edit.Text + " " + d.shout.Text)
+                d.edit.Text = "p3"
+                print(m.Player.Name + " " + d.player.Text + " " + d.shout.Text)
                 d.cb.IsChecked = true
                 print(m.Player.Active)
                 var np = new Player()
                 np.Name = "other"
                 m.Player = np
-                print(d.player.text + " " + d.edit.text)
+                print(d.player.Text + " " + d.edit.Text)
                 np.Name = "other2"
-                print(d.player.text)
-                d.edit.text = "p4"
+                print(d.player.Text)
+                d.edit.Text = "p4"
                 print(np.Name)
                 m.Title = ""
                 print(d.once.Text + "|" + d.cb.Text + "|" + d.empty.Visible)
                 d.SetDataContext(undefined)
                 np.Name = "after"
-                print(d.player.text)
+                print(d.player.Text)
                 """, new[]
                 {
                     "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
@@ -10839,14 +10839,14 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var d = new Prop1Base()
                 var m = new Model()
                 d.SetDataContext(m)
-                print(d.vol.text + " " + d.ed.text + " " + d.sum.text)
+                print(d.vol.Text + " " + d.ed.Text + " " + d.sum.Text)
                 m.Volume = 7
-                print(d.vol.text)
-                d.ed.text = "x"
-                print(m.Label + " " + d.ed.text)
-                print(d.sum.text)
+                print(d.vol.Text)
+                d.ed.Text = "x"
+                print(m.Label + " " + d.ed.Text)
+                print(d.sum.Text)
                 m.Label = "y"
-                print(d.ed.text + " " + d.sum.text)
+                print(d.ed.Text + " " + d.sum.Text)
                 """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
 
             // IntelliSense of the markup editor: `|` is the caret
@@ -11131,7 +11131,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.ui.Draw()
                 app.ui.Draw()
                 print("zeilen " + app.viaView.count + " " + app.direct.count + " " + app.young.count + " erste " + app.viaView.selectedItem)
-                print("zeile " + app.viaView.rowElements[0].children[0].text + " " + app.viaView.rowElements[0].children[1].text + " " + app.direct.rowElements[1].text)
+                print("zeile " + app.viaView.rowElements[0].children[0].Text + " " + app.viaView.rowElements[0].children[1].Text + " " + app.direct.rowElements[1].Text)
                 m.people.Add(new Person("Dave", 22))
                 m.names.Add("three")
                 app.ui.Draw()
@@ -11226,7 +11226,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 a.ui.Tick()
                 a.ui.Tick()
                 print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.count)
-                t.l.text = "changed"
+                t.l.Text = "changed"
                 print("Update " + t.ui.Update())
                 """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
         }

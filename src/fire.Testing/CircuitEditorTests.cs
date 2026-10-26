@@ -336,8 +336,8 @@ static class CircuitEditorTests
             ui.MouseUp(1, P.X(4), P.X(0))
             ui.Update()
             var ed = ui.popups[0]!UI.CircuitElementEditor
-            ed.fields[0].text = "4.7k"
-            ed.nameBox.text = "Rload"
+            ed.fields[0].Text = "4.7k"
+            ed.nameBox.Text = "Rload"
             ed.Accept()
             ui.Update()
             print("editor " + ui.popups.count + " " + s.Find("Rload").Get("resistance") + " " + s.Find("Rload").part!Circuits.Resistor.Resistance)
