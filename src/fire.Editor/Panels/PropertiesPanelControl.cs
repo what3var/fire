@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Shapes;
 using Avalonia.Input;
 using Avalonia.Layout;
@@ -59,16 +60,64 @@ namespace fire.Editor
         void FocusEditor();
     }
 
-    /// <summary>The tool window "Properties": the properties of the selection of the active document, shared by all editors that have one (see <see cref="IPropertyHost"/>).</summary>
+    /// <summary>The tool window "Properties": the properties of the selection of the active document, shared by all editors that have one (see <see cref="IPropertyHost"/>).
+    /// It looks like the property grid of .NET: a table of names and values with lines between the cells, categories that fold, a column border that can be
+    /// dragged, sorting by category or by name, and a description of the selected row at the bottom.</summary>
     public sealed class PropertiesPanelControl : UserControl
     {
-        private readonly StackPanel _rows = new() { Spacing = 4, Margin = new Thickness(8) };
+        private const double RowHeight = 24;
+        private static readonly IBrush GridLine = new SolidColorBrush(Color.FromRgb(0x36, 0x30, 0x3D));
+        private static readonly IBrush CategoryBack = new SolidColorBrush(Color.FromRgb(0x2E, 0x29, 0x34));
+        private static readonly IBrush SelectedBack = new SolidColorBrush(Color.FromArgb(0xC0, EditorTheme.AccentColor.R, EditorTheme.AccentColor.G, EditorTheme.AccentColor.B));
+
+        private readonly TextBlock _title = new() { FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
+        private readonly TextBlock _error = new() { Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(6, 0, 6, 4) };
+        private readonly ToggleButton _byCategory = new() { Content = "▤", IsChecked = true, Padding = new Thickness(6, 1), MinHeight = 0 };
+        private readonly ToggleButton _byName = new() { Content = "A-Z", Padding = new Thickness(6, 1), MinHeight = 0 };
+        private readonly Grid _table = new();
+        private readonly TextBlock _hint = new() { Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8) };
+        private readonly TextBlock _descName = new() { FontWeight = FontWeight.SemiBold };
+        private readonly TextBlock _descText = new() { Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap };
+        private GridLength _nameWidth = new(120);
+        private readonly HashSet<string> _collapsed = new();
+        private readonly Dictionary<string, (Border Name, Control Field, PropertyEntry Entry)> _cells = new();
         private IPropertyHost? _host;
         private PropertySet? _shown;
+        private string? _selected;
 
         public PropertiesPanelControl()
         {
-            Content = new ScrollViewer { Content = _rows, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+            ToolTip.SetTip(_byCategory, "Categorized");
+            ToolTip.SetTip(_byName, "Alphabetical");
+            _byCategory.Click += (_, _) => { _byCategory.IsChecked = true; _byName.IsChecked = false; Rebuild(false); };
+            _byName.Click += (_, _) => { _byName.IsChecked = true; _byCategory.IsChecked = false; Rebuild(false); };
+
+            var tools = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            tools.Children.Add(_byCategory);
+            tools.Children.Add(_byName);
+            var head = new DockPanel { Margin = new Thickness(6, 4) };
+            DockPanel.SetDock(tools, Avalonia.Controls.Dock.Right);
+            head.Children.Add(tools);
+            head.Children.Add(_title);
+            var top = new StackPanel();
+            top.Children.Add(head);
+            top.Children.Add(_error);
+
+            var description = new Border
+            {
+                Background = EditorTheme.DarkSurface, BorderBrush = GridLine, BorderThickness = new Thickness(0, 1, 0, 0), Padding = new Thickness(8, 6), MinHeight = 64,
+                Child = new StackPanel { Spacing = 2, Children = { _descName, _descText } },
+            };
+            var body = new StackPanel { Children = { _hint, new Border { BorderBrush = GridLine, BorderThickness = new Thickness(0, 1, 0, 0), Child = _table } } };
+            var scroll = new ScrollViewer { Content = body, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+
+            var dock = new DockPanel();
+            DockPanel.SetDock(top, Avalonia.Controls.Dock.Top);
+            DockPanel.SetDock(description, Avalonia.Controls.Dock.Bottom);
+            dock.Children.Add(top);
+            dock.Children.Add(description);
+            dock.Children.Add(scroll);
+            Content = dock;
             Show(null, false);
         }
 
@@ -86,38 +135,144 @@ namespace fire.Editor
 
         private void Show(PropertySet? set, bool focusFirst)
         {
-            // the field that has the focus is found again after the rebuild (Tab from one field to the next sets the first one, which rebuilds the list)
-            string? focused = _rows.Children.OfType<Grid>().FirstOrDefault(g => g.Children.Count > 1 && g.Children[1].IsKeyboardFocusWithin)?.Tag as string;
+            if (!ReferenceEquals(set, _shown) && set != null && _shown != null && set.Title != _shown.Title) _selected = null;
             _shown = set;
-            _rows.Children.Clear();
+            Rebuild(focusFirst);
+        }
+
+        private void Rebuild(bool focusFirst)
+        {
+            var set = _shown;
+            // the field that has the focus is found again after the rebuild (Tab from one field to the next sets the first one, which rebuilds the list)
+            string? focused = _cells.FirstOrDefault(c => c.Value.Field.IsKeyboardFocusWithin).Key;
+            _cells.Clear();
+            _table.Children.Clear();
+            _table.RowDefinitions.Clear();
+            _table.ColumnDefinitions = new ColumnDefinitions { new(14, GridUnitType.Pixel), new(_nameWidth.Value, GridUnitType.Pixel), new(5, GridUnitType.Pixel), new(1, GridUnitType.Star) };
+            _error.IsVisible = false;
             if (set == null)
             {
-                _rows.Children.Add(new TextBlock { Text = "Select something in a schematic or put the caret into an element of a UI markup file to see its properties here.", Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap });
+                _title.Text = "";
+                _hint.Text = "Select something in a schematic or put the caret into an element of a UI markup file to see its properties here.";
+                _hint.IsVisible = true;
+                Describe(null);
                 return;
             }
-            if (set.Title != "") _rows.Children.Add(new TextBlock { Text = set.Title, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap });
-            if (!string.IsNullOrEmpty(set.Error)) _rows.Children.Add(new TextBlock { Text = set.Error, Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap });
-            if (set.Entries.Count == 0 && set.Hint != null)
-                _rows.Children.Add(new TextBlock { Text = set.Hint, Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+            _title.Text = set.Title;
+            if (!string.IsNullOrEmpty(set.Error)) { _error.Text = set.Error; _error.IsVisible = true; }
+            _hint.Text = set.Hint ?? "";
+            _hint.IsVisible = set.Entries.Count == 0 && set.Hint != null;
 
+            bool categorized = _byCategory.IsChecked == true;
+            var entries = categorized ? set.Entries.ToList() : set.Entries.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase).ToList();
             string? category = null;
+            int row = 0;
             Control? first = null, again = null;
-            foreach (var entry in set.Entries)
+            foreach (var entry in entries)
             {
-                if (entry.Category != (category ?? ""))
+                if (categorized && entry.Category != "" && entry.Category != category)
                 {
                     category = entry.Category;
-                    _rows.Children.Add(new TextBlock { Text = category, Foreground = EditorTheme.TextDim, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 8, 0, 0) });
+                    AddCategory(row++, category);
                 }
-                category ??= entry.Category;
+                if (categorized && entry.Category != "" && _collapsed.Contains(entry.Category)) continue;
                 var field = Field(set, entry);
-                var row = Row(entry, field);
-                _rows.Children.Add(row);
+                AddRow(row++, entry, field);
                 if (first == null && field is TextBox) first = field;
                 if (focused != null && entry.Name == focused) again = field;
             }
+            if (row > 0)
+            {
+                var splitter = new GridSplitter { Background = Brushes.Transparent, ResizeDirection = GridResizeDirection.Columns, Width = 5 };
+                Grid.SetColumn(splitter, 2);
+                Grid.SetRowSpan(splitter, row);
+                splitter.DragCompleted += (_, _) => _nameWidth = new GridLength(Math.Max(40, _table.ColumnDefinitions[1].ActualWidth));
+                _table.Children.Add(splitter);
+            }
+            if (_selected != null && !_cells.ContainsKey(_selected)) _selected = null;
+            Highlight();
             var target = focusFirst ? first : again;
             if (target != null) Avalonia.Threading.Dispatcher.UIThread.Post(() => { target.Focus(); if (target is TextBox t) t.SelectAll(); });
+        }
+
+        private void AddCategory(int row, string name)
+        {
+            _table.RowDefinitions.Add(new RowDefinition(RowHeight, GridUnitType.Pixel));
+            bool open = !_collapsed.Contains(name);
+            var line = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0) };
+            line.Children.Add(new TextBlock { Text = open ? "▾" : "▸", Foreground = EditorTheme.TextDim, Width = 10 });
+            line.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold });
+            var cell = new Border { Background = CategoryBack, BorderBrush = GridLine, BorderThickness = new Thickness(0, 0, 0, 1), Child = line, Cursor = new Cursor(StandardCursorType.Hand) };
+            cell.PointerPressed += (_, e) =>
+            {
+                if (!_collapsed.Remove(name)) _collapsed.Add(name);
+                e.Handled = true;
+                Rebuild(false);
+            };
+            Grid.SetRow(cell, row);
+            Grid.SetColumnSpan(cell, 4);
+            _table.Children.Add(cell);
+        }
+
+        private void AddRow(int row, PropertyEntry entry, Control field)
+        {
+            _table.RowDefinitions.Add(new RowDefinition(RowHeight, GridUnitType.Pixel));
+            var gutter = new Border { Background = CategoryBack };
+            Grid.SetRow(gutter, row);
+            _table.Children.Add(gutter);
+
+            var text = new TextBlock
+            {
+                Text = entry.Name, Margin = new Thickness(4, 0), TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center,
+                Foreground = entry.IsSet ? EditorTheme.Text : EditorTheme.TextDim,
+            };
+            var name = new Border { BorderBrush = GridLine, BorderThickness = new Thickness(0, 0, 1, 1), Background = Brushes.Transparent, Child = text };
+            name.PointerPressed += (_, e) => { Select(entry.Name); field.Focus(); e.Handled = true; };
+            Grid.SetRow(name, row);
+            Grid.SetColumn(name, 1);
+            _table.Children.Add(name);
+
+            var value = new Border { BorderBrush = GridLine, BorderThickness = new Thickness(0, 0, 0, 1), Child = field };
+            Grid.SetRow(value, row);
+            Grid.SetColumn(value, 2);
+            Grid.SetColumnSpan(value, 2);
+            value.Margin = new Thickness(5, 0, 0, 0);
+            _table.Children.Add(value);
+
+            if (entry.Tip != null) ToolTip.SetTip(text, entry.Tip);
+            field.GotFocus += (_, _) => Select(entry.Name);
+            _cells[entry.Name] = (name, field, entry);
+        }
+
+        private void Select(string name)
+        {
+            _selected = name;
+            Highlight();
+        }
+
+        private void Highlight()
+        {
+            foreach (var (key, cell) in _cells)
+            {
+                bool on = key == _selected;
+                cell.Name.Background = on ? SelectedBack : Brushes.Transparent;
+                if (cell.Name.Child is TextBlock t) t.Foreground = on ? Brushes.White : cell.Entry.IsSet ? EditorTheme.Text : EditorTheme.TextDim;
+            }
+            Describe(_selected != null && _cells.TryGetValue(_selected, out var c) ? c.Entry : null);
+        }
+
+        private void Describe(PropertyEntry? entry)
+        {
+            if (entry == null)
+            {
+                _descName.Text = _shown?.Title ?? "";
+                _descText.Text = _shown == null ? "" : "Select a row to see what it means.";
+                return;
+            }
+            _descName.Text = entry.Name + (entry.Unit is { Length: > 0 } u ? " (" + u + ")" : "");
+            var text = entry.Tip ?? "";
+            if (!entry.IsSet && entry.Value != "") text = (text == "" ? "" : text + "\n") + "Not set; the default is " + entry.Value + ".";
+            _descText.Text = text;
         }
 
         private void Commit(PropertySet set, PropertyEntry entry, string value)
@@ -133,7 +288,7 @@ namespace fire.Editor
             {
                 case PropertyEditKind.Bool:
                 {
-                    var check = new CheckBox { IsChecked = entry.Value == "true" };
+                    var check = new CheckBox { IsChecked = entry.Value == "true", Margin = new Thickness(4, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Center };
                     check.Click += (_, _) => Commit(set, entry, check.IsChecked == true ? "true" : "false");
                     return check;
                 }
@@ -143,7 +298,11 @@ namespace fire.Editor
                     var options = (entry.Choices ?? Array.Empty<string>()).ToList();
                     if (entry.IsSet && !options.Contains(entry.Value)) options.Insert(0, entry.Value);   // a value the list does not know (a binding, an old name)
                     if (entry.CanClear) options.Insert(0, unset);
-                    var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+                    var combo = new ComboBox
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch, MinHeight = 0, Padding = new Thickness(4, 0),
+                        BorderThickness = new Thickness(0), Background = Brushes.Transparent, CornerRadius = new CornerRadius(0), VerticalContentAlignment = VerticalAlignment.Center,
+                    };
                     foreach (var o in options) combo.Items.Add(o);
                     combo.SelectedItem = entry.IsSet ? entry.Value : entry.CanClear ? unset : entry.Value;
                     combo.SelectionChanged += (_, _) =>
@@ -154,12 +313,17 @@ namespace fire.Editor
                 }
                 default:
                 {
-                    var box = new TextBox { Text = entry.IsSet ? entry.Value : "", Watermark = entry.IsSet || entry.Value == "" ? null : entry.Value };
+                    var box = new TextBox
+                    {
+                        Text = entry.IsSet ? entry.Value : "", Watermark = entry.IsSet || entry.Value == "" ? null : entry.Value,
+                        BorderThickness = new Thickness(0), Background = Brushes.Transparent, MinHeight = 0, Padding = new Thickness(4, 0), CornerRadius = new CornerRadius(0),
+                        VerticalContentAlignment = VerticalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch,
+                    };
                     if (entry.Unit is { Length: > 0 } unit)
                         box.InnerRightContent = new TextBlock { Text = unit, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0) };
                     if (entry.Kind == PropertyEditKind.Color)
                     {
-                        var swatch = new Rectangle { Width = 12, Height = 12, Margin = new Thickness(6, 0, 0, 0), Stroke = EditorTheme.Border, StrokeThickness = 1, VerticalAlignment = VerticalAlignment.Center };
+                        var swatch = new Rectangle { Width = 12, Height = 12, Margin = new Thickness(4, 0, 0, 0), Stroke = EditorTheme.Border, StrokeThickness = 1, VerticalAlignment = VerticalAlignment.Center };
                         void Paint() => swatch.Fill = Color.TryParse(box.Text ?? "", out var c) ? new SolidColorBrush(c) : Brushes.Transparent;
                         Paint();
                         box.TextChanged += (_, _) => Paint();
@@ -174,21 +338,6 @@ namespace fire.Editor
                     return box;
                 }
             }
-        }
-
-        private static Control Row(PropertyEntry entry, Control field)
-        {
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*"), Tag = entry.Name };
-            var text = new TextBlock
-            {
-                Text = entry.Name, MinWidth = 90, MaxWidth = 140, Margin = new Thickness(0, 0, 8, 0), TextTrimming = TextTrimming.CharacterEllipsis,
-                Foreground = entry.IsSet ? EditorTheme.Text : EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center,
-            };
-            if (entry.Tip != null) { ToolTip.SetTip(text, entry.Tip); ToolTip.SetTip(field, entry.Tip); }
-            Grid.SetColumn(field, 1);
-            grid.Children.Add(text);
-            grid.Children.Add(field);
-            return grid;
         }
     }
 }

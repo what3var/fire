@@ -609,7 +609,8 @@ spark opens `.biscuit` files in its circuit editor (Add > New > Circuit makes on
 so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`, each with a small picture of its
 symbol) and the tools: run/pause, reset, speed, undo/redo, rotate, flip, duplicate, delete, wire, fit. The properties of the selected element (name, values with
 units, models of the library, choices) are edited in the tool window **Properties** of spark (View > Properties; by default under the Solution Explorer), the same
-window the UI markup editor uses; double click or Enter on an element puts the focus into its first field.
+window the UI markup editor uses - a table like the property grid of .NET: names and values with lines between the cells, categories that fold, sorted by
+category or by name, a column border to drag and a description of the selected row; double click or Enter on an element puts the focus into its first field.
 
 **Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
