@@ -632,6 +632,9 @@ namespace fire.UI.Markup
             code.Line("// sets the object the bindings read from (and write to) and connects them; null disconnects");
             code.Line("undefined SetDataContext(any context) {");
             code.Line("    this.fxUnbindAll()");
+            code.Line("    // a context handed to the call (`SetDataContext(new Model())`) stays alive: the view keeps it, like List.Add");
+            code.Line("    if (context is of class)");
+            code.Line("        try context.TakeTo(this)");
             code.Line("    this.dataContext = context");
             code.Line("    this.fxBindAll()");
             code.Line("}");

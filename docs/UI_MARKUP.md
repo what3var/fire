@@ -44,6 +44,9 @@ window.SetDataContext(new Person())
 window.Run()
 ```
 
+`SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else stays theirs and
+the window only points to it.
+
 In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it (docs/PROJECTS.md), and the code-behind is simply the `.fire` file of the
 same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
 first row **Designer** opens the markup editor (like a double click on the markup itself), below it is the code-behind.
