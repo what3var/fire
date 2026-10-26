@@ -46,7 +46,8 @@ namespace fire.UI.Markup
             ["And"] = "Circuits.Gate", ["Nand"] = "Circuits.Gate", ["Or"] = "Circuits.Gate", ["Nor"] = "Circuits.Gate", ["Xor"] = "Circuits.Gate", ["Xnor"] = "Circuits.Gate",
             ["Not"] = "Circuits.Gate", ["Buffer"] = "Circuits.Gate", ["DFlipFlop"] = "Circuits.FlipFlop", ["SRLatch"] = "Circuits.SRLatch", ["Counter"] = "Circuits.Counter",
             ["Timer555"] = "Circuits.Timer555", ["GpioLine"] = "Circuits.GpioLine", ["I2cAdc"] = "Circuits.I2cAdc", ["I2cDac"] = "Circuits.I2cDac",
-            ["SpiShiftOut"] = "Circuits.SpiShiftOut", ["SpiShiftIn"] = "Circuits.SpiShiftIn", ["LogicOutput"] = "Circuits.Element", ["Probe"] = "Circuits.Element", ["Scope"] = "Circuits.Scope",
+            ["Potentiometer"] = "Circuits.Potentiometer", ["Transformer"] = "Circuits.Transformer", ["Relay"] = "Circuits.Relay", ["JKFlipFlop"] = "Circuits.JKFlipFlop",
+            ["SchmittTrigger"] = "Circuits.SchmittTrigger", ["SpiShiftOut"] = "Circuits.SpiShiftOut", ["SpiShiftIn"] = "Circuits.SpiShiftIn", ["LogicOutput"] = "Circuits.Element", ["Probe"] = "Circuits.Element", ["Scope"] = "Circuits.Scope",
             ["Label"] = "Circuits.Element", ["Pin"] = "Circuits.Element", ["Text"] = "Circuits.Element",
         };
 

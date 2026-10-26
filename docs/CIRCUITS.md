@@ -58,6 +58,8 @@ methods ending in `Raw` give plain numbers (volts, amperes, seconds).
 | `CurrentSource(i)` | drives `i` from `A` through itself to `B`; `Level` |
 | `Switch(closed = false)` | `Closed`, `Toggle()`; closed it is a wire (1 µOhm), open it is not there |
 | `Ground()` | ties its port `G` to ground |
+| `Potentiometer(r, position = 0.5)` | ports `A`, `B`, `Wiper`; `Resistance`, `Position` (0 at `A`, 1 at `B`) |
+| `Transformer(inductance = 4H, ratio = 1, coupling = 0.999)` | ports `P1`, `P2` (primary), `S1`, `S2` (secondary); two coupled inductors, the secondary has `ratio`² times the inductance of the primary; `SecondaryCurrent` |
 
 Every two-terminal part has `Voltage` (from `A` to `B`), `Current` (from `A` through the part to `B`) and `PowerRaw()`.
 
@@ -79,6 +81,8 @@ factorization run again with the same list of operations each iteration).
 | `LogicInput(high = false, supply = 5V)` | `A`, `B` | a source of 0 V or `supply`: `High`, `Toggle()` |
 | `Comparator(supply = 5V)` | `Plus`, `Minus`, `Out` | high while Plus is above Minus (analog inputs, logic output) |
 | `SRLatch(supply = 5V, withReset = false)` | `S`, `R`, `Q`, `NotQ`, `Reset` | S sets, R clears (R wins), Reset low clears |
+| `JKFlipFlop(supply = 5V, fallingEdge = false, withReset = false)` | `J`, `Clock`, `K`, `Q`, `NotQ`, `Reset` | on the clock edge: J sets, K clears, both toggle; Reset high clears |
+| `SchmittTrigger(lower = 1.66V, upper = 3.33V, supply = 5V, inverting = false)` | `In`, `Out` | goes high above `upper` and low again below `lower` (or the other way round when inverting) |
 
 The logic parts read their inputs after every step (high above half the supply) and drive their outputs in the next one through a small resistance
 (10 Ohm), like the gates of Falstad's simulator: a gate delays by one time step.
@@ -255,6 +259,7 @@ ICs are circuits of the package made of its parts - subcircuits to use like any 
 |---|---|---|
 | `Timer555(supply = 5V)` | `Trigger`, `Threshold`, `Discharge`, `Output`, `Control`, `Reset` | divider, two comparators, SR latch, discharge transistor; powered inside at `supply` |
 | `Counter(bits = 4, supply = 5V)` | `Clock`, `Q(i)` | a ripple counter of D flip-flops; `Count` |
+| `Relay(inductance = 0.2H, coilResistance = 20, onCurrent = 20mA, offCurrent = 15mA, onResistance = 0.05)` | `Coil1`, `Coil2`, `Common`, `NormallyClosed`, `NormallyOpen` | a coil (inductor and resistor) and a changeover contact: it pulls in when the coil current reaches `onCurrent` and drops out below `offCurrent`; `Energized`, `CoilCurrent` |
 
 A 555 as an astable multivibrator with RA = 1 kOhm, RB = 10 kOhm and C = 100 nF runs at 666 Hz (the formula 1.44 / ((RA + 2 RB) C) gives 686 Hz:
 the comparators react one time step late and the discharge transistor has a resistance), the capacitor swings between 1/3 and 2/3 of the supply.
@@ -492,12 +497,16 @@ print(s.ToText())                      // the schematic as the text of a .biscui
 - **Elements:** `Circuits.Symbols.Catalog()` lists them with their properties (`category|type|name:kind=default;...`):
   Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
   a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
-  And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, Counter, Timer555, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
+  And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
+  `inverting`), Counter, Timer555, Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end), LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
   voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
   emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart
-  - all as in Falstad's simulator (a unit of the grid is 8 of its pixels). Chips (555, flip-flops, counter) are boxes with their pins down the left and right side.
+  - all as in Falstad's simulator (a unit of the grid is 8 of its pixels). Chips (555, flip-flops, counter) are boxes with their pins down the left and right side
+  (`spacing` units apart). A potentiometer has its ends on the axis and the wiper at the middle, as far to the side as the second point says; a transformer has
+  its primary along the left and the secondary along the right side, `width` units long; a relay has the common contact at the first point, the two
+  contacts 2 units to the sides of the second and the coil below them.
 - **Values** are numbers with an SI prefix and a unit after it (`4.7k`, `10uF`, `2.2µH`, `1meg`) or expressions of the parameters of the circuit (`2*R + 1k`): they are
   worked out again when a parameter changes.
 - `s.Move(e, x1, y1, x2, y2)`, `s.Set(e, key, value)`, `s.Rename(e, name)`, `s.Remove(e)`, `s.Clear()`, `s.Find(name)`, `s.PartOf(name)`; an element tells `PinCount`,
@@ -564,8 +573,9 @@ window the UI markup editor uses; double click or Enter on an element puts the f
 
 **Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
-LEDs, transistors, MOSFETs, op amps, comparators, gates, logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got
-(transformers, flip-flops and the 555 of Falstad's chip layout, JFETs, ...) is listed. Of the 373 example circuits of the simulator, 194 come over completely and run.
+LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), logic inputs and
+outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the 555 of Falstad's chip layout, JFETs, saturation
+of a transformer, ...) is listed. Of the 335 example circuits in text form, 176 come over completely and run.
 `fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
 
 ## Coming next

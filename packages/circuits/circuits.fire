@@ -100,6 +100,13 @@ namespace Circuits {
             if (otherOwner != undefined) { otherOwner.Invalidate() }
             var a = this.Root()
             var b = other.Root()
+            // the port of a circuit stays the root of its node: a drawing connects such ports again (it drops their links), and what the circuit
+            // connected inside must stay hanging on them
+            if (b.part is of Circuit && !(a.part is of Circuit)) {
+                var swap = a
+                a = b
+                b = swap
+            }
             if (a != b) {
                 b.link = a
                 if (a.v == 0.0) { a.v = b.v }
@@ -1186,6 +1193,286 @@ namespace Circuits {
         }
     }
 
+    /// <summary>A potentiometer: a resistance between A and B with a wiper on it. `position` 0 puts the wiper at A, 1 at B (the resistance from A to the
+    /// wiper is position * resistance).</summary>
+    class Potentiometer : Part {
+        float r
+        float position
+
+        construct(float resistance : any = 1000, float position = 0.5) : base("POT") {
+            this.r = Circuits.Units.Ohms(resistance)
+            this.position = Circuits.Potentiometer.Clamp(position)
+            this.AddPort("a")
+            this.AddPort("b")
+            this.AddPort("wiper")
+        }
+
+        Port A { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
+        Port Wiper { get { return this.ports[2] } }
+
+        static float Clamp(float p) {
+            if (p < 0.0) { return 0.0 }
+            if (p > 1.0) { return 1.0 }
+            return p
+        }
+
+        float:any Resistance {
+            get { return this.r * 1Ohm }
+            set {
+                this.r = Circuits.Units.Ohms(value)
+                this.Invalidate()
+            }
+        }
+
+        /// <summary>Where the wiper is: 0 at A, 1 at B.</summary>
+        float Position {
+            get { return this.position }
+            set {
+                var p = Circuits.Potentiometer.Clamp(value)
+                if (p == this.position) { return }
+                this.position = p
+                this.Invalidate()
+            }
+        }
+
+        // the two halves (never quite zero: a wire would short the node)
+        float Upper() { return Math.Max(this.r * this.position, 0.001) }
+        float Lower() { return Math.Max(this.r * (1.0 - this.position), 0.001) }
+
+        bool Compile(Circuits.Solver solver) {
+            solver.Conductance(this.A, this.Wiper, 1.0 / this.Upper())
+            solver.Conductance(this.Wiper, this.B, 1.0 / this.Lower())
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.Wiper), 1.0 / this.Upper()) }
+        /// <summary>The current from A into the wiper.</summary>
+        float CurrentRaw() { return (this.A.Raw() - this.Wiper.Raw()) / this.Upper() }
+        /// <summary>The current from the wiper to B.</summary>
+        float:A LowerCurrent { get { return (this.Wiper.Raw() - this.B.Raw()) / this.Lower() * 1A } }
+    }
+
+    /// <summary>A transformer: two coupled windings, the primary from P1 to P2 (inductance `inductance`) and the secondary from S1 to S2 (`inductance` *
+    /// `ratio`^2, so the voltage is about `ratio` times the primary's). `coupling` below 1 (0.999 is a good transformer); the dots are at P1 and S1.</summary>
+    class Transformer : Part {
+        float l1
+        float ratio
+        float k
+        int index = -1
+        float i1 = 0.0
+        float i2 = 0.0
+        float v1 = 0.0
+        float v2 = 0.0
+
+        construct(float inductance : any = 4, float ratio = 1.0, float coupling = 0.999) : base("T") {
+            this.l1 = Circuits.Units.Henries(inductance)
+            if (ratio <= 0.0) { throw new ArgumentException("The ratio of a transformer must be more than 0.") }
+            this.ratio = ratio
+            this.k = coupling
+            this.AddPort("p1")
+            this.AddPort("p2")
+            this.AddPort("s1")
+            this.AddPort("s2")
+        }
+
+        Port P1 { get { return this.ports[0] } }
+        Port P2 { get { return this.ports[1] } }
+        Port S1 { get { return this.ports[2] } }
+        Port S2 { get { return this.ports[3] } }
+
+        float:any Inductance {
+            get { return this.l1 * 1H }
+            set {
+                this.l1 = Circuits.Units.Henries(value)
+                this.Invalidate()
+            }
+        }
+        /// <summary>Secondary to primary turns (voltage) ratio.</summary>
+        float Ratio {
+            get { return this.ratio }
+            set {
+                this.ratio = value
+                this.Invalidate()
+            }
+        }
+        float Coupling {
+            get { return this.k }
+            set {
+                this.k = value
+                this.Invalidate()
+            }
+        }
+
+        undefined Reset() {
+            this.i1 = 0.0
+            this.i2 = 0.0
+            this.v1 = 0.0
+            this.v2 = 0.0
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddCoupled(this.P1, this.P2, this.S1, this.S2, this.l1, this.l1 * this.ratio * this.ratio, this.k, this.i1, this.i2, this.v1, this.v2)
+            return true
+        }
+        undefined Save(Circuits.Solver solver) {
+            this.v1 = solver.State(2, this.index, 0)
+            this.i1 = solver.State(2, this.index, 1)
+            this.v2 = solver.State(2, this.index, 2)
+            this.i2 = solver.State(2, this.index, 3)
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 7, this.index, 0, 0.0) }
+
+        float Winding(int what, float saved) {
+            var plan = this.Plan()
+            if (plan == undefined) { return saved }
+            return plan.State(2, this.index, what)
+        }
+        /// <summary>The current of the primary (from P1 through the winding to P2).</summary>
+        float CurrentRaw() { return this.Winding(1, this.i1) }
+        /// <summary>The current of the secondary (from S1 through the winding to S2).</summary>
+        float:A SecondaryCurrent { get { return this.Winding(3, this.i2) * 1A } }
+    }
+
+    /// <summary>A JK flip-flop: on the rising edge of Clock (the falling one with `fallingEdge`) J and K high toggle it, J sets it, K clears it. With
+    /// `withReset` a high Reset clears it at any time.</summary>
+    class JKFlipFlop : Part {
+        float supply
+        float rout
+        bool falling
+        bool withReset
+        int index = -1
+
+        construct(float supply : any = 5, bool fallingEdge = false, bool withReset = false, float outputResistance : any = 10) : base("JK") {
+            this.supply = Circuits.Units.Volts(supply)
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            this.falling = fallingEdge
+            this.withReset = withReset
+            this.AddPort("j")
+            this.AddPort("clk")
+            this.AddPort("k")
+            this.AddPort("q")
+            this.AddPort("nq")
+            this.AddPort("reset")
+        }
+
+        Port J { get { return this.ports[0] } }
+        Port Clock { get { return this.ports[1] } }
+        Port K { get { return this.ports[2] } }
+        Port Q { get { return this.ports[3] } }
+        Port NotQ { get { return this.ports[4] } }
+        Port Reset { get { return this.ports[5] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var count = 3
+            if (this.withReset) { count = 4 }
+            var nodes = new int[count]
+            nodes[0] = solver.Node(this.J)
+            nodes[1] = solver.Node(this.Clock)
+            nodes[2] = solver.Node(this.K)
+            if (this.withReset) { nodes[3] = solver.Node(this.Reset) }
+            this.index = solver.AddGate(11, nodes, solver.Node(this.Q), solver.Node(this.NotQ), this.supply, this.supply / 2, this.rout)
+            solver.GateExtra(this.index, 0.0, this.falling)
+            return true
+        }
+
+        bool State {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.GateState(this.index)
+            }
+        }
+    }
+
+    /// <summary>A Schmitt trigger: Out goes high (`supply`) when In rises above `upper` and low when it falls below `lower`; in between it keeps its state.
+    /// `inverting` swaps high and low.</summary>
+    class SchmittTrigger : Part {
+        float lower
+        float upper
+        float supply
+        float rout
+        bool inverting
+        int index = -1
+
+        construct(float lower : any = 1.66, float upper : any = 3.33, float supply : any = 5, bool inverting = false, float outputResistance : any = 10) : base("ST") {
+            this.lower = Circuits.Units.Volts(lower)
+            this.upper = Circuits.Units.Volts(upper)
+            if (this.lower > this.upper) { throw new ArgumentException("The lower threshold of a Schmitt trigger must not be above the upper one.") }
+            this.supply = Circuits.Units.Volts(supply)
+            this.inverting = inverting
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            this.AddPort("in")
+            this.AddPort("out")
+        }
+
+        Port In { get { return this.ports[0] } }
+        Port Out { get { return this.ports[1] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var nodes = new int[1]
+            nodes[0] = solver.Node(this.In)
+            var kind = 12
+            if (this.inverting) { kind = 13 }
+            this.index = solver.AddGate(kind, nodes, solver.Node(this.Out), -1, this.supply, this.upper, this.rout)
+            solver.GateExtra(this.index, this.lower, false)
+            return true
+        }
+
+        bool State {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.GateState(this.index)
+            }
+        }
+    }
+
+    /// <summary>The switch of a relay: Common is connected to NormallyClosed while the coil current is below `onCurrent`, to NormallyOpen once it reaches
+    /// it, and back when it falls below `offCurrent`. It checks the coil after every step (the circuit then steps in fire) and compiles the circuit
+    /// again when it switches.</summary>
+    class RelayContact : Part {
+        Circuits.Inductor coil
+        float onCurrent
+        float offCurrent
+        float ron
+        bool pulled = false
+
+        construct(Circuits.Inductor coil, float onCurrent, float offCurrent, float onResistance) : base("K") {
+            this.coil = coil
+            this.pulledCurrent = onCurrent
+            this.offCurrent = offCurrent
+            this.ron = onResistance
+            this.AddPort("com")
+            this.AddPort("nc")
+            this.AddPort("no")
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            var to = this.ports[1]
+            if (this.pulled) { to = this.ports[2] }
+            solver.Conductance(this.ports[0], to, 1.0 / this.ron)
+            this.commitsInFire = true
+            return false
+        }
+        undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
+        undefined Commit(Circuits.Solver solver) {
+            var i = Math.Abs(this.coil.CurrentRaw())
+            if (!this.pulled && i >= this.pulledCurrent) {
+                this.pulled = true
+                this.InvalidateSoon()
+            } else if (this.pulled && i < this.offCurrent) {
+                this.pulled = false
+                this.InvalidateSoon()
+            }
+        }
+        undefined Reset() { this.pulled = false }
+        float CurrentRaw() {
+            var to = this.ports[1]
+            if (this.pulled) { to = this.ports[2] }
+            return (this.ports[0].Raw() - to.Raw()) / this.ron
+        }
+    }
+
     /// <summary>A logic input: a voltage source that is 0 V or `supply` (High, Toggle()).</summary>
     class LogicInput : VoltageSource {
         float supply
@@ -1785,6 +2072,12 @@ namespace Circuits {
             return __CirAddGate(this.handle, kind, inputs, out, outNot, high, threshold, rout)
         }
         bool GateState(int index) { return __CirGateState(this.handle, index) }
+        undefined GateExtra(int index, float low, bool falling) { __CirGateExtra(this.handle, index, low, falling) }
+        int AddCoupled(Port a1, Port b1, Port a2, Port b2, float l1, float l2, float k, float i1, float i2, float v1, float v2) {
+            var index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
+            if (index < 0) { throw new ArgumentException(this.Error()) }
+            return index
+        }
         bool Compile(float time) { return __CirCompile(this.handle, time) }
         string Error() { return __CirLastError() }
         undefined Begin() { __CirBegin(this.handle) }
@@ -1887,6 +2180,45 @@ namespace Circuits {
                 return n
             }
         }
+    }
+
+    /// <summary>A relay: a coil (inductance and resistance in series, from Coil1 to Coil2) and a changeover contact (Common, NormallyClosed,
+    /// NormallyOpen). The contact switches over when the coil current reaches `onCurrent` and back below `offCurrent` (default 20 mA and 15 mA).</summary>
+    class Relay : Circuit {
+        Circuits.Inductor coil
+        Circuits.RelayContact contact
+
+        construct(float inductance : any = 0.2, float coilResistance : any = 20, float onCurrent : any = 0.02, float offCurrent : any = 0.015,
+                  float onResistance : any = 0.05) : base("relay") {
+            var c1 = this.AddPort("coil1")
+            var c2 = this.AddPort("coil2")
+            var com = this.AddPort("com")
+            var nc = this.AddPort("nc")
+            var no = this.AddPort("no")
+            var l = this.Add(new Circuits.Inductor(inductance))
+            var r = this.Add(new Circuits.Resistor(coilResistance))
+            c1.Connect(l.A)
+            l.B.Connect(r.A)
+            r.B.Connect(c2)
+            this.coil = l
+            var k = this.Add(new Circuits.RelayContact(l, Circuits.Units.Amps(onCurrent), Circuits.Units.Amps(offCurrent), Circuits.Units.Ohms(onResistance)))
+            com.Connect(k.ports[0])
+            nc.Connect(k.ports[1])
+            no.Connect(k.ports[2])
+            this.contact = k
+        }
+
+        Port Coil1 { get { return this.ports[0] } }
+        Port Coil2 { get { return this.ports[1] } }
+        Port Common { get { return this.ports[2] } }
+        Port NormallyClosed { get { return this.ports[3] } }
+        Port NormallyOpen { get { return this.ports[4] } }
+
+        /// <summary>Is the relay pulled in (Common on NormallyOpen)?</summary>
+        bool Energized { get { return this.contact.pulled } }
+        /// <summary>The current through the coil.</summary>
+        float:A CoilCurrent { get { return this.coil.CurrentRaw() * 1A } }
+        float CurrentRaw() { return this.coil.CurrentRaw() }
     }
 
     /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.

@@ -331,7 +331,7 @@ namespace UI {
                 minY = UI.M.Min(minY, UI.M.Min(e.y1, e.y2) - 3)
                 maxX = UI.M.Max(maxX, UI.M.Max(e.x1, e.x2) + 2)
                 maxY = UI.M.Max(maxY, UI.M.Max(e.y1, e.y2) + 3)
-                if (Circuits.Symbols.IsChip(e.type)) { maxY = UI.M.Max(maxY, e.y1 + 2 * e.pins.count / 4 + 4) }
+                if (Circuits.Symbols.IsChip(e.type)) { maxY = UI.M.Max(maxY, e.y1 + Circuits.Symbols.ChipSpacing(e) * Circuits.Symbols.ChipRows(e) + 3) }
             }
             var w = maxX - minX
             var h = maxY - minY
@@ -399,13 +399,16 @@ namespace UI {
 
         // ---- the frame of an element ----
 
-        undefined Frame(Circuits.Element e) {
-            float dx = e.x2 - e.x1
-            float dy = e.y2 - e.y1
+        undefined Frame(Circuits.Element e) { this.FrameAt(e.x1, e.y1, e.x2, e.y2) }
+
+        // the frame from (x1, y1) to (x2, y2) on the grid
+        undefined FrameAt(int x1, int y1, int x2, int y2) {
+            float dx = x2 - x1
+            float dy = y2 - y1
             var len = Math.Sqrt(dx * dx + dy * dy)
             this.flen = len
-            this.fx = this.ax + this.offsetX + e.x1 * this.scale
-            this.fy = this.ay + this.offsetY + e.y1 * this.scale
+            this.fx = this.ax + this.offsetX + x1 * this.scale
+            this.fy = this.ay + this.offsetY + y1 * this.scale
             if (len > 0.0) {
                 this.fdx = dx / len * this.scale
                 this.fdy = dy / len * this.scale
@@ -813,6 +816,26 @@ namespace UI {
                 this.DrawGate(root, e, L)
             } else if (Circuits.Symbols.IsChip(t)) {
                 this.DrawChip(root, e)
+            } else if (t == "Potentiometer") {
+                this.DrawPotentiometer(root, e)
+            } else if (t == "Transformer") {
+                this.DrawTransformer(root, e)
+            } else if (t == "Relay") {
+                this.DrawRelay(root, e)
+            } else if (t == "SchmittTrigger") {
+                var vi = e.PinVoltage(0)
+                var vo2 = e.PinVoltage(1)
+                this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, this.VoltageColor(vi))
+                this.Seg(root, m + 1.5, 0.0, L, 0.0, this.VoltageColor(vo2))
+                this.Seg(root, m - 1.5, -1.5, m - 1.5, 1.5, white)
+                this.Seg(root, m - 1.5, -1.5, m + 1.2, 0.0, white)
+                this.Seg(root, m - 1.5, 1.5, m + 1.2, 0.0, white)
+                if (e.Flag("inverting")) { this.Arc(root, m + 1.5, 0.0, 0.3, white) }
+                // the hysteresis loop
+                this.Seg(root, m - 1.1, 0.4, m - 0.1, 0.4, white)
+                this.Seg(root, m - 0.5, -0.4, m + 0.5, -0.4, white)
+                this.Seg(root, m - 0.5, 0.4, m - 0.5, -0.4, white)
+                this.Seg(root, m - 0.1, 0.4, m - 0.1, -0.4, white)
             } else if (t == "Formula") {
                 this.Seg(root, 0.0, 0.0, m - 2.0, 0.0, c0)
                 this.Seg(root, m + 2.0, 0.0, L, 0.0, c1)
@@ -1045,24 +1068,31 @@ namespace UI {
             var right = Circuits.Symbols.Names(sides[1])
             var width = Circuits.Symbols.ChipWidth(e)
             var rows = UI.M.Max(left.length, right.length)
+            var sp = Circuits.Symbols.ChipSpacing(e)
             var white = UI.Color.Rgb(220, 220, 220)
             var x0 = this.SX(e.x1 + 1.5)
             var y0 = this.SY(e.y1 - 1.5)
             var x1 = this.SX(e.x1 + width - 1.5)
-            var y1 = this.SY(e.y1 + 2 * (rows - 1) + 1.5)
+            var y1 = this.SY(e.y1 + sp * (rows - 1) + 1.5)
             this.thin.Color = white
             root.renderer.DrawRect(x0, y0, x1 - x0, y1 - y0, this.thin)
             this.thin.Color = white
+            // (the pins skip the gaps: their numbers count only the names)
+            var pin = 0
             for (int i = 0; i < left.length; i++) {
-                var py = e.y1 + 2 * i
-                this.pen.Color = this.VoltageColor(e.PinVoltage(i))
+                if (left[i] == "") { continue }
+                var py = e.y1 + sp * i
+                this.pen.Color = this.VoltageColor(e.PinVoltage(pin))
+                pin = pin + 1
                 root.renderer.DrawLine(this.SX(e.x1), this.SY(py), x0, this.SY(py), this.pen)
                 this.textBrush.Color = UI.Color.Rgb(170, 170, 170)
                 this.DrawString(root, x0 + 3, this.SY(py) - this.TextHeight(root) / 2, left[i], this.textBrush)
             }
             for (int i = 0; i < right.length; i++) {
-                var py = e.y1 + 2 * i
-                this.pen.Color = this.VoltageColor(e.PinVoltage(left.length + i))
+                if (right[i] == "") { continue }
+                var py = e.y1 + sp * i
+                this.pen.Color = this.VoltageColor(e.PinVoltage(pin))
+                pin = pin + 1
                 root.renderer.DrawLine(x1, this.SY(py), this.SX(e.x1 + width), this.SY(py), this.pen)
                 this.textBrush.Color = UI.Color.Rgb(170, 170, 170)
                 this.DrawString(root, x1 - 3 - this.TextWidth(root, right[i]), this.SY(py) - this.TextHeight(root) / 2, right[i], this.textBrush)
@@ -1071,6 +1101,7 @@ namespace UI {
             if (title == "Timer555") { title = "555" }
             if (title == "DFlipFlop") { title = "D-FF" }
             if (title == "SRLatch") { title = "SR" }
+            if (title == "JKFlipFlop") { title = "JK-FF" }
             if (title == "I2cAdc") { title = "ADC " + e.Get("address") }
             if (title == "I2cDac") { title = "DAC " + e.Get("address") }
             if (title == "SpiShiftOut") { title = "SPI 595" }
@@ -1081,6 +1112,149 @@ namespace UI {
             }
             this.textBrush.Color = white
             this.DrawString(root, (x0 + x1) / 2 - this.TextWidth(root, title) / 2, y1 + 2, title, this.textBrush)
+        }
+
+        // half circles along the line from (s, t) in steps of (ds, dt), `bumps` of them, bulging to the side `side` (+1 / -1)
+        undefined Coil(Root root, float s, float t, float ds, float dt, int bumps, float side, float va, float vb) {
+            var steps = bumps * 6
+            var len = Math.Sqrt(ds * ds + dt * dt)
+            var ns = dt / len * side
+            var nt = -ds / len * side
+            for (int i = 0; i < steps; i++) {
+                var a = i * 1.0 / steps
+                var b = (i + 1) * 1.0 / steps
+                var ha = Math.Abs(Math.Sin(a * bumps * Math.PI)) * 0.8
+                var hb = Math.Abs(Math.Sin(b * bumps * Math.PI)) * 0.8
+                this.Seg(root, s + ds * a + ns * ha, t + dt * a + nt * ha, s + ds * b + ns * hb, t + dt * b + nt * hb, this.VoltageColor(va + (vb - va) * a))
+            }
+        }
+
+        undefined DrawPotentiometer(Root root, Circuits.Element e) {
+            var ex = e.pins[2]
+            var ey = e.pins[3]
+            var wx = e.pins[4]
+            var wy = e.pins[5]
+            this.FrameAt(e.x1, e.y1, ex, ey)
+            var L = this.flen
+            var m = L / 2
+            var va = e.PinVoltage(0)
+            var vb = e.PinVoltage(1)
+            var vw = e.PinVoltage(2)
+            this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, this.VoltageColor(va))
+            this.Seg(root, m + 1.5, 0.0, L, 0.0, this.VoltageColor(vb))
+            for (int i = 0; i < 7; i++) {
+                var za = 0.0
+                var zb = 0.0
+                if (i > 0) {
+                    if (i % 2 == 1) { za = 0.7 } else { za = -0.7 }
+                }
+                if (i < 6) {
+                    if ((i + 1) % 2 == 1) { zb = 0.7 } else { zb = -0.7 }
+                }
+                this.Seg(root, m - 1.5 + i * 3.0 / 7, za, m - 1.5 + (i + 1) * 3.0 / 7, zb, this.VoltageColor(va + (vb - va) * i / 6.0))
+            }
+            // the wiper: from its pin to the place on the resistance, with an arrow
+            var pos = 0.5
+            if (e.part != undefined) {
+                Circuits.Potentiometer pot = e.part!Circuits.Potentiometer
+                pos = pot.Position
+            }
+            var at = m - 1.5 + 3.0 * pos
+            // the side of the wiper in the frame
+            float fdx = ex - e.x1
+            float fdy = ey - e.y1
+            var flen = Math.Sqrt(fdx * fdx + fdy * fdy)
+            var side = ((wx - e.x1) * fdy - (wy - e.y1) * fdx) / flen
+            var sgn = 1.0
+            if (side < 0.0) { sgn = -1.0 }
+            this.Seg(root, m, side, at, side, this.VoltageColor(vw))
+            this.Seg(root, at, side, at, sgn * 1.0, this.VoltageColor(vw))
+            this.Seg(root, at, sgn * 1.0, at - 0.4, sgn * 1.6, this.VoltageColor(vw))
+            this.Seg(root, at, sgn * 1.0, at + 0.4, sgn * 1.6, this.VoltageColor(vw))
+            this.Value(root, e, "resistance", "Ω", m, -sgn * 1.4)
+        }
+
+        undefined DrawTransformer(Root root, Circuits.Element e) {
+            var end = Circuits.Symbols.AxisEnd(e)
+            this.FrameAt(e.x1, e.y1, end[0], end[1])
+            var L = this.flen
+            var w = e.Get("width").TryToInt()
+            if (w == undefined || w == 0) { w = 4 }
+            float g = -Circuits.Symbols.Dsign(e) * w
+            if (e.Flag("flip")) { g = -g }
+            // pins: P1 (0,0), S1, P2 (0,g), S2; S1 is at (L,0) unless reversed
+            var vp1 = e.PinVoltage(0)
+            var vp2 = e.PinVoltage(2)
+            var vs1 = e.PinVoltage(1)
+            var vs2 = e.PinVoltage(3)
+            var top = vs1
+            var bottom = vs2
+            if (e.Flag("reverse")) {
+                top = vs2
+                bottom = vs1
+            }
+            var white = UI.Color.Rgb(220, 220, 220)
+            var inward = 1.0
+            if (g < 0.0) { inward = -1.0 }
+            // leads, windings (the bulges face the core), the core
+            var s1 = Math.Min(1.5, L / 4)
+            var s2 = L - s1
+            this.Seg(root, 0.0, 0.0, s1, 0.0, this.VoltageColor(vp1))
+            this.Seg(root, 0.0, g, s1, g, this.VoltageColor(vp2))
+            this.Seg(root, s2, 0.0, L, 0.0, this.VoltageColor(top))
+            this.Seg(root, s2, g, L, g, this.VoltageColor(bottom))
+            this.Coil(root, s1, 0.0, 0.0, g, 3, inward, vp1, vp2)
+            this.Coil(root, s2, 0.0, 0.0, g, 3, -inward, top, bottom)
+            this.Seg(root, L / 2 - 0.25, 0.0, L / 2 - 0.25, g, white)
+            this.Seg(root, L / 2 + 0.25, 0.0, L / 2 + 0.25, g, white)
+            // the dots: P1 and S1
+            this.Dot(root, s1 + 1.2, g * 0.12, 0.2, white)
+            if (e.Flag("reverse")) { this.Dot(root, s2 - 1.2, g * 0.88, 0.2, white) } else { this.Dot(root, s2 - 1.2, g * 0.12, 0.2, white) }
+            if (this.showValues) { this.Label(root, L / 2, -1.4 * inward, "1:" + e.Get("ratio"), UI.Color.Rgb(170, 170, 170)) }
+        }
+
+        undefined DrawRelay(Root root, Circuits.Element e) {
+            this.Frame(e)
+            var L = this.flen
+            var m = L / 2
+            var open = -2.0 * Circuits.Symbols.Dsign(e)
+            if (e.Flag("flip")) { open = -open }
+            var white = UI.Color.Rgb(220, 220, 220)
+            var gray = UI.Color.Rgb(140, 140, 140)
+            var vcom = e.PinVoltage(0)
+            var vnc = e.PinVoltage(1)
+            var vno = e.PinVoltage(2)
+            var vc1 = e.PinVoltage(3)
+            var vc2 = e.PinVoltage(4)
+            var pulled = false
+            if (e.part != undefined) {
+                Circuits.Relay relay = e.part!Circuits.Relay
+                pulled = relay.Energized
+            }
+            // the switch: common to a pivot, the blade to NC (-open) or NO (+open)
+            var pivot = Math.Min(2.0, L / 3)
+            var tip = L - 1.5
+            this.Seg(root, 0.0, 0.0, pivot, 0.0, this.VoltageColor(vcom))
+            this.Dot(root, pivot, 0.0, 0.25, white)
+            this.Seg(root, L, -open, tip, -open, this.VoltageColor(vnc))
+            this.Seg(root, L, open, tip, open, this.VoltageColor(vno))
+            this.Dot(root, tip, -open, 0.2, white)
+            this.Dot(root, tip, open, 0.2, white)
+            if (pulled) { this.Seg(root, pivot, 0.0, tip, open * 0.85, this.VoltageColor(vcom)) } else { this.Seg(root, pivot, 0.0, tip, -open * 0.85, this.VoltageColor(vcom)) }
+            // the coil
+            var style = e.Get("coil")
+            if (style == "start" || style == "end") {
+                var cs = 0.0
+                if (style == "end") { cs = L }
+                this.Coil(root, cs, 2.0 * open, 0.0, open, 2, 1.0, vc1, vc2)
+                this.Seg(root, cs, 2.0 * open, m, 2.0 * open, gray)
+            } else {
+                this.Seg(root, 0.0, 2.0 * open, m - 2.0, 2.0 * open, this.VoltageColor(vc1))
+                this.Seg(root, m + 2.0, 2.0 * open, L, 2.0 * open, this.VoltageColor(vc2))
+                this.Coil(root, m - 2.0, 2.0 * open, 4.0, 0.0, 4, open / 2.0, vc1, vc2)
+            }
+            // the link between coil and blade
+            this.Seg(root, m, 2.0 * open * 0.8, m, open * 0.35, gray)
         }
 
         undefined DrawScope(Root root, Circuits.Element e) {
@@ -1365,7 +1539,7 @@ namespace UI {
                 if (Circuits.Symbols.IsChip(t)) {
                     x1 = e.x1 + Circuits.Symbols.ChipWidth(e) + 0.0
                     y0 = e.y1 - 1.5
-                    y1 = e.y1 + e.pins.count + 0.5
+                    y1 = e.y1 + Circuits.Symbols.ChipSpacing(e) * (Circuits.Symbols.ChipRows(e) - 1) + 1.5
                 }
                 if (ux >= x0 && ux <= x1 && uy >= y0 && uy <= y1) { return 0.0 }
                 return 100.0
@@ -1715,6 +1889,10 @@ namespace UI {
             else if (t == "Scope") { prefix = "Scope" }
             else if (t == "Pin") { prefix = "P" }
             else if (t == "Formula") { prefix = "F" }
+            else if (t == "Potentiometer") { prefix = "RV" }
+            else if (t == "Transformer") { prefix = "T" }
+            else if (t == "Relay") { prefix = "K" }
+            else if (t == "SchmittTrigger") { prefix = "U" }
             else { prefix = "G" }
             var n = 1
             while (this.Schematic.Find(prefix + n) != undefined) { n = n + 1 }

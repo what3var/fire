@@ -20,6 +20,8 @@ namespace fire.UI.Markup
             public required string Type { get; init; }
             public int X1, Y1, X2, Y2;
             public string Name = "";
+            /// <summary>The second point when the package wants another one than Falstad's (a transformer, a chip).</summary>
+            public (int X, int Y)? Fix;
             public readonly List<KeyValuePair<string, string>> Props = new();
             public void Set(string key, string value) => Props.Add(new(key, value));
         }
@@ -60,6 +62,11 @@ namespace fire.UI.Markup
                     if (e != null)
                     {
                         e.X1 = x1; e.Y1 = y1; e.X2 = x2; e.Y2 = y2;
+                        if (e.Fix is { } fix)
+                        {
+                            if (e.Type == "JKFlipFlop") { e.X2 = x1 + fix.X; e.Y2 = y1; }
+                            else { e.X2 = Grid8(fix.X); e.Y2 = Grid8(fix.Y); }
+                        }
                     }
                     elements.Add(e);
                 }
@@ -225,6 +232,85 @@ namespace fire.UI.Markup
                     e.Set("text", Unescape(string.Join(" ", t.Skip(7))));
                     return e;
                 }
+                case "174":
+                {
+                    // the points stay: the second one says where the wiper is (as in the package)
+                    var e = new Element { Type = "Potentiometer" };
+                    e.Set("resistance", Format(Num(6, 1000)));
+                    double pos = Num(7, 0.5);
+                    if (pos != 0.5) e.Set("position", Format(pos));
+                    return e;
+                }
+                case "T":
+                {
+                    var e = new Element { Type = "Transformer" };
+                    e.Set("inductance", Format(Num(6, 4)));
+                    double ratio = Num(7, 1);
+                    if (ratio != 1) e.Set("ratio", Format(ratio));
+                    double k = Num(10, 0.999);
+                    if (k != 0.999) e.Set("coupling", Format(k));
+                    if ((flags & 4) != 0) e.Set("reverse", "true");
+                    if (Num(11) > 0) warnings.Add($"Line {lineNo}: the saturation of a transformer is not simulated.");
+                    // the width (Falstad keeps it in the second point) and the side of the secondary: the points are set after Make (see Fix)
+                    int x1 = Pixels(t[1]), y1 = Pixels(t[2]), x2 = Pixels(t[3]), y2 = Pixels(t[4]);
+                    bool vertical = (flags & 8) != 0;
+                    int width = vertical ? -Math.Max(32, Math.Abs(x2 - x1)) : Math.Max(32, Math.Abs(y2 - y1));
+                    int dsF = (y2 - y1) == 0 ? Math.Sign(x2 - x1) : Math.Sign(y2 - y1);
+                    int flip = (flags & 16) != 0 ? -1 : 1;
+                    int ex = vertical ? x1 : x2, ey = vertical ? y2 : y1;
+                    int dsO = (ey - y1) == 0 ? Math.Sign(ex - x1) : Math.Sign(ey - y1);
+                    if (dsO == 0) dsO = 1;
+                    if (dsF == 0) dsF = 1;
+                    int w = (int)Math.Round(dsF * width * flip / (8.0 * dsO));
+                    if (w != 4) e.Set("width", w.ToString(CultureInfo.InvariantCulture));
+                    e.Fix = (vertical ? x1 : x2, vertical ? y2 : y1);
+                    return e;
+                }
+                case "156":
+                {
+                    // a chip: the pins go down from (x, y), 32 pixels apart (16 for a small one), the right side 96 (48) pixels to the right
+                    var e = new Element { Type = "JKFlipFlop" };
+                    bool small = (flags & 1) != 0;
+                    if ((flags & 4) == 0) e.Set("falling", "true");
+                    if ((flags & 2) != 0) e.Set("reset", "true");
+                    if ((flags & 8) != 0) warnings.Add($"Line {lineNo}: the inverted reset of a JK flip-flop is imported as an active-high reset.");
+                    if ((flags & (7 << 10)) != 0) warnings.Add($"Line {lineNo}: a flipped JK flip-flop is imported unflipped; check its connections.");
+                    if ((flags & (1 << 13)) != 0) { double hv = Num(6, 5); if (hv != 5) e.Set("supply", Format(hv)); }
+                    if (!small) e.Set("spacing", "4");
+                    e.Fix = (small ? 6 : 12, 0);   // (the width: the second point is set from the first)
+                    return e;
+                }
+                case "182":
+                case "183":
+                {
+                    var e = new Element { Type = "SchmittTrigger" };
+                    if (type == "183") e.Set("inverting", "true");
+                    if (t.Length > 9)
+                    {
+                        double lo = Num(7, 1.66), hi = Num(8, 3.33), on = Num(9, 5), off = Num(10, 0);
+                        if (lo != 1.66) e.Set("lower", Format(lo));
+                        if (hi != 3.33) e.Set("upper", Format(hi));
+                        if (on != 5) e.Set("supply", Format(on));
+                        if (off != 0) warnings.Add($"Line {lineNo}: a Schmitt trigger with a low level other than 0 V is imported with 0 V.");
+                    }
+                    return e;
+                }
+                case "178":
+                {
+                    var e = new Element { Type = "Relay" };
+                    int poles = (int)Num(6, 1);
+                    if (poles > 1) warnings.Add($"Line {lineNo}: a relay with {poles} poles is imported with its first pole only.");
+                    double l = Num(7, 0.2), ron = Num(9, 0.05), onI = Num(11, 0.02), coilR = Num(12, 20), offI = Num(13, onI);
+                    if (l != 0.2) e.Set("inductance", Format(l));
+                    if (coilR != 20) e.Set("coilResistance", Format(coilR));
+                    if (onI != 0.02) e.Set("onCurrent", Format(onI));
+                    if (offI != 0.015) e.Set("offCurrent", Format(offI));
+                    if (ron != 0.05) warnings.Add($"Line {lineNo}: the contact resistance of a relay is 0.05 Ohm in the package.");
+                    // the coil: on both sides (flag 4), at the second end (flag 1), else at the first
+                    e.Set("coil", (flags & 4) != 0 ? "both" : (flags & 1) != 0 ? "end" : "start");
+                    if ((flags & 8) != 0) e.Set("flip", "true");
+                    return e;
+                }
                 case "O":
                 {
                     warnings.Add($"Line {lineNo}: an output is imported as a logic output.");
@@ -238,8 +324,8 @@ namespace fire.UI.Markup
 
         private static string Describe(string type) => type switch
         {
-            "155" => "D flip-flop", "165" => "555 timer", "156" => "JK flip-flop", "164" => "counter", "S" => "two-way switch", "j" => "JFET", "174" => "potentiometer",
-            "181" => "lamp", "T" => "transformer", "A" => "antenna", "m" => "memristor", "170" => "sweep", "171" => "transformer", "200" => "AM source", "201" => "FM source",
+            "155" => "D flip-flop", "165" => "555 timer", "164" => "counter", "S" => "two-way switch", "j" => "JFET",
+            "181" => "lamp", "A" => "antenna", "m" => "memristor", "170" => "sweep", "171" => "tapped transformer", "200" => "AM source", "201" => "FM source",
             _ => "unknown",
         };
 
@@ -264,7 +350,8 @@ namespace fire.UI.Markup
         private static string Prefix(string type) => type switch
         {
             "Resistor" => "R", "Capacitor" => "C", "Inductor" => "L", "Source" or "Rail" => "V", "CurrentSource" => "I", "Diode" or "Zener" or "Led" => "D",
-            "Transistor" or "Mosfet" => "Q", "Switch" => "S", "OpAmp" or "Comparator" => "U", "Probe" => "P", _ => "X",
+            "Transistor" or "Mosfet" => "Q", "Switch" => "S", "OpAmp" or "Comparator" or "SchmittTrigger" or "JKFlipFlop" => "U", "Probe" => "P",
+            "Potentiometer" => "RV", "Transformer" => "T", "Relay" => "K", _ => "X",
         };
 
         private static string UniqueName(List<Element> elements, string prefix)
@@ -278,6 +365,8 @@ namespace fire.UI.Markup
 
         // Falstad's pixels to units of the grid (8 pixels)
         private static int Grid(string s) => (int)Math.Round(int.Parse(s, CultureInfo.InvariantCulture) / 8.0);
+        private static int Grid8(int pixels) => (int)Math.Round(pixels / 8.0);
+        private static int Pixels(string s) => int.Parse(s, CultureInfo.InvariantCulture);
 
         private static string Unescape(string s) => s.Replace("\\s", " ").Replace("\\p", "+").Replace("%2B", "+").Replace("%2b", "+").Replace("\\\\", "\\");
 

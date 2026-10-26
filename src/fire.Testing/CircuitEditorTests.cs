@@ -99,6 +99,21 @@ static class CircuitEditorTests
             && falstad.Biscuit.Contains("\"type\": \"And\"") && falstad.Biscuit.Contains("\"type\": \"LogicInput\", \"from\": [70, 38], \"to\": [64, 38], \"high\": \"true\"")
             && falstad.Biscuit.Contains("\"type\": \"Label\", \"from\": [14, 6], \"to\": [14, 2], \"text\": \"VCC\"")
             && falstad.Biscuit.Contains("\"type\": \"Scope\"") && falstad.Biscuit.Contains("\"probe\": \"C1\""), falstad.Biscuit);
+        var falstad5 = FalstadImport.Convert("""
+            $ 1 0.000005 10.2 50 5 50 5e-11
+            174 304 416 272 368 1 100000 0.5 Resistance
+            T 288 192 336 224 6 4.0000000000000003e-7 6 0.0008897636271907768 -0.08891607989108269 0.999
+            156 80 224 128 224 0 5
+            182 160 240 224 240 0 0.5 1 4 5 0
+            178 624 304 752 304 22 1 0.2 -0.020210235015409483 0.05 1000000 0.02 20 0.015 0.005 2
+            """);
+        Check("Falstad: Potentiometer, Transformator, JK-Flipflop, Schmitt-Trigger und Relais",
+            falstad5.Elements == 5 && falstad5.Warnings.Count == 0
+            && falstad5.Biscuit.Contains("{\"type\": \"Potentiometer\", \"from\": [38, 52], \"to\": [34, 46], \"resistance\": \"100k\"}")
+            && falstad5.Biscuit.Contains("{\"type\": \"Transformer\", \"from\": [36, 24], \"to\": [42, 24], \"inductance\": \"400n\", \"ratio\": \"6\", \"reverse\": \"true\"}")
+            && falstad5.Biscuit.Contains("{\"type\": \"JKFlipFlop\", \"from\": [10, 28], \"to\": [22, 28], \"falling\": \"true\", \"spacing\": \"4\"}")
+            && falstad5.Biscuit.Contains("{\"type\": \"SchmittTrigger\", \"from\": [20, 30], \"to\": [28, 30], \"lower\": \"1\", \"upper\": \"4\"}")
+            && falstad5.Biscuit.Contains("{\"type\": \"Relay\", \"from\": [78, 38], \"to\": [94, 38], \"coil\": \"both\"}"), falstad5.Biscuit + string.Join(" | ", falstad5.Warnings));
         Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'165' (555 timer)"), string.Join(" | ", falstad.Warnings));
         CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
             "#import \"circuits\"\n" +

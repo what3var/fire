@@ -118,6 +118,9 @@ namespace Circuits {
             l.Add("Basic|Capacitor|capacitance:F=10u;initial:V=0")
             l.Add("Basic|Inductor|inductance:H=1m;initial:A=0")
             l.Add("Basic|Switch|closed:bool=false;momentary:bool=false")
+            l.Add("Basic|Potentiometer|resistance:Ohm=10k;position:=0.5")
+            l.Add("Basic|Transformer|inductance:H=4;ratio:=1;coupling:=0.999;width:int=4;flip:bool=false;reverse:bool=false")
+            l.Add("Basic|Relay|inductance:H=0.2;coilResistance:Ohm=20;onCurrent:A=20m;offCurrent:A=15m;coil:choice:both/start/end=both;flip:bool=false")
             l.Add("Sources|Source|waveform:choice:dc/sine/square=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
             l.Add("Sources|Rail|waveform:choice:dc/sine/square=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
             l.Add("Sources|CurrentSource|current:A=10m")
@@ -141,6 +144,8 @@ namespace Circuits {
             l.Add("Logic|Buffer|supply:V=5")
             l.Add("Logic|DFlipFlop|supply:V=5")
             l.Add("Logic|SRLatch|supply:V=5;reset:bool=false")
+            l.Add("Logic|JKFlipFlop|supply:V=5;falling:bool=false;reset:bool=false;spacing:int=2")
+            l.Add("Logic|SchmittTrigger|lower:V=1.66;upper:V=3.33;supply:V=5;inverting:bool=false")
             l.Add("Logic|Counter|bits:int=4;supply:V=5")
             l.Add("ICs|Timer555|supply:V=5")
             l.Add("Devices|GpioLine|line:int=0;supply:V=3.3")
@@ -193,12 +198,13 @@ namespace Circuits {
             if (type == "Text") { return 0 }
             if (type == "Scope") { return 16 }
             if (Circuits.Symbols.IsChip(type)) { return 12 }
+            if (type == "Transformer") { return 6 }
             return 8
         }
 
         /// <summary>Is it a chip (a box with pins on both sides, whose second point only says how wide it is)?</summary>
         static bool IsChip(string type) {
-            if (type == "DFlipFlop" || type == "SRLatch" || type == "Counter" || type == "Timer555") { return true }
+            if (type == "DFlipFlop" || type == "SRLatch" || type == "JKFlipFlop" || type == "Counter" || type == "Timer555") { return true }
             return type == "I2cAdc" || type == "I2cDac" || type == "SpiShiftOut" || type == "SpiShiftIn"
         }
 
@@ -208,6 +214,11 @@ namespace Circuits {
             if (e.type == "SRLatch") {
                 if (e.Flag("reset")) { return "S,R,RST|Q,/Q" }
                 return "S,R|Q,/Q"
+            }
+            if (e.type == "JKFlipFlop") {
+                // as in Falstad's simulator: Q at the top, /Q at the bottom, the reset between them
+                if (e.Flag("reset")) { return "J,CLK,K|Q,R,/Q" }
+                return "J,CLK,K|Q,,/Q"
             }
             if (e.type == "Timer555") { return "TRG,THR,RST,CTL|OUT,DIS" }
             if (e.type == "I2cAdc") { return Circuits.Symbols.Row("IN", Circuits.Symbols.Channels(e, 4)) + "|" }
@@ -224,6 +235,23 @@ namespace Circuits {
                 return "CLK|" + right
             }
             return "|"
+        }
+
+        /// <summary>The distance of the pins of a chip in grid units ("spacing", default 2; Falstad's large chips have 4).</summary>
+        static int ChipSpacing(Circuits.Element e) {
+            var n = e.Get("spacing").TryToInt()
+            if (n == undefined || n < 1) { return 2 }
+            if (n > 8) { return 8 }
+            return n
+        }
+
+        /// <summary>The rows of a chip (the longer side; empty names are gaps).</summary>
+        static int ChipRows(Circuits.Element e) {
+            var sides = Circuits.Symbols.ChipPins(e).Split("|")
+            var a = Circuits.Symbols.Names(sides[0]).length
+            var b = Circuits.Symbols.Names(sides[1]).length
+            if (a > b) { return a }
+            return b
         }
 
         // "IN0,IN1,..."
@@ -364,18 +392,79 @@ namespace Circuits {
                 return
             }
             if (Circuits.Symbols.IsChip(t)) {
-                // a box: the pins of the left side go down from the first point, those of the right side from the point `width` to the right
+                // a box: the pins of the left side go down from the first point, those of the right side from the point `width` to the right (`spacing`
+                // apart; an empty name is a gap)
                 var sides = Circuits.Symbols.ChipPins(e).Split("|")
                 var width = Circuits.Symbols.ChipWidth(e)
+                var sp = Circuits.Symbols.ChipSpacing(e)
                 var left = Circuits.Symbols.Names(sides[0])
                 var right = Circuits.Symbols.Names(sides[1])
                 for (int i = 0; i < left.length; i++) {
+                    if (left[i] == "") { continue }
                     e.pins.Add(e.x1)
-                    e.pins.Add(e.y1 + i * 2)
+                    e.pins.Add(e.y1 + i * sp)
                 }
                 for (int i = 0; i < right.length; i++) {
+                    if (right[i] == "") { continue }
                     e.pins.Add(e.x1 + width)
-                    e.pins.Add(e.y1 + i * 2)
+                    e.pins.Add(e.y1 + i * sp)
+                }
+                return
+            }
+            if (t == "Potentiometer") {
+                // as in Falstad's simulator: the two ends on the main axis of the drag (a multiple of 4 units apart), the wiper at the middle on the
+                // other coordinate of the second point (2 units to the side when that is the same as the first one's)
+                Circuits.Symbols.PotentiometerPins(e)
+                return
+            }
+            if (t == "Transformer") {
+                // the primary from the first point down (or to the side) by `width`, the secondary at the second point, as in Falstad's simulator
+                var end = Circuits.Symbols.AxisEnd(e)
+                var w = e.Get("width").TryToInt()
+                if (w == undefined || w == 0) { w = 4 }
+                var g = -Circuits.Symbols.Dsign(e) * w
+                if (e.Flag("flip")) { g = -g }
+                var axis = new Circuits.Element("Wire", e.x1, e.y1, end[0], end[1])
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                var bottom = new List()
+                Circuits.Symbols.Interp(axis, 0.0, g, bottom)
+                Circuits.Symbols.Interp(axis, 1.0, g, bottom)
+                if (e.Flag("reverse")) {
+                    // the dot of the secondary at its lower end: S1 below, S2 at the top
+                    e.pins.Add(bottom[2])
+                    e.pins.Add(bottom[3])
+                    e.pins.Add(bottom[0])
+                    e.pins.Add(bottom[1])
+                    e.pins.Add(end[0])
+                    e.pins.Add(end[1])
+                } else {
+                    e.pins.Add(end[0])
+                    e.pins.Add(end[1])
+                    e.pins.Add(bottom[0])
+                    e.pins.Add(bottom[1])
+                    e.pins.Add(bottom[2])
+                    e.pins.Add(bottom[3])
+                }
+                return
+            }
+            if (t == "Relay") {
+                // the common contact at the first point, the two throws 2 units to the sides of the second, the coil 4 units off the switch
+                var open = -2 * Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { open = -open }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0, -open, e.pins)
+                Circuits.Symbols.Interp(e, 1.0, open, e.pins)
+                var style = e.Get("coil")
+                if (style == "start" || style == "end") {
+                    var f = 0.0
+                    if (style == "end") { f = 1.0 }
+                    Circuits.Symbols.Interp(e, f, 2 * open, e.pins)
+                    Circuits.Symbols.Interp(e, f, 3 * open, e.pins)
+                } else {
+                    Circuits.Symbols.Interp(e, 0.0, 2 * open, e.pins)
+                    Circuits.Symbols.Interp(e, 1.0, 2 * open, e.pins)
                 }
                 return
             }
@@ -384,6 +473,50 @@ namespace Circuits {
             e.pins.Add(e.y1)
             e.pins.Add(e.x2)
             e.pins.Add(e.y2)
+        }
+
+        /// <summary>The second end of an element that lies on the main axis of its drag (x2 for a wider drag, y2 for a taller one).</summary>
+        static int[] AxisEnd(Circuits.Element e) {
+            var r = new int[2]
+            var dx = e.x2 - e.x1
+            var dy = e.y2 - e.y1
+            if (Math.Abs(dx) >= Math.Abs(dy)) {
+                r[0] = e.x2
+                r[1] = e.y1
+            } else {
+                r[0] = e.x1
+                r[1] = e.y2
+            }
+            return r
+        }
+
+        static undefined PotentiometerPins(Circuits.Element e) {
+            var dx = e.x2 - e.x1
+            var dy = e.y2 - e.y1
+            e.pins.Add(e.x1)
+            e.pins.Add(e.y1)
+            if (Math.Abs(dx) >= Math.Abs(dy)) {
+                var s = 1
+                if (dx < 0) { s = -1 }
+                var len = 4 * s * Math.Ceiling(Math.Abs(dx) / 4.0)!int
+                if (len == 0) { len = 8 }
+                var off = dy
+                if (off == 0) { off = -2 * s }
+                e.pins.Add(e.x1 + len)
+                e.pins.Add(e.y1)
+                e.pins.Add(e.x1 + len / 2)
+                e.pins.Add(e.y1 + off)
+            } else {
+                var s = 1
+                if (dy < 0) { s = -1 }
+                var len = 4 * s * Math.Ceiling(Math.Abs(dy) / 4.0)!int
+                var off = dx
+                if (off == 0) { off = 2 * s }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1 + len)
+                e.pins.Add(e.x1 + off)
+                e.pins.Add(e.y1 + len / 2)
+            }
         }
 
         static int ChipWidth(Circuits.Element e) {
@@ -505,6 +638,14 @@ namespace Circuits {
             else if (t == "Capacitor") { part = new Circuits.Capacitor(Circuits.Symbols.Value(e, "capacitance", c), Circuits.Symbols.Value(e, "initial", c)) }
             else if (t == "Inductor") { part = new Circuits.Inductor(Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "initial", c)) }
             else if (t == "Switch") { part = new Circuits.Switch(e.Flag("closed")) }
+            else if (t == "Potentiometer") { part = new Circuits.Potentiometer(Circuits.Symbols.Value(e, "resistance", c), Circuits.Symbols.Value(e, "position", c)) }
+            else if (t == "Transformer") {
+                part = new Circuits.Transformer(Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "ratio", c), Circuits.Symbols.Value(e, "coupling", c))
+            }
+            else if (t == "Relay") {
+                part = new Circuits.Relay(Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "coilResistance", c), Circuits.Symbols.Value(e, "onCurrent", c),
+                                          Circuits.Symbols.Value(e, "offCurrent", c))
+            }
             else if (t == "Source" || t == "Rail") { part = Circuits.Symbols.MakeSource(e, c) }
             else if (t == "CurrentSource") { part = new Circuits.CurrentSource(Circuits.Symbols.Value(e, "current", c)) }
             else if (t == "AudioInput") { part = new Circuits.AudioInput(Circuits.Symbols.Value(e, "amplitude", c)) }
@@ -523,6 +664,10 @@ namespace Circuits {
             else if (t == "Not" || t == "Buffer") { part = new Circuits.Gate(t, 1, Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "DFlipFlop") { part = new Circuits.FlipFlop(Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "SRLatch") { part = new Circuits.SRLatch(Circuits.Symbols.Value(e, "supply", c), e.Flag("reset")) }
+            else if (t == "JKFlipFlop") { part = new Circuits.JKFlipFlop(Circuits.Symbols.Value(e, "supply", c), e.Flag("falling"), e.Flag("reset")) }
+            else if (t == "SchmittTrigger") {
+                part = new Circuits.SchmittTrigger(Circuits.Symbols.Value(e, "lower", c), Circuits.Symbols.Value(e, "upper", c), Circuits.Symbols.Value(e, "supply", c), e.Flag("inverting"))
+            }
             else if (t == "Timer555") { part = new Circuits.Timer555(Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "Counter") { part = new Circuits.Counter(Circuits.Symbols.Bits(e), Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "Ground") { part = new Circuits.Ground() }
@@ -568,6 +713,27 @@ namespace Circuits {
                 e.pinPorts.Add(ports[1])
                 e.pinPorts.Add(ports[0])
                 e.pinPorts.Add(ports[2])
+            } else if (t == "Transformer") {
+                // pins P1, S1, P2, S2 (as Falstad's posts); the ports are p1, p2, s1, s2
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[3])
+            } else if (t == "Relay") {
+                // pins common, NC, NO, coil, coil; the ports are coil1, coil2, com, nc, no
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[3])
+                e.pinPorts.Add(ports[4])
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[1])
+            } else if (t == "JKFlipFlop") {
+                // pins J CLK K, then Q (R) /Q; the ports are j, clk, k, q, nq, reset
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[3])
+                if (e.Flag("reset")) { e.pinPorts.Add(ports[5]) }
+                e.pinPorts.Add(ports[4])
             } else if (t == "Timer555") {
                 // left TRG THR RST CTL, right OUT DIS; the ports are trigger, threshold, discharge, output, control, reset
                 e.pinPorts.Add(ports[0])

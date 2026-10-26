@@ -221,6 +221,16 @@
         "name": "__CirProcess",
         "arguments": 13,
         "cpp": "circuits::Process"
+      },
+      {
+        "name": "__CirAddCoupled",
+        "arguments": 12,
+        "cpp": "circuits::AddCoupled"
+      },
+      {
+        "name": "__CirGateExtra",
+        "arguments": 4,
+        "cpp": "circuits::GateExtra"
       }
     ],
     "reset": "circuits::reset"

@@ -49,7 +49,7 @@ struct Recorder {
     std::vector<std::vector<double>> channels;
 };
 
-enum ProbeKind { PrNodes = 0, PrCapacitor = 1, PrInductor = 2, PrBranch = 3, PrConductance = 4, PrCurrentSource = 5, PrNonlinear = 6 };
+enum ProbeKind { PrNodes = 0, PrCapacitor = 1, PrInductor = 2, PrBranch = 3, PrConductance = 4, PrCurrentSource = 5, PrNonlinear = 6, PrCoupled = 7 };
 
 struct Probe { int rec, channel, kind, a, b; double g; };
 
@@ -74,6 +74,10 @@ struct Source {
 };
 
 struct Reactive { int a, b; double geq, vPrev, iPrev, ieq; };   // a capacitor (2C/dt) or an inductor (dt/2L), trapezoidal rule
+
+/// Two coupled inductors (a transformer): winding 1 from a1 to b1, winding 2 from a2 to b2. With L = [[L1, M], [M, L2]] the trapezoidal rule gives
+/// i(n+1) = G v(n+1) + h, G = dt/2 L^-1, h = i(n) + G v(n) - a 2x2 conductance (with the cross terms as voltage-controlled currents) and two currents.
+struct Coupled { int a1, b1, a2, b2; double g11, g12, g22, v1Prev, v2Prev, i1Prev, i2Prev, h1, h2; };
 
 enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp = 5, NlFormula = 6 };
 
@@ -530,16 +534,22 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
     }
 }
 
-enum GateKind { GAnd = 0, GOr = 1, GXor = 2, GNand = 3, GNor = 4, GXnor = 5, GNot = 6, GBuffer = 7, GDFlipFlop = 8, GComparator = 9, GSRLatch = 10 };
+enum GateKind { GAnd = 0, GOr = 1, GXor = 2, GNand = 3, GNor = 4, GXnor = 5, GNot = 6, GBuffer = 7, GDFlipFlop = 8, GComparator = 9, GSRLatch = 10,
+                GJKFlipFlop = 11, GSchmitt = 12, GInvSchmitt = 13 };
 
 /// A logic part: it reads its inputs after every step (high above `threshold`) and drives its outputs for the next one through `rout` (high: `high` volts,
 /// low: 0 V). A D flip-flop has the inputs D and clock and the outputs Q and not Q; it takes D on the rising edge of the clock. A comparator is high
 /// while its first input is above its second (analog). An SR latch has the inputs S, R and (optional) a reset that is active low; R wins over S.
+/// A JK flip-flop has the inputs J, clock, K and (optional) a reset that is active high: on the edge of the clock (rising, or falling with `falling`)
+/// J and K both high toggle it, J sets it, K clears it. A Schmitt trigger goes high above `threshold` and low below `low` (in between it keeps its state);
+/// the inverting one the other way round.
 struct Gate {
     int kind;
     std::vector<int> inputs;
     int out, outNot;
     double high, threshold, g;
+    double low = 0;            // the lower threshold of a Schmitt trigger
+    bool falling = false;      // a JK flip-flop that takes the falling edge
     bool state = false, clock = false;
     bool primed = false;   // a flip-flop has seen its clock once (the first step only notes it: no edge at power-on)
     bool eval(const std::vector<double>& x) {
@@ -551,6 +561,27 @@ struct Gate {
             if (reset || (inputs.size() > 1 && in(1))) state = false;
             else if (in(0)) state = true;
             return state;
+        }
+        if (kind == GJKFlipFlop) {
+            bool c = inputs.size() > 1 && in(1);
+            bool edge = falling ? (!c && clock) : (c && !clock);
+            if (primed && edge) {
+                bool j = in(0), k = inputs.size() > 2 && in(2);
+                if (j && k) state = !state;
+                else if (j) state = true;
+                else if (k) state = false;
+            }
+            primed = true;
+            clock = c;
+            if (inputs.size() > 3 && in(3)) state = false;
+            return state;
+        }
+        if (kind == GSchmitt || kind == GInvSchmitt) {
+            // `clock` keeps whether the input was last seen above the upper threshold
+            double v = volts(0);
+            if (v > threshold) clock = true;
+            else if (v < low) clock = false;
+            return kind == GSchmitt ? clock : !clock;
         }
         if (kind == GDFlipFlop) {
             bool c = inputs.size() > 1 && in(1);
@@ -590,6 +621,7 @@ struct Plan {
     std::vector<int> lStart, lCol, lIdx, uStart, uCol, uIdx, diag;
     std::vector<double> rhs, x, y;
     std::vector<Reactive> capacitors, inductors;
+    std::vector<Coupled> coupled;
     std::vector<Source> sources;
     std::vector<Probe> probes;
     bool compiled = false;
@@ -682,6 +714,35 @@ inline Value AddReactive(Value h, Value kind, Value a, Value b, Value value, Val
     std::vector<Reactive>& list = kind.i == 0 ? p->capacitors : p->inductors;
     list.push_back(r);
     return Int((int64_t)list.size() - 1);
+}
+
+/// Two coupled inductors (a transformer, see Coupled): l1, l2 in henries, k the coupling (below 1), with their state at the start; returns its index.
+inline Value AddCoupled(Value h, Value a1, Value b1, Value a2, Value b2, Value l1, Value l2, Value k, Value i1, Value i2, Value v1, Value v2) {
+    Plan* p = plan(h);
+    if (!p) return Int(-1);
+    double L1 = D(l1), L2 = D(l2), kk = D(k);
+    if (L1 <= 0 || L2 <= 0) { lastError() = "A transformer needs inductances above zero."; return Int(-1); }
+    if (kk < 0) kk = 0;
+    if (kk > 0.999999) kk = 0.999999;   // (k = 1 has no inverse)
+    double m = kk * std::sqrt(L1 * L2), det = L1 * L2 - m * m, f = p->dt / 2.0 / det;
+    Coupled c{(int)a1.i, (int)b1.i, (int)a2.i, (int)b2.i, f * L2, -f * m, f * L1, D(v1), D(v2), D(i1), D(i2), 0, 0};
+    p->conductance(c.a1, c.b1, c.g11);
+    p->conductance(c.a2, c.b2, c.g22);
+    // the current of each winding depends on the voltage of the other
+    p->add(c.a1, c.a2, c.g12); p->add(c.a1, c.b2, -c.g12); p->add(c.b1, c.a2, -c.g12); p->add(c.b1, c.b2, c.g12);
+    p->add(c.a2, c.a1, c.g12); p->add(c.a2, c.b1, -c.g12); p->add(c.b2, c.a1, -c.g12); p->add(c.b2, c.b1, c.g12);
+    p->coupled.push_back(c);
+    return Int((int64_t)p->coupled.size() - 1);
+}
+
+/// What a logic part has beyond AddGate: the lower threshold of a Schmitt trigger, the falling edge of a JK flip-flop.
+inline Value GateExtra(Value h, Value index, Value low, Value falling) {
+    Plan* p = plan(h);
+    if (!p || index.i < 0 || (size_t)index.i >= p->gates.size()) return Bool(false);
+    Gate& g = p->gates[(size_t)index.i];
+    g.low = D(low);
+    g.falling = falling.i != 0;
+    return Bool(true);
 }
 
 /// A source: branch >= 0 for a voltage source (its entries come with VoltageBranch), -1 for a current source from a through it to b; wave 0 DC, 1 sine, 2 square.
@@ -1027,6 +1088,11 @@ inline void begin(Plan* p) {
     auto into = [p](int node, double amps) { if (node >= 0) p->rhs[(size_t)node] += amps; };
     for (Reactive& c : p->capacitors) { c.ieq = c.geq * c.vPrev + c.iPrev; into(c.a, c.ieq); into(c.b, -c.ieq); }
     for (Reactive& l : p->inductors) { l.ieq = l.iPrev + l.geq * l.vPrev; into(l.a, -l.ieq); into(l.b, l.ieq); }
+    for (Coupled& c : p->coupled) {
+        c.h1 = c.i1Prev + c.g11 * c.v1Prev + c.g12 * c.v2Prev;
+        c.h2 = c.i2Prev + c.g12 * c.v1Prev + c.g22 * c.v2Prev;
+        into(c.a1, -c.h1); into(c.b1, c.h1); into(c.a2, -c.h2); into(c.b2, c.h2);
+    }
     for (const Source& s : p->sources) {
         double v = s.value(t);
         if (s.branch >= 0) p->rhs[(size_t)s.branch] = v;
@@ -1034,7 +1100,7 @@ inline void begin(Plan* p) {
     }
     for (Gate& gate : p->gates) {
         bool high = gate.eval(p->x);
-        if (gate.kind != GDFlipFlop && gate.kind != GSRLatch) gate.state = high;
+        if (gate.kind != GDFlipFlop && gate.kind != GSRLatch && gate.kind != GJKFlipFlop) gate.state = high;
         if (high) into(gate.out, gate.high * gate.g);
         else if (gate.outNot >= 0) into(gate.outNot, gate.high * gate.g);
     }
@@ -1049,6 +1115,7 @@ inline double probeValue(Plan* p, const Probe& pr) {
         case PrConductance: return (p->node(pr.a) - p->node(pr.b)) * pr.g;
         case PrCurrentSource: return p->sources[(size_t)pr.a].value(p->time);
         case PrNonlinear: return p->nonlinear[(size_t)pr.a].cur[pr.b];
+        case PrCoupled: return pr.b == 0 ? p->coupled[(size_t)pr.a].i1Prev : p->coupled[(size_t)pr.a].i2Prev;
         default: return 0.0;
     }
 }
@@ -1102,6 +1169,13 @@ inline void finish(Plan* p) {
     if (p->nonlinear.empty()) solve(p); else newton(p);
     for (Reactive& c : p->capacitors) { double v = p->node(c.a) - p->node(c.b); c.iPrev = c.geq * v - c.ieq; c.vPrev = v; }
     for (Reactive& l : p->inductors) { double v = p->node(l.a) - p->node(l.b); l.iPrev = l.geq * v + l.ieq; l.vPrev = v; }
+    for (Coupled& c : p->coupled) {
+        double v1 = p->node(c.a1) - p->node(c.b1), v2 = p->node(c.a2) - p->node(c.b2);
+        c.i1Prev = c.g11 * v1 + c.g12 * v2 + c.h1;
+        c.i2Prev = c.g12 * v1 + c.g22 * v2 + c.h2;
+        c.v1Prev = v1;
+        c.v2Prev = v2;
+    }
     p->time += p->dt;
     Recorder* last = nullptr;
     bool full = false;
@@ -1201,10 +1275,17 @@ inline Value SetNode(Value h, Value i, Value v) {
 }
 inline Value Unknown(Value h, Value k) { Plan* p = plan(h); return Float(p && k.i >= 0 && k.i < p->size ? (Real)p->x[(size_t)k.i] : (Real)0); }
 
-/// The state of a capacitor (kind 0) or inductor (kind 1): what 0 its voltage, 1 its current.
+/// The state of a capacitor (kind 0) or inductor (kind 1): what 0 its voltage, 1 its current; of a transformer (kind 2): what 0 and 1 voltage and current
+/// of the first winding, 2 and 3 of the second.
 inline Value State(Value h, Value kind, Value index, Value what) {
     Plan* p = plan(h);
     if (!p) return Float(0);
+    if (kind.i == 2) {
+        if (index.i < 0 || (size_t)index.i >= p->coupled.size()) return Float(0);
+        const Coupled& c = p->coupled[(size_t)index.i];
+        double v[4] = {c.v1Prev, c.i1Prev, c.v2Prev, c.i2Prev};
+        return Float((Real)(what.i >= 0 && what.i < 4 ? v[what.i] : 0));
+    }
     std::vector<Reactive>& list = kind.i == 0 ? p->capacitors : p->inductors;
     if (index.i < 0 || (size_t)index.i >= list.size()) return Float(0);
     const Reactive& r = list[(size_t)index.i];
@@ -1241,7 +1322,7 @@ inline Value Info(Value h, Value what) {
         case 0: return Int(p->size);
         case 1: return Int((int64_t)(p->lCol.size() + p->uCol.size() + (size_t)p->size));
         case 2: return Int((int64_t)p->updateOps.size() / 3);
-        case 3: return Int((int64_t)(p->capacitors.size() + p->inductors.size()));
+        case 3: return Int((int64_t)(p->capacitors.size() + p->inductors.size() + p->coupled.size()));
         case 4: return Int((int64_t)p->sources.size());
         case 6: return Int((int64_t)(p->nonlinear.size() + p->gates.size()));
         case 7: return Int(p->iterations);

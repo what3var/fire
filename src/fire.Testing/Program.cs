@@ -19917,6 +19917,112 @@ else
             var bad = l.Add("Diode", 40, 0, 48, 0, "model=nosuch")
             print("bad model: " + bad.Error)
             """),
+        ("Circuits: Potentiometer, Transformator, JK-Flipflop, Schmitt-Trigger und Relais (Kern und Schaltplan)", """
+            #import "circuits"
+            // potentiometer: 10 V over 10k, wiper at 0.25 -> 7.5 V
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(10V))
+            var pot = c.Add(new Circuits.Potentiometer(10kOhm, 0.25))
+            v.A.Connect(pot.A)
+            pot.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("pot wiper " + Math.Round(pot.Wiper.Voltage / 1V * 1000) / 1000)
+            pot.Position = 0.9
+            c.Step()
+            print("pot wiper " + Math.Round(pot.Wiper.Voltage / 1V * 1000) / 1000)
+
+            // transformer: 10 V 50 Hz sine on the primary, ratio 0.5, 1k load
+            var t = new Circuits.Circuit()
+            t.TimeStep = 20us
+            var s = t.Add(new Circuits.SineSource(10V, 50Hz))
+            var tr = t.Add(new Circuits.Transformer(4H, 0.5))
+            var load = t.Add(new Circuits.Resistor(1kOhm))
+            s.A.Connect(tr.P1)
+            tr.P2.Connect(t.Ground)
+            s.B.Connect(t.Ground)
+            tr.S1.Connect(load.A)
+            tr.S2.Connect(load.B)
+            load.B.Connect(t.Ground)
+            var peak = 0.0
+            for (int i = 0; i < 4000; i++) {
+                t.Step()
+                if (i > 2000) { peak = Math.Max(peak, Math.Abs(tr.S1.Voltage / 1V)) }
+            }
+            print("secondary peak " + Math.Round(peak * 100) / 100)
+
+            // JK flip-flop: J = K = 1 toggles on every rising edge of a 1 kHz clock
+            var j = new Circuits.Circuit()
+            var clk = j.Add(new Circuits.SquareSource(5V, 1kHz))
+            var hi = j.Add(new Circuits.VoltageSource(5V))
+            var ff = j.Add(new Circuits.JKFlipFlop())
+            clk.B.Connect(j.Ground)
+            hi.B.Connect(j.Ground)
+            clk.A.Connect(ff.Clock)
+            hi.A.Connect(ff.J)
+            hi.A.Connect(ff.K)
+            var toggles = 0
+            var last = ff.State
+            for (int i = 0; i < 1000; i++) {
+                j.Step()
+                if (ff.State != last) { toggles++; last = ff.State }
+            }
+            print("jk toggles in 10 ms " + toggles)
+
+            // Schmitt trigger on a 1 kHz triangle-ish sine 0..5 V: switches at 3.33 up and 1.66 down
+            var st = new Circuits.Circuit()
+            var sin = st.Add(new Circuits.SineSource(2.5V, 1kHz, 2.5V))
+            var trig = st.Add(new Circuits.SchmittTrigger())
+            sin.B.Connect(st.Ground)
+            sin.A.Connect(trig.In)
+            var ups = new List()
+            var prev = trig.State
+            for (int i = 0; i < 200; i++) {
+                st.Step()
+                if (trig.State != prev) {
+                    ups.Add(Math.Round(trig.In.Voltage / 1V * 10) / 10)
+                    prev = trig.State
+                }
+            }
+            print("schmitt switches at " + ups[0] + " " + ups[1])
+
+            // relay: 12 V on a 20 Ohm coil (0.6 A) pulls in; the contact then lights a 1k load from 5 V
+            var r = new Circuits.Circuit()
+            var sup = r.Add(new Circuits.VoltageSource(12V))
+            var sw = r.Add(new Circuits.Switch(true))
+            var rel = r.Add(new Circuits.Relay())
+            var five = r.Add(new Circuits.VoltageSource(5V))
+            var lamp = r.Add(new Circuits.Resistor(1kOhm))
+            sup.B.Connect(r.Ground)
+            sup.A.Connect(sw.A)
+            sw.B.Connect(rel.Coil1)
+            rel.Coil2.Connect(r.Ground)
+            five.B.Connect(r.Ground)
+            five.A.Connect(rel.Common)
+            rel.NormallyOpen.Connect(lamp.A)
+            lamp.B.Connect(r.Ground)
+            r.Run(1ms)
+            print("relay after 1ms " + rel.Energized + " lamp " + Math.Round(lamp.A.Voltage / 1V * 100) / 100)
+            r.Run(20ms)
+            print("relay after 21ms " + rel.Energized + " lamp " + Math.Round(lamp.A.Voltage / 1V * 100) / 100)
+            sw.Closed = false
+            r.Run(50ms)
+            print("relay after release " + rel.Energized + " lamp " + Math.Round(lamp.A.Voltage / 1V * 100) / 100)
+
+            // the same parts placed in a schematic: pins as in Falstad
+            var sc = new Circuits.Circuit()
+            var sm = sc.Schematic
+            var ep = sm.Add("Potentiometer", 0, 0, 8, 0, "position=0.25", "pot")
+            var et = sm.Add("Transformer", 20, 0, 26, 0, "ratio=0.5", "tr")
+            var ek = sm.Add("Relay", 40, 0, 48, 0, "", "k1")
+            var ej = sm.Add("JKFlipFlop", 60, 0, 72, 0, "reset=true", "jk")
+            var es = sm.Add("SchmittTrigger", 80, 0, 88, 0, "inverting=true", "st")
+            foreach (e in sm.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            """),
         ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
             {
               "biscuit": 1,
