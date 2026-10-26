@@ -1921,8 +1921,8 @@ namespace UI {
                 || t == "Diac" || t == "Varactor" || t == "TunnelDiode") {
                 return p.CurrentRaw()
             }
-            // a source runs from its first point (-) to its second (+)
-            if (t == "Source" || t == "AudioInput") { return -p.CurrentRaw() }
+            // a source runs from its first point (-) to its second (+); its current is the one it drives out of + (in at -, out at +)
+            if (t == "Source" || t == "AudioInput") { return p.CurrentRaw() }
             if (t == "Rail" || t == "LogicInput" || t == "Sweep") { return -p.CurrentRaw() }
             return 0.0
         }

@@ -179,6 +179,7 @@ namespace fire.Editor
         private readonly ToggleButton _run = new() { Content = "Pause", IsChecked = true };
         private readonly ComboBox _speed = new() { Width = 120 };
         private readonly List<ToggleButton> _placeButtons = new();
+        private ToggleButton? _pointerButton;
         private LiveSession? _session;
         private string _text = "";
         private string _savedText = "";
@@ -365,7 +366,13 @@ namespace fire.Editor
             ui.Update()
             view.FitToView()
             print(SparkHost.State(view))
+            var placing = ""
             while (ui.Tick()) {
+                // the tool of the view (Escape, a placed element): the palette follows
+                if (view.PlaceType != placing) {
+                    placing = view.PlaceType
+                    print("@place\t" + placing)
+                }
                 var command = __HostCommand()
                 while (command != "") {
                     if (command.StartsWith("scaling\t")) {
@@ -374,6 +381,7 @@ namespace fire.Editor
                     }
                     SparkHost.Do(view, circuit, command)
                     command = __HostCommand()
+                    ui.UpdateCursor(ui.mouseX, ui.mouseY)
                 }
             }
             """;
@@ -487,6 +495,10 @@ namespace fire.Editor
                     if (p.Length == 2) _models[p[0]] = p[1].Split(',', StringSplitOptions.RemoveEmptyEntries).ToList();
                     break;
                 }
+                case "@place":
+                    foreach (var b in _placeButtons) b.IsChecked = (b.Tag as string) == rest;
+                    if (_pointerButton != null) _pointerButton.IsChecked = rest == "";
+                    break;
                 case "@error":
                     _status.Text = "The schematic could not be read: " + rest;
                     break;
@@ -501,6 +513,21 @@ namespace fire.Editor
         {
             _palette.Children.Clear();
             _placeButtons.Clear();
+            // the pointer: no tool, select and move (like Escape)
+            var pointer = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            pointer.Children.Add(CircuitIcons.Create("Pointer", EditorTheme.Text));
+            pointer.Children.Add(new TextBlock { Text = "Pointer", VerticalAlignment = VerticalAlignment.Center });
+            _pointerButton = new ToggleButton { Content = pointer, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, IsChecked = true };
+            _pointerButton.Classes.Add("tool");
+            ToolTip.SetTip(_pointerButton, "Select, move and stretch elements, draw wires from pins (Esc)");
+            _pointerButton.Click += (_, _) =>
+            {
+                _pointerButton.IsChecked = true;
+                foreach (var other in _placeButtons) other.IsChecked = false;
+                Send("cancel");
+                _surface.Focus();
+            };
+            _palette.Children.Add(_pointerButton);
             foreach (var group in _catalog.GroupBy(c => c.Category))
             {
                 _palette.Children.Add(new TextBlock { Text = group.Key, Foreground = EditorTheme.TextDim, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 6, 0, 2) });
@@ -516,6 +543,7 @@ namespace fire.Editor
                     {
                         bool on = b.IsChecked == true;
                         foreach (var other in _placeButtons) if (!ReferenceEquals(other, b)) other.IsChecked = false;
+                        if (_pointerButton != null) _pointerButton.IsChecked = !on;
                         Send(on ? "place\t" + type : "cancel");
                         _surface.Focus();
                     };
@@ -547,8 +575,6 @@ namespace fire.Editor
 
         private void ShowProperties(List<string> report)
         {
-            // a new element was placed: the palette button lets go
-            foreach (var b in _placeButtons) b.IsChecked = false;
             if (report.Count < 5)
             {
                 _selectedIndex = -1;

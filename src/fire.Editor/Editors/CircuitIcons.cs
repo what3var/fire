@@ -19,6 +19,7 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> Paths = new()
         {
+            ["Pointer"] = "M12,1 L12,17 L16,13.5 L18.5,19 L21,18 L18.5,12.5 L23,12.5 Z",
             ["Wire"] = "M0,10 L32,10",
             ["Ground"] = "M16,1 L16,10 M7,10 L25,10 M10,14 L22,14 M13,18 L19,18",
             ["Resistor"] = "M0,10 L8,10 L10,6 L13,14 L16,6 L19,14 L22,6 L24,10 L32,10",
