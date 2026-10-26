@@ -30,6 +30,10 @@ namespace UI {
         float currentSpeed = 1.0
         /// <summary>Elements snap to this many grid units when they are placed or moved.</summary>
         int snap = 2
+        // pixels of the framebuffer per logical pixel while the view draws: it draws at the full resolution of the screen itself (the renderer at scale 1),
+        // so that lines and text are sharp at any scaling, not placed on the coarser grid of logical pixels
+        float dev = 1.0
+        bool device = false
 
         /// <summary>Called with the view when the schematic was changed by the user (to save it), when the selection changes, and when an element should be
         /// edited (a double click; without onEdit the view shows its own editor).</summary>
@@ -364,8 +368,10 @@ namespace UI {
         int GridX(float px) { return this.Snap(Math.Round(this.ToUnitX(px))!int) }
         int GridY(float py) { return this.Snap(Math.Round(this.ToUnitY(py))!int) }
         // grid units to pixels on the screen
-        int SX(float ux) { return Math.Round(this.ax + this.offsetX + ux * this.scale)!int }
-        int SY(float uy) { return Math.Round(this.ay + this.offsetY + uy * this.scale)!int }
+        int SX(float ux) { return Math.Round((this.ax + this.offsetX + ux * this.scale) * this.dev)!int }
+        int SY(float uy) { return Math.Round((this.ay + this.offsetY + uy * this.scale) * this.dev)!int }
+        // a length in logical pixels as pixels of the framebuffer while drawing
+        int Dp(float v) { return Math.Round(v * this.dev)!int }
 
         // ---- simulation ----
 
@@ -407,13 +413,13 @@ namespace UI {
             float dy = y2 - y1
             var len = Math.Sqrt(dx * dx + dy * dy)
             this.flen = len
-            this.fx = this.ax + this.offsetX + x1 * this.scale
-            this.fy = this.ay + this.offsetY + y1 * this.scale
+            this.fx = (this.ax + this.offsetX + x1 * this.scale) * this.dev
+            this.fy = (this.ay + this.offsetY + y1 * this.scale) * this.dev
             if (len > 0.0) {
-                this.fdx = dx / len * this.scale
-                this.fdy = dy / len * this.scale
+                this.fdx = dx / len * this.scale * this.dev
+                this.fdy = dy / len * this.scale * this.dev
             } else {
-                this.fdx = this.scale
+                this.fdx = this.scale * this.dev
                 this.fdy = 0.0
             }
             this.fnx = -this.fdy
@@ -466,14 +472,14 @@ namespace UI {
 
         undefined Arc(Root root, float s, float t, float r, int color) {
             this.pen.Color = color
-            var rr = Math.Round(r * this.scale)!int
+            var rr = Math.Round(r * this.scale * this.dev)!int
             this.Grow(this.PX(s, t), this.PY(s, t), rr)
             root.renderer.DrawCircle(this.PX(s, t), this.PY(s, t), rr, this.pen)
         }
 
         undefined Dot(Root root, float s, float t, float r, int color) {
             this.brush.Color = color
-            var rr = Math.Round(r * this.scale)!int
+            var rr = Math.Round(r * this.scale * this.dev)!int
             if (rr < 1) { rr = 1 }
             this.Grow(this.PX(s, t), this.PY(s, t), rr)
             root.renderer.FillCircle(this.PX(s, t), this.PY(s, t), rr, this.brush)
@@ -541,15 +547,34 @@ namespace UI {
 
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            var w = this.actualWidth
-            var h = this.actualHeight
-            root.PushClip(ax, ay, w, h)
+            root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
+            // drawn in pixels of the framebuffer (see dev)
+            var scaled = root.renderer.scale
+            this.dev = scaled
+            this.device = true
+            root.renderer.scale = 1.0
+            try { this.DrawAll(root, ax, ay) } finally {
+                root.renderer.scale = scaled
+                this.device = false
+                this.dev = 1.0
+            }
+            root.PopClip()
+        }
+
+        undefined DrawAll(Root root, int lax, int lay) {
+            var ax = this.Dp(lax)
+            var ay = this.Dp(lay)
+            var w = this.Dp(lax + this.actualWidth) - ax
+            var h = this.Dp(lay + this.actualHeight) - ay
             root.renderer.FillRect(ax, ay, w, h, this.back)
             // the pens grow with the zoom
             var pw = 1
             if (this.scale >= 12.0) { pw = 2 }
             if (this.scale >= 24.0) { pw = 3 }
-            if (this.pen.Width != pw + 1) { this.pen.Width = pw + 1 }
+            var wide = UI.M.Max(1, this.Dp(pw + 1))
+            if (this.pen.Width != wide) { this.pen.Width = wide }
+            var thinWidth = UI.M.Max(1, this.Dp(1))
+            if (this.thin.Width != thinWidth) { this.thin.Width = thinWidth }
             if (this.showGrid && !this.readOnly && this.scale >= 5.0) { this.DrawGrid(root) }
             var s = this.Schematic
             if (this.graphVersion != s.Version) { this.Analyse() }
@@ -595,12 +620,33 @@ namespace UI {
                     line = line + "paused"
                 }
                 this.textBrush.Color = UI.Color.Rgb(200, 200, 160)
-                this.DrawString(root, ax + 6, ay + h - this.TextHeight(root) - 4, line, this.textBrush)
+                this.DrawString(root, ax + this.Dp(6), ay + h - this.TextHeight(root) - this.Dp(4), line, this.textBrush)
             }
             this.textBrush.Color = UI.Color.Rgb(150, 150, 150)
             var t = "t = " + UI.CircuitView.Short(this.circuit.TimeRaw()) + "s"
-            this.DrawString(root, ax + w - this.TextWidth(root, t) - 6, ay + 4, t, this.textBrush)
-            root.PopClip()
+            this.DrawString(root, ax + w - this.TextWidth(root, t) - this.Dp(6), ay + this.Dp(4), t, this.textBrush)
+        }
+
+        // While the view draws, text is measured and drawn at the size of the screen (the renderer is at scale 1 then).
+        int DeviceFontPixels(Root root) {
+            var size = this.FontPixels(root)
+            if (size <= 0) { size = 14 }
+            return Math.Round(size * this.dev)!int
+        }
+        int TextWidth(Root root, string text) {
+            if (!this.device) { return base.TextWidth(root, text) }
+            return root.renderer.TextWidth(text, root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
+        }
+        int TextHeight(Root root) {
+            if (!this.device) { return base.TextHeight(root) }
+            return root.renderer.TextHeight(root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
+        }
+        undefined DrawString(Root root, int x, int y, string text, Brush brush) {
+            if (!this.device) {
+                base.DrawString(root, x, y, text, brush)
+                return
+            }
+            root.renderer.DrawText(x, y, text, brush, undefined, root.FontFor(this.FontName(root)), this.DeviceFontPixels(root))
         }
 
         /// <summary>A number for the eye: 3 significant digits with an SI prefix ("1.81", "47.5m").</summary>
@@ -622,21 +668,21 @@ namespace UI {
             var v1 = this.ToUnitY(this.actualHeight + 0.0)
             this.brush.Color = UI.Color.Rgb(52, 52, 60)
             for (int v = v0; v <= v1; v = v + step) {
-                for (int u = u0; u <= u1; u = u + step) { root.renderer.FillRect(this.SX(u), this.SY(v), 1, 1, this.brush) }
+                for (int u = u0; u <= u1; u = u + step) { root.renderer.FillRect(this.SX(u), this.SY(v), UI.M.Max(1, this.Dp(1)), UI.M.Max(1, this.Dp(1)), this.brush) }
             }
         }
 
         undefined DrawSelection(Root root, Circuits.Element e) {
             this.thin.Color = UI.Color.Rgb(90, 160, 255)
-            var x0 = this.SX(UI.M.Min(e.x1, e.x2)) - 4
-            var y0 = this.SY(UI.M.Min(e.y1, e.y2)) - 4
-            var x1 = this.SX(UI.M.Max(e.x1, e.x2)) + 4
-            var y1 = this.SY(UI.M.Max(e.y1, e.y2)) + 4
+            var x0 = this.SX(UI.M.Min(e.x1, e.x2)) - this.Dp(4)
+            var y0 = this.SY(UI.M.Min(e.y1, e.y2)) - this.Dp(4)
+            var x1 = this.SX(UI.M.Max(e.x1, e.x2)) + this.Dp(4)
+            var y1 = this.SY(UI.M.Max(e.y1, e.y2)) + this.Dp(4)
             for (int i = 0; i < e.pins.count / 2; i++) {
-                x0 = UI.M.Min(x0, this.SX(e.pins[i * 2]) - 4)
-                y0 = UI.M.Min(y0, this.SY(e.pins[i * 2 + 1]) - 4)
-                x1 = UI.M.Max(x1, this.SX(e.pins[i * 2]) + 4)
-                y1 = UI.M.Max(y1, this.SY(e.pins[i * 2 + 1]) + 4)
+                x0 = UI.M.Min(x0, this.SX(e.pins[i * 2]) - this.Dp(4))
+                y0 = UI.M.Min(y0, this.SY(e.pins[i * 2 + 1]) - this.Dp(4))
+                x1 = UI.M.Max(x1, this.SX(e.pins[i * 2]) + this.Dp(4))
+                y1 = UI.M.Max(y1, this.SY(e.pins[i * 2 + 1]) + this.Dp(4))
             }
             // and what was drawn of it (the body of a part is wider than its leads)
             var k = -1
@@ -646,16 +692,17 @@ namespace UI {
                 int ay0 = this.areaValues[k * 4 + 1]
                 int ax1 = this.areaValues[k * 4 + 2]
                 int ay1 = this.areaValues[k * 4 + 3]
-                x0 = UI.M.Min(x0, ax0 - 3)
-                y0 = UI.M.Min(y0, ay0 - 3)
-                x1 = UI.M.Max(x1, ax1 + 3)
-                y1 = UI.M.Max(y1, ay1 + 3)
+                x0 = UI.M.Min(x0, ax0 - this.Dp(3))
+                y0 = UI.M.Min(y0, ay0 - this.Dp(3))
+                x1 = UI.M.Max(x1, ax1 + this.Dp(3))
+                y1 = UI.M.Max(y1, ay1 + this.Dp(3))
             }
             root.renderer.DrawRect(x0, y0, x1 - x0, y1 - y0, this.thin)
             if (!this.readOnly && this.selection.count == 1 && !Circuits.Symbols.IsChip(e.type) && e.type != "Text") {
                 this.brush.Color = UI.Color.Rgb(90, 160, 255)
-                root.renderer.FillRect(this.SX(e.x1) - 3, this.SY(e.y1) - 3, 7, 7, this.brush)
-                root.renderer.FillRect(this.SX(e.x2) - 3, this.SY(e.y2) - 3, 7, 7, this.brush)
+                var hs = this.Dp(3)
+                root.renderer.FillRect(this.SX(e.x1) - hs, this.SY(e.y1) - hs, 2 * hs + 1, 2 * hs + 1, this.brush)
+                root.renderer.FillRect(this.SX(e.x2) - hs, this.SY(e.y2) - hs, 2 * hs + 1, 2 * hs + 1, this.brush)
             }
         }
 
@@ -901,7 +948,7 @@ namespace UI {
                 this.Seg(root, 0.0, 0.0, m - 2.0, 0.0, c0)
                 this.Seg(root, m + 2.0, 0.0, L, 0.0, c1)
                 this.thin.Color = white
-                root.renderer.DrawRect(this.PX(m - 2.0, 0.0) - 1, this.PY(m, -0.8), Math.Round(4.0 * this.scale)!int, Math.Round(1.6 * this.scale)!int, this.thin)
+                root.renderer.DrawRect(this.PX(m - 2.0, 0.0) - this.Dp(1), this.PY(m, -0.8), Math.Round(4.0 * this.scale * this.dev)!int, Math.Round(1.6 * this.scale * this.dev)!int, this.thin)
                 this.Label(root, m, -1.2, e.Get("formula"), gray)
             } else if (t == "Probe") {
                 this.thin.Color = gray
@@ -953,7 +1000,7 @@ namespace UI {
 
         undefined Box(Root root, float s, float t, float half, int color) {
             this.thin.Color = color
-            var r = Math.Round(half * this.scale)!int
+            var r = Math.Round(half * this.scale * this.dev)!int
             this.Grow(this.PX(s, t), this.PY(s, t), r)
             root.renderer.DrawRect(this.PX(s, t) - r, this.PY(s, t) - r, 2 * r, 2 * r, this.thin)
         }
@@ -1094,9 +1141,9 @@ namespace UI {
         // a point of the grid in the current frame: (s, t)
         float[] Local(int gx, int gy) {
             var r = new float[2]
-            float x = (this.ax + this.offsetX + gx * this.scale) - this.fx
-            float y = (this.ay + this.offsetY + gy * this.scale) - this.fy
-            var k = this.scale * this.scale
+            float x = (this.ax + this.offsetX + gx * this.scale) * this.dev - this.fx
+            float y = (this.ay + this.offsetY + gy * this.scale) * this.dev - this.fy
+            var k = this.scale * this.scale * this.dev * this.dev
             r[0] = (x * this.fdx + y * this.fdy) / k
             r[1] = (x * this.fnx + y * this.fny) / k
             return r
@@ -1354,10 +1401,10 @@ namespace UI {
                 var name = f[2]
                 var tw = this.TextWidth(root, name)
                 var th = this.TextHeight(root)
-                if (f[0] == "W") { this.DrawString(root, this.SX(ex) + 3, this.SY(ey) - th / 2, name, this.textBrush) }
-                else if (f[0] == "E") { this.DrawString(root, this.SX(ex) - 3 - tw, this.SY(ey) - th / 2, name, this.textBrush) }
-                else if (f[0] == "N") { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) + 2, name, this.textBrush) }
-                else { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) - 2 - th, name, this.textBrush) }
+                if (f[0] == "W") { this.DrawString(root, this.SX(ex) + this.Dp(3), this.SY(ey) - th / 2, name, this.textBrush) }
+                else if (f[0] == "E") { this.DrawString(root, this.SX(ex) - this.Dp(3) - tw, this.SY(ey) - th / 2, name, this.textBrush) }
+                else if (f[0] == "N") { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) + this.Dp(2), name, this.textBrush) }
+                else { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) - this.Dp(2) - th, name, this.textBrush) }
                 i = i + 1
             }
             var title = e.type
@@ -1399,7 +1446,7 @@ namespace UI {
                 pin = pin + 1
                 root.renderer.DrawLine(this.SX(e.x1), this.SY(py), x0, this.SY(py), this.pen)
                 this.textBrush.Color = UI.Color.Rgb(170, 170, 170)
-                this.DrawString(root, x0 + 3, this.SY(py) - this.TextHeight(root) / 2, left[i], this.textBrush)
+                this.DrawString(root, x0 + this.Dp(3), this.SY(py) - this.TextHeight(root) / 2, left[i], this.textBrush)
             }
             for (int i = 0; i < right.length; i++) {
                 if (right[i] == "") { continue }
@@ -1408,7 +1455,7 @@ namespace UI {
                 pin = pin + 1
                 root.renderer.DrawLine(x1, this.SY(py), this.SX(e.x1 + width), this.SY(py), this.pen)
                 this.textBrush.Color = UI.Color.Rgb(170, 170, 170)
-                this.DrawString(root, x1 - 3 - this.TextWidth(root, right[i]), this.SY(py) - this.TextHeight(root) / 2, right[i], this.textBrush)
+                this.DrawString(root, x1 - this.Dp(3) - this.TextWidth(root, right[i]), this.SY(py) - this.TextHeight(root) / 2, right[i], this.textBrush)
             }
             var title = e.type
             if (title == "Timer555") { title = "555" }
@@ -1777,7 +1824,7 @@ namespace UI {
             var scope = e.scope
             if (scope == undefined || w < 4 || h < 4) {
                 this.textBrush.Color = UI.Color.Rgb(140, 140, 140)
-                this.DrawString(root, x0 + 4, y0 + 2, label, this.textBrush)
+                this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label, this.textBrush)
                 return
             }
             var n = scope.Count
@@ -1818,7 +1865,7 @@ namespace UI {
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
             var unit = "V"
             if (e.Get("quantity") == "current") { unit = "A" }
-            this.DrawString(root, x0 + 4, y0 + 2, label + " = " + UI.CircuitView.Short(samples[samples.length - 1]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit, this.textBrush)
+            this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label + " = " + UI.CircuitView.Short(samples[samples.length - 1]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit, this.textBrush)
         }
 
         // ---- the dots of the current ----
@@ -1919,13 +1966,13 @@ namespace UI {
             var white = UI.Color.Rgb(220, 220, 220)
             this.brush.Color = white
             for (int k = 0; k < this.junctions.count / 2; k++) {
-                var r = UI.M.Max(2, Math.Round(this.scale * 0.35)!int)
+                var r = UI.M.Max(this.Dp(2), Math.Round(this.scale * 0.35 * this.dev)!int)
                 root.renderer.FillCircle(this.SX(this.junctions[k * 2]), this.SY(this.junctions[k * 2 + 1]), r, this.brush)
             }
             if (!this.readOnly) {
                 this.thin.Color = UI.Color.Rgb(200, 80, 80)
                 for (int k = 0; k < this.openPins.count / 2; k++) {
-                    root.renderer.DrawCircle(this.SX(this.openPins[k * 2]), this.SY(this.openPins[k * 2 + 1]), 2, this.thin)
+                    root.renderer.DrawCircle(this.SX(this.openPins[k * 2]), this.SY(this.openPins[k * 2 + 1]), this.Dp(2), this.thin)
                 }
             }
         }

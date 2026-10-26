@@ -37,6 +37,12 @@ namespace fire.Editor
             public LiveSession? Session { get; set; }
             public long Frame = -1;
 
+            /// <summary>Pixels of the screen per unit of Avalonia: the program draws at the full resolution, the picture is shown 1:1 (no stretching).</summary>
+            public double Scale => TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0;
+
+            /// <summary>The size of the area in pixels of the screen.</summary>
+            public (int W, int H) PixelSize(Size size) => ((int)Math.Max(1, Math.Round(size.Width * Scale)), (int)Math.Max(1, Math.Round(size.Height * Scale)));
+
             public Surface()
             {
                 Focusable = true;
@@ -71,7 +77,7 @@ namespace fire.Editor
                 context.FillRectangle(new SolidColorBrush(Color.FromRgb(24, 24, 28)), new Rect(Bounds.Size));
                 if (_bitmap != null)
                     using (context.PushRenderOptions(new RenderOptions { BitmapInterpolationMode = BitmapInterpolationMode.None }))
-                        context.DrawImage(_bitmap, new Rect(0, 0, _bitmap.PixelSize.Width, _bitmap.PixelSize.Height));
+                        context.DrawImage(_bitmap, new Rect(0, 0, _bitmap.PixelSize.Width / Scale, _bitmap.PixelSize.Height / Scale));
             }
 
             private static int Button(PointerUpdateKind kind) => kind switch
@@ -88,8 +94,9 @@ namespace fire.Editor
                 Focus();
                 var p = e.GetCurrentPoint(this);
                 e.Pointer.Capture(this);
-                Session?.MouseMove(p.Position.X, p.Position.Y, 0);
-                Session?.MouseButton(Button(p.Properties.PointerUpdateKind), true, p.Position.X, p.Position.Y);
+                double k = Scale;
+                Session?.MouseMove(p.Position.X * k, p.Position.Y * k, 0);
+                Session?.MouseButton(Button(p.Properties.PointerUpdateKind), true, p.Position.X * k, p.Position.Y * k);
                 e.Handled = true;
             }
 
@@ -98,7 +105,7 @@ namespace fire.Editor
                 base.OnPointerReleased(e);
                 var p = e.GetCurrentPoint(this);
                 e.Pointer.Capture(null);
-                Session?.MouseButton(Button(p.Properties.PointerUpdateKind), false, p.Position.X, p.Position.Y);
+                Session?.MouseButton(Button(p.Properties.PointerUpdateKind), false, p.Position.X * Scale, p.Position.Y * Scale);
                 e.Handled = true;
             }
 
@@ -107,14 +114,14 @@ namespace fire.Editor
                 base.OnPointerMoved(e);
                 var p = e.GetCurrentPoint(this);
                 int buttons = (p.Properties.IsLeftButtonPressed ? 1 : 0) | (p.Properties.IsMiddleButtonPressed ? 2 : 0) | (p.Properties.IsRightButtonPressed ? 4 : 0);
-                Session?.MouseMove(p.Position.X, p.Position.Y, buttons);
+                Session?.MouseMove(p.Position.X * Scale, p.Position.Y * Scale, buttons);
             }
 
             protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
             {
                 base.OnPointerWheelChanged(e);
                 var p = e.GetPosition(this);
-                Session?.Wheel(e.Delta.X, e.Delta.Y, p.X, p.Y);
+                Session?.Wheel(e.Delta.X, e.Delta.Y, p.X * Scale, p.Y * Scale);
                 e.Handled = true;
             }
 
@@ -143,7 +150,8 @@ namespace fire.Editor
             protected override void OnSizeChanged(SizeChangedEventArgs e)
             {
                 base.OnSizeChanged(e);
-                Session?.Resize((int)Math.Max(1, e.NewSize.Width), (int)Math.Max(1, e.NewSize.Height));
+                var (w, h) = PixelSize(e.NewSize);
+                Session?.Resize(w, h);
             }
 
             /// <summary>The key as SDL names it (letters: their lower case character; see UI.Keys); null for keys the view does not use.</summary>
@@ -253,11 +261,22 @@ namespace fire.Editor
         {
             base.OnAttachedToVisualTree(e);
             if (_session == null) StartSession(_text);
+            // a window moved to a screen with another scaling: the program draws at the new one
+            if (TopLevel.GetTopLevel(this) is TopLevel top) top.ScalingChanged += OnScalingChanged;
+        }
+
+        private void OnScalingChanged(object? sender, EventArgs e)
+        {
+            if (_session == null) return;
+            _session.Send("scaling\t" + _surface.Scale.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var (w, h) = _surface.PixelSize(_surface.Bounds.Size);
+            _session.Resize(w, h);
         }
 
         protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
         {
             base.OnDetachedFromVisualTree(e);
+            if (e.Root is TopLevel top) top.ScalingChanged -= OnScalingChanged;
             // a tab that is moved stays alive; the session ends when the document is closed (the control is not attached again)
             Dispatcher.UIThread.Post(() => { if (!IsAttachedToVisualTree() && _session != null) { _session.Stop(); _session = null; _surface.Session = null; } }, DispatcherPriority.Background);
         }
@@ -266,7 +285,7 @@ namespace fire.Editor
 
         // ---- the program -------------------------------------------------------------------------------------------------------------------------
         /// <summary>The fire program that runs the view: the schematic, the view filling the window, the reports to the editor and the commands from it.</summary>
-        public static string HostScript(string biscuit, int width, int height) => $$"""
+        public static string HostScript(string biscuit, int width, int height, double scaling = 1.0) => $$"""
             #import "circuits.ui"
             extern string __HostCommand()
 
@@ -323,7 +342,8 @@ namespace fire.Editor
             var fb = new Framebuffer({{Math.Max(width, 64)}}, {{Math.Max(height, 64)}})
             var win = new Window(fb, "circuit")
             var ui = new UI.Root(fb, win)
-            ui.Scaling = 1.0
+            // the scaling of the screen: the view draws at its full resolution (spark shows the picture 1:1)
+            ui.Scaling = {{scaling.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
             var circuit = new Circuits.Circuit("schematic")
             var view = new UI.CircuitView(circuit, 0, 0, fb.Width(), fb.Height())
             ui.Add(view)
@@ -348,6 +368,10 @@ namespace fire.Editor
             while (ui.Tick()) {
                 var command = __HostCommand()
                 while (command != "") {
+                    if (command.StartsWith("scaling\t")) {
+                        var factor = command.Substring(8).TryToFloat()
+                        if (factor != undefined) { ui.Scaling = factor }
+                    }
                     SparkHost.Do(view, circuit, command)
                     command = __HostCommand()
                 }
@@ -394,7 +418,7 @@ namespace fire.Editor
             });
             int w = (int)Math.Max(64, _surface.Bounds.Width), h = (int)Math.Max(64, _surface.Bounds.Height);
             if (_surface.Bounds.Width < 2) { w = 800; h = 500; }
-            string script = HostScript(text, w, h);
+            string script = HostScript(text, w, h, _surface.Scale);
             string? basePath = FilePath != null ? Path.GetDirectoryName(Path.GetFullPath(FilePath)) : null;
             _status.Text = "Starting...";
             Task.Run(() =>
@@ -406,7 +430,7 @@ namespace fire.Editor
                     {
                         if (!ReferenceEquals(session, _session)) return;
                         _status.Text = "";
-                        if (_surface.Bounds.Width >= 2) session.Resize((int)_surface.Bounds.Width, (int)_surface.Bounds.Height);
+                        if (_surface.Bounds.Width >= 2) { var (pw, ph) = _surface.PixelSize(_surface.Bounds.Size); session.Resize(pw, ph); }
                         if (_pendingLoad != null) { session.Send("load\t" + _pendingLoad); _pendingLoad = null; }
                         session.Send("fit");
                     });
