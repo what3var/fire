@@ -1157,6 +1157,9 @@ namespace Circuits {
         int version = 0
         bool reconnect = true
         bool applying = false
+        // the connections as Connect found them last (which pins share a node): a change that keeps them (moving a scope, a text, or a group as a
+        // whole) does not compile the circuit again, and the scopes keep what they recorded
+        string netKey = ""
 
         construct(Circuits.Circuit circuit) {
             this.circuit = circuit
@@ -1288,12 +1291,13 @@ namespace Circuits {
             this.applying = true
             try {
                 var c = this.circuit
+                // the elements whose part was made again (the scopes on them are made again)
+                var remade = new List()
                 foreach (e in this.elements) {
                     Circuits.Symbols.Pins(e)
                     // a chip is a circuit: its ports are wired inside, so it is made again when the connections change
                     if (this.reconnect && e.part != undefined && e.part is of Circuit) { e.dirty = true }
-                    if (e.type == "Scope") { e.dirty = true }
-                    if (e.dirty) {
+                    if (e.dirty && e.type != "Scope") {
                         this.Drop(e)
                         e.error = ""
                         try { Circuits.Symbols.Create(e, c) } catch (Exception ex) {
@@ -1303,16 +1307,31 @@ namespace Circuits {
                         }
                         e.dirty = false
                         this.reconnect = true
+                        remade.Add(e.name)
                     }
                 }
-                if (this.reconnect) { this.Connect() }
+                var nets = false
+                if (this.reconnect) {
+                    var before = this.netKey
+                    this.Connect()
+                    if (this.netKey != before) { nets = true }
+                }
                 this.JoinRelays()
                 foreach (e in this.elements) {
-                    if (e.type == "Scope") { this.MakeScope(e) }
+                    if (e.type != "Scope") { continue }
+                    // a scope is made again when it changed, when the connections changed or when a part was made again (the port it reads may be one of it)
+                    if (e.dirty || e.scope == undefined || nets || remade.count > 0) {
+                        this.Drop(e)
+                        e.error = ""
+                        e.dirty = false
+                        this.MakeScope(e)
+                    }
                 }
                 this.reconnect = false
-                c.Invalidate()
-                c.OnBuilt()
+                if (nets || remade.count > 0) {
+                    c.Invalidate()
+                    c.OnBuilt()
+                }
             } finally { this.applying = false }
         }
 
@@ -1369,6 +1388,26 @@ namespace Circuits {
                 start = start + count
             }
             // the ports of each group become one node; a group with ground goes to the ground of the circuit
+            // (the key of the connections: per pin the number of its group in the order of first appearance, and the elements with their parts)
+            var key = new StringBuilder()
+            var numbers = new int[n]
+            for (int i = 0; i < n; i++) { numbers[i] = -1 }
+            var next = 0
+            for (int i = 0; i < n; i++) {
+                var r = Circuits.Schematic.Root(parent, i)
+                if (numbers[r] < 0) {
+                    numbers[r] = next
+                    next = next + 1
+                }
+                key.Append(numbers[r])
+                key.Append(",")
+            }
+            foreach (e in this.elements) {
+                key.Append(e.type)
+                key.Append(":")
+                key.Append(e.pins.count)
+                key.Append(";")
+            }
             var first = new class[n]
             var grounded = new bool[n]
             for (int i = 0; i < n; i++) {
@@ -1379,6 +1418,10 @@ namespace Circuits {
                 Circuits.Element e = owners[i]
                 if (e.type == "Ground") { grounded[Circuits.Schematic.Root(parent, i)] = true }
             }
+            for (int i = 0; i < n; i++) {
+                if (grounded[Circuits.Schematic.Root(parent, i)]) { key.Append("g" + i) }
+            }
+            this.netKey = key.ToString()
             for (int i = 0; i < n; i++) {
                 var r = Circuits.Schematic.Root(parent, i)
                 Circuits.Element e = owners[i]
