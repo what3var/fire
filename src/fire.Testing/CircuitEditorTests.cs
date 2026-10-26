@@ -277,7 +277,7 @@ static class CircuitEditorTests
             ui.Add(view)
             ui.Update()
             var changes = 0
-            view.onChange = func (v) => { changes = changes + 1 }
+            view.OnChange = func (v) => { changes = changes + 1 }
             class P { static int X(int u) { return 40 + u * 10 } }
             view.BeginPlace("Source")
             ui.MouseDown(1, P.X(0), P.X(12))
@@ -371,7 +371,7 @@ static class CircuitEditorTests
                 ui.Scaling = 1.0
                 var clicks = 0
                 var b = new UI.Button("Hi", 10, 10)
-                b.onClick = func () => { clicks = clicks + 1 }
+                b.OnClick = func () => { clicks = clicks + 1 }
                 ui.Add(b)
                 while (ui.Tick()) {
                     var cmd = __HostCommand()

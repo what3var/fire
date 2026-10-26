@@ -83,10 +83,10 @@ static class DockingTests
             combo.Add("Green")
             combo.Add("Blue")
             var hits = 0
-            combo.onSelect = func () => { hits = hits + 1 }
+            combo.OnSelect = func () => { hits = hits + 1 }
             ui.Add(combo)
             ui.Draw()
-            print("leer '" + combo.text + "' " + combo.selectedIndex)
+            print("leer '" + combo.Text + "' " + combo.SelectedIndex)
             ui.MouseDown(1, 50, 20)
             ui.MouseUp(1, 50, 20)
             ui.Draw()
@@ -94,28 +94,28 @@ static class DockingTests
             var row = combo.popupList.RowHeight(ui)
             ui.MouseMove(50, 34 + row + row / 2)
             ui.Draw()
-            print("hover " + combo.popupList.selectedIndex + " " + combo.selectedIndex)
+            print("hover " + combo.popupList.SelectedIndex + " " + combo.SelectedIndex)
             ui.MouseDown(1, 50, 34 + row + row / 2)
             ui.MouseUp(1, 50, 34 + row + row / 2)
             ui.Draw()
-            print("gewaehlt " + combo.text + " " + combo.IsDropDownOpen() + " " + hits + " " + combo.TakeChanged() + " fokus " + combo.focused)
+            print("gewaehlt " + combo.Text + " " + combo.IsDropDownOpen() + " " + hits + " " + combo.TakeChanged() + " fokus " + combo.Focused)
             ui.KeyDown({{Down}}, 0)
-            print("runter " + combo.text)
+            print("runter " + combo.Text)
             ui.KeyDown({{Down}}, 0)
-            print("unten bleibt " + combo.text)
+            print("unten bleibt " + combo.Text)
             ui.KeyDown({{Up}}, 0)
-            print("hoch " + combo.text)
+            print("hoch " + combo.Text)
             ui.KeyDown({{Down}}, 512)
             ui.Draw()
             print("Alt+Runter " + combo.IsDropDownOpen())
             ui.KeyDown({{Up}}, 0)
             ui.KeyDown(13, 0)
             ui.Draw()
-            print("Enter " + combo.text + " " + combo.IsDropDownOpen())
+            print("Enter " + combo.Text + " " + combo.IsDropDownOpen())
             ui.KeyDown({{F4}}, 0)
             ui.KeyDown(27, 0)
             ui.Draw()
-            print("Escape " + combo.IsDropDownOpen() + " " + combo.text)
+            print("Escape " + combo.IsDropDownOpen() + " " + combo.Text)
             ui.MouseDown(1, 50, 20)
             ui.MouseUp(1, 50, 20)
             ui.MouseDown(1, 50, 20)
@@ -127,11 +127,11 @@ static class DockingTests
             ui.MouseDown(1, 300, 250)
             ui.MouseUp(1, 300, 250)
             ui.Draw()
-            print("daneben " + combo.IsDropDownOpen() + " " + combo.text)
-            combo.selectedIndex = 2
+            print("daneben " + combo.IsDropDownOpen() + " " + combo.Text)
+            combo.SelectedIndex = 2
             ui.Draw()
-            print("von aussen " + combo.text + " " + hits)
-            print("SelectText " + combo.SelectText("Red") + " " + combo.selectedIndex + " " + combo.SelectText("Pink"))
+            print("von aussen " + combo.Text + " " + hits)
+            print("SelectText " + combo.SelectText("Red") + " " + combo.SelectedIndex + " " + combo.SelectText("Pink"))
             """, new[] { "leer '' -1", "offen True 1 34", "hover 1 -1", "gewaehlt Green False 1 True fokus True", "runter Blue", "unten bleibt Blue", "hoch Green",
                 "Alt+Runter True", "Enter Red False", "Escape False Red", "zweiter Klick schliesst False", "daneben False Red", "von aussen Blue 5", "SelectText True 0 False" }, docking: false);
 
@@ -144,12 +144,12 @@ static class DockingTests
             fruits.Add(new Fruit("Apple"))
             fruits.Add(new Fruit("Pear"))
             var combo = new UI.ComboBox(10, 10, 120, 24)
-            combo.displayMember = "name"
-            combo.itemsSource = fruits
-            combo.selectedIndex = 1
+            combo.DisplayMember = "name"
+            combo.ItemsSource = fruits
+            combo.SelectedIndex = 1
             ui.Add(combo)
             ui.Draw()
-            print(combo.text + " " + combo.count + " " + combo.selectedItem.name)
+            print(combo.Text + " " + combo.count + " " + combo.selectedItem.name)
             // the arrow on the right is drawn in the colour of the text
             print(Px.Get(ui.renderer, 10 + 120 - 9, 10 + 12) == (ui.theme.text.Color & 16777215))
             var auto = new UI.ComboBox(10, 50, -1, -1)
@@ -230,11 +230,11 @@ static class DockingTests
             print("row " + b.row + " rows " + dm.topStrips.RowCount() + " h " + dm.topStrips.actualHeight + " " + b.ry)
             ui.MouseMove(6, 150)
             ui.Draw()
-            print("left " + dm.leftStrips.strips.count + " " + b.horizontal + " " + b.actualWidth + "x" + b.actualHeight + " top " + dm.topStrips.strips.count + " h " + dm.topStrips.actualHeight)
+            print("left " + dm.leftStrips.strips.count + " " + b.Horizontal + " " + b.actualWidth + "x" + b.actualHeight + " top " + dm.topStrips.strips.count + " h " + dm.topStrips.actualHeight)
             ui.MouseMove(200, 150)
             ui.Draw()
             var f = b.parent
-            print("float " + b.floating + " " + dm.floats.count + " " + f.x + "," + f.y + " " + b.horizontal)
+            print("float " + b.floating + " " + dm.floats.count + " " + f.x + "," + f.y + " " + b.Horizontal)
             ui.MouseUp(1, 200, 150)
             ui.Draw()
             __Shot(fb.id, "floatstrip")
@@ -244,7 +244,7 @@ static class DockingTests
             ui.MouseUp(1, 150, 8)
             ui.Draw()
             print("docked " + b.floating + " " + dm.floats.count + " top " + dm.topStrips.strips.count + " row " + b.row + " " + b.rx)
-            b.visible = false
+            b.Visible = false
             ui.Draw()
             print("hidden " + dm.topStrips.RowStrips(0).count)
             """, new[] { "row0 0 84=84 h 26", "along 144 row 0", "row 1 rows 2 h 52 26", "left 1 False 54x60 top 1 h 26", "float True 1 194,144 True", "docked False 0 top 2 row 0 145", "hidden 1" });
@@ -260,10 +260,10 @@ static class DockingTests
             var combo = strip.AddComboBox(90)
             combo.Add("x86")
             combo.Add("x64")
-            combo.selectedIndex = 0
+            combo.SelectedIndex = 0
             var box = strip.AddTextBox("", 80)
             var check = strip.AddButton("Wrap")
-            check.checkable = true
+            check.Checkable = true
             dm.AddToolStrip(strip)
             ui.Draw()
             ui.MouseDown(1, split.ax + 5, split.ay + 5)
@@ -291,10 +291,10 @@ static class DockingTests
             ui.MouseUp(1, box.ax + 5, box.ay + 5)
             ui.TextInput("abc")
             ui.Draw()
-            print("text " + box.text + " " + box.focused)
+            print("text " + box.Text + " " + box.Focused)
             ui.MouseDown(1, check.ax + 5, check.ay + 5)
             ui.MouseUp(1, check.ax + 5, check.ay + 5)
-            print("check " + check.isChecked + " " + check.TakeClicked())
+            print("check " + check.IsChecked + " " + check.TakeClicked())
             __Shot(fb.id, "items")
             """, new[] { "main run; 0", "arrow 1 24=24", "chosen run;release; 0", "combo x64", "text abc True", "check True True" });
 
@@ -320,7 +320,7 @@ static class DockingTests
             ui.MouseDown(1, pc.TabLeft(ui, 0) + 5, tabY)
             ui.MouseUp(1, pc.TabLeft(ui, 0) + 5, tabY)
             ui.Draw()
-            print("tab " + pc.ActiveWindow().title + " focus " + classes.content.focused + " active pane " + pc.focusInside)
+            print("tab " + pc.ActiveWindow().title + " focus " + classes.content.Focused + " active pane " + pc.focusInside)
             __Shot(fb.id, "tools")
             // the splitter between the left edge and the centre
             var sx = pe.ax + pe.actualWidth + 1
@@ -466,7 +466,7 @@ static class DockingTests
             run.AddItem("Run without debugging")
             var target = tools.AddComboBox(70)
             target.Add("Debug")
-            target.selectedIndex = 0
+            target.SelectedIndex = 0
             dock.AddToolStrip(tools)
             var files = new UI.ListBox()
             files.Add("main.fire")

@@ -9167,12 +9167,12 @@ string uiDrawScript = """
     lay.SetRows("24, *")
     lay.AddAt(new UI.Button("grid", 0, 0, -1, -1), 0, 0)
     var bd = new UI.Border()
-    bd.padding = new UI.Thickness(2)
+    bd.Padding = new UI.Thickness(2)
     bd.SetChild(new UI.Label("border"))
     lay.AddAt(bd, 0, 1)
     lay.AddAt(new UI.Label("auto"), 0, 2)
     var wr = new UI.WrapPanel()
-    for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.margin = new UI.Thickness(2); wr.Add(wb) }
+    for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.Margin = new UI.Thickness(2); wr.Add(wb) }
     lay.AddAt(wr, 1, 0, 1, 3)
     ui.Add(lay)
     // styles and templates: an implicit style for labels, a button whose look is a template with a part bound to its text and a hover trigger
@@ -9181,11 +9181,11 @@ string uiDrawScript = """
     ui.resources.AddStyle(sty)
     var tpl = new UI.ControlTemplate(func (owner) => {
         var tb = new UI.Border()
-        tb.name = "tb"
-        tb.background = new SolidBrush(UI.Color.Rgb(40, 160, 80))
-        tb.padding = new UI.Thickness(2)
+        tb.Name = "tb"
+        tb.Background = new SolidBrush(UI.Color.Rgb(40, 160, 80))
+        tb.Padding = new UI.Thickness(2)
         var tl = new UI.Label("")
-        tl.name = "tl"
+        tl.Name = "tl"
         tb.SetChild(tl)
         return tb
     })
@@ -9194,7 +9194,7 @@ string uiDrawScript = """
     tt.Set("background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
     tpl.AddTrigger(tt)
     var tbtn = new UI.Button("tpl", 200, 100, -1, -1)
-    tbtn.template = tpl
+    tbtn.Template = tpl
     panel.Add(tbtn)
     // scrolling with the clip rectangle, lists, a tree, radio buttons, shapes, a drawing canvas and a menu with its popup
     var sv = new UI.ScrollViewer(330, 8, 120, 90)
@@ -9211,7 +9211,7 @@ string uiDrawScript = """
     top.Add(new UI.TreeNode("child a"))
     var cb = top.Add(new UI.TreeNode("child b"))
     cb.Add(new UI.TreeNode("leaf"))
-    top.expanded = true
+    top.Expanded = true
     ui.Add(tv)
     var rbs = new UI.RadioButtons(460, 108)
     rbs.Add("one")
@@ -9220,11 +9220,11 @@ string uiDrawScript = """
     ui.Add(rbs)
     var shp = new UI.Path(undefined, 570, 8)
     shp.SetData("M 0 0 L 50 0 C 60 20 60 40 25 50 Z")
-    shp.fill = new SolidBrush(UI.Color.Rgb(200, 120, 40))
-    shp.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+    shp.Fill = new SolidBrush(UI.Color.Rgb(200, 120, 40))
+    shp.Stroke = new Pen(UI.Color.Rgb(0, 0, 0))
     ui.Add(shp)
     var dcv = new UI.DrawingCanvas(570, 70, 60, 40)
-    dcv.onPaint = func (c) => {
+    dcv.OnPaint = func (c) => {
         c.renderer.FillRect(0, 0, 60, 40, new SolidBrush(UI.Color.Rgb(30, 30, 90)))
         c.renderer.DrawLine(0, 0, 59, 39, new Pen(UI.Color.Rgb(255, 255, 255)))
     }
@@ -9238,14 +9238,14 @@ string uiDrawScript = """
     ui.Add(mbar)
     // fonts: a TrueType font found on the system (the folder FIRE_FONT_DIRS), a built-in bitmap font, the font and size passed on to the elements inside, a text field that scrolls
     var fnp = new UI.Panel(330, 236, 300, 62)
-    fnp.font = "firesans"
-    fnp.fontSize = 16
+    fnp.Font = "firesans"
+    fnp.FontSize = 16
     fnp.Add(new UI.Label("AVAVHO iAi.", 4, 4))
     var fl2 = new UI.Label("Small", 130, 4)
-    fl2.font = "8x8"
+    fl2.Font = "8x8"
     fnp.Add(fl2)
     var fbt = new UI.Button("HOAV", 4, 28, -1, -1)
-    fbt.fontSize = 12
+    fbt.FontSize = 12
     fnp.Add(fbt)
     fnp.Add(new UI.TextBox("AVA HO iii AVAV", 80, 30, 90, 24))
     ui.Add(fnp)
@@ -9414,7 +9414,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print(win.TouchMouse)
         var clicks = 0
         var b = new UI.Button("OK", 10, 10, 80, 26)
-        b.onClick = func () => { clicks = clicks + 1 }
+        b.OnClick = func () => { clicks = clicks + 1 }
         ui.Add(b)
         ui.Draw()
         __TestEvent(16, 1, 20.0, 20.0)
@@ -9425,7 +9425,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         __TestEvent(17, 1, 40.0, 22.0)
         __TestEvent(18, 1, 200.0, 150.0)
         ui.Tick()
-        print("daneben " + clicks + " hover " + b.hover + " pressed " + b.pressed)
+        print("daneben " + clicks + " hover " + b.Hover + " pressed " + b.Pressed)
         __TestEvent(16, 1, 20.0, 20.0)
         __TestEvent(16, 2, 200.0, 150.0)
         __TestEvent(18, 2, 200.0, 150.0)
@@ -9441,7 +9441,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         var col = new UI.StackPanel()
         for (var i = 0; i < 8; i = i + 1) {
             var bt = new UI.Button("b" + i, 0, 0, 60, 30)
-            bt.onClick = inc
+            bt.OnClick = inc
             col.Add(bt)
         }
         sv.SetContent(col)
@@ -9475,8 +9475,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         var b = new UI.Button("B", 90, 10, 60, 24)
         var c = new UI.Button("C", 10, 50, 60, 24)
         var d = new UI.Button("D", 90, 50, 60, 24)
-        a.onClick = func () => { log = log + "A" }
-        d.onClick = func () => { log = log + "D" }
+        a.OnClick = func () => { log = log + "A" }
+        d.OnClick = func () => { log = log + "D" }
         ui.Add(a)
         ui.Add(b)
         ui.Add(c)
@@ -9484,39 +9484,39 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         __TestEvent(35, 1, 0, 2)
         ui.Tick()
-        print("erstes " + a.focused)
+        print("erstes " + a.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 2)
         ui.Tick()
-        print("rechts " + b.focused)
+        print("rechts " + b.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 4)
         ui.Tick()
-        print("runter " + d.focused)
+        print("runter " + d.Focused)
         __TestEvent(33, 1, 0)
         ui.Tick()
         print("Knopf 0 " + log)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 8)
         ui.Tick()
-        print("links " + c.focused)
+        print("links " + c.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 1)
         ui.Tick()
-        print("hoch " + a.focused)
+        print("hoch " + a.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("Taste runter " + c.focused)
+        print("Taste runter " + c.Focused)
         __TestEvent(24, 1073741903, 0)
         ui.Tick()
-        print("Taste rechts " + d.focused)
+        print("Taste rechts " + d.Focused)
         __TestEvent(33, 1, 5)
         ui.Tick()
-        print("Knopf 5 (Tab) " + a.focused)
+        print("Knopf 5 (Tab) " + a.Focused)
         __TestEvent(33, 1, 4)
         ui.Tick()
-        print("Knopf 4 (Umschalt-Tab) " + d.focused)
+        print("Knopf 4 (Umschalt-Tab) " + d.Focused)
         """, new[] { "erstes True", "rechts True", "runter True", "Knopf 0 D", "links True", "hoch True", "Taste runter True", "Taste rechts True", "Knopf 5 (Tab) True", "Knopf 4 (Umschalt-Tab) True" });
 
     CheckUi("Joystick: der Stick wiederholt eine gehaltene Richtung; Totzone und Loslassen", uiHead + """
@@ -9535,21 +9535,21 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.joyRepeatInterval = 1
         __TestEvent(32, 1, 1, 0.4)
         ui.Tick()
-        print("Totzone " + e1.focused + " " + e2.focused)
+        print("Totzone " + e1.Focused + " " + e2.Focused)
         __TestEvent(32, 1, 1, 0.9)
         ui.Tick()
-        print("ausgeschlagen " + e1.focused)
+        print("ausgeschlagen " + e1.Focused)
         ui.Tick()
-        print("wiederholt " + e2.focused)
+        print("wiederholt " + e2.Focused)
         ui.Tick()
         ui.Tick()
-        print("am Ende " + e4.focused)
+        print("am Ende " + e4.Focused)
         __TestEvent(32, 1, 1, 0.0)
         ui.Tick()
         __TestEvent(32, 1, 0, -0.9)
         ui.Tick()
         ui.Tick()
-        print("Achse 0 links, kein Kandidat: " + e4.focused)
+        print("Achse 0 links, kein Kandidat: " + e4.Focused)
         """, new[] { "Totzone False False", "ausgeschlagen True", "wiederholt True", "am Ende True", "Achse 0 links, kein Kandidat: True" });
 
     CheckUi("Pfeiltasten: Textfeld behaelt Links/Rechts, eine Liste gibt die Taste am Rand frei, ein Element im ScrollViewer wird sichtbar", uiHead + """
@@ -9566,26 +9566,26 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.SetFocus(tb)
         __TestEvent(24, 1073741904, 0)
         ui.Tick()
-        print("Links " + tb.caret + " " + tb.focused)
+        print("Links " + tb.caret + " " + tb.Focused)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("Runter " + btn.focused)
+        print("Runter " + btn.Focused)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("Liste " + lb.focused)
+        print("Liste " + lb.Focused)
         __TestEvent(24, 1073741905, 0)
         __TestEvent(24, 1073741905, 0)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("gewaehlt " + lb.selectedIndex)
+        print("gewaehlt " + lb.SelectedIndex)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("am Ende bleibt " + lb.focused + " " + lb.selectedIndex)
+        print("am Ende bleibt " + lb.Focused + " " + lb.SelectedIndex)
         __TestEvent(24, 1073741906, 0)
         __TestEvent(24, 1073741906, 0)
         __TestEvent(24, 1073741906, 0)
         ui.Tick()
-        print("oben raus " + btn.focused + " " + lb.selectedIndex)
+        print("oben raus " + btn.Focused + " " + lb.SelectedIndex)
         var sv = new UI.ScrollViewer(200, 0, 100, 60)
         var col = new UI.StackPanel()
         var last = undefined
@@ -9676,13 +9676,13 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Add(b)
         __TestEvent(9, 20.0, 20.0)
         ui.Tick()
-        print("hover " + b.hover)
+        print("hover " + b.Hover)
         __TestEvent(8, 1, 20.0, 20.0)
         ui.Tick()
-        print("pressed " + b.pressed)
+        print("pressed " + b.Pressed)
         __TestEvent(11, 1, 20.0, 20.0)
         ui.Tick()
-        print("pressed " + b.pressed)
+        print("pressed " + b.Pressed)
         print("geklickt " + b.TakeClicked())
         print("nochmal " + b.TakeClicked())
         """, new[] { "hover True", "pressed True", "pressed False", "geklickt True", "nochmal False" });
@@ -9699,7 +9699,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Button: onClick-Lambda sieht die echten globalen Variablen", uiHead + """
         var clicks = 0
         var b = new UI.Button("OK", 10, 10, 80, 26)
-        b.onClick = func () => { clicks = clicks + 1 }
+        b.OnClick = func () => { clicks = clicks + 1 }
         ui.Add(b)
         __TestEvent(8, 1, 20.0, 20.0)
         __TestEvent(11, 1, 20.0, 20.0)
@@ -9737,10 +9737,10 @@ string[] uiDrawExpected = Array.Empty<string>();
         __TestEvent(8, 1, 15.0, 15.0)
         __TestEvent(11, 1, 15.0, 15.0)
         ui.Tick()
-        print("an " + c.isChecked + " " + c.TakeChanged())
+        print("an " + c.IsChecked + " " + c.TakeChanged())
         __TestEvent(24, 32, 0)
         ui.Tick()
-        print("aus " + c.isChecked)
+        print("aus " + c.IsChecked)
         """, new[] { "an True True", "aus False" });
 
     CheckUi("TextBox: Fokus per Klick, Eingabe, Rueck-/Entf-Taste, Pfeile, Enter", uiHead + """
@@ -9749,23 +9749,23 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         __TestEvent(3, "Hallo")
         ui.Tick()
-        print("ohne Fokus '" + t.text + "'")
+        print("ohne Fokus '" + t.Text + "'")
         __TestEvent(8, 1, 20.0, 20.0)
         __TestEvent(11, 1, 20.0, 20.0)
         __TestEvent(3, "Hallo")
         ui.Tick()
-        print("eingegeben '" + t.text + "' caret " + t.caret)
+        print("eingegeben '" + t.Text + "' caret " + t.caret)
         __TestEvent(24, 8, 0)
         ui.Tick()
-        print("rueck '" + t.text + "'")
+        print("rueck '" + t.Text + "'")
         __TestEvent(24, 1073741904, 0)
         __TestEvent(24, 1073741904, 0)
         __TestEvent(3, "X")
         ui.Tick()
-        print("links+X '" + t.text + "' caret " + t.caret)
+        print("links+X '" + t.Text + "' caret " + t.caret)
         __TestEvent(24, 127, 0)
         ui.Tick()
-        print("entf '" + t.text + "'")
+        print("entf '" + t.Text + "'")
         __TestEvent(24, 1073741898, 0)
         ui.Tick()
         print("pos1 " + t.caret)
@@ -9779,7 +9779,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("TextBox: Klick setzt die Einfuegemarke, maxLength, scrollt bei langem Text", uiHead + """
         var t = new UI.TextBox("abcdef", 10, 10, 160, 24)
-        t.maxLength = 8
+        t.MaxLength = 8
         ui.Add(t)
         ui.Draw()
         __TestEvent(8, 1, 10.0 + 4.0 + 8.0 * 2.0 + 1.0, 20.0)
@@ -9788,7 +9788,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("caret " + t.caret)
         __TestEvent(3, "123456")
         ui.Tick()
-        print("max '" + t.text + "'")
+        print("max '" + t.Text + "'")
         t.SetText("0123456789012345678901234567890123456789")
         ui.Draw()
         print("scroll " + (t.scroll > 0) + " caret " + t.caret)
@@ -9799,24 +9799,24 @@ string[] uiDrawExpected = Array.Empty<string>();
         var b = new UI.Button("B", 10, 50)
         var c = new UI.TextBox("", 10, 90)
         var d = new UI.Button("D", 10, 130)
-        b.enabled = false
-        d.visible = false
+        b.Enabled = false
+        d.Visible = false
         ui.Add(a)
         ui.Add(b)
         ui.Add(c)
         ui.Add(d)
         __TestEvent(24, 9, 0)
         ui.Tick()
-        print("1: " + a.focused + " " + c.focused)
+        print("1: " + a.Focused + " " + c.Focused)
         __TestEvent(24, 9, 0)
         ui.Tick()
-        print("2: " + a.focused + " " + c.focused)
+        print("2: " + a.Focused + " " + c.Focused)
         __TestEvent(24, 9, 0)
         ui.Tick()
-        print("3: " + a.focused + " " + c.focused)
+        print("3: " + a.Focused + " " + c.Focused)
         __TestEvent(24, 9, 1)
         ui.Tick()
-        print("zurueck: " + a.focused + " " + c.focused)
+        print("zurueck: " + a.Focused + " " + c.Focused)
         """, new[] { "1: True False", "2: False True", "3: True False", "zurueck: False True" });
 
     CheckUi("Stack ordnet an; Panel verschachtelt Koordinaten; deaktiviert bekommt keine Klicks", uiHead + """
@@ -9834,7 +9834,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         __TestEvent(11, 1, 120.0, 44.0)
         ui.Tick()
         print("b1 " + b1.TakeClicked() + " b2 " + b2.TakeClicked())
-        b2.enabled = false
+        b2.Enabled = false
         __TestEvent(8, 1, 120.0, 65.0)
         __TestEvent(11, 1, 120.0, 65.0)
         ui.Tick()
@@ -9871,7 +9871,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("label " + la.rx + "," + la.ry + " " + la.actualWidth + "x" + la.actualHeight)
         print("btn1 " + ba.rx + "," + ba.ry + " " + ba.actualWidth + "x" + ba.actualHeight)
         print("btn2 " + bb.rx + "," + bb.ry + " abs " + bb.ax + "," + bb.ay)
-        ba.visible = false
+        ba.Visible = false
         ui.Draw()
         print("ohne btn1: btn2 " + bb.rx + "," + bb.ry)
         """, new[] { "label 2,2 196x14", "btn1 2,21 100x20", "btn2 2,46 abs 12,56", "ohne btn1: btn2 2,21" });
@@ -9879,16 +9879,16 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Schrift: font und fontSize des Elements, vom umgebenden Element geerbt, sonst die der Theme; Textfeld mit Proportionalschrift (Caret, Scrollen)", uiHead + """
         var plain = new UI.Label("AVA")
         var big = new UI.Label("AVA")
-        big.font = "firesans"
-        big.fontSize = 20
+        big.Font = "firesans"
+        big.FontSize = 20
         var sp = new UI.StackPanel(0, 40, 300, 150)
-        sp.font = "firesans"
-        sp.fontSize = 10
+        sp.Font = "firesans"
+        sp.FontSize = 10
         var inh = new UI.Label("AVA")
         var own = new UI.Label("AVA")
-        own.fontSize = 20
+        own.FontSize = 20
         var bit = new UI.Label("AVA")
-        bit.font = "8x8"
+        bit.Font = "8x8"
         var btn = new UI.Button("AVA", 0, 0, -1, -1)
         sp.Add(inh)
         sp.Add(own)
@@ -9910,8 +9910,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.theme.font = ""
         ui.Draw()
         var tb = new UI.TextBox("AVA", 0, 100, 100, 24)
-        tb.font = "firesans"
-        tb.fontSize = 20
+        tb.Font = "firesans"
+        tb.FontSize = 20
         ui.Add(tb)
         ui.Draw()
         tb.MouseDown(ui, 1, tb.ax + 4 + 20, tb.ay + 5)
@@ -9926,8 +9926,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         tb.caret = 0
         ui.Draw()
         print("scroll " + tb.scroll)
-        tb.font = ""
-        tb.fontSize = 0
+        tb.Font = ""
+        tb.FontSize = 0
         ui.Draw()
         print("plain box scroll " + tb.scroll)
         """, new[] { "plain 24x14", "big 37x22", "inh 19x11", "own 37x22", "bit 24x8", "btn 43x23", "plain after theme 24x8", "caret 2", "caret 1", "caret 3", "scroll 5 caret 12", "scroll 0", "plain box scroll 0" });
@@ -9935,18 +9935,18 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Layout: Ausrichtung, Rand, Mindest- und Hoechstgroesse", uiHead + """
         var sp2 = new UI.StackPanel(0, 0, 200, 100)
         var c = new UI.Button("c", 0, 0, 60, 20)
-        c.halign = UI.HAlign.Center
+        c.HorizontalAlign = UI.HAlign.Center
         var r = new UI.Button("r", 0, 0, 60, 20)
-        r.halign = UI.HAlign.Right
-        r.margin = new UI.Thickness(5)
+        r.HorizontalAlign = UI.HAlign.Right
+        r.Margin = new UI.Thickness(5)
         sp2.Add(c)
         sp2.Add(r)
         ui.Add(sp2)
         var sp3 = new UI.StackPanel(0, 100, 300, 100)
         var m1 = new UI.Button("m", 0, 0, 10, 10)
-        m1.minWidth = 30
+        m1.MinWidth = 30
         var m2 = new UI.Button("m", 0, 0, 100, 10)
-        m2.maxWidth = 40
+        m2.MaxWidth = 40
         sp3.Add(m1)
         sp3.Add(m2)
         ui.Add(sp3)
@@ -9973,7 +9973,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         for (var i = 0; i < 7; i = i + 1) { var it = new UI.Button("w", 0, 0, 30, 10); w.Add(it) }
         ui.Add(w)
         var bo = new UI.Border(150, 100, 100, 60)
-        bo.padding = new UI.Thickness(3)
+        bo.Padding = new UI.Thickness(3)
         var inner = new UI.Label("in")
         bo.SetChild(inner)
         ui.Add(bo)
@@ -10020,11 +10020,11 @@ string[] uiDrawExpected = Array.Empty<string>();
         sp.Add(b1)
         ui.Add(sp)
         ui.Draw()
-        print("b1 " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth + " " + b1.rx + "," + b1.ry)
-        b1.hover = true
+        print("b1 " + b1.Margin.left + " " + (b1.Background == red) + " " + b1.actualWidth + " " + b1.rx + "," + b1.ry)
+        b1.Hover = true
         ui.Draw()
         print("hover " + b1.actualWidth)
-        b1.hover = false
+        b1.Hover = false
         ui.Draw()
         print("zurueck " + b1.actualWidth)
         // a style in the panel only applies below it and before that of the root
@@ -10036,24 +10036,24 @@ string[] uiDrawExpected = Array.Empty<string>();
         inner.Add(b2)
         ui.Add(inner)
         ui.Draw()
-        print("inner " + b2.margin.left + " " + (b2.background == red) + " " + b2.ry)
+        print("inner " + b2.Margin.left + " " + (b2.Background == red) + " " + b2.ry)
         var s2 = new UI.Style()
         s2.Set("margin", new UI.Thickness(9))
         s2.Set("nichtda", 1)
-        b1.style = s2
+        b1.Style = s2
         ui.Draw()
-        print("explizit " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth)
+        print("explizit " + b1.Margin.left + " " + (b1.Background == red) + " " + b1.actualWidth)
         """, new[] { "b1 3 True 100 3,3", "hover 150", "zurueck 100", "inner 7 False 7", "explizit 9 True 100" });
 
     CheckUi("Vorlagen: ControlTemplate (Teile, Bindung ans Element, Trigger auf einen Teil), Bindung zwischen Elementen, Ressourcen", uiHead + """
         var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
         var tpl = new UI.ControlTemplate(func (owner) => {
             var bd = new UI.Border()
-            bd.name = "bd"
-            bd.background = new SolidBrush(UI.Color.Rgb(0, 255, 0))
-            bd.padding = new UI.Thickness(4)
+            bd.Name = "bd"
+            bd.Background = new SolidBrush(UI.Color.Rgb(0, 255, 0))
+            bd.Padding = new UI.Thickness(4)
             var t = new UI.Label("")
-            t.name = "txt"
+            t.Name = "txt"
             bd.SetChild(t)
             return bd
         })
@@ -10063,22 +10063,22 @@ string[] uiDrawExpected = Array.Empty<string>();
         tpl.AddTrigger(tr)
         var sp = new UI.StackPanel(0, 0, 300, 200)
         var b = new UI.Button("hello", 0, 0, -1, -1)
-        b.halign = UI.HAlign.Left
-        b.template = tpl
+        b.HorizontalAlign = UI.HAlign.Left
+        b.Template = tpl
         sp.Add(b)
         ui.Add(sp)
         ui.Draw()
         print("groesse " + b.actualWidth + "x" + b.actualHeight)
         var part = b.FindPart("bd")
-        var green = part.background
-        print("teil " + (part != undefined) + " " + (part.background != red) + " " + b.FindPart("txt").text)
-        b.pressed = true
+        var green = part.Background
+        print("teil " + (part != undefined) + " " + (part.Background != red) + " " + b.FindPart("txt").Text)
+        b.Pressed = true
         ui.Draw()
-        print("gedrueckt " + (part.background == red))
-        b.pressed = false
+        print("gedrueckt " + (part.Background == red))
+        b.Pressed = false
         ui.Draw()
-        print("losgelassen " + (part.background == green))
-        b.text = "hi"
+        print("losgelassen " + (part.Background == green))
+        b.Text = "hi"
         ui.Draw()
         print("text " + b.FindPart("txt").text + " " + b.actualWidth)
         var tb = new UI.TextBox("abc")
@@ -10090,19 +10090,19 @@ string[] uiDrawExpected = Array.Empty<string>();
         l2.Bind("text", tb, "text")
         l3.Bind("text", tb, "text", true)
         ui.Draw()
-        print("bindung " + l2.text + " " + l3.text)
-        tb.text = "xyz"
+        print("bindung " + l2.Text + " " + l3.Text)
+        tb.Text = "xyz"
         ui.Draw()
-        print("quelle " + l2.text + " " + l3.text)
-        l3.text = "zurueck"
+        print("quelle " + l2.Text + " " + l3.Text)
+        l3.Text = "zurueck"
         ui.Draw()
         ui.Draw()
-        print("ziel " + tb.text + " " + l2.text)
+        print("ziel " + tb.Text + " " + l2.Text)
         var tplStyle = new UI.Style("CheckBox")
         tplStyle.Set("template", tpl)
         ui.resources.AddStyle(tplStyle)
         var cb = new UI.CheckBox("kaestchen")
-        cb.halign = UI.HAlign.Left
+        cb.HorizontalAlign = UI.HAlign.Left
         sp.Add(cb)
         ui.Draw()
         print("stilvorlage " + cb.FindPart("txt").text + " " + cb.actualWidth)
@@ -10113,7 +10113,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("ScrollViewer: Leisten, Ausschnitt, Mausrad, Ziehen am Griff, Umbrechen ohne waagerechte Leiste", uiHead + """
         var sv = new UI.ScrollViewer(0, 0, 100, 80)
-        sv.hmode = UI.ScrollMode.Auto
+        sv.HorizontalScrollMode = UI.ScrollMode.Auto
         var big = new UI.Canvas(0, 0, 300, 200)
         big.Add(new UI.Button("x", 280, 180, 20, 20))
         sv.SetContent(big)
@@ -10162,7 +10162,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Add(lb)
         ui.Draw()
         var activated = 0
-        lb.onActivate = func () => { activated = activated + 1 }
+        lb.OnActivate = func () => { activated = activated + 1 }
         ui.MouseDown(1, 20, 15)
         ui.MouseUp(1, 20, 15)
         ui.MouseDown(1, 20, 35)
@@ -10170,7 +10170,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("verschiedene Zeilen " + activated)
         ui.MouseDown(1, 20, 35)
         ui.MouseUp(1, 20, 35)
-        print("Doppelklick " + activated + " " + lb.selectedIndex)
+        print("Doppelklick " + activated + " " + lb.SelectedIndex)
         var seen = 0
         ui.onKeyPreview = func (int key, int mod) => {
             seen = seen + 1
@@ -10202,26 +10202,26 @@ string[] uiDrawExpected = Array.Empty<string>();
         lv.Add(new Person("Bob", 25))
         ui.Add(lv)
         ui.Draw()
-        print("Liste " + lb.selectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
+        print("Liste " + lb.SelectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
         ui.MouseDown(1, 20, 25)
         ui.MouseUp(1, 20, 25)
         ui.Draw()
-        print("Klick " + lb.selectedIndex + " " + lb.selectedItem + " " + lb.TakeChanged() + " " + lb.TakeChanged())
+        print("Klick " + lb.SelectedIndex + " " + lb.selectedItem + " " + lb.TakeChanged() + " " + lb.TakeChanged())
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
-        print("Pfeil " + lb.selectedIndex + " " + lb.selectedItem)
+        print("Pfeil " + lb.SelectedIndex + " " + lb.selectedItem)
         ui.KeyDown(1073741898, 0)
-        print("Pos1 " + lb.selectedIndex)
+        print("Pos1 " + lb.SelectedIndex)
         ui.KeyDown(1073741901, 0)
         ui.Draw()
-        print("Ende " + lb.selectedIndex + " Versatz " + lb.scroller.offset)
+        print("Ende " + lb.SelectedIndex + " Versatz " + lb.scroller.offset)
         ui.MouseWheel(0, 1, 20, 30)
         ui.Draw()
         print("Rad " + lb.scroller.offset)
         lb.selectedItem = "item 3"
-        print("per selectedItem " + lb.selectedIndex)
+        print("per selectedItem " + lb.SelectedIndex)
         var entered = 0
-        lb.onActivate = func () => { entered = entered + 1 }
+        lb.OnActivate = func () => { entered = entered + 1 }
         ui.KeyDown(13, 0)
         print("Enter " + entered + " " + lb.TakeActivated())
         // Kopfzeile: Klick sortiert
@@ -10234,19 +10234,19 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         print("umgekehrt " + lv.Rows()[0].name)
         var cv = new UI.CollectionView(lv.items)
-        cv.filter = func (p) => p.age > 26
+        cv.Filter = func (p) => p.age > 26
         cv.SortBy("age", true)
         cv.Update()
         print("Sicht " + cv.count + " " + cv[0].name + " " + cv[1].name)
         cv.MoveCurrentToFirst()
         cv.MoveCurrentToNext()
         print("aktuell " + cv.CurrentItem().name + " " + cv.MoveCurrentTo(5))
-        cv.comparer = func (a, b) => a.age - b.age
+        cv.Comparer = func (a, b) => a.age - b.age
         cv.Invalidate()
         cv.Update()
         print("eigener Vergleich " + cv[0].name + " aktuell " + cv.CurrentItem().name)
         var names = new UI.ListBox(10, 100, 100, 80)
-        names.displayMember = "name"
+        names.DisplayMember = "name"
         names.SetView(new UI.CollectionView(lv.items))
         ui.Add(names)
         ui.Draw()
@@ -10268,14 +10268,14 @@ string[] uiDrawExpected = Array.Empty<string>();
         a.Add(new UI.TreeNode("Cats"))
         var b = tv.AddNode(new UI.TreeNode("Plants"))
         b.Add(new UI.TreeNode("Oak"))
-        a.expanded = true
+        a.Expanded = true
         ui.Add(tv)
         ui.Draw()
         print("sichtbar " + tv.visibleNodes.count)
         ui.MouseDown(1, 32, 36)
         ui.MouseUp(1, 32, 36)
         ui.Draw()
-        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.expanded + " ausgewaehlt " + (tv.selected == undefined))
+        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.Expanded + " ausgewaehlt " + (tv.selected == undefined))
         ui.MouseDown(1, 80, 36)
         ui.MouseUp(1, 80, 36)
         ui.Draw()
@@ -10287,15 +10287,15 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Links zum Eltern " + tv.selected.text)
         ui.KeyDown(1073741904, 0)
         ui.Draw()
-        print("Links klappt zu " + d.expanded + " " + tv.visibleNodes.count)
+        print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.count)
         ui.KeyDown(1073741903, 0)
         ui.KeyDown(1073741903, 0)
-        print("Rechts klappt auf, dann zum Kind " + d.expanded + " " + tv.selected.text)
+        print("Rechts klappt auf, dann zum Kind " + d.Expanded + " " + tv.selected.Text)
         ui.KeyDown(1073741898, 0)
         print("Pos1 " + tv.selected.text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("Enter klappt um " + a.expanded + " " + tv.visibleNodes.count)
+        print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.count)
         """, new[] { "sichtbar 4", "Dogs aufgeklappt 6 True ausgewaehlt True", "gewaehlt Dogs True", "Pfeil ab Fido", "Links zum Eltern Dogs", "Links klappt zu False 4", "Rechts klappt auf, dann zum Kind True Cats", "Pos1 Animals Tiefe 0 2", "Enter klappt um False 2" });
 
     CheckUi("Menues: MenuBar, Untermenue, Haken, gesperrte Zeile, Tastatur, Kontextmenue, Klick daneben", uiHead + """
@@ -10307,9 +10307,9 @@ string[] uiDrawExpected = Array.Empty<string>();
         var rec = file.Add(new UI.MenuItem("Recent"))
         rec.Add(new UI.MenuItem("a.txt", func () => { cnt = cnt + 10 }))
         var chk = file.Add(new UI.MenuItem("Check"))
-        chk.checkable = true
+        chk.Checkable = true
         var off = file.Add(new UI.MenuItem("Off", func () => { cnt = cnt + 100 }))
-        off.enabled = false
+        off.Enabled = false
         mb.Add(file)
         var edit = new UI.MenuItem("Edit")
         edit.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 1000 }))
@@ -10366,7 +10366,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, dx, dy)
         ui.MouseUp(1, dx, dy)
         ui.Draw()
-        print("Haken " + chk.isChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
+        print("Haken " + chk.IsChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
         ui.KeyDown(27, 0)
         print("Escape " + ui.popups.count)
         // Kontextmenue
@@ -10396,7 +10396,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("RadioButtons, AutoSuggestBox, ToolBar und Image (alle Dehnungsarten)", uiHead + """
         var rb = new UI.RadioButtons(10, 10)
-        rb.header = "Size"
+        rb.Header = "Size"
         rb.Add("Small")
         rb.Add("Medium")
         rb.Add("Large")
@@ -10418,12 +10418,12 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 20, 30)
         ui.MouseUp(1, 20, 30)
         ui.Draw()
-        print("gewaehlt " + rb.selectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
+        print("gewaehlt " + rb.SelectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
-        print("Pfeile " + rb.selectedIndex)
+        print("Pfeile " + rb.SelectedIndex)
         ui.KeyDown(1073741906, 0)
-        print("hoch " + rb.selectedIndex)
+        print("hoch " + rb.SelectedIndex)
         ui.MouseDown(1, 160, 20)
         ui.MouseUp(1, 160, 20)
         ui.TextInput("ap")
@@ -10431,10 +10431,10 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Vorschlaege " + ui.popups.count + " " + asb.popupList.count)
         ui.KeyDown(1073741905, 0)
         ui.Draw()
-        print("Auswahl " + asb.popupList.selectedIndex)
+        print("Auswahl " + asb.popupList.SelectedIndex)
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("uebernommen " + asb.text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
+        print("uebernommen " + asb.Text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
         asb.SetText("")
         ui.TextInput("B")
         ui.Draw()
@@ -10442,7 +10442,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 160, 10 + 24 + 12)
         ui.MouseUp(1, 160, 10 + 24 + 12)
         ui.Draw()
-        print("Klick auf Vorschlag " + asb.text + " " + ui.popups.count)
+        print("Klick auf Vorschlag " + asb.Text + " " + ui.popups.count)
         asb.SetText("")
         ui.TextInput("x")
         ui.Draw()
@@ -10469,13 +10469,13 @@ string[] uiDrawExpected = Array.Empty<string>();
         var im = new UI.Image(img, 10, 160, 60, 30)
         ui.Add(im)
         var im2 = new UI.Image(img, 100, 160, 60, 30)
-        im2.stretch = UI.Stretch.UniformToFill
+        im2.Stretch = UI.Stretch.UniformToFill
         ui.Add(im2)
         var im3 = new UI.Image(img, 180, 160, 60, 30)
-        im3.stretch = UI.Stretch.Fill
+        im3.Stretch = UI.Stretch.Fill
         ui.Add(im3)
         var im4 = new UI.Image(img, 250, 160, 20, 20)
-        im4.stretch = UI.Stretch.None
+        im4.Stretch = UI.Stretch.None
         ui.Add(im4)
         ui.Draw()
         var R = UI.Color.Rgb(255, 0, 0)
@@ -10489,47 +10489,47 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Formen: Rectangle, Ellipse, Line, Path (Pfaddaten, Kurven), Geometry, DrawingCanvas", uiHead + """
         print(UI.M.Sin(30) + " " + UI.M.Sin(90) + " " + UI.M.Cos(60) + " " + UI.M.Sin(-30) + " " + UI.M.Sin(210) + " " + UI.M.Cos(0))
         var r = new UI.Rectangle(10, 10, 60, 40)
-        r.fill = new SolidBrush(UI.Color.Rgb(255, 200, 0))
-        r.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        r.Fill = new SolidBrush(UI.Color.Rgb(255, 200, 0))
+        r.Stroke = new Pen(UI.Color.Rgb(0, 0, 0))
         ui.Add(r)
         var e = new UI.Ellipse(80, 10, 60, 40)
-        e.fill = new SolidBrush(UI.Color.Rgb(0, 200, 100))
+        e.Fill = new SolidBrush(UI.Color.Rgb(0, 200, 100))
         ui.Add(e)
         var l = new UI.Line(0, 0, 50, 30)
-        l.stroke = new Pen(UI.Color.Rgb(200, 0, 0))
+        l.Stroke = new Pen(UI.Color.Rgb(200, 0, 0))
         var lc = new UI.Canvas(150, 10, 60, 40)
         lc.Add(l)
         ui.Add(lc)
         var p = new UI.Path(undefined, 10, 70)
         p.SetData("M 0 0 L 40 0 L 40 30 L 20 50 L 0 30 Z")
-        p.fill = new SolidBrush(UI.Color.Rgb(100, 100, 255))
-        p.stroke = new Pen(UI.Color.Rgb(0, 0, 80))
+        p.Fill = new SolidBrush(UI.Color.Rgb(100, 100, 255))
+        p.Stroke = new Pen(UI.Color.Rgb(0, 0, 80))
         ui.Add(p)
         var p2 = new UI.Path(undefined, 80, 70)
         p2.SetData("M 0 40 c 10 -40 40 -40 50 0 q -25 -30 -50 0 z")
-        p2.fill = new SolidBrush(UI.Color.Rgb(255, 120, 120))
+        p2.Fill = new SolidBrush(UI.Color.Rgb(255, 120, 120))
         ui.Add(p2)
         var g = new UI.Geometry()
         g.AddEllipse(30, 30, 28, 20)
         var p3 = new UI.Path(g, 150, 70)
-        p3.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        p3.Stroke = new Pen(UI.Color.Rgb(0, 0, 0))
         ui.Add(p3)
         ui.Draw()
-        print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
-        print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
-        print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
-        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
-        print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
+        print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.Stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
+        print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.Fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
+        print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.Stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.Stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
+        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.Stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
+        print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.Fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
         print("Ellipse-Pfad " + g.figures[0].Count() + " " + p3.actualWidth + "x" + p3.actualHeight + " " + (Px.Get(ui.renderer, 150 + 30, 70 + 30) == ui.theme.back.Color))
         var dc = new UI.DrawingCanvas(10, 150, 120, 40)
         var paints = 0
-        dc.onPaint = func (c) => {
+        dc.OnPaint = func (c) => {
             paints = paints + 1
             c.renderer.FillRect(0, 0, c.framebuffer.Width(), c.framebuffer.Height(), new SolidBrush(UI.Color.Rgb(30, 30, 60)))
         }
         var downs = 0
         var lastX = -1
-        dc.onMouseDown = func (x, y, b) => {
+        dc.OnMouseDown = func (x, y, b) => {
             downs = downs + 1
             lastX = x
         }
@@ -10540,7 +10540,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         dc.Invalidate()
         ui.Draw()
         print("neu gemalt " + paints)
-        dc.width = 80
+        dc.Width = 80
         ui.Draw()
         ui.Draw()
         print("Groesse geaendert " + paints + " " + dc.framebuffer.Width())
@@ -10558,7 +10558,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("Listen mit DataTemplate und das Beschneidungsrechteck des Renderers", uiHead + """
         var lb = new UI.ListBox(10, 10, 90, 80)
-        lb.itemTemplate = new UI.DataTemplate(func (item) => {
+        lb.ItemTemplate = new UI.DataTemplate(func (item) => {
             var st = new UI.StackPanel(0, 0, -1, -1, true, 4, 1)
             st.Add(new UI.Label("#"))
             st.Add(new UI.Label(item))
@@ -10738,12 +10738,12 @@ string[] uiDrawExpected = Array.Empty<string>();
                     int clicks = 0
                     Go(sender) { this.clicks = this.clicks + 1 }
                     FieldChanged(sender) { print("text " + sender.text) }
-                    FlagChanged(sender) { print("flag " + sender.isChecked) }
+                    FlagChanged(sender) { print("flag " + sender.IsChecked) }
                 }
                 var f = new MyForm()
                 f.ui.Draw()
                 f.ui.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
-                print(f.box.horizontal + " " + f.field.width + " " + f.caption.text)
+                print(f.box.Horizontal + " " + f.field.Width + " " + f.caption.Text)
                 // a click on the button (its screen position is known after drawing)
                 var bx = f.go.ax + 5
                 var by = f.go.ay + 5
@@ -10790,14 +10790,14 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var m = new Model()
                 m.Player = new Player()
                 d.SetDataContext(m)
-                print(d.mirror.text + " " + d.player.text + " " + d.once.text + " " + d.edit.text + " " + d.shout.text + " " + d.cb.text + " " + d.cb.isChecked + " " + d.empty.visible + " " + d.empty.brush.Color)
+                print(d.mirror.Text + " " + d.player.Text + " " + d.once.Text + " " + d.edit.Text + " " + d.shout.Text + " " + d.cb.Text + " " + d.cb.IsChecked + " " + d.empty.Visible + " " + d.empty.Color.Color)
                 d.src.text = "xyz"
                 print(d.mirror.text)
                 m.Player.Name = "p2"
                 print(d.player.text + " " + d.edit.text + " " + d.shout.text)
                 d.edit.text = "p3"
                 print(m.Player.Name + " " + d.player.text + " " + d.shout.text)
-                d.cb.isChecked = true
+                d.cb.IsChecked = true
                 print(m.Player.Active)
                 var np = new Player()
                 np.Name = "other"
@@ -10808,7 +10808,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 d.edit.text = "p4"
                 print(np.Name)
                 m.Title = ""
-                print(d.once.text + "|" + d.cb.text + "|" + d.empty.visible)
+                print(d.once.Text + "|" + d.cb.Text + "|" + d.empty.Visible)
                 d.SetDataContext(undefined)
                 np.Name = "after"
                 print(d.player.text)
@@ -10939,8 +10939,8 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var v = new MyView()
                 v.Attach(ui.content)
                 v.SetDataContext(new Item())
-                print(v.title.text + " " + v.other.text + " " + (v.title.background is of SolidBrush))
-                print(v.names.itemsSource.count + " " + v.names.itemsSource[1])
+                print(v.title.Text + " " + v.other.Text + " " + (v.title.Background is of SolidBrush))
+                print(v.names.ItemsSource.count + " " + v.names.ItemsSource[1])
                 """, new[] { "FIRE xfire True", "2 it's" });
             File.WriteAllText(P("Amb.fxml"), """
                 <View Class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
@@ -11045,9 +11045,9 @@ string[] uiDrawExpected = Array.Empty<string>();
                 c.MouseDown(app.ui, 1, c.ax + 5, c.ay + 6)
                 app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
                 app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
-                print("Stil " + (app.styled.background != undefined) + " " + app.styled.margin.left + " " + (app.styled.style == app.fxStyle_Primary))
+                print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
                 print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").text)
-                print("implizit " + (app.rect.stroke != undefined) + " " + app.radio.selectedIndex + " " + app.radio.items.count)
+                print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.count)
                 app.bar.Open(app.ui, 0)
                 app.ui.Draw()
                 var menu = app.ui.popups[0]
@@ -11138,7 +11138,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("mehr " + app.viaView.count + " " + app.direct.count + " jung " + app.young.count + " " + app.young.view[0].name)
                 m.sel = 1
                 app.ui.Draw()
-                print("Auswahl " + app.viaView.selectedIndex + " " + app.viaView.selectedItem.name)
+                print("Auswahl " + app.viaView.SelectedIndex + " " + app.viaView.selectedItem.name)
                 app.viaView.Select(3)
                 app.ui.Draw()
                 print("zurueck " + m.sel)
@@ -11169,11 +11169,11 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("idle " + ui.Update())
                 var sentinel = UI.Color.Rgb(1, 2, 3)
                 ui.renderer.SetPixel(250, 20, sentinel)
-                b.hover = true
+                b.Hover = true
                 print("hover " + ui.Update() + " rest bleibt " + (Px.Get(ui.renderer, 250, 20) == sentinel))
                 print("idle " + ui.Update())
                 ui.renderer.SetPixel(250, 20, sentinel)
-                c.x = 190
+                c.Left = 190
                 print("Layout " + ui.Update() + " alles neu " + (Px.Get(ui.renderer, 250, 20) != sentinel))
                 ui.renderer.SetPixel(250, 20, sentinel)
                 ui.theme.back = new SolidBrush(UI.Color.Rgb(10, 10, 10))
@@ -19168,7 +19168,7 @@ else
             print("scaled " + root.Scaling + " fb " + fb.Width() + "x" + fb.Height() + " logical " + root.width + "x" + root.height + " button " + b.actualWidth + "x" + b.actualHeight)
             print("pixels " + fb.Width() + " " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
             root.Dispatch([8, 1, 30, 30])
-            print("pressed " + b.pressed)
+            print("pressed " + b.Pressed)
             root.Scaling = 1.0
             root.Draw()
             print("back " + fb.Width() + "x" + fb.Height())
