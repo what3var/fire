@@ -123,8 +123,10 @@ struct TLine {
 
 enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp = 5, NlFormula = 6,
               // resistances that follow a state between the steps (Falstad's startIteration), and a switch driven by a voltage
-              NlLamp = 7, NlFuse = 8, NlMemristor = 9, NlSparkGap = 10, NlAnalogSwitch = 11 };
-inline bool isVarRes(int kind) { return kind >= NlLamp && kind <= NlSparkGap; }
+              NlLamp = 7, NlFuse = 8, NlMemristor = 9, NlSparkGap = 10, NlAnalogSwitch = 11,
+              // the switch of a thyristor (anode to its inner node; gate node2, cathode aux) and of a triac (inner node to MT1; gate node2)
+              NlScr = 12, NlTriac = 13 };
+inline bool isVarRes(int kind) { return (kind >= NlLamp && kind <= NlSparkGap) || kind == NlScr || kind == NlTriac; }
 
 constexpr double kVt = 0.025852;     // the thermal voltage at 27 degrees Celsius
 constexpr double kGmin = 1e-12;      // a conductance across every junction (keeps the matrix regular when a junction is off)
@@ -371,6 +373,7 @@ struct Nonlinear {
                                   // op amp: gain, lowest output, highest output, output resistance
     double lim[2] = {0, 0};       // the junction voltages of the last iteration (limited)
     double cur[3] = {0, 0, 0};    // the currents into its terminals after the last step
+    int aux = -1;                 // a node a state reads besides its terminals (the cathode of a thyristor)
     double st[2] = {0, 0};        // the state of a resistance that follows a state: lamp temperature / resistance, fuse heat / blown, memristor
                                   // doped width / resistance, spark gap on; the analog switch: on
     bool limited = false;         // the last linearization used a limited junction voltage (Newton's method must go on)
@@ -456,6 +459,8 @@ inline double varResistance(const Nonlinear& e) {
         case NlFuse: return e.st[1] != 0 ? 1e9 : e.p[0];
         case NlMemristor: return e.st[1];
         case NlSparkGap: return e.st[0] != 0 ? e.p[0] : e.p[1];
+        case NlScr: return e.st[0] != 0 ? 0.0105 : 1e6;
+        case NlTriac: return e.st[0] != 0 ? 0.01 : 1e6;
         default: return 1.0;
     }
 }
@@ -467,8 +472,19 @@ inline double lampResistance(double nomPower, double nomVolts, double t) {
     return nomR * (1.26104 - 4.90662 * std::sqrt(17.1839 / t - 0.00318794) - 7.8569 / (t - 187.56));
 }
 
-/// Before a step: the state of a part that follows a state moves on with the current and voltage of the last step (Falstad's startIteration).
-inline void stepState(Nonlinear& e, double v, double i, double dt) {
+/// Before a step: the state of a part that follows a state moves on with the current and voltage of the last step (Falstad's startIteration);
+/// `gate` is the voltage of node2 against node1 (triac) or against aux (thyristor).
+inline void stepState(Nonlinear& e, double v, double i, double dt, double gate) {
+    if (e.kind == NlScr || e.kind == NlTriac) {
+        // p: trigger current, holding current, gate resistance
+        double ig = gate / e.p[2];
+        if (e.kind == NlScr) e.st[0] = ig / e.p[0] + i / e.p[1] > 1 ? 1 : 0;
+        else {
+            if (std::fabs(i) < e.p[1]) e.st[0] = 0;
+            if (std::fabs(ig) > e.p[0]) e.st[0] = 1;
+        }
+        return;
+    }
     if (e.kind == NlLamp) {
         double nomPower = e.p[0], warm = e.p[2], cool = e.p[3];
         e.st[1] = lampResistance(nomPower, e.p[1], e.st[0]);
@@ -874,7 +890,8 @@ inline Value AddNonlinear(Value h, Value kind, Value n0, Value n1, Value n2, Val
     Nonlinear e{};
     e.kind = (int)kind.i;
     bool two = kind.i == NlDiode || isVarRes((int)kind.i);
-    e.node[0] = (int)n0.i; e.node[1] = (int)n1.i; e.node[2] = two ? -1 : (int)n2.i;
+    bool reads = kind.i == NlScr || kind.i == NlTriac;   // two terminals, and the gate it only reads
+    e.node[0] = (int)n0.i; e.node[1] = (int)n1.i; e.node[2] = two && !reads ? -1 : (int)n2.i;
     e.terminals = two ? 2 : 3;
     if (kind.i == NlOpAmp && (D(p0) <= 0 || D(p2) <= D(p1) || D(p3) <= 0)) { lastError() = "An op amp needs a gain, rails and an output resistance above zero."; return Int(-1); }
     e.p[0] = D(p0); e.p[1] = D(p1); e.p[2] = D(p2); e.p[3] = D(p3);
@@ -1000,12 +1017,21 @@ inline Value EvalFormula(Value text, Value parameters, Value v1, Value v2) {
     return Float((Real)evaluate(c.out, D(v1), D(v2), 0).v);
 }
 
-/// Sets the state of a part that follows a state (what 4 or 5: st[0], st[1]) - its state from the plan before, or a reset.
+/// Sets the state of a part that follows a state (what 4 or 5: st[0], st[1]) - its state from the plan before, or a reset; what 6: the node it reads
+/// besides its terminals (aux).
 inline Value NlSet(Value h, Value index, Value what, Value value) {
     Plan* p = plan(h);
-    if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size() || what.i < 4 || what.i > 5) return Bool(false);
-    p->nonlinear[(size_t)index.i].st[what.i - 4] = D(value);
+    if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size() || what.i < 4 || what.i > 6) return Bool(false);
+    Nonlinear& e = p->nonlinear[(size_t)index.i];
+    if (what.i == 6) e.aux = (int)D(value); else e.st[what.i - 4] = D(value);
     return Bool(true);
+}
+
+/// Adds `value` to the entry (row, col) of the matrix of the parts that stay the same (-1: ground, nothing) - the controlled sources of fire use it.
+inline Value Entry(Value h, Value row, Value col, Value value) {
+    Plan* p = plan(h);
+    if (p && row.i < p->size && col.i < p->size) p->add((int)row.i, (int)col.i, D(value));
+    return Undef();
 }
 
 /// The currents into the terminals of a part that is not linear after the last step (what: terminal 0..2), the voltage of a diode (what 3), the state of
@@ -1251,7 +1277,10 @@ inline void newton(Plan* p) {
     p->rhsBase = p->rhs;
     for (Nonlinear& e : p->nonlinear) {
         if (e.kind == NlFormula) e.p[0] = p->time + p->dt;
-        else if (isVarRes(e.kind)) stepState(e, p->node(e.node[0]) - p->node(e.node[1]), e.cur[0], p->dt);
+        else if (isVarRes(e.kind)) {
+            double gate = e.kind == NlScr ? p->node(e.node[2]) - p->node(e.aux) : e.kind == NlTriac ? p->node(e.node[2]) - p->node(e.node[1]) : 0;
+            stepState(e, p->node(e.node[0]) - p->node(e.node[1]), e.cur[0], p->dt, gate);
+        }
     }
     bool converged = false;
     for (int it = 0; it < p->maxIterations && !converged; it++) {

@@ -129,6 +129,8 @@ namespace Circuits {
             l.Add("Basic|Memristor|onResistance:Ohm=100;offResistance:Ohm=16k;width:=10n;mobility:=100p")
             l.Add("Basic|SparkGap|breakdown:V=1k;holdCurrent:A=1m;onResistance:Ohm=1k;offResistance:Ohm=1G")
             l.Add("Basic|TransmissionLine|impedance:Ohm=75;delay:s=1u;width:int=4")
+            l.Add("Basic|RelayCoil|label:text=K1;inductance:H=0.2;coilResistance:Ohm=20;onCurrent:A=20m;offCurrent:A=15m;mode:choice:normal/onDelay/offDelay/latching/set/reset=normal;delay:s=0")
+            l.Add("Basic|RelayContact|label:text=K1;normallyClosed:bool=false;onResistance:Ohm=50m;offResistance:Ohm=1M")
             l.Add("Basic|Relay|inductance:H=0.2;coilResistance:Ohm=20;onCurrent:A=20m;offCurrent:A=15m;coil:choice:both/start/end=both;flip:bool=false")
             l.Add("Sources|Source|waveform:choice:dc/sine/square/triangle/sawtooth/noise=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
             l.Add("Sources|Rail|waveform:choice:dc/sine/square/triangle/sawtooth/noise=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
@@ -758,6 +760,18 @@ namespace Circuits {
                 part = new Circuits.SweepSource(Circuits.Symbols.Value(e, "amplitude", c), Circuits.Symbols.Value(e, "minFrequency", c), Circuits.Symbols.Value(e, "maxFrequency", c),
                                                 Circuits.Symbols.Value(e, "sweepTime", c), e.Flag("logarithmic"), e.Flag("bidirectional"))
             }
+            else if (t == "RelayCoil") {
+                var modes = ["normal", "onDelay", "offDelay", "latching", "set", "reset"]
+                var mode = 0
+                for (int i = 0; i < modes.length; i++) {
+                    if (modes[i] == e.Get("mode")) { mode = i }
+                }
+                part = new Circuits.RelayCoil(Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "coilResistance", c), Circuits.Symbols.Value(e, "onCurrent", c),
+                                              Circuits.Symbols.Value(e, "offCurrent", c), mode, Circuits.Symbols.Value(e, "delay", c))
+            }
+            else if (t == "RelayContact") {
+                part = new Circuits.CoilContact(e.Flag("normallyClosed"), Circuits.Symbols.Value(e, "onResistance", c), Circuits.Symbols.Value(e, "offResistance", c))
+            }
             else if (t == "Source" || t == "Rail") { part = Circuits.Symbols.MakeSource(e, c) }
             else if (t == "CurrentSource") { part = new Circuits.CurrentSource(Circuits.Symbols.Value(e, "current", c)) }
             else if (t == "AudioInput") { part = new Circuits.AudioInput(Circuits.Symbols.Value(e, "amplitude", c)) }
@@ -1044,6 +1058,7 @@ namespace Circuits {
                     }
                 }
                 if (this.reconnect) { this.Connect() }
+                this.JoinRelays()
                 foreach (e in this.elements) {
                     if (e.type == "Scope") { this.MakeScope(e) }
                 }
@@ -1144,6 +1159,32 @@ namespace Circuits {
                     index = index + 1
                 }
             }
+        }
+
+        // the coils and contacts of a relay drawn apart: the ones of the same label work together (the first coil of a label leads)
+        undefined JoinRelays() {
+            foreach (e in this.elements) {
+                if (e.type == "RelayCoil" && e.part != undefined) {
+                    Circuits.RelayCoil coil = e.part!Circuits.RelayCoil
+                    var lead = this.CoilOf(e.Get("label"))
+                    coil.Join(lead)
+                }
+            }
+            foreach (e in this.elements) {
+                if (e.type == "RelayContact" && e.part != undefined) {
+                    Circuits.CoilContact contact = e.part!Circuits.CoilContact
+                    var lead = this.CoilOf(e.Get("label"))
+                    if (lead == undefined) { e.error = "There is no relay coil '" + e.Get("label") + "'." }
+                    if (contact.coil != lead) { contact.Attach(lead) }
+                }
+            }
+        }
+
+        Circuits.RelayCoil CoilOf(string label) {
+            foreach (e in this.elements) {
+                if (e.type == "RelayCoil" && e.part != undefined && e.Get("label") == label) { return e.part!Circuits.RelayCoil }
+            }
+            return undefined
         }
 
         // the port of the circuit that a Pin element stands for (made on first use)

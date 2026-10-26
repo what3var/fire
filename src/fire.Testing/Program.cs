@@ -20193,6 +20193,187 @@ else
                 print(e.Type + pins + " '" + e.Error + "'")
             }
             """),
+        ("Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // SCR: 12 V through 100 Ohm; a gate pulse fires it, it stays on, the supply going down puts it out
+            var c = new Circuits.Circuit()
+            c.TimeStep = 10us
+            var v = c.Add(new Circuits.VoltageSource(12V))
+            var rl = c.Add(new Circuits.Resistor(100Ohm))
+            var scr = c.Add(new Circuits.Thyristor())
+            var vg = c.Add(new Circuits.VoltageSource(5V))
+            var rg = c.Add(new Circuits.Resistor(300Ohm))
+            var sw = c.Add(new Circuits.Switch(false))
+            v.A.Connect(rl.A)
+            rl.B.Connect(scr.Anode)
+            scr.Cathode.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            vg.A.Connect(sw.A)
+            sw.B.Connect(rg.A)
+            rg.B.Connect(scr.Gate)
+            vg.B.Connect(c.Ground)
+            c.Run(1ms)
+            print("scr before " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            sw.Closed = true
+            c.Run(1ms)
+            print("scr gate " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            sw.Closed = false
+            c.Run(1ms)
+            print("scr held " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            v.Level = 1V
+            c.Run(1ms)
+            print("scr low " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            // triac: 100 V 50 Hz through 100 Ohm, the gate from the line through 2 kOhm: it fires in both half waves
+            var t = new Circuits.Circuit()
+            t.TimeStep = 20us
+            var ac = t.Add(new Circuits.SineSource(100V, 50Hz))
+            var load = t.Add(new Circuits.Resistor(100Ohm))
+            var tr = t.Add(new Circuits.Triac())
+            var rgt = t.Add(new Circuits.Resistor(2kOhm))
+            ac.A.Connect(load.A)
+            load.B.Connect(tr.MT2)
+            tr.MT1.Connect(t.Ground)
+            ac.B.Connect(t.Ground)
+            load.B.Connect(rgt.A)
+            rgt.B.Connect(tr.Gate)
+            var pos = 0.0
+            var neg = 0.0
+            for (int i = 0; i < 1000; i++) {
+                t.Step()
+                var ii = load.Current / 1A
+                if (ii > pos) { pos = ii }
+                if (ii < neg) { neg = ii }
+            }
+            print("triac peaks " + H.R(pos) + " " + H.R(neg))
+            // diac: relaxation oscillator from 50 V through 100 kOhm on 1 uF
+            var d = new Circuits.Circuit()
+            d.TimeStep = 100us
+            var hv = d.Add(new Circuits.VoltageSource(50V))
+            var rr = d.Add(new Circuits.Resistor(100kOhm))
+            var cc = d.Add(new Circuits.Capacitor(1uF))
+            var diac = d.Add(new Circuits.Diac())
+            var rs = d.Add(new Circuits.Resistor(10Ohm))
+            hv.A.Connect(rr.A)
+            rr.B.Connect(cc.A)
+            cc.B.Connect(d.Ground)
+            hv.B.Connect(d.Ground)
+            diac.A.Connect(cc.A)
+            diac.B.Connect(rs.A)
+            rs.B.Connect(d.Ground)
+            var fires = 0
+            var was = false
+            for (int i = 0; i < 5000; i++) {
+                d.Step()
+                if (diac.IsOn && !was) { fires++ }
+                was = diac.IsOn
+            }
+            print("diac fires in 0.5 s " + fires)
+            // JFET: Vgs 0 and -2 V, 10 V drain
+            var j = new Circuits.Circuit()
+            var vd = j.Add(new Circuits.VoltageSource(10V))
+            var vgs = j.Add(new Circuits.VoltageSource(0V))
+            var jf = j.Add(new Circuits.Jfet())
+            vd.A.Connect(jf.D)
+            jf.S.Connect(j.Ground)
+            vd.B.Connect(j.Ground)
+            vgs.A.Connect(jf.G)
+            vgs.B.Connect(j.Ground)
+            j.Step()
+            print("jfet idss " + H.R(jf.DrainCurrent / 1mA) + " mA")
+            vgs.Level = -2V
+            j.Step()
+            print("jfet at -2 V " + H.R(jf.DrainCurrent / 1mA) + " mA")
+            vgs.Level = -5V
+            j.Step()
+            print("jfet at -5 V " + H.R(jf.DrainCurrent / 1mA) + " mA")
+            // Darlington: base through 1 MOhm from 5 V
+            var q = new Circuits.Circuit()
+            var vq = q.Add(new Circuits.VoltageSource(5V))
+            var rb = q.Add(new Circuits.Resistor(1MOhm))
+            var rc = q.Add(new Circuits.Resistor(1kOhm))
+            var dar = q.Add(new Circuits.Darlington())
+            vq.A.Connect(rb.A)
+            rb.B.Connect(dar.B)
+            vq.A.Connect(rc.A)
+            rc.B.Connect(dar.C)
+            dar.E.Connect(q.Ground)
+            vq.B.Connect(q.Ground)
+            q.Step()
+            print("darlington vbe " + H.R(dar.B.Voltage / 1V) + " vce " + H.R(dar.C.Voltage / 1V))
+            // triode: 250 V through 100 kOhm on the plate, grid on ground
+            var tri = new Circuits.Circuit()
+            var vp = tri.Add(new Circuits.VoltageSource(250V))
+            var rp = tri.Add(new Circuits.Resistor(100kOhm))
+            var tube = tri.Add(new Circuits.Triode())
+            vp.A.Connect(rp.A)
+            rp.B.Connect(tube.Plate)
+            tube.Grid.Connect(tri.Ground)
+            tube.Cathode.Connect(tri.Ground)
+            vp.B.Connect(tri.Ground)
+            tri.Step()
+            print("triode plate " + H.R(tube.Plate.Voltage / 1V) + " V, " + H.R(rp.Current / 1mA) + " mA")
+            // varactor: reverse biased through 1 MOhm, runs
+            var va = new Circuits.Circuit()
+            va.TimeStep = 1us
+            var vv = va.Add(new Circuits.SineSource(1V, 1kHz, 5V))
+            var rv = va.Add(new Circuits.Resistor(1kOhm))
+            var var1 = va.Add(new Circuits.Varactor())
+            vv.A.Connect(rv.A)
+            rv.B.Connect(var1.B)
+            var1.A.Connect(va.Ground)
+            vv.B.Connect(va.Ground)
+            va.Run(1ms)
+            print("varactor ok " + H.R(var1.B.Voltage / 1V))
+            // controlled sources
+            var g = new Circuits.Circuit()
+            var e = g.Add(new Circuits.VCVS(10.0))
+            var re = g.Add(new Circuits.Resistor(1kOhm))
+            var vin2 = g.Add(new Circuits.VoltageSource(0.5V))
+            vin2.B.Connect(g.Ground)
+            e.InPlus.Connect(vin2.A)
+            e.InMinus.Connect(g.Ground)
+            e.A.Connect(re.A)
+            re.B.Connect(g.Ground)
+            e.B.Connect(g.Ground)
+            var gs = g.Add(new Circuits.VCCS(0.001))
+            var rgs = g.Add(new Circuits.Resistor(1kOhm))
+            gs.InPlus.Connect(vin2.A)
+            gs.InMinus.Connect(g.Ground)
+            gs.A.Connect(g.Ground)
+            gs.B.Connect(rgs.A)
+            rgs.B.Connect(g.Ground)
+            // sense: 1 V through 1 kOhm into F/H's InPlus
+            var v1 = g.Add(new Circuits.VoltageSource(1V))
+            var rsn = g.Add(new Circuits.Resistor(1kOhm))
+            v1.B.Connect(g.Ground)
+            v1.A.Connect(rsn.A)
+            var f = g.Add(new Circuits.CCCS(2.0))
+            rsn.B.Connect(f.InPlus)
+            var h = g.Add(new Circuits.CCVS(1kOhm))
+            f.InMinus.Connect(h.InPlus)
+            h.InMinus.Connect(g.Ground)
+            var rf = g.Add(new Circuits.Resistor(1kOhm))
+            f.A.Connect(g.Ground)
+            f.B.Connect(rf.A)
+            rf.B.Connect(g.Ground)
+            var rh = g.Add(new Circuits.Resistor(1kOhm))
+            h.A.Connect(rh.A)
+            rh.B.Connect(g.Ground)
+            h.B.Connect(g.Ground)
+            // CCII+: Y on 1 V, X through 1 kOhm to ground, Z into 2 kOhm
+            var cv = g.Add(new Circuits.CurrentConveyor(1.0))
+            var rx = g.Add(new Circuits.Resistor(1kOhm))
+            var rz = g.Add(new Circuits.Resistor(2kOhm))
+            cv.Y.Connect(v1.A)
+            cv.X.Connect(rx.A)
+            rx.B.Connect(g.Ground)
+            cv.Z.Connect(rz.A)
+            rz.B.Connect(g.Ground)
+            g.Step()
+            print("vcvs " + H.R(e.A.Voltage / 1V) + " vccs " + H.R(gs.B.Voltage / 1V) + " cccs " + H.R(f.B.Voltage / 1V) + " ccvs " + H.R(h.A.Voltage / 1V))
+            print("cc2 x " + H.R(cv.X.Voltage / 1V) + " z " + H.R(cv.Z.Voltage / 1V) + " y current " + H.R(rsn.Current / 1mA))
+            """),
         ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
             {
               "biscuit": 1,

@@ -170,6 +170,29 @@ namespace fire.UI.Markup
                     }
                     return e;
                 }
+                case "425":
+                {
+                    var e = new Element { Type = "RelayCoil" };
+                    e.Set("label", Unescape(Tok(6)));
+                    e.Set("inductance", Format(Num(7, 0.2)));
+                    e.Set("onCurrent", Format(Num(9, 0.02)));
+                    e.Set("coilResistance", Format(Num(10, 20)));
+                    e.Set("offCurrent", Format(Num(11, 0.015)));
+                    int mode = (int)Num(13);
+                    string[] modes = { "normal", "onDelay", "offDelay", "latching", "set", "reset" };
+                    if (mode > 0 && mode < modes.Length) e.Set("mode", modes[mode]);
+                    if (mode == 1 || mode == 2) e.Set("delay", Format(Num(12, 0.005)));
+                    return e;
+                }
+                case "426":
+                {
+                    var e = new Element { Type = "RelayContact" };
+                    e.Set("label", Unescape(Tok(6)));
+                    e.Set("onResistance", Format(Num(7, 0.05)));
+                    e.Set("offResistance", Format(Num(8, 1e6)));
+                    if ((flags & 2) != 0) e.Set("normallyClosed", "true");
+                    return e;
+                }
                 case "n":
                 {
                     // a rail of noise
@@ -463,7 +486,7 @@ namespace fire.UI.Markup
         private static string Describe(string type) => type switch
         {
             "155" => "D flip-flop", "165" => "555 timer", "164" => "counter", "j" => "JFET", "A" => "antenna", "169" => "tapped transformer", "200" => "AM source",
-            "201" => "FM source", "418" => "external voltage", "211" => "audio output", "179" => "current conveyor", "426" => "relay contact", "425" => "relay coil",
+            "201" => "FM source", "418" => "external voltage", "211" => "audio output", "179" => "current conveyor", 
             "419" => "decimal display", "403" => "scope", "176" => "varactor", "402" => "OTA", "184" => "multiplexer", "167" => "ADC", "166" => "DAC",
             "163" => "ring counter", "168" => "latch", "212" => "voltage-controlled voltage source", "213" => "voltage-controlled current source", "175" => "tunnel diode",
             "400" => "Darlington", "177" => "SCR", "173" => "triode", "423" => "line", "185" => "seven segment", "193" => "T flip-flop", "203" => "diac", "206" => "triac",
@@ -495,7 +518,7 @@ namespace fire.UI.Markup
             "Transistor" or "Mosfet" => "Q", "Switch" => "S", "OpAmp" or "Comparator" or "SchmittTrigger" or "JKFlipFlop" => "U", "Probe" => "P",
             "Potentiometer" => "RV", "Transformer" => "T", "Relay" => "K", "Switch2" => "S", "Lamp" => "LA", "Fuse" => "F",
             "LightResistor" or "Thermistor" or "Memristor" => "R", "SparkGap" => "E", "TransmissionLine" => "TL", "AnalogSwitch" or "AnalogSwitch2" => "U",
-            "Sweep" => "V", _ => "X",
+            "Sweep" => "V", "RelayCoil" => "K", "RelayContact" => "S", _ => "X",
         };
 
         private static string UniqueName(List<Element> elements, string prefix)

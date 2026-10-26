@@ -1788,6 +1788,365 @@ namespace Circuits {
         bool IsOn { get { return this.closer.IsOn } }
     }
 
+    /// <summary>The switch of a thyristor (`kind` 12) or a triac (13) in the kernel: between A and B, decided before every step from the gate current
+    /// (Gate against B, or against Aux for a thyristor) and its own current. Part of Thyristor and Triac.</summary>
+    class GateSwitch : Part {
+        int kind
+        float trigger
+        float holding
+        float gateResistance
+        int index = -1
+        float s0 = 0.0
+        bool saved = false
+
+        construct(int kind, float trigger, float holding, float gateResistance) : base("gs") {
+            this.kind = kind
+            this.trigger = trigger
+            this.holding = holding
+            this.gateResistance = gateResistance
+            this.AddPort("a")
+            this.AddPort("b")
+            this.AddPort("gate")
+            this.AddPort("aux")
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddNonlinear(this.kind, this.ports[0], this.ports[1], this.ports[2], this.trigger, this.holding, this.gateResistance, 0.0)
+            if (this.kind == 12) { solver.NlSet(this.index, 6, solver.Node(this.ports[3])) }
+            if (this.saved) { solver.NlSet(this.index, 4, this.s0) }
+            return true
+        }
+        undefined Save(Circuits.Solver solver) {
+            this.s0 = solver.NlState(this.index, 4)
+            this.saved = true
+        }
+        undefined Reset() { this.saved = false }
+
+        bool IsOn {
+            get {
+                var plan = this.Plan()
+                if (plan != undefined && this.index >= 0) { return plan.NlState(this.index, 4) != 0.0 }
+                return this.saved && this.s0 != 0.0
+            }
+        }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 0)
+        }
+    }
+
+    /// <summary>A thyristor (SCR), as Falstad's: it fires when the gate current reaches `triggerCurrent` and conducts from Anode to Cathode (a diode drop)
+    /// until its current falls below `holdingCurrent`. The gate has `gateResistance` to the cathode.</summary>
+    class Thyristor : Circuit {
+        Circuits.GateSwitch sw
+
+        construct(float triggerCurrent : any = 0.01, float holdingCurrent : any = 0.0082, float gateResistance : any = 50) : base("scr") {
+            var anode = this.AddPort("anode")
+            var gate = this.AddPort("gate")
+            var cathode = this.AddPort("cathode")
+            var s = this.Add(new Circuits.GateSwitch(12, Circuits.Units.Amps(triggerCurrent), Circuits.Units.Amps(holdingCurrent), Circuits.Units.Ohms(gateResistance)))
+            var d = this.Add(new Circuits.Diode())
+            var rg = this.Add(new Circuits.Resistor(gateResistance))
+            anode.Connect(s.ports[0])
+            s.ports[1].Connect(d.A)
+            d.B.Connect(cathode)
+            gate.Connect(s.ports[2])
+            gate.Connect(rg.A)
+            rg.B.Connect(cathode)
+            cathode.Connect(s.ports[3])
+            this.sw = s
+        }
+
+        Port Anode { get { return this.ports[0] } }
+        Port Gate { get { return this.ports[1] } }
+        Port Cathode { get { return this.ports[2] } }
+        bool IsOn { get { return this.sw.IsOn } }
+        float CurrentRaw() { return this.sw.CurrentRaw() }
+    }
+
+    /// <summary>A triac, as Falstad's: fires in both directions when the gate current (gate to MT1) exceeds `triggerCurrent`, goes out when the current
+    /// falls below `holdingCurrent`.</summary>
+    class Triac : Circuit {
+        Circuits.GateSwitch sw
+
+        construct(float triggerCurrent : any = 0.01, float holdingCurrent : any = 0.0082, float gateResistance : any = 50) : base("triac") {
+            var mt1 = this.AddPort("mt1")
+            var mt2 = this.AddPort("mt2")
+            var gate = this.AddPort("gate")
+            var s = this.Add(new Circuits.GateSwitch(13, Circuits.Units.Amps(triggerCurrent), Circuits.Units.Amps(holdingCurrent), Circuits.Units.Ohms(gateResistance)))
+            var d1 = this.Add(new Circuits.Diode())
+            var d2 = this.Add(new Circuits.Diode())
+            var rg = this.Add(new Circuits.Resistor(gateResistance))
+            mt2.Connect(d1.A)
+            d1.B.Connect(s.ports[0])
+            s.ports[0].Connect(d2.A)
+            d2.B.Connect(mt2)
+            s.ports[1].Connect(mt1)
+            gate.Connect(s.ports[2])
+            gate.Connect(rg.A)
+            rg.B.Connect(mt1)
+            mt1.Connect(s.ports[3])
+            this.sw = s
+        }
+
+        Port MT1 { get { return this.ports[0] } }
+        Port MT2 { get { return this.ports[1] } }
+        Port Gate { get { return this.ports[2] } }
+        bool IsOn { get { return this.sw.IsOn } }
+        float CurrentRaw() { return this.sw.CurrentRaw() }
+    }
+
+    /// <summary>A diac: conducts in both directions once the voltage across it exceeds `breakdown`, until the current falls below `holdCurrent` (a spark gap
+    /// with a diode drop each way).</summary>
+    class Diac : Circuit {
+        Circuits.SparkGap gap
+
+        construct(float breakdown : any = 30, float holdCurrent : any = 0.01, float onResistance : any = 0.1, float offResistance : any = 10000000) : base("diac") {
+            var a = this.AddPort("a")
+            var b = this.AddPort("b")
+            var g = this.Add(new Circuits.SparkGap(breakdown, holdCurrent, onResistance, offResistance))
+            var d1 = this.Add(new Circuits.Diode())
+            var d2 = this.Add(new Circuits.Diode())
+            a.Connect(g.A)
+            g.B.Connect(d1.A)
+            d1.B.Connect(b)
+            b.Connect(d2.A)
+            d2.B.Connect(g.B)
+            this.gap = g
+        }
+
+        Port A { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
+        bool IsOn { get { return this.gap.IsOn } }
+        float CurrentRaw() { return this.gap.CurrentRaw() }
+    }
+
+    /// <summary>A junction FET (Falstad's): a depletion MOSFET (`threshold` -4 V, `beta` 1.25 mA/V^2) with the gate junction to the source; ports D, G, S.</summary>
+    class Jfet : Circuit {
+        Circuits.Mosfet fet
+
+        construct(bool pChannel = false, float threshold : any = -4, float beta = 0.00125) : base("jfet") {
+            var d = this.AddPort("d")
+            var g = this.AddPort("g")
+            var s = this.AddPort("s")
+            var kind = "NMOS"
+            if (pChannel) { kind = "PMOS" }
+            // the model goes into the library (an argument alone would die after the call)
+            var vt = Circuits.Units.Volts(threshold)
+            var name = "jfet " + kind + " " + vt + " " + beta
+            if (!Circuits.Models.Has(name)) { Circuits.Models.Put(new Circuits.Model(name, kind, vt, beta, 0.0)) }
+            var m = this.Add(new Circuits.Mosfet(name))
+            var diode = this.Add(new Circuits.Diode())
+            d.Connect(m.D)
+            g.Connect(m.G)
+            s.Connect(m.S)
+            if (pChannel) {
+                s.Connect(diode.A)
+                diode.B.Connect(g)
+            } else {
+                g.Connect(diode.A)
+                diode.B.Connect(s)
+            }
+            this.fet = m
+        }
+
+        Port D { get { return this.ports[0] } }
+        Port G { get { return this.ports[1] } }
+        Port S { get { return this.ports[2] } }
+        float:A DrainCurrent { get { return this.fet.DrainCurrent } }
+        float CurrentRaw() { return this.fet.CurrentRaw() }
+    }
+
+    /// <summary>A Darlington pair: two transistors of `model`, the emitter of the first on the base of the second; ports C, B, E.</summary>
+    class Darlington : Circuit {
+        Circuits.Transistor q1
+        Circuits.Transistor q2
+
+        construct(any model = "npn") : base("darlington") {
+            var c = this.AddPort("c")
+            var b = this.AddPort("b")
+            var e = this.AddPort("e")
+            var a = this.Add(new Circuits.Transistor(model))
+            var z = this.Add(new Circuits.Transistor(model))
+            c.Connect(a.C)
+            c.Connect(z.C)
+            b.Connect(a.B)
+            a.E.Connect(z.B)
+            z.E.Connect(e)
+            this.q1 = a
+            this.q2 = z
+        }
+
+        Port C { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
+        Port E { get { return this.ports[2] } }
+        float CurrentRaw() { return this.q1.CurrentRaw() + this.q2.CurrentRaw() }
+    }
+
+    /// <summary>A varactor: a diode whose junction capacitance is `capacitance` at 0 V and falls with the reverse voltage.</summary>
+    class Varactor : Diode {
+        construct(float capacitance : any = 0.00000000002) : base(Circuits.Varactor.ModelFor(Circuits.Units.Farads(capacitance))) { }
+
+        // the name of a model in the library with this capacitance
+        static string ModelFor(float farads) {
+            var name = "varactor " + farads
+            if (!Circuits.Models.Has(name)) { Circuits.Models.Put(new Circuits.Model(name, "D", 0.00000000000001, 1.0).Set("CJO", farads).Set("VJ", 0.6).Set("M", 0.5)) }
+            return name
+        }
+    }
+
+    /// <summary>A vacuum triode (Falstad's): the plate current (mu `mu`, kg1 `kg1`) and the grid current, against the cathode; ports Plate, Grid, Cathode.</summary>
+    class Triode : Formula3 {
+        construct(float mu = 93.0, float kg1 = 680.0) : base("if(V2 + V1/mu, pow(max(V2 + V1/mu, 0), 1.5)/kg1, 0.00000001*V1)", "if(V2 - 0.01, V2/6000, 0.00000001*V2)",
+                                                       "mu=" + mu + " kg1=" + kg1) { }
+
+        Port Plate { get { return this.ports[0] } }
+        Port Grid { get { return this.ports[1] } }
+        Port Cathode { get { return this.ports[2] } }
+    }
+
+    /// <summary>A voltage-controlled voltage source: V(A) - V(B) = `gain` * (V(InPlus) - V(InMinus)).</summary>
+    class VCVS : TwoTerminal {
+        float gain
+
+        construct(float gain = 1.0) : base("E") {
+            this.gain = gain
+            this.AddPort("inplus")
+            this.AddPort("inminus")
+        }
+
+        Port InPlus { get { return this.ports[2] } }
+        Port InMinus { get { return this.ports[3] } }
+        int Branches() { return 1 }
+        bool Compile(Circuits.Solver solver) {
+            solver.VoltageBranch(this.branch, this.A, this.B)
+            solver.Entry(this.branch, solver.Node(this.InPlus), -this.gain)
+            solver.Entry(this.branch, solver.Node(this.InMinus), this.gain)
+            return true
+        }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return -plan.BranchCurrent(this.branch)
+        }
+    }
+
+    /// <summary>A voltage-controlled current source: drives `gain` * (V(InPlus) - V(InMinus)) amperes from A through itself to B (out of B into the
+    /// circuit), like a CurrentSource.</summary>
+    class VCCS : TwoTerminal {
+        float gain
+
+        construct(float gain : any = 0.001) : base("G") {
+            this.gain = Circuits.Units.Raw(gain)
+            this.AddPort("inplus")
+            this.AddPort("inminus")
+        }
+
+        Port InPlus { get { return this.ports[2] } }
+        Port InMinus { get { return this.ports[3] } }
+        bool Compile(Circuits.Solver solver) {
+            var a = solver.Node(this.A)
+            var b = solver.Node(this.B)
+            var p = solver.Node(this.InPlus)
+            var n = solver.Node(this.InMinus)
+            solver.Entry(a, p, this.gain)
+            solver.Entry(a, n, -this.gain)
+            solver.Entry(b, p, -this.gain)
+            solver.Entry(b, n, this.gain)
+            return true
+        }
+        float CurrentRaw() { return this.gain * (this.InPlus.Raw() - this.InMinus.Raw()) }
+    }
+
+    /// <summary>A current-controlled current source: the current that flows from InPlus to InMinus (through a short) times `gain` is driven from A
+    /// through itself to B.</summary>
+    class CCCS : TwoTerminal {
+        float gain
+
+        construct(float gain = 1.0) : base("F") {
+            this.gain = gain
+            this.AddPort("inplus")
+            this.AddPort("inminus")
+        }
+
+        Port InPlus { get { return this.ports[2] } }
+        Port InMinus { get { return this.ports[3] } }
+        int Branches() { return 1 }
+        bool Compile(Circuits.Solver solver) {
+            // the sense: a voltage source of 0 V from InPlus to InMinus; its branch current is the current into InPlus
+            solver.VoltageBranch(this.branch, this.InPlus, this.InMinus)
+            solver.Entry(solver.Node(this.A), this.branch, this.gain)
+            solver.Entry(solver.Node(this.B), this.branch, -this.gain)
+            return true
+        }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return this.gain * plan.BranchCurrent(this.branch)
+        }
+    }
+
+    /// <summary>A current-controlled voltage source: V(A) - V(B) = `gain` (ohms) * the current that flows from InPlus to InMinus (through a short).</summary>
+    class CCVS : TwoTerminal {
+        float gain
+
+        construct(float gain : any = 1000) : base("H") {
+            this.gain = Circuits.Units.Raw(gain)
+            this.AddPort("inplus")
+            this.AddPort("inminus")
+        }
+
+        Port InPlus { get { return this.ports[2] } }
+        Port InMinus { get { return this.ports[3] } }
+        int Branches() { return 2 }
+        bool Compile(Circuits.Solver solver) {
+            var sense = this.branch + 1
+            solver.VoltageBranch(sense, this.InPlus, this.InMinus)
+            solver.VoltageBranch(this.branch, this.A, this.B)
+            solver.Entry(this.branch, sense, -this.gain)
+            return true
+        }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return -plan.BranchCurrent(this.branch)
+        }
+    }
+
+    /// <summary>A current conveyor (CCII, Falstad's CC2): X follows the voltage of Y (Y takes no current), the current into Z is `gain` times the current
+    /// into X (+1: CCII+, -1: CCII-).</summary>
+    class CurrentConveyor : TwoTerminal {
+        float gain
+
+        construct(float gain = 1.0) : base("CC2") {
+            this.gain = gain
+            this.AddPort("z")
+        }
+
+        /// <summary>X is A, Y is B.</summary>
+        Port X { get { return this.ports[0] } }
+        Port Y { get { return this.ports[1] } }
+        Port Z { get { return this.ports[2] } }
+        int Branches() { return 1 }
+        bool Compile(Circuits.Solver solver) {
+            // V(X) - V(Y) = 0 as a branch from X to ground; its current flows out of X into the circuit
+            var k = this.branch
+            var x = solver.Node(this.X)
+            solver.Entry(x, k, 1.0)
+            solver.Entry(k, x, 1.0)
+            solver.Entry(k, solver.Node(this.Y), -1.0)
+            // the current into Z is gain times the current into X (the branch current)
+            solver.Entry(solver.Node(this.Z), k, this.gain)
+            return true
+        }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.BranchCurrent(this.branch)
+        }
+    }
+
     /// <summary>A light dependent resistor: `resistance10` at 10 lux, falling with the light as lux^-gamma (`gamma` about 0.7), at most `dark`.</summary>
     class LightResistor : TwoTerminal {
         float lux
@@ -2493,6 +2852,10 @@ namespace Circuits {
         }
         float NlState(int index, int what) { return __CirNlState(this.handle, index, what) }
         undefined NlSet(int index, int what, float value) { __CirNlSet(this.handle, index, what, value) }
+        /// <summary>Adds a number to an entry of the matrix (row and column: nodes or branches; -1, ground, is left out) - for controlled sources (Stamp).</summary>
+        undefined Entry(int row, int col, float value) {
+            if (row >= 0 && col >= 0) { __CirEntry(this.handle, row, col, value) }
+        }
         int AddLine(Port a1, Port b1, Port a2, Port b2, float z, float delay) {
             var index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
             if (index < 0) { throw new ArgumentException(this.Error()) }
@@ -2680,6 +3043,163 @@ namespace Circuits {
 
         Port A { get { return this.ports[0] } }
         Port B { get { return this.ports[1] } }
+    }
+
+    /// <summary>The switching logic of a RelayCoil (it steps in fire): follows the coil current (smoothed over about 1 ms) like Falstad's relay coil -
+    /// pulls in above `onCurrent` (after the delay of an on-delay coil), drops out below `offCurrent` (after the delay of an off-delay coil); a latching
+    /// coil toggles, a set coil switches on, a reset coil off.</summary>
+    class RelayCoilState : Part {
+        Circuits.RelayCoil coil
+        float avg = 0.0
+        int state = 0
+        float since = 0.0
+
+        construct(Circuits.RelayCoil coil) : base("coilstate") { this.coil = coil }
+
+        bool Compile(Circuits.Solver solver) {
+            this.commitsInFire = true
+            return false
+        }
+        undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
+        undefined Reset() {
+            this.avg = 0.0
+            this.state = 0
+            this.coil.position = 0
+        }
+        undefined Commit(Circuits.Solver solver) {
+            var k = this.coil
+            var a = Math.Exp(-solver.dt * 1000.0)
+            this.avg = a * this.avg + (1.0 - a) * Math.Abs(k.inductor.CurrentRaw())
+            var t = solver.Time()
+            var onDelay = 0.0
+            var offDelay = 0.0
+            if (k.mode == 1) { onDelay = k.delay }
+            if (k.mode == 2) { offDelay = k.delay }
+            if (this.state == 0) {
+                if (this.avg > k.onCurrent) {
+                    this.state = 1
+                    this.since = t
+                }
+            } else if (this.state == 1) {
+                if (this.avg < k.offCurrent) { this.state = 0 }
+                else if (t - this.since >= onDelay) {
+                    this.state = 2
+                    if (k.mode == 3) { k.Switch(1 - k.Leader().position) }
+                    else if (k.mode == 5) { k.Switch(0) }
+                    else { k.Switch(1) }
+                }
+            } else if (this.state == 2) {
+                if (this.avg < k.offCurrent) {
+                    this.state = 3
+                    this.since = t
+                }
+            } else if (this.state == 3) {
+                if (this.avg > k.onCurrent) { this.state = 2 }
+                else if (t - this.since >= offDelay) {
+                    this.state = 0
+                    if (k.mode <= 2) { k.Switch(0) }
+                }
+            }
+        }
+    }
+
+    /// <summary>The coil of a relay whose contacts are drawn apart from it (CoilContact): an inductance and a resistance from Coil1 to Coil2. `mode`:
+    /// 0 normal, 1 on-delay, 2 off-delay (by `delay`), 3 latching (every pull-in toggles), 4 set, 5 reset. Coils and contacts of the same label work
+    /// together (Join).</summary>
+    class RelayCoil : Circuit {
+        Circuits.Inductor inductor
+        float onCurrent
+        float offCurrent
+        int mode
+        float delay
+        // 1: pulled in (the contacts of the label switch over); the coils of a label share the position of the first one
+        int position = 0
+        Circuits.RelayCoil leader
+        List contacts
+
+        construct(float inductance : any = 0.2, float coilResistance : any = 20, float onCurrent : any = 0.02, float offCurrent : any = 0.015, int mode = 0,
+                  float delay : any = 0) : base("coil") {
+            var c1 = this.AddPort("coil1")
+            var c2 = this.AddPort("coil2")
+            var l = this.Add(new Circuits.Inductor(inductance))
+            var r = this.Add(new Circuits.Resistor(coilResistance))
+            c1.Connect(l.A)
+            l.B.Connect(r.A)
+            r.B.Connect(c2)
+            this.inductor = l
+            this.onCurrent = Circuits.Units.Amps(onCurrent)
+            this.offCurrent = Circuits.Units.Amps(offCurrent)
+            this.mode = mode
+            this.delay = Circuits.Units.Seconds(delay)
+            this.leader = undefined
+            this.contacts = new List()
+            this.Add(new Circuits.RelayCoilState(this))
+        }
+
+        Port Coil1 { get { return this.ports[0] } }
+        Port Coil2 { get { return this.ports[1] } }
+
+        Circuits.RelayCoil Leader() {
+            if (this.leader == undefined) { return this }
+            return this.leader
+        }
+
+        /// <summary>Makes this coil work the contacts of `leader` (the coils of one label).</summary>
+        undefined Join(Circuits.RelayCoil leader) {
+            if (leader == this) { this.leader = undefined } else { this.leader = leader }
+        }
+
+        /// <summary>Is it pulled in (the contacts of its label switched over)?</summary>
+        bool Energized { get { return this.Leader().position == 1 } }
+        float:A CoilCurrent { get { return this.inductor.CurrentRaw() * 1A } }
+        float CurrentRaw() { return this.inductor.CurrentRaw() }
+
+        undefined Switch(int position) {
+            var lead = this.Leader()
+            if (lead.position == position) { return }
+            lead.position = position
+            this.InvalidateSoon()
+        }
+    }
+
+    /// <summary>A contact of a RelayCoil: closed (`onResistance`) while the coil is pulled in, else open (`offResistance`) - the other way round when
+    /// `normallyClosed`. Attach it to the coil with Attach (a schematic does it by the label).</summary>
+    class CoilContact : TwoTerminal {
+        Circuits.RelayCoil coil
+        bool normallyClosed
+        float ron
+        float roff
+
+        construct(bool normallyClosed = false, float onResistance : any = 0.05, float offResistance : any = 1000000) : base("contact") {
+            this.normallyClosed = normallyClosed
+            this.ron = Circuits.Units.Ohms(onResistance)
+            this.roff = Circuits.Units.Ohms(offResistance)
+            this.coil = undefined
+        }
+
+        undefined Attach(Circuits.RelayCoil coil) {
+            this.coil = coil
+            this.Invalidate()
+        }
+
+        bool Closed {
+            get {
+                var pulled = this.coil != undefined && this.coil.Energized
+                return pulled != this.normallyClosed
+            }
+        }
+
+        float ResistanceRaw() {
+            if (this.Closed) { return this.ron }
+            return this.roff
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
     }
 
     /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.

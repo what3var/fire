@@ -833,6 +833,30 @@ namespace UI {
                 this.DrawRelay(root, e)
             } else if (t == "Switch2") {
                 this.DrawSwitch2(root, e)
+            } else if (t == "RelayCoil") {
+                // a box with the coil in it and the label
+                this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, c0)
+                this.Seg(root, m + 1.5, 0.0, L, 0.0, c1)
+                var energized = false
+                if (e.part != undefined) {
+                    Circuits.RelayCoil coil = e.part!Circuits.RelayCoil
+                    energized = coil.Energized
+                }
+                var box = white
+                if (energized) { box = UI.Color.Rgb(240, 200, 80) }
+                this.Rect(root, m - 1.5, -1.0, m + 1.5, 1.0, box)
+                this.Seg(root, m - 1.5, 1.0, m + 1.5, -1.0, box)
+                this.Label(root, m, -1.6, e.Get("label"), UI.Color.Rgb(230, 200, 90))
+            } else if (t == "RelayContact") {
+                this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, c0)
+                this.Seg(root, m + 1.5, 0.0, L, 0.0, c1)
+                this.Dot(root, m - 1.5, 0.0, 0.25, white)
+                this.Dot(root, m + 1.5, 0.0, 0.25, white)
+                Circuits.CoilContact contact = undefined
+                if (e.part != undefined) { contact = e.part!Circuits.CoilContact }
+                if (contact != undefined && contact.Closed) { this.Seg(root, m - 1.5, 0.0, m + 1.5, 0.0, c0) } else { this.Seg(root, m - 1.5, 0.0, m + 1.3, -1.4, c0) }
+                if (e.Flag("normallyClosed")) { this.Seg(root, m + 1.5, 0.0, m + 1.5, -1.3, white) }
+                this.Label(root, m, 1.6, e.Get("label"), UI.Color.Rgb(230, 200, 90))
             } else if (t == "AnalogSwitch" || t == "AnalogSwitch2") {
                 this.DrawAnalogSwitch(root, e)
             } else if (t == "TransmissionLine") {
@@ -1595,7 +1619,7 @@ namespace UI {
             if (p == undefined) { return 0.0 }
             var t = e.type
             if (t == "Resistor" || t == "Capacitor" || t == "Inductor" || t == "Switch" || t == "Diode" || t == "Led" || t == "Zener" || t == "Formula" || t == "CurrentSource"
-                || t == "Lamp" || t == "Fuse" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap") {
+                || t == "Lamp" || t == "Fuse" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap" || t == "RelayContact" || t == "RelayCoil") {
                 return p.CurrentRaw()
             }
             // a source runs from its first point (-) to its second (+)
@@ -2134,7 +2158,8 @@ namespace UI {
             else if (t == "Transformer") { prefix = "T" }
             else if (t == "Relay") { prefix = "K" }
             else if (t == "SchmittTrigger" || t == "AnalogSwitch" || t == "AnalogSwitch2") { prefix = "U" }
-            else if (t == "Switch2") { prefix = "S" }
+            else if (t == "Switch2" || t == "RelayContact") { prefix = "S" }
+            else if (t == "RelayCoil") { prefix = "K" }
             else if (t == "Lamp") { prefix = "LA" }
             else if (t == "Fuse") { prefix = "F" }
             else if (t == "Crystal") { prefix = "Y" }

@@ -191,6 +191,11 @@
         "cpp": "circuits::AddLine"
       },
       {
+        "name": "__CirEntry",
+        "arguments": 4,
+        "cpp": "circuits::Entry"
+      },
+      {
         "name": "__CirNlSet",
         "arguments": 4,
         "cpp": "circuits::NlSet"
