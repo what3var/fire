@@ -178,12 +178,29 @@ namespace Circuits {
             l.Add("Logic|SchmittTrigger|lower:V=1.66;upper:V=3.33;supply:V=5;inverting:bool=false")
             l.Add("Logic|Counter|bits:int=4;supply:V=5;layout:choice:fire/falstad=fire")
             l.Add("ICs|Timer555|supply:V=5;layout:choice:fire/falstad=fire;groundPin:bool=false")
+            l.Add("Logic|TFlipFlop|supply:V=5;reset:bool=false;set:bool=false;spacing:int=4")
+            l.Add("Logic|Latch|bits:int=4;supply:V=5;levelTriggered:bool=false;reset:bool=false;set:bool=false;resetActiveLow:bool=false;spacing:int=4")
+            l.Add("Logic|RingCounter|bits:int=10;supply:V=5;clockInhibit:bool=true;resetActiveHigh:bool=false;spacing:int=4")
+            l.Add("Logic|Multiplexer|selectBits:int=2;supply:V=5;invertedOutput:bool=false;strobe:bool=false;spacing:int=4")
+            l.Add("Logic|Demultiplexer|selectBits:int=2;supply:V=5;invertedOutputs:bool=false;spacing:int=4")
+            l.Add("Logic|HalfAdder|supply:V=5;spacing:int=4")
+            l.Add("Logic|FullAdder|bits:int=1;supply:V=5;spacing:int=4")
+            l.Add("Logic|SipoShift|bits:int=8;supply:V=5;spacing:int=4")
+            l.Add("Logic|PisoShift|bits:int=8;supply:V=5;serialIn:bool=false;spacing:int=4")
+            l.Add("Logic|SevenSegmentDecoder|supply:V=5;blankInput:bool=false;blankOnF:bool=false;spacing:int=4")
+            l.Add("Logic|Monostable|time:s=10m;retriggerable:bool=false;invertTrigger:bool=false;supply:V=5;spacing:int=4")
+            l.Add("Logic|TriState|supply:V=5;onResistance:Ohm=0.1;offResistance:Ohm=10G;offGroundResistance:Ohm=0;flip:bool=false")
+            l.Add("ICs|Adc|bits:int=4;supply:V=5;spacing:int=4")
+            l.Add("ICs|Dac|bits:int=4;supply:V=5;spacing:int=4")
+            l.Add("ICs|Vco|supply:V=5;spacing:int=4")
+            l.Add("ICs|PhaseComparator|supply:V=5;spacing:int=4")
             l.Add("Devices|GpioLine|line:int=0;supply:V=3.3")
             l.Add("Devices|I2cAdc|address:text=0x48;channels:int=4;reference:V=5;bits:int=8")
             l.Add("Devices|I2cDac|address:text=0x60;channels:int=1;reference:V=5")
             l.Add("Devices|SpiShiftOut|supply:V=5")
             l.Add("Devices|SpiShiftIn|supply:V=5")
             l.Add("Display|LogicOutput|threshold:V=2.5")
+            l.Add("Display|SevenSegment|point:bool=false;supply:V=5;spacing:int=4")
             l.Add("Display|Probe|")
             l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current=voltage;display:choice:time/spectrum=time;range:V=0;maxFrequency:Hz=0")
             l.Add("Display|Label|text:text=A")
@@ -234,6 +251,7 @@ namespace Circuits {
 
         /// <summary>Is it a chip (a box with pins on both sides, whose second point only says how wide it is)?</summary>
         static bool IsChip(string type) {
+            if (Circuits.Symbols.IsKernelChip(type)) { return true }
             if (type == "DFlipFlop" || type == "SRLatch" || type == "JKFlipFlop" || type == "Counter" || type == "Timer555") { return true }
             if (type == "VCVS" || type == "VCCS" || type == "CCCS" || type == "CCVS" || type == "CurrentConveyor" || type == "Optocoupler") { return true }
             return type == "I2cAdc" || type == "I2cDac" || type == "SpiShiftOut" || type == "SpiShiftIn"
@@ -389,6 +407,17 @@ namespace Circuits {
             if (t == "Ground" || t == "Rail" || t == "LogicInput" || t == "LogicOutput" || t == "Label" || t == "Pin" || t == "GpioLine" || t == "Sweep") {
                 e.pins.Add(e.x1)
                 e.pins.Add(e.y1)
+                return
+            }
+            if (t == "TriState") {
+                // in at the first point, out at the second, the control 2 units beside the middle (Falstad: 16 of its pixels, the other side with flip)
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                e.pins.Add(e.x2)
+                e.pins.Add(e.y2)
+                var side = -2.0
+                if (e.Flag("flip")) { side = 2.0 }
+                Circuits.Symbols.Interp(e, 0.5, side, e.pins)
                 return
             }
             if (t == "Transistor" || t == "Darlington") {
@@ -727,15 +756,83 @@ namespace Circuits {
             }
         }
 
+        // a kernel chip of an element
+        static Part MakeChip(Circuits.Element e, Circuits.Circuit c) {
+            var t = e.type
+            var supply = Circuits.Symbols.Value(e, "supply", c)
+            var bits = Circuits.Symbols.ChipBits(e)
+            if (t == "TFlipFlop") { return new Circuits.TFlipFlop(supply, e.Flag("reset"), e.Flag("set")) }
+            if (t == "Latch") { return new Circuits.Latch(bits, supply, e.Flag("levelTriggered"), e.Flag("reset"), e.Flag("set"), e.Flag("resetActiveLow")) }
+            if (t == "RingCounter") { return new Circuits.RingCounter(bits, supply, e.Get("clockInhibit") != "false", e.Flag("resetActiveHigh")) }
+            if (t == "Multiplexer") { return new Circuits.Multiplexer(bits, supply, e.Flag("invertedOutput"), e.Flag("strobe")) }
+            if (t == "Demultiplexer") { return new Circuits.Demultiplexer(bits, supply, e.Flag("invertedOutputs")) }
+            if (t == "HalfAdder") { return new Circuits.HalfAdder(supply) }
+            if (t == "FullAdder") { return new Circuits.FullAdder(bits, supply) }
+            if (t == "SipoShift") { return new Circuits.SipoShift(bits, supply) }
+            if (t == "PisoShift") { return new Circuits.PisoShift(bits, supply, e.Flag("serialIn")) }
+            if (t == "Adc") { return new Circuits.Adc(bits, supply) }
+            if (t == "Dac") { return new Circuits.Dac(bits, supply) }
+            if (t == "SevenSegmentDecoder") { return new Circuits.SevenSegmentDecoder(supply, e.Flag("blankInput"), e.Flag("blankOnF")) }
+            if (t == "Monostable") { return new Circuits.Monostable(Circuits.Symbols.Value(e, "time", c), e.Flag("retriggerable"), e.Flag("invertTrigger"), supply) }
+            if (t == "PhaseComparator") { return new Circuits.PhaseComparator(supply) }
+            if (t == "Vco") { return new Circuits.Vco(supply) }
+            return new Circuits.SevenSegment(e.Flag("point"), supply)
+        }
+
         /// <summary>Is it a chip in the layout of Falstad's simulator (pins on all four sides)?</summary>
         static bool IsFalstadChip(Circuits.Element e) {
+            if (Circuits.Symbols.IsKernelChip(e.type)) { return true }
             return e.Get("layout") == "falstad" && (e.type == "DFlipFlop" || e.type == "Timer555" || e.type == "Counter")
+        }
+
+        /// <summary>The chips run by the kernel's chip (Circuits.Chip): always in Falstad's layout, their pins from Chip.Layout.</summary>
+        static bool IsKernelChip(string type) {
+            var kinds = ["TFlipFlop", "Latch", "RingCounter", "Multiplexer", "Demultiplexer", "HalfAdder", "FullAdder", "SipoShift", "PisoShift", "Adc", "Dac",
+                         "SevenSegmentDecoder", "Monostable", "PhaseComparator", "Vco", "SevenSegment"]
+            for (int i = 0; i < kinds.length; i++) {
+                if (kinds[i] == type) { return true }
+            }
+            return false
+        }
+
+        static int Count(Circuits.Element e, string key, int fallback, int low, int high) {
+            var n = e.Get(key).TryToInt()
+            if (n == undefined) { return fallback }
+            if (n < low) { return low }
+            if (n > high) { return high }
+            return n
+        }
+
+        // the bits and flags of a kernel chip from its properties (as its constructor makes them)
+        static int ChipBits(Circuits.Element e) {
+            var t = e.type
+            if (t == "Multiplexer" || t == "Demultiplexer") { return Circuits.Symbols.Count(e, "selectBits", 2, 1, 6) }
+            if (t == "RingCounter") { return Circuits.Symbols.Count(e, "bits", 10, 2, 32) }
+            if (t == "Latch" || t == "Adc" || t == "Dac") { return Circuits.Symbols.Count(e, "bits", 4, 1, 16) }
+            if (t == "SipoShift" || t == "PisoShift") { return Circuits.Symbols.Count(e, "bits", 8, 1, 32) }
+            if (t == "FullAdder") { return Circuits.Symbols.Count(e, "bits", 1, 1, 16) }
+            return 0
+        }
+
+        static int ChipFlags(Circuits.Element e) {
+            var t = e.type
+            if (t == "TFlipFlop") { return Circuits.TFlipFlop.Flags(e.Flag("reset"), e.Flag("set")) }
+            if (t == "Latch") { return Circuits.Latch.Flags(e.Flag("levelTriggered"), e.Flag("reset"), e.Flag("set"), e.Flag("resetActiveLow")) }
+            if (t == "RingCounter") { return Circuits.RingCounter.Flags(e.Get("clockInhibit") != "false", e.Flag("resetActiveHigh"), Circuits.Symbols.ChipBits(e)) }
+            if (t == "Multiplexer") { return Circuits.Multiplexer.Flags(e.Flag("invertedOutput"), e.Flag("strobe")) }
+            if (t == "Demultiplexer") { return Circuits.Demultiplexer.Flags(e.Flag("invertedOutputs")) }
+            if (t == "PisoShift") { return Circuits.PisoShift.Flags(e.Flag("serialIn")) }
+            if (t == "SevenSegmentDecoder") { return Circuits.SevenSegmentDecoder.Flags(e.Flag("blankInput"), e.Flag("blankOnF")) }
+            if (t == "Monostable") { return Circuits.Monostable.Flags(e.Flag("invertTrigger"), e.Flag("retriggerable")) }
+            return 0
         }
 
         /// <summary>A chip as Falstad lays it out: "sizeX,sizeY|side:pos:name:port;..." (side W, E, N or S; port the index of the port of the part, -1
         /// for a pin without one).</summary>
         static string FalstadLayout(Circuits.Element e) {
             var t = e.type
+            if (t == "SevenSegment") { return Circuits.SevenSegment.DisplayLayout(e.Flag("point")) }
+            if (Circuits.Symbols.IsKernelChip(t)) { return Circuits.Chip.Layout(t, Circuits.Symbols.ChipBits(e), Circuits.Symbols.ChipFlags(e)) }
             if (t == "DFlipFlop") {
                 var l = "2,3|W:0:D:0;E:0:Q:2;E:2:/Q:3;W:1:>:1"
                 if (e.Flag("resetPin")) { l = l + ";W:2:R:-1" }
@@ -1021,6 +1118,11 @@ namespace Circuits {
             }
             else if (t == "Timer555") { part = new Circuits.Timer555(Circuits.Symbols.Value(e, "supply", c), Circuits.Symbols.IsFalstadChip(e)) }
             else if (t == "Counter") { part = new Circuits.Counter(Circuits.Symbols.Bits(e), Circuits.Symbols.Value(e, "supply", c)) }
+            else if (Circuits.Symbols.IsKernelChip(t)) { part = Circuits.Symbols.MakeChip(e, c) }
+            else if (t == "TriState") {
+                part = new Circuits.TriState(Circuits.Symbols.Value(e, "supply", c), Circuits.Symbols.Value(e, "onResistance", c), Circuits.Symbols.Value(e, "offResistance", c),
+                                             Circuits.Symbols.Value(e, "offGroundResistance", c))
+            }
             else if (t == "Ground") { part = new Circuits.Ground() }
             else if (t == "GpioLine") { part = new Circuits.GpioLine(Circuits.Symbols.Line(e), Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "I2cAdc" || t == "I2cDac") {
@@ -1256,7 +1358,7 @@ namespace Circuits {
                 return
             }
             // the number of pins can change (inputs, bits, flip, model of a transistor)
-            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity" || key == "smallGrid" || key == "legacy" || key == "layout" || key == "resetPin" || key == "groundPin" || key == "spacing")
+            this.Changed((Circuits.Symbols.IsKernelChip(e.type) && key != "supply" && key != "time") || key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity" || key == "smallGrid" || key == "legacy" || key == "layout" || key == "resetPin" || key == "groundPin" || key == "spacing")
         }
 
         /// <summary>Renames an element.</summary>

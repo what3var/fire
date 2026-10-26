@@ -971,6 +971,17 @@ namespace UI {
                 this.Text(root, 0.0, 0.0, e.Get("text"), white, false)
             } else if (t == "Scope") {
                 this.DrawScope(root, e)
+            } else if (t == "TriState") {
+                // a buffer (a triangle) with the control coming in from the side
+                this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, c0)
+                this.Seg(root, m + 1.5, 0.0, L, 0.0, c1)
+                this.Seg(root, m - 1.5, -1.5, m - 1.5, 1.5, white)
+                this.Seg(root, m - 1.5, -1.5, m + 1.5, 0.0, white)
+                this.Seg(root, m - 1.5, 1.5, m + 1.5, 0.0, white)
+                var side = -2.0
+                if (e.Flag("flip")) { side = 2.0 }
+                var vc = this.VoltageColor(e.PinVoltage(2))
+                this.Seg(root, m, side, m, side * 0.38, vc)
             }
             if (e.name != "" && this.showValues && t != "Label" && t != "Text" && t != "Pin" && t != "Scope") {
                 this.Label(root, m, this.NameSide(e), e.name, UI.Color.Rgb(120, 150, 200))
@@ -1412,15 +1423,62 @@ namespace UI {
                 else { this.DrawString(root, this.SX(ex) - tw / 2, this.SY(ey) - this.Dp(2) - th, name, this.textBrush) }
                 i = i + 1
             }
-            var title = e.type
-            if (title == "Timer555") { title = "555" }
-            if (title == "DFlipFlop") { title = "D-FF" }
+            if (e.type == "SevenSegment") {
+                this.DrawDigit(root, e, left, top, right, bottom)
+                return
+            }
+            var title = UI.CircuitView.ChipTitle(e.type)
             if (e.type == "Counter" && e.part != undefined) {
                 Circuits.Counter counter = e.part!Circuits.Counter
                 title = "" + counter.Count
             }
             this.textBrush.Color = white
             this.DrawString(root, (this.SX(left) + this.SX(right)) / 2 - this.TextWidth(root, title) / 2, (this.SY(top) + this.SY(bottom)) / 2 - this.TextHeight(root) / 2, title, this.textBrush)
+        }
+
+        // the short name in the box of a chip
+        static string ChipTitle(string t) {
+            var names = ["Timer555", "555", "DFlipFlop", "D-FF", "TFlipFlop", "T-FF", "RingCounter", "Ring", "Multiplexer", "MUX", "Demultiplexer", "DEMUX",
+                         "HalfAdder", "Half Add", "FullAdder", "Adder", "SipoShift", "SIPO", "PisoShift", "PISO", "Adc", "ADC", "Dac", "DAC",
+                         "SevenSegmentDecoder", "7-Seg", "Monostable", "Mono", "PhaseComparator", "Phase", "Vco", "VCO"]
+            for (int i = 0; i + 1 < names.length; i = i + 2) {
+                if (names[i] == t) { return names[i + 1] }
+            }
+            return t
+        }
+
+        // the digit of a 7-segment display in its box: the segments a..g (and the point) lit while their pin is high
+        undefined DrawDigit(Root root, Circuits.Element e, float left, float top, float right, float bottom) {
+            var supply = Circuits.Symbols.Number(e.Get("supply"))
+            if (supply == undefined) { supply = 5.0 }
+            var w = (right - left) * 0.36
+            var h = (bottom - top) * 0.32
+            var cx = (left + right) / 2.0 - w * 0.1
+            var cy = (top + bottom) / 2.0
+            // the ends of a..g: from (x, y) to (x, y), relative to the middle
+            var seg = [-w, -h, w, -h,   w, -h, w, 0.0,   w, 0.0, w, h,   -w, h, w, h,   -w, 0.0, -w, h,   -w, -h, -w, 0.0,   -w, 0.0, w, 0.0]
+            var lit = UI.Color.Rgb(255, 60, 60)
+            var dark = UI.Color.Rgb(60, 24, 24)
+            var old = this.pen.Width
+            this.pen.Width = UI.M.Max(2, Math.Round(this.scale * 0.35 * this.dev)!int)
+            for (int i = 0; i < 7; i++) {
+                var shine = e.PinVoltage(i) > supply / 2.0
+                if (shine) { this.pen.Color = lit } else { this.pen.Color = dark }
+                var x0 = cx + seg[i * 4]
+                var y0 = cy + seg[i * 4 + 1]
+                var x1 = cx + seg[i * 4 + 2]
+                var y1 = cy + seg[i * 4 + 3]
+                // a little gap at the corners
+                var gx = (x1 - x0) * 0.12
+                var gy = (y1 - y0) * 0.12
+                root.renderer.DrawLine(this.SX(x0 + gx), this.SY(y0 + gy), this.SX(x1 - gx), this.SY(y1 - gy), this.pen)
+            }
+            this.pen.Width = old
+            if (e.Flag("point")) {
+                if (e.PinVoltage(7) > supply / 2.0) { this.brush.Color = lit } else { this.brush.Color = dark }
+                var r = UI.M.Max(2, Math.Round(this.scale * 0.3 * this.dev)!int)
+                root.renderer.FillCircle(this.SX(cx + w * 1.35), this.SY(cy + h), r, this.brush)
+            }
         }
 
         undefined DrawChip(Root root, Circuits.Element e) {
@@ -2166,7 +2224,14 @@ namespace UI {
                 var x1 = UI.M.Max(e.x1, e.x2) + 0.0
                 var y0 = UI.M.Min(e.y1, e.y2) + 0.0
                 var y1 = UI.M.Max(e.y1, e.y2) + 0.0
-                if (Circuits.Symbols.IsChip(t)) {
+                if (Circuits.Symbols.IsFalstadChip(e)) {
+                    var size = Circuits.Symbols.FalstadLayout(e).Split("|")[0].Split(",")
+                    float cs = Circuits.Symbols.FalstadCell(e)
+                    x0 = e.x1 + cs / 2.0
+                    y0 = e.y1 - cs / 2.0
+                    x1 = x0 + Circuits.Symbols.Int(size[0]) * cs
+                    y1 = y0 + Circuits.Symbols.Int(size[1]) * cs
+                } else if (Circuits.Symbols.IsChip(t)) {
                     x1 = e.x1 + Circuits.Symbols.ChipWidth(e) + 0.0
                     y0 = e.y1 - 1.5
                     y1 = e.y1 + Circuits.Symbols.ChipSpacing(e) * (Circuits.Symbols.ChipRows(e) - 1) + 1.5

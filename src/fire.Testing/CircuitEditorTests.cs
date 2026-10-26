@@ -85,7 +85,7 @@ static class CircuitEditorTests
             150 560 208 672 208 0 2 0 5
             L 560 304 512 304 0 1 false 5 0
             207 112 48 112 16 4 VCC
-            184 600 400 664 400 2 2
+            211 600 400 664 400 0 0
             o 2 64 0 4099 5 0.1 0 2 2 3
             38 1 0 1 101 Resistance
             """, "Demo");
@@ -184,7 +184,30 @@ static class CircuitEditorTests
             && falstad8.Biscuit.Contains("{\"type\": \"Timer555\", \"from\": [22, 12], \"to\": [38, 12], \"layout\": \"falstad\", \"groundPin\": \"true\"}")
             && falstad8.Biscuit.Contains("{\"type\": \"DFlipFlop\", \"from\": [34, 12], \"to\": [46, 12], \"layout\": \"falstad\"}")
             && falstad8.Biscuit.Contains("{\"type\": \"Counter\", \"from\": [18, 19], \"to\": [30, 19], \"layout\": \"falstad\"}"), falstad8.Biscuit + string.Join(" | ", falstad8.Warnings));
-        Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'184' (multiplexer)"), string.Join(" | ", falstad.Warnings));
+        var falstad9 = FalstadImport.Convert("""
+            $ 1 0.000005 10.2 50 5 50
+            193 32 32 96 32 2 0.0
+            168 160 32 224 32 2 4 0.0 0.0 0.0 0.0
+            184 288 32 352 32 0 2
+            197 32 192 112 192 2 0
+            157 160 192 224 192 0 7 1 0
+            194 288 192 352 192 0 false 0.002
+            180 32 320 96 320 1 0.1 1.0E10 0.0 5.0
+            158 160 320 224 320 0
+            161 288 320 352 320 0
+            168 32 448 96 448 32 4
+            """);
+        Check("Falstad: T-Flipflop, Latch, Mux, 7-Segment-Decoder und -Anzeige, Monoflop, Tri-State, VCO und Phasenkomparator",
+            falstad9.Elements == 9 && falstad9.Warnings.Count == 1 && falstad9.Warnings[0].Contains("enable pins")
+            && falstad9.Biscuit.Contains("{\"type\": \"TFlipFlop\", \"from\": [4, 4], \"to\": [16, 4], \"reset\": \"true\"}")
+            && falstad9.Biscuit.Contains("{\"type\": \"Latch\", \"from\": [20, 4], \"to\": [32, 4], \"bits\": \"4\"}")
+            && falstad9.Biscuit.Contains("{\"type\": \"Multiplexer\", \"from\": [36, 4], \"to\": [52, 4]}")
+            && falstad9.Biscuit.Contains("{\"type\": \"SevenSegmentDecoder\", \"from\": [4, 24], \"to\": [20, 24], \"blankInput\": \"true\"}")
+            && falstad9.Biscuit.Contains("{\"type\": \"SevenSegment\", \"from\": [20, 24], \"to\": [44, 24], \"point\": \"true\"}")
+            && falstad9.Biscuit.Contains("{\"type\": \"Monostable\", \"from\": [36, 24], \"to\": [48, 24], \"time\": \"2m\"}")
+            && falstad9.Biscuit.Contains("{\"type\": \"TriState\", \"from\": [4, 40], \"to\": [12, 40], \"flip\": \"true\"}"),
+            falstad9.Biscuit + string.Join(" | ", falstad9.Warnings));
+        Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'211' (audio output)"), string.Join(" | ", falstad.Warnings));
         CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
             "#import \"circuits\"\n" +
             "var c = new Circuits.Circuit(\"x\")\n" +

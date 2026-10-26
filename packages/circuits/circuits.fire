@@ -3722,15 +3722,19 @@ namespace Circuits {
     class SevenSegment : Chip {
         construct(bool point = false, float supply : any = 5) : base("SevenSegment", Circuits.SevenSegment.DisplayLayout(point), 0, 0, supply) { }
         static string DisplayLayout(bool point) {
+            // as Falstad: a..d down the left side, e..g along the bottom (with the point: e..dp down the right side of a wider box)
             var names = ["a", "b", "c", "d", "e", "f", "g", "dp"]
-            var n = 7
-            if (point) { n = 8 }
-            var l = "2,8|"
-            for (int i = 0; i < n; i++) {
-                if (i > 0) { l = l + ";" }
-                l = l + Circuits.Chip.P("W", i, names[i], i, 0)
+            if (!point) {
+                var l = "4,4|"
+                for (int i = 0; i < 4; i++) { l = l + Circuits.Chip.P("W", i, names[i], i, 0) + ";" }
+                return l + Circuits.Chip.P("S", 1, "e", 4, 0) + ";" + Circuits.Chip.P("S", 2, "f", 5, 0) + ";" + Circuits.Chip.P("S", 3, "g", 6, 0)
             }
-            return l
+            var w = "5,4|"
+            for (int i = 0; i < 8; i++) {
+                if (i > 0) { w = w + ";" }
+                if (i < 4) { w = w + Circuits.Chip.P("W", i, names[i], i, 0) } else { w = w + Circuits.Chip.P("E", i - 4, names[i], i, 0) }
+            }
+            return w
         }
         /// <summary>Is segment i lit (0 a .. 6 g, 7 the point)?</summary>
         bool Lit(int i) { return this.High(i) }

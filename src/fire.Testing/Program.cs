@@ -20557,6 +20557,248 @@ else
             }
             print("555 at 9 V: " + edges + " periods in 50 ms (about 34: a period is 0.693 * 21k * 100n), output up to " + H.R(top) + " V")
             """),
+        ("Circuits: Chips im Kern (T-Flipflop, Latch, Ringzaehler, Mux/Demux, Addierer, Schieberegister, ADC/DAC, 7-Segment, Monoflop, Tri-State, VCO, Phasenkomparator)", """
+            #import "circuits"
+            class H {
+                static Circuits.LogicInput In(Circuits.Circuit c, Circuits.Port p, bool high) {
+                    var s = c.Add(new Circuits.LogicInput(high))
+                    s.A.Connect(p)
+                    s.B.Connect(c.Ground)
+                    return s
+                }
+                static float R(float v) { return Math.Round(v * 100) / 100 }
+            }
+            // T flip-flop: T high, 8 clock pulses -> 8 toggles
+            var c = new Circuits.Circuit()
+            var t = c.Add(new Circuits.TFlipFlop())
+            var clk = H.In(c, t.Clock, false)
+            var th = H.In(c, t.T, true)
+            var flips = 0
+            var last = t.State
+            for (int k = 0; k < 8; k++) {
+                clk.High = true
+                c.Run(0.1ms)
+                clk.High = false
+                c.Run(0.1ms)
+                if (t.State != last) { flips++ }
+                last = t.State
+            }
+            th.High = false
+            clk.High = true
+            c.Run(0.1ms)
+            print("tff flips " + flips + " of 8, with T low it stays: " + (t.State == last) + ", /Q " + H.R(t.NotQ.Raw()) + " V")
+
+            // latch 4 bit: D = 1010 (10), load edge
+            var c2 = new Circuits.Circuit()
+            var la = c2.Add(new Circuits.Latch(4))
+            var ins = new List()
+            for (int i = 0; i < 4; i++) { ins.Add(H.In(c2, la.D(i), i % 2 == 1)) }
+            var ld = H.In(c2, la.Load, false)
+            c2.Run(0.1ms)
+            var before = la.Value
+            ld.High = true
+            c2.Run(0.1ms)
+            var loaded = la.Value
+            ins[0].High = true
+            c2.Run(0.1ms)
+            print("latch " + before + " -> " + loaded + ", D changes while loaded high: still " + la.Value)
+
+            // ring counter 5 bits: 7 clocks -> position 2
+            var c3 = new Circuits.Circuit()
+            var rc = c3.Add(new Circuits.RingCounter(5))
+            var rclk = H.In(c3, rc.Clock, false)
+            var rr = H.In(c3, rc.Reset, true)
+            var ce = H.In(c3, rc.ports[7], false)
+            c3.Run(0.1ms)
+            for (int k = 0; k < 7; k++) {
+                rclk.High = true
+                c3.Run(0.1ms)
+                rclk.High = false
+                c3.Run(0.1ms)
+            }
+            print("ring counter after 7 clocks: Q" + rc.Position)
+
+            // mux 2 select bits: inputs 0,1,0,1 ; select 3 -> 1, select 2 -> 0 ; demux
+            var c4 = new Circuits.Circuit()
+            var mx = c4.Add(new Circuits.Multiplexer(2))
+            for (int i = 0; i < 4; i++) { H.In(c4, mx.In(i), i % 2 == 1) }
+            var s0 = H.In(c4, mx.Select(0), true)
+            var s1 = H.In(c4, mx.Select(1), true)
+            c4.Run(0.1ms)
+            var q3 = H.R(mx.Out.Raw())
+            s0.High = false
+            c4.Run(0.1ms)
+            print("mux I3 " + q3 + " V, I2 " + H.R(mx.Out.Raw()) + " V")
+            var dm = c4.Add(new Circuits.Demultiplexer(2))
+            H.In(c4, dm.In, true)
+            H.In(c4, dm.Select(0), true)
+            H.In(c4, dm.Select(1), false)
+            c4.Run(0.1ms)
+            print("demux outputs " + H.R(dm.Out(0).Raw()) + " " + H.R(dm.Out(1).Raw()) + " " + H.R(dm.Out(2).Raw()) + " " + H.R(dm.Out(3).Raw()))
+
+            // adders: half 1+1 ; full 4 bit 9 + 7 + 1 = 17
+            var c5 = new Circuits.Circuit()
+            var ha = c5.Add(new Circuits.HalfAdder())
+            H.In(c5, ha.A, true)
+            H.In(c5, ha.B, true)
+            var fa = c5.Add(new Circuits.FullAdder(4))
+            for (int i = 0; i < 4; i++) {
+                H.In(c5, fa.A(i), ((9 >> i) & 1) == 1)
+                H.In(c5, fa.B(i), ((7 >> i) & 1) == 1)
+            }
+            H.In(c5, fa.CarryIn, true)
+            c5.Run(0.1ms)
+            print("half adder 1+1: S " + H.R(ha.Sum.Raw()) + " C " + H.R(ha.Carry.Raw()) + "; full adder 9+7+1 = " + fa.Sum)
+
+            // shift registers: SIPO shifts 1,0,1,1 in -> Q0..Q3 = 1,1,0,1 -> 11 ; PISO 0xA5 out bit by bit
+            var c6 = new Circuits.Circuit()
+            var sr = c6.Add(new Circuits.SipoShift(4))
+            var sd = H.In(c6, sr.D, false)
+            var sc = H.In(c6, sr.Clock, false)
+            foreach (b in [true, false, true, true]) {
+                sd.High = b
+                c6.Run(0.1ms)
+                sc.High = true
+                c6.Run(0.1ms)
+                sc.High = false
+                c6.Run(0.1ms)
+            }
+            print("sipo value " + sr.Value)
+            var ps = c6.Add(new Circuits.PisoShift(8))
+            var pl = H.In(c6, ps.Load, false)
+            var pc = H.In(c6, ps.Clock, false)
+            for (int i = 0; i < 8; i++) { H.In(c6, ps.ports[3 + i], ((0xA5 >> (7 - i)) & 1) == 1) }
+            c6.Run(0.1ms)
+            pl.High = true
+            c6.Run(0.1ms)
+            var bitsOut = ""
+            for (int k = 0; k < 8; k++) {
+                pc.High = true
+                c6.Run(0.1ms)
+                if (ps.Q.Raw() > 2.5) { bitsOut = bitsOut + "1" } else { bitsOut = bitsOut + "0" }
+                pc.High = false
+                c6.Run(0.1ms)
+            }
+            print("piso out " + bitsOut)
+
+            // ADC 8 bit of 3.3 V at V+ = 5 V -> 168 ; DAC back
+            var c7 = new Circuits.Circuit()
+            var ad = c7.Add(new Circuits.Adc(8))
+            var vin = c7.Add(new Circuits.VoltageSource(3.3V))
+            vin.B.Connect(c7.Ground)
+            vin.A.Connect(ad.In)
+            var vref = c7.Add(new Circuits.VoltageSource(5V))
+            vref.B.Connect(c7.Ground)
+            vref.A.Connect(ad.Reference)
+            var da = c7.Add(new Circuits.Dac(8))
+            for (int i = 0; i < 8; i++) { ad.D(i).Connect(da.D(i)) }
+            vref.A.Connect(da.Reference)
+            var load = c7.Add(new Circuits.Resistor(10kOhm))
+            da.Out.Connect(load.A)
+            load.B.Connect(c7.Ground)
+            c7.Run(0.2ms)
+            print("adc 3.3 V -> " + ad.Value + ", dac back " + H.R(da.Out.Raw()) + " V")
+
+            // 7-segment decoder + display: 0..9
+            var c8 = new Circuits.Circuit()
+            var dec = c8.Add(new Circuits.SevenSegmentDecoder())
+            var disp = c8.Add(new Circuits.SevenSegment())
+            var bitIn = new List()
+            for (int i = 0; i < 4; i++) { bitIn.Add(H.In(c8, dec.In(i), false)) }
+            for (int i = 0; i < 7; i++) { dec.Segment(i).Connect(disp.ports[i]) }
+            var shown = ""
+            for (int d = 0; d < 16; d++) {
+                for (int i = 0; i < 4; i++) { bitIn[i].High = ((d >> i) & 1) == 1 }
+                c8.Run(0.1ms)
+                shown = shown + disp.Digit + " "
+            }
+            print("7-segment shows " + shown)
+
+            // monostable 1 ms
+            var c9 = new Circuits.Circuit()
+            c9.TimeStep = 10us
+            var mono = c9.Add(new Circuits.Monostable(1ms))
+            var trig = H.In(c9, mono.Trigger, false)
+            c9.Run(0.1ms)
+            trig.High = true
+            c9.Run(0.5ms)
+            var during = mono.Q.Raw() > 2.5
+            c9.Run(0.7ms)
+            print("monostable high after 0.5 ms " + during + ", after 1.2 ms " + (mono.Q.Raw() > 2.5))
+
+            // tri-state
+            var c10 = new Circuits.Circuit()
+            var ts = c10.Add(new Circuits.TriState())
+            H.In(c10, ts.In, true)
+            var en = H.In(c10, ts.Control, true)
+            var pull = c10.Add(new Circuits.Resistor(1kOhm))
+            ts.Out.Connect(pull.A)
+            pull.B.Connect(c10.Ground)
+            c10.Run(0.1ms)
+            var onV = H.R(ts.Out.Raw())
+            en.High = false
+            c10.Run(0.1ms)
+            print("tri-state enabled " + onV + " V, disabled " + H.R(ts.Out.Raw()) + " V")
+
+            foreach (vin in [2.5]) {
+                var cv = new Circuits.Circuit()
+                cv.TimeStep = 0.1us
+                var v = cv.Add(new Circuits.Vco())
+                var src = cv.Add(new Circuits.VoltageSource(vin * 1V))
+                src.B.Connect(cv.Ground)
+                src.A.Connect(v.In)
+                var r1 = cv.Add(new Circuits.Resistor(10kOhm))
+                v.R1.Connect(r1.A)
+                r1.B.Connect(cv.Ground)
+                var r2 = cv.Add(new Circuits.Resistor(100kOhm))
+                v.R2.Connect(r2.A)
+                r2.B.Connect(cv.Ground)
+                var cap = cv.Add(new Circuits.Capacitor(1nF))
+                v.C1.Connect(cap.A)
+                cap.B.Connect(v.C2)
+                var edges = 0
+                var last = false
+                var first = 0.0
+                var lastT = 0.0
+                for (int k = 0; k < 20000; k++) {
+                    cv.Step()
+                    var high = v.Out.Raw() > 2.5
+                    if (high && !last) {
+                        edges++
+                        if (edges == 2) { first = cv.TimeRaw() }
+                        lastT = cv.TimeRaw()
+                    }
+                    last = high
+                }
+                var f = 0.0
+                if (edges > 3) { f = (edges - 2) / (lastT - first) }
+                var expected = (vin / 10000.0 + 5.0 / 100000.0) / (8.0 * 0.000000001)
+                print("vco at " + vin + " V: " + Math.Round(f) + " Hz (Falstad's formula " + Math.Round(expected) + " Hz)")
+            }
+            // phase comparator: I2 a quarter period after I1, into 10 kOhm and 100 nF
+            var cp = new Circuits.Circuit()
+            cp.TimeStep = 1us
+            var phc = cp.Add(new Circuits.PhaseComparator())
+            var pa = cp.Add(new Circuits.VoltageSource(0V))
+            pa.B.Connect(cp.Ground)
+            pa.A.Connect(phc.I1)
+            var pb = cp.Add(new Circuits.VoltageSource(0V))
+            pb.B.Connect(cp.Ground)
+            pb.A.Connect(phc.I2)
+            var pr = cp.Add(new Circuits.Resistor(10kOhm))
+            phc.Out.Connect(pr.A)
+            var cf = cp.Add(new Circuits.Capacitor(100nF))
+            pr.B.Connect(cf.A)
+            cf.B.Connect(cp.Ground)
+            for (int k = 0; k < 20000; k++) {
+                var ph = k % 1000
+                if (ph < 500) { pa.Level = 5V } else { pa.Level = 0V }
+                var ph2 = (k + 750) % 1000
+                if (ph2 < 500) { pb.Level = 5V } else { pb.Level = 0V }
+                cp.Step()
+            }
+            print("phase comparator, I2 a quarter period late: filter at " + Math.Round(cf.A.Raw() * 100) / 100 + " V")
+            """),
         ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
             {
               "biscuit": 1,

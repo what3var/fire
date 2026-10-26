@@ -291,6 +291,30 @@ ICs are circuits of the package made of its parts - subcircuits to use like any 
 | `Crystal(seriesCapacitance = 0.1pF, parallelCapacitance = 28.7pF, inductance = 2.5mH, resistance = 6.4)` | `A`, `B` | a quartz: series R-L-C with the holder's capacitance in parallel (about 10 MHz) |
 | `Relay(inductance = 0.2H, coilResistance = 20, onCurrent = 20mA, offCurrent = 15mA, onResistance = 0.05)` | `Coil1`, `Coil2`, `Common`, `NormallyClosed`, `NormallyOpen` | a coil (inductor and resistor) and a changeover contact: it pulls in when the coil current reaches `onCurrent` and drops out below `offCurrent`; `Energized`, `CoilCurrent` |
 
+The logic chips of Falstad's simulator run inside the kernel as one part each (`Circuits.Chip`): every time step the chip reads its inputs
+(high above half of `supply`), works out its outputs and drives them through 10 Ohm, like the gates. Their ports are named as the pins in Falstad's chip
+layout (`D0`, `Q0`, `Clock`, ...), the state survives a recompile of the circuit:
+
+| Chip | |
+|---|---|
+| `TFlipFlop(supply = 5V, withReset = false, withSet = false)` | a high T toggles Q on the rising clock edge; `State` |
+| `Latch(bits = 4, supply = 5V, levelTriggered = false, withReset = false, withSet = false, resetActiveLow = false)` | D0.. go to Q0.. on the rising edge of Load (while it is high with `levelTriggered`); `Number` |
+| `RingCounter(bits = 10, supply = 5V, clockInhibit = true, resetActiveHigh = false)` | like a 4017: one of Q0.. is high, the next on every clock edge; `Count` |
+| `Multiplexer(selectBits = 2, supply = 5V, invertedOutput = false, strobe = false)` | Q is the input I(S) |
+| `Demultiplexer(selectBits = 2, supply = 5V, invertedOutputs = false)` | the input goes to Q(S) |
+| `HalfAdder(supply = 5V)`, `FullAdder(bits = 1, supply = 5V)` | S = A + B (+ Cin), C the carry; `Number` |
+| `SipoShift(bits = 8, supply = 5V)`, `PisoShift(bits = 8, supply = 5V, serialIn = false)` | shift registers, serial in/parallel out and parallel in/serial out |
+| `Adc(bits = 8, supply = 5V)`, `Dac(bits = 8, supply = 5V)` | D = (2^bits - 1) In / V+ (rounded down), O = V+ D / (2^bits - 1) |
+| `SevenSegmentDecoder(supply = 5V, blankInput = false, blankOnF = false)` | the segments a..g of the hex digit I3..I0 |
+| `SevenSegment(point = false, supply = 5V)` | a display: segment lit while its pin is high, draws no current; `Digit` |
+| `Monostable(time = 10ms, retriggerable = false, invertTrigger = false, supply = 5V)` | an edge at the input makes Q high for `time` |
+| `PhaseComparator(supply = 5V)` | like the type II of a 4046: an edge at I1 drives O high, one at I2 low, after both O is open |
+| `Vco(supply = 5V)` | like the VCO of a 4046: the frequency grows with Vi, set by the capacitor between C1/C2 and the resistors at R1/R2 |
+| `TriState(supply = 5V, onResistance = 0.1, offResistance = 10 GOhm, offGroundResistance = 0)` | Out follows In while Control is high, else it is open |
+
+A full adder of 4 bits gives 9 + 7 + 1 = 17, an ADC of 8 bits reads 3.3 V at 5 V as 168, and a PLL of the VCO, the phase comparator and an RC filter locks onto
+60 Hz.
+
 A 555 as an astable multivibrator with RA = 1 kOhm, RB = 10 kOhm and C = 100 nF runs at 666 Hz (the formula 1.44 / ((RA + 2 RB) C) gives 686 Hz:
 the comparators react one time step late and the discharge transistor has a resistance), the capacitor swings between 1/3 and 2/3 of the supply.
 
@@ -533,13 +557,15 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
   LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail), RelayCoil and RelayContact (`label`), Jfet (`pChannel`, `flip`),
   Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), Unijunction (`flip`), VCVS, VCCS, CCCS, CCVS,
-  CurrentConveyor, Ota, Optocoupler; sources and rails also have the waveforms triangle,
+  CurrentConveyor, Ota, Optocoupler, the logic chips TFlipFlop, Latch, RingCounter, Multiplexer, Demultiplexer, HalfAdder, FullAdder, SipoShift, PisoShift,
+  Adc, Dac, SevenSegmentDecoder, SevenSegment, Monostable, PhaseComparator, Vco (always in Falstad's chip layout; `bits`, `spacing` and the options of the
+  chip) and TriState (`flip`: the control on the other side); sources and rails also have the waveforms triangle,
   sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
   voltage/current, `display` time or spectrum - an FFT analyzer of the last samples with a Hann window, in dB, up to `maxFrequency` or automatically, `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
   emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart
-  - all as in Falstad's simulator (a unit of the grid is 8 of its pixels). Chips (555, flip-flops, counter) are boxes with their pins down the left and right side
+  - all as in Falstad's simulator (a unit of the grid is 8 of its pixels). Chips (555, flip-flops, counter, the logic chips) are boxes with their pins down the left and right side
   (`spacing` units apart). A potentiometer has its ends on the axis and the wiper at the middle, as far to the side as the second point says; a transformer has
   its primary along the left and the secondary along the right side, `width` units long; a relay has the common contact at the first point, the two
   contacts 2 units to the sides of the second and the coil below them.
@@ -617,11 +643,12 @@ divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, si
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and
 analog switches, lamps, fuses, memristors, spark gaps, LDRs, thermistors, transmission lines, sweeps, noise, triangle and sawtooth sources, rails with a slider,
 relay coils and contacts, JFETs, Darlingtons, thyristors, triacs, diacs, unijunction transistors, varactors, tunnel diodes, triodes, current conveyors, OTAs, optocouplers, the controlled
-sources whose expression is linear, D flip-flops, 555 timers and counters (in Falstad's chip layout, `layout` = falstad), logic inputs and outputs, probes,
-labels, texts and scopes become elements. What the package has not got (multiplexers, ADCs, nonlinear controlled sources, saturation of a transformer, ...) is
-listed. Of the 373 example circuits in text form, 328 come over without leaving an element out.
+sources whose expression is linear, D flip-flops, 555 timers and counters (in Falstad's chip layout, `layout` = falstad), T flip-flops, latches, ring counters, multiplexers,
+demultiplexers, adders, shift registers, ADCs, DACs, 7-segment decoders and displays, monostables, VCOs, phase comparators, tri-state buffers, logic inputs and outputs, probes,
+labels, texts and scopes become elements. What the package has not got (latches with enable pins, 14- and 16-segment displays, nonlinear controlled sources, saturation of a transformer, ...) is
+listed. Of the 373 example circuits in text form, 336 come over without leaving an element out.
 `fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
 
 ## Coming next
 
-More ICs, more parts at the simulated devices (I2C sensors with their own registers, an SPI ADC), and more of Falstad's elements for the import.
+More ICs (counters with load, custom logic), more parts at the simulated devices (I2C sensors with their own registers, an SPI ADC), and more of Falstad's elements for the import.

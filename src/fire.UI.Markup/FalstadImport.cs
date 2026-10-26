@@ -8,6 +8,10 @@ namespace fire.UI.Markup
     /// and named in <see cref="Result.Warnings"/>.</summary>
     public static class FalstadImport
     {
+        // the chips of the package that run in the kernel (always in Falstad's layout)
+        static readonly HashSet<string> KernelChips = new() { "TFlipFlop", "Latch", "RingCounter", "Multiplexer", "Demultiplexer", "HalfAdder", "FullAdder",
+            "SipoShift", "PisoShift", "Adc", "Dac", "SevenSegmentDecoder", "Monostable", "PhaseComparator", "Vco", "SevenSegment" };
+
         public sealed class Result
         {
             public string Biscuit { get; init; } = "";
@@ -71,7 +75,8 @@ namespace fire.UI.Markup
                         if (smallGrid && e.Type is "Thyristor" or "Triac") e.Set("smallGrid", "true");
                         if (e.Fix is { } fix)
                         {
-                            if (e.Type is "JKFlipFlop" or "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Optocoupler" or "DFlipFlop" or "Timer555" or "Counter") { e.X2 = x1 + fix.X; e.Y2 = y1; }
+                            if (e.Type is "JKFlipFlop" or "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Optocoupler" or "DFlipFlop" or "Timer555" or "Counter"
+                                || KernelChips.Contains(e.Type)) { e.X2 = x1 + fix.X; e.Y2 = y1; }
                             else if (e.Type == "Triode")
                             {
                                 // Falstad's side of plate and cathode, against the one the package takes from the direction
@@ -597,6 +602,124 @@ namespace fire.UI.Markup
                     e.Fix = ((sizeX + 1) * (small ? 2 : 4), 0);
                     return e;
                 }
+                case "193": case "168": case "163": case "184": case "185": case "195": case "196": case "189": case "186": case "167": case "166":
+                case "197": case "194": case "161": case "158": case "157":
+                {
+                    // the chips of the kernel's Chip: Falstad's layout; the numbers after the flags: bits (if the chip has them), the high level (with flag
+                    // 1 << 13), the values of the pins that keep a state, then its own
+                    string kind = type switch
+                    {
+                        "193" => "TFlipFlop", "168" => "Latch", "163" => "RingCounter", "184" => "Multiplexer", "185" => "Demultiplexer", "195" => "HalfAdder",
+                        "196" => "FullAdder", "189" => "SipoShift", "186" => "PisoShift", "167" => "Adc", "166" => "Dac", "197" => "SevenSegmentDecoder",
+                        "194" => "Monostable", "161" => "PhaseComparator", "158" => "Vco", _ => "SevenSegment",
+                    };
+                    var e = new Element { Type = kind };
+                    bool small = (flags & 1) != 0;
+                    if (small) e.Set("spacing", "2");
+                    int next = 6;
+                    int bits = 0;
+                    bool hasBits = kind is "Latch" or "RingCounter" or "SipoShift" or "PisoShift" or "Adc" or "Dac" || (kind == "FullAdder" && (flags & 2) != 0);
+                    if (hasBits)
+                    {
+                        int fallback = kind switch { "RingCounter" => 10, "SipoShift" or "PisoShift" => 8, "FullAdder" => 1, _ => 4 };
+                        bits = (int)Num(6, fallback);
+                        next = 7;
+                        e.Set("bits", bits.ToString(CultureInfo.InvariantCulture));
+                    }
+                    if ((flags & (1 << 13)) != 0) { double hv = Num(next, 5); next++; if (hv != 5) e.Set("supply", Format(hv)); }
+                    // the pins with a state: their values come next
+                    next += kind switch { "TFlipFlop" => 1, "RingCounter" => bits, "Latch" => (flags & 2) != 0 ? bits : 0, _ => 0 };
+                    int sizeX = 2;
+                    switch (kind)
+                    {
+                        case "TFlipFlop":
+                            if ((flags & 2) != 0) e.Set("reset", "true");
+                            if ((flags & 4) != 0) e.Set("set", "true");
+                            break;
+                        case "Latch":
+                            if ((flags & (32 | 64)) != 0)
+                            {
+                                warnings.Add($"Line {lineNo}: a latch with enable pins is not in the package circuits and was left out.");
+                                return null;
+                            }
+                            if ((flags & 4) != 0) e.Set("levelTriggered", "true");
+                            if ((flags & 8) != 0) e.Set("reset", "true");
+                            if ((flags & 16) != 0) e.Set("set", "true");
+                            if ((flags & 128) != 0) e.Set("resetActiveLow", "true");
+                            break;
+                        case "RingCounter":
+                            sizeX = bits > 2 ? bits : 2;
+                            e.Set("clockInhibit", (flags & 2) != 0 ? "true" : "false");
+                            if ((flags & 4) != 0) e.Set("resetActiveHigh", "true");
+                            break;
+                        case "Multiplexer":
+                        case "Demultiplexer":
+                        {
+                            int sel = (int)Num(next, 2);
+                            if (sel != 2) e.Set("selectBits", sel.ToString(CultureInfo.InvariantCulture));
+                            sizeX = sel + 1;
+                            if ((flags & 8) != 0)
+                            {
+                                warnings.Add($"Line {lineNo}: a {Describe(type)} with a select bus is not in the package circuits and was left out.");
+                                return null;
+                            }
+                            if (kind == "Multiplexer")
+                            {
+                                if ((flags & 2) != 0) e.Set("invertedOutput", "true");
+                                if ((flags & 4) != 0) e.Set("strobe", "true");
+                            }
+                            else if ((flags & 16) != 0) e.Set("invertedOutputs", "true");
+                            break;
+                        }
+                        case "SipoShift": sizeX = bits + 1; break;
+                        case "PisoShift":
+                            sizeX = bits + 2;
+                            if ((flags & 2) != 0) e.Set("serialIn", "true");
+                            break;
+                        case "SevenSegmentDecoder":
+                            sizeX = 3;
+                            if (Num(next, 0) != 0)
+                            {
+                                warnings.Add($"Line {lineNo}: a 14 or 16 segment decoder is not in the package circuits and was left out.");
+                                return null;
+                            }
+                            if ((flags & 2) != 0) e.Set("blankInput", "true");
+                            if ((flags & 4) != 0) e.Set("blankOnF", "true");
+                            break;
+                        case "Monostable":
+                            if (Tok(next) == "true") e.Set("retriggerable", "true");
+                            double delay = Num(next + 1, 0.01);
+                            if (delay != 0.01) e.Set("time", Format(delay));
+                            if ((flags & 2) != 0) e.Set("invertTrigger", "true");
+                            break;
+                        case "SevenSegment":
+                        {
+                            double segs = Num(next, 7), extra = Num(next + 1, 0), diodes = Num(next + 2, 0);
+                            if (segs != 7 || diodes != 0 || extra > 1)
+                            {
+                                warnings.Add($"Line {lineNo}: only the 7-segment display with logic inputs (and a point) is in the package circuits; this one was left out.");
+                                return null;
+                            }
+                            sizeX = 4;
+                            if (extra == 1) { e.Set("point", "true"); sizeX = 5; }
+                            break;
+                        }
+                    }
+                    if ((flags & (7 << 10)) != 0) warnings.Add($"Line {lineNo}: a flipped chip is imported unflipped; check its connections.");
+                    e.Fix = ((sizeX + 1) * (small ? 2 : 4), 0);
+                    return e;
+                }
+                case "180":
+                {
+                    var e = new Element { Type = "TriState" };
+                    double ron = Num(6, 0.1), roff = Num(7, 1e10), rground = Num(8, 0), hv = Num(9, 5);
+                    if (ron != 0.1) e.Set("onResistance", Format(ron));
+                    if (roff != 1e10) e.Set("offResistance", Format(roff));
+                    if (rground != 0) e.Set("offGroundResistance", Format(rground));
+                    if (hv != 5) e.Set("supply", Format(hv));
+                    if ((flags & 1) != 0) e.Set("flip", "true");
+                    return e;
+                }
                 case "402":
                 {
                     // the supplies are the fourth number of the first two parts of the composite (its rails)
@@ -653,8 +776,9 @@ namespace fire.UI.Markup
             "201" => "FM source", "418" => "external voltage", "211" => "audio output", "179" => "current conveyor", 
             "419" => "decimal display", "403" => "scope", "176" => "varactor", "402" => "OTA", "184" => "multiplexer", "167" => "ADC", "166" => "DAC",
             "163" => "ring counter", "168" => "latch", "212" => "voltage-controlled voltage source", "213" => "voltage-controlled current source", "175" => "tunnel diode",
-            "400" => "Darlington", "177" => "SCR", "173" => "triode", "423" => "line", "185" => "seven segment", "193" => "T flip-flop", "203" => "diac", "206" => "triac",
-            "208" => "custom logic", "430" => "time delay relay", "417" => "unijunction", "407" => "optocoupler", "405" => "LED array", "370" => "ammeter",
+            "400" => "Darlington", "177" => "SCR", "173" => "triode", "423" => "line", "185" => "demultiplexer", "193" => "T flip-flop", "203" => "diac", "206" => "triac",
+            "208" => "custom logic", "180" => "tri-state buffer", "157" => "7-segment display", "197" => "7-segment decoder", "194" => "monostable",
+            "161" => "phase comparator", "158" => "VCO", "195" => "half adder", "196" => "full adder", "189" => "shift register (SIPO)", "186" => "shift register (PISO)", "430" => "time delay relay", "417" => "unijunction", "407" => "optocoupler", "405" => "LED array", "370" => "ammeter",
             _ => "unknown",
         };
 
