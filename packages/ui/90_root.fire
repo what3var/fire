@@ -529,10 +529,10 @@ namespace UI {
 
         undefined SetFocus(Element element) {
             var old = this.focusElement
-            if (old != undefined) { old.focused = false }
+            if (old != undefined) { old.Focused = false }
             this.focusElement = element
             if (element != undefined) {
-                element.focused = true
+                element.Focused = true
                 this.Reveal(element)
             }
         }
@@ -637,7 +637,7 @@ namespace UI {
             var e = element
             if (e == undefined) { e = this.Hit(this.mouseX, this.mouseY) }
             while (e != undefined) {
-                if (e.enabled && e.MouseWheel(this, dx, dy)) { return }
+                if (e.Enabled && e.MouseWheel(this, dx, dy)) { return }
                 e = e.parent
             }
         }
@@ -711,7 +711,7 @@ namespace UI {
             // a finger leaves no hover highlight
             var old = this.hoverElement
             if (old != undefined) {
-                old.hover = false
+                old.Hover = false
                 this.hoverElement = undefined
             }
         }
@@ -835,7 +835,7 @@ namespace UI {
             this.mouseY = py
             var e = this.Hit(px, py)
             while (e != undefined) {
-                if (e.enabled && e.MouseWheel(this, dx, dy)) { return }
+                if (e.Enabled && e.MouseWheel(this, dx, dy)) { return }
                 e = e.parent
             }
         }
@@ -871,7 +871,7 @@ namespace UI {
                     e = e.parent
                 }
             }
-            if (hit != undefined && hit.enabled) {
+            if (hit != undefined && hit.Enabled) {
                 if (hit.Focusable()) { this.SetFocus(hit) } else { this.SetFocus(undefined) }
                 this.pressedElement = hit
                 hit.MouseDown(this, button, px, py)
@@ -907,9 +907,9 @@ namespace UI {
             var hit = this.Hit(px, py)
             var old = this.hoverElement
             if (hit != old) {
-                if (old != undefined) { old.hover = false }
+                if (old != undefined) { old.Hover = false }
                 this.hoverElement = hit
-                if (hit != undefined) { hit.hover = true }
+                if (hit != undefined) { hit.Hover = true }
             }
             var target = this.pressedElement
             if (target != undefined) { target.MouseMove(this, px, py) }

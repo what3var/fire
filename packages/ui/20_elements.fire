@@ -10,47 +10,47 @@ namespace UI {
     // x/y only apply in a Canvas (and in the Panel, which arranges like a Canvas). ax/ay is the position on the screen at the last drawing
     // (so that hit testing and drawing always mean the same).
     class Element {
-        int x
-        int y
-        int width = -1
-        int height = -1
-        int minWidth = 0
-        int minHeight = 0
-        int maxWidth = -1
-        int maxHeight = -1
-        Thickness margin
-        int halign = UI.HAlign.Stretch
-        int valign = UI.VAlign.Stretch
-        // Attached properties of the containers: DockPanel (dock), Grid (gridRow, gridColumn, gridRowSpan, gridColumnSpan)
-        int dock = UI.Dock.Left
-        int gridRow = 0
-        int gridColumn = 0
-        int gridRowSpan = 1
-        int gridColumnSpan = 1
-        bool visible = true
-        bool enabled = true
+        int Left
+        int Top
+        int Width = -1
+        int Height = -1
+        int MinWidth = 0
+        int MinHeight = 0
+        int MaxWidth = -1
+        int MaxHeight = -1
+        Thickness Margin
+        int HorizontalAlign = UI.HAlign.Stretch
+        int VerticalAlign = UI.VAlign.Stretch
+        // Attached properties of the containers: DockPanel (Dock), Grid (GridRow, GridColumn, GridRowSpan, GridColumnSpan)
+        int Dock = UI.Dock.Left
+        int GridRow = 0
+        int GridColumn = 0
+        int GridRowSpan = 1
+        int GridColumnSpan = 1
+        bool Visible = true
+        bool Enabled = true
         // the mouse pointer over the element (UI.Cursor; -1: that of the element around it)
         int cursor = -1
-        bool hover = false
-        bool pressed = false
-        bool focused = false
+        bool Hover = false
+        bool Pressed = false
+        bool Focused = false
         Element parent
         // Appearance: undefined = the control takes the colours of the theme (states like hover then change them themselves)
-        Brush background
-        Brush foreground
-        Pen pen
+        Brush Background
+        Brush Foreground
+        Pen Pen
         // The font of the text of this element (and of the elements inside it, unless they choose their own): a name for Fonts.Get - a font added with Fonts.Add, a built-in one
         // ("8x14", "8x8") or one installed on the system. "" = that of the surrounding element, in the end `theme.font` (default "": the console font of the renderer).
         // fontSize is the height of the letters in pixels (0 = that of the surrounding element, in the end `theme.fontSize`); the bitmap fonts ignore it.
-        string font = ""
-        int fontSize = 0
+        string Font = ""
+        int FontSize = 0
         // Name (for the parts of a template, see FindPart)
-        string name = ""
+        string Name = ""
         // Own resources (undefined until you assign a ResourceDictionary) and style (undefined: the implicit style, see StyleKey)
         ResourceDictionary resources
-        Style style
+        Style Style
         // Template for the appearance of controls (ControlTemplate); templateRoot is the subtree built from it
-        ControlTemplate template
+        ControlTemplate Template
         Element templateRoot
         Root host
         // State of style, template, bindings
@@ -87,11 +87,11 @@ namespace UI {
         int ay = 0
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) {
-            this.x = x
-            this.y = y
-            this.width = width
-            this.height = height
-            this.margin = new Thickness(0)
+            this.Left = x
+            this.Top = y
+            this.Width = width
+            this.Height = height
+            this.Margin = new Thickness(0)
         }
 
         // ---- Text and fonts ----
@@ -106,7 +106,7 @@ namespace UI {
         string FontName(Root root) {
             var e = this
             while (e != undefined) {
-                if (e.font != "") { return e.font }
+                if (e.Font != "") { return e.Font }
                 e = e.Outer()
             }
             return root.theme.font
@@ -116,7 +116,7 @@ namespace UI {
         int FontPixels(Root root) {
             var e = this
             while (e != undefined) {
-                if (e.fontSize > 0) { return e.fontSize }
+                if (e.FontSize > 0) { return e.FontSize }
                 e = e.Outer()
             }
             return root.theme.fontSize
@@ -136,7 +136,7 @@ namespace UI {
 
         // The element (or a descendant) with this name, otherwise undefined.
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             return undefined
         }
 
@@ -207,18 +207,18 @@ namespace UI {
 
         // Builds the parts from the template.
         undefined BuildTemplate() {
-            var make = this.template.factory
+            var make = this.Template.factory
             var tree = make(this)
             tree.TakeTo(this)
             tree.parent = this
             this.templateRoot = tree
             this.templateParts = new List()
-            for (var i = 0; i < this.template.bindings.count; i = i + 1) {
-                this.templateParts.Add(tree.FindName(this.template.bindings[i].part))
+            for (var i = 0; i < this.Template.bindings.count; i = i + 1) {
+                this.templateParts.Add(tree.FindName(this.Template.bindings[i].part))
             }
             this.templateStates = new List()
-            for (var j = 0; j < this.template.triggers.count; j = j + 1) {
-                var state = new TriggerState(this.template.triggers[j])
+            for (var j = 0; j < this.Template.triggers.count; j = j + 1) {
+                var state = new TriggerState(this.Template.triggers[j])
                 state.TakeTo(this)
                 this.templateStates.Add(state)
             }
@@ -250,7 +250,7 @@ namespace UI {
             root.Watch(this)
             if (!this.styled) {
                 this.styled = true
-                if (this.style == undefined) {
+                if (this.Style == undefined) {
                     var found = this.FindStyle(this.StyleKey())
                     if (found != undefined) {
                         this.appliedStyle = found
@@ -258,20 +258,20 @@ namespace UI {
                     }
                 }
             }
-            if (this.style != undefined && this.style != this.appliedStyle) {
+            if (this.Style != undefined && this.Style != this.appliedStyle) {
                 this.ClearStyle()
-                this.appliedStyle = this.style
-                this.style.Apply(this)
+                this.appliedStyle = this.Style
+                this.Style.Apply(this)
             }
-            if (this.template != undefined && this.templateRoot == undefined) { this.BuildTemplate() }
+            if (this.Template != undefined && this.templateRoot == undefined) { this.BuildTemplate() }
             if (this.bindings != undefined) {
                 for (var b = 0; b < this.bindings.count; b = b + 1) { this.bindings[b].Sync() }
             }
             if (this.templateRoot != undefined) {
-                for (var i = 0; i < this.template.bindings.count; i = i + 1) {
+                for (var i = 0; i < this.Template.bindings.count; i = i + 1) {
                     var part = this.templateParts[i]
                     if (part == undefined) { continue }
-                    var binding = this.template.bindings[i]
+                    var binding = this.Template.bindings[i]
                     if (!Reflect.Has(this, binding.ownerProperty) || !Reflect.Has(part, binding.partProperty)) { continue }
                     var value = Reflect.Get(this, binding.ownerProperty)
                     if (Reflect.Get(part, binding.partProperty) != value) { Reflect.Set(part, binding.partProperty, value) }
@@ -293,31 +293,31 @@ namespace UI {
         }
 
         undefined Measure(Root root, int aw, int ah) {
-            if (!this.visible) {
+            if (!this.Visible) {
                 this.dw = 0
                 this.dh = 0
                 return
             }
-            var mw = this.margin.left + this.margin.right
-            var mh = this.margin.top + this.margin.bottom
+            var mw = this.Margin.left + this.Margin.right
+            var mh = this.Margin.top + this.Margin.bottom
             var iw = aw
             var ih = ah
             if (iw >= 0) { iw = UI.M.Max(0, iw - mw) }
             if (ih >= 0) { ih = UI.M.Max(0, ih - mh) }
             // a fixed size applies, no matter how much space is available
-            if (this.width >= 0) { iw = this.width }
-            if (this.height >= 0) { ih = this.height }
-            if (this.maxWidth >= 0 && (iw < 0 || iw > this.maxWidth)) { iw = this.maxWidth }
-            if (this.maxHeight >= 0 && (ih < 0 || ih > this.maxHeight)) { ih = this.maxHeight }
+            if (this.Width >= 0) { iw = this.Width }
+            if (this.Height >= 0) { ih = this.Height }
+            if (this.MaxWidth >= 0 && (iw < 0 || iw > this.MaxWidth)) { iw = this.MaxWidth }
+            if (this.MaxHeight >= 0 && (ih < 0 || ih > this.MaxHeight)) { ih = this.MaxHeight }
             this.cw = 0
             this.ch = 0
             this.MeasureContent(root, iw, ih)
             var w = this.cw
             var h = this.ch
-            if (this.width >= 0) { w = this.width }
-            if (this.height >= 0) { h = this.height }
-            w = UI.M.Clamp(w, this.minWidth, this.maxWidth)
-            h = UI.M.Clamp(h, this.minHeight, this.maxHeight)
+            if (this.Width >= 0) { w = this.Width }
+            if (this.Height >= 0) { h = this.Height }
+            w = UI.M.Clamp(w, this.MinWidth, this.MaxWidth)
+            h = UI.M.Clamp(h, this.MinHeight, this.MaxHeight)
             this.dw = w + mw
             this.dh = h + mh
         }
@@ -327,28 +327,28 @@ namespace UI {
 
         // The space in the container is (px, py, pw, ph), margin included.
         undefined Arrange(Root root, int px, int py, int pw, int ph) {
-            if (!this.visible) {
+            if (!this.Visible) {
                 if (this.actualWidth != 0 || this.actualHeight != 0) { root.layoutMoved = true }
                 this.actualWidth = 0
                 this.actualHeight = 0
                 return
             }
-            var ml = this.margin.left
-            var mt = this.margin.top
-            var ew = UI.M.Max(0, pw - this.margin.left - this.margin.right)
-            var eh = UI.M.Max(0, ph - this.margin.top - this.margin.bottom)
-            var w = this.dw - this.margin.left - this.margin.right
-            var h = this.dh - this.margin.top - this.margin.bottom
-            if (this.halign == UI.HAlign.Stretch && this.width < 0) { w = ew }
-            if (this.valign == UI.VAlign.Stretch && this.height < 0) { h = eh }
-            w = UI.M.Clamp(w, this.minWidth, this.maxWidth)
-            h = UI.M.Clamp(h, this.minHeight, this.maxHeight)
+            var ml = this.Margin.left
+            var mt = this.Margin.top
+            var ew = UI.M.Max(0, pw - this.Margin.left - this.Margin.right)
+            var eh = UI.M.Max(0, ph - this.Margin.top - this.Margin.bottom)
+            var w = this.dw - this.Margin.left - this.Margin.right
+            var h = this.dh - this.Margin.top - this.Margin.bottom
+            if (this.HorizontalAlign == UI.HAlign.Stretch && this.Width < 0) { w = ew }
+            if (this.VerticalAlign == UI.VAlign.Stretch && this.Height < 0) { h = eh }
+            w = UI.M.Clamp(w, this.MinWidth, this.MaxWidth)
+            h = UI.M.Clamp(h, this.MinHeight, this.MaxHeight)
             var ox = 0
             var oy = 0
-            if (this.halign == UI.HAlign.Center) { ox = (ew - w) / 2 }
-            else if (this.halign == UI.HAlign.Right) { ox = ew - w }
-            if (this.valign == UI.VAlign.Center) { oy = (eh - h) / 2 }
-            else if (this.valign == UI.VAlign.Bottom) { oy = eh - h }
+            if (this.HorizontalAlign == UI.HAlign.Center) { ox = (ew - w) / 2 }
+            else if (this.HorizontalAlign == UI.HAlign.Right) { ox = ew - w }
+            if (this.VerticalAlign == UI.VAlign.Center) { oy = (eh - h) / 2 }
+            else if (this.VerticalAlign == UI.VAlign.Bottom) { oy = eh - h }
             var nx = px + ml + ox
             var ny = py + mt + oy
             // if the position or size has changed (or it is the first time), everything must be repainted: what lies next to it may have moved along
@@ -401,14 +401,14 @@ namespace UI {
 
         // The element (or a descendant) under the screen position (px, py), otherwise undefined.
         UI.Element HitTest(int px, int py) {
-            if (!this.visible) { return undefined }
+            if (!this.Visible) { return undefined }
             if (px >= this.ax && px < this.ax + this.actualWidth && py >= this.ay && py < this.ay + this.actualHeight) { return this }
             return undefined
         }
 
         // Collects all focusable elements in drawing order (for Tab).
         undefined Collect(List list) {
-            if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
+            if (this.Visible && this.Enabled && this.Focusable()) { list.Add(this) }
         }
 
         bool Contains(int px, int py) {
@@ -459,10 +459,10 @@ namespace UI {
     // (StackPanel, DockPanel, WrapPanel, Grid) derive from it and arrange differently.
     class Panel : Element {
         List children
-        bool showBorder = false
+        bool ShowBorder = false
         // Background (`background`, see Element): undefined = the brush `panel` of the theme; with filled = false there is none (transparent)
         // Frame (showBorder, `pen`): undefined = the pen `border` of the theme
-        bool filled = true
+        bool Filled = true
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
             this.children = new List()
@@ -529,13 +529,13 @@ namespace UI {
         undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
-                if (this.filled) {
-                    var brush = this.background
+                if (this.Filled) {
+                    var brush = this.Background
                     if (brush == undefined) { brush = root.theme.panel }
                     root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, brush)
                 }
-                if (this.showBorder) {
-                    var pen = this.pen
+                if (this.ShowBorder) {
+                    var pen = this.Pen
                     if (pen == undefined) { pen = root.theme.border }
                     root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
                 }
@@ -551,7 +551,7 @@ namespace UI {
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible) { return undefined }
+            if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var i = this.children.count - 1
             while (i >= 0) {
@@ -563,7 +563,7 @@ namespace UI {
         }
 
         undefined Collect(List list) {
-            if (!this.visible || !this.enabled) { return }
+            if (!this.Visible || !this.Enabled) { return }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 this.children[i].Collect(list)
             }
@@ -572,7 +572,7 @@ namespace UI {
         string StyleKey() { return "Panel" }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var found = this.children[i].FindName(name)
                 if (found != undefined) { return found }
@@ -586,7 +586,7 @@ namespace UI {
         string StyleKey() { return "Canvas" }
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
-            this.filled = false
+            this.Filled = false
         }
     }
 
@@ -596,19 +596,19 @@ namespace UI {
     class StackPanel : Panel {
         string StyleKey() { return "StackPanel" }
 
-        bool horizontal
-        int spacing
-        int padding
+        bool Horizontal
+        int Spacing
+        int Padding
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 0, int padding = 0) : base(x, y, width, height) {
-            this.horizontal = horizontal
-            this.spacing = spacing
-            this.padding = padding
-            this.filled = false
+            this.Horizontal = horizontal
+            this.Spacing = spacing
+            this.Padding = padding
+            this.Filled = false
         }
 
         undefined MeasureCore(Root root, int aw, int ah) {
-            var pad2 = this.padding * 2
+            var pad2 = this.Padding * 2
             var iw = aw
             var ih = ah
             if (iw >= 0) { iw = UI.M.Max(0, iw - pad2) }
@@ -618,9 +618,9 @@ namespace UI {
             var count = 0
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                if (this.horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
+                if (this.Horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
                 if (!child.visible) { continue }
-                if (this.horizontal) {
+                if (this.Horizontal) {
                     along = along + child.dw
                     across = UI.M.Max(across, child.dh)
                 } else {
@@ -629,8 +629,8 @@ namespace UI {
                 }
                 count = count + 1
             }
-            if (count > 1) { along = along + this.spacing * (count - 1) }
-            if (this.horizontal) {
+            if (count > 1) { along = along + this.Spacing * (count - 1) }
+            if (this.Horizontal) {
                 this.cw = along + pad2
                 this.ch = across + pad2
             } else {
@@ -640,18 +640,18 @@ namespace UI {
         }
 
         undefined ArrangeCore(Root root, int w, int h) {
-            var pos = this.padding
-            var iw = w - this.padding * 2
-            var ih = h - this.padding * 2
+            var pos = this.Padding
+            var iw = w - this.Padding * 2
+            var ih = h - this.Padding * 2
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 if (!child.visible) { continue }
-                if (this.horizontal) {
-                    child.Arrange(root, pos, this.padding, child.dw, ih)
-                    pos = pos + child.dw + this.spacing
+                if (this.Horizontal) {
+                    child.Arrange(root, pos, this.Padding, child.dw, ih)
+                    pos = pos + child.dw + this.Spacing
                 } else {
-                    child.Arrange(root, this.padding, pos, iw, child.dh)
-                    pos = pos + child.dh + this.spacing
+                    child.Arrange(root, this.Padding, pos, iw, child.dh)
+                    pos = pos + child.dh + this.Spacing
                 }
             }
         }
@@ -660,24 +660,24 @@ namespace UI {
     // Like StackPanel, but like the elements used to be: with background and the old defaults (spacing and padding 4).
     class Stack : StackPanel {
         construct(int x = 0, int y = 0, int width = -1, int height = -1, bool horizontal = false, int spacing = 4, int padding = 4) : base(x, y, width, height, horizontal, spacing, padding) {
-            this.filled = true
+            this.Filled = true
         }
     }
 
-    // The children lie at the edges (`dock`: Left, Top, Right, Bottom) in the order in which they were added; what is left over fills the
+    // The children lie at the edges (`Dock`: Left, Top, Right, Bottom) in the order in which they were added; what is left over fills the
     // last child (lastChildFill).
     class DockPanel : Panel {
         string StyleKey() { return "DockPanel" }
 
-        bool lastChildFill = true
+        bool LastChildFill = true
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
-            this.filled = false
+            this.Filled = false
         }
 
         // A child with the side it lies on: `dock.AddDocked(element, UI.Dock.Top)`.
         undefined AddDocked(Element child, int side) {
-            child.dock = side
+            child.Dock = side
             this.Add(child)
         }
 
@@ -696,11 +696,11 @@ namespace UI {
                 if (aw >= 0) { availW = UI.M.Max(0, aw - usedW) }
                 if (ah >= 0) { availH = UI.M.Max(0, ah - usedH) }
                 child.Measure(root, availW, availH)
-                var fills = this.lastChildFill && i == last
+                var fills = this.LastChildFill && i == last
                 if (fills) {
                     maxW = UI.M.Max(maxW, usedW + child.dw)
                     maxH = UI.M.Max(maxH, usedH + child.dh)
-                } else if (child.dock == UI.Dock.Left || child.dock == UI.Dock.Right) {
+                } else if (child.Dock == UI.Dock.Left || child.Dock == UI.Dock.Right) {
                     maxH = UI.M.Max(maxH, usedH + child.dh)
                     usedW = usedW + child.dw
                 } else {
@@ -729,16 +729,16 @@ namespace UI {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 if (!child.visible) { continue }
-                var fills = this.lastChildFill && i == last
+                var fills = this.LastChildFill && i == last
                 if (fills) {
                     child.Arrange(root, left, top, UI.M.Max(0, right - left), UI.M.Max(0, bottom - top))
-                } else if (child.dock == UI.Dock.Left) {
+                } else if (child.Dock == UI.Dock.Left) {
                     child.Arrange(root, left, top, child.dw, UI.M.Max(0, bottom - top))
                     left = left + child.dw
-                } else if (child.dock == UI.Dock.Right) {
+                } else if (child.Dock == UI.Dock.Right) {
                     child.Arrange(root, UI.M.Max(left, right - child.dw), top, child.dw, UI.M.Max(0, bottom - top))
                     right = UI.M.Max(left, right - child.dw)
-                } else if (child.dock == UI.Dock.Top) {
+                } else if (child.Dock == UI.Dock.Top) {
                     child.Arrange(root, left, top, UI.M.Max(0, right - left), child.dh)
                     top = top + child.dh
                 } else {
@@ -754,12 +754,12 @@ namespace UI {
     class WrapPanel : Panel {
         string StyleKey() { return "WrapPanel" }
 
-        bool vertical = false
-        int itemWidth = -1
-        int itemHeight = -1
+        bool Vertical = false
+        int ItemWidth = -1
+        int ItemHeight = -1
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
-            this.filled = false
+            this.Filled = false
         }
 
         undefined MeasureCore(Root root, int aw, int ah) {
@@ -768,18 +768,18 @@ namespace UI {
             var total = 0
             var longest = 0
             var limit = aw
-            if (this.vertical) { limit = ah }
+            if (this.Vertical) { limit = ah }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                child.Measure(root, this.itemWidth, this.itemHeight)
+                child.Measure(root, this.ItemWidth, this.ItemHeight)
                 if (!child.visible) { continue }
                 var w = child.dw
                 var h = child.dh
-                if (this.itemWidth >= 0) { w = this.itemWidth }
-                if (this.itemHeight >= 0) { h = this.itemHeight }
+                if (this.ItemWidth >= 0) { w = this.ItemWidth }
+                if (this.ItemHeight >= 0) { h = this.ItemHeight }
                 var along = w
                 var thick = h
-                if (this.vertical) {
+                if (this.Vertical) {
                     along = h
                     thick = w
                 }
@@ -794,7 +794,7 @@ namespace UI {
             }
             total = total + lineThick
             longest = UI.M.Max(longest, lineLen)
-            if (this.vertical) {
+            if (this.Vertical) {
                 this.cw = total
                 this.ch = longest
             } else {
@@ -805,7 +805,7 @@ namespace UI {
 
         undefined ArrangeCore(Root root, int w, int h) {
             var limit = w
-            if (this.vertical) { limit = h }
+            if (this.Vertical) { limit = h }
             var lineLen = 0
             var lineThick = 0
             var offset = 0
@@ -816,13 +816,13 @@ namespace UI {
                 if (!child.visible) { continue }
                 var along = child.dw
                 var thick = child.dh
-                if (this.itemWidth >= 0) { along = this.itemWidth }
-                if (this.itemHeight >= 0) { thick = this.itemHeight }
-                if (this.vertical) {
+                if (this.ItemWidth >= 0) { along = this.ItemWidth }
+                if (this.ItemHeight >= 0) { thick = this.ItemHeight }
+                if (this.Vertical) {
                     along = child.dh
                     thick = child.dw
-                    if (this.itemHeight >= 0) { along = this.itemHeight }
-                    if (this.itemWidth >= 0) { thick = this.itemWidth }
+                    if (this.ItemHeight >= 0) { along = this.ItemHeight }
+                    if (this.ItemWidth >= 0) { thick = this.ItemWidth }
                 }
                 if (lineLen > 0 && lineLen + along > limit) {
                     this.ArrangeLine(root, start, i, offset, lineThick)
@@ -845,9 +845,9 @@ namespace UI {
                 if (!child.visible) { continue }
                 var cwid = child.dw
                 var chei = child.dh
-                if (this.itemWidth >= 0) { cwid = this.itemWidth }
-                if (this.itemHeight >= 0) { chei = this.itemHeight }
-                if (this.vertical) {
+                if (this.ItemWidth >= 0) { cwid = this.ItemWidth }
+                if (this.ItemHeight >= 0) { chei = this.ItemHeight }
+                if (this.Vertical) {
                     child.Arrange(root, offset, pos, thick, chei)
                     pos = pos + chei
                 } else {
@@ -897,7 +897,7 @@ namespace UI {
         List columns
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
-            this.filled = false
+            this.Filled = false
             this.rows = new List()
             this.columns = new List()
         }
@@ -1131,11 +1131,11 @@ namespace UI {
     // A child with frame, background and inner margin (padding). thickness is the width of the frame in pixels (0: none).
     class Border : Element {
         Element child
-        int thickness = 1
-        Thickness padding
+        int Thickness = 1
+        Thickness Padding
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
-            this.padding = new Thickness(0)
+            this.Padding = new Thickness(0)
         }
 
         // The child belongs to the Border from now on.
@@ -1153,9 +1153,9 @@ namespace UI {
         }
 
         undefined MeasureCore(Root root, int aw, int ah) {
-            var inset = this.thickness * 2
-            var padW = this.padding.left + this.padding.right + inset
-            var padH = this.padding.top + this.padding.bottom + inset
+            var inset = this.Thickness * 2
+            var padW = this.Padding.left + this.Padding.right + inset
+            var padH = this.Padding.top + this.Padding.bottom + inset
             var iw = aw
             var ih = ah
             if (iw >= 0) { iw = UI.M.Max(0, iw - padW) }
@@ -1173,19 +1173,19 @@ namespace UI {
 
         undefined ArrangeCore(Root root, int w, int h) {
             if (this.child == undefined) { return }
-            var l = this.padding.left + this.thickness
-            var t = this.padding.top + this.thickness
-            var iw = UI.M.Max(0, w - l - this.padding.right - this.thickness)
-            var ih = UI.M.Max(0, h - t - this.padding.bottom - this.thickness)
+            var l = this.Padding.left + this.Thickness
+            var t = this.Padding.top + this.Thickness
+            var iw = UI.M.Max(0, w - l - this.Padding.right - this.Thickness)
+            var ih = UI.M.Max(0, h - t - this.Padding.bottom - this.Thickness)
             this.child.Arrange(root, l, t, iw, ih)
         }
 
         undefined Draw(Root root, int ax, int ay) {
             base.Draw(root, ax, ay)
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
-                if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
-                if (this.thickness > 0) {
-                    var pen = this.pen
+                if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
+                if (this.Thickness > 0) {
+                    var pen = this.Pen
                     if (pen == undefined) { pen = root.theme.border }
                     root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
                 }
@@ -1194,7 +1194,7 @@ namespace UI {
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible) { return undefined }
+            if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             if (this.child != undefined) {
                 var hit = this.child.HitTest(px, py)
@@ -1204,14 +1204,14 @@ namespace UI {
         }
 
         undefined Collect(List list) {
-            if (!this.visible || !this.enabled) { return }
+            if (!this.Visible || !this.Enabled) { return }
             if (this.child != undefined) { this.child.Collect(list) }
         }
 
         string StyleKey() { return "Border" }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             if (this.child != undefined) { return this.child.FindName(name) }
             return undefined
         }

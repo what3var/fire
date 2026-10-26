@@ -621,18 +621,18 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 |---|---|
 | place | `view.BeginPlace("Resistor")` (from a palette, a menu, a toolstrip of the program); then a click places it with its default length, a drag gives length and direction; Esc stops |
 | wires | drag from a pin (or `BeginPlace("Wire")`, W); wires go along the grid |
-| select | click, a rectangle on empty space, Ctrl+A; `Selection()`, `SelectedElement`, `onSelect` |
+| select | click, a rectangle on empty space, Ctrl+A; `Selection()`, `SelectedElement`, `OnSelect` |
 | move, stretch | drag the selection; drag an end of a selected element |
 | rotate, flip, copy, delete | R, F, Ctrl+D, Del (or `RotateSelection()`, ...) |
 | undo, redo | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (`Undo()`, `Redo()`) |
-| properties | double click or Enter: the view's own editor, or `onEdit` of the program |
+| properties | double click or Enter: the view's own editor, or `OnEdit` of the program |
 | zoom, pan | the wheel zooms at the pointer, the middle or right button pans; `FitToView()` |
 | context menu | a right click without dragging: on an element Attach Scope (voltage, current), Attach FFT Analyzer, properties, rotate, flip, duplicate, delete; on a scope time or spectrum; on empty space run, reset, select all, fit, grid, values, current. `AttachScope(element, quantity, display)` does the same from a program |
 
 The view draws at the full resolution of the screen (a UI.Root with `Scaling` above 1): lines and text are sharp, not stretched. Changes that keep the connections
 (moving a scope, a text, or a group as a whole) do not compile the circuit again - the simulation and the scopes go on.
 
-`onChange` (or `TakeChanged()`) reports every change - `view.Schematic.ToText()` is the file to save.
+`OnChange` (or `TakeChanged()`) reports every change - `view.Schematic.ToText()` is the file to save.
 
 ## The circuit editor of spark
 

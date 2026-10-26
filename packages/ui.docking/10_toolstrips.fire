@@ -66,14 +66,14 @@ namespace UI.Docking {
     // A button of a toolstrip: text and/or symbol (`icon` a UI.Geometry such as UI.Icons.Folder(), or `image` a Framebuffer), flat until the pointer is over it.
     // `checkable`: a click toggles `isChecked` (shown pressed). `showText = false` shows only the symbol (the text is then the name in the overflow menu).
     class ToolStripButton : UI.Element {
-        string text
-        UI.Geometry icon
-        Framebuffer image
-        int iconSize = 16
-        lambda onClick
+        string Text
+        UI.Geometry Icon
+        Framebuffer Image
+        int IconSize = 16
+        lambda OnClick
         bool clicked = false
-        bool checkable = false
-        bool isChecked = false
+        bool Checkable = false
+        bool IsChecked = false
         bool showText = true
         int overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
@@ -81,23 +81,23 @@ namespace UI.Docking {
         bool inOverflow = false
 
         construct(string text = "", any onClick = undefined) : base(0, 0, -1, -1) {
-            this.text = text
-            this.onClick = onClick
+            this.Text = text
+            this.OnClick = onClick
         }
 
         string StyleKey() { return "ToolStripButton" }
 
-        bool HasSymbol() { return this.icon != undefined || this.image != undefined }
+        bool HasSymbol() { return this.Icon != undefined || this.Image != undefined }
 
-        bool ShowsText() { return this.text != "" && (this.showText || !this.HasSymbol() || this.inOverflow) }
+        bool ShowsText() { return this.Text != "" && (this.showText || !this.HasSymbol() || this.inOverflow) }
 
         // the width of symbol, gap and text
         int ContentWidth(UI.Root root) {
             var w = 0
-            if (this.HasSymbol()) { w = this.iconSize }
-            if (this.text != "" && (this.showText || !this.HasSymbol())) {
+            if (this.HasSymbol()) { w = this.IconSize }
+            if (this.Text != "" && (this.showText || !this.HasSymbol())) {
                 if (w > 0) { w = w + 6 }
-                w = w + this.TextWidth(root, this.text)
+                w = w + this.TextWidth(root, this.Text)
             }
             return w
         }
@@ -107,15 +107,15 @@ namespace UI.Docking {
 
         // the width as a row of the overflow menu: a column for the symbol, the text, the extra part
         int RowWidth(UI.Root root) {
-            var w = this.iconSize + 16 + this.ExtraWidth()
-            if (this.text != "") { w = w + 6 + this.TextWidth(root, this.text) }
+            var w = this.IconSize + 16 + this.ExtraWidth()
+            if (this.Text != "") { w = w + 6 + this.TextWidth(root, this.Text) }
             return w
         }
 
         undefined MeasureCore(UI.Root root, int aw, int ah) {
             this.cw = this.ContentWidth(root) + 10 + this.ExtraWidth()
             var symbol = 0
-            if (this.HasSymbol()) { symbol = this.iconSize }
+            if (this.HasSymbol()) { symbol = this.IconSize }
             this.ch = UI.M.Max(this.TextHeight(root), symbol) + 8
         }
 
@@ -126,26 +126,26 @@ namespace UI.Docking {
         }
 
         undefined Click() {
-            if (this.checkable) { this.isChecked = !this.isChecked }
+            if (this.Checkable) { this.IsChecked = !this.IsChecked }
             this.clicked = true
             UI.Docking.ToolStrip.ItemDone(this)
-            var callback = this.onClick
+            var callback = this.OnClick
             if (callback != undefined) { callback() }
         }
 
         // The background of the button part (w pixels wide).
         undefined DrawFace(UI.Root root, int ax, int ay, int w) {
-            if (!this.enabled) { return }
+            if (!this.Enabled) { return }
             var theme = root.theme
             var h = this.actualHeight
-            if (this.pressed && this.hover) { root.renderer.FillRect(ax, ay, w, h, theme.facePressed) }
-            else if (this.hover || this.isChecked) { root.renderer.FillRect(ax, ay, w, h, theme.faceHover) }
-            if (this.isChecked || (this.hover && !this.inOverflow)) { root.renderer.DrawRect(ax, ay, w, h, theme.borderFocus) }
+            if (this.Pressed && this.Hover) { root.renderer.FillRect(ax, ay, w, h, theme.facePressed) }
+            else if (this.Hover || this.IsChecked) { root.renderer.FillRect(ax, ay, w, h, theme.faceHover) }
+            if (this.IsChecked || (this.Hover && !this.inOverflow)) { root.renderer.DrawRect(ax, ay, w, h, theme.borderFocus) }
         }
 
         Brush TextBrush(UI.Root root) {
-            if (!this.enabled) { return root.theme.textDisabled }
-            if (this.foreground != undefined) { return this.foreground }
+            if (!this.Enabled) { return root.theme.textDisabled }
+            if (this.Foreground != undefined) { return this.Foreground }
             return root.theme.text
         }
 
@@ -160,20 +160,20 @@ namespace UI.Docking {
             var room = this.actualWidth - this.ExtraWidth()
             var x = ax + (room - this.ContentWidth(root)) / 2
             if (this.inOverflow) { x = ax + 5 }
-            var sy = ay + (this.actualHeight - this.iconSize) / 2
-            if (this.HasSymbol()) { UI.Docking.Paint.Symbol(root, this.icon, this.image, this.iconSize, x, sy, color) }
-            else if (this.inOverflow && this.isChecked) { UI.Docking.Paint.Check(root, x + this.iconSize / 2, ay + this.actualHeight / 2, color) }
-            if (this.HasSymbol() || this.inOverflow) { x = x + this.iconSize + 6 }
-            if (this.ShowsText()) { this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.text, color) }
+            var sy = ay + (this.actualHeight - this.IconSize) / 2
+            if (this.HasSymbol()) { UI.Docking.Paint.Symbol(root, this.Icon, this.Image, this.IconSize, x, sy, color) }
+            else if (this.inOverflow && this.IsChecked) { UI.Docking.Paint.Check(root, x + this.IconSize / 2, ay + this.actualHeight / 2, color) }
+            if (this.HasSymbol() || this.inOverflow) { x = x + this.IconSize + 6 }
+            if (this.ShowsText()) { this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.Text, color) }
         }
 
         undefined MouseDown(UI.Root root, int button, int px, int py) {
-            if (button == 1) { this.pressed = true }
+            if (button == 1) { this.Pressed = true }
         }
 
         undefined MouseUp(UI.Root root, int button, int px, int py) {
-            var was = this.pressed
-            this.pressed = false
+            var was = this.Pressed
+            this.Pressed = false
             if (was && button == 1 && this.Contains(px, py)) { this.Click() }
         }
     }
@@ -253,8 +253,8 @@ namespace UI.Docking {
         }
 
         undefined MouseUp(UI.Root root, int button, int px, int py) {
-            var was = this.pressed
-            this.pressed = false
+            var was = this.Pressed
+            this.Pressed = false
             if (was && button == 1 && this.Contains(px, py) && !this.OverArrow(px, py)) { this.Click() }
         }
 
@@ -264,15 +264,15 @@ namespace UI.Docking {
             var extra = this.ExtraWidth()
             var bx = ax + this.actualWidth - extra
             var open = this.MenuOpen()
-            if (this.enabled && (open || this.hover)) {
+            if (this.Enabled && (open || this.Hover)) {
                 var face = theme.faceHover
                 if (open) { face = theme.facePressed }
                 root.renderer.FillRect(bx, ay, extra, this.actualHeight, face)
-                if (this.hover && !this.inOverflow) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.borderFocus) }
+                if (this.Hover && !this.inOverflow) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.borderFocus) }
             }
             this.DrawFace(root, ax, ay, this.actualWidth - extra)
             this.DrawContent(root, ax, ay)
-            if ((this.hover || open) && !this.inOverflow) { root.renderer.DrawLine(bx, ay + 1, bx, ay + this.actualHeight - 2, theme.borderFocus) }
+            if ((this.Hover || open) && !this.inOverflow) { root.renderer.DrawLine(bx, ay + 1, bx, ay + this.actualHeight - 2, theme.borderFocus) }
             UI.Docking.Paint.Arrow(root, bx + extra / 2, ay + this.actualHeight / 2, this.inOverflow, this.TextBrush(root))
         }
     }
@@ -287,23 +287,23 @@ namespace UI.Docking {
 
         string StyleKey() { return "ToolStripLabel" }
 
-        int RowWidth(UI.Root root) { return this.TextWidth(root, this.text) + 38 }
+        int RowWidth(UI.Root root) { return this.TextWidth(root, this.Text) + 38 }
 
         undefined MeasureCore(UI.Root root, int aw, int ah) {
-            this.cw = this.TextWidth(root, this.text) + 10
+            this.cw = this.TextWidth(root, this.Text) + 10
             this.ch = this.TextHeight(root) + 8
         }
 
         undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            var c = this.brush
-            if (c == undefined) { c = this.foreground }
+            var c = this.Color
+            if (c == undefined) { c = this.Foreground }
             if (c == undefined) { c = root.theme.text }
-            if (!this.enabled) { c = root.theme.textDisabled }
+            if (!this.Enabled) { c = root.theme.textDisabled }
             var x = ax + 5
             if (this.inOverflow) { x = ax + 27 }
             root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
-            this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.text, c)
+            this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.Text, c)
             root.PopClip()
         }
     }
@@ -333,7 +333,7 @@ namespace UI.Docking {
 
         undefined Draw(UI.Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            var pen = this.pen
+            var pen = this.Pen
             if (pen == undefined) { pen = root.theme.border }
             if (this.Upright()) { root.renderer.DrawLine(ax + 3, ay + 3, ax + 3, ay + this.actualHeight - 4, pen) }
             else { root.renderer.DrawLine(ax + 3, ay + 3, ax + this.actualWidth - 4, ay + 3, pen) }
@@ -379,7 +379,7 @@ namespace UI.Docking {
             var inner = this.actualWidth - 2
             var part = 0
             if (this.maximum > 0) { part = inner * UI.M.Clamp(this.value, 0, this.maximum) / this.maximum }
-            var brush = this.foreground
+            var brush = this.Foreground
             if (brush == undefined) { brush = theme.accent }
             if (part > 0) { r.FillRect(ax + 1, ay + 1, part, this.actualHeight - 2, brush) }
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
@@ -440,7 +440,7 @@ namespace UI.Docking {
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             if (this.strip != undefined) {
                 var items = this.strip.overflowItems
                 var i = items.count - 1
@@ -465,17 +465,17 @@ namespace UI.Docking {
     // element). In a DockManager it can be dragged by its grip to another place, another row or edge, or out of the panels (then it floats); what does not fit goes
     // into the menu of the » button at its end (`canOverflow`, the `overflow` of an item). `text` is its title while it floats.
     class ToolStrip : UI.Panel {
-        bool horizontal = true
+        bool Horizontal = true
         /// <summary>false (default): the items are centred across the strip at their own size; true: they fill it.</summary>
         bool stretchItems = false
-        string text = ""
+        string Text = ""
         bool showGrip = true
         bool canOverflow = true
         // the row in its panel and the desired position in it (pixels from the start of the row)
         int row = 0
         int offset = 0
         // the gap between two items
-        int spacing = 1
+        int Spacing = 1
         UI.Docking.DockManager manager
         bool floating = false
         List shown
@@ -485,7 +485,7 @@ namespace UI.Docking {
         bool dragging = false
 
         construct(string text = "") : base(0, 0, -1, -1) {
-            this.text = text
+            this.Text = text
             this.shown = new List()
             this.overflowItems = new List()
             this.overflowPopup = new UI.Docking.ToolStripOverflow()
@@ -500,7 +500,7 @@ namespace UI.Docking {
             var b = new UI.Docking.ToolStripButton(text, onClick)
             // a symbol made in the call (UI.Icons.Folder()) is kept by the button, one of the caller stays theirs
             if (icon != undefined) { try icon.TakeTo(b) }
-            b.icon = icon
+            b.Icon = icon
             this.Add(b)
             return b
         }
@@ -533,7 +533,7 @@ namespace UI.Docking {
         UI.Docking.ToolStripSplitButton AddSplitButton(string text, any onClick = undefined, UI.Geometry icon = undefined) {
             var b = new UI.Docking.ToolStripSplitButton(text, onClick)
             if (icon != undefined) { try icon.TakeTo(b) }
-            b.icon = icon
+            b.Icon = icon
             this.Add(b)
             return b
         }
@@ -571,12 +571,12 @@ namespace UI.Docking {
         int OverflowSize() { return 13 }
 
         int Along(UI.Element e) {
-            if (this.horizontal) { return e.dw }
+            if (this.Horizontal) { return e.dw }
             return e.dh
         }
 
         int Across(UI.Element e) {
-            if (this.horizontal) { return e.dh }
+            if (this.Horizontal) { return e.dh }
             return e.dw
         }
 
@@ -588,7 +588,7 @@ namespace UI.Docking {
             if (this.CanOverflowNow()) { length = length + this.OverflowSize() }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var c = this.children[i]
-                if (c.visible && (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Never || !this.CanOverflowNow())) { length = length + this.Along(c) + this.spacing }
+                if (c.visible && (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Never || !this.CanOverflowNow())) { length = length + this.Along(c) + this.Spacing }
             }
             return length
         }
@@ -606,11 +606,11 @@ namespace UI.Docking {
                     always = true
                     continue
                 }
-                along = along + this.Along(c) + this.spacing
+                along = along + this.Along(c) + this.Spacing
             }
             if (always) { along = along + this.OverflowSize() }
             across = across + 4
-            if (this.horizontal) {
+            if (this.Horizontal) {
                 this.cw = along
                 this.ch = across
             } else {
@@ -622,7 +622,7 @@ namespace UI.Docking {
         undefined ArrangeCore(UI.Root root, int w, int h) {
             var length = w
             var across = h
-            if (!this.horizontal) {
+            if (!this.Horizontal) {
                 length = h
                 across = w
             }
@@ -645,8 +645,8 @@ namespace UI.Docking {
                     always = true
                     continue
                 }
-                total = total + this.Along(c) + this.spacing
-                if (mode == UI.Docking.Overflow.Never) { fixedLength = fixedLength + this.Along(c) + this.spacing }
+                total = total + this.Along(c) + this.Spacing
+                if (mode == UI.Docking.Overflow.Never) { fixedLength = fixedLength + this.Along(c) + this.Spacing }
             }
             var overflow = this.CanOverflowNow() && (always || total > avail)
             var room = avail
@@ -660,10 +660,10 @@ namespace UI.Docking {
                 var keep = true
                 if (mode == UI.Docking.Overflow.Always) { keep = !this.CanOverflowNow() }
                 else if (mode == UI.Docking.Overflow.AsNeeded && overflow) {
-                    if (full || used + this.Along(c) + this.spacing > room) {
+                    if (full || used + this.Along(c) + this.Spacing > room) {
                         keep = false
                         full = true
-                    } else { used = used + this.Along(c) + this.spacing }
+                    } else { used = used + this.Along(c) + this.Spacing }
                 }
                 if (keep) { shown.Add(c) } else { spill.Add(c) }
                 UI.Docking.ToolStrip.Flag(c, !keep)
@@ -672,7 +672,7 @@ namespace UI.Docking {
             var usedShown = 0
             var springs = 0
             for (var i = 0; i < shown.count; i = i + 1) {
-                usedShown = usedShown + this.Along(shown[i]) + this.spacing
+                usedShown = usedShown + this.Along(shown[i]) + this.Spacing
                 if (UI.Docking.ToolStrip.SpringOf(shown[i])) { springs = springs + 1 }
             }
             var extra = UI.M.Max(0, room - usedShown)
@@ -693,13 +693,13 @@ namespace UI.Docking {
                 var off = 2
                 var size = room2
                 if (!this.stretchItems && !(c is of UI.Docking.ToolStripSeparator)) {
-                    if (this.horizontal && c.valign == UI.VAlign.Stretch) { size = UI.M.Min(room2, c.dh) }
-                    if (!this.horizontal && c.halign == UI.HAlign.Stretch) { size = UI.M.Min(room2, c.dw) }
+                    if (this.Horizontal && c.valign == UI.VAlign.Stretch) { size = UI.M.Min(room2, c.dh) }
+                    if (!this.Horizontal && c.halign == UI.HAlign.Stretch) { size = UI.M.Min(room2, c.dw) }
                     off = 2 + (room2 - size) / 2
                 }
-                if (this.horizontal) { c.Arrange(root, pos, off, len, size) }
+                if (this.Horizontal) { c.Arrange(root, pos, off, len, size) }
                 else { c.Arrange(root, off, pos, size, len) }
-                pos = pos + len + this.spacing
+                pos = pos + len + this.Spacing
             }
         }
 
@@ -719,13 +719,13 @@ namespace UI.Docking {
         bool OverGrip(int px, int py) {
             var grip = this.GripSize()
             if (grip == 0) { return false }
-            if (this.horizontal) { return px < this.ax + grip }
+            if (this.Horizontal) { return px < this.ax + grip }
             return py < this.ay + grip
         }
 
         bool OverOverflow(int px, int py) {
             if (!this.HasOverflow() || !this.Contains(px, py)) { return false }
-            if (this.horizontal) { return px >= this.ax + this.actualWidth - this.OverflowSize() - 1 }
+            if (this.Horizontal) { return px >= this.ax + this.actualWidth - this.OverflowSize() - 1 }
             return py >= this.ay + this.actualHeight - this.OverflowSize() - 1
         }
 
@@ -736,7 +736,7 @@ namespace UI.Docking {
                 return
             }
             if (!this.HasOverflow()) { return }
-            if (this.horizontal) { root.ShowPopup(this.overflowPopup, this.ax + this.actualWidth - this.OverflowSize() - 1, this.ay + this.actualHeight, false, this) }
+            if (this.Horizontal) { root.ShowPopup(this.overflowPopup, this.ax + this.actualWidth - this.OverflowSize() - 1, this.ay + this.actualHeight, false, this) }
             else { root.ShowPopup(this.overflowPopup, this.ax + this.actualWidth, this.ay + this.actualHeight - this.OverflowSize() - 1, false, this) }
             this.Invalidate()
         }
@@ -755,7 +755,7 @@ namespace UI.Docking {
         }
 
         Brush BackBrush(UI.Root root) {
-            if (this.background != undefined) { return this.background }
+            if (this.Background != undefined) { return this.Background }
             return root.theme.panel
         }
 
@@ -769,7 +769,7 @@ namespace UI.Docking {
                 // the grip: two rows of dots
                 var grip = this.GripSize()
                 if (grip > 0) {
-                    if (this.horizontal) {
+                    if (this.Horizontal) {
                         for (var y = ay + 4; y < ay + this.actualHeight - 4; y = y + 4) {
                             r.FillRect(ax + 3, y, 2, 2, theme.textDisabled)
                             r.FillRect(ax + 6, y + 2, 2, 2, theme.textDisabled)
@@ -787,7 +787,7 @@ namespace UI.Docking {
                     var by = ay + 1
                     var bw = size
                     var bh = this.actualHeight - 2
-                    if (!this.horizontal) {
+                    if (!this.Horizontal) {
                         bx = ax + 1
                         by = ay + this.actualHeight - size - 1
                         bw = this.actualWidth - 2
@@ -808,7 +808,7 @@ namespace UI.Docking {
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.shown.count - 1
             while (i >= 0) {
                 var hit = this.shown[i].HitTest(px, py)
@@ -819,7 +819,7 @@ namespace UI.Docking {
         }
 
         undefined Collect(List list) {
-            if (!this.visible || !this.enabled) { return }
+            if (!this.Visible || !this.Enabled) { return }
             for (var i = 0; i < this.shown.count; i = i + 1) { this.shown[i].Collect(list) }
         }
 
@@ -866,7 +866,7 @@ namespace UI.Docking {
         string StyleKey() { return "StatusBar" }
 
         Brush BackBrush(UI.Root root) {
-            if (this.background != undefined) { return this.background }
+            if (this.Background != undefined) { return this.Background }
             return root.theme.back
         }
 
@@ -898,7 +898,7 @@ namespace UI.Docking {
             if (offset < 0) { offset = this.RowEnd(row) }
             strip.TakeTo(this)
             strip.parent = this
-            strip.horizontal = this.Horizontal()
+            strip.Horizontal = this.Horizontal()
             strip.floating = false
             strip.manager = this.manager
             strip.row = row
@@ -1090,7 +1090,7 @@ namespace UI.Docking {
             this.ax = ax
             this.ay = ay
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
-                var back = this.background
+                var back = this.Background
                 if (back == undefined) { back = root.theme.back }
                 root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             }
@@ -1101,7 +1101,7 @@ namespace UI.Docking {
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.strips.count - 1
             while (i >= 0) {
                 var hit = this.strips[i].HitTest(px, py)
@@ -1116,7 +1116,7 @@ namespace UI.Docking {
         }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             for (var i = 0; i < this.strips.count; i = i + 1) {
                 var found = this.strips[i].FindName(name)
                 if (found != undefined) { return found }

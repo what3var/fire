@@ -40,10 +40,10 @@ namespace fire.UI.Markup
     }
 
     /// <summary>A property of an element of the markup: its name in the markup (PascalCase: `Width`, `HorizontalAlign`), the field of the fire class it sets
-    /// (by default the name in camel case: `width`; else given: `HorizontalAlign` sets `halign`) and its type.</summary>
+    /// (the same name, unless given: `Grid.Row` sets `GridRow`) and its type.</summary>
     public sealed record PropertyDef(string Name, PropertyKind Kind, string? Field = null)
     {
-        public string FieldName => Field ?? MarkupSchema.Camel(Name);
+        public string FieldName => Field ?? Name;
         /// <summary>For <see cref="PropertyKind.Enum"/>: the enum in fire (`UI.HAlign`) and the names it has.</summary>
         public string? EnumType { get; init; }
         public string[]? Choices { get; init; }
@@ -69,8 +69,8 @@ namespace fire.UI.Markup
     /// <summary>An event of an element: the field of the fire class (a lambda) and the parameters the lambda gets, which the handler method gets after `sender`.</summary>
     public sealed record EventDef(string Name, string[] Args)
     {
-        /// <summary>The field of the fire class (a lambda): the name in camel case (`OnClick`: `onClick`).</summary>
-        public string FieldName => MarkupSchema.Camel(Name);
+        /// <summary>The field of the fire class (a lambda): the same name (`OnClick`).</summary>
+        public string FieldName => Name;
         public EventDef(string name) : this(name, Array.Empty<string>()) { }
     }
 
@@ -105,20 +105,20 @@ namespace fire.UI.Markup
 
         private static readonly PropertyDef[] Common =
         {
-            new("Left", PropertyKind.Int, "x"), new("Top", PropertyKind.Int, "y"), new("Width", PropertyKind.Int), new("Height", PropertyKind.Int),
+            new("Left", PropertyKind.Int), new("Top", PropertyKind.Int), new("Width", PropertyKind.Int), new("Height", PropertyKind.Int),
             new("Visible", PropertyKind.Bool), new("Enabled", PropertyKind.Bool),
             new("Margin", PropertyKind.Thickness),
-            Enum("HorizontalAlign", "halign", "UI.HAlign", "Stretch", "Left", "Center", "Right"),
-            Enum("VerticalAlign", "valign", "UI.VAlign", "Stretch", "Top", "Center", "Bottom"),
+            Enum("HorizontalAlign", "UI.HAlign", "Stretch", "Left", "Center", "Right"),
+            Enum("VerticalAlign", "UI.VAlign", "Stretch", "Top", "Center", "Bottom"),
             new("MinWidth", PropertyKind.Int), new("MinHeight", PropertyKind.Int), new("MaxWidth", PropertyKind.Int), new("MaxHeight", PropertyKind.Int),
             new("Background", PropertyKind.Color), new("Foreground", PropertyKind.Color), new("Pen", PropertyKind.Pen),
             // the font of the text: a name for Fonts.Get ("" = that of the surrounding element) and the height of the letters in pixels (0 = that of the surrounding element)
             new("Font", PropertyKind.Text), new("FontSize", PropertyKind.Int),
             new("Style", PropertyKind.StyleRef), new("Template", PropertyKind.TemplateRef),
             // attached properties of the containers
-            new("Grid.Row", PropertyKind.Int, "gridRow"), new("Grid.Column", PropertyKind.Int, "gridColumn"),
-            new("Grid.RowSpan", PropertyKind.Int, "gridRowSpan"), new("Grid.ColumnSpan", PropertyKind.Int, "gridColumnSpan"),
-            new PropertyDef("DockPanel.Dock", PropertyKind.Enum, "dock") { EnumType = "UI.Dock", Choices = new[] { "Left", "Top", "Right", "Bottom" } },
+            new("Grid.Row", PropertyKind.Int, "GridRow"), new("Grid.Column", PropertyKind.Int, "GridColumn"),
+            new("Grid.RowSpan", PropertyKind.Int, "GridRowSpan"), new("Grid.ColumnSpan", PropertyKind.Int, "GridColumnSpan"),
+            new PropertyDef("DockPanel.Dock", PropertyKind.Enum, "Dock") { EnumType = "UI.Dock", Choices = new[] { "Left", "Top", "Right", "Bottom" } },
         };
 
         /// <summary>The properties that a trigger can test besides the ones of an element: the state the library tracks.</summary>
@@ -135,7 +135,7 @@ namespace fire.UI.Markup
 
         private static readonly PropertyDef[] StackProperties =
         {
-            new("Orientation", PropertyKind.Orientation, "horizontal"), new("Horizontal", PropertyKind.Bool),
+            new("Orientation", PropertyKind.Orientation, "Horizontal"), new("Horizontal", PropertyKind.Bool),
             new("Spacing", PropertyKind.Int), new("Padding", PropertyKind.Int),
         };
 
@@ -152,7 +152,7 @@ namespace fire.UI.Markup
         /// <summary>The attributes of a `&lt;CollectionView&gt;` of the Resources (it is no element of the interface: it has no common properties). `sortBy` and `descending` are set together by `SortBy`.</summary>
         public static readonly ElementDef CollectionViewDef = new("CollectionView", "UI.CollectionView", ChildMode.None, "new UI.CollectionView(undefined)", new PropertyDef[]
         {
-            new("Source", PropertyKind.Collection), new("SortBy", PropertyKind.Text), new("Descending", PropertyKind.Bool),
+            new("Source", PropertyKind.Collection), new("SortBy", PropertyKind.Text, "sortBy"), new("Descending", PropertyKind.Bool),
             new("Filter", PropertyKind.Code), new("Comparer", PropertyKind.Code),
         }, Array.Empty<EventDef>());
 
@@ -174,12 +174,12 @@ namespace fire.UI.Markup
             }) with { AddCall = "{p}.SetChild({e})" },
             Define("ScrollViewer", ChildMode.Single, "new UI.ScrollViewer(0, 0, -1, -1)", new PropertyDef[]
             {
-                Enum("VerticalScrollMode", "vmode", "UI.ScrollMode", "Disabled", "Auto", "Visible"), Enum("HorizontalScrollMode", "hmode", "UI.ScrollMode", "Disabled", "Auto", "Visible"),
+                Enum("VerticalScrollMode", "UI.ScrollMode", "Disabled", "Auto", "Visible"), Enum("HorizontalScrollMode", "UI.ScrollMode", "Disabled", "Auto", "Visible"),
             }) with { AddCall = "{p}.SetContent({e})" },
             Define("ToolBar", true, "new UI.ToolBar(0, 0, -1, -1)", PanelLook),
             Define("Label", false, "new UI.Label(\"\", 0, 0)", new PropertyDef[]
             {
-                new("Text", PropertyKind.Text), new("Color", PropertyKind.Color, "brush"),
+                new("Text", PropertyKind.Text), new("Color", PropertyKind.Color),
             }),
             Define("Button", false, "new UI.Button(\"\", 0, 0)", new PropertyDef[]
             {

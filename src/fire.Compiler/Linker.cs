@@ -462,6 +462,24 @@ namespace fire.Compiler
             }
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             var resolveResult = Resolver.Resolve(program, natives.Names);
+            string? memberLogFile = Environment.GetEnvironmentVariable("FIRE_MEMBER_LOG");
+            if (memberLogFile != null)
+            {
+                // a refactoring tool: every member access whose receiver class is known, with the text of its line (TypeChecker.MemberLog)
+                TypeChecker.MemberLog = new();
+                try { TypeChecker.Check(program, resolveResult, TypeCheckMode.Lax, 0); }
+                catch (Exception) { }
+                var lines = new System.Text.StringBuilder();
+                foreach (var e in TypeChecker.MemberLog)
+                {
+                    if (e.Source < 0 || e.Source >= processedSources.Count) continue;
+                    var text = processedSources[e.Source].Source.Split('\n');
+                    if (e.Line < 1 || e.Line > text.Length) continue;
+                    lines.Append(e.Class).Append('\t').Append(e.Name).Append('\t').Append(e.Bare ? "1" : "0").Append('\t').Append(text[e.Line - 1].TrimEnd('\r')).Append('\n');
+                }
+                TypeChecker.MemberLog = null;
+                lock (typeof(Linker)) File.AppendAllText(memberLogFile, lines.ToString());
+            }
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)

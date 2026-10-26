@@ -29,7 +29,7 @@ tools.AddLabel("Target:")
 var target = tools.AddComboBox(90)
 target.Add("Debug")
 target.Add("Release")
-target.selectedIndex = 0
+target.SelectedIndex = 0
 tools.AddTextBox("", 120)
 dock.AddToolStrip(tools)
 
@@ -78,7 +78,7 @@ it loses a fixed width and height).
 
 | | |
 |---|---|
-| `title`, `icon` (a `UI.Geometry`, shown in the caption) | |
+| `title`, `Icon` (a `UI.Geometry`, shown in the caption) | |
 | `canClose`, `canFloat` | may the user close it, let it float |
 | `onClose` | a lambda, called when it is closed (the close button, or `Close()`) |
 | `Show()` | shows a hidden window where it was: as a tab of its last pane if that still exists, otherwise in a pane of its own at its place along the edge, or floating; a visible one becomes the visible tab |
@@ -100,12 +100,12 @@ float/dock and the close button; with several windows tabs at the bottom. A clic
 
 ## Toolstrips
 
-`new UI.Docking.ToolStrip(text)` - `text` is the title while it floats. Items are added with:
+`new UI.Docking.ToolStrip(text)` - `Text` (the argument `text`) is the title while it floats. Items are added with:
 
 | | |
 |---|---|
-| `AddButton(text, onClick, icon)` | a `ToolStripButton`: text and/or symbol (`icon` a UI.Geometry such as `UI.Icons.Folder()`, or `image` a Framebuffer, `iconSize`), flat until the pointer is over it; `checkable`/`isChecked`; `showText = false` shows only the symbol; `onClick`/`TakeClicked()` |
-| `AddSplitButton(text, onClick, icon)` | a `ToolStripSplitButton`: the button runs `onClick`, the arrow opens a menu: `AddItem(header, onClick)`, `Add(menuItem)` (MenuItem as in menus, also with submenus) |
+| `AddButton(text, onClick, icon)` | a `ToolStripButton`: text and/or symbol (`Icon` a UI.Geometry such as `UI.Icons.Folder()`, or `Image` a Framebuffer, `IconSize`), flat until the pointer is over it; `Checkable`/`IsChecked`; `showText = false` shows only the symbol; `OnClick`/`TakeClicked()` |
+| `AddSplitButton(text, onClick, icon)` | a `ToolStripSplitButton`: the button runs `OnClick`, the arrow opens a menu: `AddItem(header, onClick)`, `Add(menuItem)` (MenuItem as in menus, also with submenus) |
 | `AddLabel(text, spring = false)` | a `ToolStripLabel`; with `spring` it takes the room that is left (several springs share it) |
 | `AddSeparator()` | a `ToolStripSeparator`: a line, across a horizontal strip, along a vertical one |
 | `AddTextBox(text, width)` | a `ToolStripTextBox` (a `UI.TextBox`) |
@@ -118,11 +118,11 @@ open their menu to the side, text fields and combo boxes work as in the strip). 
 the strip), `Always` (only in the menu). `canOverflow = false` switches the menu off.
 
 **Moving:** a strip is dragged by its **grip** (the dots at its start): along its row, into another row (or a new one at the inner side of the panel), to another edge (at the left and
-right edge it stands upright), or out of the panels - then it floats in a small frame with its title and a close button (which hides it: `strip.visible = true` shows it again).
+right edge it stands upright), or out of the panels - then it floats in a small frame with its title and a close button (which hides it: `strip.Visible = true` shows it again).
 Dragged by the title back onto a panel, it docks there. In a row the strips sit at their `offset` as far as there is room; otherwise they are pushed together and finally shortened -
 their items go into the overflow menu. `showGrip = false` fixes a strip in place.
 
-`row`, `offset`, `horizontal`, `floating` tell where a strip is; `ToolStripPanel` (`topStrips` ...) has `strips`, `RowCount()`, `RowStrips(row)`.
+`row`, `offset`, `Horizontal`, `floating` tell where a strip is; `ToolStripPanel` (`topStrips` ...) has `strips`, `RowCount()`, `RowStrips(row)`.
 
 ## The status bar
 

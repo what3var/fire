@@ -5,7 +5,7 @@
 //     window.Show()      // shows the window and goes on (or window.Run(): runs until it is closed)
 
 class $class$ : $class$Base {
-    // onClick="Ok" in the markup
+    // OnClick="Ok" in the markup
     undefined Ok(any sender) {
         print("OK")
     }

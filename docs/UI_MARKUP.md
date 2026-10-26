@@ -36,7 +36,7 @@ class Person {
 }
 
 class GreeterWindow : GreeterBase {        // the inheritance is declared here, in the code-behind
-    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of onClick="Ok"
+    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of OnClick="Ok"
 }
 
 var window = new GreeterWindow()
@@ -102,9 +102,10 @@ that a window can be composed of views.
 Every element has the properties it shares with all others - `Left Top Width Height Visible Enabled`, `Margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `HorizontalAlign` (`Stretch Left Center Right`),
 `VerticalAlign` (`Stretch Top Center Bottom`), `MinWidth MinHeight MaxWidth MaxHeight`, `Background` `Foreground` (colours), `Pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `Font` (a font name for `Fonts.Get`, docs/FONTS.md; empty = that of the surrounding element) and `FontSize` (pixels), `Style`, `Template` (keys of
 resources, see below) - plus `Name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
-The attribute names are written in PascalCase (case does not matter when they are read). Each sets the field of the element with the same name in camel case
-(`Text` sets `text`, `IsChecked` sets `isChecked`, `OnClick` sets `onClick`) - except `Left`/`Top` (the fields `x`/`y`), `HorizontalAlign`/`VerticalAlign`
-(`halign`/`valign`) and `VerticalScrollMode`/`HorizontalScrollMode` (`vmode`/`hmode`). The old names `x`, `y`, `halign`, ... are reported with the new one.
+The attribute names are written in PascalCase (case does not matter when they are read). Each sets the field of the element with exactly the same name
+(`Text` sets `button.Text`, `IsChecked` sets `IsChecked`, `OnClick` sets `OnClick`, `Left`/`Top` set `Left`/`Top`), so code and markup use the same names -
+only the attached properties differ (`Grid.Row` sets `GridRow`, `DockPanel.Dock` sets `Dock`) and `Orientation` of a stack sets `Horizontal`.
+The old names `x`, `y`, `halign`, ... are reported with the new one.
 
 | element | properties | events |
 |---|---|---|
@@ -147,13 +148,13 @@ The attribute names are written in PascalCase (case does not matter when they ar
 
 A text that starts with a brace is written `{}{like this}`.
 
-**Objects:** `[Type Arg1, Arg2]` assigns a new instance of `Type` - the arguments go to its constructor: `background="[SolidBrush #336699]"`, `itemsSource="[Names 'Ada', 'Bob']"`.
+**Objects:** `[Type Arg1, Arg2]` assigns a new instance of `Type` - the arguments go to its constructor: `Background="[SolidBrush #336699]"`, `ItemsSource="[Names 'Ada', 'Bob']"`.
 An argument is a number (also with a unit: `2.5mm`), a text in quotes (`'it''s'` - single quotes are easiest inside an attribute; two quotes stand for one), `#RRGGBB` (a colour number),
 `true`/`false`/`undefined`, `{Enum ...}`/`{Static ...}`/`{Expr ...}` or another object (`[Pair 1, [Point 2, 3]]`). The value is used as it is: a colour property gets the brush itself, not a
 `SolidBrush` around it. The design view makes objects of the libraries (`UI.*`, `SolidBrush`, `Pen`); objects of your own classes are left out there, like `{Expr ...}`.
 A text that starts with `[` and a name is written `{}[like this]`.
 
-**Handlers:** `onClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
+**Handlers:** `OnClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
 override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)
 
 ## Styles, triggers and templates
@@ -189,7 +190,7 @@ In `<Resources>` (next to the converters):
 (more conditions with `<Condition Property="..." Value="..."/>`, in a template with `Source="partName"` to test a part). A property that a method sets (`Rows`, `Data`) cannot be set by a style. Event handlers and `{Binding}` are not available
 inside a template (react to the control itself). Everything is explained in docs/UI.md (*Aussehen*); the generated script builds `UI.Style`, `UI.Trigger` and `UI.ControlTemplate` objects (`fxStyle_Key`, `fxTemplate_Key` are fields of the class).
 
-## Lists with data: DataTemplate, CollectionView, itemsSource
+## Lists with data: DataTemplate, CollectionView, ItemsSource
 
 `ListBox` and `ListView` can take their rows from data instead of `<Item>` children:
 

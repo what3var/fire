@@ -222,8 +222,8 @@ namespace UI {
 
     // The common properties of the shapes: fill (`fill`, a Brush; undefined: do not fill) and outline (`stroke`, a Pen; undefined: no outline).
     class Shape : Element {
-        Brush fill
-        Pen stroke
+        Brush Fill
+        Pen Stroke
 
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) { }
 
@@ -238,8 +238,8 @@ namespace UI {
 
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            if (this.fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.fill) }
-            if (this.stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.stroke) }
+            if (this.Fill != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Fill) }
+            if (this.Stroke != undefined) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, this.Stroke) }
         }
     }
 
@@ -256,35 +256,35 @@ namespace UI {
             var mx = ax + rx
             var my = ay + ry
             // with an odd size the ellipse stays within the rectangle
-            if (this.fill != undefined) { root.renderer.FillEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.fill) }
-            if (this.stroke != undefined) { root.renderer.DrawEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.stroke) }
+            if (this.Fill != undefined) { root.renderer.FillEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.Fill) }
+            if (this.Stroke != undefined) { root.renderer.DrawEllipse(mx, my, UI.M.Max(0, rx - 1), UI.M.Max(0, ry - 1), this.Stroke) }
         }
     }
 
     // A segment from (x1, y1) to (x2, y2) in the element (coordinates relative to its top left corner).
     class Line : Shape {
-        int x1 = 0
-        int y1 = 0
-        int x2 = 0
-        int y2 = 0
+        int X1 = 0
+        int Y1 = 0
+        int X2 = 0
+        int Y2 = 0
 
         construct(int x1 = 0, int y1 = 0, int x2 = 0, int y2 = 0) : base(0, 0, -1, -1) {
-            this.x1 = x1
-            this.y1 = y1
-            this.x2 = x2
-            this.y2 = y2
+            this.X1 = x1
+            this.Y1 = y1
+            this.X2 = x2
+            this.Y2 = y2
         }
 
         string StyleKey() { return "Line" }
 
         undefined MeasureCore(Root root, int aw, int ah) {
-            this.cw = UI.M.Max(this.x1, this.x2) + 1
-            this.ch = UI.M.Max(this.y1, this.y2) + 1
+            this.cw = UI.M.Max(this.X1, this.X2) + 1
+            this.ch = UI.M.Max(this.Y1, this.Y2) + 1
         }
 
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            if (this.stroke != undefined) { root.renderer.DrawLine(ax + this.x1, ay + this.y1, ax + this.x2, ay + this.y2, this.stroke) }
+            if (this.Stroke != undefined) { root.renderer.DrawLine(ax + this.X1, ay + this.Y1, ax + this.X2, ay + this.Y2, this.Stroke) }
         }
     }
 
@@ -339,8 +339,8 @@ namespace UI {
                     pts[k] = pts[k] + ax
                     pts[k + 1] = pts[k + 1] + ay
                 }
-                if (f.closed && this.fill != undefined && f.Count() >= 3) { root.renderer.FillPolygon(pts, this.fill) }
-                if (this.stroke != undefined) { root.renderer.DrawPath(pts, this.stroke, f.closed) }
+                if (f.closed && this.Fill != undefined && f.Count() >= 3) { root.renderer.FillPolygon(pts, this.Fill) }
+                if (this.Stroke != undefined) { root.renderer.DrawPath(pts, this.Stroke, f.closed) }
             }
         }
     }
@@ -352,11 +352,11 @@ namespace UI {
     class DrawingCanvas : Element {
         Framebuffer framebuffer
         Renderer renderer
-        lambda<DrawingCanvas> onPaint
-        lambda<int, int, int> onMouseDown
-        lambda<int, int> onMouseMove
-        lambda<int, int, int> onMouseUp
-        bool continuous = false
+        lambda<DrawingCanvas> OnPaint
+        lambda<int, int, int> OnMouseDown
+        lambda<int, int> OnMouseMove
+        lambda<int, int, int> OnMouseUp
+        bool Continuous = false
         bool dirty = true
         bool external = false
         // how the image gets onto the surface: UI.BlitMode (Copy, Transparent, Blend)
@@ -375,7 +375,7 @@ namespace UI {
         // onPaint runs here (not while painting): what it changes on the elements then reports itself like any other change.
         undefined Poll(Root root) {
             base.Poll(root)
-            if (this.continuous) { this.dirty = true }
+            if (this.Continuous) { this.dirty = true }
             // the element has a different size than the surface: it is created anew and repainted
             if (!this.external && this.framebuffer != undefined && (this.framebuffer.Width() != this.actualWidth || this.framebuffer.Height() != this.actualHeight)) { this.dirty = true }
             if (this.external || !this.dirty || this.actualWidth <= 0 || this.actualHeight <= 0) { return }
@@ -384,7 +384,7 @@ namespace UI {
             this.Ensure(this.actualWidth, this.actualHeight)
             this.dirty = false
             root.painting = false
-            var paint = this.onPaint
+            var paint = this.OnPaint
             if (paint != undefined) { paint(this) }
             base.Invalidate()
         }
@@ -435,22 +435,22 @@ namespace UI {
         }
 
         undefined MouseDown(Root root, int button, int px, int py) {
-            var callback = this.onMouseDown
+            var callback = this.OnMouseDown
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }
 
         undefined MouseMove(Root root, int px, int py) {
-            var callback = this.onMouseMove
+            var callback = this.OnMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
         undefined Hover(Root root, int px, int py) {
-            var callback = this.onMouseMove
+            var callback = this.OnMouseMove
             if (callback != undefined) { callback(px - this.ax, py - this.ay) }
         }
 
         undefined MouseUp(Root root, int button, int px, int py) {
-            var callback = this.onMouseUp
+            var callback = this.OnMouseUp
             if (callback != undefined) { callback(px - this.ax, py - this.ay, button) }
         }
     }

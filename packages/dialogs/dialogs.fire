@@ -30,8 +30,8 @@ namespace Dialogs {
             this.body = new UI.DockPanel(0, 0, width, height)
             this.root.Add(this.body)
             this.root.onResize = func (int w, int h) on this => {
-                this.body.width = w
-                this.body.height = h
+                this.body.Width = w
+                this.body.Height = h
             }
             this.root.onKeyPreview = func (int key, int mod) on this => {
                 if (key == UI.Keys.Escape()) {
@@ -67,7 +67,7 @@ namespace Dialogs {
         construct(string text, Dialogs.DialogWindow dialog, int result) : base(text, 0, 0, 96, 28) {
             this.dialog = dialog
             this.result = result
-            this.onClick = func () on this => { this.dialog.Close(this.result) }
+            this.OnClick = func () on this => { this.dialog.Close(this.result) }
         }
     }
 
@@ -82,7 +82,7 @@ namespace Dialogs {
             var dialog = new Dialogs.DialogWindow(caption == "" ? "Message" : caption, width, height)
 
             var row = new UI.StackPanel(0, 0, -1, -1, true, 8, 10)
-            row.halign = UI.HAlign.Right
+            row.HorizontalAlign = UI.HAlign.Right
             if (buttons == Dialogs.MessageBoxButtons.OK) {
                 row.Add(new Dialogs.DialogButton("OK", dialog, Dialogs.DialogResult.OK))
                 dialog.cancelResult = Dialogs.DialogResult.OK
@@ -220,20 +220,20 @@ namespace Dialogs {
 
             // top: up, home, the folder
             var top = new UI.Grid()
-            top.margin = new UI.Thickness(8, 8, 8, 4)
+            top.Margin = new UI.Thickness(8, 8, 8, 4)
             top.SetColumns("auto, auto, *")
             top.SetRows("auto")
             var up = new UI.Button("Up", 0, 0, 64, 26)
-            up.icon = UI.Icons.Up()
-            up.iconSize = 12
-            up.onClick = func () on this => { this.GoUp() }
+            up.Icon = UI.Icons.Up()
+            up.IconSize = 12
+            up.OnClick = func () on this => { this.GoUp() }
             var home = new UI.Button("Home", 0, 0, 80, 26)
-            home.icon = UI.Icons.Home()
-            home.iconSize = 12
-            home.onClick = func () on this => { this.Navigate(this.Home()) }
+            home.Icon = UI.Icons.Home()
+            home.IconSize = 12
+            home.OnClick = func () on this => { this.Navigate(this.Home()) }
             this.placeBox = new UI.TextBox("", 0, 0, -1, 26)
-            this.placeBox.margin = new UI.Thickness(6, 0, 0, 0)
-            this.placeBox.onEnter = func () on this => { this.Navigate(this.placeBox.text) }
+            this.placeBox.Margin = new UI.Thickness(6, 0, 0, 0)
+            this.placeBox.OnEnter = func () on this => { this.Navigate(this.placeBox.Text) }
             top.AddAt(up, 0, 0)
             top.AddAt(home, 0, 1)
             top.AddAt(this.placeBox, 0, 2)
@@ -241,24 +241,24 @@ namespace Dialogs {
 
             // bottom: name, type, the buttons, a line for problems
             var bottom = new UI.Grid()
-            bottom.margin = new UI.Thickness(8, 4, 8, 8)
+            bottom.Margin = new UI.Thickness(8, 4, 8, 8)
             bottom.SetColumns("auto, *, auto")
             bottom.SetRows("auto, auto, auto")
             var nameLabel = new UI.Label(this.foldersOnly ? "Folder:" : "File name:")
-            nameLabel.valign = UI.VAlign.Center
+            nameLabel.VerticalAlign = UI.VAlign.Center
             this.nameBox = new UI.TextBox("", 0, 0, -1, 26)
-            this.nameBox.margin = new UI.Thickness(6, 2, 6, 2)
-            this.nameBox.onEnter = func () on this => { this.AcceptName() }
+            this.nameBox.Margin = new UI.Thickness(6, 2, 6, 2)
+            this.nameBox.OnEnter = func () on this => { this.AcceptName() }
             var accept = new UI.Button(this.acceptText, 0, 0, 96, 28)
-            accept.onClick = func () on this => { this.AcceptName() }
+            accept.OnClick = func () on this => { this.AcceptName() }
             var typeLabel = new UI.Label("Type:")
-            typeLabel.valign = UI.VAlign.Center
+            typeLabel.VerticalAlign = UI.VAlign.Center
             this.typeButton = new UI.Button(this.filterNames[this.filterAt], 0, 0, -1, 28)
-            this.typeButton.margin = new UI.Thickness(6, 2, 6, 2)
-            this.typeButton.onClick = func () on this => { this.ChooseType() }
+            this.typeButton.Margin = new UI.Thickness(6, 2, 6, 2)
+            this.typeButton.OnClick = func () on this => { this.ChooseType() }
             var cancel = new Dialogs.DialogButton("Cancel", this.dialog, Dialogs.DialogResult.Cancel)
             this.status = new UI.Label("")
-            this.status.brush = new SolidBrush(UI.Color.Rgb(230, 90, 90))
+            this.status.Color = new SolidBrush(UI.Color.Rgb(230, 90, 90))
             bottom.AddAt(nameLabel, 0, 0)
             bottom.AddAt(this.nameBox, 0, 1)
             bottom.AddAt(accept, 0, 2)
@@ -272,22 +272,22 @@ namespace Dialogs {
 
             // left: the places
             this.places = new UI.ListBox(0, 0, 150, -1)
-            this.places.margin = new UI.Thickness(8, 4, 4, 4)
+            this.places.Margin = new UI.Thickness(8, 4, 4, 4)
             this.FillPlaces()
-            this.places.onSelect = func () on this => {
-                var i = this.places.selectedIndex
+            this.places.OnSelect = func () on this => {
+                var i = this.places.SelectedIndex
                 if (i >= 0) { this.Navigate(this.placePaths[i]) }
             }
             body.AddDocked(this.places, UI.Dock.Left)
 
             // the content of the folder
             this.list = new UI.ListView(0, 0, -1, -1)
-            this.list.margin = new UI.Thickness(4, 4, 8, 4)
+            this.list.Margin = new UI.Thickness(4, 4, 8, 4)
             this.list.AddColumn("Name", "name", -1)
             if (!this.foldersOnly) { this.list.AddColumn("Size", "size", 80) }
             this.list.AddColumn("Modified", "modified", 140)
-            this.list.onSelect = func () on this => { this.Selected() }
-            this.list.onActivate = func () on this => { this.Activated() }
+            this.list.OnSelect = func () on this => { this.Selected() }
+            this.list.OnActivate = func () on this => { this.Activated() }
             body.Add(this.list)
 
             this.dialog.root.onKeyPreview = func (int key, int mod) on this => {
@@ -356,7 +356,7 @@ namespace Dialogs {
         bool Navigate(string folder) {
             var full = ""
             try { full = IO.Path.GetFullPath(folder) } catch (IO.IOException e) {
-                this.status.text = e.message
+                this.status.Text = e.message
                 return false
             }
             var rows = new List()
@@ -377,13 +377,13 @@ namespace Dialogs {
                     }
                 }
             } catch (IO.IOException e) {
-                this.status.text = e.message
+                this.status.Text = e.message
                 return false
             }
             this.current = full
             this.placeBox.SetText(full)
             this.list.SetItems(rows)
-            this.status.text = ""
+            this.status.Text = ""
             return true
         }
 
@@ -424,7 +424,7 @@ namespace Dialogs {
 
         // The name box: a folder opens, a pattern ("*.log") filters, anything else is the file.
         undefined AcceptName() {
-            var text = this.nameBox.text.Trim()
+            var text = this.nameBox.Text.Trim()
             if (text == "") {
                 if (this.foldersOnly) { this.Choose(this.current) }
                 return
@@ -434,7 +434,7 @@ namespace Dialogs {
                 this.filterNames.Add(text)
                 this.filterPatterns.Add(text)
                 this.filterAt = this.filterNames.count - 1
-                this.typeButton.text = text
+                this.typeButton.Text = text
                 this.nameBox.SetText("")
                 this.Navigate(this.current)
                 return
@@ -484,7 +484,7 @@ namespace Dialogs {
 
         undefined SetType(int index) {
             this.filterAt = index
-            this.typeButton.text = this.filterNames[index]
+            this.typeButton.Text = this.filterNames[index]
             this.Navigate(this.current)
         }
     }
@@ -497,7 +497,7 @@ namespace Dialogs {
         construct(Dialogs.FileDialog owner, int index) : base(owner.filterNames[index]) {
             this.owner = owner
             this.index = index
-            this.onClick = func () on this => { this.owner.SetType(this.index) }
+            this.OnClick = func () on this => { this.owner.SetType(this.index) }
         }
     }
 

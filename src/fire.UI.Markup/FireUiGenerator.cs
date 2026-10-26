@@ -301,7 +301,7 @@ namespace fire.UI.Markup
                 if (element.Name != null || bound)
                 {
                     partName = element.Name ?? "fxPart" + local.Substring(1);
-                    code.Line($"{local}.name = {Quote(partName)}");
+                    code.Line($"{local}.Name = {Quote(partName)}");
                 }
             }
 
@@ -472,13 +472,14 @@ namespace fire.UI.Markup
                 if (element.Find("descending")?.Value is LiteralValue d2 && !d2.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) && !d2.Text.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
                     errors.Add(new MarkupDiagnostic(element.Find("descending")!.Line, $"'Descending' needs true or false, not '{d2.Text}'."));
                 if (sortBy != null) code.Line($"{v}.SortBy({Quote(sortBy)}, {(descending ? "true" : "false")})");
-                else if (descending) code.Line($"{v}.descending = true");
-                foreach (var name in new[] { "filter", "comparer", "source" })
+                else if (descending) code.Line($"{v}.Descending = true");
+                foreach (var name in new[] { "Filter", "Comparer", "Source" })
                 {
                     var attribute = element.Find(name);
                     if (attribute == null || attribute.Value is BindingValue) continue; // a binding makes the source
-                    string? value = ValueCode(MarkupSchema.CollectionViewDef.Property(name)!, attribute, errors);
-                    if (value != null) code.Line($"{v}.{name} = {value}");
+                    var property = MarkupSchema.CollectionViewDef.Property(name)!;
+                    string? value = ValueCode(property, attribute, errors);
+                    if (value != null) code.Line($"{v}.{property.FieldName} = {value}");
                 }
                 code.Line($"{resources}.Set({Quote(view.Key)}, {v})");
                 code.Line($"this.fxView_{view.Key} = {v}");

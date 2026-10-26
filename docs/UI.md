@@ -21,46 +21,46 @@ ui.Add(ok)
 ui.Add(check)
 ui.Add(out)
 
-ok.onClick = func () => { out.text = "Hallo " + name.text }     // läuft im Hauptprogramm, sieht die echten Globals
+ok.OnClick = func () => { out.Text = "Hallo " + name.Text }     // läuft im Hauptprogramm, sieht die echten Globals
 
 while (ui.Tick()) {                      // zeichnen, Fenster-Zyklus, Ereignisse verarbeiten
-    if (check.TakeChanged()) { print("Kontrollkaestchen: " + check.isChecked) }
+    if (check.TakeChanged()) { print("Kontrollkaestchen: " + check.IsChecked) }
 }
 ```
 
 ## Steuerelemente
 
-**Symbole auf Knöpfen.** `button.icon` ist eine Vektorform (`UI.Geometry`), die in der Textfarbe gezeichnet wird (ausgegraut, wenn der Knopf gesperrt ist):
+**Symbole auf Knöpfen.** `button.Icon` ist eine Vektorform (`UI.Geometry`), die in der Textfarbe gezeichnet wird (ausgegraut, wenn der Knopf gesperrt ist):
 fertige gibt es in `UI.Icons` (`Up`, `Down`, `Back`, `Forward`, `Home`, `Folder`, `File`, `Close`, `Check`, `Add`, Raster 16 x 16) oder eigene mit
-`UI.Geometry.Parse("M 8 1 L 15 8 L 1 8 Z")` (geschlossene Figuren werden gefüllt, offene als Linie gezeichnet). `button.image` ist ein Bild (`Framebuffer`), etwa
-`Framebuffer.FromResource(new Resource("icons/home.png"))` - auch aus einem Paket (docs/RESOURCES.md). Beides steht vor dem Text (oder allein, ohne Text), `iconSize` Pixel
+`UI.Geometry.Parse("M 8 1 L 15 8 L 1 8 Z")` (geschlossene Figuren werden gefüllt, offene als Linie gezeichnet). `button.Image` ist ein Bild (`Framebuffer`), etwa
+`Framebuffer.FromResource(new Resource("icons/home.png"))` - auch aus einem Paket (docs/RESOURCES.md). Beides steht vor dem Text (oder allein, ohne Text), `IconSize` Pixel
 groß (16); ein Knopf ohne feste Größe wird entsprechend breiter.
 
-Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibliothek diese Elemente mit; alle erben von `UI.Element`, haben also Layout-Felder, `style`, `template` (wo es Sinn hat) und lassen sich stylen:
+Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibliothek diese Elemente mit; alle erben von `UI.Element`, haben also Layout-Felder, `Style`, `Template` (wo es Sinn hat) und lassen sich stylen:
 
-- **`ScrollViewer(x, y, w, h)`**: zeigt EIN Kind (`SetContent(element)`) in einem Ausschnitt; Bildlaufleisten erscheinen, wenn es nicht hineinpasst (`vmode`/`hmode` = `UI.ScrollMode.Disabled/Auto/Visible`, senkrecht Auto, waagerecht Disabled: dann wird das Kind auf die Breite des Ausschnitts begrenzt, ein WrapPanel bricht um).
+- **`ScrollViewer(x, y, w, h)`**: zeigt EIN Kind (`SetContent(element)`) in einem Ausschnitt; Bildlaufleisten erscheinen, wenn es nicht hineinpasst (`VerticalScrollMode`/`HorizontalScrollMode` = `UI.ScrollMode.Disabled/Auto/Visible`, senkrecht Auto, waagerecht Disabled: dann wird das Kind auf die Breite des Ausschnitts begrenzt, ein WrapPanel bricht um).
   Mausrad (mit waagerechtem Rad seitlich), Ziehen am Griff, Klick neben den Griff blättert eine Seite; `ScrollIntoView(x, y, w, h)`. Dahinter steckt `UI.Scroller` (Versatz, Inhalts- und Ausschnittsgröße, Griff), den die Listen mitbenutzen.
-- **`ListBox(x, y, w, h)`**: `Add(item)` (Text, Zahl oder Objekt; ein Objekt gehört danach der Liste), `SetItems(liste)`, `Remove`, `Clear`; `displayMember = "name"` zeigt diese Eigenschaft der Objekte; `selectedIndex`/`selectedItem`, `Select(i)`, `onSelect`/`TakeChanged()`,
-  Enter oder ein Doppelklick auf eine Zeile (zweiter Klick auf dieselbe Zeile innerhalb von `doubleClickCycles` = 24 Zyklen) meldet `onActivate`/`TakeActivated()`; Pfeile, Pos1/Ende, Bild auf/ab, Mausrad, Klick. `itemTemplate = new UI.DataTemplate(func (item) => element)` baut jede Zeile als eigenes Element (nur zum Anzeigen). Nach einer Änderung in den Objekten selbst: `Refresh()`.
+- **`ListBox(x, y, w, h)`**: `Add(item)` (Text, Zahl oder Objekt; ein Objekt gehört danach der Liste), `SetItems(liste)`, `Remove`, `Clear`; `DisplayMember = "name"` zeigt diese Eigenschaft der Objekte; `SelectedIndex`/`selectedItem`, `Select(i)`, `OnSelect`/`TakeChanged()`,
+  Enter oder ein Doppelklick auf eine Zeile (zweiter Klick auf dieselbe Zeile innerhalb von `doubleClickCycles` = 24 Zyklen) meldet `OnActivate`/`TakeActivated()`; Pfeile, Pos1/Ende, Bild auf/ab, Mausrad, Klick. `ItemTemplate = new UI.DataTemplate(func (item) => element)` baut jede Zeile als eigenes Element (nur zum Anzeigen). Nach einer Änderung in den Objekten selbst: `Refresh()`.
 - **`ListView`**: wie die ListBox, mit Spalten und Kopfzeile: `AddColumn("Name", "name", 100)` (Breite -1: der Rest); ein Klick auf den Titel sortiert (noch einmal: umgekehrt).
-- **`CollectionView(liste)`**: eine Sicht auf eine Liste - `filter` (Lambda mit einem Parameter), `SortBy("eigenschaft", absteigend)` oder `comparer` (Lambda mit zwei Parametern), `current` mit `MoveCurrentTo.../CurrentItem()`;
+- **`CollectionView(liste)`**: eine Sicht auf eine Liste - `Filter` (Lambda mit einem Parameter), `SortBy("eigenschaft", absteigend)` oder `Comparer` (Lambda mit zwei Parametern), `current` mit `MoveCurrentTo.../CurrentItem()`;
   `listBox.SetView(sicht)` zeigt sie (die Auswahl folgt `current`). Die Sicht aktualisiert sich beim Zeichnen, wenn sich die Anzahl der Quelle ändert, sonst mit `Refresh()`/`Invalidate()`.
-- **`TreeView`**: `AddNode(new UI.TreeNode("Text", wert))`, Kinder mit `node.Add(...)`, `expanded`; Klick aufs Kästchen klappt auf/zu, Klick wählt (`selected`, `onSelect`/`TakeChanged()`); Auf/Ab wandern, Rechts klappt auf bzw. geht zum ersten Kind, Links klappt zu bzw. geht zum Elternknoten.
-- **`RadioButtons`**: `Add("Text")`, `header`, `horizontal`, `selectedIndex`/`selectedItem`, `onChange`/`TakeChanged()`; Pfeiltasten wechseln die Wahl.
-- **`ComboBox(x, y, w, h)`**: eine Auswahl aus einer aufklappenden Liste: `Add(item)`, `SetItems(liste)`/`itemsSource`, `Remove`, `Clear`, `displayMember`, `selectedIndex`/`selectedItem`, `text` (der Text der Wahl), `SelectText("x")`,
-  `onSelect`/`TakeChanged()`; ein Klick (oder Alt+Ab, F4, Enter, Leertaste) klappt die Liste auf (höchstens `maxDropDownItems` Zeilen, mehr rollen), ein Klick auf eine Zeile wählt, Escape oder ein Klick daneben schließt;
+- **`TreeView`**: `AddNode(new UI.TreeNode("Text", wert))`, Kinder mit `node.Add(...)`, `Expanded`; Klick aufs Kästchen klappt auf/zu, Klick wählt (`selected`, `OnSelect`/`TakeChanged()`); Auf/Ab wandern, Rechts klappt auf bzw. geht zum ersten Kind, Links klappt zu bzw. geht zum Elternknoten.
+- **`RadioButtons`**: `Add("Text")`, `Header`, `Horizontal`, `SelectedIndex`/`selectedItem`, `OnChange`/`TakeChanged()`; Pfeiltasten wechseln die Wahl.
+- **`ComboBox(x, y, w, h)`**: eine Auswahl aus einer aufklappenden Liste: `Add(item)`, `SetItems(liste)`/`ItemsSource`, `Remove`, `Clear`, `DisplayMember`, `SelectedIndex`/`selectedItem`, `Text` (der Text der Wahl), `SelectText("x")`,
+  `OnSelect`/`TakeChanged()`; ein Klick (oder Alt+Ab, F4, Enter, Leertaste) klappt die Liste auf (höchstens `MaxDropDownItems` Zeilen, mehr rollen), ein Klick auf eine Zeile wählt, Escape oder ein Klick daneben schließt;
   zugeklappt wählen Auf/Ab, Pos1/Ende direkt. Tool-Leisten mit Kombinationsfeldern, andockbare Toolfenster und eine Statusleiste bringt `#import "ui.docking"` (docs/DOCKING.md).
 - **`AutoSuggestBox(text, x, y, w, h)`**: ein TextBox, der beim Tippen eine Liste von Vorschlägen zeigt: `AddSuggestion(item)` (vorgeschlagen wird, was den Text enthält, ohne Groß-/Kleinschreibung) oder `provider = func (text) => liste`;
-  Auf/Ab wählt, Enter oder Klick übernimmt (`onChosen`/`TakeChosen()`, `chosenItem`), Escape schließt; `maxSuggestions`.
-- **Menüs:** `UI.MenuBar` mit Menüs der obersten Ebene (`bar.Add(new UI.MenuItem("File"))`), `item.Add(new UI.MenuItem("Open", func () => { ... }))`, Trenner `UI.MenuItem.Separator()`, Untermenüs (ein `MenuItem` mit eigenen Zeilen), `checkable`/`isChecked`, `enabled`, `shortcut` (nur ein Text).
+  Auf/Ab wählt, Enter oder Klick übernimmt (`OnChosen`/`TakeChosen()`, `chosenItem`), Escape schließt; `MaxSuggestions`.
+- **Menüs:** `UI.MenuBar` mit Menüs der obersten Ebene (`bar.Add(new UI.MenuItem("File"))`), `item.Add(new UI.MenuItem("Open", func () => { ... }))`, Trenner `UI.MenuItem.Separator()`, Untermenüs (ein `MenuItem` mit eigenen Zeilen), `Checkable`/`IsChecked`, `Enabled`, `Shortcut` (nur ein Text).
   Ein Klick klappt auf, bei offenem Menü wechselt der Zeiger das Menü; Pfeile, Enter, Escape. **Kontextmenü:** `element.contextMenu = liste` (eine Liste von `MenuItem`) - ein Rechtsklick auf das Element oder einen Nachfahren zeigt es; allgemein `root.ShowMenu(liste, x, y)`.
 - **Schwebende Elemente:** `root.ShowPopup(element, x, y, transient = true, owner = undefined)` legt ein Element über die Oberfläche (zuletzt gezeichnet, zuerst getroffen), `root.ClosePopup(element)`, `root.CloseAllPopups()`; ein Klick daneben ruft `element.PopupOutside(root, x, y)` (schließt und
   verbraucht den Klick, wenn er den `owner` traf); `grabsKeys` heißt: es bekommt zuerst die Tasten. Menüs und die Vorschlagsliste sind solche Elemente.
 - **`ToolBar`**: ein waagerechtes StackPanel mit `AddButton("Text", func () => { ... })` und `AddSeparator()`.
-- **`Image(framebuffer)`**: zeigt einen Framebuffer (`Framebuffer.FromResource(new Resource("logo.png"))`, ein geladenes oder selbst gemaltes Bild) mit Alpha; `stretch = UI.Stretch.None/Fill/Uniform/UniformToFill`.
-- **Formen:** `Rectangle`, `Ellipse` (Größe des Elements), `Line(x1, y1, x2, y2)`, `Path(geometry)` - alle mit `fill` (Brush) und `stroke` (Pen). Eine **`Geometry`** besteht aus Linienzügen: `MoveTo/LineTo/QuadTo/CubicTo/Close`, `AddRect/AddEllipse/AddArc` oder
+- **`Image(framebuffer)`**: zeigt einen Framebuffer (`Framebuffer.FromResource(new Resource("logo.png"))`, ein geladenes oder selbst gemaltes Bild) mit Alpha; `Stretch = UI.Stretch.None/Fill/Uniform/UniformToFill`.
+- **Formen:** `Rectangle`, `Ellipse` (Größe des Elements), `Line(x1, y1, x2, y2)`, `Path(geometry)` - alle mit `Fill` (Brush) und `Stroke` (Pen). Eine **`Geometry`** besteht aus Linienzügen: `MoveTo/LineTo/QuadTo/CubicTo/Close`, `AddRect/AddEllipse/AddArc` oder
   `UI.Geometry.Parse("M 10 10 L 50 10 C 60 20 60 40 25 50 Z")` (Befehle M L H V C Q Z, klein = relativ; Zahlen ganzzahlig); `path.SetData(text)`. Geschlossene Figuren werden gefüllt (Even-Odd).
-- **`DrawingCanvas(x, y, w, h)`**: eine Zeichenfläche mit eigenem Framebuffer (`canvas.framebuffer`, gezeichnet wird mit `canvas.renderer`): `onPaint = func (c) => { ... }` läuft beim Anlegen und bei Größenänderung, nach `Invalidate()` und - mit `continuous` - in jedem Bild;
+- **`DrawingCanvas(x, y, w, h)`**: eine Zeichenfläche mit eigenem Framebuffer (`canvas.framebuffer`, gezeichnet wird mit `canvas.renderer`): `OnPaint = func (c) => { ... }` läuft beim Anlegen und bei Größenänderung, nach `Invalidate()` und - mit `Continuous` - in jedem Bild;
   `SetSource(framebuffer)` zeigt stattdessen einen fremden Framebuffer; `onMouseDown/onMouseMove/onMouseUp` melden Mausereignisse (x, y relativ zur Fläche).
 - **Mausrad und Hover:** `Element.MouseWheel(root, dx, dy)` (true = verbraucht, sonst fragt der Root den Container) und `Element.Hover(root, x, y)`; `Root.PushClip/PopClip` beschneiden das Zeichnen (siehe `docs/CONSOLE.md`, `SetClip`).
 
@@ -69,68 +69,68 @@ Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibl
 - **`UI.Root(Framebuffer, Window)`**: legt einen `Renderer` zum Zeichnen an (`root.renderer`), schaltet die Ereignis-Warteschlange des Fensters ein und hält die oberste Ebene (`content`, ein `Panel`), das `theme`
   (`UI.Theme`: alle Farben als `Brush`-Felder - `back`, `panel`, `face`, `faceHover`, `facePressed`, `faceDisabled`, `inputBack`, `accent`, `text`, `textDisabled` - und `Pen`-Felder `border`, `borderFocus`, `caret`) und Fokus/Hover/gedrückt-Zustand. `Add(element)` hängt ein Element an, `Update()` bringt die Oberfläche auf den Stand und malt, was sich geändert hat (siehe *Zeichnen nur bei Änderungen*), `Draw()` zeichnet alles neu, `Tick()` ist ein Zyklus
   (`Update()`, `window.Tick()`, alle angekommenen Ereignisse verteilen; false, sobald das Fenster geschlossen ist), `Run()` ruft `Tick` bis zum Schließen - `Run(anderes)` hängt vorher ein weiteres Fenster an
-  (siehe *Mehrere Fenster*). Eine Änderung an einem Feld (`label.text = ...`) ist beim nächsten Tick sichtbar.
-- **Elemente** (`UI.Element` als Basis: `x`, `y`, `width`, `height` relativ zum Container, `visible`, `enabled`, dazu `hover`/`pressed`/`focused`):
-  `Panel` (Container, `showBorder`, `background` = Brush, `filled`, `pen` = Stift des Rahmens), `Stack` (ordnet Kinder unter- oder nebeneinander an: `horizontal`, `spacing`, `padding`), `Label` (`brush`), `Button`, `CheckBox`, `TextBox`.
-- **Reagieren:** jedes bedienbare Element kennt beides - ein Lambda-Feld (`onClick`, `onChange`, `onEnter`) und einen abfragbaren Merker (`TakeClicked()`, `TakeChanged()`, `TakeEntered()`; liefert
+  (siehe *Mehrere Fenster*). Eine Änderung an einem Feld (`label.Text = ...`) ist beim nächsten Tick sichtbar.
+- **Elemente** (`UI.Element` als Basis: `Left`, `Top`, `Width`, `Height` relativ zum Container, `Visible`, `Enabled`, dazu `Hover`/`Pressed`/`Focused`):
+  `Panel` (Container, `ShowBorder`, `Background` = Brush, `Filled`, `Pen` = Stift des Rahmens), `Stack` (ordnet Kinder unter- oder nebeneinander an: `Horizontal`, `Spacing`, `Padding`), `Label` (`Color`), `Button`, `CheckBox`, `TextBox`.
+- **Reagieren:** jedes bedienbare Element kennt beides - ein Lambda-Feld (`OnClick`, `OnChange`, `OnEnter`) und einen abfragbaren Merker (`TakeClicked()`, `TakeChanged()`, `TakeEntered()`; liefert
   true einmal und setzt zurück). Lambdas laufen im Hauptprogramm, weil `Root.Tick` die Ereignisse per `Window.NextEvent` abholt statt über einen Callback (dessen isolierte Kopie der Globals
   würde ein Lambda in einem Objekt gar nicht erst zulassen, siehe `docs/CONSOLE.md`).
 - **Besitz:** `Add` ruft `child.TakeTo(this)` - ein Element gehört seinem Container und lebt, solange der Root lebt, auch wenn es in einer Hilfsfunktion angelegt wurde.
 - **Tasten vorab:** `root.onKeyPreview = func (int key, int mod) => { ... }` sieht jede Taste vor den Elementen; gibt es `true` zurück, ist die Taste verbraucht (so fängt ein Dialog Escape ab, egal wo der Fokus ist). `root.cycles` zählt die Zyklen des Roots.
 - **Bedienung:** Mausklick fokussiert, `Tab`/`Umschalt+Tab` wechselt den Fokus (nur sichtbare, aktive, fokussierbare Elemente), Leertaste/Enter löst Schaltfläche/Kontrollkästchen aus. `TextBox`:
-  Zeichen (Texteingabe-Ereignisse), Pfeile, Pos1/Ende, Rücktaste/Entf, Klick setzt die Einfügemarke, der sichtbare Ausschnitt wandert mit, `maxLength`, Enter meldet `entered`.
-- **Zeichnen:** flach, mit der eingebauten 8x14-Schrift (`root.cw`/`root.ch` sind Breite und Höhe eines Zeichens) oder - mit `font`/`fontSize` an einem Element, siehe *Schriften* unten - mit einer TrueType-Schrift; Gezeichnet wird mit Pinseln und Stiften (`new SolidBrush(UI.Color.Rgb(r, g, b))`, `new Pen(farbe, breite)`; `undefined` = Vorgabe des Themes), also auch mit halbdurchsichtigen Farben, solange `root.renderer.AlphaBlending` an ist. `UI.Color.Rgb(r, g, b)` baut die rohen Farbwerte, `UI.Keys` nennt die Tastencodes.
+  Zeichen (Texteingabe-Ereignisse), Pfeile, Pos1/Ende, Rücktaste/Entf, Klick setzt die Einfügemarke, der sichtbare Ausschnitt wandert mit, `MaxLength`, Enter meldet `entered`.
+- **Zeichnen:** flach, mit der eingebauten 8x14-Schrift (`root.cw`/`root.ch` sind Breite und Höhe eines Zeichens) oder - mit `Font`/`FontSize` an einem Element, siehe *Schriften* unten - mit einer TrueType-Schrift; Gezeichnet wird mit Pinseln und Stiften (`new SolidBrush(UI.Color.Rgb(r, g, b))`, `new Pen(farbe, breite)`; `undefined` = Vorgabe des Themes), also auch mit halbdurchsichtigen Farben, solange `root.renderer.AlphaBlending` an ist. `UI.Color.Rgb(r, g, b)` baut die rohen Farbwerte, `UI.Keys` nennt die Tastencodes.
 
 ## Layout
 
 Wie in WPF läuft das Layout in zwei Durchgängen je Zeichnen: `Measure` (was möchte das Element, bei begrenztem oder unbegrenztem Platz) und `Arrange` (Position und Größe im
 Container). Ganze Pixel, `-1` heißt "automatisch/unbegrenzt".
 
-- **Gemeinsame Felder** jedes `UI.Element`: `width`/`height` (`-1` = automatisch), `minWidth`/`minHeight`, `maxWidth`/`maxHeight`, `margin` (`new UI.Thickness(a)` / `(waagerecht, senkrecht)` /
-  `(links, oben, rechts, unten)`), `halign` (`UI.HAlign.Stretch/Left/Center/Right`), `valign` (`UI.VAlign....`). Nach dem Layout liefern `actualWidth`/`actualHeight` die Größe.
+- **Gemeinsame Felder** jedes `UI.Element`: `Width`/`Height` (`-1` = automatisch), `MinWidth`/`MinHeight`, `MaxWidth`/`MaxHeight`, `Margin` (`new UI.Thickness(a)` / `(waagerecht, senkrecht)` /
+  `(links, oben, rechts, unten)`), `HorizontalAlign` (`UI.HAlign.Stretch/Left/Center/Right`), `VerticalAlign` (`UI.VAlign....`). Nach dem Layout liefern `actualWidth`/`actualHeight` die Größe.
   Abweichung von WPF: ein `Stretch`-Element mit ausdrücklicher Breite/Höhe wird links bzw. oben ausgerichtet.
 - **`Panel`** / **`Canvas`**: absolute Positionen (`x`, `y`) wie bisher.
-- **`StackPanel`** (Alias `Stack`): `horizontal`, `spacing`, `padding`; Kinder quer gestreckt, unsichtbare zählen nicht.
-- **`DockPanel`**: Kind-Feld `dock` (`UI.Dock.Left/Top/Right/Bottom`) in Reihenfolge; das letzte Kind füllt den Rest.
+- **`StackPanel`** (Alias `Stack`): `Horizontal`, `Spacing`, `Padding`; Kinder quer gestreckt, unsichtbare zählen nicht.
+- **`DockPanel`**: Kind-Feld `Dock` (`UI.Dock.Left/Top/Right/Bottom`) in Reihenfolge; das letzte Kind füllt den Rest.
 - **`WrapPanel`**: bricht in die nächste Zeile bzw. Spalte um.
-- **`Grid`**: `SetRows("24, *, auto")`, `SetColumns("60, 2*, auto")` (Pixel, Stern mit Gewicht, auto); Kinder mit `AddAt(kind, zeile, spalte, zeilen, spalten)` oder den Feldern `gridRow`, `gridColumn`, `gridRowSpan`, `gridColumnSpan`.
+- **`Grid`**: `SetRows("24, *, auto")`, `SetColumns("60, 2*, auto")` (Pixel, Stern mit Gewicht, auto); Kinder mit `AddAt(kind, zeile, spalte, zeilen, spalten)` oder den Feldern `GridRow`, `GridColumn`, `GridRowSpan`, `GridColumnSpan`.
 - **`Border`**: ein Kind mit Rand, Innenabstand und Hintergrund.
 
 ## Aussehen: Eigenschaften, Styles, Trigger, Vorlagen, Ressourcen
 
 Die **Eigenschaften** der Elemente sind ihre Felder; Styles und Trigger setzen sie über den Namen (`Reflect`, deshalb bringt `#import "ui"` die Bibliothek `reflection` mit).
-Allen Elementen gemeinsam: `background` und `foreground` (Brush), `pen` (Stift des Rahmens), `name`; `undefined` heißt: das Steuerelement nimmt die Farben des Themes (und
-färbt Hover/Druck selbst; ein gesetztes `background` gilt in jedem Zustand, bis ein Trigger es ändert). Bei `Label` gilt `brush`, dann `foreground`.
+Allen Elementen gemeinsam: `Background` und `Foreground` (Brush), `Pen` (Stift des Rahmens), `name`; `undefined` heißt: das Steuerelement nimmt die Farben des Themes (und
+färbt Hover/Druck selbst; ein gesetztes `Background` gilt in jedem Zustand, bis ein Trigger es ändert). Bei `Label` gilt `Color`, dann `Foreground`.
 
 - **`UI.Style(target)`** sammelt `Set("eigenschaft", wert)` und Trigger. `target` ist der Stil-Schlüssel der Art Element (`element.StyleKey()`: `"Button"`, `"Label"`, `"CheckBox"`, `"TextBox"`,
   `"Panel"`, `"StackPanel"`, `"DockPanel"`, `"WrapPanel"`, `"Grid"`, `"Border"`, `"Canvas"`, `"Element"`; eine abgeleitete Klasse erbt den Schlüssel oder überschreibt `StyleKey`).
   `style.basedOn = anderer` baut auf einem Style auf.
 - **Impliziter Style:** `root.resources.AddStyle(style)` (oder `panel.Resources().AddStyle(style)`) - gilt für alle Elemente dieser Art darunter; der nächste Style nach oben gewinnt, zuletzt der des Roots.
-  **Expliziter Style:** `element.style = style` (auch später; er ersetzt den impliziten). Ein Style gilt beim **ersten Layout** des Elements und überschreibt dort, was der Konstruktor oder der Code vorher
-  gesetzt haben; wer einen eigenen Wert behalten will, setzt ihn nach dem ersten Zeichnen oder weist `element.style = new UI.Style()` zu. Eigenschaften, die es beim Element nicht gibt, werden übergangen.
-- **`UI.Trigger(eigenschaft, wert)`**: solange die Eigenschaft des Elements den Wert hat (`new UI.Trigger("hover", true)`), setzen die `Set(...)`-Aufrufe ihre Werte; danach kommen die alten wieder.
-  Weitere Bedingungen: `trigger.And("isChecked", true)`. `style.AddTrigger(trigger)`. Die Trigger werden bei jedem Layout geprüft (ohne Ereignisse).
-- **Vorlagen:** `UI.ControlTemplate(func (owner) => { ...; return wurzel })` ersetzt das Aussehen von `Label`, `Button` und `CheckBox` (`element.template = vorlage`, oder per Style:
-  `style.Set("template", vorlage)`): das Lambda baut aus Elementen (`Border`, `StackPanel`, `Label`, ...) einen Teilbaum und bekommt das Steuerelement übergeben. Teile mit `name` lassen sich
-  ansprechen: `vorlage.Bind("teil", "text", "text")` hält `teil.text` gleich `owner.text`; `vorlage.AddTrigger(trigger)` mit Settern, deren drittes Argument der Name des Teils ist
-  (`trigger.Set("background", brush, "teil")`), und Bedingungen auf das Steuerelement (`hover`, `pressed`, `focused`, `isChecked`, `enabled`). Größe, Klicks und Fokus bleiben beim Steuerelement.
+  **Expliziter Style:** `element.Style = style` (auch später; er ersetzt den impliziten). Ein Style gilt beim **ersten Layout** des Elements und überschreibt dort, was der Konstruktor oder der Code vorher
+  gesetzt haben; wer einen eigenen Wert behalten will, setzt ihn nach dem ersten Zeichnen oder weist `element.Style = new UI.Style()` zu. Eigenschaften, die es beim Element nicht gibt, werden übergangen.
+- **`UI.Trigger(eigenschaft, wert)`**: solange die Eigenschaft des Elements den Wert hat (`new UI.Trigger("Hover", true)`), setzen die `Set(...)`-Aufrufe ihre Werte; danach kommen die alten wieder.
+  Weitere Bedingungen: `trigger.And("IsChecked", true)`. `style.AddTrigger(trigger)`. Die Trigger werden bei jedem Layout geprüft (ohne Ereignisse).
+- **Vorlagen:** `UI.ControlTemplate(func (owner) => { ...; return wurzel })` ersetzt das Aussehen von `Label`, `Button` und `CheckBox` (`element.Template = vorlage`, oder per Style:
+  `style.Set("Template", vorlage)`): das Lambda baut aus Elementen (`Border`, `StackPanel`, `Label`, ...) einen Teilbaum und bekommt das Steuerelement übergeben. Teile mit `name` lassen sich
+  ansprechen: `vorlage.Bind("teil", "Text", "Text")` hält `teil.Text` gleich `owner.Text`; `vorlage.AddTrigger(trigger)` mit Settern, deren drittes Argument der Name des Teils ist
+  (`trigger.Set("Background", brush, "teil")`), und Bedingungen auf das Steuerelement (`Hover`, `Pressed`, `Focused`, `IsChecked`, `Enabled`). Größe, Klicks und Fokus bleiben beim Steuerelement.
   `element.FindPart("name")` liefert einen Teil. `TextBox` zeichnet sich immer selbst (Einfügemarke und Auswahl).
 - **`UI.DataTemplate(func (item) => element)`**: baut aus einem Datenelement das Element, das es zeigt (`template.Build(item)`; die Listen-Steuerelemente nutzen es).
-- **Bindung zwischen Elementen:** `element.Bind("text", quelle, "text")` (optional `twoWay`, `converter` = `UI.Converter`, `once` = nur einmal übertragen) gleicht bei jedem Durchlauf von `Update` ab; die Quelle ist
+- **Bindung zwischen Elementen:** `element.Bind("Text", quelle, "text")` (optional `twoWay`, `converter` = `UI.Converter`, `once` = nur einmal übertragen) gleicht bei jedem Durchlauf von `Update` ab; die Quelle ist
   ein beliebiges Objekt, der Pfad darf durch Objekte gehen (`"adresse.ort"`); ein leerer Pfad ist die Quelle selbst (bei einer Zeile mit `DataTemplate` das Datenelement, nur lesend). Eine Text-Eigenschaft zeigt jeden Wert als Text.
-- **Listen:** `ListBox`/`ListView` zeigen `items`; `list.itemsSource = liste` zeigt eine fremde Liste, ohne sie zu besitzen (Änderungen darin erscheinen von selbst, die Liste austauschen geht auch),
-  `list.SetView(view, false)` eine `CollectionView` (`view.source` ist austauschbar; mit `own = false` gehört sie nicht der Liste), `list.itemTemplate = DataTemplate` baut die Zeilen. Wird `selectedIndex` von außen gesetzt
-  (zum Beispiel durch eine Bindung), verhält sich das wie eine Auswahl (`onSelect`).
+- **Listen:** `ListBox`/`ListView` zeigen `items`; `list.ItemsSource = liste` zeigt eine fremde Liste, ohne sie zu besitzen (Änderungen darin erscheinen von selbst, die Liste austauschen geht auch),
+  `list.SetView(view, false)` eine `CollectionView` (`view.Source` ist austauschbar; mit `own = false` gehört sie nicht der Liste), `list.ItemTemplate = DataTemplate` baut die Zeilen. Wird `SelectedIndex` von außen gesetzt
+  (zum Beispiel durch eine Bindung), verhält sich das wie eine Auswahl (`OnSelect`).
 - **Ressourcen:** `element.Resources().Set("schluessel", wert)`, `root.resources.Set(...)`; `element.FindResource("schluessel")` sucht vom Element nach oben, zuletzt im Root (vor dem ersten Layout nur
   bei den Vorfahren); `undefined`, wenn es sie nicht gibt. Ein `ResourceDictionary` besitzt seine Werte (und Styles).
 
 ```
 var rot = new SolidBrush(UI.Color.Rgb(200, 60, 60))
 var stil = new UI.Style("Button")
-stil.Set("margin", new UI.Thickness(4))
-stil.Set("background", new SolidBrush(UI.Color.Rgb(60, 120, 200)))
-var hover = new UI.Trigger("hover", true)
-hover.Set("background", rot)
+stil.Set("Margin", new UI.Thickness(4))
+stil.Set("Background", new SolidBrush(UI.Color.Rgb(60, 120, 200)))
+var hover = new UI.Trigger("Hover", true)
+hover.Set("Background", rot)
 stil.AddTrigger(hover)
 ui.resources.AddStyle(stil)               // alle Button
 ```
@@ -145,7 +145,7 @@ wirklich ändert, meldet sich), dazu fragt `Update()` bei jedem Durchlauf ab, wa
   Rutscht dabei ein Element woanders hin oder ändert sich seine Größe (zum Beispiel ein längerer Text in einem `StackPanel`), wird alles neu angeordnet und ganz neu gemalt.
 - Änderungen am Theme (`root.theme.back = ...`) und an Fenstergröße/Schrift malen alles neu.
 - **Nicht** beobachtet werden Änderungen *im Inneren* eines Brushes, Stifts, einer `Geometry` oder eines Bildes, das ein Element nutzt (ein `SolidBrush`, dessen Farbe man verändert): dann `element.Invalidate()`
-  (oder `root.Invalidate()` für alles) aufrufen, oder den Brush austauschen. `Draw()` zeichnet immer alles. Ein `DrawingCanvas` mit `continuous = true` malt in jedem Zyklus neu.
+  (oder `root.Invalidate()` für alles) aufrufen, oder den Brush austauschen. `Draw()` zeichnet immer alles. Ein `DrawingCanvas` mit `Continuous = true` malt in jedem Zyklus neu.
 - Eigene Elemente: `Draw` beginnt mit `if (!this.NeedsDraw(root, ax, ay)) { return }` und malt nur, was in den Bereich fällt; Änderungen, die keine Felder sind, meldet das Element mit `Invalidate()`
   oder in `Poll(root)`.
 
@@ -169,7 +169,7 @@ Das `UI.Root` schaltet dafür `window.TouchMouse` aus (siehe docs/CONSOLE.md "To
 ## Fenstergröße
 
 Ein `UI.Root` schaltet `window.AutoResize` ein: zieht der Nutzer das Fenster auf eine andere Größe, bekommt der Framebuffer sie (sofern sie gültig ist, siehe docs/CONSOLE.md "Fenstergröße ändern") und die Oberfläche
-ordnet sich in der neuen Größe neu an und malt neu - Elemente mit `halign`/`valign` = `Stretch` (und Panels, die ihre Kinder dehnen) füllen den neuen Platz, `Dock`-, `Grid`- und `Stack`-Layouts rechnen neu, schwebende
+ordnet sich in der neuen Größe neu an und malt neu - Elemente mit `HorizontalAlign`/`VerticalAlign` = `Stretch` (und Panels, die ihre Kinder dehnen) füllen den neuen Platz, `Dock`-, `Grid`- und `Stack`-Layouts rechnen neu, schwebende
 Elemente (Menüs) bleiben im Fenster. `ui.width` und `ui.height` sind immer die aktuelle Größe; `ui.onResize = func (int w, int h) => { ... }` wird danach gerufen (zum Beispiel für ein eigenes Bild in einem `Canvas`).
 Wer das Strecken des festen Bildes vorzieht, setzt `window.AutoResize = false`.
 
@@ -190,7 +190,7 @@ ui.Dark = true          // dunkles Aussehen
 ui.Accent = 0x8854D0    // Akzentfarbe als 0xRRGGBB
 ```
 
-Die Elemente rechnen weiter in **logischen Pixeln**: `x`, `y`, Breiten, Abstände, `ui.width`/`ui.height` und die Mauspositionen der Elemente bleiben gleich, der `Renderer` rechnet beim Zeichnen
+Die Elemente rechnen weiter in **logischen Pixeln**: `Left`, `Top`, Breiten, Abstände, `ui.width`/`ui.height` und die Mauspositionen der Elemente bleiben gleich, der `Renderer` rechnet beim Zeichnen
 in Bildschirmpixel um (`root.renderer.scale`). TrueType-Text wird dabei in der größeren Größe gezeichnet und bleibt scharf; die Bitmap-Schriften behalten ihre Größe. Fenster und Framebuffer
 wachsen mit (`Window.SetSize`), ein 400×300-Framebuffer wird bei 150 % ein 600×450-Fenster. `Theme.SetColors(dark, accent)` setzt alle Farben eines Themes auf einmal - eigene Pinsel, die ein
 Programm ins Theme gesetzt hat, bleiben, solange sie kein `SolidBrush` sind.
@@ -227,7 +227,7 @@ Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) e
 
 ## Grenzen
 
-- Keine Mehrzeilen-Textfelder, kein Drag & Drop, keine Animationen; Listenzeilen mit `itemTemplate` sind nur zum Anzeigen (sie nehmen keine Eingaben an).
+- Keine Mehrzeilen-Textfelder, kein Drag & Drop, keine Animationen; Listenzeilen mit `ItemTemplate` sind nur zum Anzeigen (sie nehmen keine Eingaben an).
 - Text ist dicktengleich (eine Schrift, eine Größe).
 - Touch kennt nur einen Finger (kein Zoomen, kein Zwei-Finger-Rollen, kein langes Drücken für das Kontextmenü, kein Schwung nach dem Wischen); die Menüleiste ist nur mit Maus und Finger zu öffnen. Der Joystick-Wiederholtakt zählt Zyklen, nicht Zeit.
 - Die Elemente zeichnen sich in den Framebuffer des Roots; mehrere Roots auf demselben Framebuffer übermalen einander.
@@ -236,7 +236,7 @@ Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) e
 
 ## Schriften
 
-Jedes `UI.Element` hat `font` (ein Name für `Fonts.Get`, `""` = vom umgebenden Element erben) und `fontSize` (Pixel, `0` = erben). Eine Schrift an einem `Panel` gilt für alles darin, ein Menü nimmt die Schrift des Elements, von dem es geöffnet wurde,
+Jedes `UI.Element` hat `Font` (ein Name für `Fonts.Get`, `""` = vom umgebenden Element erben) und `FontSize` (Pixel, `0` = erben). Eine Schrift an einem `Panel` gilt für alles darin, ein Menü nimmt die Schrift des Elements, von dem es geöffnet wurde,
 und `root.theme.font` / `root.theme.fontSize` (Vorgabe `""` und `14`) sind der letzte Rückgriff. Ohne alles bleibt es bei der Konsolenschrift des Renderers - Größen und Bild sind dann wie vorher. Namen: `"8x14"`, `"8x8"`, eine mit
 `Fonts.Add(new Resource("fonts/X.ttf"))` eingebettete Schrift (nach Dateiname, Familie, vollem Namen oder Alias) oder eine auf dem System installierte; unbekannte Namen ergeben die Konsolenschrift (docs/FONTS.md).
 
@@ -245,9 +245,9 @@ Fonts.Add(new Resource("fonts/Roboto-Regular.ttf"))
 ui.theme.font = "Roboto-Regular"
 ui.theme.fontSize = 16
 var title = new UI.Label("Settings", 8, 8)
-title.fontSize = 24                       // dieselbe Schrift, größer
+title.FontSize = 24                       // dieselbe Schrift, größer
 var hint = new UI.Label("Esc closes", 8, 40)
-hint.font = "8x8"                         // eine Bitmap-Schrift
+hint.Font = "8x8"                         // eine Bitmap-Schrift
 ```
 
 `Label`, `Button`, `CheckBox`, `TextBox`, `ListBox`/`ListView`, `TreeView`, `RadioButtons` und Menüs messen und zeichnen ihren Text mit der Schrift des Elements (`element.TextWidth(root, text)`, `element.TextHeight(root)` und

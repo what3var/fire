@@ -361,17 +361,17 @@ namespace fire.Editor
             var view = new UI.CircuitView(circuit, 0, 0, fb.Width(), fb.Height())
             ui.Add(view)
             ui.onResize = func (int w, int h) => {
-                view.width = w
-                view.height = h
+                view.Width = w
+                view.Height = h
             }
             try { circuit.LoadSchematic({{BiscuitGenerator.Quote(biscuit)}}) } catch (Exception ex) { print("@error\t" + ex.message) }
-            view.onChange = func (v) => {
+            view.OnChange = func (v) => {
                 print("@text\t" + circuit.Schematic.ToText())
                 print(SparkHost.Selected(view))
                 print(SparkHost.State(view))
             }
-            view.onSelect = func (v) => { print(SparkHost.Selected(view)) }
-            view.onEdit = func (e) => { print("@edit") }
+            view.OnSelect = func (v) => { print(SparkHost.Selected(view)) }
+            view.OnEdit = func (e) => { print("@edit") }
             print("@catalog\t" + "\n".Join(Circuits.Symbols.Catalog()))
             foreach (kind in ["D", "NPN", "PNP", "NMOS", "PMOS", "OPAMP", "FORMULA"]) { print("@models\t" + kind + "\t" + ",".Join(Circuits.Models.Names(kind))) }
             print("@text\t" + circuit.Schematic.ToText())

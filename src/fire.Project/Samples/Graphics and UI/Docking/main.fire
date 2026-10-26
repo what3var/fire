@@ -21,35 +21,35 @@ dock.SetStatusBar(status)
 
 // the toolstrips
 var standard = new UI.Docking.ToolStrip("Standard")
-standard.AddButton("New", func () => { message.text = "New" }, UI.Icons.File())
-standard.AddButton("Open", func () => { message.text = "Open" }, UI.Icons.Folder())
+standard.AddButton("New", func () => { message.Text = "New" }, UI.Icons.File())
+standard.AddButton("Open", func () => { message.Text = "Open" }, UI.Icons.Folder())
 standard.AddSeparator()
-var back = standard.AddButton("Back", func () => { message.text = "Back" }, UI.Icons.Back())
+var back = standard.AddButton("Back", func () => { message.Text = "Back" }, UI.Icons.Back())
 back.showText = false
-var forward = standard.AddButton("Forward", func () => { message.text = "Forward" }, UI.Icons.Forward())
+var forward = standard.AddButton("Forward", func () => { message.Text = "Forward" }, UI.Icons.Forward())
 forward.showText = false
 standard.AddSeparator()
 var wrap = standard.AddButton("Word wrap")
-wrap.checkable = true
+wrap.Checkable = true
 dock.AddToolStrip(standard)
 
 var build = new UI.Docking.ToolStrip("Build")
-var run = build.AddSplitButton("Run", func () => { message.text = "Run" })
-run.AddItem("Run without debugging", func () => { message.text = "Run without debugging" })
-run.AddItem("Run tests", func () => { message.text = "Run tests" })
+var run = build.AddSplitButton("Run", func () => { message.Text = "Run" })
+run.AddItem("Run without debugging", func () => { message.Text = "Run without debugging" })
+run.AddItem("Run tests", func () => { message.Text = "Run tests" })
 build.AddLabel("Mode:")
 var mode = build.AddComboBox(90)
 mode.Add("Debug")
 mode.Add("Release")
-mode.selectedIndex = 0
-mode.onSelect = func () => { message.text = "Mode: " + mode.text }
+mode.SelectedIndex = 0
+mode.OnSelect = func () => { message.Text = "Mode: " + mode.Text }
 dock.AddToolStrip(build)
 
 var find = new UI.Docking.ToolStrip("Find")
 find.AddLabel("Find:")
 var query = find.AddTextBox("", 140)
-query.onEnter = func () => { message.text = "Find " + query.text }
-find.AddButton("Next", func () => { message.text = "Find next " + query.text })
+query.OnEnter = func () => { message.Text = "Find " + query.Text }
+find.AddButton("Next", func () => { message.Text = "Find next " + query.Text })
 dock.AddToolStrip(find, UI.Dock.Top, 1)
 
 // the tool windows
@@ -62,12 +62,12 @@ var outline = new UI.TreeView()
 var root = outline.AddNode(new UI.TreeNode("main.fire"))
 root.Add(new UI.TreeNode("dock"))
 root.Add(new UI.TreeNode("standard"))
-root.expanded = true
+root.Expanded = true
 dock.Add(new UI.Docking.ToolWindow("Outline", outline), UI.Dock.Left)
 var output = dock.Add(new UI.Docking.ToolWindow("Output", new UI.TextBox("Build started...")), UI.Dock.Bottom)
 dock.AddTabbed(new UI.Docking.ToolWindow("Errors", new UI.ListBox()), output)
 var properties = dock.Add(new UI.Docking.ToolWindow("Properties", new UI.ListBox()), UI.Dock.Right)
-properties.onClose = func () => { message.text = "Properties closed - shown again in a moment" }
+properties.onClose = func () => { message.Text = "Properties closed - shown again in a moment" }
 
 // (a lambda sees copies of the variables outside: the count lives in an object)
 class Clock {
