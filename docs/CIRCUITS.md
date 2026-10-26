@@ -643,6 +643,11 @@ units, models of the library, choices) are edited in the tool window **Propertie
 window the UI markup editor uses - a table like the property grid of .NET: names and values with lines between the cells, categories that fold, sorted by
 category or by name, a column border to drag and a description of the selected row; double click or Enter on an element puts the focus into its first field.
 
+**Samples** next to it loads one of the example circuits of the editor (our own, embedded in `fire.UI.Markup`, `CircuitSamples.All`): an RC
+low-pass, an LC tank, a bridge rectifier, a Zener regulator, a transistor switch, an inverting amplifier, a Schmitt trigger oscillator, a 555 blinker, a
+counter with a 7-segment display and a full adder. When a circuit is already drawn, the editor asks before it replaces it (Undo brings it back) - the same
+for the import.
+
 **Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and

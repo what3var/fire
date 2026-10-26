@@ -1,0 +1,14 @@
+{
+  "biscuit": 1,
+  "timeStep": "25us",
+  "elements": [
+    {"type": "Text", "from": [0, -12], "to": [4, -12], "text": "RC low-pass: a square wave through 1 kOhm into 1 uF (tau = 1 ms)"},
+    {"type": "Source", "name": "V1", "from": [0, 16], "to": [0, 0], "waveform": "square", "voltage": "5V", "frequency": "100Hz", "duty": "0.5"},
+    {"type": "Resistor", "name": "R1", "from": [0, 0], "to": [16, 0], "resistance": "1k"},
+    {"type": "Capacitor", "name": "C1", "from": [16, 0], "to": [16, 16], "capacitance": "1uF"},
+    {"type": "Wire", "from": [0, 16], "to": [16, 16]},
+    {"type": "Ground", "from": [0, 16], "to": [0, 20]},
+    {"type": "Scope", "from": [28, -4], "to": [68, 8], "probe": "V1"},
+    {"type": "Scope", "from": [28, 12], "to": [68, 24], "probe": "C1"}
+  ]
+}

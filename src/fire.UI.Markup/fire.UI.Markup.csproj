@@ -14,4 +14,9 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- the example circuits of the circuit editor (CircuitSamples) -->
+    <EmbeddedResource Include="CircuitSamples\*.biscuit" LogicalName="CircuitSamples.%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

@@ -217,6 +217,32 @@ static class CircuitEditorTests
             "foreach (e in c.Schematic.Elements()) { if (e.Error != \"\") { bad = bad + 1 } }\n" +
             "print(\"errors \" + bad + \" vcc \" + Math.Round(c.Schematic.Elements()[11].PinVoltage(0)) + \" recorded \" + (c.Schematic.Elements()[12].scope.Count > 0))\n"), new[] { "errors 0 vcc 5 recorded True" });
 
+        // the examples of the Samples menu: every one loads, has no element with an error and no pin left open, and runs
+        foreach (var sample in CircuitSamples.All)
+        {
+            CheckLines("Beispiel '" + sample.Title + "' laedt und laeuft", Run(
+                "#import \"circuits\"\n" +
+                "var c = new Circuits.Circuit(\"x\")\n" +
+                "c.LoadSchematic(" + BiscuitGenerator.Quote(sample.Text) + ")\n" +
+                "c.Run(20ms)\n" +
+                "var bad = 0\n" +
+                "var keys = new List()\n" +
+                "var counts = new List()\n" +
+                "foreach (e in c.Schematic.Elements()) {\n" +
+                "    if (e.Error != \"\") { bad = bad + 1 }\n" +
+                "    for (int k = 0; k < e.pins.count / 2; k++) {\n" +
+                "        var key = e.pins[k * 2] + \",\" + e.pins[k * 2 + 1]\n" +
+                "        var i = keys.IndexOf(key)\n" +
+                "        if (i < 0) { keys.Add(key)\n counts.Add(1) } else { counts[i] = counts[i] + 1 }\n" +
+                "    }\n" +
+                "}\n" +
+                "var dangling = 0\n" +
+                "foreach (n in counts) { if (n == 1) { dangling = dangling + 1 } }\n" +
+                "print(\"errors \" + bad + \" open \" + dangling + \" ran \" + (c.TimeRaw() > 0.0))\n"), new[] { "errors 0 open 0 ran True" });
+        }
+        Check("es gibt Beispiele, alle mit Titel und eigener Datei",
+            CircuitSamples.All.Count >= 10 && CircuitSamples.All.Select(x => x.File).Distinct().Count() == CircuitSamples.All.Count && CircuitSamples.All.All(x => x.Title != ""));
+
         // a switch closed across a charged capacitor: the trapezoidal rule alone would let the current ring from step to step for ever
         CheckLines("Schaltung: Schalter parallel zum geladenen Kondensator - kein Klingeln, Strom durch den Schalter in der richtigen Richtung", Run("""
             #import "circuits"

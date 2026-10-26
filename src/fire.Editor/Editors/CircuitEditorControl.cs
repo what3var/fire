@@ -231,6 +231,18 @@ namespace fire.Editor
             import.ContextMenu = importMenu;
             import.Click += (_, _) => importMenu.Open(import);
 
+            var samples = Tool("Samples", "Example circuits to try out and to start from", () => { });
+            var samplesMenu = new ContextMenu();
+            foreach (var sample in CircuitSamples.All)
+            {
+                var item = new MenuItem { Header = sample.Title };
+                ToolTip.SetTip(item, sample.Description);
+                item.Click += async (_, _) => await LoadSample(sample);
+                samplesMenu.Items.Add(item);
+            }
+            samples.ContextMenu = samplesMenu;
+            samples.Click += (_, _) => samplesMenu.Open(samples);
+
             var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(4, 2) };
             foreach (var c in new Control[]
             {
@@ -239,7 +251,7 @@ namespace fire.Editor
                 Tool("Rotate", "Turn the selection by 90 degrees (R)", () => Send("rotate")), Tool("Flip", "Mirror the selection (F)", () => Send("flip")),
                 Tool("Duplicate", "Copy the selection (Ctrl+D)", () => Send("duplicate")), Tool("Delete", "Remove the selection (Del)", () => Send("delete")), Separator(),
                 Tool("Wire", "Draw wires (or drag from a pin; W)", () => Send("place\tWire")), Tool("Fit", "Show the whole schematic", () => Send("fit")), Separator(),
-                import, _status,
+                import, samples, _status,
             }) bar.Children.Add(c);
 
             var paletteScroll = new ScrollViewer { Content = _palette, Width = 150 };
@@ -672,11 +684,40 @@ namespace fire.Editor
         {
             var result = FalstadImport.Convert(falstad);
             if (result.Elements == 0) { await Dialogs.Message(Dialogs.WindowOf(this), "The text holds no circuit of Falstad's simulator.", "Import"); return; }
+            if (!await ConfirmReplace("Import")) return;
             Send("load\t" + result.Biscuit);
             Send("fit");
             if (result.Warnings.Count > 0)
                 await Dialogs.Message(Dialogs.WindowOf(this), $"{result.Elements} elements imported. Not everything could be taken over:\n\n" + string.Join("\n", result.Warnings.Take(20)) +
                     (result.Warnings.Count > 20 ? $"\n... and {result.Warnings.Count - 20} more" : ""), "Import");
+        }
+
+        // ---- samples -----------------------------------------------------------------------------------------------------------------------------
+        private async Task LoadSample(CircuitSamples.Sample sample)
+        {
+            if (!await ConfirmReplace("Samples")) return;
+            Send("load\t" + sample.Text);
+            Send("fit");
+        }
+
+        /// <summary>Asks before the drawn circuit is replaced (true at once when nothing is drawn; the replacement can be undone).</summary>
+        private async Task<bool> ConfirmReplace(string title)
+        {
+            if (!HasElements(_text)) return true;
+            var answer = await Dialogs.Ask(Dialogs.WindowOf(this), "The circuit that is drawn will be replaced (Undo brings it back). Replace it?", title,
+                ("Replace", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.Cancel));
+            return answer == Dialogs.Answer.Yes;
+        }
+
+        /// <summary>Does the text of a schematic hold an element?</summary>
+        internal static bool HasElements(string text)
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(text);
+                return doc.RootElement.TryGetProperty("elements", out var elements) && elements.ValueKind == System.Text.Json.JsonValueKind.Array && elements.GetArrayLength() > 0;
+            }
+            catch (System.Text.Json.JsonException) { return !string.IsNullOrWhiteSpace(text); }
         }
 
         // ---- IDocumentView -------------------------------------------------------------------------------------------------------------------------

@@ -1620,7 +1620,12 @@ namespace Circuits {
                 Port b = undefined
                 if (target.nets.count > 1) { b = target.nets[1] }
                 if (target.nets.count > 1 && target.type != "Probe" && target.part == undefined) { b = undefined }
-                scope.Voltage("y", target.nets[0], b)
+                if (b != undefined && (target.type == "Source" || target.type == "AudioInput")) {
+                    // a source runs from its first point (-) to its second (+): its voltage is the one of + against -
+                    scope.Voltage("y", b, target.nets[0])
+                } else {
+                    scope.Voltage("y", target.nets[0], b)
+                }
             }
             scope.TakeTo(e)
             e.scope = scope
