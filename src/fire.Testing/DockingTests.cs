@@ -490,12 +490,12 @@ static class DockingTests
         {
             string fxml = Path.Combine(dir, "Pick.fxml").Replace('\\', '/');
             File.WriteAllText(fxml, """
-                <Window class="Pick" title="Pick" width="300" height="200">
-                  <StackPanel padding="4">
-                    <ComboBox name="choice" width="140" selectedIndex="1" onSelect="Picked">
+                <Window Class="Pick" Title="Pick" Width="300" Height="200">
+                  <StackPanel Padding="4">
+                    <ComboBox Name="choice" Width="140" SelectedIndex="1" OnSelect="Picked">
                       <Item>One</Item>
                       <Item>Two</Item>
-                      <Item text="Three"/>
+                      <Item Text="Three"/>
                     </ComboBox>
                   </StackPanel>
                 </Window>

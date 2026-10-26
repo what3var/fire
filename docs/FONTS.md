@@ -68,7 +68,7 @@ A damaged font gives "no glyph" instead of an error.
 ## In the UI
 
 Every `UI.Element` has `font` (a name for `Fonts.Get`, `""` = inherit) and `fontSize` (pixels, `0` = inherit): a font set on a panel applies to everything inside it, a menu opened from an element takes the font of that
-element, and `root.theme.font` / `root.theme.fontSize` (default `""` and `14`) are the last resort. Without any of them the console font is used, exactly as before. In markup: `font="Roboto-Regular" fontSize="18"`.
+element, and `root.theme.font` / `root.theme.fontSize` (default `""` and `14`) are the last resort. Without any of them the console font is used, exactly as before. In markup: `Font="Roboto-Regular" FontSize="18"`.
 Labels, buttons, check boxes, text fields, lists, trees, radio buttons and menus measure and draw their text with the font of the element; a text field with a proportional font measures the text up to the
 caret and under the mouse.
 

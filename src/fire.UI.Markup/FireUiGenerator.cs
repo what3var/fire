@@ -332,7 +332,7 @@ namespace fire.UI.Markup
                     if (partBindings != null && partName != null)
                     {
                         string ownerField = templateTarget?.Property(binding.OwnerProperty)?.FieldName
-                            ?? MarkupSchema.StateProperties.FirstOrDefault(p => p.Name == binding.OwnerProperty)?.FieldName ?? binding.OwnerProperty;
+                            ?? MarkupSchema.StateProperty(binding.OwnerProperty)?.FieldName ?? binding.OwnerProperty;
                         partBindings.Add((partName, property.FieldName, ownerField));
                     }
                     continue;
@@ -353,7 +353,7 @@ namespace fire.UI.Markup
             {
                 var args = info.Def.Event(eventName)!.Args;
                 string parameters = string.Join(", ", args);
-                code.Line($"{local}.{eventName} = func ({parameters}) on this => {{ {handler}({local}{string.Concat(args.Select(a => ", " + a))}) }}");
+                code.Line($"{local}.{info.Def.Event(eventName)!.FieldName} = func ({parameters}) on this => {{ {handler}({local}{string.Concat(args.Select(a => ", " + a))}) }}");
             }
 
             foreach (var child in element.Children) EmitElement(code, infos, child, local, info.Def, errors, partBindings, templateTarget, dataItem);
@@ -413,7 +413,7 @@ namespace fire.UI.Markup
                     {
                         var (propertyName, value, source, line) = trigger.Conditions[c];
                         var sourceDef = source != null && parts != null && parts.TryGetValue(source, out var part) ? MarkupSchema.Find(part.Tag) : def;
-                        var property = sourceDef?.Property(propertyName) ?? MarkupSchema.StateProperties.FirstOrDefault(p => p.Name == propertyName);
+                        var property = sourceDef?.Property(propertyName) ?? MarkupSchema.StateProperty(propertyName);
                         if (property == null) continue;
                         string? code1 = ValueCode(property, new MarkupAttribute(property.Name, value, line), errors);
                         if (code1 == null) continue;
@@ -470,7 +470,7 @@ namespace fire.UI.Markup
                 string? sortBy = element.Find("sortBy")?.Value is LiteralValue sort ? sort.Text.Trim() : null;
                 bool descending = element.Find("descending")?.Value is LiteralValue desc && desc.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
                 if (element.Find("descending")?.Value is LiteralValue d2 && !d2.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) && !d2.Text.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
-                    errors.Add(new MarkupDiagnostic(element.Find("descending")!.Line, $"'descending' needs true or false, not '{d2.Text}'."));
+                    errors.Add(new MarkupDiagnostic(element.Find("descending")!.Line, $"'Descending' needs true or false, not '{d2.Text}'."));
                 if (sortBy != null) code.Line($"{v}.SortBy({Quote(sortBy)}, {(descending ? "true" : "false")})");
                 else if (descending) code.Line($"{v}.descending = true");
                 foreach (var name in new[] { "filter", "comparer", "source" })

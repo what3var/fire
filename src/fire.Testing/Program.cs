@@ -10638,57 +10638,57 @@ string[] uiDrawExpected = Array.Empty<string>();
             string.Join(" | ", fire.UI.Markup.MarkupParser.Parse(markup).Diagnostics.Select(d => d.ToString()));
 
         CheckMarkup("Markup: ein gueltiges Dokument hat keine Diagnosen",
-            fire.UI.Markup.MarkupParser.Parse("<Window class=\"A\"><Button name=\"b\" text=\"x\" onClick=\"Go\"/></Window>").Diagnostics.Count == 0);
+            fire.UI.Markup.MarkupParser.Parse("<Window Class=\"A\"><Button Name=\"b\" Text=\"x\" OnClick=\"Go\"/></Window>").Diagnostics.Count == 0);
 
         void ExpectDiagnostic(string title, string markup, string expected)
         {
             string actual = Diagnose(markup);
             CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
         }
-        ExpectDiagnostic("Fehler im XML mit Zeile", "<Window class=\"A\">\n<Button>\n</Window>", "line 3");
+        ExpectDiagnostic("Fehler im XML mit Zeile", "<Window Class=\"A\">\n<Button>\n</Window>", "line 3");
         ExpectDiagnostic("das Wurzelelement", "<Foo class=\"A\"/>", "must be 'Window' or 'View'");
         ExpectDiagnostic("class fehlt", "<Window/>", "needs the attribute class");
-        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
-        ExpectDiagnostic("unbekannte Eigenschaft", "<Window class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
-        ExpectDiagnostic("ein Button hat keine Kinder", "<Window class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
-        ExpectDiagnostic("Name doppelt", "<Window class=\"A\"><Label name=\"a\"/><Label name=\"a\"/></Window>", "used twice");
-        ExpectDiagnostic("reservierter Name", "<Window class=\"A\"><Label name=\"ui\"/></Window>", "used by the generated class");
-        ExpectDiagnostic("Handlername gleich Elementname", "<Window class=\"A\"><Label name=\"a\"/><Button onClick=\"a\"/></Window>", "already used");
-        ExpectDiagnostic("unbekannter Converter", "<Window class=\"A\"><Label text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
-        ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window class=\"A\"><Label text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
-        ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window class=\"A\"><Label text=\"{Bind X}\"/></Window>", "Unknown markup extension");
-        ExpectDiagnostic("Binding ohne Pfad", "<Window class=\"A\"><Label text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
-        ExpectDiagnostic("ein Teil ausserhalb seines Containers", "<Window class=\"A\"><Item>x</Item></Window>", "'Item' can only be inside");
-        ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
-        ExpectDiagnostic("Border nimmt nur ein Kind", "<Window class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
-        ExpectDiagnostic("Style ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"k\"/></Resources></Window>", "needs target");
-        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window class=\"A\"><Resources><Style target=\"Slider\"/></Resources></Window>", "Unknown style target");
-        ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"nope\" value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
-        ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window class=\"A\"><Resources><Style target=\"Button\"/><Style target=\"Button\"/></Resources></Window>", "two styles without a key");
-        ExpectDiagnostic("basedOn ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"a\" target=\"Button\" basedOn=\"b\"/></Resources></Window>", "does not exist");
-        ExpectDiagnostic("Stil, den es nicht gibt", "<Window class=\"A\"><Button style=\"Nope\"/></Window>", "Unknown style 'Nope'");
-        ExpectDiagnostic("TemplateBinding ausserhalb einer Vorlage", "<Window class=\"A\"><Label text=\"{TemplateBinding text}\"/></Window>", "only for the elements inside a ControlTemplate");
-        ExpectDiagnostic("Binding in einer Vorlage", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
-        ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label name=\"a\"/><Trigger property=\"hover\" value=\"true\"><Setter target=\"b\" property=\"text\" value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
-        ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
-        const string dtHead = "<Window class=\"A\"><Resources>";
-        ExpectDiagnostic("DataTemplate: ein Binding ohne Pfad ausserhalb", "<Window class=\"A\"><Label text=\"{Binding}\"/></Window>", "without a path is for the elements of a DataTemplate");
-        ExpectDiagnostic("DataTemplate: genau ein Element", dtHead + "<DataTemplate key=\"d\"><Label/><Label/></DataTemplate></Resources></Window>", "contains exactly one element");
+        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window Class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
+        ExpectDiagnostic("unbekannte Eigenschaft", "<Window Class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
+        ExpectDiagnostic("ein Button hat keine Kinder", "<Window Class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
+        ExpectDiagnostic("Name doppelt", "<Window Class=\"A\"><Label Name=\"a\"/><Label Name=\"a\"/></Window>", "used twice");
+        ExpectDiagnostic("reservierter Name", "<Window Class=\"A\"><Label Name=\"ui\"/></Window>", "used by the generated class");
+        ExpectDiagnostic("Handlername gleich Elementname", "<Window Class=\"A\"><Label Name=\"a\"/><Button OnClick=\"a\"/></Window>", "already used");
+        ExpectDiagnostic("unbekannter Converter", "<Window Class=\"A\"><Label Text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window Class=\"A\"><Label Text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
+        ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window Class=\"A\"><Label Text=\"{Bind X}\"/></Window>", "Unknown markup extension");
+        ExpectDiagnostic("Binding ohne Pfad", "<Window Class=\"A\"><Label Text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
+        ExpectDiagnostic("ein Teil ausserhalb seines Containers", "<Window Class=\"A\"><Item>x</Item></Window>", "'Item' can only be inside");
+        ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window Class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
+        ExpectDiagnostic("Border nimmt nur ein Kind", "<Window Class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
+        ExpectDiagnostic("Style ohne Ziel", "<Window Class=\"A\"><Resources><Style Key=\"k\"/></Resources></Window>", "needs target");
+        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Slider\"/></Resources></Window>", "Unknown style target");
+        ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window Class=\"A\"><Resources><Style Target=\"Button\"><Setter Property=\"nope\" Value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
+        ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Button\"/><Style Target=\"Button\"/></Resources></Window>", "two styles without a key");
+        ExpectDiagnostic("basedOn ohne Ziel", "<Window Class=\"A\"><Resources><Style Key=\"a\" Target=\"Button\" BasedOn=\"b\"/></Resources></Window>", "does not exist");
+        ExpectDiagnostic("Stil, den es nicht gibt", "<Window Class=\"A\"><Button Style=\"Nope\"/></Window>", "Unknown style 'Nope'");
+        ExpectDiagnostic("TemplateBinding ausserhalb einer Vorlage", "<Window Class=\"A\"><Label Text=\"{TemplateBinding Text}\"/></Window>", "only for the elements inside a ControlTemplate");
+        ExpectDiagnostic("Binding in einer Vorlage", "<Window Class=\"A\"><Resources><ControlTemplate Key=\"t\" Target=\"Button\"><Label Text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
+        ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window Class=\"A\"><Resources><ControlTemplate Key=\"t\" Target=\"Button\"><Label Name=\"a\"/><Trigger Property=\"Hover\" Value=\"true\"><Setter Target=\"b\" Property=\"Text\" Value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
+        ExpectDiagnostic("unbekannter Binding-Modus", "<Window Class=\"A\"><Label Text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
+        const string dtHead = "<Window Class=\"A\"><Resources>";
+        ExpectDiagnostic("DataTemplate: ein Binding ohne Pfad ausserhalb", "<Window Class=\"A\"><Label Text=\"{Binding}\"/></Window>", "without a path is for the elements of a DataTemplate");
+        ExpectDiagnostic("DataTemplate: genau ein Element", dtHead + "<DataTemplate Key=\"d\"><Label/><Label/></DataTemplate></Resources></Window>", "contains exactly one element");
         ExpectDiagnostic("DataTemplate: ohne Schluessel", dtHead + "<DataTemplate><Label/></DataTemplate></Resources></Window>", "needs key");
-        ExpectDiagnostic("DataTemplate: keine Namen", dtHead + "<DataTemplate key=\"d\"><Label name=\"a\"/></DataTemplate></Resources></Window>", "have no name");
-        ExpectDiagnostic("DataTemplate: keine Handler", dtHead + "<DataTemplate key=\"d\"><Button onClick=\"Go\"/></DataTemplate></Resources></Window>", "Event handlers are not available inside a DataTemplate");
-        ExpectDiagnostic("DataTemplate: kein ElementName", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, ElementName=y}\"/></DataTemplate></Resources></Window>", "'ElementName' is not available inside a DataTemplate");
-        ExpectDiagnostic("DataTemplate: das Element selbst ist nur lesbar", dtHead + "<DataTemplate key=\"d\"><TextBox text=\"{Binding Mode=TwoWay}\"/></DataTemplate></Resources></Window>", "read only");
-        ExpectDiagnostic("DataTemplate: unbekannter Converter", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, Converter=Nope}\"/></DataTemplate></Resources></Window>", "Unknown converter 'Nope'");
-        ExpectDiagnostic("DataTemplate: Schluessel doppelt", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><DataTemplate key=\"d\"><Label/></DataTemplate></Resources></Window>", "used twice");
-        ExpectDiagnostic("itemTemplate, das es nicht gibt", "<Window class=\"A\"><ListBox itemTemplate=\"Nope\"/></Window>", "Unknown data template 'Nope'");
-        ExpectDiagnostic("view, die es nicht gibt", "<Window class=\"A\"><ListBox view=\"Nope\"/></Window>", "Unknown view 'Nope'");
-        ExpectDiagnostic("itemsSource nimmt keinen festen Wert", "<Window class=\"A\"><ListBox itemsSource=\"abc\"/></Window>", "is a list: give {Binding ...} or {Expr ...}");
-        ExpectDiagnostic("view und itemsSource zusammen", dtHead + "<CollectionView key=\"v\"/></Resources><ListBox view=\"v\" itemsSource=\"{Binding xs}\"/></Window>", "a 'view' or an 'itemsSource', not both");
-        ExpectDiagnostic("CollectionView: nur Lesen", dtHead + "<CollectionView key=\"v\" source=\"{Binding xs, Mode=TwoWay}\"/></Resources></Window>", "read only");
-        ExpectDiagnostic("CollectionView: filter ist Code", dtHead + "<CollectionView key=\"v\" filter=\"abc\"/></Resources></Window>", "is code: give {Expr ...}");
-        ExpectDiagnostic("CollectionView: unbekanntes Attribut", dtHead + "<CollectionView key=\"v\" sorted=\"a\"/></Resources></Window>", "no attribute 'sorted'");
-        ExpectDiagnostic("Schluessel von Vorlage und View teilen sich den Namensraum", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><CollectionView key=\"d\"/></Resources></Window>", "used twice");
+        ExpectDiagnostic("DataTemplate: keine Namen", dtHead + "<DataTemplate Key=\"d\"><Label Name=\"a\"/></DataTemplate></Resources></Window>", "have no name");
+        ExpectDiagnostic("DataTemplate: keine Handler", dtHead + "<DataTemplate Key=\"d\"><Button OnClick=\"Go\"/></DataTemplate></Resources></Window>", "Event handlers are not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: kein ElementName", dtHead + "<DataTemplate Key=\"d\"><Label Text=\"{Binding x, ElementName=y}\"/></DataTemplate></Resources></Window>", "'ElementName' is not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: das Element selbst ist nur lesbar", dtHead + "<DataTemplate Key=\"d\"><TextBox Text=\"{Binding Mode=TwoWay}\"/></DataTemplate></Resources></Window>", "read only");
+        ExpectDiagnostic("DataTemplate: unbekannter Converter", dtHead + "<DataTemplate Key=\"d\"><Label Text=\"{Binding x, Converter=Nope}\"/></DataTemplate></Resources></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("DataTemplate: Schluessel doppelt", dtHead + "<DataTemplate Key=\"d\"><Label/></DataTemplate><DataTemplate Key=\"d\"><Label/></DataTemplate></Resources></Window>", "used twice");
+        ExpectDiagnostic("itemTemplate, das es nicht gibt", "<Window Class=\"A\"><ListBox ItemTemplate=\"Nope\"/></Window>", "Unknown data template 'Nope'");
+        ExpectDiagnostic("view, die es nicht gibt", "<Window Class=\"A\"><ListBox View=\"Nope\"/></Window>", "Unknown view 'Nope'");
+        ExpectDiagnostic("itemsSource nimmt keinen festen Wert", "<Window Class=\"A\"><ListBox ItemsSource=\"abc\"/></Window>", "is a list: give {Binding ...} or {Expr ...}");
+        ExpectDiagnostic("view und itemsSource zusammen", dtHead + "<CollectionView Key=\"v\"/></Resources><ListBox View=\"v\" ItemsSource=\"{Binding xs}\"/></Window>", "a 'view' or an 'itemsSource', not both");
+        ExpectDiagnostic("CollectionView: nur Lesen", dtHead + "<CollectionView Key=\"v\" Source=\"{Binding xs, Mode=TwoWay}\"/></Resources></Window>", "read only");
+        ExpectDiagnostic("CollectionView: filter ist Code", dtHead + "<CollectionView Key=\"v\" Filter=\"abc\"/></Resources></Window>", "is code: give {Expr ...}");
+        ExpectDiagnostic("CollectionView: unbekanntes Attribut", dtHead + "<CollectionView Key=\"v\" sorted=\"a\"/></Resources></Window>", "no attribute 'sorted'");
+        ExpectDiagnostic("Schluessel von Vorlage und View teilen sich den Namensraum", dtHead + "<DataTemplate Key=\"d\"><Label/></DataTemplate><CollectionView Key=\"d\"/></Resources></Window>", "used twice");
 
         string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
         void ExpectGenerateError(string title, string markup, string expected)
@@ -10698,21 +10698,21 @@ string[] uiDrawExpected = Array.Empty<string>();
             catch (fire.UI.Markup.MarkupException ex) { actual = ex.Message; }
             CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
         }
-        ExpectGenerateError("Zahl erwartet", "<Window class=\"A\"><Label x=\"abc\"/></Window>", "needs a whole number");
-        ExpectGenerateError("true/false erwartet", "<Window class=\"A\"><Label visible=\"yes\"/></Window>", "needs true or false");
-        ExpectGenerateError("Ausrichtung erwartet", "<Window class=\"A\"><Stack orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
-        ExpectGenerateError("Abstand erwartet", "<Window class=\"A\"><Label margin=\"1,2,3\"/></Window>", "needs 1 number");
-        ExpectGenerateError("Auswahl erwartet", "<Window class=\"A\"><Label halign=\"Middle\"/></Window>", "needs one of Stretch, Left, Center, Right");
-        ExpectGenerateError("Stift erwartet", "<Window class=\"A\"><Rectangle stroke=\"black\"/></Window>", "needs a pen");
-        ExpectGenerateError("eine Eigenschaft, die eine Methode setzt, ist nicht bindbar", "<Window class=\"A\"><Grid rows=\"{Binding R}\"/></Window>", "cannot be bound");
-        ExpectGenerateError("Farbe erwartet", "<Window class=\"A\"><Label color=\"red\"/></Window>", "needs a colour");
+        ExpectGenerateError("Zahl erwartet", "<Window Class=\"A\"><Label Left=\"abc\"/></Window>", "needs a whole number");
+        ExpectGenerateError("true/false erwartet", "<Window Class=\"A\"><Label Visible=\"yes\"/></Window>", "needs true or false");
+        ExpectGenerateError("Ausrichtung erwartet", "<Window Class=\"A\"><Stack Orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
+        ExpectGenerateError("Abstand erwartet", "<Window Class=\"A\"><Label Margin=\"1,2,3\"/></Window>", "needs 1 number");
+        ExpectGenerateError("Auswahl erwartet", "<Window Class=\"A\"><Label HorizontalAlign=\"Middle\"/></Window>", "needs one of Stretch, Left, Center, Right");
+        ExpectGenerateError("Stift erwartet", "<Window Class=\"A\"><Rectangle Stroke=\"black\"/></Window>", "needs a pen");
+        ExpectGenerateError("eine Eigenschaft, die eine Methode setzt, ist nicht bindbar", "<Window Class=\"A\"><Grid Rows=\"{Binding R}\"/></Window>", "cannot be bound");
+        ExpectGenerateError("Farbe erwartet", "<Window Class=\"A\"><Label Color=\"red\"/></Window>", "needs a colour");
 
-        string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
+        string script = Generate("<Window Class=\"Settings\" Title=\"Hi &quot;you&quot;\" Width=\"200\" Height=\"100\"><Button Name=\"ok\" Text=\"OK\" OnClick=\"Save\" Left=\"0x10\"/></Window>");
         CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
             script.Contains("class SettingsBase {") && script.Contains("undefined Save(any sender) { }") && script.Contains("new Framebuffer(200, 100)")
             && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
-            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
+            Generate("<View Class=\"V\" Base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
 
         // the generated classes against the library: a window (events through the fake window) and a view (bindings)
         string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
@@ -10721,12 +10721,12 @@ string[] uiDrawExpected = Array.Empty<string>();
         {
             string P(string name) => Path.Combine(dir, name).Replace('\\', '/');
             File.WriteAllText(P("Form.fxml"), """
-                <Window class="Form" title="Form" width="320" height="200">
-                  <Stack name="box" x="10" y="10" width="300" height="180" orientation="Vertical" spacing="6">
-                    <Label name="caption">Name:</Label>
-                    <TextBox name="field" width="200" onChange="FieldChanged"/>
-                    <CheckBox name="flag" text="Flag" onChange="FlagChanged"/>
-                    <Button name="go" text="Go" width="60" onClick="Go"/>
+                <Window Class="Form" Title="Form" Width="320" Height="200">
+                  <Stack Name="box" Left="10" Top="10" Width="300" Height="180" Orientation="Vertical" Spacing="6">
+                    <Label Name="caption">Name:</Label>
+                    <TextBox Name="field" Width="200" OnChange="FieldChanged"/>
+                    <CheckBox Name="flag" Text="Flag" OnChange="FlagChanged"/>
+                    <Button Name="go" Text="Go" Width="60" OnClick="Go"/>
                   </Stack>
                 </Window>
                 """);
@@ -10762,18 +10762,18 @@ string[] uiDrawExpected = Array.Empty<string>();
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
 
             File.WriteAllText(P("Panel.fxml"), """
-                <View class="Panel1" width="300" height="200">
-                  <Panel width="300" height="200">
-                    <TextBox name="src" x="5" y="5" width="120" text="abc"/>
-                    <Label name="mirror" x="5" y="40" text="{Binding Path=text, ElementName=src}"/>
-                    <Label name="player" x="5" y="60" text="{Binding Player.Name}"/>
-                    <Label name="once" x="5" y="80" text="{Binding Title, Mode=OneTime}"/>
-                    <TextBox name="edit" x="5" y="100" width="120" text="{Binding Player.Name, Mode=TwoWay}"/>
-                    <Label name="shout" x="5" y="120" text="{Binding Player.Name, Converter=Upper}"/>
-                    <CheckBox name="cb" x="5" y="130" text="{Binding Title}" isChecked="{Binding Player.Active, Converter=Not, Mode=TwoWay}"/>
-                    <Label name="empty" x="5" y="150" visible="{Binding Title, Converter=IsEmpty}" color="{Enum Colors.Red}"/>
+                <View Class="Panel1" Width="300" Height="200">
+                  <Panel Width="300" Height="200">
+                    <TextBox Name="src" Left="5" Top="5" Width="120" Text="abc"/>
+                    <Label Name="mirror" Left="5" Top="40" Text="{Binding Path=text, ElementName=src}"/>
+                    <Label Name="player" Left="5" Top="60" Text="{Binding Player.Name}"/>
+                    <Label Name="once" Left="5" Top="80" Text="{Binding Title, Mode=OneTime}"/>
+                    <TextBox Name="edit" Left="5" Top="100" Width="120" Text="{Binding Player.Name, Mode=TwoWay}"/>
+                    <Label Name="shout" Left="5" Top="120" Text="{Binding Player.Name, Converter=Upper}"/>
+                    <CheckBox Name="cb" Left="5" Top="130" Text="{Binding Title}" IsChecked="{Binding Player.Active, Converter=Not, Mode=TwoWay}"/>
+                    <Label Name="empty" Left="5" Top="150" Visible="{Binding Title, Converter=IsEmpty}" Color="{Enum Colors.Red}"/>
                   </Panel>
-                  <Resources><Converter key="Upper" type="UpperConverter"/></Resources>
+                  <Resources><Converter Key="Upper" Type="UpperConverter"/></Resources>
                 </View>
                 """);
             CheckUi("Markup: Bindings mit Probes - Pfad, Element, TwoWay, Converter, OneTime, Austausch im Pfad, Trennen", $$"""
@@ -10817,11 +10817,11 @@ string[] uiDrawExpected = Array.Empty<string>();
                 });
 
             File.WriteAllText(P("Prop.fxml"), """
-                <View class="Prop1" width="300" height="100">
-                  <Panel width="300" height="100">
-                    <Label name="vol" x="5" y="5" text="{Binding Volume, Converter=Text}"/>
-                    <TextBox name="ed" x="5" y="30" width="120" text="{Binding Label, Mode=TwoWay}"/>
-                    <Label name="sum" x="5" y="60" text="{Binding Summary}"/>
+                <View Class="Prop1" Width="300" Height="100">
+                  <Panel Width="300" Height="100">
+                    <Label Name="vol" Left="5" Top="5" Text="{Binding Volume, Converter=Text}"/>
+                    <TextBox Name="ed" Left="5" Top="30" Width="120" Text="{Binding Label, Mode=TwoWay}"/>
+                    <Label Name="sum" Left="5" Top="60" Text="{Binding Summary}"/>
                   </Panel>
                 </View>
                 """);
@@ -10857,68 +10857,68 @@ string[] uiDrawExpected = Array.Empty<string>();
             bool Has(List<string> list, params string[] names) => names.All(list.Contains);
             var sRoot = Suggest("<|");
             CheckMarkup("Markup-IntelliSense: im leeren Dokument Window und View", sRoot.SequenceEqual(new[] { "Window", "View" }), string.Join(",", sRoot));
-            var sChildren = Suggest("<Window class=\"A\">\n  <St|");
+            var sChildren = Suggest("<Window Class=\"A\">\n  <St|");
             CheckMarkup("Markup-IntelliSense: Elemente im Fenster, gefiltert nach dem Getippten", sChildren.Count > 0 && sChildren.All(x => x.Contains("St", StringComparison.OrdinalIgnoreCase)) && Has(sChildren, "Stack", "StackPanel"), string.Join(",", sChildren));
-            var sParts = Suggest("<Window class=\"A\"><ListView><|");
+            var sParts = Suggest("<Window Class=\"A\"><ListView><|");
             CheckMarkup("Markup-IntelliSense: in einer Liste nur ihre Teile", sParts.SequenceEqual(new[] { "Column", "Item" }), string.Join(",", sParts));
-            var sRes = Suggest("<Window class=\"A\"><Resources><|");
+            var sRes = Suggest("<Window Class=\"A\"><Resources><|");
             CheckMarkup("Markup-IntelliSense: in Resources die Ressourcen", Has(sRes, "Converter", "Style", "ControlTemplate", "DataTemplate", "CollectionView") && sRes.Count == 5, string.Join(",", sRes));
-            var sClose = Suggest("<Window class=\"A\"><Stack><Label/></|");
+            var sClose = Suggest("<Window Class=\"A\"><Stack><Label/></|");
             CheckMarkup("Markup-IntelliSense: </ schliesst das offene Element", sClose.SequenceEqual(new[] { "Stack>" }), string.Join(",", sClose));
-            var sAttr = Suggest("<Window class=\"A\"><Button text=\"x\" |");
+            var sAttr = Suggest("<Window Class=\"A\"><Button text=\"x\" |");
             CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "name", "onClick", "margin", "Grid.Row") && !sAttr.Contains("text"), string.Join(",", sAttr));
             var sRootAttr = Suggest("<Window |");
             CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "class", "namespace", "namespace:prefix", "title"), string.Join(",", sRootAttr));
-            var sEnum = Suggest("<Window class=\"A\"><Label halign=\"|");
+            var sEnum = Suggest("<Window Class=\"A\"><Label halign=\"|");
             CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
-            var sBool = Suggest("<Window class=\"A\"><Label visible=\"f|");
+            var sBool = Suggest("<Window Class=\"A\"><Label visible=\"f|");
             CheckMarkup("Markup-IntelliSense: true/false, gefiltert", sBool.SequenceEqual(new[] { "false" }), string.Join(",", sBool));
-            var sStyle = Suggest("<Window class=\"A\"><Resources><Style key=\"Primary\" target=\"Button\"/><Style key=\"Big\" target=\"Label\"/></Resources><Button style=\"|");
+            var sStyle = Suggest("<Window Class=\"A\"><Resources><Style Key=\"Primary\" Target=\"Button\"/><Style Key=\"Big\" Target=\"Label\"/></Resources><Button style=\"|");
             CheckMarkup("Markup-IntelliSense: Schluessel der Styles", sStyle.SequenceEqual(new[] { "Primary", "Big" }), string.Join(",", sStyle));
-            var sSetter = Suggest("<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"back|");
+            var sSetter = Suggest("<Window Class=\"A\"><Resources><Style Target=\"Button\"><Setter property=\"back|");
             CheckMarkup("Markup-IntelliSense: Setter-Eigenschaften des Style-Ziels", sSetter.SequenceEqual(new[] { "background" }), string.Join(",", sSetter));
-            var sSetterValue = Suggest("<Window class=\"A\"><Resources><Style target=\"Label\"><Setter property=\"halign\" value=\"|");
+            var sSetterValue = Suggest("<Window Class=\"A\"><Resources><Style Target=\"Label\"><Setter property=\"halign\" value=\"|");
             CheckMarkup("Markup-IntelliSense: Setter-Wert nach der Eigenschaft", Has(sSetterValue, "Left", "Center"), string.Join(",", sSetterValue));
-            var sExt = Suggest("<Window class=\"A\"><Label text=\"{B|");
+            var sExt = Suggest("<Window Class=\"A\"><Label text=\"{B|");
             CheckMarkup("Markup-IntelliSense: Markup-Erweiterungen, was mit dem Getippten anfaengt zuerst", sExt.SequenceEqual(new[] { "Binding", "TemplateBinding" }), string.Join(",", sExt));
-            var sConv = Suggest("<Window class=\"A\"><Resources><Converter key=\"Upper\" type=\"U\"/></Resources><Label text=\"{Binding Name, Converter=|");
+            var sConv = Suggest("<Window Class=\"A\"><Resources><Converter Key=\"Upper\" Type=\"U\"/></Resources><Label text=\"{Binding Name, Converter=|");
             CheckMarkup("Markup-IntelliSense: Converter einer Bindung (eigene und eingebaute)", Has(sConv, "Upper", "Not", "IsEmpty"), string.Join(",", sConv));
-            var sMode = Suggest("<Window class=\"A\"><TextBox text=\"{Binding Name, |");
+            var sMode = Suggest("<Window Class=\"A\"><TextBox text=\"{Binding Name, |");
             CheckMarkup("Markup-IntelliSense: Optionen einer Bindung", Has(sMode, "Mode=", "Converter=", "ElementName="), string.Join(",", sMode));
-            var sNs = Suggest("<Window class=\"A\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"|");
+            var sNs = Suggest("<Window Class=\"A\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"|");
             CheckMarkup("Markup-IntelliSense: Namespace-Praefixe bei Typnamen", sNs.SequenceEqual(new[] { "local:", "m:" }), string.Join(",", sNs));
-            var sHandler = Suggest("<Window class=\"A\"><Button onClick=\"Save\"/><Button onClick=\"|");
+            var sHandler = Suggest("<Window Class=\"A\"><Button OnClick=\"Save\"/><Button onClick=\"|");
             CheckMarkup("Markup-IntelliSense: vorhandene Handler-Namen", sHandler.SequenceEqual(new[] { "Save" }), string.Join(",", sHandler));
-            var sComment = Suggest("<Window class=\"A\"><!-- <|");
+            var sComment = Suggest("<Window Class=\"A\"><!-- <|");
             CheckMarkup("Markup-IntelliSense: in einem Kommentar nichts", sComment.Count == 0, string.Join(",", sComment));
-            var sAttrItem = fire.UI.Markup.MarkupCompletion.Suggest("<Window class=\"A\"><Button ", 27).Items.First(x => x.Label == "onClick");
+            var sAttrItem = fire.UI.Markup.MarkupCompletion.Suggest("<Window Class=\"A\"><Button ", 27).Items.First(x => x.Label == "onClick");
             CheckMarkup("Markup-IntelliSense: ein Attribut wird mit =\"\" eingefuegt, der Cursor kommt zwischen die Anfuehrungszeichen", sAttrItem.Text == "onClick=\"\"" && sAttrItem.CaretBack == 1);
 
             // namespaces of the markup and object values
-            string nsScript = Generate("<Window class=\"N\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"m:Upper\"/><Converter key=\"L\" type=\"local:Lower\"/></Resources>"
-                + "<Label background=\"[SolidBrush #FF0000]\" text=\"{Binding Name, Converter=U}\"/><Label color=\"{Enum m:Colors.Red}\"/></Window>");
+            string nsScript = Generate("<Window Class=\"N\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter Key=\"U\" Type=\"m:Upper\"/><Converter Key=\"L\" Type=\"local:Lower\"/></Resources>"
+                + "<Label Background=\"[SolidBrush #FF0000]\" Text=\"{Binding Name, Converter=U}\"/><Label Color=\"{Enum m:Colors.Red}\"/></Window>");
             CheckMarkup("Markup: Namespaces - #using, namespace-Block, Praefixe werden qualifiziert, Objektwerte",
                 nsScript.Contains("#using App.Models") && nsScript.Contains("namespace App {") && nsScript.Contains("App.Models.Upper fxConv_U") && nsScript.Contains("App.Lower fxConv_L")
                 && nsScript.Contains("new SolidBrush(UI.Color.Rgb(255, 0, 0))") && !nsScript.Contains("new SolidBrush(new SolidBrush") && nsScript.Contains("App.Models.Colors.Red"), nsScript);
-            ExpectGenerateError("unbekanntes Namespace-Praefix", "<Window class=\"A\"><Label color=\"{Enum x:Colors.Red}\"/></Window>", "Unknown namespace prefix 'x'");
-            ExpectGenerateError("Objektwert: Argument ohne Anfuehrungszeichen", "<Window class=\"A\"><Label background=\"[SolidBrush red]\"/></Window>", "is no argument value");
-            ExpectGenerateError("Objektwert: offener Text", "<Window class=\"A\"><Label background=\"[X 'a]\"/></Window>", "is not closed");
+            ExpectGenerateError("unbekanntes Namespace-Praefix", "<Window Class=\"A\"><Label Color=\"{Enum x:Colors.Red}\"/></Window>", "Unknown namespace prefix 'x'");
+            ExpectGenerateError("Objektwert: Argument ohne Anfuehrungszeichen", "<Window Class=\"A\"><Label Background=\"[SolidBrush red]\"/></Window>", "is no argument value");
+            ExpectGenerateError("Objektwert: offener Text", "<Window Class=\"A\"><Label Background=\"[X 'a]\"/></Window>", "is not closed");
             CheckMarkup("Markup: Objektwert - Texte in '' (zwei stehen fuer eines), verschachtelte Objekte, Zahlen mit Einheit",
-                Generate("<Window class=\"A\"><ListBox itemsSource=\"[Names 'it''s', &quot;b&quot;, [Pair 1, 2.5mm], true]\"/></Window>") is var objScript
+                Generate("<Window Class=\"A\"><ListBox ItemsSource=\"[Names 'it''s', &quot;b&quot;, [Pair 1, 2.5mm], true]\"/></Window>") is var objScript
                 && objScript.Contains("new Names(\"it's\", \"b\", new Pair(1, 2.5mm), true)"), objScript);
             CheckMarkup("Markup: local: ohne namespace ist der Name selbst; ohne Namespace kein namespace-Block",
-                Generate("<Window class=\"A\"><Resources><Converter key=\"U\" type=\"local:Up\"/></Resources></Window>") is var localScript
+                Generate("<Window Class=\"A\"><Resources><Converter Key=\"U\" Type=\"local:Up\"/></Resources></Window>") is var localScript
                 && localScript.Contains("Up fxConv_U") && !localScript.Contains("namespace ") && !localScript.Contains("#using"), localScript);
             File.WriteAllText(P("Ns.fxml"), """
-                <View class="NsView" namespace="Shop" namespace:m="Shop.Models" namespace:x="Shop.Extra" width="200" height="100">
+                <View Class="NsView" namespace="Shop" namespace:m="Shop.Models" namespace:x="Shop.Extra" Width="200" Height="100">
                   <Resources>
-                    <Converter key="Up" type="Upper"/>
-                    <Converter key="Ex" type="x:Shout"/>
+                    <Converter Key="Up" Type="Upper"/>
+                    <Converter Key="Ex" Type="x:Shout"/>
                   </Resources>
-                  <Stack name="box">
-                    <Label name="title" text="{Binding Name, Converter=Up}" background="[SolidBrush #102030]"/>
-                    <Label name="other" text="{Binding Name, Converter=Ex}"/>
-                    <ListBox name="names" itemsSource="[Names 'Ada', 'it''s']"/>
+                  <Stack Name="box">
+                    <Label Name="title" Text="{Binding Name, Converter=Up}" Background="[SolidBrush #102030]"/>
+                    <Label Name="other" Text="{Binding Name, Converter=Ex}"/>
+                    <ListBox Name="names" ItemsSource="[Names 'Ada', 'it''s']"/>
                   </Stack>
                 </View>
                 """);
@@ -10941,9 +10941,9 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print(v.names.itemsSource.count + " " + v.names.itemsSource[1])
                 """, new[] { "FIRE xfire True", "2 it's" });
             File.WriteAllText(P("Amb.fxml"), """
-                <View class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
-                  <Resources><Converter key="Up" type="Upper"/></Resources>
-                  <Label text="{Binding Name, Converter=Up}"/>
+                <View Class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
+                  <Resources><Converter Key="Up" Type="Upper"/></Resources>
+                  <Label Text="{Binding Name, Converter=Up}"/>
                 </View>
                 """);
             CheckUi("Markup: Namespaces - ein Name in zwei gebundenen Namespaces muss qualifiziert werden", $$"""
@@ -10953,71 +10953,71 @@ string[] uiDrawExpected = Array.Empty<string>();
                 """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (20)" });
 
             File.WriteAllText(P("Rich.fxml"), """
-                <Window class="Rich" title="Rich" width="480" height="320">
+                <Window Class="Rich" Title="Rich" Width="480" Height="320">
                   <Resources>
-                    <Style target="Label">
-                      <Setter property="color" value="#0000C8"/>
+                    <Style Target="Label">
+                      <Setter Property="Color" Value="#0000C8"/>
                     </Style>
-                    <Style key="Primary" target="Button">
-                      <Setter property="background" value="#3366AA"/>
-                      <Setter property="foreground" value="#FFFFFF"/>
-                      <Setter property="margin" value="2,1"/>
-                      <Trigger property="hover" value="true">
-                        <Setter property="background" value="#4477BB"/>
+                    <Style Key="Primary" Target="Button">
+                      <Setter Property="Background" Value="#3366AA"/>
+                      <Setter Property="Foreground" Value="#FFFFFF"/>
+                      <Setter Property="Margin" Value="2,1"/>
+                      <Trigger Property="Hover" Value="true">
+                        <Setter Property="Background" Value="#4477BB"/>
                       </Trigger>
                     </Style>
-                    <ControlTemplate key="Fancy" target="Button">
-                      <Border name="bd" background="#33AA66" padding="4">
-                        <Label name="txt" text="{TemplateBinding text}"/>
+                    <ControlTemplate Key="Fancy" Target="Button">
+                      <Border Name="bd" Background="#33AA66" Padding="4">
+                        <Label Name="txt" Text="{TemplateBinding Text}"/>
                       </Border>
-                      <Trigger property="pressed" value="true">
-                        <Setter target="bd" property="background" value="#AA3333"/>
+                      <Trigger Property="Pressed" Value="true">
+                        <Setter Target="bd" Property="Background" Value="#AA3333"/>
                       </Trigger>
                     </ControlTemplate>
                   </Resources>
-                  <DockPanel x="0" y="0" width="480" height="320">
-                    <MenuBar name="bar" DockPanel.Dock="Top">
-                      <Menu header="File">
-                        <MenuItem header="Open" shortcut="Ctrl+O" onClick="OpenFile"/>
+                  <DockPanel Left="0" Top="0" Width="480" Height="320">
+                    <MenuBar Name="bar" DockPanel.Dock="Top">
+                      <Menu Header="File">
+                        <MenuItem Header="Open" Shortcut="Ctrl+O" OnClick="OpenFile"/>
                         <MenuSeparator/>
-                        <MenuItem header="Recent">
-                          <MenuItem header="a.txt"/>
+                        <MenuItem Header="Recent">
+                          <MenuItem Header="a.txt"/>
                         </MenuItem>
-                        <MenuItem header="Check" checkable="true" isChecked="true"/>
+                        <MenuItem Header="Check" Checkable="true" IsChecked="true"/>
                       </Menu>
-                      <Menu header="Edit"><MenuItem header="Copy"/></Menu>
+                      <Menu Header="Edit"><MenuItem Header="Copy"/></Menu>
                     </MenuBar>
                     <ToolBar DockPanel.Dock="Top">
-                      <Button name="one" text="One" onClick="One"/>
+                      <Button Name="one" Text="One" OnClick="One"/>
                       <Separator/>
-                      <Button text="Two"/>
+                      <Button Text="Two"/>
                     </ToolBar>
-                    <Grid rows="*,auto" columns="150,*">
-                      <ListBox name="names" Grid.Row="0" Grid.Column="0" margin="4" onSelect="Picked">
+                    <Grid Rows="*,auto" Columns="150,*">
+                      <ListBox Name="names" Grid.Row="0" Grid.Column="0" Margin="4" OnSelect="Picked">
                         <Item>Alice</Item>
                         <Item>Bob</Item>
-                        <Item text="Carol"/>
+                        <Item Text="Carol"/>
                       </ListBox>
-                      <ScrollViewer Grid.Row="0" Grid.Column="1" margin="4">
-                        <StackPanel spacing="4" padding="4">
-                          <TreeView name="tree" height="80">
-                            <TreeNode text="root" expanded="true">
-                              <TreeNode text="child a"/>
-                              <TreeNode text="child b"><TreeNode text="leaf"/></TreeNode>
+                      <ScrollViewer Grid.Row="0" Grid.Column="1" Margin="4">
+                        <StackPanel Spacing="4" Padding="4">
+                          <TreeView Name="tree" Height="80">
+                            <TreeNode Text="root" Expanded="true">
+                              <TreeNode Text="child a"/>
+                              <TreeNode Text="child b"><TreeNode Text="leaf"/></TreeNode>
                             </TreeNode>
                           </TreeView>
-                          <RadioButtons name="radio" header="Size" selectedIndex="1"><Item>Small</Item><Item>Large</Item></RadioButtons>
-                          <Button name="styled" text="Styled" style="Primary"/>
-                          <Button name="templated" text="Templated" template="Fancy"/>
-                          <AutoSuggestBox name="sugg" width="150"><Suggestion>apple</Suggestion><Suggestion>banana</Suggestion></AutoSuggestBox>
-                          <Rectangle name="rect" width="60" height="20" fill="#FFCC00" stroke="#000000"/>
-                          <Path data="M 0 0 L 30 0 L 15 20 Z" fill="#66AAFF" stroke="#003366,2"/>
-                          <DrawingCanvas name="canvas" width="80" height="40" onPaint="Paint" onMouseDown="Down"/>
+                          <RadioButtons Name="radio" Header="Size" SelectedIndex="1"><Item>Small</Item><Item>Large</Item></RadioButtons>
+                          <Button Name="styled" Text="Styled" Style="Primary"/>
+                          <Button Name="templated" Text="Templated" Template="Fancy"/>
+                          <AutoSuggestBox Name="sugg" Width="150"><Suggestion>apple</Suggestion><Suggestion>banana</Suggestion></AutoSuggestBox>
+                          <Rectangle Name="rect" Width="60" Height="20" Fill="#FFCC00" Stroke="#000000"/>
+                          <Path Data="M 0 0 L 30 0 L 15 20 Z" Fill="#66AAFF" Stroke="#003366,2"/>
+                          <DrawingCanvas Name="canvas" Width="80" Height="40" OnPaint="Paint" OnMouseDown="Down"/>
                         </StackPanel>
                       </ScrollViewer>
-                      <ListView name="table" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" height="60">
-                        <Column header="Name" member="name" width="120"/>
-                        <Column header="Age" member="age"/>
+                      <ListView Name="table" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Height="60">
+                        <Column Header="Name" Member="name" Width="120"/>
+                        <Column Header="Age" Member="age"/>
                       </ListView>
                     </Grid>
                   </DockPanel>
@@ -11066,33 +11066,33 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var styledRect = shot.Rects.FirstOrDefault(r => r.Index == styledAt);
                 uint styledColor = 51u | (102u << 8) | (170u << 16) | (255u << 24);
                 CheckMarkup("Markup: Entwurfsansicht - der Style steckt im Bild (Hintergrund des Buttons mit style=\"Primary\")", shot.Ok && styledRect != null && shot.Pixels[(styledRect.Y + 3) * shot.Width + styledRect.X + 3] == styledColor);
-                var bound = fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\" width=\"200\" height=\"100\"><Label text=\"{Binding Name}\"/><Label color=\"{Enum Colors.Red}\" text=\"x\"/><Button onClick=\"Nope\"/></Window>");
+                var bound = fire.UI.Markup.MarkupParser.Parse("<Window Class=\"B\" Width=\"200\" Height=\"100\"><Label Text=\"{Binding Name}\"/><Label Color=\"{Enum Colors.Red}\" Text=\"x\"/><Button OnClick=\"Nope\"/></Window>");
                 string previewScript = fire.UI.Markup.FireUiGenerator.GeneratePreview(bound);
                 CheckMarkup("Markup: Entwurfsansicht - ein gebundener Text zeigt den Pfad, Code des Programms und Handler fehlen", previewScript.Contains("\u2039Name\u203A") && !previewScript.Contains("Colors.Red") && !previewScript.Contains("Nope(") && fire.Compiler.UiPreview.Render(bound).Ok);
-                CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\"><Label x=\"abc\"/></Window>")).Ok);
+                CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window Class=\"B\"><Label Left=\"abc\"/></Window>")).Ok);
             }
 
             // DataTemplate, CollectionView, itemsSource/itemTemplate/view im Markup
             File.WriteAllText(P("Data.fxml"), """
-                <Window class="Data" title="Data" width="360" height="240">
+                <Window Class="Data" Title="Data" Width="360" Height="240">
                   <Resources>
-                    <Converter key="Up" type="UpperConverter"/>
-                    <DataTemplate key="Person">
-                      <StackPanel horizontal="true" spacing="6">
-                        <Label text="{Binding name, Converter=Up}"/>
-                        <Label text="{Binding age}"/>
+                    <Converter Key="Up" Type="UpperConverter"/>
+                    <DataTemplate Key="Person">
+                      <StackPanel Horizontal="true" Spacing="6">
+                        <Label Text="{Binding name, Converter=Up}"/>
+                        <Label Text="{Binding age}"/>
                       </StackPanel>
                     </DataTemplate>
-                    <DataTemplate key="Plain">
-                      <Label text="{Binding}"/>
+                    <DataTemplate Key="Plain">
+                      <Label Text="{Binding}"/>
                     </DataTemplate>
-                    <CollectionView key="ByName" source="{Binding people}" sortBy="name" descending="true"/>
-                    <CollectionView key="Young" source="{Binding people}" sortBy="age" filter="{Expr func (p) on this => { return p.age &lt; 30 }}"/>
+                    <CollectionView Key="ByName" Source="{Binding people}" SortBy="name" Descending="true"/>
+                    <CollectionView Key="Young" Source="{Binding people}" SortBy="age" filter="{Expr func (p) on this => { return p.age &lt; 30 }}"/>
                   </Resources>
-                  <StackPanel padding="4" spacing="4">
-                    <ListBox name="viaView" width="200" height="90" view="ByName" itemTemplate="Person" selectedIndex="{Binding sel, Mode=TwoWay}"/>
-                    <ListBox name="direct" width="200" height="60" itemsSource="{Binding names}" itemTemplate="Plain"/>
-                    <ListBox name="young" width="200" height="40" view="Young" itemTemplate="Person"/>
+                  <StackPanel Padding="4" Spacing="4">
+                    <ListBox Name="viaView" Width="200" Height="90" View="ByName" ItemTemplate="Person" SelectedIndex="{Binding sel, Mode=TwoWay}"/>
+                    <ListBox Name="direct" Width="200" Height="60" ItemsSource="{Binding names}" ItemTemplate="Plain"/>
+                    <ListBox Name="young" Width="200" Height="40" View="Young" ItemTemplate="Person"/>
                   </StackPanel>
                 </Window>
                 """);
@@ -11209,8 +11209,8 @@ string[] uiDrawExpected = Array.Empty<string>();
                 """, new[] { "angehaengt 1", "True", "True", "ticks 2 gezeichnet True", "nach Detach 2" });
 
             // several windows: one window opens another, Tick processes both
-            File.WriteAllText(P("Main.fxml"), "<Window class=\"Main\" width=\"120\" height=\"80\"><Button name=\"b\" text=\"main\"/></Window>");
-            File.WriteAllText(P("Tool.fxml"), "<Window class=\"Tool\" title=\"Tool\" width=\"100\" height=\"60\"><Label name=\"l\" text=\"tool\"/></Window>");
+            File.WriteAllText(P("Main.fxml"), "<Window Class=\"Main\" Width=\"120\" Height=\"80\"><Button Name=\"b\" Text=\"main\"/></Window>");
+            File.WriteAllText(P("Tool.fxml"), "<Window Class=\"Tool\" Title=\"Tool\" Width=\"100\" Height=\"60\"><Label Name=\"l\" Text=\"tool\"/></Window>");
             CheckUi("Markup: Open/Run(other) - das erzeugte Fenster haengt ein anderes an, ein Tick arbeitet beide ab", $$"""
                 #include "{{P("Main.fxml")}}"
                 #include "{{P("Tool.fxml")}}"
