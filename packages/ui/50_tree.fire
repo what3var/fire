@@ -86,8 +86,8 @@ namespace UI {
             var sig = list.count
             for (var i = 0; i < list.count; i = i + 1) {
                 var n = list[i]
-                sig = (sig * 31 + n.text.Length * 7 + n.Depth()) % 1000000007
-                if (n.expanded) { sig = (sig * 31 + 1) % 1000000007 }
+                sig = (sig * 31 + n.Text.Length * 7 + n.Depth()) % 1000000007
+                if (n.Expanded) { sig = (sig * 31 + 1) % 1000000007 }
             }
             return sig
         }
@@ -108,7 +108,7 @@ namespace UI {
 
         undefined Collect_(List list, TreeNode node) {
             list.Add(node)
-            if (node.expanded) {
+            if (node.Expanded) {
                 for (var i = 0; i < node.children.count; i = i + 1) { this.Collect_(list, node.children[i]) }
             }
         }
@@ -124,7 +124,7 @@ namespace UI {
             var widest = 0
             for (var i = 0; i < this.visibleNodes.count; i = i + 1) {
                 var n = this.visibleNodes[i]
-                widest = UI.M.Max(widest, n.Depth() * this.Indent + 20 + this.TextWidth(root, n.text))
+                widest = UI.M.Max(widest, n.Depth() * this.Indent + 20 + this.TextWidth(root, n.Text))
             }
             this.cw = widest + 4
             this.ch = this.visibleNodes.count * this.RowHeight(root) + 2
@@ -170,8 +170,8 @@ namespace UI {
                     r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
                 }
                 var x = ax + 3 + node.Depth() * this.Indent
-                if (node.HasChildren()) { this.DrawBox(root, x, y + (rh - 9) / 2, node.expanded, text) }
-                this.DrawString(root, x + 14, y + (rh - this.TextHeight(root)) / 2, node.text, text)
+                if (node.HasChildren()) { this.DrawBox(root, x, y + (rh - 9) / 2, node.Expanded, text) }
+                this.DrawString(root, x + 14, y + (rh - this.TextHeight(root)) / 2, node.Text, text)
             }
             root.PopClip()
             if (this.scroller.Needed()) { this.scroller.Draw(root, ax + this.actualWidth - 1 - this.scroller.size, top, this.viewH) }
@@ -235,7 +235,7 @@ namespace UI {
             var node = this.visibleNodes[index]
             var boxX = this.ax + 3 + node.Depth() * this.Indent
             if (node.HasChildren() && px >= boxX && px < boxX + 12) {
-                node.expanded = !node.expanded
+                node.Expanded = !node.Expanded
                 return
             }
             this.SelectNode(node)
@@ -290,20 +290,20 @@ namespace UI {
                 else {
                     var n = this.visibleNodes[index]
                     if (n.HasChildren()) {
-                        if (!n.expanded) { n.expanded = true }
+                        if (!n.Expanded) { n.Expanded = true }
                         else { index = index + 1 }
                     }
                 }
             } else if (key == UI.Keys.Left()) {
                 if (index >= 0) {
                     var n = this.visibleNodes[index]
-                    if (n.HasChildren() && n.expanded) { n.expanded = false }
+                    if (n.HasChildren() && n.Expanded) { n.Expanded = false }
                     else if (n.parent != undefined) { index = this.visibleNodes.IndexOf(n.parent) }
                 }
             } else if (key == UI.Keys.Enter()) {
                 if (index >= 0) {
                     var n = this.visibleNodes[index]
-                    if (n.HasChildren()) { n.expanded = !n.expanded }
+                    if (n.HasChildren()) { n.Expanded = !n.Expanded }
                 }
                 return
             } else { return }

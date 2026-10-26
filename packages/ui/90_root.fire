@@ -142,7 +142,7 @@ namespace UI {
             float systemScale = system.scale
             if (this.embedded) { systemScale = Math.Max(1.0, Math.Round(systemScale)) }
             this.content = new Panel(0, 0, this.width, this.height)
-            this.content.filled = false
+            this.content.Filled = false
 
             // Events are polled, not delivered by callback: this way they run in the main program, and an
             // onClick lambda sees the real global variables (a callback, by contrast, works on a copy, SPEC 8.1.4)
@@ -290,8 +290,8 @@ namespace UI {
             if (w == this.width && h == this.height) { return false }
             this.width = w
             this.height = h
-            this.content.width = w
-            this.content.height = h
+            this.content.Width = w
+            this.content.Height = h
             this.Invalidate()
             var callback = this.onResize
             if (callback != undefined) { callback(w, h) }
@@ -308,7 +308,7 @@ namespace UI {
                 if (popup.y + popup.dh > this.height) { popup.y = UI.M.Max(0, this.height - popup.dh) }
                 var moved = this.layoutMoved
                 this.layoutMoved = false
-                popup.Arrange(this, popup.x, popup.y, popup.dw, popup.dh)
+                popup.Arrange(this, popup.Left, popup.Top, popup.dw, popup.dh)
                 if (this.layoutMoved && !this.fullRedraw) { this.InvalidateRect(popup.rx, popup.ry, popup.actualWidth, popup.actualHeight) }
                 this.layoutMoved = moved
             }
@@ -365,8 +365,8 @@ namespace UI {
         // on closing (menus). `owner`: the element that opened it (a click on it only closes, does not reopen right away).
         undefined ShowPopup(Element popup, int x, int y, bool transient = true, Element owner = undefined) {
             popup.TakeTo(this)
-            popup.x = x
-            popup.y = y
+            popup.Left = x
+            popup.Top = y
             popup.transient = transient
             popup.owner = owner
             popup.parent = undefined
@@ -693,7 +693,7 @@ namespace UI {
             if (e == undefined) { e = this.Hit(this.touchX0, this.touchY0) }
             while (e != undefined) {
                 if (e.Dragging()) { return undefined }
-                if (e.enabled && e.CanPan()) { return e }
+                if (e.Enabled && e.CanPan()) { return e }
                 e = e.parent
             }
             return undefined
@@ -957,16 +957,16 @@ namespace UI {
             }
             var target = this.focusElement
             // an arrow key that the focused element does not need itself moves the focus
-            if (this.IsArrow(key) && (target == undefined || !target.enabled || !target.WantsKey(key))) {
+            if (this.IsArrow(key) && (target == undefined || !target.Enabled || !target.WantsKey(key))) {
                 this.FocusMove(key)
                 return
             }
-            if (target != undefined && target.enabled) { target.KeyDown(this, key, mod) }
+            if (target != undefined && target.Enabled) { target.KeyDown(this, key, mod) }
         }
 
         undefined TextInput(string text) {
             var target = this.focusElement
-            if (target != undefined && target.enabled) { target.TextInput(this, text) }
+            if (target != undefined && target.Enabled) { target.TextInput(this, text) }
         }
     }
 }

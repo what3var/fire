@@ -243,12 +243,12 @@ namespace UI {
             }
             this.popupList.DisplayMember = this.DisplayMember
             this.popupList.SetItems(found)
-            this.popupList.width = this.actualWidth
-            this.popupList.height = found.count * this.popupList.RowHeight(root) + 2
+            this.popupList.Width = this.actualWidth
+            this.popupList.Height = found.count * this.popupList.RowHeight(root) + 2
             if (!root.IsPopup(this.popupList)) { root.ShowPopup(this.popupList, this.ax, this.ay + this.actualHeight, false, this) }
             else {
-                this.popupList.x = this.ax
-                this.popupList.y = this.ay + this.actualHeight
+                this.popupList.Left = this.ax
+                this.popupList.Top = this.ay + this.actualHeight
             }
         }
 
@@ -283,7 +283,7 @@ namespace UI {
         undefined Poll(Root root) {
             base.Poll(root)
             // a click in the list has chosen
-            if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
+            if (this.popupList.TakeChanged() && this.popupList.SelectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
             if (!this.Focused && this.ListOpen()) { this.CloseList() }
         }
 
@@ -297,12 +297,12 @@ namespace UI {
             if (this.ListOpen()) {
                 var list = this.popupList
                 if (key == UI.Keys.Down()) {
-                    list.Select(UI.M.Min(list.count - 1, list.selectedIndex + 1))
+                    list.Select(UI.M.Min(list.count - 1, list.SelectedIndex + 1))
                     list.TakeChanged()
                     return
                 }
                 if (key == UI.Keys.Up()) {
-                    list.Select(UI.M.Max(0, list.selectedIndex - 1))
+                    list.Select(UI.M.Max(0, list.SelectedIndex - 1))
                     list.TakeChanged()
                     return
                 }
@@ -310,7 +310,7 @@ namespace UI {
                     this.CloseList()
                     return
                 }
-                if (key == UI.Keys.Enter() && list.selectedIndex >= 0) {
+                if (key == UI.Keys.Enter() && list.SelectedIndex >= 0) {
                     this.Choose(list.selectedItem)
                     return
                 }
@@ -486,12 +486,12 @@ namespace UI {
             list.DisplayMember = this.DisplayMember
             list.SetItems(this.items, false)
             var rows = UI.M.Min(this.items.count, UI.M.Max(1, this.MaxDropDownItems))
-            list.width = this.actualWidth
-            list.height = rows * list.RowHeight(root) + 2
+            list.Width = this.actualWidth
+            list.Height = rows * list.RowHeight(root) + 2
             list.Select(this.SelectedIndex)
             list.TakeChanged()
             var y = this.ay + this.actualHeight
-            if (y + list.height > root.height && this.ay - list.height >= 0) { y = this.ay - list.height }
+            if (y + list.Height > root.height && this.ay - list.Height >= 0) { y = this.ay - list.Height }
             root.ShowPopup(list, this.ax, y, false, this)
             if (this.SelectedIndex >= 0) { list.EnsureVisible(root, this.SelectedIndex) }
             this.Invalidate()
@@ -581,13 +581,13 @@ namespace UI {
                 if (key == UI.Keys.Escape() || (alt && key == UI.Keys.Up()) || key == UI.Keys.F4()) {
                     this.CloseDropDown()
                 } else if (key == UI.Keys.Down()) {
-                    list.Select(UI.M.Min(list.count - 1, list.selectedIndex + 1))
-                    list.EnsureVisible(root, list.selectedIndex)
+                    list.Select(UI.M.Min(list.count - 1, list.SelectedIndex + 1))
+                    list.EnsureVisible(root, list.SelectedIndex)
                 } else if (key == UI.Keys.Up()) {
-                    list.Select(UI.M.Max(0, list.selectedIndex - 1))
-                    list.EnsureVisible(root, list.selectedIndex)
+                    list.Select(UI.M.Max(0, list.SelectedIndex - 1))
+                    list.EnsureVisible(root, list.SelectedIndex)
                 } else if (key == UI.Keys.Enter() || key == UI.Keys.Space()) {
-                    var index = list.selectedIndex
+                    var index = list.SelectedIndex
                     if (index >= 0) { this.Choose(index) } else { this.CloseDropDown() }
                 }
                 list.TakeChanged()
@@ -620,7 +620,7 @@ namespace UI {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var pen = this.Pen
             if (pen == undefined) { pen = root.theme.border }
-            if (this.parent != undefined && this.parent is of StackPanel && this.parent.horizontal) {
+            if (this.parent != undefined && this.parent is of StackPanel && this.parent.Horizontal) {
                 root.renderer.DrawLine(ax + 2, ay + 2, ax + 2, ay + this.actualHeight - 3, pen)
             } else {
                 root.renderer.DrawLine(ax + 2, ay + 2, ax + this.actualWidth - 3, ay + 2, pen)
@@ -639,7 +639,7 @@ namespace UI {
 
         UI.Button AddButton(string text, any onClick = undefined) {
             var button = new Button(text, 0, 0, -1, -1)
-            button.onClick = onClick
+            button.OnClick = onClick
             this.Add(button)
             return button
         }

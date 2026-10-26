@@ -513,7 +513,7 @@ namespace Dialogs {
 
         bool Confirm(string path) {
             if (this.CheckFileExists && !IO.File.Exists(path)) {
-                this.status.text = "The file '" + IO.Path.GetFileName(path) + "' does not exist."
+                this.status.Text = "The file '" + IO.Path.GetFileName(path) + "' does not exist."
                 return false
             }
             return true
@@ -543,7 +543,7 @@ namespace Dialogs {
 
         bool Confirm(string path) {
             if (this.CheckPathExists && !IO.Directory.Exists(IO.Path.GetDirectoryName(path))) {
-                this.status.text = "The folder '" + IO.Path.GetDirectoryName(path) + "' does not exist."
+                this.status.Text = "The folder '" + IO.Path.GetDirectoryName(path) + "' does not exist."
                 return false
             }
             if (this.OverwritePrompt && IO.File.Exists(path)) {
@@ -589,7 +589,7 @@ namespace Dialogs {
         // The name box names a folder in the open one; empty: the open folder.
         bool Confirm(string path) {
             if (!IO.Directory.Exists(path)) {
-                this.status.text = "The folder '" + path + "' does not exist."
+                this.status.Text = "The folder '" + path + "' does not exist."
                 return false
             }
             return true

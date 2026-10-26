@@ -572,7 +572,7 @@ namespace UI.Docking {
                 any strip = this.body
                 this.body.Measure(root, -1, -1)
                 var title = this.TitleHeight(root)
-                this.cw = UI.M.Max(this.body.dw + 2, this.TextWidth(root, strip.text) + title + 16)
+                this.cw = UI.M.Max(this.body.dw + 2, this.TextWidth(root, strip.Text) + title + 16)
                 this.ch = this.body.dh + title + 2
                 return
             }
@@ -612,7 +612,7 @@ namespace UI.Docking {
                     r.FillRect(ax + 1, ay + 1, this.actualWidth - 2, title, theme.accent)
                     var close = this.CloseLeft(root)
                     root.PushClip(ax, ay, close - ax, title + 1)
-                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.text, theme.selectionText)
+                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.Text, theme.selectionText)
                     root.PopClip()
                     if (this.closeHot) { r.FillRect(close, ay + 1, title, title, theme.faceHover) }
                     var cross = theme.selectionText
@@ -1085,10 +1085,10 @@ namespace UI.Docking {
             window.wasFloating = pane.floating
             if (pane.floating) {
                 any f = pane.parent
-                window.floatX = f.x
-                window.floatY = f.y
-                window.floatWidth = f.width
-                window.floatHeight = f.height
+                window.floatX = f.Left
+                window.floatY = f.Top
+                window.floatWidth = f.Width
+                window.floatHeight = f.Height
             } else {
                 window.lastSide = pane.side
                 window.lastIndex = this.PanesOf(pane.side).IndexOf(pane)
@@ -1364,9 +1364,9 @@ namespace UI.Docking {
             for (var i = 0; i < this.floats.count; i = i + 1) {
                 var f = this.floats[i]
                 f.Measure(root, -1, -1)
-                f.x = UI.M.Clamp(f.x, 0, UI.M.Max(0, w - f.dw))
-                f.y = UI.M.Clamp(f.y, 0, UI.M.Max(0, h - f.dh))
-                f.Arrange(root, f.x, f.y, f.dw, f.dh)
+                f.Left = UI.M.Clamp(f.Left, 0, UI.M.Max(0, w - f.dw))
+                f.Top = UI.M.Clamp(f.Top, 0, UI.M.Max(0, h - f.dh))
+                f.Arrange(root, f.Left, f.Top, f.dw, f.dh)
             }
         }
 
@@ -1685,8 +1685,8 @@ namespace UI.Docking {
                 if (pane.floating) {
                     any f = pane.parent
                     this.dragFloat = f
-                    this.grabX = this.pressX - this.ax - f.x
-                    this.grabY = this.pressY - this.ay - f.y
+                    this.grabX = this.pressX - this.ax - f.Left
+                    this.grabY = this.pressY - this.ay - f.Top
                     this.BringToFront(f)
                 } else {
                     var w = UI.M.Max(160, pane.actualWidth)
@@ -1893,8 +1893,8 @@ namespace UI.Docking {
                 this.dragStarted = true
                 if (strip.floating) {
                     any f = strip.parent
-                    this.grabX = this.pressX - this.ax - f.x
-                    this.grabY = this.pressY - this.ay - f.y
+                    this.grabX = this.pressX - this.ax - f.Left
+                    this.grabY = this.pressY - this.ay - f.Top
                     this.BringToFront(f)
                 } else {
                     this.grabX = this.pressX - strip.ax
@@ -1912,8 +1912,8 @@ namespace UI.Docking {
                     this.grabY = 6
                 }
                 any f = strip.parent
-                f.x = x - this.grabX
-                f.y = y - this.grabY
+                f.Left = x - this.grabX
+                f.Top = y - this.grabY
                 this.Changed()
                 return
             }
