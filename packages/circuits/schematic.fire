@@ -185,7 +185,7 @@ namespace Circuits {
             l.Add("Devices|SpiShiftIn|supply:V=5")
             l.Add("Display|LogicOutput|threshold:V=2.5")
             l.Add("Display|Probe|")
-            l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current=voltage;range:V=0")
+            l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current=voltage;display:choice:time/spectrum=time;range:V=0;maxFrequency:Hz=0")
             l.Add("Display|Label|text:text=A")
             l.Add("Display|Pin|port:text=in")
             l.Add("Display|Text|text:text=Text")
@@ -1249,6 +1249,12 @@ namespace Circuits {
         /// <summary>Sets a property of an element and applies it.</summary>
         undefined Set(Circuits.Element e, string key, string value) {
             e.Set(key, value)
+            // how a scope shows what it records: only the picture changes (the recording goes on)
+            if (e.type == "Scope" && (key == "display" || key == "range" || key == "maxFrequency")) {
+                e.dirty = false
+                this.version = this.version + 1
+                return
+            }
             // the number of pins can change (inputs, bits, flip, model of a transistor)
             this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity" || key == "smallGrid" || key == "legacy" || key == "layout" || key == "resetPin" || key == "groundPin" || key == "spacing")
         }

@@ -34,6 +34,11 @@ namespace UI {
         // so that lines and text are sharp at any scaling, not placed on the coarser grid of logical pixels
         float dev = 1.0
         bool device = false
+        // the context menu (a right click without dragging): its rows and the element it was opened on
+        List contextItems
+        Circuits.Element contextElement
+        int downPX = 0
+        int downPY = 0
 
         /// <summary>Called with the view when the schematic was changed by the user (to save it), when the selection changes, and when an element should be
         /// edited (a double click; without onEdit the view shows its own editor).</summary>
@@ -1818,7 +1823,7 @@ namespace UI {
             root.renderer.FillRect(x0, y0, w, h, this.brush)
             this.thin.Color = UI.Color.Rgb(90, 90, 90)
             root.renderer.DrawRect(x0, y0, w, h, this.thin)
-            root.renderer.DrawLine(x0, y0 + h / 2, x1, y0 + h / 2, this.thin)
+            if (e.Get("display") != "spectrum") { root.renderer.DrawLine(x0, y0 + h / 2, x1, y0 + h / 2, this.thin) }
             var label = e.Get("probe")
             if (e.Get("quantity") == "current") { label = "I(" + label + ")" } else { label = "V(" + label + ")" }
             var scope = e.scope
@@ -1830,6 +1835,10 @@ namespace UI {
             var n = scope.Count
             if (n == 0) { return }
             var samples = scope.Samples("y")
+            if (e.Get("display") == "spectrum") {
+                this.DrawSpectrum(root, e, scope, samples, x0, y0, w, h, label)
+                return
+            }
             var count = w - 2
             var first = samples.length - count
             if (first < 0) { first = 0 }
@@ -1866,6 +1875,75 @@ namespace UI {
             var unit = "V"
             if (e.Get("quantity") == "current") { unit = "A" }
             this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label + " = " + UI.CircuitView.Short(samples[samples.length - 1]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit, this.textBrush)
+        }
+
+        // a scope as an FFT analyzer: the spectrum of the last samples (a power of two, at most 2048, with a Hann window), in dB below its strongest line,
+        // from 0 Hz to maxFrequency (0: up to a little above the highest line that is not 60 dB down)
+        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, any samples, int x0, int y0, int w, int h, string label) {
+            var times = scope.Times()
+            var size = 1
+            while (size * 2 <= samples.length && size * 2 <= 2048) { size = size * 2 }
+            this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
+            if (size < 16 || times.length < 2) {
+                this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), "FFT " + label, this.textBrush)
+                return
+            }
+            var first = samples.length - size
+            var dt = (times[times.length - 1] - times[first]) / (size - 1)
+            if (dt <= 0.0) { return }
+            var rate = 1.0 / dt
+            var windowed = new float[size]
+            var mean = 0.0
+            for (int i = 0; i < size; i++) { mean = mean + samples[first + i] }
+            mean = mean / size
+            for (int i = 0; i < size; i++) {
+                var hann = 0.5 - 0.5 * Math.Cos(2.0 * Math.PI * i / (size - 1))
+                windowed[i] = (samples[first + i] - mean) * hann
+            }
+            var mags = Circuits.Fft.Magnitudes(windowed)
+            var peak = 0.0
+            var peakBin = 1
+            for (int k = 1; k < mags.length; k++) {
+                if (mags[k] > peak) {
+                    peak = mags[k]
+                    peakBin = k
+                }
+            }
+            var binHz = rate / size
+            var top = mags.length - 1
+            var fmax = Circuits.Symbols.Number(e.Get("maxFrequency"))
+            if (fmax != undefined && fmax > 0.0) {
+                top = UI.M.Min(mags.length - 1, UI.M.Max(4, Math.Ceiling(fmax / binHz)!int))
+            } else if (peak > 0.0) {
+                var last = peakBin
+                for (int k = 1; k < mags.length; k++) {
+                    if (mags[k] > peak * 0.001) { last = k }
+                }
+                top = UI.M.Min(mags.length - 1, UI.M.Max(16, Math.Ceiling(last * 1.25)!int))
+            }
+            // the lines: one bar per column, the strongest bin of the column, 0 dB at the top, -80 dB at the bottom
+            this.brush.Color = UI.Color.Rgb(80, 220, 255)
+            var inner = h - this.Dp(4)
+            for (int col = 0; col < w - 2; col++) {
+                var k0 = 1 + Math.Floor(col * top / (w - 2.0))!int
+                var k1 = 1 + Math.Floor((col + 1) * top / (w - 2.0))!int
+                if (k1 <= k0) { k1 = k0 + 1 }
+                var m = 0.0
+                for (int k = k0; k < k1 && k < mags.length; k++) {
+                    if (mags[k] > m) { m = mags[k] }
+                }
+                if (m <= 0.0 || peak <= 0.0) { continue }
+                var db = 20.0 * Math.Log(m / peak) / Math.Log(10.0)
+                if (db < -80.0) { continue }
+                var bar = Math.Round((db + 80.0) / 80.0 * inner)!int
+                if (bar > 0) { root.renderer.FillRect(x0 + 1 + col, y0 + h - this.Dp(2) - bar, 1, bar, this.brush) }
+            }
+            this.textBrush.Color = UI.Color.Rgb(140, 200, 255)
+            var unit = "V"
+            if (e.Get("quantity") == "current") { unit = "A" }
+            this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), "FFT " + label + "  peak " + UI.CircuitView.Short(peakBin * binHz) + "Hz " + UI.CircuitView.Short(peak) + unit, this.textBrush)
+            var right = UI.CircuitView.Short(top * binHz) + "Hz"
+            this.DrawString(root, x0 + w - this.TextWidth(root, right) - this.Dp(4), y0 + h - this.TextHeight(root) - this.Dp(2), right, this.textBrush)
         }
 
         // ---- the dots of the current ----
@@ -2193,6 +2271,8 @@ namespace UI {
 
         undefined MouseDown(Root root, int button, int px, int py) {
             root.SetFocus(this)
+            this.downPX = px
+            this.downPY = py
             var lx = px - this.ax + 0.0
             var ly = py - this.ay + 0.0
             this.downX = this.ToUnitX(lx)
@@ -2362,6 +2442,11 @@ namespace UI {
             var mode = this.mode
             this.mode = 0
             var s = this.Schematic
+            // the right button without dragging: the context menu
+            if (mode == 5 && button == 3 && Math.Abs(px - this.downPX) + Math.Abs(py - this.downPY) <= 4) {
+                this.ShowContextMenu(root, px, py)
+                return
+            }
             if (mode == 7 || (mode == 1 && !this.moved)) {
                 // a click: switch, or the second click of a double click edits
                 var e = this.pressedElement
@@ -2524,6 +2609,151 @@ namespace UI {
         }
 
         /// <summary>Edits the properties of an element: onEdit if it is set (an editor around the view), else the editor of the view.</summary>
+        // ---- the context menu ----
+
+        undefined ShowContextMenu(Root root, int px, int py) {
+            var hit = this.ElementAt(this.ToUnitX(px - this.ax + 0.0), this.ToUnitY(py - this.ay + 0.0))
+            this.contextElement = hit
+            if (hit != undefined && this.selection.IndexOf(hit) < 0) { this.Select(hit, false) }
+            if (this.contextItems == undefined) { this.contextItems = new List() } else { this.contextItems.Clear() }
+            var items = this.contextItems
+            if (hit != undefined && !this.readOnly) {
+                if (this.CanProbe(hit)) {
+                    items.Add(new UI.CircuitMenuItem("Attach Scope (voltage)", this, "scope voltage time"))
+                    if (this.HasCurrent(hit)) { items.Add(new UI.CircuitMenuItem("Attach Scope (current)", this, "scope current time")) }
+                    items.Add(new UI.CircuitMenuItem("Attach FFT Analyzer", this, "scope voltage spectrum"))
+                    if (this.HasCurrent(hit)) { items.Add(new UI.CircuitMenuItem("Attach FFT Analyzer (current)", this, "scope current spectrum")) }
+                    items.Add(UI.MenuItem.Separator())
+                }
+                if (hit.type == "Scope") {
+                    var asTime = new UI.CircuitMenuItem("Show Over Time", this, "display time")
+                    asTime.checkable = true
+                    asTime.isChecked = hit.Get("display") != "spectrum"
+                    items.Add(take asTime)
+                    var asSpectrum = new UI.CircuitMenuItem("Show Spectrum (FFT)", this, "display spectrum")
+                    asSpectrum.checkable = true
+                    asSpectrum.isChecked = hit.Get("display") == "spectrum"
+                    items.Add(take asSpectrum)
+                    items.Add(UI.MenuItem.Separator())
+                }
+                if (this.IsInteractive(hit)) { items.Add(new UI.CircuitMenuItem("Switch", this, "toggle")) }
+                items.Add(new UI.CircuitMenuItem("Properties...", this, "edit"))
+                var rotate = new UI.CircuitMenuItem("Rotate", this, "rotate")
+                rotate.shortcut = "R"
+                items.Add(take rotate)
+                var flip = new UI.CircuitMenuItem("Flip", this, "flip")
+                flip.shortcut = "F"
+                items.Add(take flip)
+                var duplicate = new UI.CircuitMenuItem("Duplicate", this, "duplicate")
+                duplicate.shortcut = "Ctrl+D"
+                items.Add(take duplicate)
+                var remove = new UI.CircuitMenuItem("Delete", this, "delete")
+                remove.shortcut = "Del"
+                items.Add(take remove)
+            } else {
+                if (hit != undefined && this.IsInteractive(hit)) { items.Add(new UI.CircuitMenuItem("Switch", this, "toggle")) }
+                var run = new UI.CircuitMenuItem("Run", this, "run")
+                run.checkable = true
+                run.isChecked = this.running
+                run.shortcut = "Space"
+                items.Add(take run)
+                items.Add(new UI.CircuitMenuItem("Reset Simulation", this, "reset"))
+                items.Add(UI.MenuItem.Separator())
+                if (!this.readOnly) {
+                    var all = new UI.CircuitMenuItem("Select All", this, "selectall")
+                    all.shortcut = "Ctrl+A"
+                    items.Add(take all)
+                }
+                items.Add(new UI.CircuitMenuItem("Fit to View", this, "fit"))
+                var grid = new UI.CircuitMenuItem("Show Grid", this, "grid")
+                grid.checkable = true
+                grid.isChecked = this.showGrid
+                items.Add(take grid)
+                var values = new UI.CircuitMenuItem("Show Values", this, "values")
+                values.checkable = true
+                values.isChecked = this.showValues
+                items.Add(take values)
+                var current = new UI.CircuitMenuItem("Show Current", this, "current")
+                current.checkable = true
+                current.isChecked = this.showCurrent
+                items.Add(take current)
+            }
+            root.ShowMenu(items, px, py, this)
+        }
+
+        // an element whose voltage a scope can show (it has pins on the circuit)
+        bool CanProbe(Circuits.Element e) {
+            var t = e.type
+            if (t == "Scope" || t == "Text" || t == "Wire" || t == "Ground") { return false }
+            return e.pins.count >= 2
+        }
+
+        // a part with two pins whose current a scope can show
+        bool HasCurrent(Circuits.Element e) { return e.part != undefined && e.pins.count == 4 }
+
+        /// <summary>What a row of the context menu does (see ShowContextMenu): "scope <quantity> <display>", "display <how>", "edit", "rotate", ...</summary>
+        undefined MenuAction(string action) {
+            var e = this.contextElement
+            var p = action.Split(" ")
+            var a = p[0]
+            if (a == "scope") { this.AttachScope(e, p[1], p[2]) }
+            else if (a == "display") {
+                if (e != undefined) { this.SetProperty(e, "display", p[1]) }
+            }
+            else if (a == "toggle") {
+                if (e != undefined) { this.Toggle(e) }
+            }
+            else if (a == "edit") {
+                if (e != undefined) { this.Edit(e) }
+            }
+            else if (a == "rotate") { this.RotateSelection() }
+            else if (a == "flip") { this.FlipSelection() }
+            else if (a == "duplicate") { this.DuplicateSelection() }
+            else if (a == "delete") { this.DeleteSelection() }
+            else if (a == "run") { this.running = !this.running }
+            else if (a == "reset") { this.circuit.Reset() }
+            else if (a == "selectall") { this.SelectAll() }
+            else if (a == "fit") { this.FitToView() }
+            else if (a == "grid") { this.showGrid = !this.showGrid }
+            else if (a == "values") { this.showValues = !this.showValues }
+            else if (a == "current") { this.showCurrent = !this.showCurrent }
+            this.Invalidate()
+        }
+
+        /// <summary>Puts a scope below an element that shows its voltage or current ("voltage"/"current") over time or as a spectrum ("time"/"spectrum").
+        /// An element without a name gets one (the scope finds it by its name). Returns the scope element.</summary>
+        Circuits.Element AttachScope(Circuits.Element e, string quantity = "voltage", string display = "time") {
+            if (e == undefined || this.readOnly) { return undefined }
+            this.Remember()
+            var s = this.Schematic
+            if (e.name == "") { s.Rename(e, this.NewName(e.type)) }
+            // below the circuit (like the scopes of Falstad's simulator), under the element, next to or below the scopes there already
+            var x = UI.M.Min(e.x1, e.x2)
+            for (int i = 0; i < e.pins.count / 2; i++) { x = UI.M.Min(x, e.pins[i * 2]) }
+            var bottom = UI.M.Max(e.y1, e.y2)
+            foreach (o in s.Elements()) {
+                if (o.type == "Scope") { continue }
+                bottom = UI.M.Max(bottom, UI.M.Max(o.y1, o.y2))
+                for (int i = 0; i < o.pins.count / 2; i++) { bottom = UI.M.Max(bottom, o.pins[i * 2 + 1]) }
+            }
+            x = this.Snap(x)
+            var y = this.Snap(bottom + 4)
+            var free = false
+            while (!free) {
+                free = true
+                foreach (o in s.Elements()) {
+                    if (o.type == "Scope" && UI.M.Min(o.y1, o.y2) <= y + 10 && UI.M.Max(o.y1, o.y2) >= y && UI.M.Min(o.x1, o.x2) <= x + 24 && UI.M.Max(o.x1, o.x2) >= x) {
+                        free = false
+                        x = UI.M.Max(o.x1, o.x2) + 2
+                    }
+                }
+            }
+            var scope = s.Add("Scope", x, y, x + 24, y + 10, "probe=" + e.name + ";quantity=" + quantity + ";display=" + display, this.NewName("Scope"))
+            this.Select(scope, false)
+            this.Changed()
+            return scope
+        }
+
         undefined Edit(Circuits.Element e) {
             if (this.readOnly) { return }
             var f = this.onEdit
@@ -2535,6 +2765,22 @@ namespace UI {
             if (root == undefined) { return }
             var editor = new UI.CircuitElementEditor(this, e)
             root.ShowPopup(editor, this.ax + 20, this.ay + 20, true, this)
+        }
+    }
+
+    /// <summary>A row of the context menu of a CircuitView: it hands its action to the view.</summary>
+    class CircuitMenuItem : MenuItem {
+        UI.CircuitView view
+        string action
+
+        construct(string header, UI.CircuitView view, string action) : base(header) {
+            this.view = view
+            this.action = action
+        }
+
+        undefined Activate() {
+            if (this.checkable) { this.isChecked = !this.isChecked }
+            this.view.MenuAction(this.action)
         }
     }
 

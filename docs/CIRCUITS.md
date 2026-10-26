@@ -535,7 +535,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), Unijunction (`flip`), VCVS, VCCS, CCCS, CCVS,
   CurrentConveyor, Ota, Optocoupler; sources and rails also have the waveforms triangle,
   sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
-  voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
+  voltage/current, `display` time or spectrum - an FFT analyzer of the last samples with a Hann window, in dB, up to `maxFrequency` or automatically, `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
   emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart
@@ -596,6 +596,10 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 | undo, redo | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (`Undo()`, `Redo()`) |
 | properties | double click or Enter: the view's own editor, or `onEdit` of the program |
 | zoom, pan | the wheel zooms at the pointer, the middle or right button pans; `FitToView()` |
+| context menu | a right click without dragging: on an element Attach Scope (voltage, current), Attach FFT Analyzer, properties, rotate, flip, duplicate, delete; on a scope time or spectrum; on empty space run, reset, select all, fit, grid, values, current. `AttachScope(element, quantity, display)` does the same from a program |
+
+The view draws at the full resolution of the screen (a UI.Root with `Scaling` above 1): lines and text are sharp, not stretched. Changes that keep the connections
+(moving a scope, a text, or a group as a whole) do not compile the circuit again - the simulation and the scopes go on.
 
 `onChange` (or `TakeChanged()`) reports every change - `view.Schematic.ToText()` is the file to save.
 
