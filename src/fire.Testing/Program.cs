@@ -10080,7 +10080,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("losgelassen " + (part.Background == green))
         b.Text = "hi"
         ui.Draw()
-        print("text " + b.FindPart("txt").text + " " + b.actualWidth)
+        print("text " + b.FindPart("txt").Text + " " + b.actualWidth)
         var tb = new UI.TextBox("abc")
         var l2 = new UI.Label("")
         var l3 = new UI.TextBox("")
@@ -10105,7 +10105,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         cb.HorizontalAlign = UI.HAlign.Left
         sp.Add(cb)
         ui.Draw()
-        print("stilvorlage " + cb.FindPart("txt").text + " " + cb.actualWidth)
+        print("stilvorlage " + cb.FindPart("txt").Text + " " + cb.actualWidth)
         sp.Resources().Set("akzent", 42)
         ui.resources.Set("rot", red)
         print("ressource " + b.FindResource("akzent") + " " + b.FindResource("fehlt") + " " + (b.FindResource("rot") == red))
@@ -10767,7 +10767,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 <View Class="Panel1" Width="300" Height="200">
                   <Panel Width="300" Height="200">
                     <TextBox Name="src" Left="5" Top="5" Width="120" Text="abc"/>
-                    <Label Name="mirror" Left="5" Top="40" Text="{Binding Path=text, ElementName=src}"/>
+                    <Label Name="mirror" Left="5" Top="40" Text="{Binding Path=Text, ElementName=src}"/>
                     <Label Name="player" Left="5" Top="60" Text="{Binding Player.Name}"/>
                     <Label Name="once" Left="5" Top="80" Text="{Binding Title, Mode=OneTime}"/>
                     <TextBox Name="edit" Left="5" Top="100" Width="120" Text="{Binding Player.Name, Mode=TwoWay}"/>
@@ -11046,7 +11046,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
                 app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
                 print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
-                print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").text)
+                print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").Text)
                 print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.count)
                 app.bar.Open(app.ui, 0)
                 app.ui.Draw()
