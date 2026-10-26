@@ -95,6 +95,19 @@ factorization run again with the same list of operations each iteration).
 | `SRLatch(supply = 5V, withReset = false)` | `S`, `R`, `Q`, `NotQ`, `Reset` | S sets, R clears (R wins), Reset low clears |
 | `JKFlipFlop(supply = 5V, fallingEdge = false, withReset = false)` | `J`, `Clock`, `K`, `Q`, `NotQ`, `Reset` | on the clock edge: J sets, K clears, both toggle; Reset high clears |
 | `SchmittTrigger(lower = 1.66V, upper = 3.33V, supply = 5V, inverting = false)` | `In`, `Out` | goes high above `upper` and low again below `lower` (or the other way round when inverting) |
+| `Jfet(pChannel = false, threshold = -4V, beta = 1.25m)` | `D`, `G`, `S` | a depletion MOSFET with the gate junction (Falstad's JFET); `DrainCurrent` |
+| `Darlington(model = "npn")` | `C`, `B`, `E` | two transistors of the model, the first one's emitter on the second one's base |
+| `Thyristor(triggerCurrent = 10mA, holdingCurrent = 8.2mA, gateResistance = 50)` | `Anode`, `Gate`, `Cathode` | fires when the gate current reaches `triggerCurrent`, conducts (a diode drop) until the current falls below `holdingCurrent`; `IsOn` |
+| `Triac(triggerCurrent = 10mA, holdingCurrent = 8.2mA, gateResistance = 100)` | `MT1`, `MT2`, `Gate` | the same in both directions, the gate against MT1 |
+| `Diac(breakdown = 30V, holdCurrent = 10mA, onResistance = 500, offResistance = 100M)` | `A`, `B` | conducts both ways above `breakdown` until the current falls below `holdCurrent` |
+| `Varactor(capacitance = 4pF)` | `A`, `B` | a diode whose junction capacitance falls with the reverse voltage |
+| `TunnelDiode()` | `A`, `B` | Falstad's model: 4.7 mA at 0.1 V, a valley near 0.37 V (negative resistance between) |
+| `Triode(mu = 93, kg1 = 680)` | `Plate`, `Grid`, `Cathode` | a vacuum triode (Koren's 3/2 law, grid current above 0 V) |
+| `VCVS(gain = 1)`, `VCCS(gain = 1mS)` | `A`, `B`, `InPlus`, `InMinus` | V(A) - V(B) = gain · (V(InPlus) - V(InMinus)); or that many amperes from A through the source to B |
+| `CCCS(gain = 1)`, `CCVS(gain = 1kOhm)` | `A`, `B`, `InPlus`, `InMinus` | controlled by the current from InPlus to InMinus (a short between them) |
+| `CurrentConveyor(gain = 1)` | `X`, `Y`, `Z` | CCII: X follows Y (Y takes no current), the current into Z is `gain` (+1 or -1) times the current into X |
+| `Ota(positive = 9V, negative = -9V)` | `InPlus`, `InMinus`, `Bias`, `Iabc`, `Out` | Falstad's transistor OTA (LM13700 style): output current about Iabc / (2 Vt) · (V+ - V-) |
+| `Optocoupler(ctr = 1)` | `Anode`, `Cathode`, `Collector`, `Emitter` | an LED whose current drives a phototransistor (collector current about `ctr` times the LED current) |
 
 The logic parts read their inputs after every step (high above half the supply) and drive their outputs in the next one through a small resistance
 (10 Ohm), like the gates of Falstad's simulator: a gate delays by one time step.
@@ -513,7 +526,9 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
   `inverting`), Counter, Timer555, Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
   Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
-  LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail); sources and rails also have the waveforms triangle,
+  LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail), RelayCoil and RelayContact (`label`), Jfet (`pChannel`, `flip`),
+  Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), VCVS, VCCS, CCCS, CCVS,
+  CurrentConveyor, Ota, Optocoupler; sources and rails also have the waveforms triangle,
   sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
   voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
@@ -591,8 +606,10 @@ window the UI markup editor uses; double click or Enter on an element puts the f
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and
 analog switches, lamps, fuses, memristors, spark gaps, LDRs, thermistors, transmission lines, sweeps, noise, triangle and sawtooth sources, rails with a slider,
-logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the 555 of Falstad's chip layout,
-JFETs, saturation of a transformer, ...) is listed. Of the 335 example circuits in text form, 240 come over without leaving an element out.
+relay coils and contacts, JFETs, Darlingtons, thyristors, triacs, diacs, varactors, tunnel diodes, triodes, current conveyors, OTAs, optocouplers, the controlled
+sources whose expression is linear, logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the
+555 of Falstad's chip layout, nonlinear controlled sources, saturation of a transformer, ...) is listed. Of the 373 example circuits in text form, 311 come over
+without leaving an element out.
 `fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
 
 ## Coming next

@@ -33,6 +33,7 @@ namespace fire.UI.Markup
             var elements = new List<Element?>();   // by the index Falstad gives them (null: left out), for the scopes
             var scopes = new List<(int Index, int Value)>();
             string timeStep = "";
+            bool smallGrid = false;   // Falstad's grid: 16 pixels, 8 with flag 2 of the options
             int lineNo = 0;
             foreach (var raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
             {
@@ -47,6 +48,7 @@ namespace fire.UI.Markup
                     if (type == "$")
                     {
                         if (t.Length > 2 && double.TryParse(t[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double dt) && dt > 0) timeStep = Format(dt) + "s";
+                        if (t.Length > 1 && int.TryParse(t[1], out int options)) smallGrid = (options & 2) != 0;
                         continue;
                     }
                     if (type == "o")
@@ -65,9 +67,18 @@ namespace fire.UI.Markup
                     if (e != null)
                     {
                         e.X1 = x1; e.Y1 = y1; e.X2 = x2; e.Y2 = y2;
+                        // the gate of a thyristor or triac lies on Falstad's grid
+                        if (smallGrid && e.Type is "Thyristor" or "Triac") e.Set("smallGrid", "true");
                         if (e.Fix is { } fix)
                         {
-                            if (e.Type == "JKFlipFlop") { e.X2 = x1 + fix.X; e.Y2 = y1; }
+                            if (e.Type is "JKFlipFlop" or "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Optocoupler") { e.X2 = x1 + fix.X; e.Y2 = y1; }
+                            else if (e.Type == "Triode")
+                            {
+                                // Falstad's side of plate and cathode, against the one the package takes from the direction
+                                int dsign = y2 == y1 ? Math.Sign(x2 - x1) : Math.Sign(y2 - y1);
+                                if (dsign == 0) dsign = 1;
+                                if (fix.X != dsign) e.Set("flip", "true");
+                            }
                             else { e.X2 = Grid8(fix.X); e.Y2 = Grid8(fix.Y); }
                         }
                     }
@@ -477,6 +488,119 @@ namespace fire.UI.Markup
                     warnings.Add($"Line {lineNo}: an output is imported as a logic output.");
                     return new Element { Type = "LogicOutput" };
                 }
+                case "j":
+                {
+                    var e = new Element { Type = "Jfet" };
+                    if ((flags & 1) != 0) e.Set("pChannel", "true");
+                    if ((flags & 8) != 0) e.Set("flip", "true");
+                    double vt = Num(6, -4), beta = Num(7, 0.00125);
+                    if (vt != -4) e.Set("threshold", Format(vt));
+                    if (beta != 0.00125) e.Set("beta", Format(beta));
+                    return e;
+                }
+                case "400":
+                {
+                    var e = new Element { Type = "Darlington" };
+                    e.Set("model", Tok(t.Length - 1) == "-1" ? "pnp" : "npn");
+                    return e;
+                }
+                case "177":
+                {
+                    var e = new Element { Type = "Thyristor" };
+                    if ((flags & 1) == 0) e.Set("legacy", "true");
+                    double trig = Num(8, 0.01), hold = Num(9, 0.0082), gr = Num(10, 50);
+                    if (trig != 0.01) e.Set("triggerCurrent", Format(trig));
+                    if (hold != 0.0082) e.Set("holdingCurrent", Format(hold));
+                    if (gr != 50) e.Set("gateResistance", Format(gr));
+                    return e;
+                }
+                case "206":
+                {
+                    var e = new Element { Type = "Triac" };
+                    double trig = Num(6, 0.01), hold = Num(7, 0.0082), gr = Num(8, 100);
+                    if (trig != 0.01) e.Set("triggerCurrent", Format(trig));
+                    if (hold != 0.0082) e.Set("holdingCurrent", Format(hold));
+                    if (gr != 100) e.Set("gateResistance", Format(gr));
+                    return e;
+                }
+                case "203":
+                {
+                    var e = new Element { Type = "Diac" };
+                    e.Set("onResistance", Format(Num(6, 500)));
+                    e.Set("offResistance", Format(Num(7, 1e8)));
+                    e.Set("breakdown", Format(Num(8, 30)));
+                    e.Set("holdCurrent", Format(Num(9, 0.01)));
+                    return e;
+                }
+                case "176":
+                {
+                    // after the flags (and a forward drop with flag 1): the last voltage and the capacitance at 0 V
+                    var e = new Element { Type = "Varactor" };
+                    double cap = t.Length >= 8 ? Num(t.Length - 1, 4e-12) : 4e-12;
+                    if (cap != 4e-12) e.Set("capacitance", Format(cap));
+                    return e;
+                }
+                case "175": return new Element { Type = "TunnelDiode" };
+                case "173":
+                {
+                    var e = new Element { Type = "Triode" };
+                    double mu = Num(6, 93), kg1 = Num(7, 680);
+                    if (mu != 93) e.Set("mu", Format(mu));
+                    if (kg1 != 680) e.Set("kg1", Format(kg1));
+                    // the side of the plate: flag 2 follows the direction, flag 1 flips it (the points are set after Make, see Fix)
+                    int x1 = Pixels(t[1]), y1 = Pixels(t[2]), x2 = Pixels(t[3]), y2 = Pixels(t[4]);
+                    int ds = y2 == y1 ? Math.Sign(x2 - x1) : Math.Sign(y2 - y1);
+                    if (ds == 0) ds = 1;
+                    int side = ((flags & 2) != 0 ? ds : 1) * ((flags & 1) != 0 ? -1 : 1);
+                    e.Fix = (side, 0);
+                    return e;
+                }
+                case "179":
+                {
+                    var e = new Element { Type = "CurrentConveyor" };
+                    double gain = Num(6, 1);
+                    if (gain != 1) e.Set("gain", Format(gain));
+                    ChipLayout(e, flags);
+                    return e;
+                }
+                case "402":
+                {
+                    // the supplies are the fourth number of the first two parts of the composite (its rails)
+                    var e = new Element { Type = "Ota" };
+                    double Rail(int i, double fallback)
+                    {
+                        var parts = Tok(i).Split('_');
+                        return parts.Length > 3 && double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : fallback;
+                    }
+                    double neg = Rail(6, -9), pos = Rail(7, 9);
+                    if (pos != 9) e.Set("positive", Format(pos));
+                    if (neg != -9) e.Set("negative", Format(neg));
+                    return e;
+                }
+                case "407":
+                {
+                    var e = new Element { Type = "Optocoupler" };
+                    if ((flags & (3 << 10)) != 0) warnings.Add($"Line {lineNo}: a flipped optocoupler is imported unflipped; check its connections.");
+                    e.Fix = (12, 0);
+                    return e;
+                }
+                case "212": case "213": case "214": case "215":
+                {
+                    // Falstad's sources compute their output from an expression of their inputs; the package has the linear ones
+                    string kind = type switch { "212" => "VCVS", "213" => "VCCS", "214" => "CCVS", _ => "CCCS" };
+                    int inputs = (int)Num(6, 2);
+                    string expr = Unescape(Tok(7));
+                    double? gain = inputs == 2 ? LinearGain(expr, type is "212" or "213") : null;
+                    if (gain is not { } g)
+                    {
+                        warnings.Add($"Line {lineNo}: the {Describe(type)} with the expression '{expr}' is not linear in the package circuits and was left out.");
+                        return null;
+                    }
+                    var e = new Element { Type = kind };
+                    e.Set("gain", Format(g));
+                    ChipLayout(e, flags);
+                    return e;
+                }
                 default:
                     warnings.Add($"Line {lineNo}: the element '{type}' ({Describe(type)}) is not in the package circuits and was left out.");
                     return null;
@@ -493,6 +617,28 @@ namespace fire.UI.Markup
             "208" => "custom logic", "430" => "time delay relay", "417" => "optocoupler", "405" => "LED array", "370" => "ammeter",
             _ => "unknown",
         };
+
+        // a chip of Falstad's (sizeX 2): the pins 32 pixels apart (16 small), the right side 96 (48) pixels to the right
+        private static void ChipLayout(Element e, int flags)
+        {
+            bool small = (flags & 1) != 0;
+            if (!small) e.Set("spacing", "4");
+            e.Fix = (small ? 6 : 12, 0);
+        }
+
+        // the factor k of a linear expression: k*(a-b), (a-b)*k, (a-b)/k, a-b (difference) or k*a, a*k, a/k, a (a current)
+        private static double? LinearGain(string expr, bool difference)
+        {
+            string x = expr.Replace(" ", "").ToLowerInvariant();
+            string core = difference ? "(a-b)" : "a";
+            if (difference && x == "a-b") return 1;
+            if (x == core) return 1;
+            static double? Number(string n) => double.TryParse(n, NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : null;
+            if (x.StartsWith(core + "*")) return Number(x[(core.Length + 1)..]);
+            if (x.StartsWith(core + "/")) return Number(x[(core.Length + 1)..]) is { } d && d != 0 ? 1 / d : null;
+            if (x.EndsWith("*" + core)) return Number(x[..^(core.Length + 1)]);
+            return null;
+        }
 
         private static string WaveName(int wf) => wf switch { 3 => "triangle", 4 => "sawtooth", 5 => "pulse", 6 => "noise", 7 => "variable", _ => "special" };
 
@@ -518,7 +664,8 @@ namespace fire.UI.Markup
             "Transistor" or "Mosfet" => "Q", "Switch" => "S", "OpAmp" or "Comparator" or "SchmittTrigger" or "JKFlipFlop" => "U", "Probe" => "P",
             "Potentiometer" => "RV", "Transformer" => "T", "Relay" => "K", "Switch2" => "S", "Lamp" => "LA", "Fuse" => "F",
             "LightResistor" or "Thermistor" or "Memristor" => "R", "SparkGap" => "E", "TransmissionLine" => "TL", "AnalogSwitch" or "AnalogSwitch2" => "U",
-            "Sweep" => "V", "RelayCoil" => "K", "RelayContact" => "S", _ => "X",
+            "Sweep" => "V", "RelayCoil" => "K", "RelayContact" => "S", "Jfet" or "Darlington" => "Q", "Thyristor" or "Triac" or "Diac" or "Varactor" or "TunnelDiode" => "D",
+            "Triode" => "V", "VCVS" or "VCCS" or "CCCS" or "CCVS" or "CurrentConveyor" or "Ota" or "Optocoupler" => "U", _ => "X",
         };
 
         private static string UniqueName(List<Element> elements, string prefix)

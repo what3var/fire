@@ -817,8 +817,22 @@ namespace UI {
                 }
             } else if (t == "Transistor") {
                 this.DrawTransistor(root, e, L)
+            } else if (t == "Darlington") {
+                this.DrawTransistor(root, e, L)
+                // the second transistor: a second bar beside the base
+                this.Seg(root, L - 2.6, -1.2, L - 2.6, 1.2, this.VoltageColor(e.PinVoltage(0)))
             } else if (t == "Mosfet") {
                 this.DrawMosfet(root, e, L)
+            } else if (t == "Jfet") {
+                this.DrawJfet(root, e, L)
+            } else if (t == "Thyristor" || t == "Triac") {
+                this.DrawGated(root, e)
+            } else if (t == "Triode") {
+                this.DrawTriode(root, e, L)
+            } else if (t == "Ota") {
+                this.DrawOta(root, e)
+            } else if (t == "Diac" || t == "Varactor" || t == "TunnelDiode") {
+                this.DrawDiodeLike(root, e, L)
             } else if (t == "OpAmp" || t == "Comparator") {
                 this.DrawOpAmp(root, e, L)
             } else if (t == "And" || t == "Nand" || t == "Or" || t == "Nor" || t == "Xor" || t == "Xnor" || t == "Not" || t == "Buffer") {
@@ -913,7 +927,9 @@ namespace UI {
         // how far the name is from the line of the element (the other side than the values)
         float NameSide(Circuits.Element e) {
             var t = e.type
-            if (t == "Transistor" || t == "Mosfet") { return 3.0 }
+            if (t == "Transistor" || t == "Mosfet" || t == "Jfet" || t == "Darlington") { return 3.0 }
+            if (t == "Thyristor" || t == "Triac" || t == "Diac") { return 2.6 }
+            if (t == "Triode") { return 4.6 }
             if (t == "OpAmp" || t == "Comparator") { return 3.4 }
             if (t == "And" || t == "Nand" || t == "Or" || t == "Nor" || t == "Xor" || t == "Xnor") { return 2.0 * (Circuits.Symbols.Inputs(e) / 2) + 1.6 }
             if (t == "Source" || t == "AudioInput" || t == "CurrentSource") { return 2.0 }
@@ -1048,6 +1064,169 @@ namespace UI {
             this.Seg(root, L - 2.0, hs * 0.6, L, hs * 0.6, this.VoltageColor(vd))
             this.Seg(root, L, hs * 0.6, L, hs, this.VoltageColor(vd))
             if (this.showValues) { this.Label(root, L - 2.0, -2.6 * Circuits.Symbols.Dsign(e), e.Get("model"), UI.Color.Rgb(140, 140, 140)) }
+        }
+
+        undefined DrawJfet(Root root, Circuits.Element e, float L) {
+            var vg = e.PinVoltage(0)
+            var vs = e.PinVoltage(1)
+            var vd = e.PinVoltage(2)
+            var hs = 2.0 * Circuits.Symbols.Dsign(e)
+            if (e.Flag("flip")) { hs = -hs }
+            // the gate runs into the channel bar (an arrow in for n, out for p); source and drain leave the bar
+            this.Seg(root, 0.0, 0.0, L - 2.0, 0.0, this.VoltageColor(vg))
+            this.Seg(root, L - 2.0, -1.6, L - 2.0, 1.6, UI.Color.Rgb(160, 160, 160))
+            var tip = L - 2.0
+            var back = L - 2.7
+            if (e.Flag("pChannel")) {
+                tip = L - 2.7
+                back = L - 2.0
+            }
+            this.Seg(root, tip, 0.0, back, 0.4, this.VoltageColor(vg))
+            this.Seg(root, tip, 0.0, back, -0.4, this.VoltageColor(vg))
+            this.Seg(root, L - 2.0, -hs * 0.5, L, -hs * 0.5, this.VoltageColor(vs))
+            this.Seg(root, L, -hs * 0.5, L, -hs, this.VoltageColor(vs))
+            this.Seg(root, L - 2.0, hs * 0.5, L, hs * 0.5, this.VoltageColor(vd))
+            this.Seg(root, L, hs * 0.5, L, hs, this.VoltageColor(vd))
+        }
+
+        // a point of the grid in the current frame: (s, t)
+        float[] Local(int gx, int gy) {
+            var r = new float[2]
+            float x = (this.ax + this.offsetX + gx * this.scale) - this.fx
+            float y = (this.ay + this.offsetY + gy * this.scale) - this.fy
+            var k = this.scale * this.scale
+            r[0] = (x * this.fdx + y * this.fdy) / k
+            r[1] = (x * this.fnx + y * this.fny) / k
+            return r
+        }
+
+        // a thyristor (a diode with a gate at its cathode) or a triac (two diodes against each other, the gate at MT1), along the main axis
+        undefined DrawGated(Root root, Circuits.Element e) {
+            var end = Circuits.Symbols.AxisEnd(e)
+            this.FrameAt(e.x1, e.y1, end[0], end[1])
+            var L = this.flen
+            var m = L / 2
+            var va = e.PinVoltage(0)
+            var vk = e.PinVoltage(1)
+            var vg = e.PinVoltage(2)
+            var ca = this.VoltageColor(va)
+            var ck = this.VoltageColor(vk)
+            var white = UI.Color.Rgb(220, 220, 220)
+            this.Seg(root, 0.0, 0.0, m - 1.0, 0.0, ca)
+            this.Seg(root, m + 1.0, 0.0, L, 0.0, ck)
+            if (e.type == "Thyristor") {
+                this.Seg(root, m - 1.0, -1.0, m - 1.0, 1.0, ca)
+                this.Seg(root, m - 1.0, -1.0, m + 1.0, 0.0, ca)
+                this.Seg(root, m - 1.0, 1.0, m + 1.0, 0.0, ca)
+                this.Seg(root, m + 1.0, -1.0, m + 1.0, 1.0, ck)
+            } else {
+                this.Seg(root, m - 1.0, -2.0, m - 1.0, 2.0, ca)
+                this.Seg(root, m + 1.0, -2.0, m + 1.0, 2.0, ck)
+                this.Seg(root, m - 1.0, -2.0, m + 1.0, -1.0, white)
+                this.Seg(root, m - 1.0, 0.0, m + 1.0, -1.0, white)
+                this.Seg(root, m + 1.0, 2.0, m - 1.0, 1.0, white)
+                this.Seg(root, m + 1.0, 0.0, m - 1.0, 1.0, white)
+            }
+            // the gate: from its pin back to the end of the body
+            var g = this.Local(e.PinX(2), e.PinY(2))
+            var cg = this.VoltageColor(vg)
+            this.Seg(root, g[0], g[1], m + 1.0, g[1], cg)
+            this.Seg(root, m + 1.0, g[1], m + 1.0, g[1] * 0.5, cg)
+            var fired = false
+            if (e.part != undefined) {
+                if (e.type == "Thyristor") {
+                    Circuits.Thyristor th = e.part!Circuits.Thyristor
+                    fired = th.IsOn
+                } else {
+                    Circuits.Triac tr = e.part!Circuits.Triac
+                    fired = tr.IsOn
+                }
+            }
+            if (fired) { this.Label(root, m, -2.4 * this.Sign(g[1]), "on", UI.Color.Rgb(240, 200, 80)) }
+        }
+
+        float Sign(float v) {
+            if (v < 0.0) { return -1.0 }
+            return 1.0
+        }
+
+        // an OTA: a triangle with the inputs, the bias and Iabc pins and the output
+        undefined DrawOta(Root root, Circuits.Element e) {
+            var white = UI.Color.Rgb(220, 220, 220)
+            var ps = new float[10]
+            for (int i = 0; i < 5; i++) {
+                var l = this.Local(e.PinX(i), e.PinY(i))
+                ps[i * 2] = l[0]
+                ps[i * 2 + 1] = l[1]
+            }
+            var end = ps[8]
+            var x0 = 2.0
+            var h = Math.Abs(ps[1]) + 1.5
+            // the triangle from x0 to the output, a bit before it
+            var tip = end - 2.0
+            this.Seg(root, x0, -h, x0, h, white)
+            this.Seg(root, x0, -h, tip, 0.0, white)
+            this.Seg(root, x0, h, tip, 0.0, white)
+            this.Seg(root, ps[0], ps[1], x0, ps[1], this.VoltageColor(e.PinVoltage(0)))
+            this.Seg(root, ps[2], ps[3], x0, ps[3], this.VoltageColor(e.PinVoltage(1)))
+            this.Seg(root, ps[4], ps[5], x0, ps[5], this.VoltageColor(e.PinVoltage(2)))
+            this.Seg(root, ps[6], ps[7], ps[6], ps[7] * 0.4, this.VoltageColor(e.PinVoltage(3)))
+            this.Seg(root, tip, 0.0, ps[8], ps[9], this.VoltageColor(e.PinVoltage(4)))
+            this.Text(root, x0 + 0.7, ps[1] * 0.75, "+", white)
+            this.Text(root, x0 + 0.7, ps[3] * 0.75, "-", white)
+            // the current source symbol at the output
+            this.Arc(root, tip - 1.2, 0.0, 0.7, white)
+        }
+
+        // a vacuum triode: grid at the first point, plate and cathode beside the second
+        undefined DrawTriode(Root root, Circuits.Element e, float L) {
+            var fl = 1.0 * Circuits.Symbols.Dsign(e)
+            if (e.Flag("flip")) { fl = -fl }
+            var vp = e.PinVoltage(0)
+            var vg = e.PinVoltage(1)
+            var vk = e.PinVoltage(2)
+            var white = UI.Color.Rgb(220, 220, 220)
+            this.Arc(root, L, 0.0, 3.0, white)
+            // plate
+            this.Seg(root, L, 4.0 * fl, L, 1.4 * fl, this.VoltageColor(vp))
+            this.Seg(root, L - 1.3, 1.4 * fl, L + 1.3, 1.4 * fl, this.VoltageColor(vp))
+            // grid: a dashed line across
+            this.Seg(root, 0.0, 0.0, L - 3.0, 0.0, this.VoltageColor(vg))
+            for (int i = 0; i < 4; i++) { this.Seg(root, L - 2.4 + i * 1.3, 0.0, L - 1.8 + i * 1.3, 0.0, this.VoltageColor(vg)) }
+            // cathode
+            this.Seg(root, L - 2.0, -4.0 * fl, L - 1.2, -1.4 * fl, this.VoltageColor(vk))
+            this.Seg(root, L - 1.2, -1.4 * fl, L + 1.3, -1.4 * fl, this.VoltageColor(vk))
+        }
+
+        // diac (two diodes against each other), varactor (a diode with a capacitor plate), tunnel diode (a diode with a bracket)
+        undefined DrawDiodeLike(Root root, Circuits.Element e, float L) {
+            var m = L / 2
+            var c0 = this.VoltageColor(e.PinVoltage(0))
+            var c1 = this.VoltageColor(e.PinVoltage(1))
+            var white = UI.Color.Rgb(220, 220, 220)
+            this.Seg(root, 0.0, 0.0, m - 1.0, 0.0, c0)
+            this.Seg(root, m + 1.0, 0.0, L, 0.0, c1)
+            if (e.type == "Diac") {
+                this.Seg(root, m - 1.0, -2.0, m - 1.0, 2.0, c0)
+                this.Seg(root, m + 1.0, -2.0, m + 1.0, 2.0, c1)
+                this.Seg(root, m - 1.0, -2.0, m + 1.0, -1.0, white)
+                this.Seg(root, m - 1.0, 0.0, m + 1.0, -1.0, white)
+                this.Seg(root, m + 1.0, 2.0, m - 1.0, 1.0, white)
+                this.Seg(root, m + 1.0, 0.0, m - 1.0, 1.0, white)
+                this.Value(root, e, "breakdown", "V", m, -2.6)
+                return
+            }
+            this.Seg(root, m - 1.0, -1.0, m - 1.0, 1.0, c0)
+            this.Seg(root, m - 1.0, -1.0, m + 1.0, 0.0, c0)
+            this.Seg(root, m - 1.0, 1.0, m + 1.0, 0.0, c0)
+            this.Seg(root, m + 1.0, -1.0, m + 1.0, 1.0, c1)
+            if (e.type == "Varactor") {
+                this.Seg(root, m + 1.5, -1.0, m + 1.5, 1.0, c1)
+                this.Value(root, e, "capacitance", "F", m, -1.8)
+            } else {
+                this.Seg(root, m + 1.0, -1.0, m + 0.5, -1.0, c1)
+                this.Seg(root, m + 1.0, 1.0, m + 0.5, 1.0, c1)
+            }
         }
 
         undefined DrawOpAmp(Root root, Circuits.Element e, float L) {
@@ -1619,7 +1798,8 @@ namespace UI {
             if (p == undefined) { return 0.0 }
             var t = e.type
             if (t == "Resistor" || t == "Capacitor" || t == "Inductor" || t == "Switch" || t == "Diode" || t == "Led" || t == "Zener" || t == "Formula" || t == "CurrentSource"
-                || t == "Lamp" || t == "Fuse" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap" || t == "RelayContact" || t == "RelayCoil") {
+                || t == "Lamp" || t == "Fuse" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap" || t == "RelayContact" || t == "RelayCoil"
+                || t == "Diac" || t == "Varactor" || t == "TunnelDiode") {
                 return p.CurrentRaw()
             }
             // a source runs from its first point (-) to its second (+)
@@ -2146,7 +2326,10 @@ namespace UI {
             else if (t == "Source" || t == "Rail" || t == "AudioInput") { prefix = "V" }
             else if (t == "CurrentSource") { prefix = "I" }
             else if (t == "Diode" || t == "Zener" || t == "Led") { prefix = "D" }
-            else if (t == "Transistor" || t == "Mosfet") { prefix = "Q" }
+            else if (t == "Transistor" || t == "Mosfet" || t == "Jfet" || t == "Darlington") { prefix = "Q" }
+            else if (t == "Diac" || t == "Varactor" || t == "TunnelDiode" || t == "Thyristor" || t == "Triac") { prefix = "D" }
+            else if (t == "Triode") { prefix = "V" }
+            else if (t == "Ota" || t == "Optocoupler") { prefix = "U" }
             else if (t == "OpAmp" || t == "Comparator" || Circuits.Symbols.IsChip(t)) { prefix = "U" }
             else if (t == "LogicInput") { prefix = "In" }
             else if (t == "GpioLine") { prefix = "Gpio" }

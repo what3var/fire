@@ -144,10 +144,25 @@ namespace Circuits {
             l.Add("Semiconductors|Transistor|model:model:NPN/PNP=2N3904;flip:bool=false")
             l.Add("Semiconductors|Mosfet|model:model:NMOS/PMOS=2N7000;flip:bool=false")
             l.Add("Semiconductors|Formula|formula:text=V/1k;parameters:text=")
+            l.Add("Semiconductors|Jfet|pChannel:bool=false;threshold:V=-4;beta:=1.25m;flip:bool=false")
+            l.Add("Semiconductors|Darlington|model:model:NPN/PNP=npn")
+            l.Add("Semiconductors|Thyristor|triggerCurrent:A=10m;holdingCurrent:A=8.2m;gateResistance:Ohm=50;smallGrid:bool=false;legacy:bool=false")
+            l.Add("Semiconductors|Triac|triggerCurrent:A=10m;holdingCurrent:A=8.2m;gateResistance:Ohm=100;smallGrid:bool=false")
+            l.Add("Semiconductors|Diac|breakdown:V=30;holdCurrent:A=10m;onResistance:Ohm=500;offResistance:Ohm=100M")
+            l.Add("Semiconductors|Varactor|capacitance:F=4p")
+            l.Add("Semiconductors|TunnelDiode|")
+            l.Add("Semiconductors|Triode|mu:=93;kg1:=680;flip:bool=false")
             l.Add("ICs|OpAmp|model:model:OPAMP=opamp;flip:bool=false")
             l.Add("ICs|AnalogSwitch|threshold:V=2.5;inverting:bool=false;onResistance:Ohm=20;offResistance:Ohm=10G;flip:bool=false")
             l.Add("ICs|AnalogSwitch2|threshold:V=2.5;onResistance:Ohm=20;offResistance:Ohm=10G;swap:bool=false;flip:bool=false")
             l.Add("ICs|Comparator|supply:V=5;flip:bool=false")
+            l.Add("ICs|Ota|positive:V=9;negative:V=-9")
+            l.Add("ICs|Optocoupler|ctr:=1;spacing:int=4")
+            l.Add("ICs|VCVS|gain:=1;spacing:int=2")
+            l.Add("ICs|VCCS|gain:=1m;spacing:int=2")
+            l.Add("ICs|CCCS|gain:=1;spacing:int=2")
+            l.Add("ICs|CCVS|gain:Ohm=1k;spacing:int=2")
+            l.Add("ICs|CurrentConveyor|gain:=1;spacing:int=2")
             l.Add("Logic|And|inputs:int=2;supply:V=5")
             l.Add("Logic|Nand|inputs:int=2;supply:V=5")
             l.Add("Logic|Or|inputs:int=2;supply:V=5")
@@ -219,6 +234,7 @@ namespace Circuits {
         /// <summary>Is it a chip (a box with pins on both sides, whose second point only says how wide it is)?</summary>
         static bool IsChip(string type) {
             if (type == "DFlipFlop" || type == "SRLatch" || type == "JKFlipFlop" || type == "Counter" || type == "Timer555") { return true }
+            if (type == "VCVS" || type == "VCCS" || type == "CCCS" || type == "CCVS" || type == "CurrentConveyor" || type == "Optocoupler") { return true }
             return type == "I2cAdc" || type == "I2cDac" || type == "SpiShiftOut" || type == "SpiShiftIn"
         }
 
@@ -235,6 +251,11 @@ namespace Circuits {
                 return "J,CLK,K|Q,,/Q"
             }
             if (e.type == "Timer555") { return "TRG,THR,RST,CTL|OUT,DIS" }
+            // the controlled sources and the current conveyor as Falstad draws them
+            if (e.type == "VCVS" || e.type == "VCCS") { return "A,B|C+,C-" }
+            if (e.type == "CCCS" || e.type == "CCVS") { return "A+,A-|O+,O-" }
+            if (e.type == "CurrentConveyor") { return "X,,Y|,Z" }
+            if (e.type == "Optocoupler") { return "A,K|C,E" }
             if (e.type == "I2cAdc") { return Circuits.Symbols.Row("IN", Circuits.Symbols.Channels(e, 4)) + "|" }
             if (e.type == "I2cDac") { return "|" + Circuits.Symbols.Row("OUT", Circuits.Symbols.Channels(e, 1)) }
             if (e.type == "SpiShiftOut") { return "|" + Circuits.Symbols.Row("Q", 8) }
@@ -369,7 +390,7 @@ namespace Circuits {
                 e.pins.Add(e.y1)
                 return
             }
-            if (t == "Transistor") {
+            if (t == "Transistor" || t == "Darlington") {
                 // the base at the first point; collector and emitter 2 units to the sides of the second (as in Falstad: their order depends on direction, flip and PNP)
                 var hs = 2 * Circuits.Symbols.Dsign(e)
                 if (e.Flag("flip")) { hs = -hs }
@@ -380,7 +401,7 @@ namespace Circuits {
                 Circuits.Symbols.Interp(e, 1.0, -hs, e.pins)
                 return
             }
-            if (t == "Mosfet") {
+            if (t == "Mosfet" || t == "Jfet") {
                 // the gate at the first point; source and drain to the sides of the second
                 var hs = 2 * Circuits.Symbols.Dsign(e)
                 if (e.Flag("flip")) { hs = -hs }
@@ -388,6 +409,28 @@ namespace Circuits {
                 e.pins.Add(e.y1)
                 Circuits.Symbols.Interp(e, 1.0, -hs, e.pins)
                 Circuits.Symbols.Interp(e, 1.0, hs, e.pins)
+                return
+            }
+            if (t == "Thyristor" || t == "Triac") {
+                Circuits.Symbols.GatePins(e)
+                return
+            }
+            if (t == "Ota") {
+                Circuits.Symbols.OtaPins(e)
+                return
+            }
+            if (t == "Triode") {
+                // the grid at the first point, the plate 4 units to the side of the second, the cathode 4 units to the other side and 2 back (Falstad's)
+                var fl = Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { fl = -fl }
+                float dx = e.x2 - e.x1
+                float dy = e.y2 - e.y1
+                var len = Math.Sqrt(dx * dx + dy * dy)
+                if (len < 4.0) { len = 4.0 }
+                Circuits.Symbols.Interp(e, 1.0, 4.0 * fl, e.pins)
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0 - 2.0 / len, -4.0 * fl, e.pins)
                 return
             }
             if (t == "OpAmp" || t == "Comparator") {
@@ -546,6 +589,82 @@ namespace Circuits {
             e.pins.Add(e.y1)
             e.pins.Add(e.x2)
             e.pins.Add(e.y2)
+        }
+
+        // a thyristor or triac as Falstad's: from the first point (anode, MT2) along the main axis to the second (cathode, MT1); the gate beside the end
+        // of the body, 2 units to the side (the side follows the drag across the axis)
+        static undefined GatePins(Circuits.Element e) {
+            var end = Circuits.Symbols.AxisEnd(e)
+            var dx = e.x2 - e.x1
+            var dy = e.y2 - e.y1
+            var dir = 0
+            var n = 0
+            if (Math.Abs(dx) > Math.Abs(dy)) {
+                dir = -Circuits.Symbols.Sign(dx) * Circuits.Symbols.Sign(dy)
+                n = Math.Abs(dx)
+            } else {
+                dir = Circuits.Symbols.Sign(dy) * Circuits.Symbols.Sign(dx)
+                n = Math.Abs(dy)
+            }
+            if (dir == 0) { dir = 1 }
+            e.pins.Add(e.x1)
+            e.pins.Add(e.y1)
+            e.pins.Add(end[0])
+            e.pins.Add(end[1])
+            // in pixels as Falstad: its grid is 16 pixels (8 with "smallGrid"); the body 16 long in the middle, the gate gatelen past its end.
+            // Old thyristors ("legacy") measure the drag along its slant.
+            var grid = 16.0
+            if (e.Flag("smallGrid")) { grid = 8.0 }
+            float axis = n * 8.0
+            float dn = axis
+            if (e.Flag("legacy")) { dn = Math.Sqrt(dx * dx + dy * dy + 0.0) * 8.0 }
+            var leadlen = (dn - 16.0) / 2.0
+            var gatelen = grid + (leadlen - grid * Math.Floor(leadlen / grid))
+            if (leadlen < gatelen || axis <= 0.0) {
+                // too short for a gate: it sits on the first point
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                return
+            }
+            var lead2 = axis * (dn + 16.0) / (2.0 * dn)
+            var along = (lead2 + (axis - lead2) * gatelen / leadlen) / 8.0
+            var side = grid * 2.0 * dir / 8.0
+            // the direction of the axis and the side to the right of it (Interp's)
+            float ux = Circuits.Symbols.Sign(end[0] - e.x1)
+            float uy = Circuits.Symbols.Sign(end[1] - e.y1)
+            var gx = e.x1 + ux * along + uy * side
+            var gy = e.y1 + uy * along - ux * side
+            if (e.type == "Thyristor") {
+                // Falstad snaps the gate of a thyristor to its grid
+                gx = Math.Floor((gx * 8.0 + grid / 2.0 - 1.0) / grid) * grid / 8.0
+                gy = Math.Floor((gy * 8.0 + grid / 2.0 - 1.0) / grid) * grid / 8.0
+            }
+            e.pins.Add(Math.Floor(gx + 0.48)!int)
+            e.pins.Add(Math.Floor(gy + 0.48)!int)
+        }
+
+        // the OTA as Falstad's: + and - 4 units to the sides of the first point, the diode bias at the first point, Iabc 4 units to the side and 2
+        // back from the output, the output at the second point (at least 11.75 units from the first)
+        static undefined OtaPins(Circuits.Element e) {
+            var ds = Circuits.Symbols.Dsign(e)
+            float dx = e.x2 - e.x1
+            float dy = e.y2 - e.y1
+            var len = Math.Sqrt(dx * dx + dy * dy)
+            if (len < 1.0) { len = 1.0 }
+            var end = len
+            if (end < 11.75) { end = 11.75 }
+            Circuits.Symbols.Interp(e, 0.0, 4.0 * ds, e.pins)
+            Circuits.Symbols.Interp(e, 0.0, -4.0 * ds, e.pins)
+            e.pins.Add(e.x1)
+            e.pins.Add(e.y1)
+            Circuits.Symbols.Interp(e, (end - 2.0) / len, 4.0, e.pins)
+            Circuits.Symbols.Interp(e, end / len, 0.0, e.pins)
+        }
+
+        static int Sign(int v) {
+            if (v > 0) { return 1 }
+            if (v < 0) { return -1 }
+            return 0
         }
 
         /// <summary>The second end of an element that lies on the main axis of its drag (x2 for a wider drag, y2 for a taller one).</summary>
@@ -782,6 +901,28 @@ namespace Circuits {
             else if (t == "Formula") { part = new Circuits.Formula(e.Get("formula"), e.Get("parameters")) }
             else if (t == "Transistor") { part = new Circuits.Transistor(e.Get("model")) }
             else if (t == "Mosfet") { part = new Circuits.Mosfet(e.Get("model")) }
+            else if (t == "Jfet") { part = new Circuits.Jfet(e.Flag("pChannel"), Circuits.Symbols.Value(e, "threshold", c), Circuits.Symbols.Value(e, "beta", c)) }
+            else if (t == "Darlington") { part = new Circuits.Darlington(e.Get("model")) }
+            else if (t == "Thyristor") {
+                part = new Circuits.Thyristor(Circuits.Symbols.Value(e, "triggerCurrent", c), Circuits.Symbols.Value(e, "holdingCurrent", c), Circuits.Symbols.Value(e, "gateResistance", c))
+            }
+            else if (t == "Triac") {
+                part = new Circuits.Triac(Circuits.Symbols.Value(e, "triggerCurrent", c), Circuits.Symbols.Value(e, "holdingCurrent", c), Circuits.Symbols.Value(e, "gateResistance", c))
+            }
+            else if (t == "Diac") {
+                part = new Circuits.Diac(Circuits.Symbols.Value(e, "breakdown", c), Circuits.Symbols.Value(e, "holdCurrent", c), Circuits.Symbols.Value(e, "onResistance", c),
+                                         Circuits.Symbols.Value(e, "offResistance", c))
+            }
+            else if (t == "Varactor") { part = new Circuits.Varactor(Circuits.Symbols.Value(e, "capacitance", c)) }
+            else if (t == "TunnelDiode") { part = new Circuits.TunnelDiode() }
+            else if (t == "Triode") { part = new Circuits.Triode(Circuits.Symbols.Value(e, "mu", c), Circuits.Symbols.Value(e, "kg1", c)) }
+            else if (t == "VCVS") { part = new Circuits.VCVS(Circuits.Symbols.Value(e, "gain", c)) }
+            else if (t == "VCCS") { part = new Circuits.VCCS(Circuits.Symbols.Value(e, "gain", c)) }
+            else if (t == "CCCS") { part = new Circuits.CCCS(Circuits.Symbols.Value(e, "gain", c)) }
+            else if (t == "CCVS") { part = new Circuits.CCVS(Circuits.Symbols.Value(e, "gain", c)) }
+            else if (t == "CurrentConveyor") { part = new Circuits.CurrentConveyor(Circuits.Symbols.Value(e, "gain", c)) }
+            else if (t == "Ota") { part = new Circuits.Ota(Circuits.Symbols.Value(e, "positive", c), Circuits.Symbols.Value(e, "negative", c)) }
+            else if (t == "Optocoupler") { part = new Circuits.Optocoupler(Circuits.Symbols.Value(e, "ctr", c)) }
             else if (t == "OpAmp") { part = new Circuits.OpAmp(e.Get("model")) }
             else if (t == "Comparator") { part = new Circuits.Comparator(Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "And" || t == "Nand" || t == "Or" || t == "Nor" || t == "Xor" || t == "Xnor") {
@@ -827,14 +968,30 @@ namespace Circuits {
             } else if (t == "Rail" || t == "LogicInput" || t == "Sweep") {
                 e.pinPorts.Add(ports[0])
                 e.groundPorts.Add(ports[1])
-            } else if (t == "Transistor") {
+            } else if (t == "Transistor" || t == "Darlington") {
                 e.pinPorts.Add(ports[1])
                 e.pinPorts.Add(ports[0])
                 e.pinPorts.Add(ports[2])
-            } else if (t == "Mosfet") {
+            } else if (t == "Mosfet" || t == "Jfet") {
                 e.pinPorts.Add(ports[1])
                 e.pinPorts.Add(ports[2])
                 e.pinPorts.Add(ports[0])
+            } else if (t == "Thyristor") {
+                // pins anode, cathode, gate; the ports are anode, gate, cathode
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[1])
+            } else if (t == "Triac") {
+                // pins MT2, MT1, gate; the ports are mt1, mt2, gate
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[2])
+            } else if (t == "VCVS" || t == "VCCS" || t == "CCCS" || t == "CCVS") {
+                // pins in+, in-, out+, out-; the ports are a, b, inplus, inminus
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[3])
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[1])
             } else if (t == "OpAmp" || t == "Comparator") {
                 e.pinPorts.Add(ports[1])
                 e.pinPorts.Add(ports[0])
@@ -999,7 +1156,7 @@ namespace Circuits {
         undefined Set(Circuits.Element e, string key, string value) {
             e.Set(key, value)
             // the number of pins can change (inputs, bits, flip, model of a transistor)
-            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity")
+            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity" || key == "smallGrid" || key == "legacy")
         }
 
         /// <summary>Renames an element.</summary>
@@ -1204,20 +1361,20 @@ namespace Circuits {
                 if (e.Get("probe") != "") { e.error = "There is no element '" + e.Get("probe") + "'." }
                 return
             }
+            // checked before the scope is made (it joins the circuit when it is made)
+            var current = e.Get("quantity") == "current"
+            if (current && target.part == undefined) {
+                e.error = "'" + target.name + "' has no current."
+                return
+            }
+            if (!current && (target.nets.count == 0 || target.nets[0] == undefined)) {
+                e.error = "'" + target.name + "' is not connected."
+                return
+            }
             var scope = new Circuits.Scope(this.circuit.Top(), 20000)
-            if (e.Get("quantity") == "current") {
-                if (target.part == undefined) {
-                    e.error = "'" + target.name + "' has no current."
-                    delete scope
-                    return
-                }
+            if (current) {
                 scope.Current("y", target.part)
             } else {
-                if (target.nets.count == 0 || target.nets[0] == undefined) {
-                    e.error = "'" + target.name + "' is not connected."
-                    delete scope
-                    return
-                }
                 Port b = undefined
                 if (target.nets.count > 1) { b = target.nets[1] }
                 if (target.nets.count > 1 && target.type != "Probe" && target.part == undefined) { b = undefined }

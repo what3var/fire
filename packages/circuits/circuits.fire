@@ -1870,7 +1870,7 @@ namespace Circuits {
     class Triac : Circuit {
         Circuits.GateSwitch sw
 
-        construct(float triggerCurrent : any = 0.01, float holdingCurrent : any = 0.0082, float gateResistance : any = 50) : base("triac") {
+        construct(float triggerCurrent : any = 0.01, float holdingCurrent : any = 0.0082, float gateResistance : any = 100) : base("triac") {
             var mt1 = this.AddPort("mt1")
             var mt2 = this.AddPort("mt2")
             var gate = this.AddPort("gate")
@@ -1902,7 +1902,7 @@ namespace Circuits {
     class Diac : Circuit {
         Circuits.SparkGap gap
 
-        construct(float breakdown : any = 30, float holdCurrent : any = 0.01, float onResistance : any = 0.1, float offResistance : any = 10000000) : base("diac") {
+        construct(float breakdown : any = 30, float holdCurrent : any = 0.01, float onResistance : any = 500, float offResistance : any = 100000000) : base("diac") {
             var a = this.AddPort("a")
             var b = this.AddPort("b")
             var g = this.Add(new Circuits.SparkGap(breakdown, holdCurrent, onResistance, offResistance))
@@ -1986,7 +1986,7 @@ namespace Circuits {
 
     /// <summary>A varactor: a diode whose junction capacitance is `capacitance` at 0 V and falls with the reverse voltage.</summary>
     class Varactor : Diode {
-        construct(float capacitance : any = 0.00000000002) : base(Circuits.Varactor.ModelFor(Circuits.Units.Farads(capacitance))) { }
+        construct(float capacitance : any = 0.000000000004) : base(Circuits.Varactor.ModelFor(Circuits.Units.Farads(capacitance))) { }
 
         // the name of a model in the library with this capacitance
         static string ModelFor(float farads) {
@@ -1994,6 +1994,95 @@ namespace Circuits {
             if (!Circuits.Models.Has(name)) { Circuits.Models.Put(new Circuits.Model(name, "D", 0.00000000000001, 1.0).Set("CJO", farads).Set("VJ", 0.6).Set("M", 0.5)) }
             return name
         }
+    }
+
+    /// <summary>A tunnel diode (Falstad's model): A is the anode; the current rises to 4.7 mA at 0.1 V, falls to a valley near 0.37 V, then rises
+    /// again like a diode.</summary>
+    class TunnelDiode : Formula {
+        construct() : base("ip*exp(-vpp/vtd)*(exp(V/vtd)-1) + ip*(V/vp)*exp(1-V/vp) + iv*exp(V-vv) - iv*exp(-vv)",
+                           "ip=0.0047 vp=0.1 vv=0.37 vtd=0.026 vpp=0.525 iv=0.00037") { }
+    }
+
+    /// <summary>An operational transconductance amplifier as Falstad's (LM13700 style, built from transistors): the output current is about
+    /// Iabc / (2 Vt) * (V(InPlus) - V(InMinus)); `Bias` feeds the linearizing diodes. Supplies `negative` and `positive` volts inside.</summary>
+    class Ota : Circuit {
+        List nodes
+
+        construct(float positive : any = 9, float negative : any = -9) : base("ota") {
+            var inPlus = this.AddPort("inplus")
+            var inMinus = this.AddPort("inminus")
+            var bias = this.AddPort("bias")
+            var iabc = this.AddPort("iabc")
+            var output = this.AddPort("out")
+            this.nodes = new List()
+            for (int i = 0; i < 16; i++) { this.nodes.Add(undefined) }
+            this.nodes[7] = inPlus
+            this.nodes[5] = inMinus
+            this.nodes[15] = bias
+            this.nodes[1] = iabc
+            this.nodes[13] = output
+            var vn = this.Add(new Circuits.VoltageSource(negative))
+            vn.B.Connect(this.Ground)
+            this.Join(4, vn.A)
+            var vp = this.Add(new Circuits.VoltageSource(positive))
+            vp.B.Connect(this.Ground)
+            this.Join(10, vp.A)
+            // Falstad's netlist: base, collector, emitter
+            var npn = [1, 2, 3, 3, 1, 4, 3, 3, 4, 5, 6, 2, 7, 8, 2, 14, 14, 4, 14, 12, 4, 12, 13, 14, 15, 15, 5, 15, 15, 7]
+            var pnp = [9, 6, 10, 9, 9, 10, 6, 12, 9, 11, 8, 10, 11, 11, 10, 8, 13, 11]
+            for (int i = 0; i < npn.length; i = i + 3) { this.Transistor("npn", npn[i], npn[i + 1], npn[i + 2]) }
+            for (int i = 0; i < pnp.length; i = i + 3) { this.Transistor("pnp", pnp[i], pnp[i + 1], pnp[i + 2]) }
+        }
+
+        undefined Transistor(string model, int b, int c, int e) {
+            var q = this.Add(new Circuits.Transistor(model))
+            this.Join(b, q.B)
+            this.Join(c, q.C)
+            this.Join(e, q.E)
+        }
+
+        // a port on node n of the netlist: the first one names the node, the others join it
+        undefined Join(int n, Port p) {
+            if (this.nodes[n] == undefined) { this.nodes[n] = p } else {
+                Port first = this.nodes[n]
+                first.Connect(p)
+            }
+        }
+
+        Port InPlus { get { return this.ports[0] } }
+        Port InMinus { get { return this.ports[1] } }
+        Port Bias { get { return this.ports[2] } }
+        Port Iabc { get { return this.ports[3] } }
+        Port Out { get { return this.ports[4] } }
+    }
+
+    /// <summary>An optocoupler as Falstad's: an LED from Anode to Cathode, its current drives the base of an NPN transistor (Collector, Emitter); the
+    /// collector current is about `ctr` times the LED current.</summary>
+    class Optocoupler : Circuit {
+        construct(float ctr = 1.0) : base("opto") {
+            var anode = this.AddPort("anode")
+            var cathode = this.AddPort("cathode")
+            var collector = this.AddPort("collector")
+            var emitter = this.AddPort("emitter")
+            if (!Circuits.Models.Has("opto-led")) { Circuits.Models.Put(new Circuits.Model("opto-led", "D", 0.0000001714, 4.077)) }
+            if (!Circuits.Models.Has("opto-npn")) { Circuits.Models.Put(new Circuits.Model("opto-npn", "NPN", 0.00000000000001, 700.0, 1.0)) }
+            var led = this.Add(new Circuits.Diode("opto-led"))
+            var sense = this.Add(new Circuits.CCCS(ctr / 700.0))
+            var q = this.Add(new Circuits.Transistor("opto-npn"))
+            anode.Connect(led.A)
+            led.B.Connect(sense.InPlus)
+            sense.InMinus.Connect(cathode)
+            // the photo current: out of the collector into the base
+            sense.A.Connect(collector)
+            sense.B.Connect(q.B)
+            q.C.Connect(collector)
+            q.E.Connect(emitter)
+        }
+
+        Port Anode { get { return this.ports[0] } }
+        Port Cathode { get { return this.ports[1] } }
+        Port Collector { get { return this.ports[2] } }
+        Port Emitter { get { return this.ports[3] } }
     }
 
     /// <summary>A vacuum triode (Falstad's): the plate current (mu `mu`, kg1 `kg1`) and the grid current, against the cathode; ports Plate, Grid, Cathode.</summary>

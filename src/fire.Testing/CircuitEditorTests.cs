@@ -141,6 +141,36 @@ static class CircuitEditorTests
             && falstad6.Biscuit.Contains("\"type\": \"SparkGap\", \"from\": [32, 18], \"to\": [44, 32], \"onResistance\": \"1k\", \"offResistance\": \"1G\", \"breakdown\": \"4k\", \"holdCurrent\": \"1.5m\"")
             && falstad6.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [38, 36], \"to\": [38, 42], \"waveform\": \"triangle\", \"voltage\": \"2\", \"frequency\": \"20\", \"offset\": \"3\"}")
             && falstad6.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [0, 0], \"to\": [0, 5], \"voltage\": \"5\"}"), falstad6.Biscuit + string.Join(" | ", falstad6.Warnings));
+        var falstad7 = FalstadImport.Convert("""
+            $ 1 0.000005 10.2 50 5 50 5e-11
+            177 384 160 368 288 0 0.0 0.0
+            206 1360 272 1312 528 0 0.011 0.008 100 false
+            203 1264 432 1328 432 0 500 100000000 30 0.01
+            j 240 176 272 176 1 -4 0.00125
+            400 592 496 656 496 0 0_1_-9.1_0.47_100 0_1_-9.6_0.58_100 -1
+            173 304 240 368 240 0 93.0 680.0
+            176 560 256 560 352 1 0.805904783 -0.9415790148957013 1e-11
+            175 320 208 320 288 0
+            179 272 224 304 224 0 -1.0
+            212 1456 320 1504 320 0 2 (a-b)*10
+            213 976 528 1008 528 0 2 a*b*2/1000
+            402 512 528 624 528 0 0_0_40_-12_0_0_0.5 0_0_40_12_0_0_0.5
+            407 288 192 320 192 1
+            """);
+        Check("Falstad: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, Tunneldiode, Stromkonverter, gesteuerte Quelle, OTA, Optokoppler",
+            falstad7.Elements == 12 && falstad7.Warnings.Count == 1 && falstad7.Warnings[0].Contains("'a*b*2/1000' is not linear")
+            && falstad7.Biscuit.Contains("{\"type\": \"Thyristor\", \"from\": [48, 20], \"to\": [46, 36], \"legacy\": \"true\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Triac\", \"from\": [170, 34], \"to\": [164, 66], \"triggerCurrent\": \"11m\", \"holdingCurrent\": \"8m\"}")
+            && falstad7.Biscuit.Contains("\"type\": \"Diac\", \"from\": [158, 54], \"to\": [166, 54], \"onResistance\": \"500\"")
+            && falstad7.Biscuit.Contains("{\"type\": \"Jfet\", \"from\": [30, 22], \"to\": [34, 22], \"pChannel\": \"true\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Darlington\", \"from\": [74, 62], \"to\": [82, 62], \"model\": \"pnp\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Triode\", \"from\": [38, 30], \"to\": [46, 30]}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Varactor\", \"from\": [70, 32], \"to\": [70, 44], \"capacitance\": \"10p\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"TunnelDiode\", \"from\": [40, 26], \"to\": [40, 36]}")
+            && falstad7.Biscuit.Contains("{\"type\": \"CurrentConveyor\", \"from\": [34, 28], \"to\": [46, 28], \"gain\": \"-1\", \"spacing\": \"4\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"VCVS\", \"from\": [182, 40], \"to\": [194, 40], \"gain\": \"10\", \"spacing\": \"4\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Ota\", \"from\": [64, 66], \"to\": [78, 66], \"positive\": \"12\", \"negative\": \"-12\"}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Optocoupler\", \"from\": [36, 24], \"to\": [48, 24]}"), falstad7.Biscuit + string.Join(" | ", falstad7.Warnings));
         Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'165' (555 timer)"), string.Join(" | ", falstad.Warnings));
         CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
             "#import \"circuits\"\n" +

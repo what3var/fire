@@ -20193,7 +20193,7 @@ else
                 print(e.Type + pins + " '" + e.Error + "'")
             }
             """),
-        ("Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter", """
+        ("Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter, OTA, Optokoppler", """
             #import "circuits"
             class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
             // SCR: 12 V through 100 Ohm; a gate pulse fires it, it stays on, the supply going down puts it out
@@ -20373,6 +20373,81 @@ else
             g.Step()
             print("vcvs " + H.R(e.A.Voltage / 1V) + " vccs " + H.R(gs.B.Voltage / 1V) + " cccs " + H.R(f.B.Voltage / 1V) + " ccvs " + H.R(h.A.Voltage / 1V))
             print("cc2 x " + H.R(cv.X.Voltage / 1V) + " z " + H.R(cv.Z.Voltage / 1V) + " y current " + H.R(rsn.Current / 1mA))
+            // OTA: Iabc 100 uA from +9 V through a resistor into the Iabc pin (it sits near -9 V + 2 Vbe), output into 10 kOhm
+            var c = new Circuits.Circuit()
+            var ota = c.Add(new Circuits.Ota())
+            var vin = c.Add(new Circuits.VoltageSource(0.01V))
+            var rabc = c.Add(new Circuits.Resistor(166kOhm))
+            var vplus = c.Add(new Circuits.VoltageSource(9V))
+            var rl = c.Add(new Circuits.Resistor(10kOhm))
+            vin.A.Connect(ota.InPlus)
+            vin.B.Connect(c.Ground)
+            ota.InMinus.Connect(c.Ground)
+            vplus.B.Connect(c.Ground)
+            vplus.A.Connect(rabc.A)
+            rabc.B.Connect(ota.Iabc)
+            ota.Out.Connect(rl.A)
+            rl.B.Connect(c.Ground)
+            c.Step()
+            print("ota out " + H.R(ota.Out.Voltage / 1V) + " V, iabc " + H.R(rabc.Current / 1uA) + " uA")
+            vin.Level = -0.01V
+            c.Step()
+            print("ota out " + H.R(ota.Out.Voltage / 1V) + " V")
+            // optocoupler: 10 mA through the LED, the transistor from 5 V through 1 kOhm
+            var o = new Circuits.Circuit()
+            var opto = o.Add(new Circuits.Optocoupler())
+            var vled = o.Add(new Circuits.VoltageSource(5V))
+            var rled = o.Add(new Circuits.Resistor(330Ohm))
+            var vcc = o.Add(new Circuits.VoltageSource(5V))
+            var rc = o.Add(new Circuits.Resistor(1kOhm))
+            vled.A.Connect(rled.A)
+            rled.B.Connect(opto.Anode)
+            opto.Cathode.Connect(o.Ground)
+            vled.B.Connect(o.Ground)
+            vcc.A.Connect(rc.A)
+            rc.B.Connect(opto.Collector)
+            opto.Emitter.Connect(o.Ground)
+            vcc.B.Connect(o.Ground)
+            o.Step()
+            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(rc.Current / 1mA) + " mA")
+            vled.Level = 1.5V
+            o.Step()
+            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(rc.Current / 1mA) + " mA")
+            """),
+        ("Circuits: die aktiven Bauteile im Schaltplan (Pins wie bei Falstad, Gate auf Falstads Raster)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // a thyristor on the schematic: 12 V through 100 Ohm, the gate from 5 V through 300 Ohm
+            var c = new Circuits.Circuit()
+            c.TimeStep = 10us
+            var sm = c.Schematic
+            sm.Add("Rail", 0, -8, 0, -12, "voltage=12")
+            sm.Add("Resistor", 0, -8, 0, 0, "resistance=100")
+            var scr = sm.Add("Thyristor", 0, 0, 0, 8, "", "SCR1")
+            sm.Add("Ground", 0, 8, 0, 12)
+            sm.Add("Rail", 10, 8, 14, 8, "voltage=5")
+            var gate = sm.Add("Resistor", 4, 8, 10, 8, "resistance=300")
+            c.Run(1ms)
+            Circuits.Thyristor th = sm.PartOf("SCR1")!Circuits.Thyristor
+            print("scr on " + th.IsOn + " anode " + H.R(scr.PinVoltage(0)))
+            // every new kind: where its pins are
+            var l = new Circuits.Circuit()
+            var s2 = l.Schematic
+            var kinds = ["Jfet", "Darlington", "Thyristor", "Triac", "Diac", "Varactor", "TunnelDiode", "Triode", "VCVS", "VCCS", "CCCS", "CCVS", "CurrentConveyor", "Ota", "Optocoupler"]
+            var x = 0
+            foreach (k in kinds) {
+                s2.Add(k, x, 0, x + 8, 0)
+                x = x + 20
+            }
+            s2.Add("Thyristor", 0, 20, 7, 20, "smallGrid=true")
+            s2.Add("Thyristor", 0, 40, 2, 56, "legacy=true")
+            s2.Add("Triac", 20, 20, 20, 30)
+            s2.Add("Triode", 40, 20, 40, 28)
+            foreach (e in s2.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
             """),
         ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
             {
