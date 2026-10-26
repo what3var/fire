@@ -47,7 +47,10 @@ namespace fire.UI.Markup
             ["Not"] = "Circuits.Gate", ["Buffer"] = "Circuits.Gate", ["DFlipFlop"] = "Circuits.FlipFlop", ["SRLatch"] = "Circuits.SRLatch", ["Counter"] = "Circuits.Counter",
             ["Timer555"] = "Circuits.Timer555", ["GpioLine"] = "Circuits.GpioLine", ["I2cAdc"] = "Circuits.I2cAdc", ["I2cDac"] = "Circuits.I2cDac",
             ["Potentiometer"] = "Circuits.Potentiometer", ["Transformer"] = "Circuits.Transformer", ["Relay"] = "Circuits.Relay", ["JKFlipFlop"] = "Circuits.JKFlipFlop",
-            ["SchmittTrigger"] = "Circuits.SchmittTrigger", ["SpiShiftOut"] = "Circuits.SpiShiftOut", ["SpiShiftIn"] = "Circuits.SpiShiftIn", ["LogicOutput"] = "Circuits.Element", ["Probe"] = "Circuits.Element", ["Scope"] = "Circuits.Scope",
+            ["SchmittTrigger"] = "Circuits.SchmittTrigger", ["Switch2"] = "Circuits.Switch2", ["Lamp"] = "Circuits.Lamp", ["Fuse"] = "Circuits.Fuse",
+            ["Crystal"] = "Circuits.Crystal", ["LightResistor"] = "Circuits.LightResistor", ["Thermistor"] = "Circuits.Thermistor", ["Memristor"] = "Circuits.Memristor",
+            ["SparkGap"] = "Circuits.SparkGap", ["TransmissionLine"] = "Circuits.TransmissionLine", ["AnalogSwitch"] = "Circuits.AnalogSwitch",
+            ["AnalogSwitch2"] = "Circuits.AnalogSwitch2", ["Sweep"] = "Circuits.SweepSource", ["SpiShiftOut"] = "Circuits.SpiShiftOut", ["SpiShiftIn"] = "Circuits.SpiShiftIn", ["LogicOutput"] = "Circuits.Element", ["Probe"] = "Circuits.Element", ["Scope"] = "Circuits.Scope",
             ["Label"] = "Circuits.Element", ["Pin"] = "Circuits.Element", ["Text"] = "Circuits.Element",
         };
 

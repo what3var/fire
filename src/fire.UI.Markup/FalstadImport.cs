@@ -55,6 +55,9 @@ namespace fire.UI.Markup
                         continue;
                     }
                     if (type is "h" or "!" or "%" or "?" or "B" or "." or "34" or "32" or "38") continue;   // hints, models, sliders, subcircuits
+                    // old files give the letters of the types as numbers ("82" is 'R')
+                    if (int.TryParse(type, NumberStyles.None, CultureInfo.InvariantCulture, out int code) && code >= 65 && code < 127 && char.IsLetter((char)code))
+                        type = ((char)code).ToString();
                     if (t.Length < 6) { warnings.Add($"Line {lineNo}: '{line}' is no element."); continue; }
                     int x1 = Grid(t[1]), y1 = Grid(t[2]), x2 = Grid(t[3]), y2 = Grid(t[4]);
                     int flags = int.TryParse(t[5], out int f) ? f : 0;
@@ -137,16 +140,151 @@ namespace fire.UI.Markup
                         if (bias != 0) e.Set("offset", Format(bias));
                         if (phase != 0) e.Set("phase", Format(phase));
                     }
-                    else
+                    else if (wf == 3 || wf == 4)
                     {
-                        // square (and the curves the package has not got: triangle, sawtooth, pulse, noise) as a square of the same levels
-                        if (wf != 2) warnings.Add($"Line {lineNo}: a {WaveName(wf)} source is imported as a square wave.");
+                        e.Set("waveform", wf == 3 ? "triangle" : "sawtooth");
+                        e.Set("voltage", Format(max));
+                        e.Set("frequency", Format(freq));
+                        if (bias != 0) e.Set("offset", Format(bias));
+                        if (phase != 0) e.Set("phase", Format(phase));
+                    }
+                    else if (wf == 6)
+                    {
+                        e.Set("waveform", "noise");
+                        e.Set("voltage", Format(max));
+                        if (bias != 0) e.Set("offset", Format(bias));
+                    }
+                    else if (wf == 2 || wf == 5)
+                    {
+                        // a square between bias - max and bias + max; a pulse between bias and bias + max (its duty cycle)
                         e.Set("waveform", "square");
                         e.Set("voltage", Format(bias + max));
-                        e.Set("offset", Format(bias - max));
+                        e.Set("offset", Format(wf == 5 ? bias : bias - max));
                         e.Set("frequency", Format(freq));
                         if (wf == 5 && duty != 0.5) e.Set("duty", Format(duty));
                     }
+                    else
+                    {
+                        warnings.Add($"Line {lineNo}: a {WaveName(wf)} source is imported as DC.");
+                        e.Set("voltage", Format(bias + max));
+                    }
+                    return e;
+                }
+                case "n":
+                {
+                    // a rail of noise
+                    var e = new Element { Type = "Rail" };
+                    e.Set("waveform", "noise");
+                    e.Set("voltage", Format(Num(8, 5)));
+                    if (Num(9) != 0) e.Set("offset", Format(Num(9)));
+                    return e;
+                }
+                case "172":
+                {
+                    // a rail with a slider: the voltage it was set to
+                    var e = new Element { Type = "Rail" };
+                    e.Set("voltage", Format(Num(7, 5)));
+                    return e;
+                }
+                case "170":
+                {
+                    var e = new Element { Type = "Sweep" };
+                    e.Set("minFrequency", Format(Num(6, 20)));
+                    e.Set("maxFrequency", Format(Num(7, 4000)));
+                    e.Set("amplitude", Format(Num(8, 5)));
+                    e.Set("sweepTime", Format(Num(9, 0.1)));
+                    if ((flags & 1) != 0) e.Set("logarithmic", "true");
+                    if ((flags & 2) == 0) e.Set("bidirectional", "false");
+                    return e;
+                }
+                case "S":
+                {
+                    var e = new Element { Type = "Switch2" };
+                    int pos = (int)Num(6);
+                    int throws = (int)Num(9, 2);
+                    if (pos != 0) e.Set("position", pos.ToString(CultureInfo.InvariantCulture));
+                    if (throws != 2) e.Set("throws", throws.ToString(CultureInfo.InvariantCulture));
+                    if ((flags & 1) != 0) e.Set("centerOff", "true");
+                    int link = (int)Num(8);
+                    if (link != 0) e.Set("link", link.ToString(CultureInfo.InvariantCulture));
+                    if (Tok(7) == "true") warnings.Add($"Line {lineNo}: a momentary two-way switch is imported as a normal one.");
+                    return e;
+                }
+                case "181":
+                {
+                    var e = new Element { Type = "Lamp" };
+                    e.Set("power", Format(Num(7, 100)));
+                    e.Set("voltage", Format(Num(8, 120)));
+                    e.Set("warmTime", Format(Num(9, 0.4)));
+                    e.Set("coolTime", Format(Num(10, 0.4)));
+                    return e;
+                }
+                case "404":
+                {
+                    var e = new Element { Type = "Fuse" };
+                    e.Set("resistance", Format(Num(6, 0.0613)));
+                    e.Set("i2t", Format(Num(7, 6.73)));
+                    return e;
+                }
+                case "m":
+                {
+                    var e = new Element { Type = "Memristor" };
+                    e.Set("onResistance", Format(Num(6, 100)));
+                    e.Set("offResistance", Format(Num(7, 16000)));
+                    e.Set("width", Format(Num(9, 1e-8)));
+                    e.Set("mobility", Format(Num(10, 1e-10)));
+                    return e;
+                }
+                case "187":
+                {
+                    var e = new Element { Type = "SparkGap" };
+                    e.Set("onResistance", Format(Num(6, 1000)));
+                    e.Set("offResistance", Format(Num(7, 1e9)));
+                    e.Set("breakdown", Format(Num(8, 1000)));
+                    e.Set("holdCurrent", Format(Num(9, 0.001)));
+                    return e;
+                }
+                case "374":
+                {
+                    // Falstad's light: 0.1 + 10000 * position lux
+                    var e = new Element { Type = "LightResistor" };
+                    e.Set("lux", Format(10000 * Num(6, 0.5) + 0.1));
+                    return e;
+                }
+                case "350":
+                {
+                    // R25, R50 (the B value between them), the range of the slider and its position
+                    var e = new Element { Type = "Thermistor" };
+                    double r25 = Num(6, 10000), r50 = Num(7, 3588), lo = Num(8, -40), hi = Num(9, 150), pos = Num(10, 0.34);
+                    double beta = (Math.Log(r25) - Math.Log(r50)) / (1 / 298.15 - 1 / 323.15);
+                    e.Set("resistance25", Format(r25));
+                    e.Set("beta", Format(Math.Round(beta)));
+                    e.Set("temperature", Format(Math.Round(pos * (hi - lo) + lo)));
+                    return e;
+                }
+                case "209": { var e = new Element { Type = "Capacitor" }; e.Set("capacitance", Format(Num(6, 1e-5))); return e; }
+                case "171":
+                {
+                    var e = new Element { Type = "TransmissionLine" };
+                    e.Set("delay", Format(Num(6, 1e-6)));
+                    e.Set("impedance", Format(Num(7, 75)));
+                    int w = Grid8((int)Num(8, 32));
+                    if (w != 4 && w > 0) e.Set("width", w.ToString(CultureInfo.InvariantCulture));
+                    return e;
+                }
+                case "159":
+                case "160":
+                {
+                    var e = new Element { Type = type == "159" ? "AnalogSwitch" : "AnalogSwitch2" };
+                    if (t.Length > 7)
+                    {
+                        e.Set("onResistance", Format(Num(6, 20)));
+                        e.Set("offResistance", Format(Num(7, 1e10)));
+                    }
+                    if (t.Length > 8) e.Set("threshold", Format(Num(8, 2.5)));
+                    if ((flags & 1) != 0) { if (type == "159") e.Set("inverting", "true"); else e.Set("swap", "true"); }
+                    int flips = ((flags & 4) != 0 ? 1 : 0) + ((flags & 8) != 0 ? 1 : 0) + ((flags & 16) != 0 ? 1 : 0);
+                    if (flips % 2 == 1) e.Set("flip", "true");
                     return e;
                 }
                 case "i": { var e = new Element { Type = "CurrentSource" }; e.Set("current", Format(Num(6, 0.01))); return e; }
@@ -324,8 +462,12 @@ namespace fire.UI.Markup
 
         private static string Describe(string type) => type switch
         {
-            "155" => "D flip-flop", "165" => "555 timer", "164" => "counter", "S" => "two-way switch", "j" => "JFET",
-            "181" => "lamp", "A" => "antenna", "m" => "memristor", "170" => "sweep", "171" => "tapped transformer", "200" => "AM source", "201" => "FM source",
+            "155" => "D flip-flop", "165" => "555 timer", "164" => "counter", "j" => "JFET", "A" => "antenna", "169" => "tapped transformer", "200" => "AM source",
+            "201" => "FM source", "418" => "external voltage", "211" => "audio output", "179" => "current conveyor", "426" => "relay contact", "425" => "relay coil",
+            "419" => "decimal display", "403" => "scope", "176" => "varactor", "402" => "OTA", "184" => "multiplexer", "167" => "ADC", "166" => "DAC",
+            "163" => "ring counter", "168" => "latch", "212" => "voltage-controlled voltage source", "213" => "voltage-controlled current source", "175" => "tunnel diode",
+            "400" => "Darlington", "177" => "SCR", "173" => "triode", "423" => "line", "185" => "seven segment", "193" => "T flip-flop", "203" => "diac", "206" => "triac",
+            "208" => "custom logic", "430" => "time delay relay", "417" => "optocoupler", "405" => "LED array", "370" => "ammeter",
             _ => "unknown",
         };
 
@@ -351,7 +493,9 @@ namespace fire.UI.Markup
         {
             "Resistor" => "R", "Capacitor" => "C", "Inductor" => "L", "Source" or "Rail" => "V", "CurrentSource" => "I", "Diode" or "Zener" or "Led" => "D",
             "Transistor" or "Mosfet" => "Q", "Switch" => "S", "OpAmp" or "Comparator" or "SchmittTrigger" or "JKFlipFlop" => "U", "Probe" => "P",
-            "Potentiometer" => "RV", "Transformer" => "T", "Relay" => "K", _ => "X",
+            "Potentiometer" => "RV", "Transformer" => "T", "Relay" => "K", "Switch2" => "S", "Lamp" => "LA", "Fuse" => "F",
+            "LightResistor" or "Thermistor" or "Memristor" => "R", "SparkGap" => "E", "TransmissionLine" => "TL", "AnalogSwitch" or "AnalogSwitch2" => "U",
+            "Sweep" => "V", _ => "X",
         };
 
         private static string UniqueName(List<Element> elements, string prefix)

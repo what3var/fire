@@ -730,9 +730,15 @@ namespace UI {
                 } else if (w == "sine") {
                     this.Wave(root, m, 0.0, 0, white)
                     this.Value(root, e, "frequency", "Hz", m, -1.8)
-                } else if (w == "square") {
-                    this.Wave(root, m, 0.0, 1, white)
+                } else if (w == "square" || w == "triangle" || w == "sawtooth") {
+                    var kind = 1
+                    if (w == "triangle") { kind = 2 }
+                    if (w == "sawtooth") { kind = 3 }
+                    this.Wave(root, m, 0.0, kind, white)
                     this.Value(root, e, "frequency", "Hz", m, -1.8)
+                } else if (w == "noise") {
+                    this.Wave(root, m, 0.0, 4, white)
+                    this.Label(root, m, -1.8, "noise", gray)
                 } else {
                     // + at the second point, - at the first
                     this.Text(root, m + 0.8, 0.0, "+", white)
@@ -746,6 +752,9 @@ namespace UI {
                 var label = this.Pretty(e, "voltage", "V")
                 if (w == "sine") { label = "~" + this.Pretty(e, "frequency", "Hz") }
                 if (w == "square") { label = "П" + this.Pretty(e, "frequency", "Hz") }
+                if (w == "triangle") { label = "/\\" + this.Pretty(e, "frequency", "Hz") }
+                if (w == "sawtooth") { label = "/|" + this.Pretty(e, "frequency", "Hz") }
+                if (w == "noise") { label = "noise" }
                 this.EndText(root, L + 0.8, label, white)
             } else if (t == "LogicInput") {
                 this.Seg(root, 0.0, 0.0, L - 1.0, 0.0, c0)
@@ -822,6 +831,18 @@ namespace UI {
                 this.DrawTransformer(root, e)
             } else if (t == "Relay") {
                 this.DrawRelay(root, e)
+            } else if (t == "Switch2") {
+                this.DrawSwitch2(root, e)
+            } else if (t == "AnalogSwitch" || t == "AnalogSwitch2") {
+                this.DrawAnalogSwitch(root, e)
+            } else if (t == "TransmissionLine") {
+                this.DrawLine(root, e)
+            } else if (t == "Lamp" || t == "Fuse" || t == "Crystal" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap") {
+                this.DrawTwoPin(root, e, L)
+            } else if (t == "Sweep") {
+                this.Seg(root, 0.0, 0.0, L, 0.0, c0)
+                this.Dot(root, L, 0.0, 0.3, c0)
+                this.EndText(root, L + 0.8, "sweep " + this.Pretty(e, "minFrequency", "Hz") + "-" + this.Pretty(e, "maxFrequency", "Hz"), white)
             } else if (t == "SchmittTrigger") {
                 var vi = e.PinVoltage(0)
                 var vo2 = e.PinVoltage(1)
@@ -897,6 +918,23 @@ namespace UI {
 
         // a sine (kind 0) or square (kind 1) in a circle at (s, t)
         undefined Wave(Root root, float s, float t, int kind, int color) {
+            if (kind == 2) {
+                this.Seg(root, s - 0.9, t + 0.4, s - 0.45, t - 0.4, color)
+                this.Seg(root, s - 0.45, t - 0.4, s + 0.45, t + 0.4, color)
+                this.Seg(root, s + 0.45, t + 0.4, s + 0.9, t - 0.4, color)
+                return
+            }
+            if (kind == 3) {
+                this.Seg(root, s - 0.9, t + 0.4, s, t - 0.4, color)
+                this.Seg(root, s, t - 0.4, s, t + 0.4, color)
+                this.Seg(root, s, t + 0.4, s + 0.9, t - 0.4, color)
+                return
+            }
+            if (kind == 4) {
+                var ys = [0.1, -0.4, 0.3, -0.2, 0.4, -0.3, 0.2]
+                for (int i = 0; i < 6; i++) { this.Seg(root, s - 0.9 + i * 0.3, t + ys[i], s - 0.6 + i * 0.3, t + ys[i + 1], color) }
+                return
+            }
             if (kind == 1) {
                 this.Seg(root, s - 0.9, t + 0.4, s - 0.9, t - 0.4, color)
                 this.Seg(root, s - 0.9, t - 0.4, s, t - 0.4, color)
@@ -1257,6 +1295,196 @@ namespace UI {
             this.Seg(root, m, 2.0 * open * 0.8, m, open * 0.35, gray)
         }
 
+
+        undefined DrawSwitch2(Root root, Circuits.Element e) {
+            this.Frame(e)
+            var L = this.flen
+            var white = UI.Color.Rgb(220, 220, 220)
+            var n = Circuits.Symbols.Throws(e)
+            var pos = 0
+            if (e.part != undefined) {
+                Circuits.Switch2 sw = e.part!Circuits.Switch2
+                pos = sw.Position
+            }
+            var vcom = e.PinVoltage(0)
+            var pivot = L - 3.0
+            if (pivot < 0.5) { pivot = L / 3 }
+            this.Seg(root, 0.0, 0.0, pivot, 0.0, this.VoltageColor(vcom))
+            this.Dot(root, pivot, 0.0, 0.25, white)
+            var tipT = 0.0
+            for (int i = 0; i < n; i++) {
+                float hs = -2 * (i - Math.Floor((n - 1) / 2.0)!int)
+                if (n == 2 && i == 0) { hs = 2.0 }
+                this.Seg(root, L - 1.0, hs, L, hs, this.VoltageColor(e.PinVoltage(i + 1)))
+                this.Dot(root, L - 1.0, hs, 0.2, white)
+                if (i == pos) { tipT = hs }
+            }
+            if (pos < n) { this.Seg(root, pivot, 0.0, L - 1.0, tipT * 0.9, this.VoltageColor(vcom)) } else { this.Seg(root, pivot, 0.0, L - 1.0, 0.0, this.VoltageColor(vcom)) }
+        }
+
+        undefined DrawAnalogSwitch(Root root, Circuits.Element e) {
+            this.Frame(e)
+            var L = this.flen
+            var m = L / 2
+            var white = UI.Color.Rgb(220, 220, 220)
+            var gray = UI.Color.Rgb(140, 140, 140)
+            var isOn = false
+            if (e.part != undefined) {
+                if (e.type == "AnalogSwitch") {
+                    Circuits.AnalogSwitch a = e.part!Circuits.AnalogSwitch
+                    isOn = a.IsOn
+                } else {
+                    Circuits.AnalogSwitch2 a2 = e.part!Circuits.AnalogSwitch2
+                    isOn = a2.IsOn
+                }
+            }
+            var v0 = e.PinVoltage(0)
+            if (e.type == "AnalogSwitch") {
+                var hs = -2.0
+                if (e.Flag("flip")) { hs = 2.0 }
+                this.Seg(root, 0.0, 0.0, m - 1.2, 0.0, this.VoltageColor(v0))
+                this.Seg(root, m + 1.2, 0.0, L, 0.0, this.VoltageColor(e.PinVoltage(1)))
+                if (isOn) { this.Seg(root, m - 1.2, 0.0, m + 1.2, 0.0, this.VoltageColor(v0)) } else { this.Seg(root, m - 1.2, 0.0, m + 1.0, hs * 0.5, this.VoltageColor(v0)) }
+                this.Seg(root, m, hs, m, hs * 0.3, this.VoltageColor(e.PinVoltage(2)))
+                this.Box(root, m, hs * 0.25, 0.2, gray)
+                return
+            }
+            // two throws: NO isOn the side of the control
+            var hs = 2.0
+            if (e.Flag("flip")) { hs = -2.0 }
+            var pivot = L - 3.0
+            if (pivot < 0.5) { pivot = L / 3 }
+            this.Seg(root, 0.0, 0.0, pivot, 0.0, this.VoltageColor(v0))
+            this.Dot(root, pivot, 0.0, 0.25, white)
+            this.Seg(root, L - 1.0, hs, L, hs, this.VoltageColor(e.PinVoltage(1)))
+            this.Seg(root, L - 1.0, -hs, L, -hs, this.VoltageColor(e.PinVoltage(2)))
+            if (isOn) { this.Seg(root, pivot, 0.0, L - 1.0, hs * 0.9, this.VoltageColor(v0)) } else { this.Seg(root, pivot, 0.0, L - 1.0, -hs * 0.9, this.VoltageColor(v0)) }
+            this.Seg(root, m, hs, m, hs * 0.4, this.VoltageColor(e.PinVoltage(3)))
+        }
+
+        undefined DrawLine(Root root, Circuits.Element e) {
+            var end = Circuits.Symbols.AxisEnd(e)
+            this.FrameAt(e.x1, e.y1, end[0], end[1])
+            var L = this.flen
+            var w = e.Get("width").TryToInt()
+            if (w == undefined || w == 0) { w = 4 }
+            var ds = 1
+            if (end[1] == e.y1) {
+                if (end[0] < e.x1) { ds = -1 }
+            } else if (end[1] > e.y1) { ds = -1 }
+            float g = -w * ds
+            var white = UI.Color.Rgb(220, 220, 220)
+            var va1 = e.PinVoltage(0)
+            var va2 = e.PinVoltage(1)
+            var vb1 = e.PinVoltage(2)
+            var vb2 = e.PinVoltage(3)
+            var inner = g * 0.35
+            var outer = g * 0.65
+            // the leads to the two conductors, the conductors with the voltage along them
+            this.Seg(root, 0.0, 0.0, 0.0, inner, this.VoltageColor(va1))
+            this.Seg(root, L, 0.0, L, inner, this.VoltageColor(va2))
+            this.Seg(root, 0.0, g, 0.0, outer, this.VoltageColor(vb1))
+            this.Seg(root, L, g, L, outer, this.VoltageColor(vb2))
+            var steps = 12
+            for (int i = 0; i < steps; i++) {
+                var a = L * i / steps
+                var b = L * (i + 1) / steps
+                this.Seg(root, a, inner, b, inner, this.VoltageColor(va1 + (va2 - va1) * i / (steps - 1.0)))
+                this.Seg(root, a, outer, b, outer, this.VoltageColor(vb1 + (vb2 - vb1) * i / (steps - 1.0)))
+            }
+            this.Label(root, L / 2, g * 0.5, this.Pretty(e, "impedance", "Ω") + " " + this.Pretty(e, "delay", "s"), UI.Color.Rgb(170, 170, 170))
+        }
+
+        // the parts with two pins that are a box or a special line between their leads
+        // a rectangle in the frame of the element (it turns with the element)
+        undefined Rect(Root root, float s1, float t1, float s2, float t2, int color) {
+            this.Seg(root, s1, t1, s2, t1, color)
+            this.Seg(root, s2, t1, s2, t2, color)
+            this.Seg(root, s2, t2, s1, t2, color)
+            this.Seg(root, s1, t2, s1, t1, color)
+        }
+
+        undefined DrawTwoPin(Root root, Circuits.Element e, float L) {
+            var t = e.type
+            var m = L / 2
+            var v0 = e.PinVoltage(0)
+            var v1 = e.PinVoltage(1)
+            var c0 = this.VoltageColor(v0)
+            var c1 = this.VoltageColor(v1)
+            var white = UI.Color.Rgb(220, 220, 220)
+            var gray = UI.Color.Rgb(140, 140, 140)
+            if (t == "Lamp") {
+                // a circle with a cross, filled with the glow of the filament
+                this.Seg(root, 0.0, 0.0, m - 1.4, 0.0, c0)
+                this.Seg(root, m + 1.4, 0.0, L, 0.0, c1)
+                var b = 0.0
+                if (e.part != undefined) {
+                    Circuits.Lamp lamp = e.part!Circuits.Lamp
+                    b = lamp.Brightness
+                }
+                if (b > 0.0) { this.Dot(root, m, 0.0, 1.4, UI.Color.Rgb(Math.Round(60 + 195 * b)!int, Math.Round(40 + 200 * b)!int, Math.Round(20 + 120 * b)!int)) }
+                this.Arc(root, m, 0.0, 1.4, white)
+                this.Seg(root, m - 1.0, -1.0, m + 1.0, 1.0, white)
+                this.Seg(root, m - 1.0, 1.0, m + 1.0, -1.0, white)
+                this.Value(root, e, "power", "W", m, -2.0)
+            } else if (t == "Fuse") {
+                this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, c0)
+                this.Seg(root, m + 1.5, 0.0, L, 0.0, c1)
+                var blown = false
+                if (e.part != undefined) {
+                    Circuits.Fuse fuse = e.part!Circuits.Fuse
+                    blown = fuse.Blown
+                }
+                this.Rect(root, m - 1.5, -0.6, m + 1.5, 0.6, white)
+                if (blown) {
+                    this.Seg(root, m - 1.5, 0.0, m - 0.3, 0.0, c0)
+                    this.Seg(root, m + 0.3, 0.0, m + 1.5, 0.0, c1)
+                } else {
+                    this.Seg(root, m - 1.5, 0.0, m + 1.5, 0.0, c0)
+                }
+                this.Value(root, e, "i2t", "A²s", m, -1.4)
+            } else if (t == "Crystal") {
+                this.Seg(root, 0.0, 0.0, m - 0.9, 0.0, c0)
+                this.Seg(root, m + 0.9, 0.0, L, 0.0, c1)
+                this.Seg(root, m - 0.9, -1.3, m - 0.9, 1.3, c0)
+                this.Seg(root, m + 0.9, -1.3, m + 0.9, 1.3, c1)
+                this.Rect(root, m - 0.5, -1.0, m + 0.5, 1.0, white)
+            } else if (t == "SparkGap") {
+                this.Seg(root, 0.0, 0.0, m - 0.4, 0.0, c0)
+                this.Seg(root, m + 0.4, 0.0, L, 0.0, c1)
+                this.Seg(root, m - 1.2, -0.6, m - 0.4, 0.0, c0)
+                this.Seg(root, m - 1.2, 0.6, m - 0.4, 0.0, c0)
+                this.Seg(root, m + 1.2, -0.6, m + 0.4, 0.0, c1)
+                this.Seg(root, m + 1.2, 0.6, m + 0.4, 0.0, c1)
+                var isOn = false
+                if (e.part != undefined) {
+                    Circuits.SparkGap gap = e.part!Circuits.SparkGap
+                    isOn = gap.IsOn
+                }
+                if (isOn) { this.Seg(root, m - 0.4, 0.0, m + 0.4, 0.0, UI.Color.Rgb(160, 200, 255)) }
+                this.Value(root, e, "breakdown", "V", m, -1.4)
+            } else {
+                // a resistor box: LDR (arrows of light), thermistor (a slanted line), memristor (a band at one end)
+                this.Seg(root, 0.0, 0.0, m - 1.5, 0.0, c0)
+                this.Seg(root, m + 1.5, 0.0, L, 0.0, c1)
+                this.Rect(root, m - 1.5, -0.6, m + 1.5, 0.6, white)
+                if (t == "LightResistor") {
+                    this.Seg(root, m - 1.6, -2.2, m - 0.6, -1.0, white)
+                    this.Seg(root, m - 0.6, -1.0, m - 0.6, -1.5, white)
+                    this.Seg(root, m - 0.6, -2.2, m + 0.4, -1.0, white)
+                    this.Seg(root, m + 0.4, -1.0, m + 0.4, -1.5, white)
+                    this.Label(root, m, 1.4, e.Get("lux") + " lx", gray)
+                } else if (t == "Thermistor") {
+                    this.Seg(root, m - 2.0, 1.2, m + 1.6, -1.2, white)
+                    this.Seg(root, m + 1.6, -1.2, m + 2.2, -1.2, white)
+                    this.Label(root, m, 1.6, e.Get("temperature") + " °C", gray)
+                } else {
+                    this.Seg(root, m + 1.0, -0.6, m + 1.0, 0.6, white)
+                    this.Seg(root, m + 1.2, -0.6, m + 1.2, 0.6, white)
+                }
+            }
+        }
+
         undefined DrawScope(Root root, Circuits.Element e) {
             var x0 = this.SX(UI.M.Min(e.x1, e.x2))
             var y0 = this.SY(UI.M.Min(e.y1, e.y2))
@@ -1366,12 +1594,13 @@ namespace UI {
             var p = e.part
             if (p == undefined) { return 0.0 }
             var t = e.type
-            if (t == "Resistor" || t == "Capacitor" || t == "Inductor" || t == "Switch" || t == "Diode" || t == "Led" || t == "Zener" || t == "Formula" || t == "CurrentSource") {
+            if (t == "Resistor" || t == "Capacitor" || t == "Inductor" || t == "Switch" || t == "Diode" || t == "Led" || t == "Zener" || t == "Formula" || t == "CurrentSource"
+                || t == "Lamp" || t == "Fuse" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap") {
                 return p.CurrentRaw()
             }
             // a source runs from its first point (-) to its second (+)
             if (t == "Source" || t == "AudioInput") { return -p.CurrentRaw() }
-            if (t == "Rail" || t == "LogicInput") { return -p.CurrentRaw() }
+            if (t == "Rail" || t == "LogicInput" || t == "Sweep") { return -p.CurrentRaw() }
             return 0.0
         }
 
@@ -1401,7 +1630,7 @@ namespace UI {
                     root.painting = false
                     this.Frame(e)
                     var L = this.flen
-                    if (t == "Rail" || t == "LogicInput") { L = L - 1.0 }
+                    if (t == "Rail" || t == "LogicInput" || t == "Sweep") { L = L - 1.0 }
                     var d = ph
                     while (d < L) {
                         this.Dot(root, d, 0.0, 0.18, yellow)
@@ -1571,7 +1800,7 @@ namespace UI {
             return Math.Sqrt(qx * qx + qy * qy)
         }
 
-        bool IsInteractive(Circuits.Element e) { return e.type == "Switch" || e.type == "LogicInput" }
+        bool IsInteractive(Circuits.Element e) { return e.type == "Switch" || e.type == "Switch2" || e.type == "LogicInput" }
 
         // a click on a switch or a logic input
         undefined Toggle(Circuits.Element e) {
@@ -1582,6 +1811,18 @@ namespace UI {
                 // the property follows (the file keeps the position)
                 if (sw.Closed) { e.Set("closed", "true") } else { e.Set("closed", "false") }
                 e.dirty = false
+            } else if (e.type == "Switch2") {
+                // a switch of a group (link) moves the others of the group with it
+                var link = e.Get("link")
+                foreach (o in this.circuit.Schematic.Elements()) {
+                    Circuits.Element other = o
+                    if (other.type == "Switch2" && other.part != undefined && (other == e || (link != "0" && link != "" && other.Get("link") == link))) {
+                        Circuits.Switch2 s2 = other.part!Circuits.Switch2
+                        s2.Toggle()
+                        other.Set("position", "" + s2.Position)
+                        other.dirty = false
+                    }
+                }
             } else if (e.type == "LogicInput") {
                 Circuits.LogicInput li = e.part!Circuits.LogicInput
                 li.Toggle()
@@ -1892,7 +2133,15 @@ namespace UI {
             else if (t == "Potentiometer") { prefix = "RV" }
             else if (t == "Transformer") { prefix = "T" }
             else if (t == "Relay") { prefix = "K" }
-            else if (t == "SchmittTrigger") { prefix = "U" }
+            else if (t == "SchmittTrigger" || t == "AnalogSwitch" || t == "AnalogSwitch2") { prefix = "U" }
+            else if (t == "Switch2") { prefix = "S" }
+            else if (t == "Lamp") { prefix = "LA" }
+            else if (t == "Fuse") { prefix = "F" }
+            else if (t == "Crystal") { prefix = "Y" }
+            else if (t == "LightResistor" || t == "Thermistor" || t == "Memristor") { prefix = "R" }
+            else if (t == "SparkGap") { prefix = "E" }
+            else if (t == "TransmissionLine") { prefix = "TL" }
+            else if (t == "Sweep") { prefix = "V" }
             else { prefix = "G" }
             var n = 1
             while (this.Schematic.Find(prefix + n) != undefined) { n = n + 1 }

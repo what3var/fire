@@ -120,9 +120,19 @@ namespace Circuits {
             l.Add("Basic|Switch|closed:bool=false;momentary:bool=false")
             l.Add("Basic|Potentiometer|resistance:Ohm=10k;position:=0.5")
             l.Add("Basic|Transformer|inductance:H=4;ratio:=1;coupling:=0.999;width:int=4;flip:bool=false;reverse:bool=false")
+            l.Add("Basic|Switch2|position:int=0;throws:int=2;centerOff:bool=false;link:int=0")
+            l.Add("Basic|Lamp|power:W=100;voltage:V=120;warmTime:s=0.4;coolTime:s=0.4")
+            l.Add("Basic|Fuse|resistance:Ohm=61.3m;i2t:=6.73")
+            l.Add("Basic|Crystal|seriesCapacitance:F=0.1p;parallelCapacitance:F=28.7p;inductance:H=2.5m;resistance:Ohm=6.4")
+            l.Add("Basic|LightResistor|lux:=100;resistance10:Ohm=10k;gamma:=0.7")
+            l.Add("Basic|Thermistor|temperature:=25;resistance25:Ohm=10k;beta:=3950")
+            l.Add("Basic|Memristor|onResistance:Ohm=100;offResistance:Ohm=16k;width:=10n;mobility:=100p")
+            l.Add("Basic|SparkGap|breakdown:V=1k;holdCurrent:A=1m;onResistance:Ohm=1k;offResistance:Ohm=1G")
+            l.Add("Basic|TransmissionLine|impedance:Ohm=75;delay:s=1u;width:int=4")
             l.Add("Basic|Relay|inductance:H=0.2;coilResistance:Ohm=20;onCurrent:A=20m;offCurrent:A=15m;coil:choice:both/start/end=both;flip:bool=false")
-            l.Add("Sources|Source|waveform:choice:dc/sine/square=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
-            l.Add("Sources|Rail|waveform:choice:dc/sine/square=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
+            l.Add("Sources|Source|waveform:choice:dc/sine/square/triangle/sawtooth/noise=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
+            l.Add("Sources|Rail|waveform:choice:dc/sine/square/triangle/sawtooth/noise=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
+            l.Add("Sources|Sweep|amplitude:V=5;minFrequency:Hz=20;maxFrequency:Hz=4k;sweepTime:s=0.1;logarithmic:bool=false;bidirectional:bool=true")
             l.Add("Sources|CurrentSource|current:A=10m")
             l.Add("Sources|AudioInput|amplitude:V=1")
             l.Add("Sources|LogicInput|high:bool=false;supply:V=5")
@@ -133,6 +143,8 @@ namespace Circuits {
             l.Add("Semiconductors|Mosfet|model:model:NMOS/PMOS=2N7000;flip:bool=false")
             l.Add("Semiconductors|Formula|formula:text=V/1k;parameters:text=")
             l.Add("ICs|OpAmp|model:model:OPAMP=opamp;flip:bool=false")
+            l.Add("ICs|AnalogSwitch|threshold:V=2.5;inverting:bool=false;onResistance:Ohm=20;offResistance:Ohm=10G;flip:bool=false")
+            l.Add("ICs|AnalogSwitch2|threshold:V=2.5;onResistance:Ohm=20;offResistance:Ohm=10G;swap:bool=false;flip:bool=false")
             l.Add("ICs|Comparator|supply:V=5;flip:bool=false")
             l.Add("Logic|And|inputs:int=2;supply:V=5")
             l.Add("Logic|Nand|inputs:int=2;supply:V=5")
@@ -194,7 +206,7 @@ namespace Circuits {
 
         /// <summary>How an element is placed by default: the distance from its first point to its second (dx, dy).</summary>
         static int DefaultLength(string type) {
-            if (type == "Ground" || type == "Rail" || type == "LogicInput" || type == "LogicOutput" || type == "Label" || type == "Pin" || type == "GpioLine") { return 4 }
+            if (type == "Ground" || type == "Rail" || type == "LogicInput" || type == "LogicOutput" || type == "Label" || type == "Pin" || type == "GpioLine" || type == "Sweep") { return 4 }
             if (type == "Text") { return 0 }
             if (type == "Scope") { return 16 }
             if (Circuits.Symbols.IsChip(type)) { return 12 }
@@ -304,6 +316,13 @@ namespace Circuits {
             return n
         }
 
+        static int Throws(Circuits.Element e) {
+            var n = e.Get("throws").TryToInt()
+            if (n == undefined || n < 2) { return 2 }
+            if (n > 8) { return 8 }
+            return n
+        }
+
         static int Inputs(Circuits.Element e) {
             var n = e.Get("inputs").TryToInt()
             if (n == undefined || n < 2) { return 2 }
@@ -343,7 +362,7 @@ namespace Circuits {
             e.pins.Clear()
             var t = e.type
             if (t == "Text" || t == "Scope") { return }
-            if (t == "Ground" || t == "Rail" || t == "LogicInput" || t == "LogicOutput" || t == "Label" || t == "Pin" || t == "GpioLine") {
+            if (t == "Ground" || t == "Rail" || t == "LogicInput" || t == "LogicOutput" || t == "Label" || t == "Pin" || t == "GpioLine" || t == "Sweep") {
                 e.pins.Add(e.x1)
                 e.pins.Add(e.y1)
                 return
@@ -446,6 +465,58 @@ namespace Circuits {
                     e.pins.Add(bottom[2])
                     e.pins.Add(bottom[3])
                 }
+                return
+            }
+            if (t == "Switch2") {
+                // the common contact at the first point, the throws 2 units apart across the second (as Falstad's two-way switch)
+                var n = Circuits.Symbols.Throws(e)
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                for (int i = 0; i < n; i++) {
+                    var hs = -2 * (i - Math.Floor((n - 1) / 2.0)!int)
+                    if (n == 2 && i == 0) { hs = 2 }
+                    Circuits.Symbols.Interp(e, 1.0, hs, e.pins)
+                }
+                return
+            }
+            if (t == "AnalogSwitch") {
+                // A and B at the points, the control 2 units to the side of the middle
+                var hs = -2
+                if (e.Flag("flip")) { hs = 2 }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                e.pins.Add(e.x2)
+                e.pins.Add(e.y2)
+                Circuits.Symbols.Interp(e, 0.5, hs, e.pins)
+                return
+            }
+            if (t == "AnalogSwitch2") {
+                // common at the first point, NO and NC 2 units to the sides of the second, the control beside the middle on the side of NO
+                var hs = 2
+                if (e.Flag("flip")) { hs = -2 }
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0, hs, e.pins)
+                Circuits.Symbols.Interp(e, 1.0, -hs, e.pins)
+                Circuits.Symbols.Interp(e, 0.5, hs, e.pins)
+                return
+            }
+            if (t == "TransmissionLine") {
+                // the conductor from the first point to the second, the return `width` units beside it (as Falstad's line)
+                var end = Circuits.Symbols.AxisEnd(e)
+                var w = e.Get("width").TryToInt()
+                if (w == undefined || w == 0) { w = 4 }
+                var ds = 1
+                if (end[1] == e.y1) {
+                    if (end[0] < e.x1) { ds = -1 }
+                } else if (end[1] > e.y1) { ds = -1 }
+                var axis = new Circuits.Element("Wire", e.x1, e.y1, end[0], end[1])
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                e.pins.Add(end[0])
+                e.pins.Add(end[1])
+                Circuits.Symbols.Interp(axis, 0.0, -w * ds, e.pins)
+                Circuits.Symbols.Interp(axis, 1.0, -w * ds, e.pins)
                 return
             }
             if (t == "Relay") {
@@ -646,6 +717,47 @@ namespace Circuits {
                 part = new Circuits.Relay(Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "coilResistance", c), Circuits.Symbols.Value(e, "onCurrent", c),
                                           Circuits.Symbols.Value(e, "offCurrent", c))
             }
+            else if (t == "Switch2") {
+                var pos = e.Get("position").TryToInt()
+                if (pos == undefined) { pos = 0 }
+                part = new Circuits.Switch2(pos, Circuits.Symbols.Throws(e), e.Flag("centerOff"))
+            }
+            else if (t == "Lamp") {
+                part = new Circuits.Lamp(Circuits.Symbols.Value(e, "power", c), Circuits.Symbols.Value(e, "voltage", c), Circuits.Symbols.Value(e, "warmTime", c),
+                                         Circuits.Symbols.Value(e, "coolTime", c))
+            }
+            else if (t == "Fuse") { part = new Circuits.Fuse(Circuits.Symbols.Value(e, "resistance", c), Circuits.Symbols.Value(e, "i2t", c)) }
+            else if (t == "Crystal") {
+                part = new Circuits.Crystal(Circuits.Symbols.Value(e, "seriesCapacitance", c), Circuits.Symbols.Value(e, "parallelCapacitance", c),
+                                            Circuits.Symbols.Value(e, "inductance", c), Circuits.Symbols.Value(e, "resistance", c))
+            }
+            else if (t == "LightResistor") {
+                part = new Circuits.LightResistor(Circuits.Symbols.Value(e, "lux", c), Circuits.Symbols.Value(e, "resistance10", c), Circuits.Symbols.Value(e, "gamma", c))
+            }
+            else if (t == "Thermistor") {
+                part = new Circuits.Thermistor(Circuits.Symbols.Value(e, "temperature", c), Circuits.Symbols.Value(e, "resistance25", c), Circuits.Symbols.Value(e, "beta", c))
+            }
+            else if (t == "Memristor") {
+                part = new Circuits.Memristor(Circuits.Symbols.Value(e, "onResistance", c), Circuits.Symbols.Value(e, "offResistance", c), Circuits.Symbols.Value(e, "width", c),
+                                              Circuits.Symbols.Value(e, "mobility", c))
+            }
+            else if (t == "SparkGap") {
+                part = new Circuits.SparkGap(Circuits.Symbols.Value(e, "breakdown", c), Circuits.Symbols.Value(e, "holdCurrent", c), Circuits.Symbols.Value(e, "onResistance", c),
+                                             Circuits.Symbols.Value(e, "offResistance", c))
+            }
+            else if (t == "TransmissionLine") { part = new Circuits.TransmissionLine(Circuits.Symbols.Value(e, "impedance", c), Circuits.Symbols.Value(e, "delay", c)) }
+            else if (t == "AnalogSwitch") {
+                part = new Circuits.AnalogSwitch(Circuits.Symbols.Value(e, "threshold", c), e.Flag("inverting"), Circuits.Symbols.Value(e, "onResistance", c),
+                                                 Circuits.Symbols.Value(e, "offResistance", c))
+            }
+            else if (t == "AnalogSwitch2") {
+                part = new Circuits.AnalogSwitch2(Circuits.Symbols.Value(e, "threshold", c), Circuits.Symbols.Value(e, "onResistance", c), Circuits.Symbols.Value(e, "offResistance", c),
+                                                  e.Flag("swap"))
+            }
+            else if (t == "Sweep") {
+                part = new Circuits.SweepSource(Circuits.Symbols.Value(e, "amplitude", c), Circuits.Symbols.Value(e, "minFrequency", c), Circuits.Symbols.Value(e, "maxFrequency", c),
+                                                Circuits.Symbols.Value(e, "sweepTime", c), e.Flag("logarithmic"), e.Flag("bidirectional"))
+            }
             else if (t == "Source" || t == "Rail") { part = Circuits.Symbols.MakeSource(e, c) }
             else if (t == "CurrentSource") { part = new Circuits.CurrentSource(Circuits.Symbols.Value(e, "current", c)) }
             else if (t == "AudioInput") { part = new Circuits.AudioInput(Circuits.Symbols.Value(e, "amplitude", c)) }
@@ -698,7 +810,7 @@ namespace Circuits {
                 // from the first point (-) to the second (+), as in Falstad
                 e.pinPorts.Add(ports[1])
                 e.pinPorts.Add(ports[0])
-            } else if (t == "Rail" || t == "LogicInput") {
+            } else if (t == "Rail" || t == "LogicInput" || t == "Sweep") {
                 e.pinPorts.Add(ports[0])
                 e.groundPorts.Add(ports[1])
             } else if (t == "Transistor") {
@@ -715,6 +827,12 @@ namespace Circuits {
                 e.pinPorts.Add(ports[2])
             } else if (t == "Transformer") {
                 // pins P1, S1, P2, S2 (as Falstad's posts); the ports are p1, p2, s1, s2
+                e.pinPorts.Add(ports[0])
+                e.pinPorts.Add(ports[2])
+                e.pinPorts.Add(ports[1])
+                e.pinPorts.Add(ports[3])
+            } else if (t == "TransmissionLine") {
+                // pins A1, A2, B1, B2; the ports are a1, b1, a2, b2
                 e.pinPorts.Add(ports[0])
                 e.pinPorts.Add(ports[2])
                 e.pinPorts.Add(ports[1])
@@ -757,6 +875,11 @@ namespace Circuits {
             if (w == "square") {
                 return new Circuits.SquareSource(v, Circuits.Symbols.Value(e, "frequency", c), Circuits.Symbols.Value(e, "offset", c), Circuits.Symbols.Value(e, "duty", c))
             }
+            if (w == "triangle" || w == "sawtooth") {
+                return new Circuits.TriangleSource(v, Circuits.Symbols.Value(e, "frequency", c), Circuits.Symbols.Value(e, "offset", c), Circuits.Symbols.Value(e, "phase", c),
+                                                   w == "sawtooth")
+            }
+            if (w == "noise") { return new Circuits.NoiseSource(v, Circuits.Symbols.Value(e, "offset", c)) }
             return new Circuits.VoltageSource(v)
         }
     }
@@ -862,7 +985,7 @@ namespace Circuits {
         undefined Set(Circuits.Element e, string key, string value) {
             e.Set(key, value)
             // the number of pins can change (inputs, bits, flip, model of a transistor)
-            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "text" || key == "port" || key == "probe" || key == "quantity")
+            this.Changed(key == "inputs" || key == "bits" || key == "flip" || key == "model" || key == "reset" || key == "throws" || key == "width" || key == "text" || key == "port" || key == "probe" || key == "quantity")
         }
 
         /// <summary>Renames an element.</summary>

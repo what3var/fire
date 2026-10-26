@@ -1439,7 +1439,7 @@ namespace Circuits {
 
         construct(Circuits.Inductor coil, float onCurrent, float offCurrent, float onResistance) : base("K") {
             this.coil = coil
-            this.pulledCurrent = onCurrent
+            this.onCurrent = onCurrent
             this.offCurrent = offCurrent
             this.ron = onResistance
             this.AddPort("com")
@@ -1457,7 +1457,7 @@ namespace Circuits {
         undefined StampStep(Circuits.Solver solver) { this.stepsInFire = false }
         undefined Commit(Circuits.Solver solver) {
             var i = Math.Abs(this.coil.CurrentRaw())
-            if (!this.pulled && i >= this.pulledCurrent) {
+            if (!this.pulled && i >= this.onCurrent) {
                 this.pulled = true
                 this.InvalidateSoon()
             } else if (this.pulled && i < this.offCurrent) {
@@ -1470,6 +1470,438 @@ namespace Circuits {
             var to = this.ports[1]
             if (this.pulled) { to = this.ports[2] }
             return (this.ports[0].Raw() - to.Raw()) / this.ron
+        }
+    }
+
+    /// <summary>A voltage that is a triangle (`sawtooth` false) or a sawtooth between offset - amplitude and offset + amplitude, as in Falstad's simulator.</summary>
+    class TriangleSource : VoltageSource {
+        construct(float amplitude : any, float frequency : any, float offset : any = 0, float phase = 0.0, bool sawtooth = false) : base(0) {
+            this.wave = 3
+            if (sawtooth) { this.wave = 4 }
+            this.p0 = Circuits.Units.Volts(amplitude)
+            this.p1 = Circuits.Units.Hertz(frequency)
+            this.p2 = Circuits.Units.Volts(offset)
+            this.p3 = phase
+        }
+
+        float:any Frequency {
+            get { return this.p1 * 1Hz }
+            set {
+                this.p1 = Circuits.Units.Hertz(value)
+                this.Update()
+            }
+        }
+    }
+
+    /// <summary>White noise: a new random voltage between offset - amplitude and offset + amplitude every step.</summary>
+    class NoiseSource : VoltageSource {
+        construct(float amplitude : any = 5, float offset : any = 0) : base(0) {
+            this.wave = 5
+            this.p0 = Circuits.Units.Volts(amplitude)
+            this.p2 = Circuits.Units.Volts(offset)
+        }
+    }
+
+    /// <summary>A sine whose frequency sweeps from `minFrequency` to `maxFrequency` in `sweepTime` (logarithmic or linear), then back down
+    /// (`bidirectional`) or from the start again - Falstad's sweep.</summary>
+    class SweepSource : VoltageSource {
+        construct(float amplitude : any = 5, float minFrequency : any = 20, float maxFrequency : any = 4000, float sweepTime : any = 0.1,
+                  bool logarithmic = false, bool bidirectional = true) : base(0) {
+            this.wave = 6
+            if (logarithmic) { this.wave = this.wave + 1 }
+            if (bidirectional) { this.wave = this.wave + 2 }
+            this.p0 = Circuits.Units.Volts(amplitude)
+            this.p1 = Circuits.Units.Hertz(minFrequency)
+            this.p2 = Circuits.Units.Hertz(maxFrequency)
+            this.p3 = Circuits.Units.Seconds(sweepTime)
+            if (this.p1 <= 0.0 || this.p2 <= this.p1 || this.p3 <= 0.0) { throw new ArgumentException("A sweep needs 0 < min frequency < max frequency and a sweep time.") }
+        }
+    }
+
+    /// <summary>A switch with one common contact and two (or three) throws: Common is connected to throw `Position` (0, 1, 2); with `centerOff` a
+    /// two-way switch has a middle position (2) that connects nothing.</summary>
+    class Switch2 : Part {
+        int throws
+        int position
+        bool centerOff
+
+        construct(int position = 0, int throws = 2, bool centerOff = false) : base("S") {
+            if (throws < 2 || throws > 8) { throw new ArgumentException("A switch has 2 to 8 throws.") }
+            this.throws = throws
+            this.centerOff = centerOff && throws == 2
+            this.position = 0
+            this.AddPort("com")
+            for (int i = 0; i < throws; i++) { this.AddPort("t" + i) }
+            this.Position = position
+        }
+
+        Port Common { get { return this.ports[0] } }
+        /// <summary>The throw i (0, 1, ...).</summary>
+        Port Throw(int i) { return this.ports[i + 1] }
+
+        /// <summary>How many positions it has (the throws, and the middle one of a center-off switch).</summary>
+        int Positions {
+            get {
+                if (this.centerOff) { return 3 }
+                return this.throws
+            }
+        }
+
+        int Position {
+            get { return this.position }
+            set {
+                var p = value
+                if (p < 0) { p = 0 }
+                if (p >= this.Positions) { p = this.Positions - 1 }
+                if (p == this.position) { return }
+                this.position = p
+                this.Invalidate()
+            }
+        }
+
+        /// <summary>To the next position (after the last one back to the first).</summary>
+        undefined Toggle() { this.Position = (this.position + 1) % this.Positions }
+
+        bool Compile(Circuits.Solver solver) {
+            if (this.position < this.throws) { solver.Conductance(this.ports[0], this.ports[this.position + 1], 1000000.0) }
+            return true
+        }
+        float CurrentRaw() {
+            if (this.position >= this.throws) { return 0.0 }
+            return (this.ports[0].Raw() - this.ports[this.position + 1].Raw()) * 1000000.0
+        }
+    }
+
+    /// <summary>A resistance that follows a state the kernel moves on after every step, from the current and voltage of the step before (the base of
+    /// Lamp, Fuse, Memristor and SparkGap).</summary>
+    class StateResistor : TwoTerminal {
+        int kind
+        float p0
+        float p1
+        float p2
+        float p3
+        // the state kept while the circuit is compiled again
+        float s0 = 0.0
+        float s1 = 0.0
+        bool saved = false
+
+        construct(string name, int kind, float p0, float p1, float p2, float p3) : base(name) {
+            this.kind = kind
+            this.p0 = p0
+            this.p1 = p1
+            this.p2 = p2
+            this.p3 = p3
+        }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddNonlinear(this.kind, this.A, this.B, this.B, this.p0, this.p1, this.p2, this.p3)
+            if (this.saved) {
+                solver.NlSet(this.index, 4, this.s0)
+                solver.NlSet(this.index, 5, this.s1)
+            }
+            return true
+        }
+        undefined Save(Circuits.Solver solver) {
+            this.s0 = solver.NlState(this.index, 4)
+            this.s1 = solver.NlState(this.index, 5)
+            this.saved = true
+        }
+        undefined Reset() { this.saved = false }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+
+        // the state (0 or 1) now; undefined before the first step
+        any StateOf(int what) {
+            var plan = this.Plan()
+            if (plan != undefined && this.index >= 0) { return plan.NlState(this.index, 4 + what) }
+            if (!this.saved) { return undefined }
+            if (what == 0) { return this.s0 }
+            return this.s1
+        }
+
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 0)
+        }
+    }
+
+    /// <summary>An incandescent lamp: its filament heats up with the power it takes (`warmTime`) and cools down (`coolTime`); its resistance grows with
+    /// the temperature - cold it is about a twentieth of the hot one (`nominalVoltage`^2 / `nominalPower`). Falstad's lamp.</summary>
+    class Lamp : StateResistor {
+        construct(float nominalPower : any = 100, float nominalVoltage : any = 120, float warmTime : any = 0.4, float coolTime : any = 0.4) : base("LAMP", 7,
+                  Circuits.Units.Raw(nominalPower), Circuits.Units.Volts(nominalVoltage), Circuits.Units.Seconds(warmTime), Circuits.Units.Seconds(coolTime)) {
+            if (this.p0 <= 0.0 || this.p1 <= 0.0) { throw new ArgumentException("A lamp needs a nominal power and voltage above zero.") }
+        }
+
+        /// <summary>The temperature of the filament in kelvin (300 cold).</summary>
+        float Temperature {
+            get {
+                var t = this.StateOf(0)
+                if (t == undefined) { return 300.0 }
+                return t
+            }
+        }
+
+        /// <summary>0 (dark, below 800 K) to 1 (white hot, 2400 K and more).</summary>
+        float Brightness {
+            get {
+                var b = (this.Temperature - 800.0) / 1600.0
+                if (b < 0.0) { return 0.0 }
+                if (b > 1.0) { return 1.0 }
+                return b
+            }
+        }
+    }
+
+    /// <summary>A fuse: the heat i^2 t of its current builds up (and goes away within 3 seconds); when it reaches `i2t` (A^2 s) the fuse blows and stays
+    /// open (1 GOhm) until Repair. Falstad's fuse.</summary>
+    class Fuse : StateResistor {
+        construct(float resistance : any = 0.0613, float i2t = 6.73) : base("F", 8, Circuits.Units.Ohms(resistance), i2t, 0.0, 0.0) {
+            if (i2t <= 0.0) { throw new ArgumentException("A fuse needs an i2t above zero.") }
+        }
+
+        bool Blown {
+            get {
+                var b = this.StateOf(1)
+                return b != undefined && b != 0.0
+            }
+        }
+
+        /// <summary>How far it is to blowing: 0 cold, 1 blown.</summary>
+        float Heat {
+            get {
+                var h = this.StateOf(0)
+                if (h == undefined) { return 0.0 }
+                if (this.Blown) { return 1.0 }
+                return h / this.p1
+            }
+        }
+
+        /// <summary>A new fuse.</summary>
+        undefined Repair() {
+            this.saved = false
+            this.Invalidate()
+        }
+    }
+
+    /// <summary>A memristor (HP's model): its resistance goes from `offResistance` to `onResistance` as charge flows through it (the doped layer of
+    /// `width` grows with the `mobility` of the dopants) and back with the other direction. Falstad's memristor.</summary>
+    class Memristor : StateResistor {
+        construct(float onResistance : any = 100, float offResistance : any = 16000, float width = 0.00000001, float mobility = 0.0000000001) : base("M", 9,
+                  Circuits.Units.Ohms(onResistance), Circuits.Units.Ohms(offResistance), width, mobility) { }
+
+        /// <summary>The resistance now.</summary>
+        float:any Resistance {
+            get {
+                var r = this.StateOf(1)
+                if (r == undefined) { return this.p1 * 1Ohm }
+                return r * 1Ohm
+            }
+        }
+    }
+
+    /// <summary>A spark gap: it fires when the voltage across it exceeds `breakdown` (then `onResistance`) and goes out when the current falls below
+    /// `holdCurrent` (then `offResistance`). Falstad's spark gap.</summary>
+    class SparkGap : StateResistor {
+        construct(float breakdown : any = 1000, float holdCurrent : any = 0.001, float onResistance : any = 1000, float offResistance : any = 1000000000) : base("SG", 10,
+                  Circuits.Units.Ohms(onResistance), Circuits.Units.Ohms(offResistance), Circuits.Units.Volts(breakdown), Circuits.Units.Amps(holdCurrent)) { }
+
+        bool IsOn {
+            get {
+                var s = this.StateOf(0)
+                return s != undefined && s != 0.0
+            }
+        }
+    }
+
+    /// <summary>An analog switch: A and B are connected (`onResistance`) while Control is at or above `threshold` (below it when `inverting`), else
+    /// `offResistance` lies between them. Control takes no current.</summary>
+    class AnalogSwitch : Part {
+        float ron
+        float roff
+        float threshold
+        bool inverting
+        int index = -1
+
+        construct(float threshold : any = 2.5, bool inverting = false, float onResistance : any = 20, float offResistance : any = 10000000000) : base("SW") {
+            this.threshold = Circuits.Units.Volts(threshold)
+            this.inverting = inverting
+            this.ron = Circuits.Units.Ohms(onResistance)
+            this.roff = Circuits.Units.Ohms(offResistance)
+            this.AddPort("a")
+            this.AddPort("b")
+            this.AddPort("control")
+        }
+
+        Port A { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
+        Port Control { get { return this.ports[2] } }
+
+        bool Compile(Circuits.Solver solver) {
+            var inv = 0.0
+            if (this.inverting) { inv = 1.0 }
+            this.index = solver.AddNonlinear(11, this.A, this.B, this.Control, this.ron, this.roff, this.threshold, inv)
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+
+        bool IsOn {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return false }
+                return plan.NlState(this.index, 4) != 0.0
+            }
+        }
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.NlState(this.index, 0)
+        }
+    }
+
+    /// <summary>An analog switch with two throws: Common is on NormallyOpen while Control is at or above `threshold` and on NormallyClosed below it.</summary>
+    class AnalogSwitch2 : Circuit {
+        Circuits.AnalogSwitch closer
+
+        construct(float threshold : any = 2.5, float onResistance : any = 20, float offResistance : any = 10000000000, bool swap = false) : base("switch2") {
+            var com = this.AddPort("com")
+            var no = this.AddPort("no")
+            var nc = this.AddPort("nc")
+            var control = this.AddPort("control")
+            // (`swap`: NormallyOpen is on below the threshold, NormallyClosed above it)
+            var a = this.Add(new Circuits.AnalogSwitch(threshold, swap, onResistance, offResistance))
+            var b = this.Add(new Circuits.AnalogSwitch(threshold, !swap, onResistance, offResistance))
+            com.Connect(a.A)
+            com.Connect(b.A)
+            no.Connect(a.B)
+            nc.Connect(b.B)
+            control.Connect(a.Control)
+            control.Connect(b.Control)
+            this.closer = a
+        }
+
+        Port Common { get { return this.ports[0] } }
+        Port NormallyOpen { get { return this.ports[1] } }
+        Port NormallyClosed { get { return this.ports[2] } }
+        Port Control { get { return this.ports[3] } }
+        /// <summary>Is Common on NormallyOpen?</summary>
+        bool IsOn { get { return this.closer.IsOn } }
+    }
+
+    /// <summary>A light dependent resistor: `resistance10` at 10 lux, falling with the light as lux^-gamma (`gamma` about 0.7), at most `dark`.</summary>
+    class LightResistor : TwoTerminal {
+        float lux
+        float r10
+        float gamma
+        float dark
+
+        construct(float lux = 100.0, float resistance10 : any = 10000, float gamma = 0.7, float dark : any = 1000000) : base("LDR") {
+            this.lux = lux
+            this.r10 = Circuits.Units.Ohms(resistance10)
+            this.gamma = gamma
+            this.dark = Circuits.Units.Ohms(dark)
+        }
+
+        /// <summary>The light on it (lux).</summary>
+        float Lux {
+            get { return this.lux }
+            set {
+                if (value == this.lux) { return }
+                this.lux = value
+                this.Invalidate()
+            }
+        }
+
+        float ResistanceRaw() {
+            if (this.lux <= 0.0) { return this.dark }
+            var r = this.r10 * Math.Exp(-this.gamma * Math.Log(this.lux / 10.0))
+            if (r > this.dark) { return this.dark }
+            return r
+        }
+        float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
+
+        bool Compile(Circuits.Solver solver) {
+            solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+    }
+
+    /// <summary>An NTC thermistor: `resistance25` at 25 °C, R = R25 exp(B (1/T - 1/298.15 K)) at `Temperature` (°C).</summary>
+    class Thermistor : TwoTerminal {
+        float temperature
+        float r25
+        float beta
+
+        construct(float temperature = 25.0, float resistance25 : any = 10000, float beta = 3950.0) : base("TH") {
+            this.temperature = temperature
+            this.r25 = Circuits.Units.Ohms(resistance25)
+            this.beta = beta
+        }
+
+        /// <summary>Its temperature in °C.</summary>
+        float Temperature {
+            get { return this.temperature }
+            set {
+                if (value == this.temperature) { return }
+                this.temperature = value
+                this.Invalidate()
+            }
+        }
+
+        float ResistanceRaw() { return this.r25 * Math.Exp(this.beta * (1.0 / (this.temperature + 273.15) - 1.0 / 298.15)) }
+        float:any Resistance { get { return this.ResistanceRaw() * 1Ohm } }
+
+        bool Compile(Circuits.Solver solver) {
+            solver.Conductance(this.A, this.B, 1.0 / this.ResistanceRaw())
+            return true
+        }
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
+        float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+    }
+
+    /// <summary>A lossless transmission line of `impedance` that delays a wave by `delay`: one end between A1 (the conductor) and B1 (its return), the
+    /// other between A2 and B2. A wave that comes to an end not matched by `impedance` is reflected.</summary>
+    class TransmissionLine : Part {
+        float z
+        float delay
+        int index = -1
+
+        construct(float impedance : any = 75, float delay : any = 0.000001) : base("TL") {
+            this.z = Circuits.Units.Ohms(impedance)
+            this.delay = Circuits.Units.Seconds(delay)
+            this.AddPort("a1")
+            this.AddPort("b1")
+            this.AddPort("a2")
+            this.AddPort("b2")
+        }
+
+        Port A1 { get { return this.ports[0] } }
+        Port B1 { get { return this.ports[1] } }
+        Port A2 { get { return this.ports[2] } }
+        Port B2 { get { return this.ports[3] } }
+
+        float:any Impedance { get { return this.z * 1Ohm } }
+        float:any Delay { get { return this.delay * 1s } }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddLine(this.A1, this.B1, this.A2, this.B2, this.z, this.delay)
+            return true
+        }
+        /// <summary>The current into the line at A1.</summary>
+        float CurrentRaw() {
+            var plan = this.Plan()
+            if (plan == undefined) { return 0.0 }
+            return plan.State(3, this.index, 0)
+        }
+        /// <summary>The current into the line at A2.</summary>
+        float:A Current2 {
+            get {
+                var plan = this.Plan()
+                if (plan == undefined) { return 0A }
+                return plan.State(3, this.index, 1) * 1A
+            }
         }
     }
 
@@ -2060,6 +2492,12 @@ namespace Circuits {
             return __CirAddNonlinear(this.handle, kind, n0.Root().node, n1.Root().node, n2.Root().node, p0, p1, p2, p3)
         }
         float NlState(int index, int what) { return __CirNlState(this.handle, index, what) }
+        undefined NlSet(int index, int what, float value) { __CirNlSet(this.handle, index, what, value) }
+        int AddLine(Port a1, Port b1, Port a2, Port b2, float z, float delay) {
+            var index = __CirAddLine(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, z, delay)
+            if (index < 0) { throw new ArgumentException(this.Error()) }
+            return index
+        }
         undefined SetCaps(int index, float cjA, float cjB, float vj, float m, float tt, float tr = 0.0) { __CirSetCaps(this.handle, index, cjA, cjB, vj, m, tt, tr) }
         int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
             var n2 = -2
@@ -2219,6 +2657,29 @@ namespace Circuits {
         /// <summary>The current through the coil.</summary>
         float:A CoilCurrent { get { return this.coil.CurrentRaw() * 1A } }
         float CurrentRaw() { return this.coil.CurrentRaw() }
+    }
+
+    /// <summary>A quartz crystal: its motional arm (resistance, inductance and series capacitance) from A to B with the capacitance of its holder in
+    /// parallel - Falstad's crystal (about 10 MHz with the defaults).</summary>
+    class Crystal : Circuit {
+        construct(float seriesCapacitance : any = 0.0000000000001, float parallelCapacitance : any = 0.0000000000287, float inductance : any = 0.0025,
+                  float resistance : any = 6.4) : base("crystal") {
+            var a = this.AddPort("a")
+            var b = this.AddPort("b")
+            var cp = this.Add(new Circuits.Capacitor(parallelCapacitance))
+            a.Connect(cp.A)
+            cp.B.Connect(b)
+            var r = this.Add(new Circuits.Resistor(resistance))
+            var l = this.Add(new Circuits.Inductor(inductance))
+            var cs = this.Add(new Circuits.Capacitor(seriesCapacitance))
+            a.Connect(r.A)
+            r.B.Connect(l.A)
+            l.B.Connect(cs.A)
+            cs.B.Connect(b)
+        }
+
+        Port A { get { return this.ports[0] } }
+        Port B { get { return this.ports[1] } }
     }
 
     /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.

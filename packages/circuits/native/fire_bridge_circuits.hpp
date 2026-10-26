@@ -53,7 +53,8 @@ enum ProbeKind { PrNodes = 0, PrCapacitor = 1, PrInductor = 2, PrBranch = 3, PrC
 
 struct Probe { int rec, channel, kind, a, b; double g; };
 
-enum Wave { WDc = 0, WSine = 1, WSquare = 2 };
+// WSweep + flags (1: logarithmic, 2: up and down again): WSweep .. WSweep + 3
+enum Wave { WDc = 0, WSine = 1, WSquare = 2, WTriangle = 3, WSawtooth = 4, WNoise = 5, WSweep = 6 };
 
 struct Source {
     int a, b, branch;      // branch >= 0: a voltage source (row of its branch), else a current source from a through it to b
@@ -61,14 +62,44 @@ struct Source {
     double p0, p1, p2, p3;  // DC: level; sine: amplitude, frequency, offset, phase; square: high, frequency, low, duty
     bool fed = false;       // driven by Process before: the next piece of sound goes on from its last sample
     double lastSample = 0;
+    // the waves with a state (noise, sweep): the value of the step, and the state of the sweep (frequency, phase, direction)
+    double held = 0, freq = 0, phase = 0, dir = 1;
+    uint64_t seed = 0x9E3779B97F4A7C15ull;
+    bool started = false;
     double value(double t) const {
+        const double pi = 3.14159265358979323846;
         switch (wave) {
-            case WSine: return p2 + p0 * std::sin(2.0 * 3.14159265358979323846 * p1 * t + p3);
+            case WSine: return p2 + p0 * std::sin(2.0 * pi * p1 * t + p3);
             case WSquare: {
                 double cycles = t * p1;
                 return cycles - std::floor(cycles) < p3 ? p0 : p2;
             }
-            default: return p0;
+            case WTriangle: case WSawtooth: {
+                // as Falstad: amplitude p0, frequency p1, offset p2, phase p3
+                double w = std::fmod(2.0 * pi * p1 * t + p3, 2.0 * pi);
+                if (w < 0) w += 2.0 * pi;
+                if (wave == WSawtooth) return p2 + w * (p0 / pi) - p0;
+                return p2 + (w < pi ? w * (2 / pi) - 1 : 1 - (w - pi) * (2 / pi)) * p0;
+            }
+            default: return wave >= WNoise ? held : p0;
+        }
+    }
+    /// Before a step: the waves with a state move on (Falstad's SweepElm: amplitude p0 from p1 to p2 Hz in p3 seconds).
+    void advance(double dt) {
+        if (wave == WNoise) {
+            seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+            double r = (double)(seed >> 11) / 9007199254740992.0;
+            held = (r * 2 - 1) * p0 + p2;
+        } else if (wave >= WSweep) {
+            int flags = wave - WSweep;
+            if (!started || freq < p1 || freq > p2) { freq = p1; phase = 0; dir = 1; started = true; }
+            held = std::sin(phase) * p0;
+            phase += freq * 2 * 3.14159265358979323846 * dt;
+            if (flags & 1) freq *= std::pow(p2 / p1, dir * dt / p3); else freq += dir * dt * (p2 - p1) / p3;
+            if (freq >= p2 && dir == 1) {
+                if (flags & 2) dir = -1; else freq = p1;
+            }
+            if (freq <= p1 && dir == -1) dir = 1;
         }
     }
 };
@@ -79,7 +110,21 @@ struct Reactive { int a, b; double geq, vPrev, iPrev, ieq; };   // a capacitor (
 /// i(n+1) = G v(n+1) + h, G = dt/2 L^-1, h = i(n) + G v(n) - a 2x2 conductance (with the cross terms as voltage-controlled currents) and two currents.
 struct Coupled { int a1, b1, a2, b2; double g11, g12, g22, v1Prev, v2Prev, i1Prev, i2Prev, h1, h2; };
 
-enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp = 5, NlFormula = 6 };
+/// A lossless transmission line (Bergeron's method): each end (a: the conductor, b: the return) is its impedance z with a current source that brings the
+/// wave the other end sent `delay` ago. h holds per step and end V/z + I (I: the current into the line at its conductor).
+struct TLine {
+    int a1, b1, a2, b2;
+    double z;
+    int steps;
+    std::vector<double> h1, h2;
+    int ptr = 0;
+    double j1 = 0, j2 = 0, i1 = 0, i2 = 0;
+};
+
+enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp = 5, NlFormula = 6,
+              // resistances that follow a state between the steps (Falstad's startIteration), and a switch driven by a voltage
+              NlLamp = 7, NlFuse = 8, NlMemristor = 9, NlSparkGap = 10, NlAnalogSwitch = 11 };
+inline bool isVarRes(int kind) { return kind >= NlLamp && kind <= NlSparkGap; }
 
 constexpr double kVt = 0.025852;     // the thermal voltage at 27 degrees Celsius
 constexpr double kGmin = 1e-12;      // a conductance across every junction (keeps the matrix regular when a junction is off)
@@ -326,6 +371,8 @@ struct Nonlinear {
                                   // op amp: gain, lowest output, highest output, output resistance
     double lim[2] = {0, 0};       // the junction voltages of the last iteration (limited)
     double cur[3] = {0, 0, 0};    // the currents into its terminals after the last step
+    double st[2] = {0, 0};        // the state of a resistance that follows a state: lamp temperature / resistance, fuse heat / blown, memristor
+                                  // doped width / resistance, spark gap on; the analog switch: on
     bool limited = false;         // the last linearization used a limited junction voltage (Newton's method must go on)
     // the linearization: I(V) = i0 + J (V - v0)
     double i0[3], j[3][3], v0[3];
@@ -399,6 +446,51 @@ inline void commitCharges(Nonlinear& e, const std::vector<double>& x, double dt)
         double q = j.q + j.c * (v - j.v);
         j.iPrev = (q - j.qPrev) / dt;
         j.qPrev = q;
+    }
+}
+
+/// The resistance of a part that follows a state (NlLamp ... NlSparkGap) for the present step.
+inline double varResistance(const Nonlinear& e) {
+    switch (e.kind) {
+        case NlLamp: return e.st[1];
+        case NlFuse: return e.st[1] != 0 ? 1e9 : e.p[0];
+        case NlMemristor: return e.st[1];
+        case NlSparkGap: return e.st[0] != 0 ? e.p[0] : e.p[1];
+        default: return 1.0;
+    }
+}
+
+/// The resistance of a lamp at the temperature t (Falstad's LampElm, after http://www.intusoft.com/nlpdf/nl11.pdf): nominal power p0 at the voltage p1.
+inline double lampResistance(double nomPower, double nomVolts, double t) {
+    double nomR = nomVolts * nomVolts / nomPower;
+    if (t > 5390) t = 5390;
+    return nomR * (1.26104 - 4.90662 * std::sqrt(17.1839 / t - 0.00318794) - 7.8569 / (t - 187.56));
+}
+
+/// Before a step: the state of a part that follows a state moves on with the current and voltage of the last step (Falstad's startIteration).
+inline void stepState(Nonlinear& e, double v, double i, double dt) {
+    if (e.kind == NlLamp) {
+        double nomPower = e.p[0], warm = e.p[2], cool = e.p[3];
+        e.st[1] = lampResistance(nomPower, e.p[1], e.st[0]);
+        double cap = 1.57e-4 * nomPower, capw = cap * warm / 0.4, capc = cap * cool / 0.4, cr = 2600 / nomPower;
+        e.st[0] += v * i * dt / capw;
+        e.st[0] -= dt * (e.st[0] - 300) / (capc * cr);
+    } else if (e.kind == NlFuse) {
+        double i2t = e.p[1];
+        e.st[0] += i * i * dt;
+        e.st[0] -= dt * i2t / 3;   // it gives off its whole i2t in 3 seconds
+        if (e.st[0] < 0) e.st[0] = 0;
+        if (e.st[0] > i2t) e.st[1] = 1;
+    } else if (e.kind == NlMemristor) {
+        double ron = e.p[0], roff = e.p[1], width = e.p[2], mobility = e.p[3];
+        double wd = e.st[0] / width;
+        e.st[0] += dt * mobility * ron * i / width;
+        if (e.st[0] < 0) e.st[0] = 0;
+        if (e.st[0] > width) e.st[0] = width;
+        e.st[1] = ron * wd + roff * (1 - wd);
+    } else if (e.kind == NlSparkGap) {
+        if (std::fabs(i) < e.p[3]) e.st[0] = 0;
+        if (std::fabs(v) > e.p[2]) e.st[0] = 1;
     }
 }
 
@@ -487,6 +579,18 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
             for (int b = 0; b < 3; b++) { e.j[0][b] = r0[b]; e.j[1][b] = r1[b]; e.j[2][b] = -(r0[b] + r1[b]); }
             e.v0[0] = V(2) + v1; e.v0[1] = V(2) + v2;
         }
+    } else if (isVarRes(e.kind) || e.kind == NlAnalogSwitch) {
+        double g;
+        if (e.kind == NlAnalogSwitch) {
+            // on above the threshold (below it when inverted), read anew in every iteration (as Falstad does)
+            bool on = V(2) >= e.p[2];
+            if (e.p[3] != 0) on = !on;
+            e.st[0] = on ? 1 : 0;
+            g = 1.0 / (on ? e.p[0] : e.p[1]);
+        } else g = 1.0 / varResistance(e);
+        double v = V(0) - V(1);
+        e.i0[0] = g * v; e.i0[1] = -g * v;
+        e.j[0][0] = g; e.j[0][1] = -g; e.j[1][0] = -g; e.j[1][1] = g;
     } else if (e.kind == NlOpAmp) {
         // the output follows mid + swing * tanh(gain * (in+ - in-) / swing) through its output resistance: linear with a high gain, limited at the rails
         double gain = e.p[0], lo = e.p[1], hi = e.p[2], rout = e.p[3];
@@ -622,6 +726,7 @@ struct Plan {
     std::vector<double> rhs, x, y;
     std::vector<Reactive> capacitors, inductors;
     std::vector<Coupled> coupled;
+    std::vector<TLine> lines;
     std::vector<Source> sources;
     std::vector<Probe> probes;
     bool compiled = false;
@@ -768,16 +873,20 @@ inline Value AddNonlinear(Value h, Value kind, Value n0, Value n1, Value n2, Val
     if (!p) return Int(-1);
     Nonlinear e{};
     e.kind = (int)kind.i;
-    e.node[0] = (int)n0.i; e.node[1] = (int)n1.i; e.node[2] = kind.i == NlDiode ? -1 : (int)n2.i;
-    e.terminals = kind.i == NlDiode ? 2 : 3;
+    bool two = kind.i == NlDiode || isVarRes((int)kind.i);
+    e.node[0] = (int)n0.i; e.node[1] = (int)n1.i; e.node[2] = two ? -1 : (int)n2.i;
+    e.terminals = two ? 2 : 3;
     if (kind.i == NlOpAmp && (D(p0) <= 0 || D(p2) <= D(p1) || D(p3) <= 0)) { lastError() = "An op amp needs a gain, rails and an output resistance above zero."; return Int(-1); }
     e.p[0] = D(p0); e.p[1] = D(p1); e.p[2] = D(p2); e.p[3] = D(p3);
     if (e.kind == NlNmos || e.kind == NlPmos) e.lim[0] = 0;
+    if (e.kind == NlLamp) { e.st[0] = 300; e.st[1] = lampResistance(e.p[0], e.p[1], 300); }
+    if (e.kind == NlMemristor) e.st[1] = e.p[1];
     for (int a = 0; a < e.terminals; a++)
         for (int b = 0; b < e.terminals; b++) p->mark(e.node[a], e.node[b]);
     // (the junctions join their nodes for the tiny conductance to ground: through a junction a node is not hanging in the air; the output of an op amp is
     // tied to ground through its output stage, its inputs are not)
     if (e.kind == NlOpAmp) p->join(e.node[2], -1);
+    else if (e.kind == NlAnalogSwitch) p->join(e.node[0], e.node[1]);
     else for (int a = 1; a < e.terminals; a++) p->join(e.node[0], e.node[a]);
     p->nonlinear.push_back(e);
     return Int((int64_t)p->nonlinear.size() - 1);
@@ -891,12 +1000,22 @@ inline Value EvalFormula(Value text, Value parameters, Value v1, Value v2) {
     return Float((Real)evaluate(c.out, D(v1), D(v2), 0).v);
 }
 
-/// The currents into the terminals of a part that is not linear after the last step (what: terminal 0..2), or the voltage of a diode (what 3).
+/// Sets the state of a part that follows a state (what 4 or 5: st[0], st[1]) - its state from the plan before, or a reset.
+inline Value NlSet(Value h, Value index, Value what, Value value) {
+    Plan* p = plan(h);
+    if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size() || what.i < 4 || what.i > 5) return Bool(false);
+    p->nonlinear[(size_t)index.i].st[what.i - 4] = D(value);
+    return Bool(true);
+}
+
+/// The currents into the terminals of a part that is not linear after the last step (what: terminal 0..2), the voltage of a diode (what 3), the state of
+/// a part that follows one (what 4 and 5).
 inline Value NlState(Value h, Value index, Value what) {
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size()) return Float(0);
     const Nonlinear& e = p->nonlinear[(size_t)index.i];
     if (what.i >= 0 && what.i < 3) return Float((Real)e.cur[what.i]);
+    if (what.i == 4 || what.i == 5) return Float((Real)e.st[what.i - 4]);
     return Float((Real)(p->node(e.node[0]) - p->node(e.node[1])));
 }
 
@@ -1034,8 +1153,9 @@ inline Value Compile(Value h, Value time) {
     p->time = D(time);
     const int n = p->size;
     int ground = p->find(0);
+    // a node with no path to ground gets a tiny conductance to it - relative to what it has (next to a closed switch of 1 MS, 1e-12 S would vanish)
     for (int i = 0; i < p->nodes; i++)
-        if (p->find(i + 1) != ground) p->add(i, i, 1e-12);
+        if (p->find(i + 1) != ground) p->add(i, i, std::max(1e-12, std::fabs(p->g[(size_t)i * n + i]) * 1e-9));
     for (int i = 0; i < n; i++) p->pattern[(size_t)i * n + i] = 1;
     // the pivots are chosen with the parts that are not linear standing in as conductances of 1 mS between their terminals and from each terminal to
     // ground (without the ground ties, an op amp whose input is only fed by a current source would make the stand-in singular)
@@ -1093,7 +1213,12 @@ inline void begin(Plan* p) {
         c.h2 = c.i2Prev + c.g12 * c.v1Prev + c.g22 * c.v2Prev;
         into(c.a1, -c.h1); into(c.b1, c.h1); into(c.a2, -c.h2); into(c.b2, c.h2);
     }
-    for (const Source& s : p->sources) {
+    for (TLine& l : p->lines) {
+        l.j1 = l.h2[(size_t)l.ptr]; l.j2 = l.h1[(size_t)l.ptr];
+        into(l.a1, l.j1); into(l.b1, -l.j1); into(l.a2, l.j2); into(l.b2, -l.j2);
+    }
+    for (Source& s : p->sources) {
+        if (s.wave >= WNoise) s.advance(p->dt);
         double v = s.value(t);
         if (s.branch >= 0) p->rhs[(size_t)s.branch] = v;
         else { into(s.a, -v); into(s.b, v); }
@@ -1124,7 +1249,10 @@ inline double probeValue(Plan* p, const Probe& pr) {
 inline void newton(Plan* p) {
     const int n = p->size;
     p->rhsBase = p->rhs;
-    for (Nonlinear& e : p->nonlinear) if (e.kind == NlFormula) e.p[0] = p->time + p->dt;
+    for (Nonlinear& e : p->nonlinear) {
+        if (e.kind == NlFormula) e.p[0] = p->time + p->dt;
+        else if (isVarRes(e.kind)) stepState(e, p->node(e.node[0]) - p->node(e.node[1]), e.cur[0], p->dt);
+    }
     bool converged = false;
     for (int it = 0; it < p->maxIterations && !converged; it++) {
         p->iterations++;
@@ -1175,6 +1303,12 @@ inline void finish(Plan* p) {
         c.i2Prev = c.g12 * v1 + c.g22 * v2 + c.h2;
         c.v1Prev = v1;
         c.v2Prev = v2;
+    }
+    for (TLine& l : p->lines) {
+        double v1 = p->node(l.a1) - p->node(l.b1), v2 = p->node(l.a2) - p->node(l.b2);
+        l.i1 = v1 / l.z - l.j1; l.i2 = v2 / l.z - l.j2;
+        l.h1[(size_t)l.ptr] = v1 / l.z + l.i1; l.h2[(size_t)l.ptr] = v2 / l.z + l.i2;
+        l.ptr = (l.ptr + 1) % l.steps;
     }
     p->time += p->dt;
     Recorder* last = nullptr;
@@ -1280,6 +1414,11 @@ inline Value Unknown(Value h, Value k) { Plan* p = plan(h); return Float(p && k.
 inline Value State(Value h, Value kind, Value index, Value what) {
     Plan* p = plan(h);
     if (!p) return Float(0);
+    if (kind.i == 3) {
+        if (index.i < 0 || (size_t)index.i >= p->lines.size()) return Float(0);
+        const TLine& l = p->lines[(size_t)index.i];
+        return Float((Real)(what.i == 0 ? l.i1 : l.i2));
+    }
     if (kind.i == 2) {
         if (index.i < 0 || (size_t)index.i >= p->coupled.size()) return Float(0);
         const Coupled& c = p->coupled[(size_t)index.i];
@@ -1290,6 +1429,24 @@ inline Value State(Value h, Value kind, Value index, Value what) {
     if (index.i < 0 || (size_t)index.i >= list.size()) return Float(0);
     const Reactive& r = list[(size_t)index.i];
     return Float((Real)(what.i == 0 ? r.vPrev : r.iPrev));
+}
+
+/// A transmission line between the ends (a1, b1) and (a2, b2): impedance z (ohms), delay in seconds (at least one step). Returns its index.
+inline Value AddLine(Value h, Value a1, Value b1, Value a2, Value b2, Value z, Value delay) {
+    Plan* p = plan(h);
+    if (!p) return Int(-1);
+    if (D(z) <= 0) { lastError() = "A transmission line needs an impedance above zero."; return Int(-1); }
+    double n = std::round(D(delay) / p->dt);
+    if (n > 10000000) { lastError() = "The delay of the transmission line is too long for the time step."; return Int(-1); }
+    TLine l;
+    l.a1 = (int)a1.i; l.b1 = (int)b1.i; l.a2 = (int)a2.i; l.b2 = (int)b2.i;
+    l.z = D(z);
+    l.steps = n < 1 ? 1 : (int)n;
+    l.h1.assign((size_t)l.steps, 0.0); l.h2.assign((size_t)l.steps, 0.0);
+    p->conductance(l.a1, l.b1, 1.0 / l.z);
+    p->conductance(l.a2, l.b2, 1.0 / l.z);
+    p->lines.push_back(std::move(l));
+    return Int((int64_t)p->lines.size() - 1);
 }
 
 /// The value of a source at the time of the plan.

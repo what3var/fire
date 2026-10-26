@@ -114,6 +114,33 @@ static class CircuitEditorTests
             && falstad5.Biscuit.Contains("{\"type\": \"JKFlipFlop\", \"from\": [10, 28], \"to\": [22, 28], \"falling\": \"true\", \"spacing\": \"4\"}")
             && falstad5.Biscuit.Contains("{\"type\": \"SchmittTrigger\", \"from\": [20, 30], \"to\": [28, 30], \"lower\": \"1\", \"upper\": \"4\"}")
             && falstad5.Biscuit.Contains("{\"type\": \"Relay\", \"from\": [78, 38], \"to\": [94, 38], \"coil\": \"both\"}"), falstad5.Biscuit + string.Join(" | ", falstad5.Warnings));
+        var falstad6 = FalstadImport.Convert("""
+            $ 1 0.000005 10.2 50 5 50 5e-11
+            S 112 208 192 208 0 1 false 0 2
+            181 688 208 688 496 0 293 100 120 0.4 0.4
+            171 176 240 496 240 0 0.00000003 75.0 80 0.0
+            159 144 112 208 112 0
+            160 112 104 112 168 0
+            170 240 208 192 208 3 10.0 2000.0 5.0 0.1
+            172 272 288 192 288 0 6 4.5 5.0 0.0 0.0 0.5 Y Voltage
+            m 208 128 256 80 0 100.0 250000.0 0 1.0E-8 1.0E-10
+            187 256 144 352 256 0 1000.0 1.0E9 4000.0 0.0015
+            R 304 288 304 336 0 3 20 2 3 0 0.5
+            82 0 0 0 40 0 0 40 5 0 0 0.5
+            """);
+        Check("Falstad: Umschalter, Lampe, Leitung, Analogschalter, Sweep, Schieberail, Memristor, Funkenstrecke, Dreieck, Typ als Zahl",
+            falstad6.Elements == 11 && falstad6.Warnings.Count == 0
+            && falstad6.Biscuit.Contains("{\"type\": \"Switch2\", \"from\": [14, 26], \"to\": [24, 26], \"position\": \"1\"}")
+            && falstad6.Biscuit.Contains("\"type\": \"Lamp\", \"from\": [86, 26], \"to\": [86, 62], \"power\": \"100\", \"voltage\": \"120\"")
+            && falstad6.Biscuit.Contains("{\"type\": \"TransmissionLine\", \"from\": [22, 30], \"to\": [62, 30], \"delay\": \"30n\", \"impedance\": \"75\", \"width\": \"10\"}")
+            && falstad6.Biscuit.Contains("{\"type\": \"AnalogSwitch\", \"from\": [18, 14], \"to\": [26, 14]}")
+            && falstad6.Biscuit.Contains("{\"type\": \"AnalogSwitch2\", \"from\": [14, 13], \"to\": [14, 21]}")
+            && falstad6.Biscuit.Contains("{\"type\": \"Sweep\", \"from\": [30, 26], \"to\": [24, 26], \"minFrequency\": \"10\", \"maxFrequency\": \"2k\", \"amplitude\": \"5\", \"sweepTime\": \"100m\", \"logarithmic\": \"true\"}")
+            && falstad6.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [34, 36], \"to\": [24, 36], \"voltage\": \"4.5\"}")
+            && falstad6.Biscuit.Contains("\"type\": \"Memristor\", \"from\": [26, 16], \"to\": [32, 10], \"onResistance\": \"100\", \"offResistance\": \"250k\"")
+            && falstad6.Biscuit.Contains("\"type\": \"SparkGap\", \"from\": [32, 18], \"to\": [44, 32], \"onResistance\": \"1k\", \"offResistance\": \"1G\", \"breakdown\": \"4k\", \"holdCurrent\": \"1.5m\"")
+            && falstad6.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [38, 36], \"to\": [38, 42], \"waveform\": \"triangle\", \"voltage\": \"2\", \"frequency\": \"20\", \"offset\": \"3\"}")
+            && falstad6.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [0, 0], \"to\": [0, 5], \"voltage\": \"5\"}"), falstad6.Biscuit + string.Join(" | ", falstad6.Warnings));
         Check("Falstad: was das Paket nicht hat, wird genannt", falstad.Warnings.Count == 1 && falstad.Warnings[0].Contains("'165' (555 timer)"), string.Join(" | ", falstad.Warnings));
         CheckLines("Falstad: die uebersetzte Schaltung laeuft (Kondensator laedt ueber 1k)", Run(
             "#import \"circuits\"\n" +

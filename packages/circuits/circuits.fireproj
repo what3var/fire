@@ -186,6 +186,16 @@
         "cpp": "circuits::NlState"
       },
       {
+        "name": "__CirAddLine",
+        "arguments": 7,
+        "cpp": "circuits::AddLine"
+      },
+      {
+        "name": "__CirNlSet",
+        "arguments": 4,
+        "cpp": "circuits::NlSet"
+      },
+      {
         "name": "__CirAddGate",
         "arguments": 8,
         "cpp": "circuits::AddGate"

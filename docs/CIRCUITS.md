@@ -54,10 +54,22 @@ methods ending in `Raw` give plain numbers (volts, amperes, seconds).
 | `VoltageSource(v)` | DC; `Level`. `A` is the positive pole, `Current` the current it drives out of `A` |
 | `SineSource(amplitude, frequency, offset = 0, phase = 0)` | `offset + amplitude * sin(2 pi f t + phase)` |
 | `SquareSource(high, frequency, low = 0, duty = 0.5)` | high for `duty` of every period |
+| `TriangleSource(amplitude, frequency, offset = 0, phase = 0, sawtooth = false)` | a triangle or a sawtooth between offset - amplitude and offset + amplitude |
+| `NoiseSource(amplitude = 5V, offset = 0)` | a new random voltage every step |
+| `SweepSource(amplitude = 5V, minFrequency = 20Hz, maxFrequency = 4kHz, sweepTime = 0.1s, logarithmic = false, bidirectional = true)` | a sine whose frequency sweeps up (and down again) |
 | `FunctionSource(t => volts)` | any function of the time (seconds); it is computed in fire every step |
 | `CurrentSource(i)` | drives `i` from `A` through itself to `B`; `Level` |
 | `Switch(closed = false)` | `Closed`, `Toggle()`; closed it is a wire (1 µOhm), open it is not there |
 | `Ground()` | ties its port `G` to ground |
+| `Switch2(position = 0, throws = 2, centerOff = false)` | ports `Common`, `Throw(i)`; `Position`, `Toggle()`; a center-off switch has a middle position that connects nothing |
+| `AnalogSwitch(threshold = 2.5V, inverting = false, onResistance = 20, offResistance = 10G)` | ports `A`, `B`, `Control` (takes no current); `IsOn`. `AnalogSwitch2(threshold, ...)`: `Common` on `NormallyOpen` above the threshold, on `NormallyClosed` below |
+| `Lamp(nominalPower = 100W, nominalVoltage = 120V, warmTime = 0.4s, coolTime = 0.4s)` | the filament heats with the power it takes, its resistance grows with the temperature (cold about a twentieth); `Temperature` (K), `Brightness` |
+| `Fuse(resistance = 61.3mOhm, i2t = 6.73)` | blows when the heat i²t of its current reaches `i2t` (it gives it off in 3 s); `Blown`, `Heat`, `Repair()` |
+| `Memristor(onResistance = 100, offResistance = 16k, width = 10nm, mobility = 1e-10)` | HP's model: the resistance moves between the two with the charge through it; `Resistance` |
+| `SparkGap(breakdown = 1kV, holdCurrent = 1mA, onResistance = 1k, offResistance = 1G)` | fires above `breakdown`, goes out below `holdCurrent`; `IsOn` |
+| `LightResistor(lux = 100, resistance10 = 10k, gamma = 0.7)` | an LDR: `resistance10` at 10 lux, falling as lux^-gamma; `Lux` |
+| `Thermistor(temperature = 25, resistance25 = 10k, beta = 3950)` | an NTC at `Temperature` (°C) |
+| `TransmissionLine(impedance = 75, delay = 1us)` | ports `A1`, `B1` (one end), `A2`, `B2` (the other); a lossless line: a wave arrives after `delay`, an unmatched end reflects it |
 | `Potentiometer(r, position = 0.5)` | ports `A`, `B`, `Wiper`; `Resistance`, `Position` (0 at `A`, 1 at `B`) |
 | `Transformer(inductance = 4H, ratio = 1, coupling = 0.999)` | ports `P1`, `P2` (primary), `S1`, `S2` (secondary); two coupled inductors, the secondary has `ratio`² times the inductance of the primary; `SecondaryCurrent` |
 
@@ -259,6 +271,7 @@ ICs are circuits of the package made of its parts - subcircuits to use like any 
 |---|---|---|
 | `Timer555(supply = 5V)` | `Trigger`, `Threshold`, `Discharge`, `Output`, `Control`, `Reset` | divider, two comparators, SR latch, discharge transistor; powered inside at `supply` |
 | `Counter(bits = 4, supply = 5V)` | `Clock`, `Q(i)` | a ripple counter of D flip-flops; `Count` |
+| `Crystal(seriesCapacitance = 0.1pF, parallelCapacitance = 28.7pF, inductance = 2.5mH, resistance = 6.4)` | `A`, `B` | a quartz: series R-L-C with the holder's capacitance in parallel (about 10 MHz) |
 | `Relay(inductance = 0.2H, coilResistance = 20, onCurrent = 20mA, offCurrent = 15mA, onResistance = 0.05)` | `Coil1`, `Coil2`, `Common`, `NormallyClosed`, `NormallyOpen` | a coil (inductor and resistor) and a changeover contact: it pulls in when the coil current reaches `onCurrent` and drops out below `offCurrent`; `Energized`, `CoilCurrent` |
 
 A 555 as an astable multivibrator with RA = 1 kOhm, RB = 10 kOhm and C = 100 nF runs at 666 Hz (the formula 1.44 / ((RA + 2 RB) C) gives 686 Hz:
@@ -498,7 +511,10 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
   a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
-  `inverting`), Counter, Timer555, Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end), LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
+  `inverting`), Counter, Timer555, Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
+  Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
+  LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail); sources and rails also have the waveforms triangle,
+  sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
   voltage/current), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
@@ -573,9 +589,10 @@ window the UI markup editor uses; double click or Enter on an element puts the f
 
 **Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
-LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), logic inputs and
-outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the 555 of Falstad's chip layout, JFETs, saturation
-of a transformer, ...) is listed. Of the 335 example circuits in text form, 176 come over completely and run.
+LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and
+analog switches, lamps, fuses, memristors, spark gaps, LDRs, thermistors, transmission lines, sweeps, noise, triangle and sawtooth sources, rails with a slider,
+logic inputs and outputs, probes, labels, texts and scopes become elements. What the package has not got (D flip-flops and the 555 of Falstad's chip layout,
+JFETs, saturation of a transformer, ...) is listed. Of the 335 example circuits in text form, 240 come over without leaving an element out.
 `fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
 
 ## Coming next

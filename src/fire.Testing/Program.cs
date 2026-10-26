@@ -20023,6 +20023,176 @@ else
                 print(e.Type + pins + " '" + e.Error + "'")
             }
             """),
+        ("Circuits: Lampe, Sicherung, Funkenstrecke, Memristor, Analogschalter, Umschalter, LDR, NTC, Leitung, Dreieck/Saegezahn/Rauschen/Sweep, Quarz", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // lamp: 120 V on a 100 W lamp warms up, the current drops
+            var c = new Circuits.Circuit()
+            c.TimeStep = 100us
+            var v = c.Add(new Circuits.VoltageSource(120V))
+            var lamp = c.Add(new Circuits.Lamp())
+            v.A.Connect(lamp.A)
+            lamp.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("lamp cold " + H.R(lamp.Current / 1A) + " A, " + Math.Round(lamp.Temperature) + " K")
+            c.Run(2s)
+            print("lamp hot " + H.R(lamp.Current / 1A) + " A, " + Math.Round(lamp.Temperature) + " K, power " + Math.Round(lamp.PowerRaw()) + " W, brightness " + H.R(lamp.Brightness))
+            // fuse: 10 A through a fuse with i2t 6.73 blows after about 0.07 s
+            var f = new Circuits.Circuit()
+            f.TimeStep = 1ms
+            var s2 = f.Add(new Circuits.VoltageSource(10V))
+            var fuse = f.Add(new Circuits.Fuse())
+            var rl = f.Add(new Circuits.Resistor(1Ohm))
+            s2.A.Connect(fuse.A)
+            fuse.B.Connect(rl.A)
+            rl.B.Connect(f.Ground)
+            s2.B.Connect(f.Ground)
+            var blownAt = -1.0
+            for (int i = 0; i < 200; i++) {
+                f.Step()
+                if (fuse.Blown && blownAt < 0.0) { blownAt = f.TimeRaw() }
+            }
+            print("fuse blown at " + H.R(blownAt) + " s, current now " + H.R(fuse.Current / 1A))
+            // spark gap: a capacitor charged through 1 MOhm from 2 kV fires at 1 kV (relaxation oscillator)
+            var g = new Circuits.Circuit()
+            g.TimeStep = 1ms
+            var hv = g.Add(new Circuits.VoltageSource(2000V))
+            var rr = g.Add(new Circuits.Resistor(10MOhm))
+            var cc = g.Add(new Circuits.Capacitor(100nF))
+            var gap = g.Add(new Circuits.SparkGap())
+            hv.A.Connect(rr.A)
+            rr.B.Connect(cc.A)
+            cc.B.Connect(g.Ground)
+            hv.B.Connect(g.Ground)
+            gap.A.Connect(cc.A)
+            gap.B.Connect(g.Ground)
+            var fires = 0
+            var was = false
+            for (int i = 0; i < 3000; i++) {
+                g.Step()
+                if (gap.IsOn && !was) { fires++ }
+                was = gap.IsOn
+            }
+            print("spark gap fired " + fires + " times in 3 s")
+            // memristor driven by a sine: the resistance moves
+            var m = new Circuits.Circuit()
+            m.TimeStep = 1ms
+            var sine = m.Add(new Circuits.SineSource(1V, 1Hz))
+            var mem = m.Add(new Circuits.Memristor())
+            sine.A.Connect(mem.A)
+            mem.B.Connect(m.Ground)
+            sine.B.Connect(m.Ground)
+            var lo = 1000000.0
+            var hi = 0.0
+            for (int i = 0; i < 2000; i++) {
+                m.Step()
+                var r = mem.Resistance / 1Ohm
+                if (r < lo) { lo = r }
+                if (r > hi) { hi = r }
+            }
+            print("memristor between " + Math.Round(lo) + " and " + Math.Round(hi) + " Ohm")
+            // analog switch driven by a square wave
+            var a = new Circuits.Circuit()
+            var five = a.Add(new Circuits.VoltageSource(5V))
+            var ctl = a.Add(new Circuits.SquareSource(5V, 1kHz))
+            var sw = a.Add(new Circuits.AnalogSwitch())
+            var load = a.Add(new Circuits.Resistor(1kOhm))
+            five.A.Connect(sw.A)
+            sw.B.Connect(load.A)
+            load.B.Connect(a.Ground)
+            five.B.Connect(a.Ground)
+            ctl.A.Connect(sw.Control)
+            ctl.B.Connect(a.Ground)
+            a.Run(200us)
+            print("analog switch on " + sw.IsOn + " load " + H.R(load.A.Voltage / 1V))
+            a.Run(500us)
+            print("analog switch on " + sw.IsOn + " load " + H.R(load.A.Voltage / 1V))
+            // two-way switch
+            var t = new Circuits.Circuit()
+            var src = t.Add(new Circuits.VoltageSource(5V))
+            var s3 = t.Add(new Circuits.Switch2())
+            var r1 = t.Add(new Circuits.Resistor(1kOhm))
+            var r2 = t.Add(new Circuits.Resistor(1kOhm))
+            src.A.Connect(s3.Common)
+            s3.Throw(0).Connect(r1.A)
+            s3.Throw(1).Connect(r2.A)
+            r1.B.Connect(t.Ground)
+            r2.B.Connect(t.Ground)
+            src.B.Connect(t.Ground)
+            t.Step()
+            print("switch2 pos 0: " + H.R(r1.A.Voltage / 1V) + " " + H.R(r2.A.Voltage / 1V))
+            s3.Toggle()
+            t.Step()
+            print("switch2 pos 1: " + H.R(r1.A.Voltage / 1V) + " " + H.R(r2.A.Voltage / 1V))
+            // LDR and NTC
+            var ldr = new Circuits.LightResistor(10.0)
+            print("ldr at 10 lux " + Math.Round(ldr.Resistance / 1Ohm) + ", at 1000 lux " + Math.Round(new Circuits.LightResistor(1000.0).Resistance / 1Ohm))
+            print("ntc at 25 C " + Math.Round(new Circuits.Thermistor().Resistance / 1Ohm) + ", at 50 C " + Math.Round(new Circuits.Thermistor(50.0).Resistance / 1Ohm))
+            // transmission line: 1 us, 50 Ohm, open at the end: a 1 V step through 50 Ohm arrives doubled after 1 us
+            var l = new Circuits.Circuit()
+            l.TimeStep = 10ns
+            var step = l.Add(new Circuits.VoltageSource(2V))
+            var rs = l.Add(new Circuits.Resistor(50Ohm))
+            var line = l.Add(new Circuits.TransmissionLine(50Ohm, 1us))
+            step.A.Connect(rs.A)
+            rs.B.Connect(line.A1)
+            line.B1.Connect(l.Ground)
+            line.B2.Connect(l.Ground)
+            step.B.Connect(l.Ground)
+            l.Run(500ns)
+            print("line at 0.5 us: in " + H.R(line.A1.Voltage / 1V) + " end " + H.R(line.A2.Voltage / 1V))
+            l.Run(1us)
+            print("line at 1.5 us: in " + H.R(line.A1.Voltage / 1V) + " end " + H.R(line.A2.Voltage / 1V))
+            l.Run(1us)
+            print("line at 2.5 us: in " + H.R(line.A1.Voltage / 1V) + " end " + H.R(line.A2.Voltage / 1V))
+            // sources: triangle peak, sweep, noise
+            var w = new Circuits.Circuit()
+            w.TimeStep = 10us
+            var tri = w.Add(new Circuits.TriangleSource(1V, 1kHz))
+            var saw = w.Add(new Circuits.TriangleSource(1V, 1kHz, 0V, 0.0, true))
+            var noise = w.Add(new Circuits.NoiseSource(1V))
+            var sweep = w.Add(new Circuits.SweepSource(1V, 100Hz, 1kHz, 10ms))
+            foreach (p in [tri, saw, noise, sweep]) {
+                Circuits.VoltageSource vs = p!Circuits.VoltageSource
+                var rx = w.Add(new Circuits.Resistor(1kOhm))
+                vs.A.Connect(rx.A)
+                rx.B.Connect(w.Ground)
+                vs.B.Connect(w.Ground)
+            }
+            var tmax = -9.0
+            var smin = 9.0
+            var nmax = -9.0
+            var crossings = 0
+            var last = 0.0
+            for (int i = 0; i < 1000; i++) {
+                w.Step()
+                tmax = Math.Max(tmax, tri.A.Voltage / 1V)
+                smin = Math.Min(smin, saw.A.Voltage / 1V)
+                nmax = Math.Max(nmax, Math.Abs(noise.A.Voltage / 1V))
+                var y = sweep.A.Voltage / 1V
+                if (last < 0.0 && y >= 0.0) { crossings++ }
+                last = y
+            }
+            print("triangle max " + H.R(tmax) + " sawtooth min " + H.R(smin) + " noise within 1 V " + (nmax <= 1.0) + " sweep periods in 10 ms " + crossings)
+            // crystal: series resonance near 1/(2 pi sqrt(L Cs))
+            print("crystal series resonance " + Math.Round(1.0 / (2.0 * Math.PI * Math.Sqrt(0.0025 * 0.0000000000001)) / 1000) + " kHz")
+
+            // in a schematic: the pins as in Falstad
+            var sc = new Circuits.Circuit()
+            var sm = sc.Schematic
+            sm.Add("Switch2", 0, 0, 8, 0, "throws=3", "sw")
+            sm.Add("AnalogSwitch", 10, 0, 18, 0, "", "as")
+            sm.Add("AnalogSwitch2", 20, 0, 28, 0, "", "as2")
+            sm.Add("TransmissionLine", 30, 0, 42, 0, "", "tl")
+            sm.Add("Lamp", 44, 0, 52, 0, "", "lamp")
+            sm.Add("Sweep", 54, 0, 50, 0, "", "sweep")
+            foreach (e in sm.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            """),
         ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
             {
               "biscuit": 1,
