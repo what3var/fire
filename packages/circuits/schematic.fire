@@ -1613,7 +1613,7 @@ namespace Circuits {
                 e.error = "'" + target.name + "' is not connected."
                 return
             }
-            var scope = new Circuits.Scope(this.circuit.Top(), 20000)
+            var scope = new Circuits.Scope(this.circuit.Top(), 8192, true)
             if (current) {
                 scope.Current("y", target.part)
             } else {

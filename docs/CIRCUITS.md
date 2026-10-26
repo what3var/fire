@@ -353,7 +353,8 @@ print(result.ToWav().length)                                  // the bytes of a 
 
 ## Instruments
 
-**`Scope(circuit, capacity = 100000)`** records every step of the circuit:
+**`Scope(circuit, capacity = 100000, rolling = false)`** records every step of the circuit (it stops when `capacity` samples are there; a `rolling` scope
+drops the older half then and goes on - the scopes of a schematic roll with 8192 samples):
 
 | | |
 |---|---|
@@ -526,6 +527,10 @@ first step of an RC circuit is a little behind the exact curve (`5 * (1 - e^-1)`
 
 A switch that opens while a current flows through a capacitor makes the trapezoidal rule take half a step of that current along (the voltage moves by
 `dt / 2C * i` once) - the same as in other simulators that use it.
+
+What is much faster than the time step, the trapezoidal rule does not damp: a capacitor shorted by a switch (or an inductor left open) would keep
+a current (a voltage) that changes its sign every step and never dies away. A capacitor current (an inductor voltage) that has changed its sign two steps in
+a row is therefore replaced by the mean of the last two - the ringing is gone within three steps, and a signal the time step resolves is not touched.
 
 ## Schematics (`.biscuit`)
 

@@ -44,10 +44,21 @@ inline std::string toUtf8(Value v) {
 inline double D(Value v) { return v.kind == K_Float ? (double)v.f : (double)v.i; }
 
 /// What a scope records: the times and one row of samples per channel; stops when `capacity` samples are there.
+/// A rolling recorder (made with a negative capacity) drops the older half instead and goes on.
 struct Recorder {
     int64_t capacity = 100000;
+    bool rolling = false;
     std::vector<double> times;
     std::vector<std::vector<double>> channels;
+    /// Is there room for one more sample (after dropping the older half of a full rolling recorder)?
+    bool room() {
+        if ((int64_t)times.size() < capacity) return true;
+        if (!rolling) return false;
+        size_t drop = (size_t)(capacity / 2);
+        times.erase(times.begin(), times.begin() + (std::ptrdiff_t)std::min(drop, times.size()));
+        for (auto& c : channels) c.erase(c.begin(), c.begin() + (std::ptrdiff_t)std::min(drop, c.size()));
+        return true;
+    }
 };
 
 enum ProbeKind { PrNodes = 0, PrCapacitor = 1, PrInductor = 2, PrBranch = 3, PrConductance = 4, PrCurrentSource = 5, PrNonlinear = 6, PrCoupled = 7 };
@@ -105,7 +116,18 @@ struct Source {
     }
 };
 
-struct Reactive { int a, b; double geq, vPrev, iPrev, ieq; };   // a capacitor (2C/dt) or an inductor (dt/2L), trapezoidal rule
+// a capacitor (2C/dt) or an inductor (dt/2L), trapezoidal rule; `last` and `flips` watch it for ringing (see damp)
+struct Reactive { int a, b; double geq, vPrev, iPrev, ieq; double last = 0; int flips = 0; };
+
+/// The trapezoidal rule does not damp what is much faster than the time step: a capacitor shorted by a switch (or an inductor left open) keeps a
+/// current (a voltage) that changes its sign every step and never dies away. A value that alternates two steps in a row cannot be a signal the step
+/// resolves, so it is replaced by the mean of the last two values - the ringing is gone, and a slower signal is not touched.
+inline void damp(double& value, double& last, int& flips) {
+    bool flipped = (value > 0 && last < 0) || (value < 0 && last > 0);
+    flips = flipped ? flips + 1 : 0;
+    if (flips >= 2) { value = (value + last) / 2; flips = 0; }
+    last = value;
+}
 
 /// Two coupled inductors (a transformer): winding 1 from a1 to b1, winding 2 from a2 to b2. With L = [[L1, M], [M, L2]] the trapezoidal rule gives
 /// i(n+1) = G v(n+1) + h, G = dt/2 L^-1, h = i(n) + G v(n) - a 2x2 conductance (with the cross terms as voltage-controlled currents) and two currents.
@@ -1704,8 +1726,8 @@ inline bool newton(Plan* p) {
 
 /// After the solution of a step: the capacitors, inductors and lines take their new state, the time moves on.
 inline void settle(Plan* p) {
-    for (Reactive& c : p->capacitors) { double v = p->node(c.a) - p->node(c.b); c.iPrev = c.geq * v - c.ieq; c.vPrev = v; }
-    for (Reactive& l : p->inductors) { double v = p->node(l.a) - p->node(l.b); l.iPrev = l.geq * v + l.ieq; l.vPrev = v; }
+    for (Reactive& c : p->capacitors) { double v = p->node(c.a) - p->node(c.b); c.iPrev = c.geq * v - c.ieq; c.vPrev = v; damp(c.iPrev, c.last, c.flips); }
+    for (Reactive& l : p->inductors) { double v = p->node(l.a) - p->node(l.b); l.iPrev = l.geq * v + l.ieq; l.vPrev = v; damp(l.vPrev, l.last, l.flips); }
     for (Coupled& c : p->coupled) {
         double v1 = p->node(c.a1) - p->node(c.b1), v2 = p->node(c.a2) - p->node(c.b2);
         c.i1Prev = c.g11 * v1 + c.g12 * v2 + c.h1;
@@ -1767,7 +1789,7 @@ inline void finish(Plan* p) {
         if (!r) continue;
         if (r != last) {
             last = r;
-            full = (int64_t)r->times.size() >= r->capacity;
+            full = !r->room();
             if (!full) r->times.push_back(p->time);
         }
         if (!full && (size_t)pr.channel < r->channels.size()) r->channels[(size_t)pr.channel].push_back(probeValue(p, pr));
@@ -1942,7 +1964,8 @@ inline Value Info(Value h, Value what) {
 
 inline Value RecNew(Value capacity) {
     Recorder* r = new Recorder();
-    r->capacity = capacity.i > 0 ? capacity.i : 100000;
+    r->rolling = capacity.i < 0;
+    r->capacity = capacity.i > 0 ? capacity.i : capacity.i < -1 ? -capacity.i : 100000;
     tables().recorders.push_back(r);
     return Int((int64_t)tables().recorders.size() - 1);
 }
@@ -1969,7 +1992,7 @@ inline Value RecPut(Value h, Value channel, Value v) {
 }
 inline Value RecTime(Value h, Value t) {
     Recorder* r = recorder(h);
-    if (r && (int64_t)r->times.size() < r->capacity) r->times.push_back(D(t));
+    if (r && r->room()) r->times.push_back(D(t));
     return Undef();
 }
 inline Value RecCount(Value h) { Recorder* r = recorder(h); return Int(r ? (int64_t)r->times.size() : 0); }

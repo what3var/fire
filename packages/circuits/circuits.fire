@@ -3974,7 +3974,8 @@ namespace Circuits {
     }
 
     /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.
-    /// The kernel records them; the samples stay when the circuit is compiled again.</summary>
+    /// The kernel records them; the samples stay when the circuit is compiled again. It stops when `capacity` samples are there - with `rolling` it
+    /// drops the older half then and goes on (for a live display).</summary>
     class Scope {
         List names
         List sources
@@ -3984,11 +3985,13 @@ namespace Circuits {
         List inFire
         bool kernelChannels = false
 
-        construct(Circuit circuit, int capacity = 100000) {
+        construct(Circuit circuit, int capacity = 100000, bool rolling = false) {
             this.names = new List()
             this.sources = new List()
             this.inFire = new List()
-            this.recorder = __CirRecNew(capacity)
+            var n = capacity
+            if (rolling) { n = -capacity }
+            this.recorder = __CirRecNew(n)
             circuit.Attach(this)
         }
 

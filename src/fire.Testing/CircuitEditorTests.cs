@@ -217,6 +217,28 @@ static class CircuitEditorTests
             "foreach (e in c.Schematic.Elements()) { if (e.Error != \"\") { bad = bad + 1 } }\n" +
             "print(\"errors \" + bad + \" vcc \" + Math.Round(c.Schematic.Elements()[11].PinVoltage(0)) + \" recorded \" + (c.Schematic.Elements()[12].scope.Count > 0))\n"), new[] { "errors 0 vcc 5 recorded True" });
 
+        // a switch closed across a charged capacitor: the trapezoidal rule alone would let the current ring from step to step for ever
+        CheckLines("Schaltung: Schalter parallel zum geladenen Kondensator - kein Klingeln, Strom durch den Schalter in der richtigen Richtung", Run("""
+            #import "circuits"
+            var c = new Circuits.Circuit("x")
+            c.LoadSchematic("{\"biscuit\": 1, \"timeStep\": \"10us\", \"elements\": [{\"type\": \"Source\", \"from\": [0, 16], \"to\": [0, 0], \"voltage\": \"5V\"}, {\"type\": \"Resistor\", \"from\": [0, 0], \"to\": [16, 0], \"resistance\": \"1k\"}, {\"type\": \"Capacitor\", \"from\": [16, 0], \"to\": [16, 16], \"capacitance\": \"1uF\"}, {\"type\": \"Wire\", \"from\": [0, 16], \"to\": [16, 16]}, {\"type\": \"Ground\", \"from\": [0, 16], \"to\": [0, 20]}, {\"type\": \"Switch\", \"from\": [16, 0], \"to\": [16, 16]}]}")
+            c.Run(20ms)
+            var els = c.Schematic.Elements()
+            els[5].part.Toggle()
+            c.Run(100us)
+            print("C " + (Math.Abs(els[2].part.CurrentRaw()) < 0.000001) + " S " + Math.Round(els[5].part.CurrentRaw() * 1000.0) + "mA")
+            """), new[] { "C True S 5mA" });
+        // the scope of a schematic rolls on: it keeps the last samples and does not stop when it is full
+        CheckLines("Schaltung: das Oszilloskop des Schaltplans laeuft weiter, wenn es voll ist", Run("""
+            #import "circuits"
+            var c = new Circuits.Circuit("x")
+            c.LoadSchematic("{\"biscuit\": 1, \"timeStep\": \"10us\", \"elements\": [{\"type\": \"Source\", \"name\": \"V1\", \"from\": [0, 16], \"to\": [0, 0], \"voltage\": \"5V\"}, {\"type\": \"Resistor\", \"name\": \"R1\", \"from\": [0, 0], \"to\": [0, 16]}, {\"type\": \"Ground\", \"from\": [0, 16], \"to\": [0, 20]}, {\"type\": \"Scope\", \"from\": [8, 0], \"to\": [40, 16], \"probe\": \"R1\"}]}")
+            c.Run(300ms)
+            var sc = c.Schematic.Elements()[3].scope
+            var t = sc.Times()
+            print("full " + (sc.Count <= 8192) + " last " + Math.Round(t[t.length - 1] * 1000.0))
+            """), new[] { "full True last 300" });
+
         // ---- the view: placing, wires, moving, undo, switches, the editor of properties ----
         CheckLines("CircuitView: platzieren, Draht vom Pin, verschieben, Undo, Drehen, Loeschen, Schalter, Eigenschaften", Run("""
             #import "circuits.ui"
