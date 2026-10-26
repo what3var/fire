@@ -19,6 +19,7 @@
 #include <memory>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -721,6 +722,232 @@ struct Gate {
     }
 };
 
+
+
+// ---- chips: logic and mixed-signal ICs after Falstad's ChipElm ----
+
+enum ChipKind { CTFlipFlop = 1, CLatch = 2, CRingCounter = 3, CMux = 4, CDemux = 5, CHalfAdder = 6, CFullAdder = 7, CSipo = 8, CPiso = 9, CAdc = 10,
+                CDac = 11, CSevenSegDecoder = 12, CMonostable = 13, CPhaseComp = 14, CVco = 15 };
+enum ChipPinMode { PinIn = 0, PinOut = 1, PinCurrent = 2 };
+
+/// A chip: pins in the order of Falstad's chip (inputs, outputs that drive a level through `1/g` like the gates, and outputs that drive a current), its
+/// logic run once per step from the voltages of the step before (`execute`, as in Falstad's startIteration). `bits` and `flags` say how it is made.
+struct Chip {
+    int kind = 0, bits = 0, flags = 0;
+    std::vector<int> node;
+    std::vector<char> mode;
+    std::vector<char> val;          // the logic value of each pin (inputs: read; outputs: driven)
+    std::vector<double> level;      // what an output drives this step: volts (PinOut) or amperes (PinCurrent)
+    std::vector<double> st;         // the state of the chip (data of a shift register, times of a monostable, ...)
+    double high = 5, threshold = 2.5, g = 0.1;
+    double p[4] = {0, 0, 0, 0};
+    bool lastClock = false, lastLoad = false;
+
+    bool in(size_t i) const { return val[i] != 0; }
+    void set(size_t i, bool v) { val[i] = v ? 1 : 0; }
+
+    void execute(const std::vector<double>& x, double time) {
+        auto volts = [&](size_t i) { int n = node[i]; return n < 0 ? 0.0 : x[(size_t)n]; };
+        for (size_t i = 0; i < node.size(); i++) {
+            if (mode[i] == PinIn) val[i] = volts(i) > threshold ? 1 : 0;
+            level[i] = std::numeric_limits<double>::quiet_NaN();
+        }
+        const size_t n = (size_t)bits;
+        switch (kind) {
+            case CTFlipFlop: {
+                // T, Q, /Q, clock [, R [, S]] - flags 1: reset, 2: set
+                bool reset = (flags & 1) || (flags & 2);
+                bool c = in(3);
+                if (c && !lastClock && in(0)) set(1, !in(1));
+                if ((flags & 2) && in(5)) set(1, true);
+                if (reset && in(4)) set(1, false);
+                set(2, !in(1));
+                lastClock = c;
+                break;
+            }
+            case CLatch: {
+                // I0..In-1, O0..On-1, load [, R] [, S] - flags 1: level (not edge) triggered, 2: reset, 4: set, 8: reset active low
+                size_t load = 2 * n, k = load + 1;
+                size_t reset = (flags & 2) ? k++ : 0, setp = (flags & 4) ? k++ : 0;
+                bool ld = in(load);
+                if ((flags & 4) && in(setp)) { for (size_t i = 0; i < n; i++) set(n + i, true); }
+                else if ((flags & 2) && in(reset) != ((flags & 8) != 0)) { for (size_t i = 0; i < n; i++) set(n + i, false); }
+                else if (ld && ((flags & 1) || !lastLoad)) { for (size_t i = 0; i < n; i++) set(n + i, in(i)); }
+                lastLoad = ld;
+                break;
+            }
+            case CRingCounter: {
+                // clock, R, Q0..Qn-1 [, CE] - flags 1: clock inhibit (CE, active low), 2: reset active high
+                bool running = !((flags & 1) && in(n + 2));
+                size_t i = 0;
+                while (i < n && !in(i + 2)) i++;
+                if (in(0) && !lastClock && running) {
+                    if (i < n) set(2 + i++, false);
+                    i %= n;
+                    set(2 + i, true);
+                }
+                bool resetActive = (flags & 2) ? in(1) : !in(1);
+                if (resetActive || i == n) {
+                    for (size_t k = 1; k < n; k++) set(k + 2, false);
+                    set(2, true);
+                }
+                lastClock = in(0);
+                break;
+            }
+            case CMux: {
+                // I0..I(2^s - 1), S0..Ss-1, Q [, /Q] [, strobe] - bits = s; flags 1: inverted output, 2: strobe
+                size_t count = (size_t)1 << n, sel = 0;
+                for (size_t i = 0; i < n; i++) if (in(count + i)) sel |= (size_t)1 << i;
+                size_t out = count + n;
+                bool v = in(sel);
+                size_t strobe = out + 1 + ((flags & 1) ? 1 : 0);
+                if ((flags & 2) && in(strobe)) v = false;
+                set(out, v);
+                if (flags & 1) set(out + 1, !v);
+                break;
+            }
+            case CDemux: {
+                // Q0..Q(2^s - 1), S0..Ss-1, input - flags 1: inverted outputs
+                size_t count = (size_t)1 << n, sel = 0;
+                for (size_t i = 0; i < n; i++) if (in(count + i)) sel |= (size_t)1 << i;
+                bool idle = (flags & 1) != 0;
+                for (size_t i = 0; i < count; i++) set(i, idle);
+                set(sel, in(count + n));
+                break;
+            }
+            case CHalfAdder:
+                set(0, in(2) != in(3));
+                set(1, in(2) && in(3));
+                break;
+            case CFullAdder: {
+                // A0..An-1, B0..Bn-1, S0..Sn-1, carry in, carry out
+                int c = in(3 * n) ? 1 : 0;
+                for (size_t i = 0; i < n; i++) {
+                    int v = (in(i) ? 1 : 0) + (in(i + n) ? 1 : 0) + c;
+                    c = v > 1 ? 1 : 0;
+                    set(i + 2 * n, (v & 1) == 1);
+                }
+                set(3 * n + 1, c == 1);
+                break;
+            }
+            case CSipo: {
+                // D, clock, Q0..Qn-1
+                bool c = in(1);
+                if (c != lastClock) {
+                    lastClock = c;
+                    if (c && n > 0) {
+                        for (size_t i = n - 1; i >= 1; i--) set(2 + i, in(2 + i - 1));
+                        set(2, in(0));
+                    }
+                }
+                break;
+            }
+            case CPiso: {
+                // load, clock, Q [, serial in], D(n-1)..D0 - flags 1: Falstad's new behavior (with serial in); st: n data bits, then the index
+                bool modern = (flags & 1) != 0;
+                size_t data = modern ? 4 : 3;
+                if (st.size() < n + 1) st.assign(n + 1, 0.0);
+                double& index = st[n];
+                if (in(0) != lastLoad) {
+                    lastLoad = in(0);
+                    if (lastLoad && n > 0) {
+                        if (modern) { set(2, in(data)); index = 0; } else index = -1;
+                        for (size_t i = 0; i < n; i++) st[i] = in(data + i) ? 1 : 0;
+                    }
+                }
+                if (in(1) != lastClock) {
+                    lastClock = in(1);
+                    if (lastClock && n > 0) {
+                        if (index >= 0) st[(size_t)index] = (modern && in(3)) ? 1 : 0;
+                        index += 1;
+                        if (index >= (double)n) index = 0;
+                        set(2, st[(size_t)index] != 0);
+                    }
+                }
+                break;
+            }
+            case CAdc: {
+                // D0..Dn-1, In, V+ (the reference)
+                double imax = (double)(((int64_t)1 << n) - 1), ref = volts(n + 1);
+                int64_t v = ref != 0 ? (int64_t)std::trunc(imax * volts(n) / ref) : 0;
+                if (v < 0) v = 0;
+                if (v > (int64_t)imax) v = (int64_t)imax;
+                for (size_t i = 0; i < n; i++) set(i, (v >> i) & 1);
+                break;
+            }
+            case CDac: {
+                // D0..Dn-1, O (analog), V+ (the reference)
+                int64_t v = 0;
+                for (size_t i = 0; i < n; i++) if (in(i)) v |= (int64_t)1 << i;
+                double imax = (double)(((int64_t)1 << n) - 1);
+                level[n] = imax > 0 ? (double)v * volts(n + 1) / imax : 0;
+                break;
+            }
+            case CSevenSegDecoder: {
+                // a..g, I3, I2, I1, I0 [, BI] - flags 1: blanking input (active low), 2: blank on F
+                static const char sym[16][7] = {
+                    {1,1,1,1,1,1,0}, {0,1,1,0,0,0,0}, {1,1,0,1,1,0,1}, {1,1,1,1,0,0,1}, {0,1,1,0,0,1,1}, {1,0,1,1,0,1,1}, {1,0,1,1,1,1,1}, {1,1,1,0,0,0,0},
+                    {1,1,1,1,1,1,1}, {1,1,1,1,0,1,1}, {1,1,1,0,1,1,1}, {0,0,1,1,1,1,1}, {1,0,0,1,1,1,0}, {0,1,1,1,1,0,1}, {1,0,0,1,1,1,1}, {1,0,0,0,1,1,1} };
+                int v = (in(7) ? 8 : 0) + (in(8) ? 4 : 0) + (in(9) ? 2 : 0) + (in(10) ? 1 : 0);
+                bool on = !((flags & 1) && !in(11)) && !(v == 15 && (flags & 2));
+                for (size_t i = 0; i < 7; i++) set(i, on && sym[v][i]);
+                break;
+            }
+            case CMonostable: {
+                // trigger, Q, /Q - p0 the time; flags 1: inverted trigger, 2: retriggerable; st: triggered, the time of the edge
+                if (st.size() < 2) st.assign(2, 0.0);
+                bool trig = in(0) != ((flags & 1) != 0);
+                if (trig && !lastClock && ((flags & 2) || st[0] == 0)) {
+                    st[1] = time;
+                    st[0] = 1;
+                    set(1, true);
+                    set(2, false);
+                }
+                if (st[0] != 0 && time > st[1] + p[0]) {
+                    set(1, false);
+                    set(2, true);
+                    st[0] = 0;
+                }
+                lastClock = trig;
+                break;
+            }
+            case CPhaseComp: {
+                // I1, I2, the level, enable (the output is open while enable is low) - st: ff1, ff2, the last I1, the last I2
+                if (st.size() < 4) st.assign(4, 0.0);
+                bool v1 = volts(0) > threshold, v2 = volts(1) > threshold;
+                if (v1 && st[2] == 0) st[0] = 1;
+                if (v2 && st[3] == 0) st[1] = 1;
+                if (st[0] != 0 && st[1] != 0) st[0] = st[1] = 0;
+                st[2] = v1 ? 1 : 0;
+                st[3] = v2 ? 1 : 0;
+                set(2, st[0] != 0);
+                set(3, st[0] != 0 || st[1] != 0);
+                break;
+            }
+            case CVco: {
+                // Vi, Vo, C1, C2, R1 (held at Vi), R2 (held at the high level): the currents of R1 and R2 charge the capacitor between C1 and C2 one way
+                // or the other; Vo flips when the capacitor reaches 90 % or 10 % of the high level
+                double vc = volts(3) - volts(2);
+                bool vo = in(1);
+                int dir = vo ? -1 : 1;
+                if (!vo && vc > high * 0.9) { vo = true; dir = -1; }
+                if (vo && vc < high * 0.1) { vo = false; dir = 1; }
+                set(1, vo);
+                level[4] = volts(0);
+                level[5] = high;
+                double i1 = g * (volts(0) - volts(4)), i2 = g * (high - volts(5));
+                double i = i1 + i2;
+                level[2] = -dir * i;
+                level[3] = dir * i;
+                break;
+            }
+            default: break;
+        }
+        for (size_t i = 0; i < node.size(); i++)
+            if (std::isnan(level[i])) level[i] = mode[i] == PinOut ? (val[i] ? high : 0.0) : 0.0;
+    }
+};
+
 /// The state of a plan between two steps: what a step changes, so that a step that does not converge can be done again in smaller steps.
 struct Snapshot {
     double time = 0;
@@ -730,6 +957,7 @@ struct Snapshot {
     std::vector<Source> sources;
     std::vector<char> gates;      // per gate: state, clock, primed
     std::vector<Nonlinear> nonlinear;
+    std::vector<Chip> chips;
 };
 
 struct Plan {
@@ -743,6 +971,7 @@ struct Plan {
     std::vector<double> rhsBase, xOld;
     std::vector<Nonlinear> nonlinear;
     std::vector<Gate> gates;
+    std::vector<Chip> chips;
     int64_t iterations = 0, unconverged = 0;
     int maxIterations = 100;
     // a step whose Newton's method does not converge is done again in steps of half the time step, down to dt / 2^maxHalvings
@@ -943,6 +1172,67 @@ inline Value AddGate(Value h, Value kind, Value inputs, Value out, Value outNot,
     if (gate.outNot >= 0) p->conductance(gate.outNot, -1, gate.g);
     p->gates.push_back(gate);
     return Int((int64_t)p->gates.size() - 1);
+}
+
+/// A chip (see Chip): its kind, the nodes of its pins in Falstad's order and how each is used (0 input, 1 output of a level, 2 output of a current),
+/// the high level, the threshold of the inputs, the resistance of the outputs, bits, flags and four parameters; returns its index.
+inline Value AddChip(Value h, Value kind, Value nodes, Value modes, Value high, Value threshold, Value rout, Value bits, Value flags, Value p0, Value p1) {
+    Plan* p = plan(h);
+    if (!p || nodes.kind != K_Array || modes.kind != K_Array || D(rout) <= 0) return Int(-1);
+    Arr* a = arrOf(nodes);
+    Arr* m = arrOf(modes);
+    if (a->length != m->length) return Int(-1);
+    Chip c;
+    c.kind = (int)kind.i;
+    c.bits = (int)bits.i;
+    c.flags = (int)flags.i;
+    c.high = D(high);
+    c.threshold = D(threshold);
+    c.g = 1.0 / D(rout);
+    c.p[0] = D(p0);
+    c.p[1] = D(p1);
+    for (uint32_t i = 0; i < a->length; i++) {
+        c.node.push_back((int)a->items()[i].i);
+        c.mode.push_back((char)m->items()[i].i);
+        if (c.mode.back() == PinOut) p->conductance(c.node.back(), -1, c.g);
+    }
+    c.val.assign(c.node.size(), 0);
+    c.level.assign(c.node.size(), 0.0);
+    p->chips.push_back(c);
+    return Int((int64_t)p->chips.size() - 1);
+}
+
+/// Reads a chip: what 0 the logic value of pin k, 1 the state value k, 2 the number of state values, 3 the level (volts or amperes) pin k drives.
+inline Value ChipGet(Value h, Value index, Value what, Value k) {
+    Plan* p = plan(h);
+    if (!p || index.i < 0 || (size_t)index.i >= p->chips.size()) return Float(0);
+    const Chip& c = p->chips[(size_t)index.i];
+    size_t i = (size_t)k.i;
+    switch (what.i) {
+        case 0: return Float(i < c.val.size() && c.val[i] ? 1 : 0);
+        case 1: return Float(i < c.st.size() ? (Real)c.st[i] : 0);
+        case 2: return Float((Real)c.st.size());
+        case 3: return Float(i < c.level.size() ? (Real)c.level[i] : 0);
+        case 4: return Float(c.lastClock ? 1 : 0);
+        case 5: return Float(c.lastLoad ? 1 : 0);
+        default: return Float(0);
+    }
+}
+
+/// Sets what ChipGet reads (0 the logic value of pin k, 1 the state value k, 4 the last clock, 5 the last load): the state a chip had before the circuit
+/// was compiled again.
+inline Value ChipSet(Value h, Value index, Value what, Value k, Value value) {
+    Plan* p = plan(h);
+    if (!p || index.i < 0 || (size_t)index.i >= p->chips.size()) return Bool(false);
+    Chip& c = p->chips[(size_t)index.i];
+    size_t i = (size_t)k.i;
+    double v = D(value);
+    if (what.i == 0 && i < c.val.size()) c.val[i] = v != 0 ? 1 : 0;
+    else if (what.i == 1) { if (i >= c.st.size()) c.st.resize(i + 1, 0.0); c.st[i] = v; }
+    else if (what.i == 4) c.lastClock = v != 0;
+    else if (what.i == 5) c.lastLoad = v != 0;
+    else return Bool(false);
+    return Bool(true);
 }
 
 /// The output of a logic part (true: high).
@@ -1219,6 +1509,9 @@ inline Value Compile(Value h, Value time) {
         int node = gate.state ? gate.out : gate.outNot;
         if (node >= 0) p->x[(size_t)node] = gate.high;
     }
+    for (const Chip& c : p->chips)
+        for (size_t i = 0; i < c.node.size(); i++)
+            if (c.mode[i] == PinOut && c.val[i] && c.node[i] >= 0) p->x[(size_t)c.node[i]] = c.high;
     if (p->nonlinear.empty()) {
         load(p);
         eliminate(p);
@@ -1259,6 +1552,7 @@ inline void save(const Plan* p, Snapshot& s) {
         s.gates[i * 3] = p->gates[i].state; s.gates[i * 3 + 1] = p->gates[i].clock; s.gates[i * 3 + 2] = p->gates[i].primed;
     }
     s.nonlinear = p->nonlinear;
+    s.chips = p->chips;
 }
 
 inline void restore(Plan* p, const Snapshot& s) {
@@ -1272,6 +1566,7 @@ inline void restore(Plan* p, const Snapshot& s) {
         p->gates[i].state = s.gates[i * 3] != 0; p->gates[i].clock = s.gates[i * 3 + 1] != 0; p->gates[i].primed = s.gates[i * 3 + 2] != 0;
     }
     p->nonlinear = s.nonlinear;
+    p->chips = s.chips;
 }
 
 /// Sets the time step to h for the steps of a retry: the conductances of the capacitors and inductors (made for `full`, as in stepStart) change with it.
@@ -1330,6 +1625,13 @@ inline void begin(Plan* p) {
         if (gate.kind != GDFlipFlop && gate.kind != GSRLatch && gate.kind != GJKFlipFlop) gate.state = high;
         if (high) into(gate.out, gate.high * gate.g);
         else if (gate.outNot >= 0) into(gate.outNot, gate.high * gate.g);
+    }
+    for (Chip& c : p->chips) {
+        c.execute(p->x, p->time);
+        for (size_t i = 0; i < c.node.size(); i++) {
+            if (c.mode[i] == PinOut) into(c.node[i], c.level[i] * c.g);
+            else if (c.mode[i] == PinCurrent) into(c.node[i], c.level[i]);
+        }
     }
     // (what parts in fire add between Begin and Finish is the difference to this)
     if (canRetry(p)) p->rhsBegun = p->rhs;

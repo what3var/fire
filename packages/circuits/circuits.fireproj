@@ -206,6 +206,21 @@
         "cpp": "circuits::AddGate"
       },
       {
+        "name": "__CirAddChip",
+        "arguments": 11,
+        "cpp": "circuits::AddChip"
+      },
+      {
+        "name": "__CirChipGet",
+        "arguments": 4,
+        "cpp": "circuits::ChipGet"
+      },
+      {
+        "name": "__CirChipSet",
+        "arguments": 5,
+        "cpp": "circuits::ChipSet"
+      },
+      {
         "name": "__CirGateState",
         "arguments": 2,
         "cpp": "circuits::GateState"

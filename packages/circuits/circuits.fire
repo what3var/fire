@@ -2993,6 +2993,11 @@ namespace Circuits {
             return __CirAddGate(this.handle, kind, inputs, out, outNot, high, threshold, rout)
         }
         bool GateState(int index) { return __CirGateState(this.handle, index) }
+        int AddChip(int kind, int nodes[], int modes[], float high, float threshold, float rout, int bits, int flags, float p0, float p1) {
+            return __CirAddChip(this.handle, kind, nodes, modes, high, threshold, rout, bits, flags, p0, p1)
+        }
+        float ChipGet(int index, int what, int k) { return __CirChipGet(this.handle, index, what, k) }
+        undefined ChipSet(int index, int what, int k, float value) { __CirChipSet(this.handle, index, what, k, value) }
         undefined GateExtra(int index, float low, bool falling) { __CirGateExtra(this.handle, index, low, falling) }
         int AddCoupled(Port a1, Port b1, Port a2, Port b2, float l1, float l2, float k, float i1, float i2, float v1, float v2) {
             var index = __CirAddCoupled(this.handle, a1.Root().node, b1.Root().node, a2.Root().node, b2.Root().node, l1, l2, k, i1, i2, v1, v2)
@@ -3117,6 +3122,630 @@ namespace Circuits {
                     if (this.flops[i].State) { n = n + 1 }
                 }
                 return n
+            }
+        }
+    }
+
+
+    /// <summary>A chip of Falstad's simulator, run by the kernel: its pins come from its layout (Chip.Layout - the same text the schematic draws it
+    /// from), its logic is the one of Falstad's chip. Outputs drive `supply` or 0 V through `outputResistance` (like the gates), inputs are high above
+    /// half the supply; the chip reads them after a step and drives the next one. The state goes on when the circuit is compiled again.</summary>
+    class Chip : Part {
+        int kind
+        int bits
+        int flags
+        float supply
+        float rout
+        float p0 = 0.0
+        float p1 = 0.0
+        string layout
+        List modes
+        List initialHigh
+        int index = -1
+        // the state before the circuit was compiled again
+        List savedVal
+        List savedSt
+        bool savedClock = false
+        bool savedLoad = false
+        bool hasSaved = false
+
+        construct(string type, string layout, int bits = 0, int flags = 0, float supply : any = 5, float outputResistance : any = 10) : base(type.ToUpper()) {
+            this.kind = Circuits.Chip.KindOf(type)
+            if (this.kind < 0) { throw new ArgumentException("There is no chip '" + type + "'.") }
+            this.layout = layout
+            this.bits = bits
+            this.flags = flags
+            this.supply = Circuits.Units.Volts(supply)
+            this.rout = Circuits.Units.Ohms(outputResistance)
+            this.modes = new List()
+            this.initialHigh = new List()
+            this.savedVal = new List()
+            this.savedSt = new List()
+            foreach (p in layout.Split("|")[1].Split(";")) {
+                string pin = p
+                if (pin == "") { continue }
+                var f = pin.Split(":")
+                this.AddPort(f[2])
+                var mode = 0
+                if (f.length > 4) {
+                    var m = f[4].TryToInt()
+                    if (m != undefined) { mode = m }
+                }
+                this.modes.Add(mode)
+            }
+        }
+
+        static int KindOf(string type) {
+            var names = ["TFlipFlop", "Latch", "RingCounter", "Multiplexer", "Demultiplexer", "HalfAdder", "FullAdder", "SipoShift", "PisoShift", "Adc", "Dac",
+                         "SevenSegmentDecoder", "Monostable", "PhaseComparator", "Vco", "SevenSegment"]
+            for (int i = 0; i < names.length; i++) {
+                if (names[i] == type) {
+                    if (type == "SevenSegment") { return 0 }
+                    return i + 1
+                }
+            }
+            return -1
+        }
+
+        /// <summary>The port of the pin of this name ("Q", "/Q", "D0", ">" for the clock).</summary>
+        Port Pin(string name) {
+            foreach (p in this.ports) {
+                if (p.name == name) { return p }
+            }
+            throw new ArgumentException("The chip has no pin '" + name + "'.")
+        }
+
+        /// <summary>The pin i in the order of Falstad's chip.</summary>
+        Port At(int i) { return this.ports[i] }
+
+        bool Compile(Circuits.Solver solver) {
+            var n = this.ports.count
+            var nodes = new int[n]
+            var modes = new int[n]
+            for (int i = 0; i < n; i++) {
+                nodes[i] = solver.Node(this.ports[i])
+                modes[i] = this.modes[i]
+            }
+            this.index = solver.AddChip(this.kind, nodes, modes, this.supply, this.supply / 2, this.rout, this.bits, this.flags, this.p0, this.p1)
+            if (this.hasSaved) {
+                for (int i = 0; i < this.savedVal.count && i < n; i++) { solver.ChipSet(this.index, 0, i, this.savedVal[i]) }
+                for (int i = 0; i < this.savedSt.count; i++) { solver.ChipSet(this.index, 1, i, this.savedSt[i]) }
+                if (this.savedClock) { solver.ChipSet(this.index, 4, 0, 1.0) }
+                if (this.savedLoad) { solver.ChipSet(this.index, 5, 0, 1.0) }
+            } else {
+                foreach (i in this.initialHigh) { solver.ChipSet(this.index, 0, i, 1.0) }
+            }
+            return true
+        }
+
+        undefined Save(Circuits.Solver solver) {
+            if (this.index < 0) { return }
+            this.savedVal.Clear()
+            this.savedSt.Clear()
+            for (int i = 0; i < this.ports.count; i++) { this.savedVal.Add(solver.ChipGet(this.index, 0, i)) }
+            var count = solver.ChipGet(this.index, 2, 0)!int
+            for (int i = 0; i < count; i++) { this.savedSt.Add(solver.ChipGet(this.index, 1, i)) }
+            this.savedClock = solver.ChipGet(this.index, 4, 0) != 0.0
+            this.savedLoad = solver.ChipGet(this.index, 5, 0) != 0.0
+            this.hasSaved = true
+        }
+
+        undefined Reset() {
+            this.hasSaved = false
+            this.Invalidate()
+        }
+
+        /// <summary>Is pin i high (an output: what the chip drives; an input: what it read)?</summary>
+        bool High(int i) {
+            var plan = this.Plan()
+            if (plan == undefined || this.index < 0) {
+                if (this.hasSaved && i < this.savedVal.count) { return this.savedVal[i] != 0.0 }
+                return this.initialHigh.IndexOf(i) >= 0
+            }
+            return plan.ChipGet(this.index, 0, i) != 0.0
+        }
+
+        /// <summary>The number the pins from `first` on make (count bits, the first the lowest).</summary>
+        int Number(int first, int count) {
+            var n = 0
+            for (int i = count - 1; i >= 0; i--) {
+                n = n * 2
+                if (this.High(first + i)) { n = n + 1 }
+            }
+            return n
+        }
+
+        // ---- the layouts ----
+
+        // "W:pos:name:port:mode" (mode 0 input, 1 output, 2 output of a current)
+        static string P(string side, int pos, string name, int port, int mode) { return side + ":" + pos + ":" + name + ":" + port + ":" + mode }
+
+        // bits as Falstad's makeBitPins makes them, the highest bit at `pos` (the lowest at the bottom or right)
+        static string Bits(string side, int pos, int count, string name, int firstPort, int mode, bool reversed = false) {
+            var text = ""
+            for (int i = 0; i < count; i++) {
+                var port = firstPort + i
+                if (reversed) { port = firstPort + count - 1 - i }
+                if (text != "") { text = text + ";" }
+                text = text + Circuits.Chip.P(side, pos + count - 1 - i, name + i, port, mode)
+            }
+            return text
+        }
+
+        /// <summary>The layout of a chip as Falstad draws it: "sizeX,sizeY|side:pos:name:port:mode;..." with the pins in the order of its ports (see
+        /// Symbols.FalstadLayout). bits 0: the default.</summary>
+        static string Layout(string type, int bits, int flags) {
+            if (type == "TFlipFlop") {
+                var set = (flags & 2) != 0
+                var reset = (flags & 1) != 0 || set
+                var q2 = 2
+                if (set) { q2 = 1 }
+                var l = "2,3|" + Circuits.Chip.P("W", 0, "T", 0, 0) + ";" + Circuits.Chip.P("E", 0, "Q", 1, 1) + ";" + Circuits.Chip.P("E", q2, "/Q", 2, 1) + ";" + Circuits.Chip.P("W", 1, ">", 3, 0)
+                if (set) { return l + ";" + Circuits.Chip.P("E", 2, "R", 4, 0) + ";" + Circuits.Chip.P("W", 2, "S", 5, 0) }
+                if (reset) { return l + ";" + Circuits.Chip.P("W", 2, "R", 4, 0) }
+                return l
+            }
+            if (type == "Latch") {
+                var n = bits
+                if (n < 1) { n = 4 }
+                var extra = 0
+                if ((flags & 2) != 0) { extra = extra + 1 }
+                if ((flags & 4) != 0) { extra = extra + 1 }
+                var l = "2," + (n + 1 + extra) + "|" + Circuits.Chip.Bits("W", 0, n, "I", 0, 0) + ";" + Circuits.Chip.Bits("E", 0, n, "O", n, 1)
+                var ld = ">"
+                if ((flags & 1) != 0) { ld = "Ld" }
+                l = l + ";" + Circuits.Chip.P("W", n, ld, 2 * n, 0)
+                var pos = n + 1
+                var port = 2 * n + 1
+                if ((flags & 2) != 0) {
+                    var r = "R"
+                    if ((flags & 8) != 0) { r = "/R" }
+                    l = l + ";" + Circuits.Chip.P("W", pos, r, port, 0)
+                    pos = pos + 1
+                    port = port + 1
+                }
+                if ((flags & 4) != 0) { l = l + ";" + Circuits.Chip.P("W", pos, "S", port, 0) }
+                return l
+            }
+            if (type == "RingCounter") {
+                var n = bits
+                if (n < 2) { n = 10 }
+                var sx = 2
+                if (n > 2) { sx = n }
+                var r = "/R"
+                if ((flags & 2) != 0) { r = "R" }
+                var l = sx + ",2|" + Circuits.Chip.P("W", 1, ">", 0, 0) + ";" + Circuits.Chip.P("S", sx - 1, r, 1, 0)
+                for (int i = 0; i < n; i++) { l = l + ";" + Circuits.Chip.P("N", i, "Q" + i, i + 2, 1) }
+                if ((flags & 1) != 0 && n >= 3) { l = l + ";" + Circuits.Chip.P("S", 1, "/CE", n + 2, 0) }
+                return l
+            }
+            if (type == "Multiplexer") {
+                var s = bits
+                if (s < 1) { s = 2 }
+                var count = 1 << s
+                var l = (s + 1) + "," + (count + 1) + "|"
+                for (int i = 0; i < count; i++) {
+                    if (i > 0) { l = l + ";" }
+                    l = l + Circuits.Chip.P("W", i, "I" + i, i, 0)
+                }
+                for (int i = 0; i < s; i++) { l = l + ";" + Circuits.Chip.P("S", i + 1, "S" + i, count + i, 0) }
+                var out = count + s
+                l = l + ";" + Circuits.Chip.P("E", 0, "Q", out, 1)
+                if ((flags & 1) != 0) {
+                    out = out + 1
+                    l = l + ";" + Circuits.Chip.P("E", 1, "/Q", out, 1)
+                }
+                if ((flags & 2) != 0) { l = l + ";" + Circuits.Chip.P("S", 0, "STR", out + 1, 0) }
+                return l
+            }
+            if (type == "Demultiplexer") {
+                var s = bits
+                if (s < 1) { s = 2 }
+                var count = 1 << s
+                var l = (s + 1) + "," + (count + 1) + "|"
+                for (int i = 0; i < count; i++) {
+                    if (i > 0) { l = l + ";" }
+                    l = l + Circuits.Chip.P("E", i, "Q" + i, i, 1)
+                }
+                for (int i = 0; i < s; i++) { l = l + ";" + Circuits.Chip.P("S", i, "S" + i, count + i, 0) }
+                return l + ";" + Circuits.Chip.P("W", 0, "I", count + s, 0)
+            }
+            if (type == "HalfAdder") {
+                return "2,2|" + Circuits.Chip.P("E", 0, "S", 0, 1) + ";" + Circuits.Chip.P("E", 1, "C", 1, 1) + ";" + Circuits.Chip.P("W", 0, "A", 2, 0) + ";" + Circuits.Chip.P("W", 1, "B", 3, 0)
+            }
+            if (type == "FullAdder") {
+                var n = bits
+                if (n < 1) { n = 1 }
+                var l = "2," + (2 * n + 1) + "|" + Circuits.Chip.Bits("W", 0, n, "A", 0, 0) + ";" + Circuits.Chip.Bits("W", n, n, "B", n, 0) + ";" + Circuits.Chip.Bits("E", 2, n, "S", 2 * n, 1)
+                if (n == 1) { l = "2,3|" + Circuits.Chip.P("W", 0, "A", 0, 0) + ";" + Circuits.Chip.P("W", 1, "B", 1, 0) + ";" + Circuits.Chip.P("E", 2, "S", 2, 1) }
+                return l + ";" + Circuits.Chip.P("W", 2 * n, "Cin", 3 * n, 0) + ";" + Circuits.Chip.P("E", 0, "C", 3 * n + 1, 1)
+            }
+            if (type == "SipoShift") {
+                var n = bits
+                if (n < 1) { n = 8 }
+                var l = (n + 1) + ",3|" + Circuits.Chip.P("W", 1, "D", 0, 0) + ";" + Circuits.Chip.P("W", 2, ">", 1, 0)
+                for (int i = 0; i < n; i++) { l = l + ";" + Circuits.Chip.P("N", i + 1, "Q" + i, i + 2, 1) }
+                return l
+            }
+            if (type == "PisoShift") {
+                var n = bits
+                if (n < 1) { n = 8 }
+                var modern = (flags & 1) != 0
+                var qn = n
+                if (modern) { qn = n - 1 }
+                var l = (n + 2) + ",3|" + Circuits.Chip.P("W", 1, "LD", 0, 0) + ";" + Circuits.Chip.P("W", 2, ">", 1, 0) + ";" + Circuits.Chip.P("E", 1, "Q" + qn, 2, 1)
+                var data = 3
+                if (modern) {
+                    l = l + ";" + Circuits.Chip.P("W", 0, "SER", 3, 0)
+                    data = 4
+                }
+                for (int i = 0; i < n; i++) { l = l + ";" + Circuits.Chip.P("N", n - i, "D" + (n - 1 - i), data + i, 0) }
+                return l
+            }
+            if (type == "Adc" || type == "Dac") {
+                var n = bits
+                if (n < 1) { n = 4 }
+                var sy = n
+                if (sy < 2) { sy = 2 }
+                if (type == "Adc") {
+                    return "2," + sy + "|" + Circuits.Chip.Bits("E", 0, n, "D", 0, 1) + ";" + Circuits.Chip.P("W", 0, "In", n, 0) + ";" + Circuits.Chip.P("W", sy - 1, "V+", n + 1, 0)
+                }
+                return "2," + sy + "|" + Circuits.Chip.Bits("W", 0, n, "D", 0, 0) + ";" + Circuits.Chip.P("E", 0, "O", n, 1) + ";" + Circuits.Chip.P("E", sy - 1, "V+", n + 1, 0)
+            }
+            if (type == "SevenSegmentDecoder") {
+                var blank = (flags & 1) != 0
+                var sy = 7
+                var l = "3," + sy + "|"
+                var names = ["a", "b", "c", "d", "e", "f", "g"]
+                for (int i = 0; i < 7; i++) {
+                    if (i > 0) { l = l + ";" }
+                    l = l + Circuits.Chip.P("E", i, names[i], i, 1)
+                }
+                // the inputs: I3 (8) at the top, I0 (1) at the bottom; pins 7..10 are I3..I0
+                for (int i = 3; i >= 0; i--) { l = l + ";" + Circuits.Chip.P("W", 3 - i, "I" + i, 7 + 3 - i, 0) }
+                if (blank) { l = l + ";" + Circuits.Chip.P("W", 4, "/BI", 11, 0) }
+                return l
+            }
+            if (type == "Monostable") {
+                return "2,2|" + Circuits.Chip.P("W", 0, ">", 0, 0) + ";" + Circuits.Chip.P("E", 0, "Q", 1, 1) + ";" + Circuits.Chip.P("E", 1, "/Q", 2, 1)
+            }
+            if (type == "PhaseComparator") {
+                return "2,2|" + Circuits.Chip.P("W", 0, "I1", 0, 0) + ";" + Circuits.Chip.P("W", 1, "I2", 1, 0) + ";" + Circuits.Chip.P("E", 0, "O", 2, 1)
+            }
+            if (type == "Vco") {
+                return "2,4|" + Circuits.Chip.P("W", 0, "Vi", 0, 0) + ";" + Circuits.Chip.P("W", 3, "Vo", 1, 1) + ";" + Circuits.Chip.P("E", 0, "C", 2, 2) + ";" + Circuits.Chip.P("E", 1, "C", 3, 2) + ";" + Circuits.Chip.P("E", 2, "R1", 4, 1) + ";" + Circuits.Chip.P("E", 3, "R2", 5, 1)
+            }
+            throw new ArgumentException("There is no chip '" + type + "'.")
+        }
+    }
+
+    /// <summary>A T flip-flop: on the rising edge of the clock a high T toggles Q (Falstad's T flip-flop; with `withReset` a high R clears it, with
+    /// `withSet` a high S sets it).</summary>
+    class TFlipFlop : Chip {
+        construct(float supply : any = 5, bool withReset = false, bool withSet = false) : base("TFlipFlop", Circuits.Chip.Layout("TFlipFlop", 0, Circuits.TFlipFlop.Flags(withReset, withSet)), 0,
+                                                                                         Circuits.TFlipFlop.Flags(withReset, withSet), supply) {
+            this.initialHigh.Add(2)
+        }
+        static int Flags(bool reset, bool set) {
+            var f = 0
+            if (reset) { f = f + 1 }
+            if (set) { f = f + 2 }
+            return f
+        }
+        Port T { get { return this.ports[0] } }
+        Port Q { get { return this.ports[1] } }
+        Port NotQ { get { return this.ports[2] } }
+        Port Clock { get { return this.ports[3] } }
+        bool State { get { return this.High(1) } }
+    }
+
+    /// <summary>A latch of `bits` bits (Falstad's latch): D0.. are taken to Q0.. on the rising edge of Load (`levelTriggered`: while Load is high);
+    /// optional reset and set pins.</summary>
+    class Latch : Chip {
+        construct(int bits = 4, float supply : any = 5, bool levelTriggered = false, bool withReset = false, bool withSet = false, bool resetActiveLow = false)
+            : base("Latch", Circuits.Chip.Layout("Latch", bits, Circuits.Latch.Flags(levelTriggered, withReset, withSet, resetActiveLow)), bits,
+                   Circuits.Latch.Flags(levelTriggered, withReset, withSet, resetActiveLow), supply) {
+            if (bits < 1) { throw new ArgumentException("A latch needs a bit.") }
+        }
+        static int Flags(bool level, bool reset, bool set, bool low) {
+            var f = 0
+            if (level) { f = f + 1 }
+            if (reset) { f = f + 2 }
+            if (set) { f = f + 4 }
+            if (low) { f = f + 8 }
+            return f
+        }
+        Port D(int i) { return this.ports[i] }
+        Port Q(int i) { return this.ports[this.bits + i] }
+        Port Load { get { return this.ports[2 * this.bits] } }
+        /// <summary>The number it holds.</summary>
+        int Value { get { return this.Number(this.bits, this.bits) } }
+    }
+
+    /// <summary>A ring counter (Falstad's, like a 4017): one of Q0..Q(bits-1) is high, the next on every rising clock edge; reset (active low unless
+    /// `resetActiveHigh`) goes back to Q0; with `clockInhibit` (3 bits or more) a high /CE stops it.</summary>
+    class RingCounter : Chip {
+        construct(int bits = 10, float supply : any = 5, bool clockInhibit = true, bool resetActiveHigh = false)
+            : base("RingCounter", Circuits.Chip.Layout("RingCounter", bits, Circuits.RingCounter.Flags(clockInhibit, resetActiveHigh, bits)), bits,
+                   Circuits.RingCounter.Flags(clockInhibit, resetActiveHigh, bits), supply) {
+            if (bits < 2) { throw new ArgumentException("A ring counter needs 2 bits or more.") }
+            this.initialHigh.Add(2)
+        }
+        static int Flags(bool inhibit, bool high, int bits) {
+            var f = 0
+            if (inhibit && bits >= 3) { f = f + 1 }
+            if (high) { f = f + 2 }
+            return f
+        }
+        Port Clock { get { return this.ports[0] } }
+        Port Reset { get { return this.ports[1] } }
+        Port Q(int i) { return this.ports[i + 2] }
+        /// <summary>The output that is high.</summary>
+        int Position {
+            get {
+                for (int i = 0; i < this.bits; i++) {
+                    if (this.High(i + 2)) { return i }
+                }
+                return -1
+            }
+        }
+    }
+
+    /// <summary>A multiplexer with `selectBits` select inputs: Q is the input I(S); optional inverted output and strobe (a high strobe makes Q low).</summary>
+    class Multiplexer : Chip {
+        construct(int selectBits = 2, float supply : any = 5, bool invertedOutput = false, bool strobe = false)
+            : base("Multiplexer", Circuits.Chip.Layout("Multiplexer", selectBits, Circuits.Multiplexer.Flags(invertedOutput, strobe)), selectBits,
+                   Circuits.Multiplexer.Flags(invertedOutput, strobe), supply) {
+            if (selectBits < 1 || selectBits > 6) { throw new ArgumentException("A multiplexer has 1 to 6 select bits.") }
+        }
+        static int Flags(bool inverted, bool strobe) {
+            var f = 0
+            if (inverted) { f = f + 1 }
+            if (strobe) { f = f + 2 }
+            return f
+        }
+        Port In(int i) { return this.ports[i] }
+        Port Select(int i) { return this.ports[(1 << this.bits) + i] }
+        Port Out { get { return this.ports[(1 << this.bits) + this.bits] } }
+    }
+
+    /// <summary>A demultiplexer with `selectBits` select inputs: the input goes to Q(S), the other outputs are low (high with `invertedOutputs`).</summary>
+    class Demultiplexer : Chip {
+        construct(int selectBits = 2, float supply : any = 5, bool invertedOutputs = false)
+            : base("Demultiplexer", Circuits.Chip.Layout("Demultiplexer", selectBits, 0), selectBits, Circuits.Demultiplexer.Flags(invertedOutputs), supply) {
+            if (selectBits < 1 || selectBits > 6) { throw new ArgumentException("A demultiplexer has 1 to 6 select bits.") }
+        }
+        static int Flags(bool inverted) {
+            if (inverted) { return 1 }
+            return 0
+        }
+        Port Out(int i) { return this.ports[i] }
+        Port Select(int i) { return this.ports[(1 << this.bits) + i] }
+        Port In { get { return this.ports[(1 << this.bits) + this.bits] } }
+    }
+
+    /// <summary>A half adder: S = A xor B, C = A and B.</summary>
+    class HalfAdder : Chip {
+        construct(float supply : any = 5) : base("HalfAdder", Circuits.Chip.Layout("HalfAdder", 0, 0), 0, 0, supply) { }
+        Port Sum { get { return this.ports[0] } }
+        Port Carry { get { return this.ports[1] } }
+        Port A { get { return this.ports[2] } }
+        Port B { get { return this.ports[3] } }
+    }
+
+    /// <summary>A full adder of `bits` bits: S = A + B + Cin, C the carry out.</summary>
+    class FullAdder : Chip {
+        construct(int bits = 1, float supply : any = 5) : base("FullAdder", Circuits.Chip.Layout("FullAdder", bits, 0), bits, 0, supply) {
+            if (bits < 1) { throw new ArgumentException("An adder needs a bit.") }
+        }
+        Port A(int i) { return this.ports[i] }
+        Port B(int i) { return this.ports[this.bits + i] }
+        Port S(int i) { return this.ports[2 * this.bits + i] }
+        Port CarryIn { get { return this.ports[3 * this.bits] } }
+        Port CarryOut { get { return this.ports[3 * this.bits + 1] } }
+        /// <summary>The sum with the carry (as a number).</summary>
+        int Sum {
+            get {
+                var n = this.Number(2 * this.bits, this.bits)
+                if (this.High(3 * this.bits + 1)) { n = n + (1 << this.bits) }
+                return n
+            }
+        }
+    }
+
+    /// <summary>A shift register, serial in, parallel out: on every rising clock edge Q0 takes D and every Q(i) the one before it.</summary>
+    class SipoShift : Chip {
+        construct(int bits = 8, float supply : any = 5) : base("SipoShift", Circuits.Chip.Layout("SipoShift", bits, 0), bits, 0, supply) {
+            if (bits < 1) { throw new ArgumentException("A shift register needs a bit.") }
+        }
+        Port D { get { return this.ports[0] } }
+        Port Clock { get { return this.ports[1] } }
+        Port Q(int i) { return this.ports[i + 2] }
+        int Value { get { return this.Number(2, this.bits) } }
+    }
+
+    /// <summary>A shift register, parallel in, serial out: a rising LD takes D0..; every rising clock edge brings the next bit to Q (Falstad's old
+    /// behavior; `serialIn` is the new one with a serial input that is shifted in).</summary>
+    class PisoShift : Chip {
+        construct(int bits = 8, float supply : any = 5, bool serialIn = false) : base("PisoShift", Circuits.Chip.Layout("PisoShift", bits, Circuits.PisoShift.Flags(serialIn)), bits,
+                                                                                      Circuits.PisoShift.Flags(serialIn), supply) {
+            if (bits < 1) { throw new ArgumentException("A shift register needs a bit.") }
+        }
+        static int Flags(bool serial) {
+            if (serial) { return 1 }
+            return 0
+        }
+        Port Load { get { return this.ports[0] } }
+        Port Clock { get { return this.ports[1] } }
+        Port Q { get { return this.ports[2] } }
+    }
+
+    /// <summary>An analog-to-digital converter of `bits` bits: D = (2^bits - 1) * In / V+ (rounded down).</summary>
+    class Adc : Chip {
+        construct(int bits = 8, float supply : any = 5) : base("Adc", Circuits.Chip.Layout("Adc", bits, 0), bits, 0, supply) {
+            if (bits < 1 || bits > 30) { throw new ArgumentException("An ADC has 1 to 30 bits.") }
+        }
+        Port D(int i) { return this.ports[i] }
+        Port In { get { return this.ports[this.bits] } }
+        Port Reference { get { return this.ports[this.bits + 1] } }
+        int Value { get { return this.Number(0, this.bits) } }
+    }
+
+    /// <summary>A digital-to-analog converter of `bits` bits: O = V+ * D / (2^bits - 1).</summary>
+    class Dac : Chip {
+        construct(int bits = 8, float supply : any = 5) : base("Dac", Circuits.Chip.Layout("Dac", bits, 0), bits, 0, supply) {
+            if (bits < 1 || bits > 30) { throw new ArgumentException("A DAC has 1 to 30 bits.") }
+        }
+        Port D(int i) { return this.ports[i] }
+        Port Out { get { return this.ports[this.bits] } }
+        Port Reference { get { return this.ports[this.bits + 1] } }
+    }
+
+    /// <summary>A 7-segment decoder: the outputs a..g light the digit (0-9, A-F) of I3..I0; with `blankInput` a low /BI blanks it, with `blankOnF` 15 is
+    /// blank.</summary>
+    class SevenSegmentDecoder : Chip {
+        construct(float supply : any = 5, bool blankInput = false, bool blankOnF = false)
+            : base("SevenSegmentDecoder", Circuits.Chip.Layout("SevenSegmentDecoder", 0, Circuits.SevenSegmentDecoder.Flags(blankInput, blankOnF)), 4,
+                   Circuits.SevenSegmentDecoder.Flags(blankInput, blankOnF), supply) { }
+        static int Flags(bool blank, bool f) {
+            var r = 0
+            if (blank) { r = r + 1 }
+            if (f) { r = r + 2 }
+            return r
+        }
+        /// <summary>The segment i (0 a .. 6 g).</summary>
+        Port Segment(int i) { return this.ports[i] }
+        /// <summary>The input bit i (0: the lowest, 1).</summary>
+        Port In(int i) { return this.ports[10 - i] }
+    }
+
+    /// <summary>A monostable: a rising edge at its input (falling with `invertTrigger`) makes Q high for `time`; `retriggerable` starts the time again on
+    /// every edge.</summary>
+    class Monostable : Chip {
+        construct(float time : any = 0.01, bool retriggerable = false, bool invertTrigger = false, float supply : any = 5)
+            : base("Monostable", Circuits.Chip.Layout("Monostable", 0, 0), 0, Circuits.Monostable.Flags(invertTrigger, retriggerable), supply) {
+            this.p0 = Circuits.Units.Seconds(time)
+            this.initialHigh.Add(2)
+        }
+        static int Flags(bool invert, bool re) {
+            var f = 0
+            if (invert) { f = f + 1 }
+            if (re) { f = f + 2 }
+            return f
+        }
+        Port Trigger { get { return this.ports[0] } }
+        Port Q { get { return this.ports[1] } }
+        Port NotQ { get { return this.ports[2] } }
+    }
+
+    /// <summary>A phase comparator (Falstad's, like the type II of a 4046): a rising edge at I1 drives O high, one at I2 low; when both have come, O is
+    /// open (it holds a loop filter where it is).</summary>
+    class PhaseComparator : Circuit {
+        Circuits.Chip core
+        construct(float supply : any = 5) : base("phasecomp") {
+            var i1 = this.AddPort("i1")
+            var i2 = this.AddPort("i2")
+            var o = this.AddPort("o")
+            var layout = Circuits.Chip.Layout("PhaseComparator", 0, 0) + ";X:0:EN:3:1"
+            var chip = this.Add(new Circuits.Chip("PhaseComparator", layout, 0, 0, supply))
+            var sw = this.Add(new Circuits.AnalogSwitch(Circuits.Units.Volts(supply) / 2, false, 0.1, 10000000000.0))
+            i1.Connect(chip.ports[0])
+            i2.Connect(chip.ports[1])
+            chip.ports[2].Connect(sw.A)
+            sw.B.Connect(o)
+            chip.ports[3].Connect(sw.Control)
+            this.core = chip
+        }
+        Port I1 { get { return this.ports[0] } }
+        Port I2 { get { return this.ports[1] } }
+        Port Out { get { return this.ports[2] } }
+    }
+
+    /// <summary>A voltage-controlled oscillator (Falstad's, like a 4046): R1 is held at Vi and R2 at the supply; the currents of the resistors from
+    /// there charge the capacitor between the two C pins, the output Vo flips when it reaches 90 % or 10 % of the supply - the frequency grows with Vi.</summary>
+    class Vco : Circuit {
+        Circuits.Chip core
+        construct(float supply : any = 5) : base("vco") {
+            var vi = this.AddPort("vi")
+            var vo = this.AddPort("vo")
+            var c1 = this.AddPort("c1")
+            var c2 = this.AddPort("c2")
+            var r1 = this.AddPort("r1")
+            var r2 = this.AddPort("r2")
+            var chip = this.Add(new Circuits.Chip("Vco", Circuits.Chip.Layout("Vco", 0, 0), 0, 0, supply))
+            var leak = this.Add(new Circuits.Resistor(1000000))
+            vi.Connect(chip.ports[0])
+            vo.Connect(chip.ports[1])
+            c1.Connect(chip.ports[2])
+            c2.Connect(chip.ports[3])
+            r1.Connect(chip.ports[4])
+            r2.Connect(chip.ports[5])
+            c1.Connect(leak.A)
+            leak.B.Connect(c2)
+            this.core = chip
+        }
+        Port In { get { return this.ports[0] } }
+        Port Out { get { return this.ports[1] } }
+        Port C1 { get { return this.ports[2] } }
+        Port C2 { get { return this.ports[3] } }
+        Port R1 { get { return this.ports[4] } }
+        Port R2 { get { return this.ports[5] } }
+    }
+
+    /// <summary>A tri-state buffer: while Control is high, Out follows In (high: `supply`) through `onResistance`; while it is low, Out is open
+    /// (`offResistance`, and `offGroundResistance` to ground if above 0).</summary>
+    class TriState : Circuit {
+        construct(float supply : any = 5, float onResistance : any = 0.1, float offResistance : any = 10000000000, float offGroundResistance : any = 0) : base("tristate") {
+            var a = this.AddPort("in")
+            var b = this.AddPort("out")
+            var ctl = this.AddPort("control")
+            var buffer = this.Add(new Circuits.Gate("BUFFER", 1, supply, 1))
+            var sw = this.Add(new Circuits.AnalogSwitch(Circuits.Units.Volts(supply) / 2, false, onResistance, offResistance))
+            a.Connect(buffer.In(0))
+            buffer.Out.Connect(sw.A)
+            sw.B.Connect(b)
+            ctl.Connect(sw.Control)
+            var rg = Circuits.Units.Ohms(offGroundResistance)
+            if (rg > 0.0) {
+                var r = this.Add(new Circuits.Resistor(rg))
+                b.Connect(r.A)
+                r.B.Connect(this.Ground)
+            }
+        }
+        Port In { get { return this.ports[0] } }
+        Port Out { get { return this.ports[1] } }
+        Port Control { get { return this.ports[2] } }
+    }
+
+    /// <summary>A 7-segment display (Falstad's): it lights segment a..g (and the point with `point`) while its pin is high (above half of `supply`); it
+    /// draws no current. Digit tells the digit it shows (-1: none).</summary>
+    class SevenSegment : Chip {
+        construct(bool point = false, float supply : any = 5) : base("SevenSegment", Circuits.SevenSegment.DisplayLayout(point), 0, 0, supply) { }
+        static string DisplayLayout(bool point) {
+            var names = ["a", "b", "c", "d", "e", "f", "g", "dp"]
+            var n = 7
+            if (point) { n = 8 }
+            var l = "2,8|"
+            for (int i = 0; i < n; i++) {
+                if (i > 0) { l = l + ";" }
+                l = l + Circuits.Chip.P("W", i, names[i], i, 0)
+            }
+            return l
+        }
+        /// <summary>Is segment i lit (0 a .. 6 g, 7 the point)?</summary>
+        bool Lit(int i) { return this.High(i) }
+        /// <summary>The digit the lit segments make (0-9, A-F), -1 for none.</summary>
+        int Digit {
+            get {
+                var codes = [0x7E, 0x30, 0x6D, 0x79, 0x33, 0x5B, 0x5F, 0x70, 0x7F, 0x7B, 0x77, 0x1F, 0x4E, 0x3D, 0x4F, 0x47]
+                var code = 0
+                for (int i = 0; i < 7; i++) {
+                    if (this.High(i)) { code = code + (64 >> i) }
+                }
+                for (int d = 0; d < 16; d++) {
+                    if (codes[d] == code) { return d }
+                }
+                return -1
             }
         }
     }
