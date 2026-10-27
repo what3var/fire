@@ -71,8 +71,8 @@ namespace UI {
                 var item = this.entries[i]
                 h = h + this.HeightOf(root, item)
                 if (item.separator) { continue }
-                var line = 28 + this.TextWidth(root, item.header) + 12
-                if (item.shortcut != "") { line = line + 24 + this.TextWidth(root, item.shortcut) }
+                var line = 28 + this.TextWidth(root, item.Header) + 12
+                if (item.Shortcut != "") { line = line + 24 + this.TextWidth(root, item.Shortcut) }
                 if (item.HasSubmenu()) { line = line + 12 }
                 w = UI.M.Max(w, line)
             }
@@ -118,12 +118,12 @@ namespace UI {
                 }
                 var text = theme.text
                 if (this.Foreground != undefined) { text = this.Foreground }
-                if (!item.enabled) { text = theme.textDisabled }
-                if (i == this.hot && item.enabled) {
+                if (!item.Enabled) { text = theme.textDisabled }
+                if (i == this.hot && item.Enabled) {
                     r.FillRect(ax + 2, y, this.actualWidth - 4, h, theme.selection)
                     text = theme.selectionText
                 }
-                if (item.isChecked) {
+                if (item.IsChecked) {
                     // a check mark
                     var cx = ax + 8
                     var cy = y + h / 2
@@ -132,7 +132,7 @@ namespace UI {
                     r.DrawLine(cx + 3, cy + 4, cx + 10, cy - 4, tick)
                 }
                 var ty = y + (h - this.TextHeight(root)) / 2
-                this.DrawString(root, ax + 28, ty, item.header, text)
+                this.DrawString(root, ax + 28, ty, item.Header, text)
                 var right = ax + this.actualWidth - 12
                 if (item.HasSubmenu()) {
                     // an arrow to the right
@@ -140,7 +140,7 @@ namespace UI {
                     r.FillTriangle(right - 4, my - 4, right - 4, my + 4, right + 1, my, text)
                     right = right - 12
                 }
-                if (item.shortcut != "") { this.DrawString(root, right - this.TextWidth(root, item.shortcut), ty, item.shortcut, text) }
+                if (item.Shortcut != "") { this.DrawString(root, right - this.TextWidth(root, item.Shortcut), ty, item.Shortcut, text) }
                 y = y + h
             }
         }
@@ -161,7 +161,7 @@ namespace UI {
             var item = this.entries[index]
             if (this.subIndex == index && this.sub != undefined) { return }
             this.CloseSub(root)
-            if (!item.HasSubmenu() || !item.enabled) { return }
+            if (!item.HasSubmenu() || !item.Enabled) { return }
             var menu = new MenuPopup(item.items)
             menu.parentMenu = this
             root.ShowPopup(menu, this.ax + this.actualWidth - 2, this.RowTop(root, index), true, this)
@@ -172,7 +172,7 @@ namespace UI {
         // Selects the row: a submenu opens, otherwise the action runs and everything closes.
         undefined Choose(Root root, int index) {
             var item = this.entries[index]
-            if (item.separator || !item.enabled) { return }
+            if (item.separator || !item.Enabled) { return }
             if (item.HasSubmenu()) {
                 this.OpenSub(root, index)
                 return
@@ -227,7 +227,7 @@ namespace UI {
 
         int FirstRow() {
             for (var i = 0; i < this.entries.count; i = i + 1) {
-                if (!this.entries[i].separator && this.entries[i].enabled) { return i }
+                if (!this.entries[i].separator && this.entries[i].Enabled) { return i }
             }
             return -1
         }
@@ -242,7 +242,7 @@ namespace UI {
                 if (i >= n) { i = 0 }
                 if (i < 0) { i = n - 1 }
                 var item = this.entries[i]
-                if (!item.separator && item.enabled) {
+                if (!item.separator && item.Enabled) {
                     this.hot = i
                     return
                 }
@@ -271,7 +271,7 @@ namespace UI {
             return item
         }
 
-        int HeaderWidth(Root root, any item) { return this.TextWidth(root, item.header) + 16 }
+        int HeaderWidth(Root root, any item) { return this.TextWidth(root, item.Header) + 16 }
 
         undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
@@ -324,8 +324,8 @@ namespace UI {
                 } else if (i == this.hotIndex) {
                     root.renderer.FillRect(x, ay, w, this.actualHeight, theme.faceHover)
                 }
-                if (!item.enabled) { text = theme.textDisabled }
-                this.DrawString(root, x + 8, ay + (this.actualHeight - this.TextHeight(root)) / 2, item.header, text)
+                if (!item.Enabled) { text = theme.textDisabled }
+                this.DrawString(root, x + 8, ay + (this.actualHeight - this.TextHeight(root)) / 2, item.Header, text)
                 x = x + w
             }
         }
@@ -337,7 +337,7 @@ namespace UI {
             }
             this.openIndex = index
             var item = this.menus[index]
-            if (!item.enabled || !item.HasSubmenu()) {
+            if (!item.Enabled || !item.HasSubmenu()) {
                 this.openIndex = -1
                 item.Activate()
                 return

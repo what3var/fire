@@ -55,6 +55,10 @@ namespace fire.Editor
 
         private void NewMarkdown_Click(object? sender, RoutedEventArgs e) => NewMarkdown("");
 
+        /// <summary>File > New Circuit: an empty schematic in the circuit editor (saved as .biscuit).</summary>
+        private void NewCircuit_Click(object? sender, RoutedEventArgs e) =>
+            CreateDocument(DocumentKind.Circuit, "{\n  \"biscuit\": 1,\n  \"elements\": []\n}\n", null, untitledName: "Untitled.biscuit");
+
         /// <summary>File > New Pixel Image: asks for the size and the kind (palette of 256 colours, or true colour) and opens a new picture in the pixel editor.</summary>
         private async void NewPixelImage_Click(object? sender, RoutedEventArgs e)
         {

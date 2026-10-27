@@ -390,7 +390,7 @@ namespace UI {
         undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
             if (this.ItemTemplate != undefined) {
                 var row = this.rowElements[index]
-                if (row != undefined && row.visible) { row.Draw(root, x + row.rx, y + row.ry) }
+                if (row != undefined && row.Visible) { row.Draw(root, x + row.rx, y + row.ry) }
                 return
             }
             this.DrawString(root, x + 4, y + (h - this.TextHeight(root)) / 2, this.ItemText(item), text)

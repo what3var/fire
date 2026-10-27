@@ -390,7 +390,7 @@ namespace UI {
             this.ax = ax
             this.ay = ay
             if (t == undefined) { return false }
-            if (t.visible) { t.Draw(root, ax + t.rx, ay + t.ry) }
+            if (t.Visible) { t.Draw(root, ax + t.rx, ay + t.ry) }
             return true
         }
 
@@ -511,9 +511,9 @@ namespace UI {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 child.Measure(root, -1, -1)
-                if (!child.visible) { continue }
-                w = UI.M.Max(w, child.x + child.dw)
-                h = UI.M.Max(h, child.y + child.dh)
+                if (!child.Visible) { continue }
+                w = UI.M.Max(w, child.Left + child.dw)
+                h = UI.M.Max(h, child.Top + child.dh)
             }
             this.cw = w
             this.ch = h
@@ -522,7 +522,7 @@ namespace UI {
         undefined ArrangeCore(Root root, int w, int h) {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                child.Arrange(root, child.x, child.y, child.dw, child.dh)
+                child.Arrange(root, child.Left, child.Top, child.dw, child.dh)
             }
         }
 
@@ -546,7 +546,7 @@ namespace UI {
         undefined DrawChildren(Root root, int ax, int ay) {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                if (child.visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
+                if (child.Visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
             }
         }
 
@@ -619,7 +619,7 @@ namespace UI {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 if (this.Horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 if (this.Horizontal) {
                     along = along + child.dw
                     across = UI.M.Max(across, child.dh)
@@ -645,7 +645,7 @@ namespace UI {
             var ih = h - this.Padding * 2
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 if (this.Horizontal) {
                     child.Arrange(root, pos, this.Padding, child.dw, ih)
                     pos = pos + child.dw + this.Spacing
@@ -690,7 +690,7 @@ namespace UI {
             var last = this.LastVisible()
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 var availW = -1
                 var availH = -1
                 if (aw >= 0) { availW = UI.M.Max(0, aw - usedW) }
@@ -715,7 +715,7 @@ namespace UI {
         int LastVisible() {
             var last = -1
             for (var i = 0; i < this.children.count; i = i + 1) {
-                if (this.children[i].visible) { last = i }
+                if (this.children[i].Visible) { last = i }
             }
             return last
         }
@@ -728,7 +728,7 @@ namespace UI {
             var last = this.LastVisible()
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 var fills = this.LastChildFill && i == last
                 if (fills) {
                     child.Arrange(root, left, top, UI.M.Max(0, right - left), UI.M.Max(0, bottom - top))
@@ -772,7 +772,7 @@ namespace UI {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
                 child.Measure(root, this.ItemWidth, this.ItemHeight)
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 var w = child.dw
                 var h = child.dh
                 if (this.ItemWidth >= 0) { w = this.ItemWidth }
@@ -813,7 +813,7 @@ namespace UI {
             var start = 0
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var child = this.children[i]
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 var along = child.dw
                 var thick = child.dh
                 if (this.ItemWidth >= 0) { along = this.ItemWidth }
@@ -842,7 +842,7 @@ namespace UI {
             var pos = 0
             for (var i = first; i < last; i = i + 1) {
                 var child = this.children[i]
-                if (!child.visible) { continue }
+                if (!child.Visible) { continue }
                 var cwid = child.dw
                 var chei = child.dh
                 if (this.ItemWidth >= 0) { cwid = this.ItemWidth }
@@ -927,10 +927,10 @@ namespace UI {
 
         // Put a child into a cell.
         undefined AddAt(Element child, int row, int column, int rowSpan = 1, int columnSpan = 1) {
-            child.gridRow = row
-            child.gridColumn = column
-            child.gridRowSpan = rowSpan
-            child.gridColumnSpan = columnSpan
+            child.GridRow = row
+            child.GridColumn = column
+            child.GridRowSpan = rowSpan
+            child.GridColumnSpan = columnSpan
             this.Add(child)
         }
 
@@ -983,14 +983,14 @@ namespace UI {
             // measure every child with the final size of its cell (also those that did not determine a track)
             for (var c = 0; c < this.children.count; c = c + 1) {
                 var child = this.children[c]
-                if (!child.visible) {
+                if (!child.Visible) {
                     child.Measure(root, 0, 0)
                     continue
                 }
-                var r = this.Fit(rows, child.gridRow)
-                var k = this.Fit(cols, child.gridColumn)
-                var rs = UI.M.Max(1, child.gridRowSpan)
-                var cs = UI.M.Max(1, child.gridColumnSpan)
+                var r = this.Fit(rows, child.GridRow)
+                var k = this.Fit(cols, child.GridColumn)
+                var rs = UI.M.Max(1, child.GridRowSpan)
+                var cs = UI.M.Max(1, child.GridColumnSpan)
                 child.Measure(root, this.SpanSize(cols, k, cs), this.SpanSize(rows, r, rs))
             }
             var w = 0
@@ -1015,15 +1015,15 @@ namespace UI {
             for (var pass = 0; pass < 2; pass = pass + 1) {
                 for (var c = 0; c < this.children.count; c = c + 1) {
                     var child = this.children[c]
-                    if (!child.visible) { continue }
+                    if (!child.Visible) { continue }
                     var begin = 0
                     var span = 1
                     if (isColumn) {
-                        begin = this.Fit(along, child.gridColumn)
-                        span = child.gridColumnSpan
+                        begin = this.Fit(along, child.GridColumn)
+                        span = child.GridColumnSpan
                     } else {
-                        begin = this.Fit(along, child.gridRow)
-                        span = child.gridRowSpan
+                        begin = this.Fit(along, child.GridRow)
+                        span = child.GridRowSpan
                     }
                     if (span < 1) { span = 1 }
                     var contentTracks = 0
@@ -1080,11 +1080,11 @@ namespace UI {
             var begin = 0
             var span = 1
             if (isColumnAxis) {
-                begin = this.Fit(other, child.gridColumn)
-                span = child.gridColumnSpan
+                begin = this.Fit(other, child.GridColumn)
+                span = child.GridColumnSpan
             } else {
-                begin = this.Fit(other, child.gridRow)
-                span = child.gridRowSpan
+                begin = this.Fit(other, child.GridRow)
+                span = child.GridRowSpan
             }
             if (span < 1) { span = 1 }
             var total = 0
@@ -1102,11 +1102,11 @@ namespace UI {
             this.Restar(cols, w)
             for (var c = 0; c < this.children.count; c = c + 1) {
                 var child = this.children[c]
-                if (!child.visible) { continue }
-                var r = this.Fit(rows, child.gridRow)
-                var k = this.Fit(cols, child.gridColumn)
-                var rs = child.gridRowSpan
-                var cs = child.gridColumnSpan
+                if (!child.Visible) { continue }
+                var r = this.Fit(rows, child.GridRow)
+                var k = this.Fit(cols, child.GridColumn)
+                var rs = child.GridRowSpan
+                var cs = child.GridColumnSpan
                 if (rs < 1) { rs = 1 }
                 if (cs < 1) { cs = 1 }
                 var px = 0
@@ -1190,7 +1190,7 @@ namespace UI {
                     root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, pen)
                 }
             }
-            if (this.child != undefined && this.child.visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
+            if (this.child != undefined && this.child.Visible) { this.child.Draw(root, ax + this.child.rx, ay + this.child.ry) }
         }
 
         UI.Element HitTest(int px, int py) {

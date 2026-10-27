@@ -402,15 +402,15 @@ static class WindowManagerTests
             var ui = new UI.Root(fb, win)
             var plain = new UI.Button("Up", 0, 0, -1, -1)
             var withIcon = new UI.Button("Up", 0, 0, -1, -1)
-            withIcon.icon = UI.Icons.Up()
+            withIcon.Icon = UI.Icons.Up()
             var only = new UI.Button("", 60, 0, 30, 30)
-            only.icon = UI.Icons.Home()
+            only.Icon = UI.Icons.Home()
             var red = UI.Color.Rgb(255, 0, 0)
             var pic = new UI.Button("", 0, 40, 30, 30)
             var picture = new Framebuffer(2, 2)
             var painter = new Renderer(picture)
             painter.FillRect(0, 0, 2, 2, new SolidBrush(red))
-            pic.image = picture
+            pic.Image = picture
             var stack = new UI.StackPanel(0, 0, -1, -1, true)
             stack.Add(plain)
             stack.Add(withIcon)
@@ -471,7 +471,7 @@ static class WindowManagerTests
             var ui = new UI.Root(fb, win)
             var clicks = 0
             var button = new UI.Button("Click", 10, 10)
-            button.onClick = func () => { clicks++; print("clicked " + clicks) }
+            button.OnClick = func () => { clicks++; print("clicked " + clicks) }
             ui.Add(button)
             ui.Show()
             __TestClick(0, 15.0, 15.0)

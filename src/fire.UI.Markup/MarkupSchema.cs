@@ -100,8 +100,6 @@ namespace fire.UI.Markup
     public static class MarkupSchema
     {
         private static PropertyDef Enum(string name, string type, params string[] choices) => new(name, PropertyKind.Enum) { EnumType = type, Choices = choices };
-        // an enum property whose field in fire is not the camel case of its name (HorizontalAlign: halign)
-        private static PropertyDef Enum(string name, string field, string type, params string[] choices) => new(name, PropertyKind.Enum, field) { EnumType = type, Choices = choices };
 
         private static readonly PropertyDef[] Common =
         {
@@ -312,9 +310,6 @@ namespace fire.UI.Markup
         private static readonly Regex DottedName = new(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
 
         public static bool IsIdentifier(string text) => Identifier.IsMatch(text);
-
-        /// <summary>A name in camel case: the first letter small (`IsChecked`: `isChecked`, `X1`: `x1`).</summary>
-        public static string Camel(string name) => name.Length == 0 ? name : char.ToLowerInvariant(name[0]) + name.Substring(1);
 
         /// <summary>The names the markup had before its attributes were written in PascalCase and got clearer names: old name to new.</summary>
         public static readonly IReadOnlyDictionary<string, string> RenamedAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

@@ -37,6 +37,8 @@ namespace UI {
         // the context menu (a right click without dragging): its rows and the element it was opened on
         List contextItems
         Circuits.Element contextElement
+        // the pin a context menu was opened on (index into the pins of contextElement)
+        int contextPin = -1
         int downPX = 0
         int downPY = 0
 
@@ -307,6 +309,154 @@ namespace UI {
             if (e.Get(key) == value) { return }
             this.Remember()
             this.Schematic.Set(e, key, value)
+            this.Changed()
+        }
+
+        /// <summary>A property of the circuit itself (with undo): "class" and "namespace" of the class generated from the file, "timeStep" (the step of the
+        /// simulation, a number with an SI prefix and an optional "s": "10u", "1us"). False if the value is not valid.</summary>
+        bool SetCircuitProperty(string key, string value) {
+            var s = this.Schematic
+            var v = value.Trim()
+            if (key == "class") {
+                if (s.className == v) { return true }
+                this.Remember()
+                s.className = v
+            } else if (key == "namespace") {
+                if (s.namespaceName == v) { return true }
+                this.Remember()
+                s.namespaceName = v
+            } else if (key == "timeStep") {
+                var text = v
+                if (text.EndsWith("s")) { text = text.Substring(0, text.Length - 1) }
+                var dt = Circuits.Symbols.Number(text)
+                if (dt == undefined || dt <= 0.0 || dt > 1.0) { return false }
+                if (Math.Abs(this.circuit.dt - dt) <= dt * 0.000001) { return true }
+                this.Remember()
+                this.circuit.TimeStep = dt * 1s
+            } else {
+                return false
+            }
+            this.Changed()
+            return true
+        }
+
+        /// <summary>A property of the circuit itself as text: "class", "namespace", "timeStep" (with "s").</summary>
+        string CircuitProperty(string key) {
+            if (key == "class") { return this.Schematic.className }
+            if (key == "namespace") { return this.Schematic.namespaceName }
+            if (key == "timeStep") { return Circuits.Schematic.Format(this.circuit.dt) + "s" }
+            return ""
+        }
+
+        /// <summary>What can be operated while the circuit runs: potentiometers (a group once), switches, push buttons, selector switches and logic inputs.
+        /// Each line: "index|kind|name|value|range", kind slider / switch / button / choice / logic; the value of a slider is the position 0..1.</summary>
+        List Positions() {
+            var lines = new List()
+            var groups = new List()
+            var els = this.Schematic.Elements()
+            for (int i = 0; i < els.count; i++) {
+                Circuits.Element e = els[i]
+                var t = e.type
+                if (t == "Potentiometer") {
+                    var group = e.Get("group")
+                    var name = e.name
+                    if (group != "") {
+                        if (groups.IndexOf(group) >= 0) { continue }
+                        groups.Add(group)
+                        name = group
+                    }
+                    lines.Add(i + "|slider|" + name + "|" + e.Get("position") + "|")
+                } else if (t == "Switch") {
+                    if (e.Get("momentary") == "true") { lines.Add(i + "|button|" + e.name + "|" + e.Get("closed") + "|") }
+                    else { lines.Add(i + "|switch|" + e.name + "|" + e.Get("closed") + "|") }
+                } else if (t == "Switch2") {
+                    lines.Add(i + "|choice|" + e.name + "|" + e.Get("position") + "|" + e.Get("throws"))
+                } else if (t == "LogicInput") {
+                    lines.Add(i + "|logic|" + e.name + "|" + e.Get("high") + "|")
+                }
+            }
+            return lines
+        }
+
+        /// <summary>Operates element number `index` as Positions lists it: the position of a potentiometer (0..1, the whole group), a switch or a logic
+        /// input on or off ("true"/"false"), a push button held ("true") or let go, a selector switch to a throw. Not part of the undo history.</summary>
+        undefined Operate(int index, string value) {
+            var els = this.Schematic.Elements()
+            if (index < 0 || index >= els.count) { return }
+            Circuits.Element e = els[index]
+            var key = ""
+            if (e.type == "Potentiometer") { key = "position" }
+            else if (e.type == "Switch") { key = "closed" }
+            else if (e.type == "Switch2") { key = "position" }
+            else if (e.type == "LogicInput") { key = "high" }
+            if (key == "" || e.Get(key) == value) { return }
+            this.Schematic.Set(e, key, value)
+            this.Changed()
+        }
+
+        /// <summary>The ports of the circuit (its Pin elements) and the parts that connect it to the devices of a program (GPIO line, I2C, SPI): each line
+        /// "index|type|name|key|value" - the key is the property that names the port or binds the device (port, line, address; "" for none).</summary>
+        List Ports() {
+            var lines = new List()
+            var els = this.Schematic.Elements()
+            for (int i = 0; i < els.count; i++) {
+                Circuits.Element e = els[i]
+                var t = e.type
+                var key = ""
+                if (t == "Pin") { key = "port" }
+                else if (t == "GpioLine") { key = "line" }
+                else if (t == "I2cAdc" || t == "I2cDac") { key = "address" }
+                else if (t == "SpiShiftOut" || t == "SpiShiftIn") { key = "-" }
+                else { continue }
+                var value = ""
+                if (key != "-") { value = e.Get(key) } else { key = "" }
+                lines.Add(i + "|" + t + "|" + e.name + "|" + key + "|" + value)
+            }
+            return lines
+        }
+
+        /// <summary>The inputs and outputs of the circuit: each line "index|name|direction|pin|color|error" (direction input/output, pin "R1.2", color "#RRGGBB",
+        /// error what is wrong with it - "" if nothing).</summary>
+        List PortLines() {
+            var lines = new List()
+            var defs = this.Schematic.PortDefinitions()
+            for (int i = 0; i < defs.count; i++) {
+                Circuits.PortDefinition d = defs[i]
+                lines.Add(i + "|" + d.name + "|" + d.direction + "|" + d.pin + "|" + d.color + "|" + d.error)
+            }
+            return lines
+        }
+
+        /// <summary>The pins an input or output can be bound to ("R1.1", "R1.2", ...).</summary>
+        List PinNames() { return this.Schematic.PinNames() }
+
+        /// <summary>Adds an input ("input") or output ("output") with the next free name and color (with undo); bound to `pin` if it is given.</summary>
+        undefined AddPort(string direction, string pin = "") {
+            if (this.readOnly) { return }
+            this.Remember()
+            this.Schematic.AddPortDefinition("", direction, pin)
+            this.Changed()
+        }
+
+        /// <summary>Changes the input or output number `index` (with undo): "name", "direction", "pin" or "color".</summary>
+        undefined SetPort(int index, string key, string value) {
+            var defs = this.Schematic.PortDefinitions()
+            if (this.readOnly || index < 0 || index >= defs.count) { return }
+            Circuits.PortDefinition d = defs[index]
+            var old = ""
+            if (key == "name") { old = d.name } else if (key == "direction") { old = d.direction } else if (key == "pin") { old = d.pin } else if (key == "color") { old = d.color }
+            if (old == value) { return }
+            this.Remember()
+            this.Schematic.SetPortDefinition(index, key, value)
+            this.Changed()
+        }
+
+        /// <summary>Removes the input or output number `index` (with undo).</summary>
+        undefined RemovePort(int index) {
+            var defs = this.Schematic.PortDefinitions()
+            if (this.readOnly || index < 0 || index >= defs.count) { return }
+            this.Remember()
+            this.Schematic.RemovePortDefinition(index)
             this.Changed()
         }
 
@@ -603,6 +753,7 @@ namespace UI {
                 }
             }
             this.DrawDots(root)
+            this.DrawPortMarks(root)
             // the selection
             foreach (e in this.selection) { this.DrawSelection(root, e) }
             if (this.ghost != undefined) {
@@ -661,6 +812,43 @@ namespace UI {
             var digits = Math.Floor(Math.Log(a) / Math.Log(10.0))
             var unit = 10.0 ^ (digits - 2.0)
             return Circuits.Schematic.Format(Math.Round(v / unit) * unit)
+        }
+
+        /// <summary>The color of "#RRGGBB" (or "RRGGBB", "0xRRGGBB"); gray if it is none.</summary>
+        static any HexColor(string text) {
+            var t = text.Trim()
+            if (t.StartsWith("#")) { t = t.Substring(1) }
+            else if (t.StartsWith("0x") || t.StartsWith("0X")) { t = t.Substring(2) }
+            if (t.Length != 6) { return UI.Color.Rgb(160, 160, 160) }
+            var v = 0
+            for (int i = 0; i < 6; i++) {
+                var d = "0123456789abcdef".IndexOf(t.Substring(i, 1).ToLower())
+                if (d < 0) { return UI.Color.Rgb(160, 160, 160) }
+                v = v * 16 + d
+            }
+            return UI.Color.Rgb((v >> 16) & 255, (v >> 8) & 255, v & 255)
+        }
+
+        // the inputs and outputs of the circuit: the pin each is bound to in its color, with its name (an arrow into the pin for an input, out of it for an output)
+        undefined DrawPortMarks(Root root) {
+            var s = this.Schematic
+            foreach (d in s.PortDefinitions()) {
+                if (d.slot < 0) { continue }
+                var e = s.Find(d.element)
+                if (e == undefined || d.slot * 2 + 1 >= e.pins.count) { continue }
+                var px = this.SX(e.pins[d.slot * 2])
+                var py = this.SY(e.pins[d.slot * 2 + 1])
+                var r = UI.M.Max(3, this.Dp(Math.Round(this.scale * 0.45)!int))
+                // (a color belongs to what it is given to: one for each)
+                this.brush.Color = UI.CircuitView.HexColor(d.color)
+                root.renderer.FillCircle(px, py, r, this.brush)
+                this.thin.Color = UI.CircuitView.HexColor(d.color)
+                root.renderer.DrawCircle(px, py, r + this.Dp(2), this.thin)
+                var label = d.name
+                if (d.direction == "output") { label = d.name + " >" } else { label = "> " + d.name }
+                this.textBrush.Color = UI.CircuitView.HexColor(d.color)
+                this.DrawString(root, px + r + this.Dp(3), py - r - this.TextHeight(root), label, this.textBrush)
+            }
         }
 
         undefined DrawGrid(Root root) {
@@ -1881,25 +2069,57 @@ namespace UI {
             root.renderer.FillRect(x0, y0, w, h, this.brush)
             this.thin.Color = UI.Color.Rgb(90, 90, 90)
             root.renderer.DrawRect(x0, y0, w, h, this.thin)
-            if (e.Get("display") != "spectrum") { root.renderer.DrawLine(x0, y0 + h / 2, x1, y0 + h / 2, this.thin) }
+            var display = e.Get("display")
+            var quantity = e.Get("quantity")
             var label = e.Get("probe")
-            if (e.Get("quantity") == "current") { label = "I(" + label + ")" } else { label = "V(" + label + ")" }
+            var unit = "V"
+            if (quantity == "current") {
+                label = "I(" + label + ")"
+                unit = "A"
+            } else if (quantity == "power") {
+                label = "P(" + label + ")"
+                unit = "W"
+            } else {
+                label = "V(" + label + ")"
+            }
             var scope = e.scope
             if (scope == undefined || w < 4 || h < 4) {
                 this.textBrush.Color = UI.Color.Rgb(140, 140, 140)
                 this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label, this.textBrush)
                 return
             }
-            var n = scope.Count
-            if (n == 0) { return }
-            var samples = scope.Samples("y")
-            if (e.Get("display") == "spectrum") {
-                this.DrawSpectrum(root, e, scope, samples, x0, y0, w, h, label)
+            if (scope.Count == 0) { return }
+            if (display == "spectrum") {
+                this.DrawSpectrum(root, e, scope, x0, y0, w, h, label)
                 return
             }
-            var count = w - 2
-            var first = samples.length - count
-            if (first < 0) { first = 0 }
+            if (display == "xy") {
+                this.DrawXY(root, e, scope, x0, y0, w, h)
+                return
+            }
+            // over time: the time base (10 divisions across), the trigger, the power as v * i
+            var perDiv = 0.0
+            var perDivText = Circuits.Symbols.Number(e.Get("timePerDiv").Replace("s", ""))
+            if (perDivText != undefined && perDivText > 0.0) { perDiv = perDivText }
+            var trigger = 0
+            if (e.Get("trigger") == "rising") { trigger = 1 } else if (e.Get("trigger") == "falling") { trigger = 2 }
+            var level = 0.0
+            var levelText = Circuits.Symbols.Number(e.Get("triggerLevel"))
+            if (levelText != undefined) { level = levelText }
+            var other = ""
+            if (quantity == "power") { other = "x" }
+            var columns = w - 2
+            var trace = scope.Trace("y", columns, perDiv * 10.0 * 1s, trigger, level, other)
+            var first = Math.Round(trace[0])!int
+            if (perDiv > 0.0) {
+                this.thin.Color = UI.Color.Rgb(40, 60, 44)
+                for (int d = 1; d < 10; d++) {
+                    var gx = x0 + 1 + d * columns / 10
+                    root.renderer.DrawLine(gx, y0 + 1, gx, y1 - 1, this.thin)
+                }
+            }
+            this.thin.Color = UI.Color.Rgb(90, 90, 90)
+            root.renderer.DrawLine(x0, y0 + h / 2, x1, y0 + h / 2, this.thin)
             var lo = 0.0
             var hi = 0.0
             var range = Circuits.Symbols.Number(e.Get("range"))
@@ -1907,9 +2127,10 @@ namespace UI {
                 lo = -range
                 hi = range
             } else {
-                for (int i = first; i < samples.length; i++) {
-                    if (samples[i] < lo) { lo = samples[i] }
-                    if (samples[i] > hi) { hi = samples[i] }
+                for (int c = first; c < columns; c++) {
+                    var v = trace[c + 1]
+                    if (v < lo) { lo = v }
+                    if (v > hi) { hi = v }
                 }
                 if (hi - lo < 0.000000001) {
                     hi = hi + 1.0
@@ -1919,46 +2140,105 @@ namespace UI {
                 lo = -big
                 hi = big
             }
-            var pts = new float[(samples.length - first) * 2]
-            for (int i = first; i < samples.length; i++) {
-                var k = i - first
-                pts[k * 2] = x0 + 1.0 + k
-                pts[k * 2 + 1] = y0 + h / 2.0 - (samples[i] / (hi - lo) * 2.0) * (h / 2.0 - 2.0)
+            if (trigger != 0 && level > lo && level < hi) {
+                // the trigger level: a short mark at the left edge
+                var ly = y0 + h / 2.0 - (level / (hi - lo) * 2.0) * (h / 2.0 - 2.0)
+                this.thin.Color = UI.Color.Rgb(220, 180, 60)
+                root.renderer.DrawLine(x0 + 1, Math.Round(ly)!int, x0 + this.Dp(6), Math.Round(ly)!int, this.thin)
             }
-            if (pts.length >= 4) {
-                this.thin.Color = UI.Color.Rgb(80, 255, 80)
-                root.renderer.DrawPath(pts, this.thin)
+            if (first < columns) {
+                var pts = new float[(columns - first) * 2]
+                for (int c = first; c < columns; c++) {
+                    var k = c - first
+                    pts[k * 2] = x0 + 1.0 + c
+                    pts[k * 2 + 1] = y0 + h / 2.0 - (trace[c + 1] / (hi - lo) * 2.0) * (h / 2.0 - 2.0)
+                }
+                if (pts.length >= 4) {
+                    this.thin.Color = UI.Color.Rgb(80, 255, 80)
+                    if (quantity == "power") { this.thin.Color = UI.Color.Rgb(255, 160, 60) }
+                    root.renderer.DrawPath(pts, this.thin)
+                }
             }
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
-            var unit = "V"
-            if (e.Get("quantity") == "current") { unit = "A" }
-            this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label + " = " + UI.CircuitView.Short(samples[samples.length - 1]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit, this.textBrush)
+            var text = label + " = " + UI.CircuitView.Short(trace[columns]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit
+            if (perDiv > 0.0) { text = text + "  " + UI.CircuitView.Short(perDiv) + "s/div" }
+            this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), text, this.textBrush)
         }
 
-        // a scope as an FFT analyzer: the spectrum of the last samples (a power of two, at most 2048, with a Hann window), in dB below its strongest line,
-        // from 0 Hz to maxFrequency (0: up to a little above the highest line that is not 60 dB down)
-        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, any samples, int x0, int y0, int w, int h, string label) {
-            var times = scope.Times()
-            var size = 1
-            while (size * 2 <= samples.length && size * 2 <= 2048) { size = size * 2 }
+        // a scope as an XY display: the current of the element (up) over its voltage (across) - its characteristic curve
+        undefined DrawXY(Root root, Circuits.Element e, Circuits.Scope scope, int x0, int y0, int w, int h) {
+            var vName = "y"
+            var iName = "x"
+            if (e.Get("quantity") != "voltage") {
+                vName = "x"
+                iName = "y"
+            }
+            var pairs = scope.Pairs(vName, iName, 4000)
+            this.textBrush.Color = UI.Color.Rgb(200, 160, 255)
+            var label = "I(" + e.Get("probe") + ") over V"
+            if (pairs.length < 4) {
+                this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label, this.textBrush)
+                return
+            }
+            var vmin = pairs[0]
+            var vmax = pairs[0]
+            var imin = pairs[1]
+            var imax = pairs[1]
+            for (int k = 0; k < pairs.length; k = k + 2) {
+                vmin = Math.Min(vmin, pairs[k])
+                vmax = Math.Max(vmax, pairs[k])
+                imin = Math.Min(imin, pairs[k + 1])
+                imax = Math.Max(imax, pairs[k + 1])
+            }
+            if (vmax - vmin < 0.000000001) {
+                vmax = vmax + 1.0
+                vmin = vmin - 1.0
+            }
+            if (imax - imin < 0.000000000001) {
+                imax = imax + 0.001
+                imin = imin - 0.001
+            }
+            var pw = w - 4.0
+            var ph = h - 4.0
+            // the axes where they cross 0
+            this.thin.Color = UI.Color.Rgb(70, 70, 70)
+            if (vmin < 0.0 && vmax > 0.0) {
+                var ax = Math.Round(x0 + 2.0 + (0.0 - vmin) / (vmax - vmin) * pw)!int
+                root.renderer.DrawLine(ax, y0 + 1, ax, y0 + h - 1, this.thin)
+            }
+            if (imin < 0.0 && imax > 0.0) {
+                var ay = Math.Round(y0 + 2.0 + ph - (0.0 - imin) / (imax - imin) * ph)!int
+                root.renderer.DrawLine(x0 + 1, ay, x0 + w - 1, ay, this.thin)
+            }
+            var pts = new float[pairs.length]
+            for (int k = 0; k < pairs.length; k = k + 2) {
+                pts[k] = x0 + 2.0 + (pairs[k] - vmin) / (vmax - vmin) * pw
+                pts[k + 1] = y0 + 2.0 + ph - (pairs[k + 1] - imin) / (imax - imin) * ph
+            }
+            this.thin.Color = UI.Color.Rgb(200, 160, 255)
+            root.renderer.DrawPath(pts, this.thin)
+            var last = pairs.length - 2
+            this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label + "  " + UI.CircuitView.Short(pairs[last]) + "V " + UI.CircuitView.Short(pairs[last + 1]) + "A", this.textBrush)
+        }
+
+        // a scope as an FFT analyzer: the spectrum of the last fftSize samples (taken at twice maxFrequency, Hann window; computed natively), in dB below its
+        // strongest line, from 0 Hz to maxFrequency (0: at the rate of the simulation, up to a little above the highest line that is not 60 dB down)
+        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, int x0, int y0, int w, int h, string label) {
+            var size = 512
+            var sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
+            if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
+            var fmax = 0.0
+            var fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
+            if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
+            var spectrum = scope.Spectrum("y", size, fmax)
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
-            if (size < 16 || times.length < 2) {
+            if (spectrum.length < 9) {
                 this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), "FFT " + label, this.textBrush)
                 return
             }
-            var first = samples.length - size
-            var dt = (times[times.length - 1] - times[first]) / (size - 1)
-            if (dt <= 0.0) { return }
-            var rate = 1.0 / dt
-            var windowed = new float[size]
-            var mean = 0.0
-            for (int i = 0; i < size; i++) { mean = mean + samples[first + i] }
-            mean = mean / size
-            for (int i = 0; i < size; i++) {
-                var hann = 0.5 - 0.5 * Math.Cos(2.0 * Math.PI * i / (size - 1))
-                windowed[i] = (samples[first + i] - mean) * hann
-            }
-            var mags = Circuits.Fft.Magnitudes(windowed)
+            // mags[k]: bin k (k >= 1); mags[0] is the bin width
+            var mags = spectrum
+            var binHz = mags[0]
             var peak = 0.0
             var peakBin = 1
             for (int k = 1; k < mags.length; k++) {
@@ -1967,10 +2247,8 @@ namespace UI {
                     peakBin = k
                 }
             }
-            var binHz = rate / size
             var top = mags.length - 1
-            var fmax = Circuits.Symbols.Number(e.Get("maxFrequency"))
-            if (fmax != undefined && fmax > 0.0) {
+            if (fmax > 0.0) {
                 top = UI.M.Min(mags.length - 1, UI.M.Max(4, Math.Ceiling(fmax / binHz)!int))
             } else if (peak > 0.0) {
                 var last = peakBin
@@ -2309,6 +2587,22 @@ namespace UI {
         }
 
         // is the point (grid units) close to a pin? Then downGX/downGY become that pin.
+        // the pin near a point: its element (contextPin is its index) or undefined
+        Circuits.Element PinElementAt(float ux, float uy) {
+            var r = 5.0 / this.scale
+            if (r < 0.5) { r = 0.5 }
+            foreach (e in this.Schematic.Elements()) {
+                if (!this.CanProbe(e)) { continue }
+                for (int i = 0; i < e.pins.count / 2; i++) {
+                    if (Math.Abs(ux - e.pins[i * 2]) <= r && Math.Abs(uy - e.pins[i * 2 + 1]) <= r) {
+                        this.contextPin = i
+                        return e
+                    }
+                }
+            }
+            return undefined
+        }
+
         bool NearPin(float ux, float uy) {
             var r = 5.0 / this.scale
             if (r < 0.5) { r = 0.5 }
@@ -2677,7 +2971,30 @@ namespace UI {
         // ---- the context menu ----
 
         undefined ShowContextMenu(Root root, int px, int py) {
-            var hit = this.ElementAt(this.ToUnitX(px - this.ax + 0.0), this.ToUnitY(py - this.ay + 0.0))
+            var ux = this.ToUnitX(px - this.ax + 0.0)
+            var uy = this.ToUnitY(py - this.ay + 0.0)
+            // on a pin: a scope for the voltage of that pin
+            var pinOf = this.PinElementAt(ux, uy)
+            if (pinOf != undefined && !this.readOnly) {
+                this.contextElement = pinOf
+                if (this.contextItems == undefined) { this.contextItems = new List() } else { this.contextItems.Clear() }
+                var label = pinOf.name
+                if (label == "") { label = pinOf.type }
+                this.contextItems.Add(new UI.CircuitMenuItem("Attach Scope to Pin " + (this.contextPin + 1) + " of " + label, this, "pinscope time"))
+                this.contextItems.Add(new UI.CircuitMenuItem("Attach FFT Analyzer to Pin " + (this.contextPin + 1), this, "pinscope spectrum"))
+                // an input or output of the circuit on this pin (a pin is named by its element: elements without a name have none)
+                if (pinOf.name != "") {
+                    var bound = this.Schematic.PortAtPin(pinOf, this.contextPin)
+                    if (bound != undefined) { this.contextItems.Add(new UI.CircuitMenuItem("Remove " + bound.direction + " '" + bound.name + "'", this, "unbind")) }
+                    else {
+                        this.contextItems.Add(new UI.CircuitMenuItem("Make Pin an Input of the Circuit", this, "bind input"))
+                        this.contextItems.Add(new UI.CircuitMenuItem("Make Pin an Output of the Circuit", this, "bind output"))
+                    }
+                }
+                root.ShowMenu(this.contextItems, px, py, this)
+                return
+            }
+            var hit = this.ElementAt(ux, uy)
             this.contextElement = hit
             if (hit != undefined && this.selection.IndexOf(hit) < 0) { this.Select(hit, false) }
             if (this.contextItems == undefined) { this.contextItems = new List() } else { this.contextItems.Clear() }
@@ -2685,7 +3002,11 @@ namespace UI {
             if (hit != undefined && !this.readOnly) {
                 if (this.CanProbe(hit)) {
                     items.Add(new UI.CircuitMenuItem("Attach Scope (voltage)", this, "scope voltage time"))
-                    if (this.HasCurrent(hit)) { items.Add(new UI.CircuitMenuItem("Attach Scope (current)", this, "scope current time")) }
+                    if (this.HasCurrent(hit)) {
+                        items.Add(new UI.CircuitMenuItem("Attach Scope (current)", this, "scope current time"))
+                        items.Add(new UI.CircuitMenuItem("Attach Scope (power)", this, "scope power time"))
+                        items.Add(new UI.CircuitMenuItem("Attach XY Scope (current over voltage)", this, "scope voltage xy"))
+                    }
                     items.Add(new UI.CircuitMenuItem("Attach FFT Analyzer", this, "scope voltage spectrum"))
                     if (this.HasCurrent(hit)) { items.Add(new UI.CircuitMenuItem("Attach FFT Analyzer (current)", this, "scope current spectrum")) }
                     items.Add(UI.MenuItem.Separator())
@@ -2699,6 +3020,10 @@ namespace UI {
                     asSpectrum.Checkable = true
                     asSpectrum.IsChecked = hit.Get("display") == "spectrum"
                     items.Add(take asSpectrum)
+                    var asXY = new UI.CircuitMenuItem("Show XY (Current over Voltage)", this, "display xy")
+                    asXY.Checkable = true
+                    asXY.IsChecked = hit.Get("display") == "xy"
+                    items.Add(take asXY)
                     items.Add(UI.MenuItem.Separator())
                 }
                 if (this.IsInteractive(hit)) { items.Add(new UI.CircuitMenuItem("Switch", this, "toggle")) }
@@ -2762,6 +3087,16 @@ namespace UI {
             var p = action.Split(" ")
             var a = p[0]
             if (a == "scope") { this.AttachScope(e, p[1], p[2]) }
+            else if (a == "pinscope") { this.AttachScope(e, "voltage", p[1], this.contextPin) }
+            else if (a == "bind") {
+                if (e != undefined && e.name != "") { this.AddPort(p[1], e.name + "." + (this.contextPin + 1)) }
+            }
+            else if (a == "unbind") {
+                if (e != undefined) {
+                    var bound = this.Schematic.PortAtPin(e, this.contextPin)
+                    if (bound != undefined) { this.RemovePort(this.Schematic.PortDefinitions().IndexOf(bound)) }
+                }
+            }
             else if (a == "display") {
                 if (e != undefined) { this.SetProperty(e, "display", p[1]) }
             }
@@ -2787,12 +3122,15 @@ namespace UI {
 
         /// <summary>Puts a scope below an element that shows its voltage or current ("voltage"/"current") over time or as a spectrum ("time"/"spectrum").
         /// An element without a name gets one (the scope finds it by its name). Returns the scope element.</summary>
-        Circuits.Element AttachScope(Circuits.Element e, string quantity = "voltage", string display = "time") {
+        Circuits.Element AttachScope(Circuits.Element e, string quantity = "voltage", string display = "time", int pin = -1) {
             if (e == undefined || this.readOnly) { return undefined }
             this.Remember()
             var s = this.Schematic
             if (e.name == "") { s.Rename(e, this.NewName(e.type)) }
             // below the circuit (like the scopes of Falstad's simulator), under the element, next to or below the scopes there already
+            // a pin: "R1.2" (counted from 1) - the voltage of that pin against ground
+            var probe = e.name
+            if (pin >= 0) { probe = e.name + "." + (pin + 1) }
             var x = UI.M.Min(e.x1, e.x2)
             for (int i = 0; i < e.pins.count / 2; i++) { x = UI.M.Min(x, e.pins[i * 2]) }
             var bottom = UI.M.Max(e.y1, e.y2)
@@ -2813,7 +3151,7 @@ namespace UI {
                     }
                 }
             }
-            var scope = s.Add("Scope", x, y, x + 24, y + 10, "probe=" + e.name + ";quantity=" + quantity + ";display=" + display, this.NewName("Scope"))
+            var scope = s.Add("Scope", x, y, x + 24, y + 10, "probe=" + probe + ";quantity=" + quantity + ";display=" + display, this.NewName("Scope"))
             this.Select(scope, false)
             this.Changed()
             return scope

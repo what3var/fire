@@ -2020,5 +2020,169 @@ inline Value RecSamples(Value h, Value channel, OwnList* list) {
     return ArrV(a);
 }
 
+/// The trace of a scope over `columns` columns of the screen. Channel y (times channel x when x >= 0: the power v * i). `span` <= 0: the last `columns` samples, one
+/// per column; else a window of `span` seconds - with a trigger (1 rising, 2 falling through `level`) it starts at the latest crossing that leaves room for the
+/// whole window, without one (or when there is no crossing) it ends now. Result: [first column with data, value of column 0, ..., of column columns-1].
+inline Value RecTrace(Value h, Value chY, Value chX, Value spanV, Value columnsV, Value triggerV, Value levelV, OwnList* list) {
+    Recorder* r = recorder(h);
+    int64_t columns = std::max<int64_t>(1, std::min<int64_t>(16384, columnsV.i));
+    Arr* out = allocArr((uint32_t)(columns + 1), list);
+    Value* o = out->items();
+    o[0] = Float((Real)columns);
+    for (int64_t c = 0; c < columns; c++) o[c + 1] = Float(0);
+    if (!r || chY.i < 0 || (size_t)chY.i >= r->channels.size()) return ArrV(out);
+    const std::vector<double>& ys = r->channels[(size_t)chY.i];
+    const std::vector<double>* xs = (chX.i >= 0 && (size_t)chX.i < r->channels.size()) ? &r->channels[(size_t)chX.i] : nullptr;
+    size_t count = std::min(ys.size(), r->times.size());
+    if (xs) count = std::min(count, xs->size());
+    if (count == 0) return ArrV(out);
+    auto value = [&](size_t i) { return xs ? ys[i] * (*xs)[i] : ys[i]; };
+    double span = D(spanV);
+    if (span <= 0) {
+        size_t n = std::min<size_t>(count, (size_t)columns);
+        int64_t first = columns - (int64_t)n;
+        o[0] = Float((Real)first);
+        for (size_t k = 0; k < n; k++) o[first + (int64_t)k + 1] = Float((Real)value(count - n + k));
+        return ArrV(out);
+    }
+    const std::vector<double>& times = r->times;
+    double end = times[count - 1];
+    double start = end - span;
+    int64_t trigger = triggerV.i;
+    double level = D(levelV);
+    if (trigger == 1 || trigger == 2) {
+        // the latest crossing at or before end - span
+        for (size_t i = count - 1; i > 0; i--) {
+            if (times[i] > end - span) continue;
+            double a = value(i - 1), b = value(i);
+            bool hit = trigger == 1 ? (a < level && b >= level) : (a > level && b <= level);
+            if (hit) {
+                double f = b != a ? (level - a) / (b - a) : 0.0;
+                start = times[i - 1] + (times[i] - times[i - 1]) * f;
+                break;
+            }
+        }
+    }
+    // each column: the sample at its time (linear between the samples)
+    size_t idx = 0;
+    while (idx + 1 < count && times[idx + 1] < start) idx++;
+    int64_t first = columns;
+    for (int64_t c = 0; c < columns; c++) {
+        double tc = start + span * (double)c / (double)std::max<int64_t>(1, columns - 1);
+        if (tc < times[0] || tc > end + 1e-15) continue;
+        while (idx + 1 < count && times[idx + 1] < tc) idx++;
+        double v;
+        if (idx + 1 < count && times[idx + 1] > times[idx]) {
+            double f = (tc - times[idx]) / (times[idx + 1] - times[idx]);
+            f = std::max(0.0, std::min(1.0, f));
+            v = value(idx) + (value(idx + 1) - value(idx)) * f;
+        } else v = value(idx);
+        o[c + 1] = Float((Real)v);
+        if (c < first) first = c;
+    }
+    o[0] = Float((Real)first);
+    return ArrV(out);
+}
+
+/// The last pairs of two channels for an XY display: [x0, y0, x1, y1, ...] of at most `count` samples (the newest last).
+inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list) {
+    Recorder* r = recorder(h);
+    if (!r || chX.i < 0 || chY.i < 0 || (size_t)chX.i >= r->channels.size() || (size_t)chY.i >= r->channels.size()) return ArrV(allocArr(0, list));
+    const std::vector<double>& xs = r->channels[(size_t)chX.i];
+    const std::vector<double>& ys = r->channels[(size_t)chY.i];
+    size_t n = std::min(xs.size(), ys.size());
+    size_t take = std::min<size_t>(n, (size_t)std::max<int64_t>(0, countV.i));
+    Arr* out = allocArr((uint32_t)(take * 2), list);
+    for (size_t k = 0; k < take; k++) {
+        out->items()[k * 2] = Float((Real)xs[n - take + k]);
+        out->items()[k * 2 + 1] = Float((Real)ys[n - take + k]);
+    }
+    return ArrV(out);
+}
+
+/// The spectrum of a channel for an FFT analyzer: the last `size` samples (a power of two, 16 .. 8192), taken at the rate 2 * fmax (so the bins reach up to
+/// fmax; fmax <= 0 or a coarser simulation: the rate of the simulation), the mean taken away, a Hann window, then the FFT. Result: [bin width in Hz,
+/// amplitude of bin 1, ..., amplitude of bin size/2] (amplitudes of a sine as its peak value); empty if there are too few samples.
+inline Value RecSpectrum(Value h, Value channel, Value sizeV, Value fmaxV, OwnList* list) {
+    Recorder* r = recorder(h);
+    const std::vector<double>* src = nullptr;
+    if (r && channel.i >= 0 && (size_t)channel.i < r->channels.size()) src = &r->channels[(size_t)channel.i];
+    size_t count = src ? std::min(src->size(), r->times.size()) : 0;
+    size_t n = 16;
+    while (n < (size_t)std::max<int64_t>(16, std::min<int64_t>(8192, sizeV.i))) n <<= 1;
+    if (count < 16) return ArrV(allocArr(0, list));
+    const std::vector<double>& times = r->times;
+    const std::vector<double>& v = *src;
+    // the step of the simulation (over the last samples) and the rate of the analysis
+    size_t look = std::min<size_t>(count - 1, 64);
+    double simDt = (times[count - 1] - times[count - 1 - look]) / (double)look;
+    if (!(simDt > 0)) return ArrV(allocArr(0, list));
+    double fmax = D(fmaxV);
+    double dt = simDt;
+    if (fmax > 0 && 1.0 / (2.0 * fmax) > simDt) dt = 1.0 / (2.0 * fmax);
+    // resample the last n points (linear between the recorded ones); before the first sample: none
+    std::vector<double> re(n, 0.0), im(n, 0.0);
+    double end = times[count - 1];
+    size_t idx = count - 1;
+    size_t valid = 0;
+    double mean = 0;
+    std::vector<double> x(n, 0.0);
+    std::vector<bool> has(n, false);
+    for (size_t k = n; k-- > 0;) {
+        double tk = end - (double)(n - 1 - k) * dt;
+        while (idx > 0 && times[idx - 1] >= tk) idx--;
+        if (idx == 0 && times[0] > tk) break;
+        double y;
+        if (times[idx] <= tk || idx == 0) y = v[idx];
+        else {
+            double t0 = times[idx - 1], t1 = times[idx];
+            double a = t1 > t0 ? (tk - t0) / (t1 - t0) : 1.0;
+            y = v[idx - 1] + (v[idx] - v[idx - 1]) * a;
+        }
+        x[k] = y;
+        has[k] = true;
+        mean += y;
+        valid++;
+    }
+    if (valid < 16) return ArrV(allocArr(0, list));
+    mean /= (double)valid;
+    const double pi = 3.14159265358979323846;
+    double wsum = 0;
+    for (size_t k = 0; k < n; k++) {
+        double w = 0.5 - 0.5 * std::cos(2.0 * pi * (double)k / (double)(n - 1));
+        wsum += w;
+        re[k] = has[k] ? (x[k] - mean) * w : 0.0;
+    }
+    // iterative radix-2 FFT
+    for (size_t i = 1, j = 0; i < n; i++) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) { std::swap(re[i], re[j]); std::swap(im[i], im[j]); }
+    }
+    for (size_t len = 2; len <= n; len <<= 1) {
+        double ang = -2.0 * pi / (double)len;
+        double wr = std::cos(ang), wi = std::sin(ang);
+        for (size_t s = 0; s < n; s += len) {
+            double cr = 1, ci = 0;
+            for (size_t k = 0; k < len / 2; k++) {
+                size_t a = s + k, b = s + k + len / 2;
+                double br = re[b] * cr - im[b] * ci, bi = re[b] * ci + im[b] * cr;
+                re[b] = re[a] - br; im[b] = im[a] - bi;
+                re[a] += br; im[a] += bi;
+                double ncr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = ncr;
+            }
+        }
+    }
+    size_t half = n / 2;
+    Arr* out = allocArr((uint32_t)(half + 1), list);
+    out->items()[0] = Float((Real)(1.0 / (dt * (double)n)));
+    double scale = wsum > 0 ? 2.0 / wsum : 0.0;
+    for (size_t k = 1; k <= half; k++) out->items()[k] = Float((Real)(std::sqrt(re[k] * re[k] + im[k] * im[k]) * scale));
+    return ArrV(out);
+}
+
 }  // namespace circuits
 }  // namespace fire

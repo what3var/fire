@@ -222,7 +222,7 @@ namespace UI.Docking {
             }
             if (this.items.count == 0) { return }
             any strip = this.parent
-            var below = !this.inOverflow && (strip == undefined || !(strip is of UI.Docking.ToolStrip) || strip.horizontal)
+            var below = !this.inOverflow && (strip == undefined || !(strip is of UI.Docking.ToolStrip) || strip.Horizontal)
             if (below) { this.menu = root.ShowMenu(this.items, this.ax, this.ay + this.actualHeight, this) }
             else { this.menu = root.ShowMenu(this.items, this.ax + this.actualWidth, this.ay, this) }
             this.Invalidate()
@@ -323,7 +323,7 @@ namespace UI.Docking {
         // Is the line vertical (in a horizontal strip)?
         bool Upright() {
             any strip = this.parent
-            return !this.inOverflow && strip != undefined && strip is of UI.Docking.ToolStrip && strip.horizontal
+            return !this.inOverflow && strip != undefined && strip is of UI.Docking.ToolStrip && strip.Horizontal
         }
 
         undefined MeasureCore(UI.Root root, int aw, int ah) {
@@ -435,7 +435,7 @@ namespace UI.Docking {
             var items = this.strip.overflowItems
             for (var i = 0; i < items.count; i = i + 1) {
                 var item = items[i]
-                if (item.visible) { item.Draw(root, ax + item.rx, ay + item.ry) }
+                if (item.Visible) { item.Draw(root, ax + item.rx, ay + item.ry) }
             }
         }
 
@@ -588,7 +588,7 @@ namespace UI.Docking {
             if (this.CanOverflowNow()) { length = length + this.OverflowSize() }
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var c = this.children[i]
-                if (c.visible && (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Never || !this.CanOverflowNow())) { length = length + this.Along(c) + this.Spacing }
+                if (c.Visible && (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Never || !this.CanOverflowNow())) { length = length + this.Along(c) + this.Spacing }
             }
             return length
         }
@@ -600,7 +600,7 @@ namespace UI.Docking {
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var c = this.children[i]
                 c.Measure(root, -1, -1)
-                if (!c.visible) { continue }
+                if (!c.Visible) { continue }
                 across = UI.M.Max(across, this.Across(c))
                 if (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Always && this.CanOverflowNow()) {
                     always = true
@@ -639,7 +639,7 @@ namespace UI.Docking {
             var fixedLength = 0
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var c = this.children[i]
-                if (!c.visible) { continue }
+                if (!c.Visible) { continue }
                 var mode = UI.Docking.ToolStrip.ModeOf(c)
                 if (mode == UI.Docking.Overflow.Always) {
                     always = true
@@ -655,7 +655,7 @@ namespace UI.Docking {
             var full = false
             for (var i = 0; i < this.children.count; i = i + 1) {
                 var c = this.children[i]
-                if (!c.visible) { continue }
+                if (!c.Visible) { continue }
                 var mode = UI.Docking.ToolStrip.ModeOf(c)
                 var keep = true
                 if (mode == UI.Docking.Overflow.Always) { keep = !this.CanOverflowNow() }
@@ -693,8 +693,8 @@ namespace UI.Docking {
                 var off = 2
                 var size = room2
                 if (!this.stretchItems && !(c is of UI.Docking.ToolStripSeparator)) {
-                    if (this.Horizontal && c.valign == UI.VAlign.Stretch) { size = UI.M.Min(room2, c.dh) }
-                    if (!this.Horizontal && c.halign == UI.HAlign.Stretch) { size = UI.M.Min(room2, c.dw) }
+                    if (this.Horizontal && c.VerticalAlign == UI.VAlign.Stretch) { size = UI.M.Min(room2, c.dh) }
+                    if (!this.Horizontal && c.HorizontalAlign == UI.HAlign.Stretch) { size = UI.M.Min(room2, c.dw) }
                     off = 2 + (room2 - size) / 2
                 }
                 if (this.Horizontal) { c.Arrange(root, pos, off, len, size) }
@@ -803,7 +803,7 @@ namespace UI.Docking {
             }
             for (var i = 0; i < this.shown.count; i = i + 1) {
                 var c = this.shown[i]
-                if (c.visible) { c.Draw(root, ax + c.rx, ay + c.ry) }
+                if (c.Visible) { c.Draw(root, ax + c.rx, ay + c.ry) }
             }
         }
 
@@ -979,7 +979,7 @@ namespace UI.Docking {
             var list = new List()
             for (var i = 0; i < this.strips.count; i = i + 1) {
                 var s = this.strips[i]
-                if (s.row != row || !s.visible) { continue }
+                if (s.row != row || !s.Visible) { continue }
                 var at = list.count
                 while (at > 0 && list[at - 1].offset > s.offset) { at = at - 1 }
                 list.Insert(at, s)
@@ -991,7 +991,7 @@ namespace UI.Docking {
             var t = 0
             for (var i = 0; i < this.strips.count; i = i + 1) {
                 var s = this.strips[i]
-                if (s.row == row && s.visible) { t = UI.M.Max(t, this.Across(s)) }
+                if (s.row == row && s.Visible) { t = UI.M.Max(t, this.Across(s)) }
             }
             return t
         }
@@ -1096,7 +1096,7 @@ namespace UI.Docking {
             }
             for (var i = 0; i < this.strips.count; i = i + 1) {
                 var s = this.strips[i]
-                if (s.visible) { s.Draw(root, ax + s.rx, ay + s.ry) }
+                if (s.Visible) { s.Draw(root, ax + s.rx, ay + s.ry) }
             }
         }
 

@@ -99,6 +99,75 @@ static class CircuitEditorTests
             && falstad.Biscuit.Contains("\"type\": \"And\"") && falstad.Biscuit.Contains("\"type\": \"LogicInput\", \"from\": [70, 38], \"to\": [64, 38], \"high\": \"true\"")
             && falstad.Biscuit.Contains("\"type\": \"Label\", \"from\": [14, 6], \"to\": [14, 2], \"text\": \"VCC\"")
             && falstad.Biscuit.Contains("\"type\": \"Scope\"") && falstad.Biscuit.Contains("\"probe\": \"C1\""), falstad.Biscuit);
+        var falstadXml = FalstadImport.Convert("""
+            <cir f="1" ts="0.000005" ic="10.2" cb="50" pb="50" vr="5" mts="5e-11">
+              <R x="208 128 144 128" f="16" wf="6" fr="60" maxv="1"/>
+              <pt x="352 224 384 176" f="5" ma="20000" po="0.5" sl="Resistance" li="1"/>
+              <pt x="352 224 384 288" f="1" ma="20000" po="0.25" sl="Resistance" li="1"/>
+              <c x="528 224 448 224" f="0" c="2.0000000000000002e-7" iv="0.001" sr="0" vd="0.4"/>
+              <s x="240 48 352 48" f="0" p="0" mm="false"/>
+              <t x="400 208 464 208" f="0" pn="-1" vbe="-0.6" vbc="0.6" be="100" mo="default"/>
+              <And x="560 208 672 208" f="0" in="3" hi="5"/>
+              <Spooky x="0 0 16 0" f="0"/>
+              <v x="288 128 208 128" f="16" wf="1" fr="100" maxv="1.4142135623730951"/>
+              <o en="3" sp="64" f="x2" p="0"><p v="1" sc="0.625"/></o>
+            </cir>
+            """);
+        Check("Falstad XML: <cir>, Tags, benannte Attribute, verbundene Potis als Gruppe, unbekanntes Tag mit Warnung, Scope auf Strom",
+            falstadXml.Elements == 9 && falstadXml.Biscuit.Contains("\"timeStep\": \"5us\"")
+            && falstadXml.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [26, 16], \"to\": [18, 16], \"waveform\": \"noise\", \"voltage\": \"1\"}")
+            && falstadXml.Biscuit.Contains("\"resistance\": \"20k\", \"group\": \"link1\"}") && falstadXml.Biscuit.Contains("\"position\": \"250m\", \"group\": \"link1\"}")
+            && falstadXml.Biscuit.Contains("\"capacitance\": \"200n\"")
+            && falstadXml.Biscuit.Contains("\"closed\": \"true\"") && falstadXml.Biscuit.Contains("\"model\": \"pnp\"") && falstadXml.Biscuit.Contains("\"inputs\": \"3\"")
+            && falstadXml.Biscuit.Contains("\"waveform\": \"sine\", \"voltage\": \"1.414214\", \"frequency\": \"100\"")
+            && falstadXml.Warnings.Count == 1 && falstadXml.Warnings[0].Contains("<Spooky>")
+            && falstadXml.Biscuit.Contains("\"probe\": \"C1\", \"quantity\": \"current\""), falstadXml.Biscuit + string.Join(" | ", falstadXml.Warnings));
+        var falstadBad = FalstadImport.Convert("<cir><r x=\"1 2\"");
+        Check("Falstad XML: kaputtes XML gibt eine Warnung statt einer Ausnahme", falstadBad.Elements == 0 && falstadBad.Warnings.Count == 1, string.Join(" | ", falstadBad.Warnings));
+        // ---- inputs and outputs of a circuit, [Colorize] ----
+        var portScript = MarkupFiles.GenerateScript("Div.biscuit", """
+            {"biscuit": 1, "ports": [{"name": "Out", "direction": "output", "pin": "R2.1", "color": "#E03030"}, {"name": "Vin", "pin": "R1.1", "color": "#9040e0"}],
+             "elements": [{"type": "Resistor", "name": "R1", "from": [0, 0], "to": [16, 0]}, {"type": "Resistor", "name": "R2", "from": [16, 0], "to": [16, 8]}]}
+            """);
+        Check("Generator: Ports werden Member mit [Colorize 0xRRGGBB] in ihrer Farbe und zeigen auf den Port der Schaltung",
+            portScript.Contains("[Colorize 0xE03030]\n    Circuits.Port Out") && portScript.Contains("[Colorize 0x9040E0]\n    Circuits.Port Vin")
+            && portScript.Contains("foreach (port in this.ports) { if (port.name == \"Vin\") { this.Vin = port } }"), portScript);
+        CheckLines("Ports: die erzeugte Klasse ist ein Teil einer anderen Schaltung (8 V an Vin, 4 V an Out), falsche Bindungen werden gemeldet, Umbenennen zieht mit", Run(
+            portScript + "\n" +
+            "var d = new Div()\n" +
+            "var top = new Circuits.Circuit(\"top\")\n" +
+            "var v = new Circuits.VoltageSource(8V)\n" +
+            "top.Add(v)\n" +
+            "top.Add(d)\n" +
+            "v.A.Connect(d.Vin)\n" +
+            "v.B.Connect(top.Ground)\n" +
+            "d.R2.B.Connect(top.Ground)\n" +
+            "top.Run(1ms)\n" +
+            "print(Math.Round(d.Out.Voltage / 1V * 10) / 10)\n" +
+            "var s = d.Schematic\n" +
+            "s.AddPortDefinition(\"Bad\", \"input\", \"R9.1\")\n" +
+            "s.AddPortDefinition(\"\", \"output\", \"R1.7\")\n" +
+            "foreach (p in s.PortDefinitions()) { print(p.Name + \" \" + p.Color + \" \" + p.Error) }\n" +
+            "var c = new Circuits.Circuit(\"c\")\n" +
+            "c.LoadSchematic(\"{\\\"ports\\\": [{\\\"name\\\": \\\"In\\\", \\\"pin\\\": \\\"R1.2\\\"}], \\\"elements\\\": [{\\\"type\\\": \\\"Resistor\\\", \\\"name\\\": \\\"R1\\\", \\\"from\\\": [0, 0], \\\"to\\\": [8, 0]}]}\")\n" +
+            "c.Schematic.Rename(c.Schematic.Find(\"R1\"), \"RA\")\n" +
+            "print(c.Schematic.PortDefinitions()[0].Pin + \" \" + c.Schematic.PortDefinitions()[0].Color + \" \" + c.Schematic.PortDefinitions()[0].Error)\n"),
+            new[] { "4", "Out #E03030 ", "Vin #9040e0 ", "Bad #E08020 There is no element 'R9'.", "Out1 #3070E0 'R1' has no pin '7'.", "RA.2 #E03030 " });
+        string portClash = "";
+        try { MarkupFiles.GenerateScript("x.biscuit", """{"ports": [{"name": "R1", "pin": "R1.1"}, {"name": "ports"}, {"name": "A", "direction": "sideways"}], "elements": [{"type": "Resistor", "name": "R1", "from": [0, 0], "to": [8, 0]}]}"""); }
+        catch (MarkupException ex) { portClash = ex.Message; }
+        Check("Generator: Port wie ein Element, wie ein Member der Schaltung, falsche Richtung",
+            portClash.Contains("named like an element") && portClash.Contains("member of Circuits.Circuit") && portClash.Contains("'input' or 'output'"), portClash);
+        var colorSource = "class Amp {\n    [Colorize 0x6010C0]\n    float:V Level\n    /// <summary>x</summary>\n    [Colorize \"#10A0B0\"]\n    undefined Run(int n) { }\n    [Colorize(0x112233)] [Test]\n    int Count = 2\n}\n";
+        var colors = fire.Editor.ColorizeAttributes.Collect(colorSource);
+        Check("Colorize: Member-, Property- und Methodennamen mit Farbe (0x, \"#\", Klammern, weitere Attribute davor/danach)",
+            colors.Count == 3 && colors["Level"] == 0x6010C0 && colors["Run"] == 0x10A0B0 && colors["Count"] == 0x112233, string.Join(",", colors.Select(c => c.Key + "=" + c.Value.ToString("X6"))));
+        var useSource = "var a = new Amp()\nprint(a.Level)\nvar Level = 3\nprint(Level)\n";
+        var spans = fire.Editor.SyntaxHighlighter.Highlight(useSource);
+        fire.Editor.ColorizeAttributes.Apply(spans, useSource, colors, new Dictionary<string, int>());
+        var colored = spans.Where(s => s.Category == fire.Editor.HighlightCategory.Colorized).Select(s => useSource.Substring(s.Start, s.Length) + "@" + s.Start).ToList();
+        Check("Colorize: im Quelltext wird der Member nach '.' eingefaerbt, eine gleichnamige Variable nicht",
+            colored.Count == 1 && colored[0] == "Level@" + (useSource.IndexOf("a.Level", StringComparison.Ordinal) + 2), string.Join(" ", colored));
         var falstad5 = FalstadImport.Convert("""
             $ 1 0.000005 10.2 50 5 50 5e-11
             174 304 416 272 368 1 100000 0.5 Resistance
@@ -277,7 +346,7 @@ static class CircuitEditorTests
             ui.Add(view)
             ui.Update()
             var changes = 0
-            view.onChange = func (v) => { changes = changes + 1 }
+            view.OnChange = func (v) => { changes = changes + 1 }
             class P { static int X(int u) { return 40 + u * 10 } }
             view.BeginPlace("Source")
             ui.MouseDown(1, P.X(0), P.X(12))
@@ -336,8 +405,8 @@ static class CircuitEditorTests
             ui.MouseUp(1, P.X(4), P.X(0))
             ui.Update()
             var ed = ui.popups[0]!UI.CircuitElementEditor
-            ed.fields[0].text = "4.7k"
-            ed.nameBox.text = "Rload"
+            ed.fields[0].Text = "4.7k"
+            ed.nameBox.Text = "Rload"
             ed.Accept()
             ui.Update()
             print("editor " + ui.popups.count + " " + s.Find("Rload").Get("resistance") + " " + s.Find("Rload").part!Circuits.Resistor.Resistance)
@@ -371,7 +440,7 @@ static class CircuitEditorTests
                 ui.Scaling = 1.0
                 var clicks = 0
                 var b = new UI.Button("Hi", 10, 10)
-                b.onClick = func () => { clicks = clicks + 1 }
+                b.OnClick = func () => { clicks = clicks + 1 }
                 ui.Add(b)
                 while (ui.Tick()) {
                     var cmd = __HostCommand()

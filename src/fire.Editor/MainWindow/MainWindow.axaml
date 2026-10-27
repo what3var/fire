@@ -65,6 +65,7 @@
 							</MenuItem.Icon>
 						</MenuItem>
 						<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
+						<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
 					</MenuItem>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
@@ -246,6 +247,7 @@
 										<MenuItem.Icon><Image Source="/Assets/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
 									</MenuItem>
 									<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
+									<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
 									<Separator/>
 									<MenuItem Header="_Project..." Click="NewProject_Click"/>
 									<MenuItem Header="_Solution..." Click="NewSolution_Click"/>

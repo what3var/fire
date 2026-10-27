@@ -191,6 +191,13 @@ namespace fire.Editor
         // the catalog of the package: category, type, properties (name, kind, default)
         private readonly List<(string Category, string Type, string Properties)> _catalog = new();
         private readonly Dictionary<string, List<string>> _models = new(StringComparer.OrdinalIgnoreCase);
+        // the circuit itself as the view reported it (@circuit): class, namespace, time step and the parts that can be operated (index|kind|name|value|range)
+        private string[] _circuit = { "", "", "10us" };
+        private readonly List<string[]> _positions = new();
+        // the inputs and outputs of the circuit (@ports): index|name|direction|pin|color|error; the pins they can be bound to (@pins)
+        private readonly List<string[]> _ports = new();
+        private readonly List<string> _pins = new();
+        public event Action? PortsChanged;
         // the selected element as the view reported it
         private int _selectedIndex = -1;
         private string _selectedType = "";
@@ -220,7 +227,7 @@ namespace fire.Editor
             ToolTip.SetTip(_speed, "Time steps of the circuit per picture (the speed of the simulation)");
             _speed.SelectionChanged += (_, _) => { if (_speed.SelectedItem is string s) Send("steps\t" + s.Split(' ')[0]); };
 
-            var import = Tool("Import Falstad...", "A circuit of Paul Falstad's simulator (File > Export As Text) from a file or from the clipboard", () => { });
+            var import = Tool("Import Falstad...", "A circuit of Paul Falstad's simulator (its XML file, or the text of File > Export As Text) from a file or from the clipboard", () => { });
             var importMenu = new ContextMenu();
             var fromFile = new MenuItem { Header = "From file..." };
             fromFile.Click += async (_, _) => await ImportFromFile();
@@ -251,6 +258,7 @@ namespace fire.Editor
                 Tool("Rotate", "Turn the selection by 90 degrees (R)", () => Send("rotate")), Tool("Flip", "Mirror the selection (F)", () => Send("flip")),
                 Tool("Duplicate", "Copy the selection (Ctrl+D)", () => Send("duplicate")), Tool("Delete", "Remove the selection (Del)", () => Send("delete")), Separator(),
                 Tool("Wire", "Draw wires (or drag from a pin; W)", () => Send("place\tWire")), Tool("Fit", "Show the whole schematic", () => Send("fit")), Separator(),
+                Tool("Circuit...", "The name of the generated class, the time step of the simulation, the ports of the circuit and the parts bound to devices", () => _ = ShowCircuitDialog()),
                 import, samples, _status,
             }) bar.Children.Add(c);
 
@@ -311,6 +319,22 @@ namespace fire.Editor
                     return text
                 }
 
+                // the circuit itself: class, namespace, time step, then a field for each part that can be operated (UI.CircuitView.Positions)
+                static string Circuit(UI.CircuitView view) {
+                    var text = "@circuit\t" + view.CircuitProperty("class") + "\t" + view.CircuitProperty("namespace") + "\t" + view.CircuitProperty("timeStep")
+                    foreach (line in view.Positions()) { text = text + "\t" + line }
+                    return text
+                }
+
+                // the inputs and outputs of the circuit (index|name|direction|pin|color|error), then the pins they can be bound to
+                static string Ports(UI.CircuitView view) {
+                    var text = "@ports"
+                    foreach (line in view.PortLines()) { text = text + "\t" + line }
+                    text = text + "\n@pins"
+                    foreach (pin in view.PinNames()) { text = text + "\t" + pin }
+                    return text
+                }
+
                 static string State(UI.CircuitView view) {
                     return "@state\t" + view.running + "\t" + view.CanUndo + "\t" + view.CanRedo
                 }
@@ -344,6 +368,14 @@ namespace fire.Editor
                         var e = SparkHost.At(view, p[1])
                         if (e != undefined) { view.SetProperty(e, p[2], command.Substring(p[0].Length + p[1].Length + p[2].Length + 3)) }
                     }
+                    else if (c == "circuit") {
+                        if (!view.SetCircuitProperty(p[1], command.Substring(p[0].Length + p[1].Length + 2))) { print("@circuiterror\t" + p[1]) }
+                        print(SparkHost.Circuit(view))
+                    }
+                    else if (c == "operate") { view.Operate(p[1].ToInt(), p[2]) }
+                    else if (c == "addport") { view.AddPort(p[1]) }
+                    else if (c == "setport") { view.SetPort(p[1].ToInt(), p[2], command.Substring(p[0].Length + p[1].Length + p[2].Length + 3)) }
+                    else if (c == "removeport") { view.RemovePort(p[1].ToInt()) }
                     else if (c == "rename") {
                         var e = SparkHost.At(view, p[1])
                         if (e != undefined) { view.RenameElement(e, p[2]) }
@@ -367,6 +399,8 @@ namespace fire.Editor
             try { circuit.LoadSchematic({{BiscuitGenerator.Quote(biscuit)}}) } catch (Exception ex) { print("@error\t" + ex.message) }
             view.OnChange = func (v) => {
                 print("@text\t" + circuit.Schematic.ToText())
+                print(SparkHost.Circuit(view))
+                print(SparkHost.Ports(view))
                 print(SparkHost.Selected(view))
                 print(SparkHost.State(view))
             }
@@ -375,6 +409,8 @@ namespace fire.Editor
             print("@catalog\t" + "\n".Join(Circuits.Symbols.Catalog()))
             foreach (kind in ["D", "NPN", "PNP", "NMOS", "PMOS", "OPAMP", "FORMULA"]) { print("@models\t" + kind + "\t" + ",".Join(Circuits.Models.Names(kind))) }
             print("@text\t" + circuit.Schematic.ToText())
+            print(SparkHost.Circuit(view))
+            print(SparkHost.Ports(view))
             ui.Update()
             view.FitToView()
             print(SparkHost.State(view))
@@ -479,6 +515,30 @@ namespace fire.Editor
                     break;
                 case "@select":
                     ShowProperties(rest == "" ? new List<string>() : rest.Split('\t').ToList());
+                    break;
+                case "@circuit":
+                {
+                    var p = rest.Split('\t');
+                    if (p.Length >= 3)
+                    {
+                        _circuit = new[] { p[0], p[1], p[2] };
+                        _positions.Clear();
+                        foreach (var item in p.Skip(3)) { var f = item.Split('|'); if (f.Length >= 5) _positions.Add(f); }
+                        if (_selectedIndex < 0) ShowProperties(new List<string>());
+                    }
+                    break;
+                }
+                case "@ports":
+                    _ports.Clear();
+                    foreach (var item in rest.Split('\t', StringSplitOptions.RemoveEmptyEntries)) { var f = item.Split('|'); if (f.Length >= 6) _ports.Add(f); }
+                    break;
+                case "@pins":
+                    _pins.Clear();
+                    _pins.AddRange(rest.Split('\t', StringSplitOptions.RemoveEmptyEntries));
+                    PortsChanged?.Invoke();
+                    break;
+                case "@circuiterror":
+                    _status.Text = rest == "timeStep" ? "The time step must be a time like 10us (more than 0, at most 1s)." : "That value is not valid.";
                     break;
                 case "@state":
                 {
@@ -591,7 +651,7 @@ namespace fire.Editor
             {
                 _selectedIndex = -1;
                 _selectedType = "";
-                Properties = new PropertySet { Title = "Nothing selected", Hint = "Select an element in the schematic to see its properties.\n\n" + Hint };
+                Properties = CircuitProperties();
                 PropertiesChanged?.Invoke(false);
                 return;
             }
@@ -636,6 +696,63 @@ namespace fire.Editor
             PropertiesChanged?.Invoke(false);
         }
 
+        /// <summary>Nothing selected: the circuit itself - its class and time step, and a control for each potentiometer (group), switch, push button,
+        /// selector switch and logic input.</summary>
+        private PropertySet CircuitProperties()
+        {
+            var entries = new List<PropertyEntry>
+            {
+                new("class", PropertyEditKind.Text, _circuit[0]) { Category = "Circuit", IsSet = _circuit[0] != "", CanClear = true,
+                    Tip = "The name of the class generated from the file (empty: the name of the file)" },
+                new("namespace", PropertyEditKind.Text, _circuit[1]) { Category = "Circuit", IsSet = _circuit[1] != "", CanClear = true,
+                    Tip = "The namespace of the generated class (empty: none)" },
+                new("timeStep", PropertyEditKind.Text, _circuit[2]) { Category = "Circuit",
+                    Tip = "The time step of the simulation, like 10us: smaller is more exact and slower (a step that does not converge is halved by itself)" },
+            };
+            var targets = new Dictionary<string, (string Index, string Kind)>();
+            foreach (var p in _positions)
+            {
+                string name = p[2] != "" ? p[2] : "#" + p[0];
+                if (targets.ContainsKey(name)) name += " (" + p[0] + ")";
+                targets[name] = (p[0], p[1]);
+                entries.Add(p[1] switch
+                {
+                    "slider" => new PropertyEntry(name, PropertyEditKind.Slider, p[3]) { Category = "Positions", Tip = "The position of the potentiometer (or of its group), 0 .. 1" },
+                    "button" => new PropertyEntry(name, PropertyEditKind.Momentary, p[3]) { Category = "Positions", Tip = "A push button: closed while it is held" },
+                    "choice" => new PropertyEntry(name, PropertyEditKind.Choice, p[3])
+                    {
+                        Category = "Positions", Tip = "The throw the selector switch is at",
+                        Choices = Enumerable.Range(0, int.TryParse(p[4], out int n) && n > 0 ? n : 2).Select(i => i.ToString(CultureInfo.InvariantCulture)).ToList(),
+                    },
+                    _ => new PropertyEntry(name, PropertyEditKind.Bool, p[3]) { Category = "Positions", Tip = p[1] == "logic" ? "The logic input high (on) or low" : "The switch closed (on) or open" },
+                });
+            }
+            return new PropertySet
+            {
+                Title = "Circuit",
+                Hint = Hint,
+                Entries = entries,
+                Set = (key, value) =>
+                {
+                    if (key is "class" or "namespace" or "timeStep") Send($"circuit\t{key}\t{value}");
+                    else if (targets.TryGetValue(key, out var target)) Send($"operate\t{target.Index}\t{value}");
+                },
+            };
+        }
+
+        /// <summary>The dialog of the circuit: class, namespace and time step, the ports (Pin elements) and the parts bound to devices.</summary>
+        private async Task ShowCircuitDialog()
+        {
+            var owner = Dialogs.WindowOf(this);
+            if (owner == null) return;
+            var dialog = new CircuitDialog(_circuit, _ports, _pins, (key, value) => Send($"circuit\t{key}\t{value}"),
+                (index, key, value) => Send($"setport\t{index}\t{key}\t{value}"), direction => Send($"addport\t{direction}"), index => Send($"removeport\t{index}"));
+            void Update() => dialog.Refresh(_circuit, _ports, _pins);
+            PortsChanged += Update;
+            try { await dialog.ShowDialog(owner); }
+            finally { PortsChanged -= Update; }
+        }
+
         private PropertyEntry Entry(string key, string kind, string value)
         {
             if (kind == "bool") return new PropertyEntry(key, PropertyEditKind.Bool, value);
@@ -663,7 +780,7 @@ namespace fire.Editor
             {
                 Title = "Import a circuit of Falstad's simulator",
                 AllowMultiple = false,
-                FileTypeFilter = new[] { new FilePickerFileType("Falstad circuit") { Patterns = new[] { "*.txt", "*.circuitjs.txt", "*" } } },
+                FileTypeFilter = new[] { new FilePickerFileType("Falstad circuit") { Patterns = new[] { "*.txt", "*.xml", "*.circuitjs.txt", "*" } } },
             });
             if (files.Count == 0) return;
             string? path = files[0].TryGetLocalPath();
@@ -676,14 +793,14 @@ namespace fire.Editor
             var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
             if (clipboard == null) return;
             string? text = await clipboard.TryGetTextAsync();
-            if (string.IsNullOrWhiteSpace(text)) { await Dialogs.Message(Dialogs.WindowOf(this), "The clipboard holds no text. In Falstad's simulator: File > Export As Text, then copy the text.", "Import"); return; }
+            if (string.IsNullOrWhiteSpace(text)) { await Dialogs.Message(Dialogs.WindowOf(this), "The clipboard holds no text. Copy the XML of a saved circuit of Falstad's simulator, or its File > Export As Text.", "Import"); return; }
             await Import(text);
         }
 
         private async Task Import(string falstad)
         {
             var result = FalstadImport.Convert(falstad);
-            if (result.Elements == 0) { await Dialogs.Message(Dialogs.WindowOf(this), "The text holds no circuit of Falstad's simulator.", "Import"); return; }
+            if (result.Elements == 0) { await Dialogs.Message(Dialogs.WindowOf(this), result.Warnings.Count > 0 ? "No circuit of Falstad's simulator: " + result.Warnings[0] : "The text holds no circuit of Falstad's simulator.", "Import"); return; }
             if (!await ConfirmReplace("Import")) return;
             Send("load\t" + result.Biscuit);
             Send("fit");

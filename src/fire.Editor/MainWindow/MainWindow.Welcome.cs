@@ -36,6 +36,7 @@ namespace fire.Editor
                 case WelcomeAction.OpenWorkspace: OpenWorkspace_Click(this, new RoutedEventArgs()); break;
                 case WelcomeAction.OpenFile: Open_Click(this, new RoutedEventArgs()); break;
                 case WelcomeAction.NewScript: New_Click(this, new RoutedEventArgs()); break;
+                case WelcomeAction.NewCircuit: NewCircuit_Click(this, new RoutedEventArgs()); break;
                 case WelcomeAction.FirstSteps: HelpFirstSteps_Click(this, new RoutedEventArgs()); break;
                 case WelcomeAction.OpenRecent: await OpenRecent(dialog.Path!); break;
             }

@@ -4072,6 +4072,22 @@ namespace Circuits {
         /// <summary>The samples of a channel (volts or amperes).</summary>
         float[] Samples(string name) { return __CirRecSamples(this.recorder, this.ChannelOf(name)) }
 
+        /// <summary>The trace of a channel over `columns` columns (with `times` another channel, multiplied in: v * i is the power). `span` 0: the last
+        /// `columns` samples; else that many seconds - with `trigger` 1 (rising) or 2 (falling) through `level` from the latest crossing that leaves room for
+        /// the window, otherwise up to now. Result: [first column with data, value of column 0, ..., of column columns-1].</summary>
+        float[] Trace(string name, int columns, float span : any = 0, int trigger = 0, float level = 0.0, string times = "") {
+            var x = -1
+            if (times != "") { x = this.ChannelOf(times) }
+            return __CirRecTrace(this.recorder, this.ChannelOf(name), x, Circuits.Units.Seconds(span), columns, trigger, level)
+        }
+
+        /// <summary>The last `count` pairs of two channels for an XY display: [x0, y0, x1, y1, ...].</summary>
+        float[] Pairs(string x, string y, int count = 2000) { return __CirRecPairs(this.recorder, this.ChannelOf(x), this.ChannelOf(y), count) }
+
+        /// <summary>The spectrum of a channel for an FFT analyzer: `size` samples (a power of two, 16 .. 8192) at the rate 2 * fmax (fmax 0: the rate of the
+        /// simulation), Hann window. Result: [bin width in Hz, amplitude of bin 1, ..., of bin size/2]; empty while there are too few samples.</summary>
+        float[] Spectrum(string name, int size = 512, float fmax : any = 20000.0) { return __CirRecSpectrum(this.recorder, this.ChannelOf(name), size, Circuits.Units.Hertz(fmax)) }
+
         /// <summary>The last sample of a channel.</summary>
         float Last(string name) { return __CirRecLast(this.recorder, this.ChannelOf(name)) }
 

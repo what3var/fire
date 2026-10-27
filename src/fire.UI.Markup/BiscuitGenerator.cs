@@ -20,12 +20,16 @@ namespace fire.UI.Markup
     /// <summary>One element of a `.biscuit` file as the generator sees it.</summary>
     public sealed record BiscuitElement(string Type, string Name, int Line);
 
+    /// <summary>An input or output of a `.biscuit` file: a port of the circuit bound to a pin, in a color ("#RRGGBB").</summary>
+    public sealed record BiscuitPort(string Name, string Direction, string Pin, string Color, int Line);
+
     /// <summary>A `.biscuit` file read by the generator: the class it makes and its elements.</summary>
     public sealed class BiscuitDocument
     {
         public string ClassName { get; init; } = "";
         public string Namespace { get; init; } = "";
         public IReadOnlyList<BiscuitElement> Elements { get; init; } = Array.Empty<BiscuitElement>();
+        public IReadOnlyList<BiscuitPort> Ports { get; init; } = Array.Empty<BiscuitPort>();
         /// <summary>The text of the file without line breaks and indentation (it goes into the generated class).</summary>
         public string Compact { get; init; } = "";
     }
@@ -125,9 +129,33 @@ namespace fire.UI.Markup
                         }
                     }
                 }
+                // the inputs and outputs: a member each (named like no element and no member of Circuits.Circuit)
+                var ports = new List<BiscuitPort>();
+                if (root.TryGetProperty("ports", out var plist))
+                {
+                    int at = text.IndexOf("\"ports\"", StringComparison.Ordinal);
+                    int line = LineOf(lines, at);
+                    if (plist.ValueKind != JsonValueKind.Array) errors.Add(new MarkupDiagnostic(line, "'ports' is a list."));
+                    else
+                    {
+                        foreach (var p in plist.EnumerateArray())
+                        {
+                            if (p.ValueKind != JsonValueKind.Object) { errors.Add(new MarkupDiagnostic(line, "A port is a JSON object.")); continue; }
+                            string Str(string key) => p.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+                            string name = Str("name"), direction = Str("direction"), pin = Str("pin"), color = Str("color");
+                            if (direction == "") direction = "input";
+                            if (!IsIdentifier(name)) errors.Add(new MarkupDiagnostic(line, $"'{name}' is no name for a port (letters, digits and '_', not a keyword)."));
+                            else if (Reserved.Contains(name)) errors.Add(new MarkupDiagnostic(line, $"'{name}' is a member of Circuits.Circuit: choose another name for the port."));
+                            else if (name == className) errors.Add(new MarkupDiagnostic(line, $"'{name}' is the name of the class."));
+                            else if (!names.Add(name)) errors.Add(new MarkupDiagnostic(line, $"The port '{name}' is named like an element or another port."));
+                            if (direction is not ("input" or "output")) errors.Add(new MarkupDiagnostic(line, $"The port '{name}': the direction is 'input' or 'output'."));
+                            ports.Add(new BiscuitPort(name, direction, pin, color, line));
+                        }
+                    }
+                }
                 if (errors.Count > 0) throw new MarkupException(errors);
                 string compact = JsonSerializer.Serialize(root, new JsonSerializerOptions { WriteIndented = false, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-                return new BiscuitDocument { ClassName = className, Namespace = ns, Elements = elements, Compact = compact };
+                return new BiscuitDocument { ClassName = className, Namespace = ns, Elements = elements, Ports = ports, Compact = compact };
             }
         }
 
@@ -150,6 +178,15 @@ namespace fire.UI.Markup
             var named = d.Elements.Where(e => e.Name != "").ToList();
             foreach (var e in named) sb.Append(indent).Append("    ").Append(FieldTypes[e.Type]).Append(' ').Append(e.Name).Append('\n');
             if (named.Count > 0) sb.Append('\n');
+            // the inputs and outputs: a port each, in the color of the drawing (Colorize is read by the editor only)
+            foreach (var p in d.Ports)
+            {
+                sb.Append(indent).Append("    /// <summary>The ").Append(p.Direction).Append(" ").Append(p.Name).Append(" of the circuit")
+                  .Append(p.Pin == "" ? " (bound to no pin)" : ", bound to " + p.Pin).Append(".</summary>\n");
+                if (ColorNumber(p.Color) is { } rgb) sb.Append(indent).Append("    [Colorize 0x").Append(rgb).Append("]\n");
+                sb.Append(indent).Append("    Circuits.Port ").Append(p.Name).Append('\n');
+            }
+            if (d.Ports.Count > 0) sb.Append('\n');
             sb.Append(indent).Append("    construct() : base(").Append(Quote(d.ClassName)).Append(") {\n");
             sb.Append(indent).Append("        this.LoadSchematic(").Append(Quote(d.Compact)).Append(")\n");
             sb.Append(indent).Append("    }\n");
@@ -157,6 +194,12 @@ namespace fire.UI.Markup
             sb.Append(indent).Append("    /// <summary>The schematic made its parts (again): the fields point at them.</summary>\n");
             sb.Append(indent).Append("    undefined OnBuilt() {\n");
             if (named.Count > 0) sb.Append(indent).Append("        var s = this.Schematic\n");
+            foreach (var p in d.Ports)
+            {
+                // the port of the circuit is there once the schematic bound it to its pin
+                sb.Append(indent).Append("        this.").Append(p.Name).Append(" = undefined\n");
+                sb.Append(indent).Append("        foreach (port in this.ports) { if (port.name == ").Append(Quote(p.Name)).Append(") { this.").Append(p.Name).Append(" = port } }\n");
+            }
             foreach (var e in named)
             {
                 string type = FieldTypes[e.Type];
@@ -174,6 +217,15 @@ namespace fire.UI.Markup
             sb.Append(indent).Append("}\n");
             if (d.Namespace != "") sb.Append("}\n");
             return sb.ToString();
+        }
+
+        /// <summary>"#RRGGBB" as the six hex digits (upper case), null if it is no color.</summary>
+        public static string? ColorNumber(string color)
+        {
+            var t = color.Trim();
+            if (t.StartsWith('#')) t = t[1..];
+            else if (t.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) t = t[2..];
+            return t.Length == 6 && t.All(Uri.IsHexDigit) ? t.ToUpperInvariant() : null;
         }
 
         /// <summary>A text as a fire string literal.</summary>

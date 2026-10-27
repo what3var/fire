@@ -12,11 +12,11 @@ using fire.Projects;
 namespace fire.Editor
 {
     /// <summary>What the user picked in the <see cref="WelcomeWindow"/>.</summary>
-    internal enum WelcomeAction { None, NewSolution, NewProject, OpenWorkspace, OpenFile, NewScript, OpenRecent, FirstSteps }
+    internal enum WelcomeAction { None, NewSolution, NewProject, OpenWorkspace, OpenFile, NewScript, NewCircuit, OpenRecent, FirstSteps }
 
     /// <summary>
-    /// The start window: the projects and solutions that were opened last (a click opens one; the cross takes it out of the list) on the left, on the right what to do: make a new solution or
-    /// project, open one, open a file, a new script, the first steps. The result is in <see cref="Action"/> (and <see cref="Path"/> for a recent one); <see cref="ShowAtStartup"/> is the check box.
+    /// The start window: the projects and solutions that were opened last (a click opens one; the cross takes it out of the list) on the left, on the right what to do: make a new solution,
+    /// open a project or solution, open a file, a new script or circuit, the first steps. The result is in <see cref="Action"/> (and <see cref="Path"/> for a recent one); <see cref="ShowAtStartup"/> is the check box.
     /// </summary>
     internal sealed class WelcomeWindow : Window
     {
@@ -52,10 +52,10 @@ namespace fire.Editor
             var right = new StackPanel { Spacing = 6 };
             right.Children.Add(new TextBlock { Text = "Get started", FontSize = 20, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 10) });
             right.Children.Add(Card("solution", "Create a new solution", "A solution with a project made from a template", WelcomeAction.NewSolution));
-            right.Children.Add(Card("project", "Create a new project", "Added to the open solution, or on its own", WelcomeAction.NewProject));
             right.Children.Add(Card("open", "Open a project or solution", "Browse for a .fireproj or .firesln", WelcomeAction.OpenWorkspace));
             right.Children.Add(Card("file", "Open a file", "A script, Markdown, a picture - any file", WelcomeAction.OpenFile));
             right.Children.Add(Card("script", "New script", "Start with an empty file", WelcomeAction.NewScript));
+            right.Children.Add(Card("circuit", "New circuit", "Draw a schematic and simulate it live", WelcomeAction.NewCircuit));
             right.Children.Add(Card("help", "First steps", "A short tour of the editor and the language", WelcomeAction.FirstSteps));
 
             var columns = new Grid { ColumnDefinitions = new ColumnDefinitions("*,360") };
