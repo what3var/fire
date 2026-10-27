@@ -247,6 +247,11 @@
         "cpp": "circuits::GateState"
       },
       {
+        "name": "__CirAddTube",
+        "arguments": 7,
+        "cpp": "circuits::AddTube"
+      },
+      {
         "name": "__CirAddFormula",
         "arguments": 7,
         "cpp": "circuits::AddFormula"

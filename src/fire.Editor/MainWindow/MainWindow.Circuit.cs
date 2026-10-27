@@ -29,6 +29,7 @@ namespace fire.Editor
         private readonly HashSet<CircuitEditorControl> _hookedCircuits = new();
         private DispatcherTimer? _editStripTimer;
         private bool _fillingSteps;
+        private bool _toolboxSynced;
         private IImage? _pauseIcon, _playIcon;
 
         private CircuitEditorControl? ActiveCircuit => ActiveDocument?.View as CircuitEditorControl;
@@ -36,6 +37,10 @@ namespace fire.Editor
         private void InitCircuitUi()
         {
             _fillingSteps = true;
+            // first the real time (Tag 0), then the steps per picture
+            var realTime = new ComboBoxItem { Content = "Real time", Tag = 0 };
+            ToolTip.SetTip(realTime, "The simulation keeps pace with the clock (never faster); it takes a coarser time step when the computer cannot keep up. The view shows how much of real time it manages.");
+            cmbSimSteps.Items.Add(realTime);
             foreach (int n in CircuitEditorControl.StepChoices)
                 cmbSimSteps.Items.Add(new ComboBoxItem { Content = (n >= 1000 ? (n / 1000).ToString(CultureInfo.InvariantCulture) + "k" : n.ToString(CultureInfo.InvariantCulture)) + " steps", Tag = n });
             _fillingSteps = false;
@@ -83,7 +88,8 @@ namespace fire.Editor
                 var icon = circuit.Running ? _pauseIcon : _playIcon;
                 if (!ReferenceEquals(tbSimPause.IconSource, icon)) tbSimPause.IconSource = icon;
                 ToolTip.SetTip(tbSimPause, circuit.Running ? "Pause the simulation (Space in the view)" : "Run the simulation (Space in the view)");
-                if (cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int shown } || shown != circuit.StepsPerFrame) SelectSteps(circuit.StepsPerFrame);
+                int wanted = circuit.RealTime ? 0 : circuit.StepsPerFrame;
+                if (cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int shown } || shown != wanted) SelectSteps(wanted);
             }
         }
 
@@ -104,14 +110,17 @@ namespace fire.Editor
                 circuit.StatusChanged += text => { if (ReferenceEquals(ActiveCircuit, circuit) && text != "") UpdateStatus(text); };
                 circuit.StateChanged += () => { if (ReferenceEquals(ActiveCircuit, circuit)) UpdateEditStrip(); };
             }
+            // the toolbox follows the active document only when that changes: closed while a circuit is active, it stays closed (View > Toolbox brings it back)
+            bool changed = !ReferenceEquals(_shownCircuit, circuit) || !_toolboxSynced;
             if (!ReferenceEquals(_shownCircuit, circuit))
             {
                 _shownCircuit = circuit;
                 if (circuit != null) _toolboxPanel.Content = circuit.Toolbox;
                 if (circuit != null && circuit.StatusText != "") UpdateStatus(circuit.StatusText);
             }
-            if (_tools.TryGetValue("toolbox", out var tool))
+            if (changed && _tools.TryGetValue("toolbox", out var tool))
             {
+                _toolboxSynced = true;
                 try
                 {
                     if (circuit != null && !IsToolVisible(tool)) _factory.RestoreDockable(tool);
@@ -159,7 +168,12 @@ namespace fire.Editor
         private void cmbSimSteps_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
             if (_fillingSteps || cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int steps } || ActiveCircuit is not { } c) return;
-            c.StepsPerFrame = steps;
+            if (steps == 0) c.RealTime = true;
+            else
+            {
+                c.RealTime = false;
+                c.StepsPerFrame = steps;
+            }
             c.FocusEditor();
         }
     }

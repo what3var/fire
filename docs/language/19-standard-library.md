@@ -44,6 +44,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events; `WindowManager` cycles windows (`window.Show()` goes on - a manager nobody runs gets a thread of its own; `window.Show(true)` is modal; `window.Run()` is the start of the program, on this thread) |
 | `"ui"` | the UI library (controls, layout, styles, data binding, `.fxml` markup) |
 | `"audio"` | sound output |
+| `"usb"` | USB devices (libusb, WinUSB): control, bulk and interrupt transfers, bulk endpoints as a stream |
 | `"tracker"` | a MOD music player |
 | `"scene3d"` | 3D scenes |
 
@@ -122,7 +123,7 @@ Streams are closed by their destructor when their owner ends (see [Ownership](13
 ## More documentation
 
 The libraries for graphics, UI, network, devices, sound and 3D have their own documents in the `docs` folder of the repository (`UI.md`,
-`UI_MARKUP.md`, `NETWORK.md`, `AUDIO.md`, `SCENE3D.md`, `TRACKER.md`, `FONTS.md`, `RESOURCES.md`). The editor completes the members of every
+`UI_MARKUP.md`, `NETWORK.md`, `AUDIO.md`, `USB.md`, `SCENE3D.md`, `TRACKER.md`, `FONTS.md`, `RESOURCES.md`). The editor completes the members of every
 imported library while you type and shows their documentation comments.
 
 ## Exercises

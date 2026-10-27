@@ -183,6 +183,7 @@ namespace fire.Editor
         private string _statusText = "";
         private bool _running = true;
         private int _stepsPerFrame = 20;
+        private bool _realTime;
         private string _findText = "";
         private readonly List<ToggleButton> _placeButtons = new();
         private ToggleButton? _pointerButton;
@@ -253,6 +254,14 @@ namespace fire.Editor
         {
             get => _stepsPerFrame;
             set { if (_stepsPerFrame == value || value < 1) return; _stepsPerFrame = value; Send("steps	" + value.ToString(CultureInfo.InvariantCulture)); StateChanged?.Invoke(); }
+        }
+
+        /// <summary>Real time instead of the steps per picture: the simulation keeps pace with the clock (never faster) and takes a coarser time step when the
+        /// computer cannot keep up; the view shows how much of real time it manages.</summary>
+        public bool RealTime
+        {
+            get => _realTime;
+            set { if (_realTime == value) return; _realTime = value; Send("realtime\t" + (value ? "1" : "0")); StateChanged?.Invoke(); }
         }
 
         /// <summary>The steps per picture offered by the tool strip (up to 10k).</summary>
@@ -349,7 +358,7 @@ namespace fire.Editor
                 }
 
                 static string State(UI.CircuitView view) {
-                    return "@state\t" + view.running + "\t" + view.CanUndo + "\t" + view.CanRedo
+                    return "@state\t" + view.running + "\t" + view.CanUndo + "\t" + view.CanRedo + "\t" + view.realTime
                 }
 
                 static Circuits.Element At(UI.CircuitView view, string index) {
@@ -385,6 +394,7 @@ namespace fire.Editor
                     else if (c == "run") { view.running = p[1] == "1" }
                     else if (c == "reset") { circuit.Reset() }
                     else if (c == "steps") { view.stepsPerFrame = p[1].ToInt() }
+                    else if (c == "realtime") { view.realTime = p[1] == "1" }
                     else if (c == "load") { view.LoadText(command.Substring(5)) }
                     else if (c == "select") { view.Select(SparkHost.At(view, p[1]), false) }
                     else if (c == "set") {
@@ -432,7 +442,7 @@ namespace fire.Editor
             view.OnSelect = func (v) => { print(SparkHost.Selected(view)) }
             view.OnEdit = func (e) => { print("@edit") }
             print("@catalog\t" + "\n".Join(Circuits.Symbols.Catalog()))
-            foreach (kind in ["D", "NPN", "PNP", "NMOS", "PMOS", "OPAMP", "FORMULA"]) { print("@models\t" + kind + "\t" + ",".Join(Circuits.Models.Names(kind))) }
+            foreach (kind in ["D", "NPN", "PNP", "NMOS", "PMOS", "OPAMP", "FORMULA", "VDIODE", "TRIODE", "PENTODE"]) { print("@models\t" + kind + "\t" + ",".Join(Circuits.Models.Names(kind))) }
             print("@text\t" + circuit.Schematic.ToText())
             print(SparkHost.Circuit(view))
             print(SparkHost.Ports(view))
@@ -575,6 +585,7 @@ namespace fire.Editor
                         _running = p[0] == "True";
                         _canUndo = p[1] == "True";
                         _canRedo = p[2] == "True";
+                        if (p.Length >= 4) _realTime = p[3] == "True";
                         StateChanged?.Invoke();
                     }
                     break;

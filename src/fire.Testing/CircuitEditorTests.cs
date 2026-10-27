@@ -234,7 +234,7 @@ static class CircuitEditorTests
             && falstad7.Biscuit.Contains("\"type\": \"Diac\", \"from\": [158, 54], \"to\": [166, 54], \"onResistance\": \"500\"")
             && falstad7.Biscuit.Contains("{\"type\": \"Jfet\", \"from\": [30, 22], \"to\": [34, 22], \"pChannel\": \"true\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"Darlington\", \"from\": [74, 62], \"to\": [82, 62], \"model\": \"pnp\"}")
-            && falstad7.Biscuit.Contains("{\"type\": \"Triode\", \"from\": [38, 30], \"to\": [46, 30]}")
+            && falstad7.Biscuit.Contains("{\"type\": \"Triode\", \"from\": [38, 30], \"to\": [46, 30], \"model\": \"falstad\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"Varactor\", \"from\": [70, 32], \"to\": [70, 44], \"capacitance\": \"10p\"}")
             && falstad7.Biscuit.Contains("{\"type\": \"TunnelDiode\", \"from\": [40, 26], \"to\": [40, 36]}")
             && falstad7.Biscuit.Contains("{\"type\": \"CurrentConveyor\", \"from\": [34, 28], \"to\": [46, 28], \"gain\": \"-1\", \"spacing\": \"4\"}")
@@ -422,6 +422,73 @@ static class CircuitEditorTests
             "changes 5 led True 3 mA", "moved 4 led False", "ctrl+z 0 led True", "r rotates 0,0 0,8", "del 4", "switch True true",
             "editor 0 4.7k 4700Ohm", "read-only: 6 elements, switch False",
         });
+
+        // ---- vacuum tubes: Koren's models against their data sheets, a schematic with them, parameters of its own ----
+        CheckLines("Roehren: 12AX7-Stufe, EL34 und 5Y3 im Arbeitspunkt, eigene Parameter, Modelle der Bibliothek", Run("""
+            #import "circuits"
+            var c = new Circuits.Circuit("stage")
+            var s = c.Schematic
+            s.Add("Source", 0, 40, 0, 0, "voltage=250V", "B")
+            s.Add("Resistor", 0, 0, 20, 0, "resistance=100k", "Ra")
+            s.Add("Triode", 12, 12, 20, 12, "model=12AX7", "V1")
+            s.Add("Wire", 20, 0, 20, 8)
+            s.Add("Resistor", 18, 16, 18, 40, "resistance=1.5k", "Rk")
+            s.Add("Resistor", 12, 12, 12, 40, "resistance=1M", "Rg")
+            s.Add("Wire", 0, 40, 12, 40)
+            s.Add("Wire", 12, 40, 18, 40)
+            s.Add("Ground", 0, 40, 0, 44)
+            c.Run(5ms)
+            var v1 = s.Find("V1")
+            print("12AX7 " + Math.Round(v1.PinVoltage(0)) + " V, " + Math.Round(v1.PinVoltage(2) * 10) / 10 + " V")
+            s.Set(v1, "parameters", "kg1=2120")
+            c.Run(5ms)
+            print("kg1 doubled " + Math.Round(v1.PinVoltage(0)) + " V")
+            s.Set(v1, "parameters", "kg1=-1")
+            print(v1.Error)
+            var p = new Circuits.Circuit("p")
+            var vb = p.Add(new Circuits.VoltageSource(250V))
+            var vg = p.Add(new Circuits.VoltageSource(-13.5V))
+            var e = p.Add(new Circuits.Pentode("EL34"))
+            vb.A.Connect(e.Plate)
+            vb.A.Connect(e.Screen)
+            vg.A.Connect(e.Grid)
+            e.Cathode.Connect(p.Ground)
+            vb.B.Connect(p.Ground)
+            vg.B.Connect(p.Ground)
+            p.Step()
+            print("EL34 " + Math.Round(e.PlateCurrent / 1mA) + " mA")
+            print(",".Join(Circuits.Models.Names("TRIODE")) + " | " + ",".Join(Circuits.Models.Names("PENTODE")) + " | " + ",".Join(Circuits.Models.Names("VDIODE")))
+            var t = p.Schematic
+            var v2 = t.Add("Pentode", 0, 20, 8, 20, "model=6L6GC", "V2")
+            print("pentode pins " + v2.PinCount + " " + v2.PinX(1) + "," + v2.PinY(1))
+            """), new[] {
+            "12AX7 170 V, 1.2 V", "kg1 doubled 181 V", "The parameter kg1 of a tube must be above zero.", "EL34 97 mA",
+            "falstad,12AX7,12AT7,12AU7,6DJ8,300B | EL34,6L6GC,KT88,EL84,6V6 | 5Y3,5AR4,EZ81,6AL5", "pentode pins 4 12,19" });
+
+        // ---- real time: never faster than the clock, a coarser step when it cannot keep up, the given step again after ----
+        CheckLines("Echtzeit: nie schneller als die Uhr, groeberer Schritt wenn es nicht reicht, TimeStep und Datei behalten den gegebenen", Run("""
+            #import "circuits"
+            var c = new Circuits.Circuit("rc")
+            var s = c.Schematic
+            s.Add("Source", 0, 8, 0, 0, "voltage=5V;waveform=sine;frequency=50Hz")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+            s.Add("Capacitor", 8, 0, 8, 8, "capacitance=1uF", "c1")
+            s.Add("Wire", 0, 8, 8, 8)
+            s.Add("Ground", 0, 8, 0, 12)
+            c.TimeStep = 10us
+            var t0 = Circuits.RealTimeClock.Now()
+            c.RunRealTime(0.2s)
+            var wall = Circuits.RealTimeClock.Now() - t0
+            print("in time " + (c.Time / 1s <= wall + 0.001) + " " + (c.Time > 0s) + " " + c.RealTime)
+            c.MaxTimeStep = 40us
+            for (int i = 0; i < 120; i++) {
+                Sleep(5)
+                c.AdvanceRealTime(0.00001s)
+            }
+            print("coarser " + (c.CurrentTimeStep / 1us) + " " + (c.TimeStep / 1us) + " " + (c.RealTimeShare < 0.9) + " " + s.ToText().Contains("\"timeStep\": \"10us\""))
+            c.RealTime = false
+            print("off " + (c.CurrentTimeStep / 1us) + " " + c.RealTimeShare)
+            """), new[] { "in time True True True", "coarser 40 10 True True", "off 10 0" });
 
         // ---- the commands of the tool strips: rotate both ways, flip, copy and paste as JSON, find and replace ----
         CheckLines("CircuitView: Drehen links/rechts, Spiegeln, Kopieren/Einfuegen, Suchen/Ersetzen", Run("""

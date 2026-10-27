@@ -626,10 +626,14 @@ namespace fire.UI.Markup
                 case "175": return new Element { Type = "TunnelDiode" };
                 case "173":
                 {
+                    // Falstad's tube is the model "falstad" (mu, kg1) of the package
                     var e = new Element { Type = "Triode" };
+                    e.Set("model", "falstad");
                     double mu = Num(6, 93, "mu"), kg1 = Num(7, 680, "kg");
-                    if (mu != 93) e.Set("mu", Format(mu));
-                    if (kg1 != 680) e.Set("kg1", Format(kg1));
+                    var own = new List<string>();
+                    if (mu != 93) own.Add("mu=" + Format(mu));
+                    if (kg1 != 680) own.Add("kg1=" + Format(kg1));
+                    if (own.Count > 0) e.Set("parameters", string.Join(" ", own));
                     // the side of the plate: flag 2 follows the direction, flag 1 flips it (the points are set after Make, see Fix)
                     int x1 = Pixels(t[1]), y1 = Pixels(t[2]), x2 = Pixels(t[3]), y2 = Pixels(t[4]);
                     int ds = y2 == y1 ? Math.Sign(x2 - x1) : Math.Sign(y2 - y1);

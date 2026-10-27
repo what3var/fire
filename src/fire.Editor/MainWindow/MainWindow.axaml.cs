@@ -391,6 +391,7 @@ namespace fire.Editor
         private void ApplyLayout(string json)
         {
             var layout = new AvaloniaDockSerializer().Deserialize<IRootDock?>(json) ?? throw new InvalidDataException("empty layout");
+            _toolboxSynced = false;   // the new layout: the toolbox follows the active document again
 
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
@@ -583,6 +584,7 @@ namespace fire.Editor
 
         private void ViewMenu_SubmenuOpened(object? sender, RoutedEventArgs e)
         {
+            mnuViewToolbox.IsVisible = ActiveCircuit != null;
             foreach (var item in mnuView.Items.OfType<MenuItem>())
                 if (item.Tag is string id && _tools.TryGetValue(id, out var tool))
                     item.IsChecked = IsToolVisible(tool);

@@ -1,0 +1,23 @@
+{
+  "biscuit": 1,
+  "class": "Fuzz",
+  "ports": [
+    {"name": "Out", "direction": "output", "pin": "C1.1", "color": "#9040E0"}
+  ],
+  "elements": [
+    {"type": "Text", "from": [0, -8], "to": [4, -8], "text": "Fuzz: two diodes clip the sound (R1), R2 and C1 take the edge off (about 3 kHz). Out is the port of the class."},
+    {"type": "AudioInput", "name": "Input", "from": [0, 12], "to": [0, 0], "amplitude": "3V"},
+    {"type": "Resistor", "name": "R1", "from": [0, 0], "to": [12, 0], "resistance": "1k"},
+    {"type": "Diode", "name": "D1", "from": [12, 0], "to": [12, 12], "model": "1N4148"},
+    {"type": "Diode", "name": "D2", "from": [16, 12], "to": [16, 0], "model": "1N4148"},
+    {"type": "Wire", "from": [12, 0], "to": [16, 0]},
+    {"type": "Resistor", "name": "R2", "from": [16, 0], "to": [28, 0], "resistance": "2.2k"},
+    {"type": "Capacitor", "name": "C1", "from": [28, 0], "to": [28, 12], "capacitance": "22nF"},
+    {"type": "Wire", "from": [0, 12], "to": [12, 12]},
+    {"type": "Wire", "from": [12, 12], "to": [16, 12]},
+    {"type": "Wire", "from": [16, 12], "to": [28, 12]},
+    {"type": "Ground", "from": [0, 12], "to": [0, 16]},
+    {"type": "Scope", "from": [36, -4], "to": [76, 8], "probe": "Input"},
+    {"type": "Scope", "from": [36, 12], "to": [76, 24], "probe": "C1"}
+  ]
+}

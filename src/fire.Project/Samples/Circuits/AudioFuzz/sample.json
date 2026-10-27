@@ -1,0 +1,6 @@
+{
+  "title": "Circuit: sound through a fuzz pedal",
+  "description": "A drawn diode clipper with a tone filter (Fuzz.biscuit): the program sends tones through the circuit and plays them clean and distorted, then turns the tone darker.",
+  "open": [ "main.fire", "Fuzz.biscuit" ],
+  "order": 131
+}

@@ -47,7 +47,7 @@ namespace fire.UI.Markup
             ["CurrentSource"] = "Circuits.CurrentSource", ["AudioInput"] = "Circuits.AudioInput", ["LogicInput"] = "Circuits.LogicInput",
             ["Diode"] = "Circuits.Diode", ["Zener"] = "Circuits.Zener", ["Led"] = "Circuits.Led", ["Transistor"] = "Circuits.Transistor", ["Mosfet"] = "Circuits.Mosfet",
             ["Formula"] = "Circuits.Formula", ["Jfet"] = "Circuits.Jfet", ["Darlington"] = "Circuits.Darlington", ["Thyristor"] = "Circuits.Thyristor", ["Triac"] = "Circuits.Triac", ["Diac"] = "Circuits.Diac",
-            ["Varactor"] = "Circuits.Varactor", ["TunnelDiode"] = "Circuits.TunnelDiode", ["Triode"] = "Circuits.Triode", ["VCVS"] = "Circuits.VCVS", ["VCCS"] = "Circuits.VCCS",
+            ["Varactor"] = "Circuits.Varactor", ["TunnelDiode"] = "Circuits.TunnelDiode", ["Triode"] = "Circuits.Triode", ["Pentode"] = "Circuits.Pentode", ["VacuumDiode"] = "Circuits.VacuumDiode", ["VCVS"] = "Circuits.VCVS", ["VCCS"] = "Circuits.VCCS",
             ["CCCS"] = "Circuits.CCCS", ["CCVS"] = "Circuits.CCVS", ["CurrentConveyor"] = "Circuits.CurrentConveyor", ["Ota"] = "Circuits.Ota", ["Unijunction"] = "Circuits.Unijunction", ["Optocoupler"] = "Circuits.Optocoupler", ["OpAmp"] = "Circuits.OpAmp", ["Comparator"] = "Circuits.Comparator",
             ["And"] = "Circuits.Gate", ["Nand"] = "Circuits.Gate", ["Or"] = "Circuits.Gate", ["Nor"] = "Circuits.Gate", ["Xor"] = "Circuits.Gate", ["Xnor"] = "Circuits.Gate",
             ["Not"] = "Circuits.Gate", ["Buffer"] = "Circuits.Gate", ["DFlipFlop"] = "Circuits.FlipFlop", ["SRLatch"] = "Circuits.SRLatch", ["Counter"] = "Circuits.Counter",

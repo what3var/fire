@@ -651,6 +651,14 @@ namespace Circuits {
             return m
         }
 
+        /// <summary>A model of a vacuum tube: `kind` "VDIODE" (k ex cpk), "TRIODE" (mu ex kg1 kp kvb rgi ccg cgp ccp) or "PENTODE" (mu ex kg1 kg2 kp kvb
+        /// rgi cin cgp cout) - the parameters of Norman Koren's models (a diode: Ip = k * Vpk^ex), as "name=value ..." text.</summary>
+        static Circuits.Model Tube(string name, string kind, string parameters) {
+            var m = new Circuits.Model(name, kind, 0.0, 0.0)
+            m.parameters = parameters
+            return m
+        }
+
         static undefined Check(string formula, string parameters, bool threeTerminals) {
             string error = __CirCheckFormula(formula, parameters, threeTerminals)
             if (error != "") { throw new ArgumentException(error) }
@@ -717,6 +725,25 @@ namespace Circuits {
             Circuits.Models.Put(Circuits.Model.Formula("tunnel", "Ip*(V/Vp)*exp(1-V/Vp) + Is*(exp(V/(n*Vt))-1)", "Ip=5m Vp=0.1 Is=1e-12 n=1.5"))
             Circuits.Models.Put(Circuits.Model.Formula("varistor", "I0*(V/V0)*pow(abs(V/V0), a-1)", "I0=1m V0=200 a=30"))
             Circuits.Models.Put(Circuits.Model.Formula("lamp", "V/(R0*(1+k*sqrt(abs(V))))", "R0=10 k=0.5"))
+            // vacuum tubes after Norman Koren's models ("Improved vacuum tube models for SPICE"); the capacitances between the electrodes from the data
+            // sheets. Rectifier and signal diodes: Ip = k * Vpk^1.5, k from the drop at the rated current
+            Circuits.Models.Put(Circuits.Model.Tube("5Y3", "VDIODE", "k=0.35m ex=1.5 cpk=5p"))
+            Circuits.Models.Put(Circuits.Model.Tube("5AR4", "VDIODE", "k=3.2m ex=1.5 cpk=5p"))
+            Circuits.Models.Put(Circuits.Model.Tube("EZ81", "VDIODE", "k=1.2m ex=1.5 cpk=5p"))
+            Circuits.Models.Put(Circuits.Model.Tube("6AL5", "VDIODE", "k=0.9m ex=1.5 cpk=3p"))
+            // triodes: falstad is the simpler tube of Paul Falstad's simulator (mu, kg1)
+            Circuits.Models.Put(Circuits.Model.Tube("falstad", "TRIODE", "mu=93 kg1=680"))
+            Circuits.Models.Put(Circuits.Model.Tube("12AX7", "TRIODE", "mu=100 ex=1.4 kg1=1060 kp=600 kvb=300 rgi=2000 ccg=2.3p cgp=2.4p ccp=0.9p"))
+            Circuits.Models.Put(Circuits.Model.Tube("12AT7", "TRIODE", "mu=60 ex=1.35 kg1=460 kp=300 kvb=300 rgi=2000 ccg=2.7p cgp=2.2p ccp=1p"))
+            Circuits.Models.Put(Circuits.Model.Tube("12AU7", "TRIODE", "mu=21.5 ex=1.3 kg1=1180 kp=84 kvb=300 rgi=2000 ccg=2.3p cgp=2.2p ccp=1p"))
+            Circuits.Models.Put(Circuits.Model.Tube("6DJ8", "TRIODE", "mu=28 ex=1.3 kg1=330 kp=320 kvb=300 rgi=2000 ccg=3.3p cgp=1.4p ccp=1.8p"))
+            Circuits.Models.Put(Circuits.Model.Tube("300B", "TRIODE", "mu=3.95 ex=1.4 kg1=1550 kp=65 kvb=300 rgi=2000 ccg=9p cgp=15p ccp=4.3p"))
+            // pentodes and beam tetrodes
+            Circuits.Models.Put(Circuits.Model.Tube("EL34", "PENTODE", "mu=11 ex=1.35 kg1=650 kg2=4200 kp=60 kvb=24 rgi=1000 cin=15p cgp=1p cout=8p"))
+            Circuits.Models.Put(Circuits.Model.Tube("6L6GC", "PENTODE", "mu=8.7 ex=1.35 kg1=1460 kg2=4500 kp=48 kvb=12 rgi=1000 cin=10p cgp=0.6p cout=6.5p"))
+            Circuits.Models.Put(Circuits.Model.Tube("KT88", "PENTODE", "mu=8.8 ex=1.35 kg1=730 kg2=4200 kp=32 kvb=16 rgi=1000 cin=16p cgp=1.2p cout=12p"))
+            Circuits.Models.Put(Circuits.Model.Tube("EL84", "PENTODE", "mu=19 ex=1.35 kg1=600 kg2=4500 kp=200 kvb=24 rgi=1000 cin=10.8p cgp=0.5p cout=6.5p"))
+            Circuits.Models.Put(Circuits.Model.Tube("6V6", "PENTODE", "mu=9.6 ex=1.35 kg1=2400 kg2=4500 kp=41 kvb=12 rgi=1000 cin=4.5p cgp=0.7p cout=7.5p"))
             // op amps: GAIN, VMIN, VMAX, ROUT
             Circuits.Models.Put(new Circuits.Model("opamp", "OPAMP", 100000.0, -15.0, 15.0, 1.0))
             Circuits.Models.Put(new Circuits.Model("LM358", "OPAMP", 100000.0, 0.0, 3.5, 10.0))
@@ -2116,14 +2143,116 @@ namespace Circuits {
         Port B2 { get { return this.ports[2] } }
     }
 
-    /// <summary>A vacuum triode (Falstad's): the plate current (mu `mu`, kg1 `kg1`) and the grid current, against the cathode; ports Plate, Grid, Cathode.</summary>
-    class Triode : Formula3 {
-        construct(float mu = 93.0, float kg1 = 680.0) : base("if(V2 + V1/mu, pow(max(V2 + V1/mu, 0), 1.5)/kg1, 0.00000001*V1)", "if(V2 - 0.01, V2/6000, 0.00000001*V2)",
-                                                       "mu=" + mu + " kg1=" + kg1) { }
+    /// <summary>A vacuum tube: the model of the library (or a Model of its kind) and parameters of its own that change some of it ("mu=95 kg1=1100").</summary>
+    class Tube : Part {
+        Circuits.Model model
+        string parameters
+        int index = -1
+
+        construct(string prefix, string kind, any model, string parameters, int pins) : base(prefix) {
+            this.model = Circuits.Models.Of(model, kind)
+            Circuits.Tube.Check(parameters)
+            this.parameters = parameters
+            // the ports: plate, (screen), (grid), cathode
+            this.AddPort("plate")
+            if (pins == 4) { this.AddPort("screen") }
+            if (pins >= 3) { this.AddPort("grid") }
+            this.AddPort("cathode")
+        }
+
+        Circuits.Model Model { get { return this.model } }
+
+        // parameters of a tube: "name=value" pairs (a prefix after the number: 2.3p), every value above zero
+        static undefined Check(string text) {
+            var message = __CirCheckFormula("0", text, false)
+            if (message != "") { throw new ArgumentException(message) }
+            foreach (pair in text.Replace(",", " ").Replace(";", " ").Split(" ")) {
+                var p = pair.Trim()
+                if (p == "") { continue }
+                var at = p.IndexOf("=")
+                var number = Circuits.Symbols.Number(p.Substring(at + 1))
+                if (number == undefined || number <= 0.0) { throw new ArgumentException("The parameter " + p.Substring(0, at) + " of a tube must be above zero.") }
+            }
+        }
+
+        /// <summary>The parameters the tube is simulated with: those of the model, then its own.</summary>
+        string Parameters { get { return (this.model.parameters + " " + this.parameters).Trim() } }
+
+        /// <summary>Changes parameters of this tube ("kg1=1100"): the circuit compiles again.</summary>
+        undefined Set(string parameters) {
+            Circuits.Tube.Check(parameters)
+            this.parameters = (this.parameters + " " + parameters).Trim()
+            this.Invalidate()
+        }
+
+        bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 6, this.index, 0, 0.0) }
+
+        float Terminal(int t) {
+            var plan = this.Plan()
+            if (plan == undefined || this.index < 0) { return 0.0 }
+            if (t == 3) { return plan.NlState(this.index, 7) }
+            return plan.NlState(this.index, t)
+        }
+
+        /// <summary>The current into the plate.</summary>
+        float:A PlateCurrent { get { return this.Terminal(0) * 1A } }
+        float CurrentRaw() { return this.Terminal(0) }
+    }
+
+    /// <summary>A vacuum diode (a rectifier like the 5Y3 or EZ81, a signal diode like the 6AL5): Ip = k * Vpk^1.5 (Child and Langmuir). Ports Plate, Cathode.
+    /// `model`: a model of kind VDIODE.</summary>
+    class VacuumDiode : Tube {
+        construct(any model = "EZ81", string parameters = "") : base("VD", "VDIODE", model, parameters, 2) { }
+
+        Port Plate { get { return this.ports[0] } }
+        Port Cathode { get { return this.ports[1] } }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddTube(14, this.ports, this.Parameters)
+            return true
+        }
+    }
+
+    /// <summary>A vacuum triode after Norman Koren's model (12AX7, 12AT7, 12AU7, 6DJ8, 300B, or a Model of kind TRIODE), with the capacitances between its
+    /// electrodes; the model "falstad" is the simpler tube of Falstad's simulator (mu, kg1). Ports Plate, Grid, Cathode.</summary>
+    class Triode : Tube {
+        construct(any model = "12AX7", string parameters = "") : base("V", "TRIODE", model, parameters, 3) { }
 
         Port Plate { get { return this.ports[0] } }
         Port Grid { get { return this.ports[1] } }
         Port Cathode { get { return this.ports[2] } }
+
+        bool Compile(Circuits.Solver solver) {
+            if (this.model.name.ToUpper() == "FALSTAD") {
+                this.index = solver.AddFormula(this.Plate, this.Grid, this.Cathode, "if(V2 + V1/mu, pow(max(V2 + V1/mu, 0), 1.5)/kg1, 0.00000001*V1)",
+                                               "if(V2 - 0.01, V2/6000, 0.00000001*V2)", this.Parameters)
+            } else { this.index = solver.AddTube(15, this.ports, this.Parameters) }
+            return true
+        }
+
+        /// <summary>The current into the grid.</summary>
+        float:A GridCurrent { get { return this.Terminal(1) * 1A } }
+    }
+
+    /// <summary>A pentode (or beam tetrode) after Norman Koren's model (EL34, 6L6GC, KT88, EL84, 6V6, or a Model of kind PENTODE); the suppressor grid is
+    /// joined to the cathode. Ports Plate, Screen, Grid, Cathode.</summary>
+    class Pentode : Tube {
+        construct(any model = "EL34", string parameters = "") : base("V", "PENTODE", model, parameters, 4) { }
+
+        Port Plate { get { return this.ports[0] } }
+        Port Screen { get { return this.ports[1] } }
+        Port Grid { get { return this.ports[2] } }
+        Port Cathode { get { return this.ports[3] } }
+
+        bool Compile(Circuits.Solver solver) {
+            this.index = solver.AddTube(16, this.ports, this.Parameters)
+            return true
+        }
+
+        /// <summary>The current into the screen grid.</summary>
+        float:A ScreenCurrent { get { return this.Terminal(1) * 1A } }
+        /// <summary>The current into the control grid.</summary>
+        float:A GridCurrent { get { return this.Terminal(2) * 1A } }
     }
 
     /// <summary>A voltage-controlled voltage source: V(A) - V(B) = `gain` * (V(InPlus) - V(InMinus)).</summary>
@@ -2420,6 +2549,10 @@ namespace Circuits {
         bool stepping = false
         bool rebuild = false
         int clipped = 0
+        // real time (RealTime): the clock that sets the pace and the time step, the time step the circuit was given, the coarsest one allowed (0: 64 times it)
+        Circuits.RealTimeClock clock = undefined
+        float baseDt = 0.00001
+        float maxDt = 0.0
         // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
         List paramNames
         List paramValues
@@ -2572,10 +2705,99 @@ namespace Circuits {
 
         /// <summary>The time step of the simulation (default 10 us).</summary>
         float:any TimeStep {
-            get { return this.dt * 1s }
+            get {
+                // in real time the time step the circuit was given (CurrentTimeStep: the one it simulates with now)
+                if (this.clock != undefined) { return this.baseDt * 1s }
+                return this.dt * 1s
+            }
             set {
                 this.dt = Circuits.Units.Seconds(value)
+                this.baseDt = this.dt
+                if (this.clock != undefined) { this.clock.Rescale(this.dt, this.MaxStepRaw()) }
                 this.Invalidate()
+            }
+        }
+
+        // ---- real time ----
+        /// <summary>Real time: the simulation keeps pace with the clock - never faster -, AdvanceRealTime (or the circuit view) simulates up to now. It
+        /// simulates with the time step of the circuit as long as the computer keeps up; when it falls behind, the step becomes coarser (twice as long,
+        /// up to MaxTimeStep), and finer again when there is time to spare. RealTimeShare tells how much of real time it manages.</summary>
+        bool RealTime {
+            get { return this.Top().clock != undefined }
+            set {
+                var top = this.Top()
+                if (value == (top.clock != undefined)) { return }
+                if (value) {
+                    top.baseDt = top.dt
+                    top.clock = new Circuits.RealTimeClock(top, top.dt, top.MaxStepRaw())
+                } else {
+                    top.clock = undefined
+                    if (top.dt != top.baseDt) {
+                        top.dt = top.baseDt
+                        top.Invalidate()
+                    }
+                }
+            }
+        }
+
+        /// <summary>The coarsest time step of real time (0, the default: 64 times TimeStep).</summary>
+        float:any MaxTimeStep {
+            get { return this.Top().maxDt * 1s }
+            set {
+                var top = this.Top()
+                top.maxDt = Circuits.Units.Seconds(value)
+                if (top.clock != undefined) { top.clock.Rescale(top.baseDt, top.MaxStepRaw()) }
+            }
+        }
+
+        // the time step the circuit was given, in seconds (in real time the one it uses now may be coarser)
+        float StepRaw() {
+            if (this.clock != undefined) { return this.baseDt }
+            return this.dt
+        }
+
+        float MaxStepRaw() {
+            if (this.maxDt > 0.0) { return Math.Max(this.maxDt, this.baseDt) }
+            return this.baseDt * 64
+        }
+
+        /// <summary>The time step the simulation uses now (in real time it may be coarser than TimeStep).</summary>
+        float:s CurrentTimeStep { get { return this.Top().dt * 1s } }
+
+        /// <summary>How much of real time the simulation manages: 1 = all of it (never more), 0.5 = half as fast as the clock; 0 when not in real time.</summary>
+        float RealTimeShare {
+            get {
+                var c = this.Top().clock
+                if (c == undefined) { return 0.0 }
+                return c.share
+            }
+        }
+
+        /// <summary>One cycle of real time: simulates up to now, in at most `budget` of computing time (the rest of the time is the program's - to draw,
+        /// for example). The first call only starts the clock. Turns RealTime on.</summary>
+        undefined AdvanceRealTime(float budget : any = 0.02) {
+            var top = this.Top()
+            if (top.clock == undefined) { top.RealTime = true }
+            top.clock.Advance(Circuits.Units.Seconds(budget))
+        }
+
+        /// <summary>The clock of real time starts anew: the time since the last AdvanceRealTime (a pause) is not made up.</summary>
+        undefined RestartRealTime() {
+            var c = this.Top().clock
+            if (c != undefined) { c.Restart() }
+        }
+
+        /// <summary>Runs in real time for `duration` (of the clock) and returns: what the circuit simulates in the meantime is as long as it manages (all of it
+        /// at a RealTimeShare of 1). Turns RealTime on.</summary>
+        undefined RunRealTime(float duration : any) {
+            var top = this.Top()
+            top.RealTime = true
+            var end = Circuits.RealTimeClock.Now() + Circuits.Units.Seconds(duration)
+            top.clock.Restart()
+            top.clock.Advance(0.0)
+            while (Circuits.RealTimeClock.Now() < end) {
+                Sleep(1)
+                top.clock.Advance(0.05)
             }
         }
 
@@ -2915,6 +3137,109 @@ namespace Circuits {
         }
     }
 
+    /// <summary>The pace of a circuit in real time (Circuit.RealTime): every Advance simulates the time of the clock since the last one (at most a quarter of a
+    /// second), as far as the budget of computing time allows. Falls the simulation behind for a while, the time step doubles (up to the coarsest);
+    /// does it need less than a third of its budget for a while, the step halves again (down to the time step of the circuit).</summary>
+    class RealTimeClock {
+        Circuits.Circuit circuit
+        float minDt
+        float maxDt
+        int lastTicks = 0
+        // the simulated time still owed to the clock (less than a step)
+        float owed = 0.0
+        // seconds of computing time per step (measured; 0: not yet) and whether the next measurement includes compiling the circuit again
+        float stepCost = 0.0
+        bool rebuilt = false
+        // how long (clock time) the simulation has been behind, or had time to spare
+        float slowFor = 0.0
+        float fastFor = 0.0
+        float share = 1.0
+
+        construct(Circuits.Circuit circuit, float minDt, float maxDt) {
+            this.circuit = circuit
+            this.minDt = minDt
+            this.maxDt = Math.Max(maxDt, minDt)
+        }
+
+        /// <summary>The clock in seconds.</summary>
+        static float Now() { return DateTime.UtcNow.Ticks / 10000000.0 }
+
+        undefined Restart() {
+            this.lastTicks = 0
+            this.owed = 0.0
+        }
+
+        undefined Rescale(float minDt, float maxDt) {
+            this.minDt = minDt
+            this.maxDt = Math.Max(maxDt, minDt)
+            var c = this.circuit
+            var dt = Math.Min(Math.Max(c.dt, this.minDt), this.maxDt)
+            if (dt != c.dt) { this.SetStep(dt) }
+            this.slowFor = 0.0
+            this.fastFor = 0.0
+        }
+
+        undefined SetStep(float dt) {
+            var c = this.circuit
+            if (this.stepCost > 0.0) { this.stepCost = this.stepCost * dt / c.dt }
+            c.dt = dt
+            c.Invalidate()
+            this.rebuilt = true
+        }
+
+        undefined Advance(float budget) {
+            var now = DateTime.UtcNow.Ticks
+            if (this.lastTicks == 0) {
+                this.lastTicks = now
+                return
+            }
+            var wall = (now - this.lastTicks) / 10000000.0
+            this.lastTicks = now
+            if (wall <= 0.0) { return }
+            // after a long pause (the program was busy, a window was dragged) at most a quarter of a second is made up
+            var want = Math.Min(wall, 0.25)
+            var c = this.circuit
+            var dt = c.dt
+            this.owed = this.owed + want
+            var needed = Math.Floor(this.owed / dt)!int
+            var possible = needed
+            if (this.stepCost > 0.0) { possible = Math.Max(1, Math.Floor(budget / this.stepCost)!int) }
+            else { possible = Math.Min(needed, 16) }            // the first time: a few steps to measure
+            var steps = Math.Min(needed, possible)
+            var used = 0.0
+            if (steps > 0) {
+                var t0 = DateTime.UtcNow.Ticks
+                c.Run(steps * dt)
+                used = (DateTime.UtcNow.Ticks - t0) / 10000000.0
+                var cost = used / steps
+                if (this.rebuilt) { this.rebuilt = false }       // that time includes compiling the circuit
+                else if (this.stepCost <= 0.0) { this.stepCost = cost }
+                else { this.stepCost = this.stepCost * 0.7 + cost * 0.3 }
+            }
+            this.owed = this.owed - steps * dt
+            var done = steps * dt / want
+            if (steps < needed) {
+                // behind: what is not done is given up (the share tells), the step becomes coarser after a while
+                this.owed = this.owed - Math.Floor(this.owed / dt) * dt
+                this.slowFor = this.slowFor + wall
+                this.fastFor = 0.0
+            } else {
+                this.slowFor = 0.0
+                if (budget > 0.0 && used < budget / 3) { this.fastFor = this.fastFor + wall } else { this.fastFor = 0.0 }
+            }
+            if (done > 1.0) { done = 1.0 }
+            this.share = this.share * 0.8 + done * 0.2
+            if (this.share > 0.995) { this.share = 1.0 }
+            if (this.slowFor > 0.3 && dt < this.maxDt) {
+                this.SetStep(Math.Min(dt * 2, this.maxDt))
+                this.slowFor = 0.0
+            } else if (this.fastFor > 1.0 && dt > this.minDt) {
+                this.SetStep(Math.Max(dt / 2, this.minDt))
+                this.fastFor = 0.0
+            }
+        }
+    }
+
     /// <summary>The plan of a circuit in the kernel of the package (modified nodal analysis: A x = b with the node voltages and the branch currents as x).
     /// Parts written in fire use it in Stamp, StampStep and Commit.</summary>
     class Solver {
@@ -2982,6 +3307,13 @@ namespace Circuits {
             return index
         }
         undefined SetCaps(int index, float cjA, float cjB, float vj, float m, float tt, float tr = 0.0) { __CirSetCaps(this.handle, index, cjA, cjB, vj, m, tt, tr) }
+        int AddTube(int kind, List ports, string parameters) {
+            var n = [-2, -2, -2, -2]
+            for (int i = 0; i < ports.count; i++) { n[i] = ports[i].Root().node }
+            var index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
+            if (index < 0) { throw new ArgumentException(this.Error()) }
+            return index
+        }
         int AddFormula(Port a, Port b, Port c, string current1, string current2, string parameters) {
             var n2 = -2
             if (c != undefined) { n2 = c.Root().node }
