@@ -111,8 +111,8 @@ namespace UI {
         Element content
         Scroller vbar
         Scroller hbar
-        int vmode = UI.ScrollMode.Auto
-        int hmode = UI.ScrollMode.Disabled
+        int VerticalScrollMode = UI.ScrollMode.Auto
+        int HorizontalScrollMode = UI.ScrollMode.Disabled
         // at the last layout: visible bars and size of the section
         bool showV = false
         bool showH = false
@@ -153,24 +153,24 @@ namespace UI {
             // First measure without bars: with Disabled with the full space, otherwise unbounded.
             var mw = -1
             var mh = -1
-            if (this.hmode == UI.ScrollMode.Disabled) { mw = aw }
-            if (this.vmode == UI.ScrollMode.Disabled) { mh = ah }
-            this.showV = this.vmode == UI.ScrollMode.Visible
-            this.showH = this.hmode == UI.ScrollMode.Visible
+            if (this.HorizontalScrollMode == UI.ScrollMode.Disabled) { mw = aw }
+            if (this.VerticalScrollMode == UI.ScrollMode.Disabled) { mh = ah }
+            this.showV = this.VerticalScrollMode == UI.ScrollMode.Visible
+            this.showH = this.HorizontalScrollMode == UI.ScrollMode.Visible
             if (this.showV && mw >= 0) { mw = UI.M.Max(0, mw - bar) }
             if (this.showH && mh >= 0) { mh = UI.M.Max(0, mh - bar) }
             c.Measure(root, mw, mh)
             // if the child needs more space than is available, bars are added (and take away space)
-            if (!this.showV && this.vmode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - (this.ShownBar(this.showH)) ) { this.showV = true }
-            if (!this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - (this.ShownBar(this.showV))) { this.showH = true }
-            if (this.showV && !this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - bar) { this.showH = true }
+            if (!this.showV && this.VerticalScrollMode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - (this.ShownBar(this.showH)) ) { this.showV = true }
+            if (!this.showH && this.HorizontalScrollMode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - (this.ShownBar(this.showV))) { this.showH = true }
+            if (this.showV && !this.showH && this.HorizontalScrollMode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - bar) { this.showH = true }
             if (this.showV || this.showH) {
-                if (this.hmode == UI.ScrollMode.Disabled && mw >= 0) { mw = UI.M.Max(0, aw - this.ShownBar(this.showV)) }
-                if (this.vmode == UI.ScrollMode.Disabled && mh >= 0) { mh = UI.M.Max(0, ah - this.ShownBar(this.showH)) }
+                if (this.HorizontalScrollMode == UI.ScrollMode.Disabled && mw >= 0) { mw = UI.M.Max(0, aw - this.ShownBar(this.showV)) }
+                if (this.VerticalScrollMode == UI.ScrollMode.Disabled && mh >= 0) { mh = UI.M.Max(0, ah - this.ShownBar(this.showH)) }
                 c.Measure(root, mw, mh)
                 // with the bar the other may have become necessary
-                if (!this.showH && this.hmode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - this.ShownBar(this.showV)) { this.showH = true }
-                if (!this.showV && this.vmode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - this.ShownBar(this.showH)) { this.showV = true }
+                if (!this.showH && this.HorizontalScrollMode == UI.ScrollMode.Auto && aw >= 0 && c.dw > aw - this.ShownBar(this.showV)) { this.showH = true }
+                if (!this.showV && this.VerticalScrollMode == UI.ScrollMode.Auto && ah >= 0 && c.dh > ah - this.ShownBar(this.showH)) { this.showV = true }
             }
             var w = c.dw + this.ShownBar(this.showV)
             var h = c.dh + this.ShownBar(this.showH)
@@ -205,8 +205,8 @@ namespace UI {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.DrawTemplate(root, ax, ay)) { return }
             var c = this.content
-            if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
-            if (c != undefined && c.visible) {
+            if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
+            if (c != undefined && c.Visible) {
                 root.PushClip(ax, ay, this.viewW, this.viewH)
                 c.Draw(root, ax + c.rx, ay + c.ry)
                 root.PopClip()
@@ -218,7 +218,7 @@ namespace UI {
 
         // In the section the child, on the bars the ScrollViewer itself.
         UI.Element HitTest(int px, int py) {
-            if (!this.visible) { return undefined }
+            if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
             var c = this.content
             if (c != undefined && px < this.ax + this.viewW && py < this.ay + this.viewH) {
@@ -229,12 +229,12 @@ namespace UI {
         }
 
         undefined Collect(List list) {
-            if (!this.visible || !this.enabled) { return }
+            if (!this.Visible || !this.Enabled) { return }
             if (this.content != undefined) { this.content.Collect(list) }
         }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             if (this.content != undefined) { return this.content.FindName(name) }
             return undefined
         }

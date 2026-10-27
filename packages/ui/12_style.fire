@@ -51,7 +51,7 @@ namespace UI {
     }
 
     // As long as all conditions hold, the setters set their values; afterwards the old ones return.
-    // `new Trigger("hover", true)` - further conditions with And(...), the values with Set(...).
+    // `new Trigger("Hover", true)` - further conditions with And(...), the values with Set(...).
     class Trigger {
         List conditions
         List setters
@@ -185,7 +185,7 @@ namespace UI {
     }
 
     // The appearance of a control: `factory` is a lambda with one parameter (the element) that builds the tree of the parts and returns its
-    // root. Parts with names (`element.name = "..."`) can be addressed: Bind(...) binds one of their properties to one of the element,
+    // root. Parts with names (`element.Name = "..."`) can be addressed: Bind(...) binds one of their properties to one of the element,
     // AddTrigger(...) changes it under a condition (setters with `target` = name of the part).
     // Without a template the control draws itself.
     class ControlTemplate {

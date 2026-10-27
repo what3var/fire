@@ -1,20 +1,20 @@
 namespace UI {
     // A row of a menu: caption, action (lambda without parameters), submenu (Add), separator, check mark, shortcut as text.
     class MenuItem {
-        string header = ""
-        lambda onClick
+        string Header = ""
+        lambda OnClick
         List items
         bool separator = false
         // With checkable a click toggles the check mark (isChecked) before onClick runs.
-        bool checkable = false
-        bool isChecked = false
-        bool enabled = true
+        bool Checkable = false
+        bool IsChecked = false
+        bool Enabled = true
         // Only a text on the right of the row (for example "Ctrl+S"), the key assignment itself is the program's business
-        string shortcut = ""
+        string Shortcut = ""
 
         construct(string header = "", any onClick = undefined) {
-            this.header = header
-            this.onClick = onClick
+            this.Header = header
+            this.OnClick = onClick
             this.items = new List()
         }
 
@@ -36,8 +36,8 @@ namespace UI {
 
         // Executes the action (toggle the check mark, call the lambda).
         undefined Activate() {
-            if (this.checkable) { this.isChecked = !this.isChecked }
-            var callback = this.onClick
+            if (this.Checkable) { this.IsChecked = !this.IsChecked }
+            var callback = this.OnClick
             if (callback != undefined) { callback() }
         }
     }
@@ -101,10 +101,10 @@ namespace UI {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
-            var back = this.background
+            var back = this.Background
             if (back == undefined) { back = theme.menuBack }
             r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
-            var border = this.pen
+            var border = this.Pen
             if (border == undefined) { border = theme.border }
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
             var y = ay + 2
@@ -117,7 +117,7 @@ namespace UI {
                     continue
                 }
                 var text = theme.text
-                if (this.foreground != undefined) { text = this.foreground }
+                if (this.Foreground != undefined) { text = this.Foreground }
                 if (!item.enabled) { text = theme.textDisabled }
                 if (i == this.hot && item.enabled) {
                     r.FillRect(ax + 2, y, this.actualWidth - 4, h, theme.selection)
@@ -309,7 +309,7 @@ namespace UI {
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
-            var back = this.background
+            var back = this.Background
             if (back == undefined) { back = theme.panel }
             root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             var x = ax
@@ -317,7 +317,7 @@ namespace UI {
                 var item = this.menus[i]
                 var w = this.HeaderWidth(root, item)
                 var text = theme.text
-                if (this.foreground != undefined) { text = this.foreground }
+                if (this.Foreground != undefined) { text = this.Foreground }
                 if (i == this.openIndex) {
                     root.renderer.FillRect(x, ay, w, this.actualHeight, theme.selection)
                     text = theme.selectionText

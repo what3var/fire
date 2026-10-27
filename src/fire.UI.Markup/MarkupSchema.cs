@@ -39,7 +39,8 @@ namespace fire.UI.Markup
         Code,
     }
 
-    /// <summary>A property of an element of the markup: its name in the markup, the field of the fire class it sets and its type.</summary>
+    /// <summary>A property of an element of the markup: its name in the markup (PascalCase: `Width`, `HorizontalAlign`), the field of the fire class it sets
+    /// (the same name, unless given: `Grid.Row` sets `GridRow`) and its type.</summary>
     public sealed record PropertyDef(string Name, PropertyKind Kind, string? Field = null)
     {
         public string FieldName => Field ?? Name;
@@ -68,6 +69,8 @@ namespace fire.UI.Markup
     /// <summary>An event of an element: the field of the fire class (a lambda) and the parameters the lambda gets, which the handler method gets after `sender`.</summary>
     public sealed record EventDef(string Name, string[] Args)
     {
+        /// <summary>The field of the fire class (a lambda): the same name (`OnClick`).</summary>
+        public string FieldName => Name;
         public EventDef(string name) : this(name, Array.Empty<string>()) { }
     }
 
@@ -97,29 +100,31 @@ namespace fire.UI.Markup
     public static class MarkupSchema
     {
         private static PropertyDef Enum(string name, string type, params string[] choices) => new(name, PropertyKind.Enum) { EnumType = type, Choices = choices };
+        // an enum property whose field in fire is not the camel case of its name (HorizontalAlign: halign)
+        private static PropertyDef Enum(string name, string field, string type, params string[] choices) => new(name, PropertyKind.Enum, field) { EnumType = type, Choices = choices };
 
         private static readonly PropertyDef[] Common =
         {
-            new("x", PropertyKind.Int), new("y", PropertyKind.Int), new("width", PropertyKind.Int), new("height", PropertyKind.Int),
-            new("visible", PropertyKind.Bool), new("enabled", PropertyKind.Bool),
-            new("margin", PropertyKind.Thickness),
-            Enum("halign", "UI.HAlign", "Stretch", "Left", "Center", "Right"),
-            Enum("valign", "UI.VAlign", "Stretch", "Top", "Center", "Bottom"),
-            new("minWidth", PropertyKind.Int), new("minHeight", PropertyKind.Int), new("maxWidth", PropertyKind.Int), new("maxHeight", PropertyKind.Int),
-            new("background", PropertyKind.Color), new("foreground", PropertyKind.Color), new("pen", PropertyKind.Pen),
+            new("Left", PropertyKind.Int), new("Top", PropertyKind.Int), new("Width", PropertyKind.Int), new("Height", PropertyKind.Int),
+            new("Visible", PropertyKind.Bool), new("Enabled", PropertyKind.Bool),
+            new("Margin", PropertyKind.Thickness),
+            Enum("HorizontalAlign", "UI.HAlign", "Stretch", "Left", "Center", "Right"),
+            Enum("VerticalAlign", "UI.VAlign", "Stretch", "Top", "Center", "Bottom"),
+            new("MinWidth", PropertyKind.Int), new("MinHeight", PropertyKind.Int), new("MaxWidth", PropertyKind.Int), new("MaxHeight", PropertyKind.Int),
+            new("Background", PropertyKind.Color), new("Foreground", PropertyKind.Color), new("Pen", PropertyKind.Pen),
             // the font of the text: a name for Fonts.Get ("" = that of the surrounding element) and the height of the letters in pixels (0 = that of the surrounding element)
-            new("font", PropertyKind.Text), new("fontSize", PropertyKind.Int),
-            new("style", PropertyKind.StyleRef), new("template", PropertyKind.TemplateRef),
+            new("Font", PropertyKind.Text), new("FontSize", PropertyKind.Int),
+            new("Style", PropertyKind.StyleRef), new("Template", PropertyKind.TemplateRef),
             // attached properties of the containers
-            new("Grid.Row", PropertyKind.Int, "gridRow"), new("Grid.Column", PropertyKind.Int, "gridColumn"),
-            new("Grid.RowSpan", PropertyKind.Int, "gridRowSpan"), new("Grid.ColumnSpan", PropertyKind.Int, "gridColumnSpan"),
-            new PropertyDef("DockPanel.Dock", PropertyKind.Enum, "dock") { EnumType = "UI.Dock", Choices = new[] { "Left", "Top", "Right", "Bottom" } },
+            new("Grid.Row", PropertyKind.Int, "GridRow"), new("Grid.Column", PropertyKind.Int, "GridColumn"),
+            new("Grid.RowSpan", PropertyKind.Int, "GridRowSpan"), new("Grid.ColumnSpan", PropertyKind.Int, "GridColumnSpan"),
+            new PropertyDef("DockPanel.Dock", PropertyKind.Enum, "Dock") { EnumType = "UI.Dock", Choices = new[] { "Left", "Top", "Right", "Bottom" } },
         };
 
         /// <summary>The properties that a trigger can test besides the ones of an element: the state the library tracks.</summary>
         public static readonly IReadOnlyList<PropertyDef> StateProperties = new PropertyDef[]
         {
-            new("hover", PropertyKind.Bool), new("pressed", PropertyKind.Bool), new("focused", PropertyKind.Bool),
+            new("Hover", PropertyKind.Bool), new("Pressed", PropertyKind.Bool), new("Focused", PropertyKind.Bool),
         };
 
         private static ElementDef Define(string tag, ChildMode children, string create, PropertyDef[] own, params EventDef[] events) =>
@@ -130,25 +135,25 @@ namespace fire.UI.Markup
 
         private static readonly PropertyDef[] StackProperties =
         {
-            new("orientation", PropertyKind.Orientation, "horizontal"), new("horizontal", PropertyKind.Bool),
-            new("spacing", PropertyKind.Int), new("padding", PropertyKind.Int),
+            new("Orientation", PropertyKind.Orientation, "Horizontal"), new("Horizontal", PropertyKind.Bool),
+            new("Spacing", PropertyKind.Int), new("Padding", PropertyKind.Int),
         };
 
-        private static readonly PropertyDef[] PanelLook = { new("showBorder", PropertyKind.Bool), new("filled", PropertyKind.Bool) };
+        private static readonly PropertyDef[] PanelLook = { new("ShowBorder", PropertyKind.Bool), new("Filled", PropertyKind.Bool) };
 
         private static readonly string[] ItemParts = { "Item" };
 
         private static readonly PropertyDef[] ListSources =
         {
-            new("itemsSource", PropertyKind.Collection), new("itemTemplate", PropertyKind.DataTemplateRef),
-            new("view", PropertyKind.ViewRef) { Method = "SetView" },
+            new("ItemsSource", PropertyKind.Collection), new("ItemTemplate", PropertyKind.DataTemplateRef),
+            new("View", PropertyKind.ViewRef) { Method = "SetView" },
         };
 
         /// <summary>The attributes of a `&lt;CollectionView&gt;` of the Resources (it is no element of the interface: it has no common properties). `sortBy` and `descending` are set together by `SortBy`.</summary>
         public static readonly ElementDef CollectionViewDef = new("CollectionView", "UI.CollectionView", ChildMode.None, "new UI.CollectionView(undefined)", new PropertyDef[]
         {
-            new("source", PropertyKind.Collection), new("sortBy", PropertyKind.Text), new("descending", PropertyKind.Bool),
-            new("filter", PropertyKind.Code), new("comparer", PropertyKind.Code),
+            new("Source", PropertyKind.Collection), new("SortBy", PropertyKind.Text, "sortBy"), new("Descending", PropertyKind.Bool),
+            new("Filter", PropertyKind.Code), new("Comparer", PropertyKind.Code),
         }, Array.Empty<EventDef>());
 
         public static readonly IReadOnlyList<ElementDef> Elements = new[]
@@ -157,100 +162,100 @@ namespace fire.UI.Markup
             Define("Stack", true, "new UI.Stack(0, 0, 100, 100)", StackProperties.Concat(PanelLook).ToArray()) with { StyleKey = "StackPanel" },
             Define("StackPanel", true, "new UI.StackPanel(0, 0, -1, -1)", StackProperties.Concat(PanelLook).ToArray()),
             Define("Canvas", true, "new UI.Canvas(0, 0, -1, -1)", PanelLook),
-            Define("DockPanel", true, "new UI.DockPanel(0, 0, -1, -1)", PanelLook.Append(new("lastChildFill", PropertyKind.Bool)).ToArray()),
-            Define("WrapPanel", true, "new UI.WrapPanel(0, 0, -1, -1)", PanelLook.Concat(new PropertyDef[] { new("vertical", PropertyKind.Bool), new("itemWidth", PropertyKind.Int), new("itemHeight", PropertyKind.Int) }).ToArray()),
+            Define("DockPanel", true, "new UI.DockPanel(0, 0, -1, -1)", PanelLook.Append(new("LastChildFill", PropertyKind.Bool)).ToArray()),
+            Define("WrapPanel", true, "new UI.WrapPanel(0, 0, -1, -1)", PanelLook.Concat(new PropertyDef[] { new("Vertical", PropertyKind.Bool), new("ItemWidth", PropertyKind.Int), new("ItemHeight", PropertyKind.Int) }).ToArray()),
             Define("Grid", true, "new UI.Grid(0, 0, -1, -1)", PanelLook.Concat(new PropertyDef[]
             {
-                new("rows", PropertyKind.Text) { Method = "SetRows" }, new("columns", PropertyKind.Text) { Method = "SetColumns" },
+                new("Rows", PropertyKind.Text) { Method = "SetRows" }, new("Columns", PropertyKind.Text) { Method = "SetColumns" },
             }).ToArray()),
             Define("Border", ChildMode.Single, "new UI.Border(0, 0, -1, -1)", new PropertyDef[]
             {
-                new("padding", PropertyKind.Thickness), new("thickness", PropertyKind.Int),
+                new("Padding", PropertyKind.Thickness), new("Thickness", PropertyKind.Int),
             }) with { AddCall = "{p}.SetChild({e})" },
             Define("ScrollViewer", ChildMode.Single, "new UI.ScrollViewer(0, 0, -1, -1)", new PropertyDef[]
             {
-                Enum("vmode", "UI.ScrollMode", "Disabled", "Auto", "Visible"), Enum("hmode", "UI.ScrollMode", "Disabled", "Auto", "Visible"),
+                Enum("VerticalScrollMode", "UI.ScrollMode", "Disabled", "Auto", "Visible"), Enum("HorizontalScrollMode", "UI.ScrollMode", "Disabled", "Auto", "Visible"),
             }) with { AddCall = "{p}.SetContent({e})" },
             Define("ToolBar", true, "new UI.ToolBar(0, 0, -1, -1)", PanelLook),
             Define("Label", false, "new UI.Label(\"\", 0, 0)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("color", PropertyKind.Color, "brush"),
+                new("Text", PropertyKind.Text), new("Color", PropertyKind.Color),
             }),
             Define("Button", false, "new UI.Button(\"\", 0, 0)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("icon", PropertyKind.Geometry), new("image", PropertyKind.Image), new("iconSize", PropertyKind.Int),
-            }, "onClick"),
+                new("Text", PropertyKind.Text), new("Icon", PropertyKind.Geometry), new("Image", PropertyKind.Image), new("IconSize", PropertyKind.Int),
+            }, "OnClick"),
             Define("CheckBox", false, "new UI.CheckBox(\"\", 0, 0)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("isChecked", PropertyKind.Bool),
-            }, "onChange"),
+                new("Text", PropertyKind.Text), new("IsChecked", PropertyKind.Bool),
+            }, "OnChange"),
             Define("TextBox", false, "new UI.TextBox(\"\", 0, 0)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("maxLength", PropertyKind.Int),
-            }, "onChange", "onEnter"),
+                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int),
+            }, "OnChange", "OnEnter"),
             Define("AutoSuggestBox", ChildMode.Parts, "new UI.AutoSuggestBox(\"\", 0, 0, 160, 24)", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("maxLength", PropertyKind.Int), new("maxSuggestions", PropertyKind.Int), new("displayMember", PropertyKind.Text),
-            }, new[] { new EventDef("onChange"), new EventDef("onEnter"), new EventDef("onChosen") }) with { PartTags = new[] { "Suggestion" } },
+                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("MaxSuggestions", PropertyKind.Int), new("DisplayMember", PropertyKind.Text),
+            }, new[] { new EventDef("OnChange"), new EventDef("OnEnter"), new EventDef("OnChosen") }) with { PartTags = new[] { "Suggestion" } },
             Define("ListBox", ChildMode.Parts, "new UI.ListBox(0, 0, 160, 120)", new PropertyDef[]
             {
-                new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int),
-            }.Concat(ListSources).ToArray(), new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = ItemParts },
+                new("DisplayMember", PropertyKind.Text), new("SelectedIndex", PropertyKind.Int),
+            }.Concat(ListSources).ToArray(), new[] { new EventDef("OnSelect"), new EventDef("OnActivate") }) with { PartTags = ItemParts },
             Define("ComboBox", ChildMode.Parts, "new UI.ComboBox(0, 0, 140, 24)", new PropertyDef[]
             {
-                new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int), new("maxDropDownItems", PropertyKind.Int),
-                new("itemsSource", PropertyKind.Collection),
-            }, new[] { new EventDef("onSelect") }) with { PartTags = ItemParts },
+                new("DisplayMember", PropertyKind.Text), new("SelectedIndex", PropertyKind.Int), new("MaxDropDownItems", PropertyKind.Int),
+                new("ItemsSource", PropertyKind.Collection),
+            }, new[] { new EventDef("OnSelect") }) with { PartTags = ItemParts },
             Define("ListView", ChildMode.Parts, "new UI.ListView(0, 0, 240, 140)", new PropertyDef[]
             {
-                new("displayMember", PropertyKind.Text), new("selectedIndex", PropertyKind.Int),
-            }.Concat(ListSources).ToArray(), new[] { new EventDef("onSelect"), new EventDef("onActivate") }) with { PartTags = new[] { "Column", "Item" } },
+                new("DisplayMember", PropertyKind.Text), new("SelectedIndex", PropertyKind.Int),
+            }.Concat(ListSources).ToArray(), new[] { new EventDef("OnSelect"), new EventDef("OnActivate") }) with { PartTags = new[] { "Column", "Item" } },
             Define("TreeView", ChildMode.Parts, "new UI.TreeView(0, 0, 200, 160)", new PropertyDef[]
             {
-                new("indent", PropertyKind.Int),
-            }, new[] { new EventDef("onSelect") }) with { PartTags = new[] { "TreeNode" } },
+                new("Indent", PropertyKind.Int),
+            }, new[] { new EventDef("OnSelect") }) with { PartTags = new[] { "TreeNode" } },
             Define("RadioButtons", ChildMode.Parts, "new UI.RadioButtons(0, 0)", new PropertyDef[]
             {
-                new("header", PropertyKind.Text), new("horizontal", PropertyKind.Bool), new("spacing", PropertyKind.Int), new("selectedIndex", PropertyKind.Int),
-            }, new[] { new EventDef("onChange") }) with { PartTags = ItemParts },
+                new("Header", PropertyKind.Text), new("Horizontal", PropertyKind.Bool), new("Spacing", PropertyKind.Int), new("SelectedIndex", PropertyKind.Int),
+            }, new[] { new EventDef("OnChange") }) with { PartTags = ItemParts },
             Define("MenuBar", ChildMode.Parts, "new UI.MenuBar(0, 0, -1, -1)", Array.Empty<PropertyDef>()) with { PartTags = new[] { "Menu" } },
             Define("Separator", false, "new UI.Separator()", Array.Empty<PropertyDef>()),
             Define("Image", false, "new UI.Image(undefined, 0, 0, -1, -1)", new PropertyDef[]
             {
-                new("source", PropertyKind.Image), Enum("stretch", "UI.Stretch", "None", "Fill", "Uniform", "UniformToFill"),
+                new("Source", PropertyKind.Image), Enum("Stretch", "UI.Stretch", "None", "Fill", "Uniform", "UniformToFill"),
             }),
-            Define("Rectangle", false, "new UI.Rectangle(0, 0, -1, -1)", new PropertyDef[] { new("fill", PropertyKind.Color), new("stroke", PropertyKind.Pen) }),
-            Define("Ellipse", false, "new UI.Ellipse(0, 0, -1, -1)", new PropertyDef[] { new("fill", PropertyKind.Color), new("stroke", PropertyKind.Pen) }),
+            Define("Rectangle", false, "new UI.Rectangle(0, 0, -1, -1)", new PropertyDef[] { new("Fill", PropertyKind.Color), new("Stroke", PropertyKind.Pen) }),
+            Define("Ellipse", false, "new UI.Ellipse(0, 0, -1, -1)", new PropertyDef[] { new("Fill", PropertyKind.Color), new("Stroke", PropertyKind.Pen) }),
             Define("Line", false, "new UI.Line(0, 0, 0, 0)", new PropertyDef[]
             {
-                new("x1", PropertyKind.Int), new("y1", PropertyKind.Int), new("x2", PropertyKind.Int), new("y2", PropertyKind.Int), new("stroke", PropertyKind.Pen),
+                new("X1", PropertyKind.Int), new("Y1", PropertyKind.Int), new("X2", PropertyKind.Int), new("Y2", PropertyKind.Int), new("Stroke", PropertyKind.Pen),
             }),
             Define("Path", false, "new UI.Path(undefined, 0, 0)", new PropertyDef[]
             {
-                new("data", PropertyKind.Text) { Method = "SetData" }, new("fill", PropertyKind.Color), new("stroke", PropertyKind.Pen),
+                new("Data", PropertyKind.Text) { Method = "SetData" }, new("Fill", PropertyKind.Color), new("Stroke", PropertyKind.Pen),
             }),
-            Define("DrawingCanvas", ChildMode.None, "new UI.DrawingCanvas(0, 0, 200, 150)", new PropertyDef[] { new("continuous", PropertyKind.Bool) },
-                new[] { new EventDef("onPaint", new[] { "canvas" }), new EventDef("onMouseDown", new[] { "x", "y", "button" }), new EventDef("onMouseMove", new[] { "x", "y" }), new EventDef("onMouseUp", new[] { "x", "y", "button" }) }),
+            Define("DrawingCanvas", ChildMode.None, "new UI.DrawingCanvas(0, 0, 200, 150)", new PropertyDef[] { new("Continuous", PropertyKind.Bool) },
+                new[] { new EventDef("OnPaint", new[] { "canvas" }), new EventDef("OnMouseDown", new[] { "x", "y", "button" }), new EventDef("OnMouseMove", new[] { "x", "y" }), new EventDef("OnMouseUp", new[] { "x", "y", "button" }) }),
 
             // ---- parts: what the containers above contain (no common properties, no style) ----
-            new ElementDef("Item", "", ChildMode.None, "", new PropertyDef[] { new("text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
+            new ElementDef("Item", "", ChildMode.None, "", new PropertyDef[] { new("Text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
             {
-                PartOf = new[] { "ListBox", "ListView", "RadioButtons", "ComboBox" }, AddCall = "{p}.Add({text})",
+                PartOf = new[] { "ListBox", "ListView", "RadioButtons", "ComboBox" }, AddCall = "{p}.Add({Text})",
             },
-            new ElementDef("Suggestion", "", ChildMode.None, "", new PropertyDef[] { new("text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
+            new ElementDef("Suggestion", "", ChildMode.None, "", new PropertyDef[] { new("Text", PropertyKind.Text) { Default = "\"\"" } }, Array.Empty<EventDef>())
             {
-                PartOf = new[] { "AutoSuggestBox" }, AddCall = "{p}.AddSuggestion({text})",
+                PartOf = new[] { "AutoSuggestBox" }, AddCall = "{p}.AddSuggestion({Text})",
             },
             new ElementDef("Column", "", ChildMode.None, "", new PropertyDef[]
             {
-                new("header", PropertyKind.Text) { Default = "\"\"" }, new("member", PropertyKind.Text) { Default = "\"\"" }, new("width", PropertyKind.Int) { Default = "100" },
+                new("Header", PropertyKind.Text) { Default = "\"\"" }, new("Member", PropertyKind.Text) { Default = "\"\"" }, new("Width", PropertyKind.Int) { Default = "100" },
             }, Array.Empty<EventDef>())
             {
-                PartOf = new[] { "ListView" }, AddCall = "{p}.AddColumn({header}, {member}, {width})",
+                PartOf = new[] { "ListView" }, AddCall = "{p}.AddColumn({Header}, {Member}, {Width})",
             },
             new ElementDef("TreeNode", "UI.TreeNode", ChildMode.Parts, "new UI.TreeNode(\"\")", new PropertyDef[]
             {
-                new("text", PropertyKind.Text), new("expanded", PropertyKind.Bool),
+                new("Text", PropertyKind.Text), new("Expanded", PropertyKind.Bool),
             }, Array.Empty<EventDef>())
             {
                 PartOf = new[] { "TreeView", "TreeNode" }, PartTags = new[] { "TreeNode" },
@@ -258,15 +263,15 @@ namespace fire.UI.Markup
             },
             new ElementDef("Menu", "UI.MenuItem", ChildMode.Parts, "new UI.MenuItem(\"\")", new PropertyDef[]
             {
-                new("header", PropertyKind.Text), new("enabled", PropertyKind.Bool),
+                new("Header", PropertyKind.Text), new("Enabled", PropertyKind.Bool),
             }, Array.Empty<EventDef>())
             {
                 PartOf = new[] { "MenuBar" }, PartTags = new[] { "MenuItem", "MenuSeparator" },
             },
             new ElementDef("MenuItem", "UI.MenuItem", ChildMode.Parts, "new UI.MenuItem(\"\")", new PropertyDef[]
             {
-                new("header", PropertyKind.Text), new("shortcut", PropertyKind.Text), new("checkable", PropertyKind.Bool), new("isChecked", PropertyKind.Bool), new("enabled", PropertyKind.Bool),
-            }, new[] { new EventDef("onClick") })
+                new("Header", PropertyKind.Text), new("Shortcut", PropertyKind.Text), new("Checkable", PropertyKind.Bool), new("IsChecked", PropertyKind.Bool), new("Enabled", PropertyKind.Bool),
+            }, new[] { new EventDef("OnClick") })
             {
                 PartOf = new[] { "Menu", "MenuItem" }, PartTags = new[] { "MenuItem", "MenuSeparator" },
             },
@@ -307,6 +312,18 @@ namespace fire.UI.Markup
         private static readonly Regex DottedName = new(@"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
 
         public static bool IsIdentifier(string text) => Identifier.IsMatch(text);
+
+        /// <summary>A name in camel case: the first letter small (`IsChecked`: `isChecked`, `X1`: `x1`).</summary>
+        public static string Camel(string name) => name.Length == 0 ? name : char.ToLowerInvariant(name[0]) + name.Substring(1);
+
+        /// <summary>The names the markup had before its attributes were written in PascalCase and got clearer names: old name to new.</summary>
+        public static readonly IReadOnlyDictionary<string, string> RenamedAttributes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["x"] = "Left", ["y"] = "Top", ["halign"] = "HorizontalAlign", ["valign"] = "VerticalAlign", ["vmode"] = "VerticalScrollMode", ["hmode"] = "HorizontalScrollMode",
+        };
+
+        /// <summary>A state property a trigger can test (`Hover`, `Pressed`, `Focused`; any case).</summary>
+        public static PropertyDef? StateProperty(string? name) => StateProperties.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>A name that may be dotted (`UI.NotConverter`, `Colors.Red`).</summary>
         public static bool IsDottedName(string text) => DottedName.IsMatch(text);

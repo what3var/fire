@@ -509,11 +509,16 @@ namespace fire.Compiler
             if (_localTypes.Count == _scopes.Count) _localTypes[^1].Remove(name);   // (a typed local again sets its declaration: DeclareLocalType)
         }
 
-        private StaticType Lookup(string name)
+        private StaticType Lookup(string name, int line = 0)
         {
             for (int i = _scopes.Count - 1; i >= 0; i--)
                 if (_scopes[i].TryGetValue(name, out var type)) return type;
-            return _class != null && FindMember(ThisClass(), name) is { } member ? member : StaticType.Dynamic;
+            if (_class != null && FindMember(ThisClass(), name) is { } member)
+            {
+                if (MemberLog != null && ThisClass().Class is { } cls) MemberLog.Add((_source, line, cls, name, true));
+                return member;
+            }
+            return StaticType.Dynamic;
         }
 
         /// <summary>The type of a field or property `name` of an instance (looked up in its class and the classes it derives from, with their type
@@ -1059,7 +1064,7 @@ namespace fire.Compiler
                         ValueKind.Undefined => StaticType.Undefined,
                         _ => StaticType.Dynamic,
                     };
-                case IdentifierExpr id: return Lookup(id.Name);
+                case IdentifierExpr id: return Lookup(id.Name, id.Line);
                 case ThisExpr: return _thisType ?? (_class != null ? ThisClass() : StaticType.Dynamic);
                 case InterpolatedStringExpr s:
                     foreach (var part in s.Parts) if (part is InterpolationExprPart ep) Infer(ep.Expression);
@@ -1223,7 +1228,7 @@ namespace fire.Compiler
         {
             var target = a.Target switch
             {
-                IdentifierExpr id => Lookup(id.Name),
+                IdentifierExpr id => Lookup(id.Name, id.Line),
                 MemberExpr m => InferMemberTarget(m),
                 IndexExpr ix => InferIndexTarget(ix),
                 _ => StaticType.Dynamic,
@@ -1262,10 +1267,14 @@ namespace fire.Compiler
         }
 
         /// <summary>`a.Name`: a field or property of a class (also a static one, `Class.Name`), the length of an array or a string.</summary>
+        /// <summary>A tool for refactorings (FIRE_MEMBER_LOG): every member access whose receiver class is known (source, line, class, name, bare).</summary>
+        public static List<(int Source, int Line, string Class, string Name, bool Bare)>? MemberLog;
+
         private StaticType InferMember(MemberExpr m)
         {
             var target = Infer(m.Target);
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
+            if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
             if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name) && FullyKnown(target))
                 Report(UnknownMemberCode, $"'{target}' has no field, property or method '{m.Name}'", m.Line);
             return target.Kind switch

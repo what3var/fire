@@ -6,12 +6,12 @@ namespace UI {
     // `selectedIndex`/`selectedItem`, `onChange`/`TakeChanged()`; arrow keys change the choice. `horizontal` places the options side by side, `header` is a heading.
     class RadioButtons : Element {
         List items
-        string displayMember = ""
-        int selectedIndex = -1
-        bool horizontal = false
-        int spacing = 6
-        string header = ""
-        lambda onChange
+        string DisplayMember = ""
+        int SelectedIndex = -1
+        bool Horizontal = false
+        int Spacing = 6
+        string Header = ""
+        lambda OnChange
         bool changed = false
         int hotIndex = -1
 
@@ -30,12 +30,12 @@ namespace UI {
             return item
         }
 
-        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
         any selectedItem {
             get {
-                if (this.selectedIndex < 0 || this.selectedIndex >= this.items.count) { return undefined }
-                return this.items[this.selectedIndex]
+                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.count) { return undefined }
+                return this.items[this.SelectedIndex]
             }
             set { this.Select(this.items.IndexOf(value)) }
         }
@@ -43,10 +43,10 @@ namespace UI {
         undefined Select(int index) {
             if (index >= this.items.count) { index = this.items.count - 1 }
             if (index < -1) { index = -1 }
-            if (index == this.selectedIndex) { return }
-            this.selectedIndex = index
+            if (index == this.SelectedIndex) { return }
+            this.SelectedIndex = index
             this.changed = true
-            var callback = this.onChange
+            var callback = this.OnChange
             if (callback != undefined) { callback() }
         }
 
@@ -59,8 +59,8 @@ namespace UI {
         int OptionHeight(Root root) { return UI.M.Max(this.TextHeight(root), 14) }
 
         int HeaderHeight(Root root) {
-            if (this.header == "") { return 0 }
-            return this.TextHeight(root) + this.spacing
+            if (this.Header == "") { return 0 }
+            return this.TextHeight(root) + this.Spacing
         }
 
         // The width of an option: circle, spacing, text.
@@ -72,17 +72,17 @@ namespace UI {
             var oh = this.OptionHeight(root)
             for (var i = 0; i < this.items.count; i = i + 1) {
                 var ow = this.OptionWidth(root, i)
-                if (this.horizontal) {
+                if (this.Horizontal) {
                     w = w + ow
-                    if (i > 0) { w = w + this.spacing * 3 }
+                    if (i > 0) { w = w + this.Spacing * 3 }
                     h = oh
                 } else {
                     w = UI.M.Max(w, ow)
                     h = h + oh
-                    if (i > 0) { h = h + this.spacing }
+                    if (i > 0) { h = h + this.Spacing }
                 }
             }
-            w = UI.M.Max(w, this.TextWidth(root, this.header))
+            w = UI.M.Max(w, this.TextWidth(root, this.Header))
             this.cw = w
             this.ch = h + this.HeaderHeight(root)
         }
@@ -93,8 +93,8 @@ namespace UI {
             var y = this.ay + this.HeaderHeight(root)
             var oh = this.OptionHeight(root)
             for (var i = 0; i < index; i = i + 1) {
-                if (this.horizontal) { x = x + this.OptionWidth(root, i) + this.spacing * 3 }
-                else { y = y + oh + this.spacing }
+                if (this.Horizontal) { x = x + this.OptionWidth(root, i) + this.Spacing * 3 }
+                else { y = y + oh + this.Spacing }
             }
             var r = new Rect(x, y, this.OptionWidth(root, index), oh)
             return r
@@ -115,23 +115,23 @@ namespace UI {
             var theme = root.theme
             var r = root.renderer
             var text = theme.text
-            if (this.foreground != undefined) { text = this.foreground }
-            if (!this.enabled) { text = theme.textDisabled }
-            if (this.header != "") { this.DrawString(root, ax, ay, this.header, text) }
+            if (this.Foreground != undefined) { text = this.Foreground }
+            if (!this.Enabled) { text = theme.textDisabled }
+            if (this.Header != "") { this.DrawString(root, ax, ay, this.Header, text) }
             for (var i = 0; i < this.items.count; i = i + 1) {
                 var box = this.OptionRect(root, i)
                 var cy = box.y + box.h / 2
                 var back = theme.inputBack
-                if (!this.enabled) { back = theme.faceDisabled }
+                if (!this.Enabled) { back = theme.faceDisabled }
                 else if (i == this.hotIndex) { back = theme.faceHover }
                 r.FillCircle(box.x + 7, cy, 6, back)
                 var border = theme.border
-                if (this.pen != undefined) { border = this.pen }
-                if (this.focused && i == this.selectedIndex) { border = theme.borderFocus }
+                if (this.Pen != undefined) { border = this.Pen }
+                if (this.Focused && i == this.SelectedIndex) { border = theme.borderFocus }
                 r.DrawCircle(box.x + 7, cy, 6, border)
-                if (i == this.selectedIndex) {
+                if (i == this.SelectedIndex) {
                     var mark = theme.accent
-                    if (!this.enabled) { mark = theme.textDisabled }
+                    if (!this.Enabled) { mark = theme.textDisabled }
                     r.FillCircle(box.x + 7, cy, 3, mark)
                 }
                 this.DrawString(root, box.x + 20, box.y + (box.h - this.TextHeight(root)) / 2, this.ItemText(this.items[i]), text)
@@ -150,8 +150,8 @@ namespace UI {
         // The arrow keys change the option - at the first and last the group releases them (the focus moves on)
         bool WantsKey(int key) {
             var last = this.items.count - 1
-            if (key == UI.Keys.Down() || key == UI.Keys.Right()) { return this.selectedIndex < last }
-            if (key == UI.Keys.Up() || key == UI.Keys.Left()) { return this.selectedIndex > 0 }
+            if (key == UI.Keys.Down() || key == UI.Keys.Right()) { return this.SelectedIndex < last }
+            if (key == UI.Keys.Up() || key == UI.Keys.Left()) { return this.SelectedIndex > 0 }
             return false
         }
 
@@ -160,8 +160,8 @@ namespace UI {
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { step = 1 }
             else if (key == UI.Keys.Up() || key == UI.Keys.Left()) { step = -1 }
             if (step == 0 || this.items.count == 0) { return }
-            var index = this.selectedIndex + step
-            if (this.selectedIndex < 0) { index = 0 }
+            var index = this.SelectedIndex + step
+            if (this.SelectedIndex < 0) { index = 0 }
             this.Select(UI.M.Clamp(index, 0, this.items.count - 1))
         }
     }
@@ -181,11 +181,11 @@ namespace UI {
     // (`onChosen`/`TakeChosen()`, `chosenItem`), Escape closes.
     class AutoSuggestBox : TextBox {
         List suggestions
-        string displayMember = ""
+        string DisplayMember = ""
         lambda<string> provider
-        int maxSuggestions = 6
+        int MaxSuggestions = 6
         SuggestList popupList
-        lambda onChosen
+        lambda OnChosen
         bool chosen = false
         any chosenItem
         bool suppress = false
@@ -209,19 +209,19 @@ namespace UI {
             return was
         }
 
-        string TextOf(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+        string TextOf(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
         // The suggestions matching the text.
         List Matches() {
             var found = new List()
             var make = this.provider
             if (make != undefined) {
-                var list = make(this.text)
-                for (var i = 0; i < list.count && i < this.maxSuggestions; i = i + 1) { found.Add(list[i]) }
+                var list = make(this.Text)
+                for (var i = 0; i < list.count && i < this.MaxSuggestions; i = i + 1) { found.Add(list[i]) }
                 return found
             }
-            var needle = this.text.ToLower()
-            for (var i = 0; i < this.suggestions.count && found.count < this.maxSuggestions; i = i + 1) {
+            var needle = this.Text.ToLower()
+            for (var i = 0; i < this.suggestions.count && found.count < this.MaxSuggestions; i = i + 1) {
                 var item = this.suggestions[i]
                 if (this.TextOf(item).ToLower().Contains(needle)) { found.Add(item) }
             }
@@ -232,7 +232,7 @@ namespace UI {
         undefined Suggest() {
             var root = this.host
             if (root == undefined) { return }
-            if (this.text == "") {
+            if (this.Text == "") {
                 this.CloseList()
                 return
             }
@@ -241,7 +241,7 @@ namespace UI {
                 this.CloseList()
                 return
             }
-            this.popupList.displayMember = this.displayMember
+            this.popupList.DisplayMember = this.DisplayMember
             this.popupList.SetItems(found)
             this.popupList.width = this.actualWidth
             this.popupList.height = found.count * this.popupList.RowHeight(root) + 2
@@ -274,7 +274,7 @@ namespace UI {
             this.CloseList()
             this.chosenItem = item
             this.chosen = true
-            var callback = this.onChosen
+            var callback = this.OnChosen
             if (callback != undefined) { callback() }
             this.Changed()
             this.suppress = false
@@ -284,7 +284,7 @@ namespace UI {
             base.Poll(root)
             // a click in the list has chosen
             if (this.popupList.TakeChanged() && this.popupList.selectedIndex >= 0 && this.ListOpen()) { this.Choose(this.popupList.selectedItem) }
-            if (!this.focused && this.ListOpen()) { this.CloseList() }
+            if (!this.Focused && this.ListOpen()) { this.CloseList() }
         }
 
         // With the list open, Up/Down select a suggestion
@@ -361,13 +361,13 @@ namespace UI {
     // `selectedIndex`/`selectedItem`/`text`, `onSelect`/`TakeChanged()`. Closed, Up/Down select the previous/next element directly.
     class ComboBox : Element {
         List items
-        string displayMember = ""
-        int selectedIndex = -1
+        string DisplayMember = ""
+        int SelectedIndex = -1
         int seenSelected = -1
-        lambda onSelect
+        lambda OnSelect
         bool changed = false
         // at most that many rows are visible at once, more scroll
-        int maxDropDownItems = 8
+        int MaxDropDownItems = 8
         ComboList popupList
 
         construct(int x = 0, int y = 0, int width = 140, int height = 24) : base(x, y, width, height) {
@@ -393,10 +393,10 @@ namespace UI {
             var index = this.items.IndexOf(item)
             if (index < 0) { return }
             this.items.RemoveAt(index)
-            if (index == this.selectedIndex) { this.Select(-1) }
-            else if (index < this.selectedIndex) {
-                this.selectedIndex = this.selectedIndex - 1
-                this.seenSelected = this.selectedIndex
+            if (index == this.SelectedIndex) { this.Select(-1) }
+            else if (index < this.SelectedIndex) {
+                this.SelectedIndex = this.SelectedIndex - 1
+                this.seenSelected = this.SelectedIndex
             }
             this.Invalidate()
         }
@@ -413,28 +413,28 @@ namespace UI {
             this.CloseDropDown()
             if (own) { list.TakeTo(this) }
             this.items = list
-            this.selectedIndex = -1
+            this.SelectedIndex = -1
             this.seenSelected = -1
             this.Invalidate()
         }
 
-        List itemsSource {
+        List ItemsSource {
             get { return this.items }
             set { this.SetItems(value, false) }
         }
 
-        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
         any selectedItem {
             get {
-                if (this.selectedIndex < 0 || this.selectedIndex >= this.items.count) { return undefined }
-                return this.items[this.selectedIndex]
+                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.count) { return undefined }
+                return this.items[this.SelectedIndex]
             }
             set { this.Select(this.items.IndexOf(value)) }
         }
 
         // The text of the selected element ("" without a selection).
-        string text {
+        string Text {
             get {
                 var item = this.selectedItem
                 if (item == undefined) { return "" }
@@ -446,12 +446,12 @@ namespace UI {
         undefined Select(int index) {
             if (index >= this.items.count) { index = this.items.count - 1 }
             if (index < -1) { index = -1 }
-            if (index == this.selectedIndex) { return }
-            this.selectedIndex = index
+            if (index == this.SelectedIndex) { return }
+            this.SelectedIndex = index
             this.seenSelected = index
             this.changed = true
             this.Invalidate()
-            var callback = this.onSelect
+            var callback = this.OnSelect
             if (callback != undefined) { callback() }
         }
 
@@ -483,17 +483,17 @@ namespace UI {
             if (root == undefined || this.IsDropDownOpen() || this.items.count == 0) { return }
             var list = this.popupList
             list.combo = this
-            list.displayMember = this.displayMember
+            list.DisplayMember = this.DisplayMember
             list.SetItems(this.items, false)
-            var rows = UI.M.Min(this.items.count, UI.M.Max(1, this.maxDropDownItems))
+            var rows = UI.M.Min(this.items.count, UI.M.Max(1, this.MaxDropDownItems))
             list.width = this.actualWidth
             list.height = rows * list.RowHeight(root) + 2
-            list.Select(this.selectedIndex)
+            list.Select(this.SelectedIndex)
             list.TakeChanged()
             var y = this.ay + this.actualHeight
             if (y + list.height > root.height && this.ay - list.height >= 0) { y = this.ay - list.height }
             root.ShowPopup(list, this.ax, y, false, this)
-            if (this.selectedIndex >= 0) { list.EnsureVisible(root, this.selectedIndex) }
+            if (this.SelectedIndex >= 0) { list.EnsureVisible(root, this.SelectedIndex) }
             this.Invalidate()
         }
 
@@ -518,10 +518,10 @@ namespace UI {
 
         undefined Poll(Root root) {
             base.Poll(root)
-            if (this.selectedIndex != this.seenSelected) {
+            if (this.SelectedIndex != this.seenSelected) {
                 // set from outside (e.g. by a binding): treat like a selection
-                var want = this.selectedIndex
-                this.selectedIndex = this.seenSelected
+                var want = this.SelectedIndex
+                this.SelectedIndex = this.seenSelected
                 this.Select(want)
             }
         }
@@ -532,25 +532,25 @@ namespace UI {
             var theme = root.theme
             var r = root.renderer
             var back = theme.inputBack
-            if (!this.enabled) { back = theme.faceDisabled }
-            else if (this.background != undefined) { back = this.background }
+            if (!this.Enabled) { back = theme.faceDisabled }
+            else if (this.Background != undefined) { back = this.Background }
             r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             // the button with the arrow on the right
             var bw = 18
             var bx = ax + this.actualWidth - bw
             var face = theme.face
-            if (!this.enabled) { face = theme.faceDisabled }
+            if (!this.Enabled) { face = theme.faceDisabled }
             else if (this.IsDropDownOpen()) { face = theme.facePressed }
-            else if (this.hover) { face = theme.faceHover }
+            else if (this.Hover) { face = theme.faceHover }
             r.FillRect(bx, ay + 1, bw - 1, this.actualHeight - 2, face)
             var border = theme.border
-            if (this.pen != undefined) { border = this.pen }
-            if (this.focused) { border = theme.borderFocus }
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
             r.DrawLine(bx, ay + 1, bx, ay + this.actualHeight - 2, theme.border)
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
             var color = theme.text
-            if (this.foreground != undefined) { color = this.foreground }
-            if (!this.enabled) { color = theme.textDisabled }
+            if (this.Foreground != undefined) { color = this.Foreground }
+            if (!this.Enabled) { color = theme.textDisabled }
             var mx = bx + bw / 2
             var my = ay + this.actualHeight / 2
             r.FillTriangle(mx - 4, my - 2, mx + 4, my - 2, mx, my + 3, color)
@@ -598,8 +598,8 @@ namespace UI {
                 return
             }
             if (this.items.count == 0) { return }
-            if (key == UI.Keys.Down()) { this.Select(UI.M.Min(this.items.count - 1, this.selectedIndex + 1)) }
-            else if (key == UI.Keys.Up()) { this.Select(UI.M.Max(0, this.selectedIndex - 1)) }
+            if (key == UI.Keys.Down()) { this.Select(UI.M.Min(this.items.count - 1, this.SelectedIndex + 1)) }
+            else if (key == UI.Keys.Up()) { this.Select(UI.M.Max(0, this.SelectedIndex - 1)) }
             else if (key == UI.Keys.Home()) { this.Select(0) }
             else if (key == UI.Keys.End()) { this.Select(this.items.count - 1) }
         }
@@ -618,7 +618,7 @@ namespace UI {
 
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            var pen = this.pen
+            var pen = this.Pen
             if (pen == undefined) { pen = root.theme.border }
             if (this.parent != undefined && this.parent is of StackPanel && this.parent.horizontal) {
                 root.renderer.DrawLine(ax + 2, ay + 2, ax + 2, ay + this.actualHeight - 3, pen)
@@ -631,8 +631,8 @@ namespace UI {
     // A bar with buttons and separators side by side (or below one another with `horizontal = false`): `AddButton("Text", func () => { ... })`, `AddSeparator()`.
     class ToolBar : StackPanel {
         construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height, true, 2, 3) {
-            this.filled = true
-            this.showBorder = false
+            this.Filled = true
+            this.ShowBorder = false
         }
 
         string StyleKey() { return "ToolBar" }
@@ -661,40 +661,40 @@ namespace UI {
 
     // Shows a framebuffer (a loaded image: `Framebuffer.FromResource(new Resource("logo.png"))`) with alpha. `stretch` (UI.Stretch): None, Fill, Uniform (default), UniformToFill.
     class Image : Element {
-        Framebuffer source
-        int stretch = UI.Stretch.Uniform
+        Framebuffer Source
+        int Stretch = UI.Stretch.Uniform
 
         construct(any source = undefined, int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
-            this.source = source
+            this.Source = source
         }
 
         string StyleKey() { return "Image" }
 
         undefined MeasureCore(Root root, int aw, int ah) {
-            if (this.source == undefined) {
+            if (this.Source == undefined) {
                 this.cw = 0
                 this.ch = 0
                 return
             }
-            this.cw = this.source.Width()
-            this.ch = this.source.Height()
+            this.cw = this.Source.Width()
+            this.ch = this.Source.Height()
         }
 
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
-            if (this.background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.background) }
-            if (this.source == undefined) { return }
-            var sw = this.source.Width()
-            var sh = this.source.Height()
+            if (this.Background != undefined) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.Background) }
+            if (this.Source == undefined) { return }
+            var sw = this.Source.Width()
+            var sh = this.Source.Height()
             var w = this.actualWidth
             var h = this.actualHeight
             if (sw <= 0 || sh <= 0 || w <= 0 || h <= 0) { return }
             root.PushClip(ax, ay, w, h)
-            if (this.stretch == UI.Stretch.None) {
-                root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax, ay, sw, sh, 2)
-            } else if (this.stretch == UI.Stretch.Fill) {
-                root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax, ay, w, h, 2)
-            } else if (this.stretch == UI.Stretch.Uniform) {
+            if (this.Stretch == UI.Stretch.None) {
+                root.renderer.BlitScaled(this.Source, 0, 0, sw, sh, ax, ay, sw, sh, 2)
+            } else if (this.Stretch == UI.Stretch.Fill) {
+                root.renderer.BlitScaled(this.Source, 0, 0, sw, sh, ax, ay, w, h, 2)
+            } else if (this.Stretch == UI.Stretch.Uniform) {
                 // as large as possible, aspect ratio stays, centred
                 var dw = w
                 var dh = sh * w / sw
@@ -704,7 +704,7 @@ namespace UI {
                 }
                 dw = UI.M.Max(1, dw)
                 dh = UI.M.Max(1, dh)
-                root.renderer.BlitScaled(this.source, 0, 0, sw, sh, ax + (w - dw) / 2, ay + (h - dh) / 2, dw, dh, 2)
+                root.renderer.BlitScaled(this.Source, 0, 0, sw, sh, ax + (w - dw) / 2, ay + (h - dh) / 2, dw, dh, 2)
             } else {
                 // fill the area, leave out overhanging parts of the source (centred)
                 var cropW = sw
@@ -715,7 +715,7 @@ namespace UI {
                 }
                 cropW = UI.M.Max(1, cropW)
                 cropH = UI.M.Max(1, cropH)
-                root.renderer.BlitScaled(this.source, (sw - cropW) / 2, (sh - cropH) / 2, cropW, cropH, ax, ay, w, h, 2)
+                root.renderer.BlitScaled(this.Source, (sw - cropW) / 2, (sh - cropH) / 2, cropW, cropH, ax, ay, w, h, 2)
             }
             root.PopClip()
         }

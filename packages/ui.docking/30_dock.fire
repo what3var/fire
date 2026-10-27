@@ -7,7 +7,7 @@ namespace UI.Docking {
     // Show/Hide/Close/Float/DockTo move it; the user drags it by its title or tab.
     class ToolWindow : UI.Element {
         string title
-        UI.Geometry icon
+        UI.Geometry Icon
         UI.Element content
         bool canClose = true
         bool canFloat = true
@@ -45,10 +45,10 @@ namespace UI.Docking {
             content.TakeTo(this)
             content.parent = this
             if (this.fillContent) {
-                content.width = -1
-                content.height = -1
-                content.halign = UI.HAlign.Stretch
-                content.valign = UI.VAlign.Stretch
+                content.Width = -1
+                content.Height = -1
+                content.HorizontalAlign = UI.HAlign.Stretch
+                content.VerticalAlign = UI.VAlign.Stretch
             }
             this.content = content
             this.Invalidate()
@@ -134,12 +134,12 @@ namespace UI.Docking {
             this.ax = ax
             this.ay = ay
             if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
-                var back = this.background
+                var back = this.Background
                 if (back == undefined) { back = root.theme.panel }
                 root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             }
             var c = this.content
-            if (c != undefined && c.visible) {
+            if (c != undefined && c.Visible) {
                 root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
                 c.Draw(root, ax + c.rx, ay + c.ry)
                 root.PopClip()
@@ -147,7 +147,7 @@ namespace UI.Docking {
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             if (this.content != undefined) {
                 var hit = this.content.HitTest(px, py)
                 if (hit != undefined) { return hit }
@@ -160,7 +160,7 @@ namespace UI.Docking {
         }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             if (this.content != undefined) { return this.content.FindName(name) }
             return undefined
         }
@@ -387,8 +387,8 @@ namespace UI.Docking {
                 else if (close >= 0) { room = close - ax - 6 }
                 if (win != undefined) {
                     var tx = ax + 6
-                    if (win.icon != undefined) {
-                        UI.Docking.Paint.Symbol(root, win.icon, undefined, 12, tx, ay + (caption - 12) / 2, capText)
+                    if (win.Icon != undefined) {
+                        UI.Docking.Paint.Symbol(root, win.Icon, undefined, 12, tx, ay + (caption - 12) / 2, capText)
                         tx = tx + 16
                     }
                     root.PushClip(ax, ay, UI.M.Max(0, room), caption)
@@ -421,11 +421,11 @@ namespace UI.Docking {
                 }
                 r.DrawRect(ax, ay, w, h, theme.border)
             }
-            if (win != undefined && win.visible) { win.Draw(root, ax + win.rx, ay + win.ry) }
+            if (win != undefined && win.Visible) { win.Draw(root, ax + win.rx, ay + win.ry) }
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var win = this.ActiveWindow()
             if (win != undefined) {
                 var hit = win.HitTest(px, py)
@@ -440,7 +440,7 @@ namespace UI.Docking {
         }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             for (var i = 0; i < this.windows.count; i = i + 1) {
                 var found = this.windows[i].FindName(name)
                 if (found != undefined) { return found }
@@ -596,7 +596,7 @@ namespace UI.Docking {
             base.Poll(root)
             if (this.body == undefined) { return }
             this.body.Poll(root)
-            if (this.HoldsStrip() && this.visible != this.body.visible) { this.visible = this.body.visible }
+            if (this.HoldsStrip() && this.Visible != this.body.Visible) { this.Visible = this.body.Visible }
         }
 
         undefined Draw(UI.Root root, int ax, int ay) {
@@ -622,11 +622,11 @@ namespace UI.Docking {
                 r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
             }
             var b = this.body
-            if (b != undefined && b.visible) { b.Draw(root, ax + b.rx, ay + b.ry) }
+            if (b != undefined && b.Visible) { b.Draw(root, ax + b.rx, ay + b.ry) }
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             if (this.body != undefined) {
                 var hit = this.body.HitTest(px, py)
                 if (hit != undefined) { return hit }
@@ -635,11 +635,11 @@ namespace UI.Docking {
         }
 
         undefined Collect(List list) {
-            if (this.visible && this.body != undefined) { this.body.Collect(list) }
+            if (this.Visible && this.body != undefined) { this.body.Collect(list) }
         }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             if (this.body != undefined) { return this.body.FindName(name) }
             return undefined
         }
@@ -705,10 +705,10 @@ namespace UI.Docking {
             this.resizing = edges
             this.pressX = px
             this.pressY = py
-            this.startX = this.x
-            this.startY = this.y
-            this.startW = this.width
-            this.startH = this.height
+            this.startX = this.Left
+            this.startY = this.Top
+            this.startW = this.Width
+            this.startH = this.Height
         }
 
         undefined MouseMove(UI.Root root, int px, int py) {
@@ -723,16 +723,16 @@ namespace UI.Docking {
             var minH = 80
             if (this.resizing % 2 == 1) {
                 var nw = UI.M.Max(minW, this.startW - dx)
-                this.x = this.startX + this.startW - nw
-                this.width = nw
+                this.Left = this.startX + this.startW - nw
+                this.Width = nw
             }
-            if ((this.resizing / 4) % 2 == 1) { this.width = UI.M.Max(minW, this.startW + dx) }
+            if ((this.resizing / 4) % 2 == 1) { this.Width = UI.M.Max(minW, this.startW + dx) }
             if ((this.resizing / 2) % 2 == 1) {
                 var nh = UI.M.Max(minH, this.startH - dy)
-                this.y = this.startY + this.startH - nh
-                this.height = nh
+                this.Top = this.startY + this.startH - nh
+                this.Height = nh
             }
-            if ((this.resizing / 8) % 2 == 1) { this.height = UI.M.Max(minH, this.startH + dy) }
+            if ((this.resizing / 8) % 2 == 1) { this.Height = UI.M.Max(minH, this.startH + dy) }
             root.Invalidate()
         }
 
@@ -746,7 +746,7 @@ namespace UI.Docking {
                 this.closePressed = false
                 if (this.OverClose(root, px, py) && this.body != undefined) {
                     // hides the strip (strip.visible = true shows it here again)
-                    this.body.visible = false
+                    this.body.Visible = false
                     root.Invalidate()
                 }
                 return
@@ -867,10 +867,10 @@ namespace UI.Docking {
             element.TakeTo(this)
             element.parent = this
             if (this.fillContent) {
-                element.width = -1
-                element.height = -1
-                element.halign = UI.HAlign.Stretch
-                element.valign = UI.VAlign.Stretch
+                element.Width = -1
+                element.Height = -1
+                element.HorizontalAlign = UI.HAlign.Stretch
+                element.VerticalAlign = UI.VAlign.Stretch
             }
             this.content = element
             this.Changed()
@@ -929,14 +929,14 @@ namespace UI.Docking {
             strip.TakeTo(this)
             strip.CloseOverflow()
             strip.floating = true
-            strip.horizontal = true
+            strip.Horizontal = true
             var f = this.NewFloat()
             f.body = strip
             strip.parent = f
-            f.width = -1
-            f.height = -1
-            f.x = x
-            f.y = y
+            f.Width = -1
+            f.Height = -1
+            f.Left = x
+            f.Top = y
             this.floats.Add(f)
         }
 
@@ -993,7 +993,7 @@ namespace UI.Docking {
             pane.active = 0
             pane.weight = 100
             pane.floating = false
-            pane.visible = true
+            pane.Visible = true
             return pane
         }
 
@@ -1008,7 +1008,7 @@ namespace UI.Docking {
             }
             f.manager = this
             f.parent = this
-            f.visible = true
+            f.Visible = true
             f.resizing = 0
             f.dragging = false
             return f
@@ -1067,10 +1067,10 @@ namespace UI.Docking {
             f.body = pane
             pane.parent = f
             pane.floating = true
-            f.x = x
-            f.y = y
-            f.width = UI.M.Max(160, w)
-            f.height = UI.M.Max(100, h)
+            f.Left = x
+            f.Top = y
+            f.Width = UI.M.Max(160, w)
+            f.Height = UI.M.Max(100, h)
             this.floats.Add(f)
             for (var i = 0; i < pane.windows.count; i = i + 1) { pane.windows[i].wasFloating = true }
             this.Changed()
@@ -1257,8 +1257,8 @@ namespace UI.Docking {
             var w = aw
             var h = ah
             // without a size of its own and from the container: the whole window
-            if (w < 0) { w = UI.M.Max(0, root.width - this.x) }
-            if (h < 0) { h = UI.M.Max(0, root.height - this.y) }
+            if (w < 0) { w = UI.M.Max(0, root.width - this.Left) }
+            if (h < 0) { h = UI.M.Max(0, root.height - this.Top) }
             this.cw = w
             this.ch = h
         }
@@ -1274,7 +1274,7 @@ namespace UI.Docking {
         undefined ArrangeCore(UI.Root root, int w, int h) {
             var bottom = h
             var sb = this.statusBar
-            if (sb != undefined && sb.visible) {
+            if (sb != undefined && sb.Visible) {
                 sb.Measure(root, w, -1)
                 sb.Arrange(root, 0, h - sb.dh, w, sb.dh)
                 bottom = h - sb.dh
@@ -1432,7 +1432,7 @@ namespace UI.Docking {
             }
             if (this.content != undefined) {
                 var c = this.content
-                if (c.visible) {
+                if (c.Visible) {
                     root.PushClip(ax + this.centerX, ay + this.centerY, this.centerW, this.centerH)
                     c.Draw(root, ax + c.rx, ay + c.ry)
                     root.PopClip()
@@ -1443,11 +1443,11 @@ namespace UI.Docking {
         }
 
         undefined DrawChild(UI.Root root, UI.Element e) {
-            if (e.visible) { e.Draw(root, this.ax + e.rx, this.ay + e.ry) }
+            if (e.Visible) { e.Draw(root, this.ax + e.rx, this.ay + e.ry) }
         }
 
         UI.Element HitTest(int px, int py) {
-            if (!this.visible || !this.Contains(px, py)) { return undefined }
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
             var i = this.floats.count - 1
             while (i >= 0) {
                 var hit = this.floats[i].HitTest(px, py)
@@ -1475,7 +1475,7 @@ namespace UI.Docking {
         }
 
         undefined Collect(List list) {
-            if (!this.visible || !this.enabled) { return }
+            if (!this.Visible || !this.Enabled) { return }
             this.topStrips.Collect(list)
             this.leftStrips.Collect(list)
             for (var side = 0; side < 4; side = side + 1) {
@@ -1490,7 +1490,7 @@ namespace UI.Docking {
         }
 
         UI.Element FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             UI.Element found = undefined
             if (this.content != undefined) { found = this.content.FindName(name) }
             for (var side = 0; side < 4 && found == undefined; side = side + 1) { found = this.PanelOf(side).FindName(name) }
@@ -1713,8 +1713,8 @@ namespace UI.Docking {
                 this.dragPane = body
             }
             var f = this.dragFloat
-            f.x = px - this.ax - this.grabX
-            f.y = py - this.ay - this.grabY
+            f.Left = px - this.ax - this.grabX
+            f.Top = py - this.ay - this.grabY
             this.FindTarget(px - this.ax, py - this.ay)
             this.Changed()
         }

@@ -41,10 +41,10 @@ namespace UI {
         int downPY = 0
 
         /// <summary>Called with the view when the schematic was changed by the user (to save it), when the selection changes, and when an element should be
-        /// edited (a double click; without onEdit the view shows its own editor).</summary>
-        lambda<UI.CircuitView> onChange
-        lambda<UI.CircuitView> onSelect
-        lambda<Circuits.Element> onEdit
+        /// edited (a double click; without OnEdit the view shows its own editor).</summary>
+        lambda<UI.CircuitView> OnChange
+        lambda<UI.CircuitView> OnSelect
+        lambda<Circuits.Element> OnEdit
         /// <summary>A text for the status (what is under the pointer, the hint of the tool).</summary>
         string status = ""
 
@@ -171,7 +171,7 @@ namespace UI {
 
         undefined SelectionChanged() {
             this.selectionChanged = true
-            var f = this.onSelect
+            var f = this.OnSelect
             if (f != undefined) { f(this) }
             this.Invalidate()
         }
@@ -199,7 +199,7 @@ namespace UI {
         undefined Changed() {
             this.changed = true
             this.graphVersion = -1
-            var f = this.onChange
+            var f = this.OnChange
             if (f != undefined) { f(this) }
             this.Invalidate()
         }
@@ -2673,7 +2673,7 @@ namespace UI {
             else if (key == UI.Keys.Enter() && this.selection.count == 1) { this.Edit(this.selection[0]) }
         }
 
-        /// <summary>Edits the properties of an element: onEdit if it is set (an editor around the view), else the editor of the view.</summary>
+        /// <summary>Edits the properties of an element: OnEdit if it is set (an editor around the view), else the editor of the view.</summary>
         // ---- the context menu ----
 
         undefined ShowContextMenu(Root root, int px, int py) {
@@ -2692,55 +2692,55 @@ namespace UI {
                 }
                 if (hit.type == "Scope") {
                     var asTime = new UI.CircuitMenuItem("Show Over Time", this, "display time")
-                    asTime.checkable = true
-                    asTime.isChecked = hit.Get("display") != "spectrum"
+                    asTime.Checkable = true
+                    asTime.IsChecked = hit.Get("display") != "spectrum"
                     items.Add(take asTime)
                     var asSpectrum = new UI.CircuitMenuItem("Show Spectrum (FFT)", this, "display spectrum")
-                    asSpectrum.checkable = true
-                    asSpectrum.isChecked = hit.Get("display") == "spectrum"
+                    asSpectrum.Checkable = true
+                    asSpectrum.IsChecked = hit.Get("display") == "spectrum"
                     items.Add(take asSpectrum)
                     items.Add(UI.MenuItem.Separator())
                 }
                 if (this.IsInteractive(hit)) { items.Add(new UI.CircuitMenuItem("Switch", this, "toggle")) }
                 items.Add(new UI.CircuitMenuItem("Properties...", this, "edit"))
                 var rotate = new UI.CircuitMenuItem("Rotate", this, "rotate")
-                rotate.shortcut = "R"
+                rotate.Shortcut = "R"
                 items.Add(take rotate)
                 var flip = new UI.CircuitMenuItem("Flip", this, "flip")
-                flip.shortcut = "F"
+                flip.Shortcut = "F"
                 items.Add(take flip)
                 var duplicate = new UI.CircuitMenuItem("Duplicate", this, "duplicate")
-                duplicate.shortcut = "Ctrl+D"
+                duplicate.Shortcut = "Ctrl+D"
                 items.Add(take duplicate)
                 var remove = new UI.CircuitMenuItem("Delete", this, "delete")
-                remove.shortcut = "Del"
+                remove.Shortcut = "Del"
                 items.Add(take remove)
             } else {
                 if (hit != undefined && this.IsInteractive(hit)) { items.Add(new UI.CircuitMenuItem("Switch", this, "toggle")) }
                 var run = new UI.CircuitMenuItem("Run", this, "run")
-                run.checkable = true
-                run.isChecked = this.running
-                run.shortcut = "Space"
+                run.Checkable = true
+                run.IsChecked = this.running
+                run.Shortcut = "Space"
                 items.Add(take run)
                 items.Add(new UI.CircuitMenuItem("Reset Simulation", this, "reset"))
                 items.Add(UI.MenuItem.Separator())
                 if (!this.readOnly) {
                     var all = new UI.CircuitMenuItem("Select All", this, "selectall")
-                    all.shortcut = "Ctrl+A"
+                    all.Shortcut = "Ctrl+A"
                     items.Add(take all)
                 }
                 items.Add(new UI.CircuitMenuItem("Fit to View", this, "fit"))
                 var grid = new UI.CircuitMenuItem("Show Grid", this, "grid")
-                grid.checkable = true
-                grid.isChecked = this.showGrid
+                grid.Checkable = true
+                grid.IsChecked = this.showGrid
                 items.Add(take grid)
                 var values = new UI.CircuitMenuItem("Show Values", this, "values")
-                values.checkable = true
-                values.isChecked = this.showValues
+                values.Checkable = true
+                values.IsChecked = this.showValues
                 items.Add(take values)
                 var current = new UI.CircuitMenuItem("Show Current", this, "current")
-                current.checkable = true
-                current.isChecked = this.showCurrent
+                current.Checkable = true
+                current.IsChecked = this.showCurrent
                 items.Add(take current)
             }
             root.ShowMenu(items, px, py, this)
@@ -2821,7 +2821,7 @@ namespace UI {
 
         undefined Edit(Circuits.Element e) {
             if (this.readOnly) { return }
-            var f = this.onEdit
+            var f = this.OnEdit
             if (f != undefined) {
                 f(e)
                 return
@@ -2844,7 +2844,7 @@ namespace UI {
         }
 
         undefined Activate() {
-            if (this.checkable) { this.isChecked = !this.isChecked }
+            if (this.Checkable) { this.IsChecked = !this.IsChecked }
             this.view.MenuAction(this.action)
         }
     }
@@ -2862,13 +2862,13 @@ namespace UI {
             this.element = element
             this.keys = new List()
             this.fields = new List()
-            this.padding = new UI.Thickness(8)
-            this.background = new SolidBrush(UI.Color.Rgb(45, 45, 52))
+            this.Padding = new UI.Thickness(8)
+            this.Background = new SolidBrush(UI.Color.Rgb(45, 45, 52))
             this.grabsKeys = false
             var stack = new UI.StackPanel()
-            stack.spacing = 4
+            stack.Spacing = 4
             var title = new UI.Label(element.type, 0, 0)
-            title.brush = new SolidBrush(UI.Color.Rgb(230, 230, 236))
+            title.Color = new SolidBrush(UI.Color.Rgb(230, 230, 236))
             stack.Add(title)
             this.nameBox = new UI.TextBox(element.name, 0, 0, 200)
             stack.Add(this.Row("name", this.nameBox))
@@ -2885,7 +2885,7 @@ namespace UI {
                     any field = undefined
                     if (kind == "bool") {
                         var check = new UI.CheckBox("", 0, 0)
-                        check.isChecked = element.Flag(key)
+                        check.IsChecked = element.Flag(key)
                         field = check
                     } else if (kind.StartsWith("choice:") || kind.StartsWith("model:")) {
                         var combo = new UI.ComboBox(0, 0, 200, 24)
@@ -2910,12 +2910,12 @@ namespace UI {
                 }
             }
             var buttons = new UI.StackPanel()
-            buttons.horizontal = true
-            buttons.spacing = 6
+            buttons.Horizontal = true
+            buttons.Spacing = 6
             var ok = new UI.Button("OK", 0, 0)
-            ok.onClick = func () on this => { this.Accept() }
+            ok.OnClick = func () on this => { this.Accept() }
             var cancel = new UI.Button("Cancel", 0, 0)
-            cancel.onClick = func () on this => { this.Close() }
+            cancel.OnClick = func () on this => { this.Close() }
             buttons.Add(ok)
             buttons.Add(cancel)
             stack.Add(buttons)
@@ -2924,11 +2924,11 @@ namespace UI {
 
         UI.Element Row(string label, any field) {
             var row = new UI.StackPanel()
-            row.horizontal = true
-            row.spacing = 6
+            row.Horizontal = true
+            row.Spacing = 6
             var l = new UI.Label(label, 0, 0)
-            l.brush = new SolidBrush(UI.Color.Rgb(190, 190, 200))
-            l.width = 90
+            l.Color = new SolidBrush(UI.Color.Rgb(190, 190, 200))
+            l.Width = 90
             row.Add(l)
             row.Add(field)
             return row
@@ -2943,17 +2943,17 @@ namespace UI {
                 var value = ""
                 if (field is of UI.CheckBox) {
                     UI.CheckBox c = field!UI.CheckBox
-                    if (c.isChecked) { value = "true" } else { value = "false" }
+                    if (c.IsChecked) { value = "true" } else { value = "false" }
                 } else if (field is of UI.ComboBox) {
                     UI.ComboBox c = field!UI.ComboBox
-                    value = c.text
+                    value = c.Text
                 } else {
                     UI.TextBox t = field!UI.TextBox
-                    value = t.text
+                    value = t.Text
                 }
                 v.SetProperty(e, key, value)
             }
-            v.RenameElement(e, this.nameBox.text.Trim())
+            v.RenameElement(e, this.nameBox.Text.Trim())
             this.Close()
         }
 

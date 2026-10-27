@@ -8,7 +8,7 @@ var ui = new UI.Root(fb, win)
 var label = new UI.Label("Hello, World!", 20, 20)
 var button = new UI.Button("Click me", 20, 60)
 var clicks = 0
-button.onClick = func () => { clicks++; label.text = "Clicked " + clicks + " times" }
+button.OnClick = func () => { clicks++; label.Text = "Clicked " + clicks + " times" }
 ui.Add(label)
 ui.Add(button)
 

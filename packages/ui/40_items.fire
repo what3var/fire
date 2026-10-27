@@ -1,25 +1,25 @@
 namespace UI {
-    // A view of a list: filtered (`filter`: lambda with one parameter, true keeps the element), sorted (by the property `sortMember` or with `comparer`: lambda
+    // A view of a list: filtered (`Filter`: lambda with one parameter, true keeps the element), sorted (by the property `sortMember` or with `Comparer`: lambda
     // with two parameters, negative/0/positive) and with a current element (`current`). The list controls show `items`. If the source changes, the view updates itself
     // at the next drawing (with the same count after a change in the element itself: Refresh()).
     class CollectionView {
-        List source
+        List Source
         List items
-        bool lambda<any> filter
+        bool lambda<any> Filter
         string sortMember = ""
-        bool descending = false
-        int lambda<any, any> comparer
+        bool Descending = false
+        int lambda<any, any> Comparer
         // Index of the current element in `items`, -1: none
         int current = -1
         int sourceCount = -1
-        // the source `items` was last built from (if `source` is replaced, Update rebuilds)
+        // the source `items` was last built from (if `Source` is replaced, Update rebuilds)
         List seenSource
         bool dirty = true
         // counts the recomputations: whoever shows the view notices from it that `items` has changed
         int revision = 0
 
         construct(List source) {
-            this.source = source
+            this.Source = source
             this.items = new List()
         }
 
@@ -34,15 +34,15 @@ namespace UI {
         undefined Refresh() {
             var keep = this.CurrentItem()
             this.items = new List()
-            var test = this.filter
-            for (var i = 0; this.source != undefined && i < this.source.count; i = i + 1) {
-                var item = this.source[i]
+            var test = this.Filter
+            for (var i = 0; this.Source != undefined && i < this.Source.count; i = i + 1) {
+                var item = this.Source[i]
                 if (test == undefined || test(item)) { this.items.Add(item) }
             }
-            if (this.comparer != undefined || this.sortMember != "") { this.items = this.Sorted(this.items) }
+            if (this.Comparer != undefined || this.sortMember != "") { this.items = this.Sorted(this.items) }
             this.sourceCount = -1
-            if (this.source != undefined) { this.sourceCount = this.source.count }
-            this.seenSource = this.source
+            if (this.Source != undefined) { this.sourceCount = this.Source.count }
+            this.seenSource = this.Source
             this.revision = this.revision + 1
             this.dirty = false
             this.current = -1
@@ -51,16 +51,16 @@ namespace UI {
 
         // Updates the view if the source (its count) or the settings have changed.
         undefined Update() {
-            if (this.source == undefined) { return }
-            if (this.dirty || this.source != this.seenSource || this.source.count != this.sourceCount) { this.Refresh() }
+            if (this.Source == undefined) { return }
+            if (this.dirty || this.Source != this.seenSource || this.Source.count != this.sourceCount) { this.Refresh() }
         }
 
         int Compare(any a, any b) {
-            var cmp = this.comparer
+            var cmp = this.Comparer
             var result = 0
             if (cmp != undefined) { result = cmp(a, b) }
             else { result = UI.M.Compare(UI.M.Member(a, this.sortMember), UI.M.Member(b, this.sortMember)) }
-            if (this.descending) { result = -result }
+            if (this.Descending) { result = -result }
             return result
         }
 
@@ -114,11 +114,11 @@ namespace UI {
         bool MoveCurrentToNext() { return this.MoveCurrentTo(this.current + 1) }
         bool MoveCurrentToPrevious() { return this.MoveCurrentTo(this.current - 1) }
 
-        // Sorts by the property (while `descending` gives the direction).
+        // Sorts by the property (while `Descending` gives the direction).
         undefined SortBy(string member, bool descending = false) {
             this.sortMember = member
-            this.descending = descending
-            this.comparer = undefined
+            this.Descending = descending
+            this.Comparer = undefined
             this.dirty = true
         }
     }
@@ -142,15 +142,15 @@ namespace UI {
     class ItemsControl : Element {
         List items
         CollectionView view
-        string displayMember = ""
-        DataTemplate itemTemplate
+        string DisplayMember = ""
+        DataTemplate ItemTemplate
         // -1: one character height plus margin
         int rowHeight = -1
         Scroller scroller
-        int selectedIndex = -1
+        int SelectedIndex = -1
         int hotIndex = -1
-        lambda onSelect
-        lambda onActivate
+        lambda OnSelect
+        lambda OnActivate
         bool changed = false
         bool activated = false
         // the built row elements of the template (by index)
@@ -197,14 +197,14 @@ namespace UI {
             var index = this.items.IndexOf(item)
             if (index < 0) { return }
             this.items.RemoveAt(index)
-            if (this.selectedIndex >= this.items.count) { this.selectedIndex = this.items.count - 1 }
-            this.seenSelected = this.selectedIndex
+            if (this.SelectedIndex >= this.items.count) { this.SelectedIndex = this.items.count - 1 }
+            this.seenSelected = this.SelectedIndex
             this.Refresh()
         }
 
         undefined Clear() {
             this.items = new List()
-            this.selectedIndex = -1
+            this.SelectedIndex = -1
             this.seenSelected = -1
             this.scroller.Set(0)
             this.Refresh()
@@ -212,7 +212,7 @@ namespace UI {
 
         // The list of elements; assigning it shows the list without owning it (it belongs to whoever has it, e.g. the window; changes in it
         // are shown by the list by itself).
-        List itemsSource {
+        List ItemsSource {
             get { return this.items }
             set { this.SetItems(value, false) }
         }
@@ -222,7 +222,7 @@ namespace UI {
             if (own) { list.TakeTo(this) }
             this.view = undefined
             this.items = list
-            this.selectedIndex = -1
+            this.SelectedIndex = -1
             this.seenSelected = -1
             this.scroller.Set(0)
             this.Refresh()
@@ -232,7 +232,7 @@ namespace UI {
         undefined SetView(CollectionView source, bool own = true) {
             if (own) { source.TakeTo(this) }
             this.view = source
-            this.selectedIndex = source.current
+            this.SelectedIndex = source.current
             this.seenSelected = source.current
             this.scroller.Set(0)
             this.Refresh()
@@ -248,10 +248,10 @@ namespace UI {
         // If the list changes from outside (list.Add) or the view, it is repainted.
         undefined Poll(Root root) {
             base.Poll(root)
-            if (this.selectedIndex != this.seenSelected) {
+            if (this.SelectedIndex != this.seenSelected) {
                 // set from outside (e.g. by a binding): treat like a selection
-                var want = this.selectedIndex
-                this.selectedIndex = this.seenSelected
+                var want = this.SelectedIndex
+                this.SelectedIndex = this.seenSelected
                 this.Select(want)
             }
             if (this.view != undefined) {
@@ -282,14 +282,14 @@ namespace UI {
             this.builtCount = -1
         }
 
-        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.displayMember)) }
+        string ItemText(any item) { return UI.M.Text(UI.M.Member(item, this.DisplayMember)) }
 
         // The selected element (undefined: none).
         any selectedItem {
             get {
                 var rows = this.Rows()
-                if (this.selectedIndex < 0 || this.selectedIndex >= rows.count) { return undefined }
-                return rows[this.selectedIndex]
+                if (this.SelectedIndex < 0 || this.SelectedIndex >= rows.count) { return undefined }
+                return rows[this.SelectedIndex]
             }
             set {
                 this.Select(this.Rows().IndexOf(value))
@@ -306,12 +306,12 @@ namespace UI {
             var rows = this.Rows()
             if (index >= rows.count) { index = rows.count - 1 }
             if (index < -1) { index = -1 }
-            if (index == this.selectedIndex) { return }
-            this.selectedIndex = index
+            if (index == this.SelectedIndex) { return }
+            this.SelectedIndex = index
             this.seenSelected = index
             if (this.view != undefined) { this.view.current = index }
             this.changed = true
-            var callback = this.onSelect
+            var callback = this.OnSelect
             if (callback != undefined) { callback() }
         }
 
@@ -329,7 +329,7 @@ namespace UI {
 
         undefined Activate() {
             this.activated = true
-            var callback = this.onActivate
+            var callback = this.OnActivate
             if (callback != undefined) { callback() }
         }
 
@@ -358,7 +358,7 @@ namespace UI {
             this.scroller.Set(this.scroller.offset)
             this.viewW = w - 2
             if (this.scroller.Needed()) { this.viewW = this.viewW - this.scroller.size }
-            if (this.itemTemplate != undefined) { this.BuildRows(root, rows) }
+            if (this.ItemTemplate != undefined) { this.BuildRows(root, rows) }
         }
 
         // Builds the elements of the rows (only the visible ones, as needed).
@@ -371,7 +371,7 @@ namespace UI {
             var rh = this.RowHeight(root)
             var first = this.scroller.offset / rh
             var last = UI.M.Min(rows.count - 1, (this.scroller.offset + this.viewH) / rh)
-            var tpl = this.itemTemplate
+            var tpl = this.ItemTemplate
             for (var i = first; i <= last; i = i + 1) {
                 var row = this.rowElements[i]
                 if (row == undefined) {
@@ -388,7 +388,7 @@ namespace UI {
 
         // Draw a row: (x, y) is its top left corner, w x h the size; `text` the font colour (Brush).
         undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
-            if (this.itemTemplate != undefined) {
+            if (this.ItemTemplate != undefined) {
                 var row = this.rowElements[index]
                 if (row != undefined && row.visible) { row.Draw(root, x + row.rx, y + row.ry) }
                 return
@@ -402,9 +402,9 @@ namespace UI {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             var theme = root.theme
             var r = root.renderer
-            var back = this.background
+            var back = this.Background
             if (back == undefined) { back = theme.inputBack }
-            if (!this.enabled) { back = theme.faceDisabled }
+            if (!this.Enabled) { back = theme.faceDisabled }
             r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             this.DrawHeader(root, ax + 1, ay + 1, this.viewW)
             var rows = this.Rows()
@@ -416,12 +416,12 @@ namespace UI {
             for (var i = first; i <= last; i = i + 1) {
                 var y = top + i * rh - this.scroller.offset
                 var text = theme.text
-                if (this.foreground != undefined) { text = this.foreground }
-                if (!this.enabled) { text = theme.textDisabled }
-                if (i == this.selectedIndex) {
+                if (this.Foreground != undefined) { text = this.Foreground }
+                if (!this.Enabled) { text = theme.textDisabled }
+                if (i == this.SelectedIndex) {
                     r.FillRect(ax + 1, y, this.viewW, rh, theme.selection)
                     text = theme.selectionText
-                } else if (i == this.hotIndex && this.enabled) {
+                } else if (i == this.hotIndex && this.Enabled) {
                     r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
                 }
                 this.DrawRow(root, i, rows[i], ax + 1, y, this.viewW, rh, text)
@@ -429,8 +429,8 @@ namespace UI {
             root.PopClip()
             if (this.scroller.Needed()) { this.scroller.Draw(root, ax + this.actualWidth - 1 - this.scroller.size, top, this.viewH) }
             var border = theme.border
-            if (this.pen != undefined) { border = this.pen }
-            if (this.focused) { border = theme.borderFocus }
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
         }
 
@@ -499,14 +499,14 @@ namespace UI {
         // Up and Down select another row - at the first or last entry the list releases the key (the focus moves on)
         bool WantsKey(int key) {
             var last = this.Rows().count - 1
-            if (key == UI.Keys.Down()) { return this.selectedIndex < last }
-            if (key == UI.Keys.Up()) { return this.selectedIndex > 0 }
+            if (key == UI.Keys.Down()) { return this.SelectedIndex < last }
+            if (key == UI.Keys.Up()) { return this.SelectedIndex > 0 }
             return key == UI.Keys.Home() || key == UI.Keys.End() || key == UI.Keys.PageUp() || key == UI.Keys.PageDown()
         }
 
         undefined KeyDown(Root root, int key, int mod) {
             var rows = this.Rows()
-            var index = this.selectedIndex
+            var index = this.SelectedIndex
             var page = UI.M.Max(1, this.viewH / this.RowHeight(root))
             if (key == UI.Keys.Down()) { index = index + 1 }
             else if (key == UI.Keys.Up()) { index = index - 1 }
@@ -525,11 +525,11 @@ namespace UI {
         }
 
         undefined Collect(List list) {
-            if (this.visible && this.enabled && this.Focusable()) { list.Add(this) }
+            if (this.Visible && this.Enabled && this.Focusable()) { list.Add(this) }
         }
 
         UI.ItemsControl FindName(string name) {
-            if (this.name == name) { return this }
+            if (this.Name == name) { return this }
             return undefined
         }
     }
@@ -606,7 +606,7 @@ namespace UI {
         }
 
         undefined DrawRow(Root root, int index, any item, int x, int y, int w, int h, string text) {
-            if (this.itemTemplate != undefined || this.columns.count == 0) {
+            if (this.ItemTemplate != undefined || this.columns.count == 0) {
                 base.DrawRow(root, index, item, x, y, w, h, text)
                 return
             }

@@ -2519,7 +2519,7 @@ same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException
 `Renderer.DrawText(x, y, text, foreground, background = undefined, font = undefined, size = 0)` draws in the console font of the renderer (the built-in 8x14 or 8x8 bitmap font) or, given a `Font`, in one of the two built-in
 bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels. `Fonts.Get(name)` finds a font by name - the built-in ones, then the ones added with `Fonts.Add(new Resource("x.ttf"), alias = "")` (by alias,
 file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
-The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
+The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `Font` and `FontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
 
 ### 8.28b 3D scenes (`#import "scene3d"`)
 

@@ -380,7 +380,7 @@ static class ProjectTests
         foreach (var f in winFiles.Concat(viewFiles)) terminal.AddFile(winProject, f);
         var winPlan = BuildPlan.Create(terminal, terminal.Projects[0]);
         string winMarkup = winFiles.First(f => f.EndsWith(".fxml")), viewMarkup = viewFiles.First(f => f.EndsWith(".fxml"));
-        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View Class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
         Check("Vorlagen: FXML-Fenster und -View bringen den Code-behind gleichen Namens mit (class Name : NameBase), geoeffnet wird das Markup",
             winFiles.Count == 2 && viewFiles.Count == 2 && File.ReadAllText(Path.ChangeExtension(winMarkup, ".fire")).Contains("class Main : MainBase {") && File.ReadAllText(Path.ChangeExtension(viewMarkup, ".fire")).Contains("class SettingsView : SettingsViewBase {")
             && TemplateInstaller.FilesToOpen(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name), winFiles).SequenceEqual(new[] { winMarkup }), string.Join(", ", winFiles.Concat(viewFiles)));
@@ -585,7 +585,7 @@ static class ProjectTests
         // ---- the code of a project is included on its own: no #include, markup files too ---------------------------------------------------
         string m = Path.Combine(root, "markup");
         Write(m, "Ui/Ui.fireproj", """{ "name": "Ui" }""");
-        Write(m, "Ui/win.fxml", "<Window class=\"MainWindow\" title=\"x\" width=\"100\" height=\"100\">\n  <Label text=\"Hi\"/>\n</Window>\n");
+        Write(m, "Ui/win.fxml", "<Window Class=\"MainWindow\" Title=\"x\" Width=\"100\" Height=\"100\">\n  <Label Text=\"Hi\"/>\n</Window>\n");
         Write(m, "Ui/helper.script", "class Helper { static int Two() { return 2 } }\n");
         Write(m, "Ui/main.script", "#include \"helper.script\"\n#include \"win.fxml\"\nprint(Helper.Two())\n");
         var ui = Workspace.Open(Path.Combine(m, "Ui", "Ui.fireproj"));

@@ -2919,7 +2919,7 @@ namespace fire.Compiler
 
                 if (_refParams.IsLambdaField(me.Name))
                 {
-                    // `this.onClick()`: read the field, call the lambda in it
+                    // `this.OnClick()`: read the field, call the lambda in it
                     CompileExpr(me);
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
                     _chunk.EmitOp(OpCode.Call);
