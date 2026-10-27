@@ -23,6 +23,7 @@
     "spi/spi.fireproj",
     "wifi/wifi.fireproj",
     "audio/audio.fireproj",
+    "usb/usb.fireproj",
     "tracker/tracker.fireproj",
     "scene3d/scene3d.fireproj",
     "json/json.fireproj",

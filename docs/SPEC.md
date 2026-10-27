@@ -2516,6 +2516,13 @@ The package `fire-tracker` (docs/TRACKER.md is the reference): `Tracker.Song` (a
 `Seek`, `Mute`, `Separation`, `Interpolate`, `Gain`, `Loop`), `Tracker.Player` (a song on an `Audio.Output`: `Pump()` feeds the output without waiting, `Play()` plays to the end) and `Tracker.Note`. The replayer and the mixer are C++ (the VM calls them through the package ABI, a native build compiles them in; both render the
 same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException` (with a `code`), `Tracker.BadFormatException` (8) and `Tracker.UnsupportedException` (6).
 
+### 8.28b USB (`#import "usb"`)
+
+The package `fire-usb` (docs/USB.md is the reference): `Usb.Bus` (`Available()`, `Devices()`, `Find(vendorId, productId)`), `Usb.Device` (opened by id or by vendor and product id: `Endpoints()`,
+`ClaimInterface`, control transfers `Control`/`ControlIn`/`ControlOut`, `BulkRead`/`BulkWrite`, `InterruptRead`/`InterruptWrite`, `ClearHalt`, `Close`) and `Usb.UsbStream` (the bulk endpoints of an interface as an
+`IO.Stream`: `device.OpenStream()`). libusb-1.0 (loaded at run time) on Linux and macOS, WinUSB on Windows; every platform has the simulated loopback device `"sim"`. Transfers wait in slices of 20 ms, so a
+program stays abortable. Errors are `Usb.UsbException` (with a `code`) and subclasses (`TimeoutException`, `StallException`, `NotFoundException`, ...).
+
 ### 8.28a Fonts for text at pixel positions (`#import "graphics"`)
 
 `Renderer.DrawText(x, y, text, foreground, background = undefined, font = undefined, size = 0)` draws in the console font of the renderer (the built-in 8x14 or 8x8 bitmap font) or, given a `Font`, in one of the two built-in

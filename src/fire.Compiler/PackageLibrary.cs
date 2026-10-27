@@ -187,6 +187,7 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{target.Native.Platform}/fire_spi.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{target.Native.Platform}/fire_wifi.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{target.Native.Platform}/fire_audio.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_USB_HEADER \"platform/{target.Native.Platform}/fire_usb.hpp\"");
             sb.AppendLine("#include \"fire_rt.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {

@@ -245,5 +245,9 @@ static class TestingTests
             return zip.Entries.Any(e => { using var r = new StreamReader(e.Open()); return r.ReadToEnd().Contains("GreeterTests"); });
         });
         Check("Projekt: das Paket enthaelt die Tests nicht", exit == 0 && !testsInPackage, output);
+
+        // the tests of a standard package with natives: usb against its simulated device
+        (exit, output) = Forge("test", Path.Combine(StandardSources.DefaultFolder, "usb", "usb.fireproj"));
+        Check("Paket usb: die Tests gegen das simulierte Geraet laufen durch", exit == 0 && output.Contains("5 passed, 0 failed, 0 errors"), output);
     }
 }

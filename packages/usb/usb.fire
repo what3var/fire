@@ -1,0 +1,472 @@
+#import "io"
+#import "time"
+// USB devices (docs/USB.md): the list of devices, control transfers, bulk and interrupt transfers, and a pair of bulk endpoints as an IO.Stream. Through libusb-1.0 on Linux and
+// macOS, WinUSB on Windows; the simulated device "sim" (a loopback) is there everywhere.
+namespace Usb {
+    // The codes of UsbException.code (the same numbers as in the bridge).
+    class UsbException : Exception {
+        string message
+        int code
+
+        construct(string message, int code = 7) {
+            this.message = message
+            this.code = code
+        }
+    }
+
+    // No such device or interface (code 3).
+    class NotFoundException : UsbException {
+        construct(string message) : base(message, 3) { }
+    }
+
+    // Another program or a driver holds the device (code 4).
+    class BusyException : UsbException {
+        construct(string message) : base(message, 4) { }
+    }
+
+    // No permission to use the device (code 5; on Linux a udev rule must give the user access).
+    class PermissionException : UsbException {
+        construct(string message) : base(message, 5) { }
+    }
+
+    // This platform cannot do it, or libusb/WinUSB is missing (code 6).
+    class UnsupportedException : UsbException {
+        construct(string message) : base(message, 6) { }
+    }
+
+    // The transfer did not finish in time (code 8).
+    class TimeoutException : UsbException {
+        construct(string message) : base(message, 8) { }
+    }
+
+    // The endpoint stalled - the device refused the request (code 9); ClearHalt resumes a stalled endpoint.
+    class StallException : UsbException {
+        construct(string message) : base(message, 9) { }
+    }
+
+    // The device was unplugged (code 10).
+    class DisconnectedException : UsbException {
+        construct(string message) : base(message, 10) { }
+    }
+
+    class Errors {
+        static undefined Throw() {
+            var code = __UsbLastError()
+            var message = __UsbLastErrorMessage()
+            if (code == 3) { throw new NotFoundException(message) }
+            if (code == 4) { throw new BusyException(message) }
+            if (code == 5) { throw new PermissionException(message) }
+            if (code == 6) { throw new UnsupportedException(message) }
+            if (code == 8) { throw new TimeoutException(message) }
+            if (code == 9) { throw new StallException(message) }
+            if (code == 10) { throw new DisconnectedException(message) }
+            throw new UsbException(message, code)
+        }
+
+        static int Check(int result) {
+            if (result < 0) { Usb.Errors.Throw() }
+            return result
+        }
+    }
+
+    // The kinds of endpoints.
+    enum TransferType { Control, Isochronous, Bulk, Interrupt }
+
+    // The request types of control transfers (bmRequestType): direction, kind and recipient.
+    class Request {
+        static int StandardIn { get { return 0x80 } }
+        static int StandardOut { get { return 0x00 } }
+        static int ClassIn { get { return 0xA1 } }
+        static int ClassOut { get { return 0x21 } }
+        static int VendorIn { get { return 0xC0 } }
+        static int VendorOut { get { return 0x40 } }
+    }
+
+    // Time limits in milliseconds: a number, a time value (2s) or a TimeSpan; undefined: no limit (-1).
+    class Clock {
+        static int Millis(any limit) {
+            if (limit == undefined) { return -1 }
+            var span = TimeSpan.Of(limit)
+            var ms = span.Ticks / 10000
+            if (ms < 0) { return 0 }
+            return ms
+        }
+
+        static int Now() { return DateTime.UtcNow.Ticks / 10000 }
+    }
+
+    // A device in the list of the machine.
+    class DeviceInfo {
+        string id
+        int vendorId
+        int productId
+        int deviceClass
+        string manufacturer
+        string product
+        string serialNumber
+        int bus
+        int address
+
+        construct(string line) {
+            var f = line.Split("|")
+            this.id = f[0]
+            this.vendorId = f[1].ToInt()
+            this.productId = f[2].ToInt()
+            this.deviceClass = f[3].ToInt()
+            this.manufacturer = f[4]
+            this.product = f[5]
+            this.serialNumber = f[6]
+            this.bus = f[7].ToInt()
+            this.address = f[8].ToInt()
+        }
+
+        // What Usb.Device takes to open it ("001:004" with libusb, the device path with WinUSB, "sim").
+        string Id { get { return this.id } }
+        int VendorId { get { return this.vendorId } }
+        int ProductId { get { return this.productId } }
+        int DeviceClass { get { return this.deviceClass } }
+        // (the texts need access to the device: without it they are empty)
+        string Manufacturer { get { return this.manufacturer } }
+        string Product { get { return this.product } }
+        string SerialNumber { get { return this.serialNumber } }
+        int Bus { get { return this.bus } }
+        int Address { get { return this.address } }
+
+        string ToString() {
+            return Usb.Format.Hex(this.vendorId) + ":" + Usb.Format.Hex(this.productId) + " " + this.manufacturer + " " + this.product + " (" + this.id + ")"
+        }
+    }
+
+    // An endpoint of an interface.
+    class Endpoint {
+        int interfaceNumber
+        int alternate
+        int address
+        int type
+        int maxPacketSize
+        int interfaceClass
+
+        construct(string line) {
+            var f = line.Split("|")
+            this.interfaceNumber = f[0].ToInt()
+            this.alternate = f[1].ToInt()
+            this.address = f[2].ToInt()
+            this.type = f[3].ToInt()
+            this.maxPacketSize = f[4].ToInt()
+            this.interfaceClass = f[5].ToInt()
+        }
+
+        int Interface { get { return this.interfaceNumber } }
+        int AlternateSetting { get { return this.alternate } }
+        // The address: the number and, in bit 7, the direction (0x81 is endpoint 1 IN).
+        int Address { get { return this.address } }
+        bool IsIn { get { return (this.address & 0x80) != 0 }  }
+        // A value of Usb.TransferType (as a number: 2 bulk, 3 interrupt).
+        int Type { get { return this.type } }
+        int MaxPacketSize { get { return this.maxPacketSize } }
+        int InterfaceClass { get { return this.interfaceClass } }
+
+        string ToString() {
+            var kinds = ["control", "isochronous", "bulk", "interrupt"]
+            var dir = "out"
+            if (this.IsIn) { dir = "in" }
+            return "interface " + this.interfaceNumber + ": " + kinds[this.type] + " " + dir + " 0x" + Usb.Format.Hex(this.address, 2) + " (" + this.maxPacketSize + " bytes)"
+        }
+    }
+
+    // The USB devices of this machine.
+    class Bus {
+        // true if libusb (Linux, macOS) or WinUSB (Windows) is there (the device "sim" is always there).
+        static bool Available() { return __UsbSupported() == 1 }
+
+        // The devices: "sim" first, then those of the machine.
+        static List Devices() {
+            var all = __UsbDevices()
+            if (all == undefined) { Usb.Errors.Throw() }
+            var list = new List()
+            for (var i = 0; i < all.length; i++) { list.Add(new Usb.DeviceInfo(all[i])) }
+            return list
+        }
+
+        // The devices with this vendor and product id (and serial number, unless it is empty).
+        static List Find(int vendorId, int productId, string serialNumber = "") {
+            var found = new List()
+            foreach (d in Usb.Bus.Devices()) {
+                if (d.VendorId == vendorId && d.ProductId == productId && (serialNumber == "" || d.SerialNumber == serialNumber)) { found.Add(d) }
+            }
+            return found
+        }
+    }
+
+    class Format {
+        // A number as hex digits (4 by default).
+        static string Hex(int value, int count = 4) {
+            var digits = "0123456789abcdef"
+            var text = ""
+            for (int i = count - 1; i >= 0; i--) { text = text + digits.CharAt((value >> (i * 4)) & 15) }
+            return text
+        }
+    }
+
+    // An opened device.
+    class Device {
+        int handle
+        bool closed
+        string id
+        List claimed
+
+        // new Usb.Device("sim"), new Usb.Device("001:004") or new Usb.Device(0x1209, 0x0001) (and a serial number): opens the device.
+        construct(any device, int productId = -1, string serialNumber = "") {
+            this.handle = -1
+            this.closed = false
+            this.claimed = new List()
+            if (device is of string) { this.id = device }
+            else {
+                var found = Usb.Bus.Find(device, productId, serialNumber)
+                if (found.count == 0) { throw new NotFoundException("There is no USB device " + Usb.Format.Hex(device) + ":" + Usb.Format.Hex(productId) + ".") }
+                this.id = found[0].Id
+            }
+            this.handle = Usb.Errors.Check(__UsbOpen(this.id))
+        }
+
+        destruct() { try { this.Close() } catch (UsbException e) { } }
+
+        string Id { get { return this.id } }
+        bool IsClosed { get { return this.closed } }
+
+        undefined CheckOpen() {
+            if (this.closed) { throw new UsbException("The USB device is closed.", 2) }
+        }
+
+        // The endpoints of all interfaces and alternate settings.
+        List Endpoints() {
+            this.CheckOpen()
+            var all = __UsbEndpoints(this.handle)
+            if (all == undefined) { Usb.Errors.Throw() }
+            var list = new List()
+            for (var i = 0; i < all.length; i++) { list.Add(new Usb.Endpoint(all[i])) }
+            return list
+        }
+
+        // Takes an interface for this program (before its endpoints are used; on Linux a kernel driver that has it is detached meanwhile).
+        undefined ClaimInterface(int number = 0) {
+            this.CheckOpen()
+            if (!__UsbInterface(this.handle, 0, number, 0)) { Usb.Errors.Throw() }
+            if (this.claimed.IndexOf(number) < 0) { this.claimed.Add(number) }
+        }
+
+        undefined ReleaseInterface(int number = 0) {
+            this.CheckOpen()
+            if (!__UsbInterface(this.handle, 1, number, 0)) { Usb.Errors.Throw() }
+            this.claimed.Remove(number)
+        }
+
+        undefined SetAlternateSetting(int interfaceNumber, int alternate) {
+            this.CheckOpen()
+            if (!__UsbInterface(this.handle, 2, interfaceNumber, alternate)) { Usb.Errors.Throw() }
+        }
+
+        // A control transfer on endpoint 0 with its data stage in data[offset .. offset + length) - read into it or written from it, as bit 7 of requestType says (see Usb.Request).
+        // Returns the bytes moved.
+        int Control(int requestType, int request, int value, int index, byte data[], int offset = 0, int length = -1, any timeout = 1000) {
+            this.CheckOpen()
+            if (length < 0) { length = data.length - offset }
+            return Usb.Errors.Check(__UsbControl(this.handle, requestType, request, value, index, data, offset, length, Usb.Clock.Millis(timeout)))
+        }
+
+        // A control transfer that reads up to `length` bytes: what the device sent.
+        byte[] ControlIn(int requestType, int request, int value, int index, int length, any timeout = 1000) {
+            var data = new byte[length]
+            var n = this.Control(requestType | 0x80, request, value, index, data, 0, length, timeout)
+            if (n == length) { return data }
+            var shorter = new byte[n]
+            for (int i = 0; i < n; i++) { shorter[i] = data[i] }
+            return shorter
+        }
+
+        // A control transfer that sends `data` (or none): the bytes sent.
+        int ControlOut(int requestType, int request, int value, int index, byte data[] = undefined, any timeout = 1000) {
+            if (data == undefined) { data = new byte[0] }
+            return this.Control(requestType & 0x7F, request, value, index, data, 0, data.length, timeout)
+        }
+
+        // A bulk or interrupt transfer in slices of 20 ms, so that the program does not hang in one native call: up to the limit (undefined: none). Reading returns what came with
+        // the first packet; writing goes on until everything is sent.
+        int Move(int type, int endpoint, byte buffer[], int offset, int count, any timeout) {
+            this.CheckOpen()
+            var limit = Usb.Clock.Millis(timeout)
+            var start = Usb.Clock.Now()
+            var done = 0
+            var reading = (endpoint & 0x80) != 0
+            while (true) {
+                var slice = 20
+                if (limit >= 0) {
+                    var left = limit - (Usb.Clock.Now() - start)
+                    if (left <= 0) { throw new TimeoutException("The USB transfer on endpoint 0x" + Usb.Format.Hex(endpoint, 2) + " did not finish in time.") }
+                    if (left < slice) { slice = left }
+                }
+                var n = __UsbTransfer(this.handle, type, endpoint, buffer, offset + done, count - done, slice)
+                if (n < 0) {
+                    if (__UsbLastError() != 8) { Usb.Errors.Throw() }
+                    Sleep(1)
+                } else {
+                    done = done + n
+                    if (reading || done >= count) { return done }
+                }
+            }
+        }
+
+        // Reads from a bulk IN endpoint (0x81, ...): up to `count` bytes, what came in the first packet(s) - ask for whole packets (a multiple of MaxPacketSize). Waits up to `timeout`.
+        int BulkRead(int endpoint, byte buffer[], int offset, int count, any timeout = undefined) { return this.Move(2, endpoint | 0x80, buffer, offset, count, timeout) }
+
+        // Writes to a bulk OUT endpoint (0x01, ...): all of buffer[offset .. offset + count).
+        int BulkWrite(int endpoint, byte buffer[], int offset = 0, int count = -1, any timeout = undefined) {
+            if (count < 0) { count = buffer.length - offset }
+            return this.Move(2, endpoint & 0x7F, buffer, offset, count, timeout)
+        }
+
+        int InterruptRead(int endpoint, byte buffer[], int offset, int count, any timeout = undefined) { return this.Move(3, endpoint | 0x80, buffer, offset, count, timeout) }
+
+        // The same as new buffers: what came, up to `count` bytes.
+        byte[] BulkRead(int endpoint, int count = 512, any timeout = undefined) { return this.ReadNew(2, endpoint, count, timeout) }
+        byte[] InterruptRead(int endpoint, int count = 64, any timeout = undefined) { return this.ReadNew(3, endpoint, count, timeout) }
+
+        byte[] ReadNew(int type, int endpoint, int count, any timeout) {
+            var data = new byte[count]
+            var n = this.Move(type, endpoint | 0x80, data, 0, count, timeout)
+            if (n == count) { return data }
+            var shorter = new byte[n]
+            for (int i = 0; i < n; i++) { shorter[i] = data[i] }
+            return shorter
+        }
+
+        int InterruptWrite(int endpoint, byte buffer[], int offset = 0, int count = -1, any timeout = undefined) {
+            if (count < 0) { count = buffer.length - offset }
+            return this.Move(3, endpoint & 0x7F, buffer, offset, count, timeout)
+        }
+
+        // A stalled endpoint goes on.
+        undefined ClearHalt(int endpoint) {
+            this.CheckOpen()
+            if (!__UsbClearHalt(this.handle, endpoint)) { Usb.Errors.Throw() }
+        }
+
+        // The bulk endpoints of an interface as a stream: claims the interface, writes go to its bulk OUT endpoint, reads come from its bulk IN endpoint.
+        Usb.UsbStream OpenStream(int interfaceNumber = 0) {
+            var outEp = -1
+            var inEp = -1
+            var packet = 64
+            foreach (e in this.Endpoints()) {
+                if (e.Interface == interfaceNumber && e.AlternateSetting == 0 && e.Type == 2) {
+                    if (e.IsIn && inEp < 0) {
+                        inEp = e.Address
+                        packet = e.MaxPacketSize
+                    }
+                    if (!e.IsIn && outEp < 0) { outEp = e.Address }
+                }
+            }
+            if (inEp < 0 && outEp < 0) { throw new NotFoundException("Interface " + interfaceNumber + " has no bulk endpoints.") }
+            this.ClaimInterface(interfaceNumber)
+            return new Usb.UsbStream(this, outEp, inEp, packet)
+        }
+
+        // Two given bulk endpoints as a stream (-1: none in that direction); the interface must be claimed.
+        Usb.UsbStream EndpointStream(int outEndpoint, int inEndpoint, int maxPacketSize = 512) {
+            return new Usb.UsbStream(this, outEndpoint, inEndpoint, maxPacketSize)
+        }
+
+        undefined Close() {
+            if (this.closed) { return }
+            foreach (n in this.claimed) { __UsbInterface(this.handle, 1, n, 0) }
+            this.claimed.Clear()
+            this.closed = true
+            if (!__UsbClose(this.handle)) { Usb.Errors.Throw() }
+        }
+    }
+
+    // A bulk OUT and a bulk IN endpoint of a device as an IO.Stream: Write sends, Read returns what came (at least one byte; it waits up to ReadTimeout, undefined: no limit).
+    // Reads go through a buffer of whole packets, so asking for fewer bytes than a packet holds loses nothing.
+    class UsbStream : IO.Stream {
+        Usb.Device device
+        int outEndpoint
+        int inEndpoint
+        int packet
+        byte pending[]
+        int pendingAt
+        int pendingCount
+        bool closed
+        any readLimit
+        any writeLimit
+
+        construct(Usb.Device device, int outEndpoint, int inEndpoint, int packet) {
+            this.device = device
+            this.outEndpoint = outEndpoint
+            this.inEndpoint = inEndpoint
+            this.packet = packet
+            if (this.packet < 8) { this.packet = 64 }
+            this.pending = new byte[this.packet * 16]
+            this.pendingAt = 0
+            this.pendingCount = 0
+            this.closed = false
+            this.readLimit = undefined
+            this.writeLimit = undefined
+        }
+
+        bool CanRead { get { return !this.closed && this.inEndpoint >= 0 } }
+        bool CanWrite { get { return !this.closed && this.outEndpoint >= 0 } }
+
+        any ReadTimeout {
+            get { return this.readLimit }
+            set { this.readLimit = value }
+        }
+
+        any WriteTimeout {
+            get { return this.writeLimit }
+            set { this.writeLimit = value }
+        }
+
+        int OutEndpoint { get { return this.outEndpoint } }
+        int InEndpoint { get { return this.inEndpoint } }
+
+        // How many bytes have come and wait to be read.
+        int Available { get { return this.pendingCount } }
+
+        int Read(byte buffer[], int offset, int count) {
+            if (this.closed) { throw new IO.StreamClosedException("The USB stream is closed.") }
+            if (this.inEndpoint < 0) { throw new IO.IOException("This USB stream has no IN endpoint.", 8) }
+            if (count <= 0) { return 0 }
+            if (this.pendingCount == 0) {
+                this.pendingAt = 0
+                this.pendingCount = this.device.BulkRead(this.inEndpoint, this.pending, 0, this.pending.length, this.readLimit)
+            }
+            var n = count
+            if (n > this.pendingCount) { n = this.pendingCount }
+            for (int i = 0; i < n; i++) { buffer[offset + i] = this.pending[this.pendingAt + i] }
+            this.pendingAt = this.pendingAt + n
+            this.pendingCount = this.pendingCount - n
+            return n
+        }
+
+        int Write(byte buffer[], int offset, int count) {
+            if (this.closed) { throw new IO.StreamClosedException("The USB stream is closed.") }
+            if (this.outEndpoint < 0) { throw new IO.IOException("This USB stream has no OUT endpoint.", 8) }
+            return this.device.BulkWrite(this.outEndpoint, buffer, offset, count, this.writeLimit)
+        }
+
+        // Writes text (UTF-8).
+        undefined WriteText(string text) {
+            var bytes = text.ToBytes()
+            this.Write(bytes, 0, bytes.length)
+        }
+
+        undefined Close() { this.closed = true }
+    }
+
+    // The simulated device "sim" from the outside (for tests).
+    class Sim {
+        // 0 bytes written to it, 1 bytes read from it, 2 control transfers, 3 bytes still queued, 4 interface 0 claimed (1/0).
+        static int Info(int which) { return __UsbSimInfo(which) }
+        // Forgets everything.
+        static undefined Clear() { __UsbSimClear() }
+    }
+}
