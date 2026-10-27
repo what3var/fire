@@ -362,6 +362,8 @@ drops the older half then and goes on - the scopes of a schematic roll with 8192
 | `Current(name, part)` | a channel for the current through a part |
 | `Times()`, `Samples(name)` | the recorded times (seconds) and samples (volts, amperes) as `float[]` |
 | `Last(name)`, `Count`, `Clear()` | the last sample, the number of samples, start again |
+| `Trace(name, columns, span = 0, trigger = 0, level = 0, times = "")` | a channel over `columns` columns of a screen, computed natively: the last samples, or `span` seconds - from the latest crossing of `level` (`trigger` 1 rising, 2 falling); `times` multiplies another channel in (power); `[first column with data, values...]` |
+| `Pairs(x, y, count = 2000)` | the last pairs of two channels for an XY display: `[x0, y0, x1, y1, ...]` |
 | `Spectrum(name, size = 512, fmax = 20kHz)` | the spectrum of a channel, computed natively: `size` samples taken at the rate `2 * fmax` (fmax 0: the rate of the simulation), mean removed, Hann window; `[bin width in Hz, amplitude of bin 1, ..., of bin size/2]` |
 
 **`Multimeter`**: `Multimeter.Volts(a, b = undefined)` (between two ports), `Multimeter.Amps(part)`, `Multimeter.Rms(samples)`.
@@ -566,8 +568,9 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   CurrentConveyor, Ota, Optocoupler, the logic chips TFlipFlop, Latch, RingCounter, Multiplexer, Demultiplexer, HalfAdder, FullAdder, SipoShift, PisoShift,
   Adc, Dac, SevenSegmentDecoder, SevenSegment, Monostable, PhaseComparator, Vco (always in Falstad's chip layout; `bits`, `spacing` and the options of the
   chip) and TriState (`flip`: the control on the other side); sources and rails also have the waveforms triangle,
-  sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
-  voltage/current, `display` time or spectrum - an FFT analyzer: the last `fftSize` samples (128 .. 4096, default 512) taken at twice `maxFrequency` (default 20kHz; 0: at the rate of the simulation, the axis automatically), Hann window, in dB, computed natively; `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
+  sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element or one of its pins - `R1.2` counted from 1, or the name of a port of its part: `Q1.B` -, `quantity`
+  voltage/current/power (v * i), `timePerDiv` (the time base: 10 divisions across; 0 = one step per pixel), `trigger` free/rising/falling through `triggerLevel`,
+  `display` time, xy (the current of the element over its voltage, its characteristic curve) or spectrum - an FFT analyzer: the last `fftSize` samples (128 .. 4096, default 512) taken at twice `maxFrequency` (default 20kHz; 0: at the rate of the simulation, the axis automatically), Hann window, in dB, computed natively; `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
   emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart
@@ -629,7 +632,7 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 | properties | double click or Enter: the view's own editor, or `OnEdit` of the program |
 | the circuit | `SetCircuitProperty("class" / "namespace" / "timeStep", text)` and `CircuitProperty(key)` (with undo); `Positions()` lists what can be operated while it runs (potentiometers - a group once -, switches, push buttons, selector switches, logic inputs) and `Operate(index, value)` operates it; `Ports()` lists the Pin elements and the parts bound to devices |
 | zoom, pan | the wheel zooms at the pointer, the middle or right button pans; `FitToView()` |
-| context menu | a right click without dragging: on an element Attach Scope (voltage, current), Attach FFT Analyzer, properties, rotate, flip, duplicate, delete; on a scope time or spectrum; on empty space run, reset, select all, fit, grid, values, current. `AttachScope(element, quantity, display)` does the same from a program |
+| context menu | a right click without dragging: on an element Attach Scope (voltage, current, power), an XY scope, Attach FFT Analyzer; on a pin a scope for that pin; properties, rotate, flip, duplicate, delete; on a scope time, spectrum or XY; on empty space run, reset, select all, fit, grid, values, current. `AttachScope(element, quantity, display)` does the same from a program |
 
 The view draws at the full resolution of the screen (a UI.Root with `Scaling` above 1): lines and text are sharp, not stretched. Changes that keep the connections
 (moving a scope, a text, or a group as a whole) do not compile the circuit again - the simulation and the scopes go on.

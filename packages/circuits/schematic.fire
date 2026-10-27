@@ -202,7 +202,7 @@ namespace Circuits {
             l.Add("Display|LogicOutput|threshold:V=2.5")
             l.Add("Display|SevenSegment|point:bool=false;supply:V=5;spacing:int=4")
             l.Add("Display|Probe|")
-            l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current=voltage;display:choice:time/spectrum=time;range:V=0;maxFrequency:Hz=20k;fftSize:choice:128/256/512/1024/2048/4096=512")
+            l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current/power=voltage;display:choice:time/spectrum/xy=time;timePerDiv:s=0;trigger:choice:free/rising/falling=free;triggerLevel:=0;range:=0;maxFrequency:Hz=20k;fftSize:choice:128/256/512/1024/2048/4096=512")
             l.Add("Display|Label|text:text=A")
             l.Add("Display|Pin|port:text=in")
             l.Add("Display|Text|text:text=Text")
@@ -1365,7 +1365,7 @@ namespace Circuits {
                 }
             }
             // how a scope shows what it records: only the picture changes (the recording goes on)
-            if (e.type == "Scope" && (key == "display" || key == "range" || key == "maxFrequency" || key == "fftSize")) {
+            if (e.type == "Scope" && (key == "range" || key == "maxFrequency" || key == "fftSize" || key == "timePerDiv" || key == "trigger" || key == "triggerLevel")) {
                 e.dirty = false
                 this.version = this.version + 1
                 return
@@ -1611,34 +1611,68 @@ namespace Circuits {
 
         // a scope for a Scope element: the voltage at the pins of the element named by "probe", or the current through its part
         undefined MakeScope(Circuits.Element e) {
-            var target = this.Find(e.Get("probe"))
+            // the probe: an element ("R1") or one of its pins ("R1.2", counted from 1, or the name of the port of its part: "Q1.B")
+            var probe = e.Get("probe")
+            var pin = -1
+            var target = this.Find(probe)
+            if (target == undefined && probe.LastIndexOf(".") > 0) {
+                var dot = probe.LastIndexOf(".")
+                target = this.Find(probe.Substring(0, dot))
+                if (target != undefined) {
+                    var which = probe.Substring(dot + 1)
+                    var number = which.TryToInt()
+                    if (number != undefined && number >= 1 && number <= target.nets.count) { pin = number - 1 }
+                    else {
+                        for (int k = 0; k < target.nets.count; k++) {
+                            Port p = target.nets[k]
+                            if (p != undefined && p.name.ToLower() == which.ToLower()) { pin = k }
+                        }
+                    }
+                    if (pin < 0) {
+                        e.error = "'" + target.name + "' has no pin '" + which + "'."
+                        return
+                    }
+                }
+            }
             if (target == undefined) {
-                if (e.Get("probe") != "") { e.error = "There is no element '" + e.Get("probe") + "'." }
+                if (probe != "") { e.error = "There is no element '" + probe + "'." }
                 return
             }
             // checked before the scope is made (it joins the circuit when it is made)
-            var current = e.Get("quantity") == "current"
-            if (current && target.part == undefined) {
-                e.error = "'" + target.name + "' has no current."
+            var quantity = e.Get("quantity")
+            var display = e.Get("display")
+            var needCurrent = quantity == "current" || quantity == "power" || display == "xy"
+            var needVoltage = quantity != "current" || display == "xy"
+            if (needCurrent && (target.part == undefined || pin >= 0)) {
+                if (pin >= 0) { e.error = "A pin has a voltage, not a current: probe the element for its current." }
+                else { e.error = "'" + target.name + "' has no current." }
                 return
             }
-            if (!current && (target.nets.count == 0 || target.nets[0] == undefined)) {
+            if (target.nets.count == 0 || target.nets[0] == undefined) {
                 e.error = "'" + target.name + "' is not connected."
                 return
             }
             var scope = new Circuits.Scope(this.circuit.Top(), 8192, true)
-            if (current) {
-                scope.Current("y", target.part)
-            } else {
-                Port b = undefined
-                if (target.nets.count > 1) { b = target.nets[1] }
-                if (target.nets.count > 1 && target.type != "Probe" && target.part == undefined) { b = undefined }
-                if (b != undefined && (target.type == "Source" || target.type == "AudioInput")) {
-                    // a source runs from its first point (-) to its second (+): its voltage is the one of + against -
-                    scope.Voltage("y", b, target.nets[0])
+            // y: what is shown (the voltage, or the current); x: the other one for power (y * x) and the XY display (current over voltage)
+            if (needVoltage) {
+                var name = "y"
+                if (quantity != "voltage") { name = "x" }
+                if (pin >= 0) {
+                    scope.Voltage(name, target.nets[pin])
                 } else {
-                    scope.Voltage("y", target.nets[0], b)
+                    Port b = undefined
+                    if (target.nets.count > 1) { b = target.nets[1] }
+                    if (target.nets.count > 1 && target.type != "Probe" && target.part == undefined) { b = undefined }
+                    if (b != undefined && (target.type == "Source" || target.type == "AudioInput")) {
+                        // a source runs from its first point (-) to its second (+): its voltage is the one of + against -
+                        scope.Voltage(name, b, target.nets[0])
+                    } else {
+                        scope.Voltage(name, target.nets[0], b)
+                    }
                 }
+            }
+            if (needCurrent) {
+                if (quantity == "voltage") { scope.Current("x", target.part) } else { scope.Current("y", target.part) }
             }
             scope.TakeTo(e)
             e.scope = scope

@@ -176,6 +176,20 @@
         "returnsReference": true
       },
       {
+        "name": "__CirRecTrace",
+        "arguments": 7,
+        "cpp": "circuits::RecTrace",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirRecPairs",
+        "arguments": 4,
+        "cpp": "circuits::RecPairs",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
         "name": "__CirRecSpectrum",
         "arguments": 4,
         "cpp": "circuits::RecSpectrum",

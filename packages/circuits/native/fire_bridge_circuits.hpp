@@ -2020,6 +2020,86 @@ inline Value RecSamples(Value h, Value channel, OwnList* list) {
     return ArrV(a);
 }
 
+/// The trace of a scope over `columns` columns of the screen. Channel y (times channel x when x >= 0: the power v * i). `span` <= 0: the last `columns` samples, one
+/// per column; else a window of `span` seconds - with a trigger (1 rising, 2 falling through `level`) it starts at the latest crossing that leaves room for the
+/// whole window, without one (or when there is no crossing) it ends now. Result: [first column with data, value of column 0, ..., of column columns-1].
+inline Value RecTrace(Value h, Value chY, Value chX, Value spanV, Value columnsV, Value triggerV, Value levelV, OwnList* list) {
+    Recorder* r = recorder(h);
+    int64_t columns = std::max<int64_t>(1, std::min<int64_t>(16384, columnsV.i));
+    Arr* out = allocArr((uint32_t)(columns + 1), list);
+    Value* o = out->items();
+    o[0] = Float((Real)columns);
+    for (int64_t c = 0; c < columns; c++) o[c + 1] = Float(0);
+    if (!r || chY.i < 0 || (size_t)chY.i >= r->channels.size()) return ArrV(out);
+    const std::vector<double>& ys = r->channels[(size_t)chY.i];
+    const std::vector<double>* xs = (chX.i >= 0 && (size_t)chX.i < r->channels.size()) ? &r->channels[(size_t)chX.i] : nullptr;
+    size_t count = std::min(ys.size(), r->times.size());
+    if (xs) count = std::min(count, xs->size());
+    if (count == 0) return ArrV(out);
+    auto value = [&](size_t i) { return xs ? ys[i] * (*xs)[i] : ys[i]; };
+    double span = D(spanV);
+    if (span <= 0) {
+        size_t n = std::min<size_t>(count, (size_t)columns);
+        int64_t first = columns - (int64_t)n;
+        o[0] = Float((Real)first);
+        for (size_t k = 0; k < n; k++) o[first + (int64_t)k + 1] = Float((Real)value(count - n + k));
+        return ArrV(out);
+    }
+    const std::vector<double>& times = r->times;
+    double end = times[count - 1];
+    double start = end - span;
+    int64_t trigger = triggerV.i;
+    double level = D(levelV);
+    if (trigger == 1 || trigger == 2) {
+        // the latest crossing at or before end - span
+        for (size_t i = count - 1; i > 0; i--) {
+            if (times[i] > end - span) continue;
+            double a = value(i - 1), b = value(i);
+            bool hit = trigger == 1 ? (a < level && b >= level) : (a > level && b <= level);
+            if (hit) {
+                double f = b != a ? (level - a) / (b - a) : 0.0;
+                start = times[i - 1] + (times[i] - times[i - 1]) * f;
+                break;
+            }
+        }
+    }
+    // each column: the sample at its time (linear between the samples)
+    size_t idx = 0;
+    while (idx + 1 < count && times[idx + 1] < start) idx++;
+    int64_t first = columns;
+    for (int64_t c = 0; c < columns; c++) {
+        double tc = start + span * (double)c / (double)std::max<int64_t>(1, columns - 1);
+        if (tc < times[0] || tc > end + 1e-15) continue;
+        while (idx + 1 < count && times[idx + 1] < tc) idx++;
+        double v;
+        if (idx + 1 < count && times[idx + 1] > times[idx]) {
+            double f = (tc - times[idx]) / (times[idx + 1] - times[idx]);
+            f = std::max(0.0, std::min(1.0, f));
+            v = value(idx) + (value(idx + 1) - value(idx)) * f;
+        } else v = value(idx);
+        o[c + 1] = Float((Real)v);
+        if (c < first) first = c;
+    }
+    o[0] = Float((Real)first);
+    return ArrV(out);
+}
+
+/// The last pairs of two channels for an XY display: [x0, y0, x1, y1, ...] of at most `count` samples (the newest last).
+inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list) {
+    Recorder* r = recorder(h);
+    if (!r || chX.i < 0 || chY.i < 0 || (size_t)chX.i >= r->channels.size() || (size_t)chY.i >= r->channels.size()) return ArrV(allocArr(0, list));
+    const std::vector<double>& xs = r->channels[(size_t)chX.i];
+    const std::vector<double>& ys = r->channels[(size_t)chY.i];
+    size_t n = std::min(xs.size(), ys.size());
+    size_t take = std::min<size_t>(n, (size_t)std::max<int64_t>(0, countV.i));
+    Arr* out = allocArr((uint32_t)(take * 2), list);
+    for (size_t k = 0; k < take; k++) {
+        out->items()[k * 2] = Float((Real)xs[n - take + k]);
+        out->items()[k * 2 + 1] = Float((Real)ys[n - take + k]);
+    }
+    return ArrV(out);
+}
+
 /// The spectrum of a channel for an FFT analyzer: the last `size` samples (a power of two, 16 .. 8192), taken at the rate 2 * fmax (so the bins reach up to
 /// fmax; fmax <= 0 or a coarser simulation: the rate of the simulation), the mean taken away, a Hann window, then the FFT. Result: [bin width in Hz,
 /// amplitude of bin 1, ..., amplitude of bin size/2] (amplitudes of a sine as its peak value); empty if there are too few samples.
