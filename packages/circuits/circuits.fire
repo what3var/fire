@@ -4413,6 +4413,13 @@ namespace Circuits {
             return __CirRecTrace(this.recorder, this.ChannelOf(name), x, Circuits.Units.Seconds(span), columns, trigger, level)
         }
 
+        /// <summary>The scale of a trace (see Trace): [lo, hi] - ±range with `range` > 0, otherwise ± the largest value (at least ±1 for a flat trace).</summary>
+        static float[] TraceRange(float trace[], float range = 0.0) { return __CirTraceRange(trace, range) }
+
+        /// <summary>A trace (see Trace) as the points of a path [x, y, ...] in a box at (x0, y0) of height h scaled to lo .. hi: column c at x0 + 1 + c,
+        /// 0 in the middle; from the first column with data.</summary>
+        static float[] TracePoints(float trace[], float x0, float y0, float h, float lo, float hi) { return __CirTracePoints(trace, x0, y0, h, lo, hi) }
+
         /// <summary>The last `count` pairs of two channels for an XY display: [x0, y0, x1, y1, ...].</summary>
         float[] Pairs(string x, string y, int count = 2000) { return __CirRecPairs(this.recorder, this.ChannelOf(x), this.ChannelOf(y), count) }
 

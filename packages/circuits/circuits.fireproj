@@ -183,6 +183,20 @@
         "returnsReference": true
       },
       {
+        "name": "__CirTraceRange",
+        "arguments": 2,
+        "cpp": "circuits::TraceRange",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirTracePoints",
+        "arguments": 6,
+        "cpp": "circuits::TracePoints",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
         "name": "__CirRecPairs",
         "arguments": 4,
         "cpp": "circuits::RecPairs",

@@ -595,6 +595,25 @@ inline void blit(Framebuffer& dst, const Framebuffer& srcIn, int sx, int sy, int
     int64_t dyStart = std::max<int64_t>(std::max<int64_t>(0, clipTop) - (int64_t)dy, 0), dyEnd = std::min<int64_t>(absDh, std::min<int64_t>(dst.height, clipBottom) - (int64_t)dy);
     if (dxEnd <= dxStart || dyEnd <= dyStart) return;
 
+    // the common case - RGBA to RGBA, 1:1, not flipped: whole rows (copy) or a plain loop (transparent, blend), no division per pixel
+    if (!src.isIndexed() && !dst.isIndexed() && !flipX && !flipY && absDw == sw && absDh == sh) {
+        int64_t i0 = std::max<int64_t>(dxStart, -(int64_t)sx), i1 = std::min<int64_t>(dxEnd, (int64_t)src.width - sx);
+        int64_t j0 = std::max<int64_t>(dyStart, -(int64_t)sy), j1 = std::min<int64_t>(dyEnd, (int64_t)src.height - sy);
+        if (i1 <= i0 || j1 <= j0) return;
+        for (int64_t j = j0; j < j1; j++) {
+            const uint32_t* from = src.pixels + (size_t)(sy + j) * src.width + (size_t)(sx + i0);
+            uint32_t* to = dst.pixels + (size_t)(dy + j) * dst.width + (size_t)(dx + i0);
+            size_t n = (size_t)(i1 - i0);
+            if (mode == BLIT_COPY) { std::memmove(to, from, n * 4); continue; }
+            for (size_t k = 0; k < n; k++) {
+                uint32_t c = from[k];
+                if ((c >> 24) == 0) continue;
+                to[k] = mode == BLIT_BLEND ? mix(to[k], c) : c;
+            }
+        }
+        return;
+    }
+
     // a small cache for the palette lookup of RGBA sources (many equal colors, and a search costs 256 comparisons)
     struct Cached { uint32_t color; uint8_t index; bool valid; };
     std::vector<Cached> cache(!src.isIndexed() && dst.isIndexed() ? 1024 : 0, Cached{0, 0, false});

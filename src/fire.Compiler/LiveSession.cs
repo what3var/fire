@@ -40,16 +40,24 @@ namespace fire.Compiler
 
             public void Present(Framebuffer framebuffer)
             {
+                bool changed;
                 lock (_owner._lock)
                 {
                     int n = framebuffer.Width * framebuffer.Height;
-                    if (_owner._pixels.Length != n) _owner._pixels = new uint[n];
-                    Array.Copy(framebuffer.Pixels, _owner._pixels, Math.Min(n, framebuffer.Pixels.Length));
-                    _owner._width = framebuffer.Width;
-                    _owner._height = framebuffer.Height;
-                    _owner._frame++;
+                    var source = framebuffer.Pixels.AsSpan(0, Math.Min(n, framebuffer.Pixels.Length));
+                    // the same picture as last time (a paused simulation, an idle editor): nothing to hand over - the host neither copies nor uploads it again
+                    changed = _owner._pixels.Length != n || _owner._width != framebuffer.Width || _owner._height != framebuffer.Height
+                              || !source.SequenceEqual(_owner._pixels.AsSpan(0, source.Length));
+                    if (changed)
+                    {
+                        if (_owner._pixels.Length != n) _owner._pixels = new uint[n];
+                        source.CopyTo(_owner._pixels);
+                        _owner._width = framebuffer.Width;
+                        _owner._height = framebuffer.Height;
+                        _owner._frame++;
+                    }
                 }
-                _owner.FrameReady?.Invoke();
+                if (changed) _owner.FrameReady?.Invoke();
                 // about 60 pictures per second: the program waits like for the vertical blank of a screen
                 long now = Environment.TickCount64;
                 long wait = 16 - (now - _lastPresent);

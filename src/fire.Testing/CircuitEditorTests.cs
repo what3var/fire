@@ -570,6 +570,12 @@ static class CircuitEditorTests
             long number = live.CopyFrame(ref pixels, out int w, out int h);
             Check("Live-Sitzung: Bilder kommen beim Host an, Maus und Befehle beim Programm", frame && pong == "pong 7 clicks 1" && w == 200 && h == 100 && number > 0 && pixels.Length == 20000,
                 $"frame {frame}, answer {pong}, {w}x{h}, frame {number}");
+            // nothing changes any more: the same picture is not handed over again (no copy, no upload in the host)
+            Thread.Sleep(400);
+            long settled = live.CopyFrame(ref pixels, out _, out _);
+            Thread.Sleep(400);
+            long later = live.CopyFrame(ref pixels, out _, out _);
+            Check("Live-Sitzung: ein unveraendertes Bild wird nicht noch einmal uebergeben", later == settled, $"frame {settled} -> {later}");
             live.Stop();
             Check("Live-Sitzung: Stop beendet das Programm", !live.IsRunning);
         }

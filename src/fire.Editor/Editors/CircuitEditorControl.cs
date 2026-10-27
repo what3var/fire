@@ -62,12 +62,13 @@ namespace fire.Editor
                 }
                 using (var fb = _bitmap.Lock())
                 {
-                    var bytes = new byte[w * 4];
-                    for (int y = 0; y < h; y++)
-                    {
-                        Buffer.BlockCopy(_pixels, y * w * 4, bytes, 0, w * 4);
-                        System.Runtime.InteropServices.Marshal.Copy(bytes, 0, fb.Address + y * fb.RowBytes, w * 4);
-                    }
+                    // straight from the pixels into the bitmap (the runtime lets uint[] pass as int[]): no buffer per picture, one copy per row
+                    var source = (int[])(object)_pixels;
+                    if (fb.RowBytes == w * 4)
+                        System.Runtime.InteropServices.Marshal.Copy(source, 0, fb.Address, w * h);
+                    else
+                        for (int y = 0; y < h; y++)
+                            System.Runtime.InteropServices.Marshal.Copy(source, y * w, fb.Address + y * fb.RowBytes, w);
                 }
                 InvalidateVisual();
             }

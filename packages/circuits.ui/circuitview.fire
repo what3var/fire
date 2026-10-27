@@ -20,6 +20,8 @@ namespace UI {
         /// the corner shows how much of real time the simulation manages.</summary>
         bool realTime = false
         float lastFrame = 0.0
+        // cycles of the simulation since the last picture (the dots of the current move by that many)
+        int pendingCycles = 0
         /// <summary>Pixels per unit of the grid (zoom).</summary>
         float scale = 10.0
         /// <summary>Where the point (0, 0) of the grid is, in pixels from the upper left corner of the view.</summary>
@@ -84,6 +86,10 @@ namespace UI {
         SolidBrush brush
         SolidBrush textBrush
         SolidBrush back
+        // the background with the grid, drawn once and copied into each picture while size, zoom, position and grid stay (see DrawBackground)
+        Framebuffer gridLayer = undefined
+        Renderer gridRenderer = undefined
+        string gridKey = ""
         // the current through the wires (worked out per cycle) and the phases of the dots per element
         List phases
         List wireCurrents
@@ -752,13 +758,14 @@ namespace UI {
             if (c.RealTime != this.realTime) { c.RealTime = this.realTime }
             if (this.realTime && !this.running) { c.RestartRealTime() }
             if (this.running && this.actualWidth > 0) {
+                var now = Circuits.RealTimeClock.Now()
                 if (this.realTime) {
                     // at most 30 pictures a second: between them the program has the time
-                    var now = Circuits.RealTimeClock.Now()
                     if (now - this.lastFrame < 1.0 / 30) { return }
-                    this.lastFrame = now
                 }
+                // (bookkeeping of the view, not a change of what it shows: written while "painting", so the root does not paint again for it)
                 root.painting = true
+                if (this.realTime) { this.lastFrame = now }
                 try {
                     // in real time a little more than half of a picture's time for the simulation, the rest to draw
                     if (this.realTime) { c.AdvanceRealTime(0.018) }
@@ -767,8 +774,13 @@ namespace UI {
                     this.running = false
                     this.status = "Simulation stopped: " + ex.message
                 }
+                // the simulation steps every cycle, the picture follows at most 30 times a second (more is not seen, and drawing costs the most);
+                // the dots of the current move on by the cycles in between
+                this.pendingCycles = this.pendingCycles + 1
+                var draw = this.realTime || now - this.lastFrame >= 1.0 / 30 || this.status != ""
+                if (draw && !this.realTime) { this.lastFrame = now }
                 root.painting = false
-                this.Invalidate()
+                if (draw) { this.Invalidate() }
             }
         }
 
@@ -947,7 +959,7 @@ namespace UI {
             var ay = this.Dp(lay)
             var w = this.Dp(lax + this.actualWidth) - ax
             var h = this.Dp(lay + this.actualHeight) - ay
-            root.renderer.FillRect(ax, ay, w, h, this.back)
+            this.DrawBackground(root, ax, ay, w, h)
             // the pens grow with the zoom
             var pw = 1
             if (this.scale >= 12.0) { pw = 2 }
@@ -956,7 +968,6 @@ namespace UI {
             if (this.pen.Width != wide) { this.pen.Width = wide }
             var thinWidth = UI.M.Max(1, this.Dp(1))
             if (this.thin.Width != thinWidth) { this.thin.Width = thinWidth }
-            if (this.showGrid && !this.readOnly && this.scale >= 5.0) { this.DrawGrid(root) }
             var s = this.Schematic
             if (this.graphVersion != s.Version) { this.Analyse() }
             if (this.areaElements == undefined) {
@@ -1084,7 +1095,29 @@ namespace UI {
             }
         }
 
-        undefined DrawGrid(Root root) {
+        // The background and the grid dots. The grid costs thousands of dots: it is drawn into a layer of its own only when the size, the zoom, the
+        // position or the grid change (then one row of dots, copied to the other rows) - every other picture copies the layer in one go.
+        undefined DrawBackground(Root root, int ax, int ay, int w, int h) {
+            if (!this.showGrid || this.readOnly || this.scale < 5.0 || w <= 0 || h <= 0) {
+                root.renderer.FillRect(ax, ay, w, h, this.back)
+                return
+            }
+            var key = "" + w + "x" + h + "|" + ax + "," + ay + "|" + this.scale + "|" + this.offsetX + "," + this.offsetY + "|" + this.ax + "," + this.ay + "|" + this.dev + "|" + this.snap
+            if (key != this.gridKey || this.gridLayer == undefined) {
+                if (this.gridLayer == undefined || this.gridLayer.Width() != w || this.gridLayer.Height() != h) {
+                    this.gridRenderer = undefined
+                    this.gridLayer = new Framebuffer(w, h)
+                    this.gridRenderer = new Renderer(this.gridLayer)
+                }
+                this.DrawGrid(this.gridRenderer, ax, ay, w, h)
+                this.gridKey = key
+            }
+            root.renderer.Blit(this.gridLayer, ax, ay)
+        }
+
+        // the grid into the layer (whose top left corner is at (ax, ay) of the framebuffer)
+        undefined DrawGrid(Renderer r, int ax, int ay, int w, int h) {
+            r.FillRect(0, 0, w, h, this.back)
             var step = this.snap
             if (step < 1) { step = 1 }
             while (step * this.scale < 8.0) { step = step * 2 }
@@ -1092,9 +1125,18 @@ namespace UI {
             var v0 = Math.Floor(this.ToUnitY(0.0) / step)!int * step
             var u1 = this.ToUnitX(this.actualWidth + 0.0)
             var v1 = this.ToUnitY(this.actualHeight + 0.0)
+            var d = UI.M.Max(1, this.Dp(1))
             this.brush.Color = UI.Color.Rgb(52, 52, 60)
-            for (int v = v0; v <= v1; v = v + step) {
-                for (int u = u0; u <= u1; u = u + step) { root.renderer.FillRect(this.SX(u), this.SY(v), UI.M.Max(1, this.Dp(1)), UI.M.Max(1, this.Dp(1)), this.brush) }
+            // the first row that lies in the layer: its dots one by one
+            var first = v0
+            while (first <= v1 && this.SY(first) - ay < 0) { first = first + step }
+            if (first > v1) { return }
+            var y0 = this.SY(first) - ay
+            for (int u = u0; u <= u1; u = u + step) { r.FillRect(this.SX(u) - ax, y0, d, d, this.brush) }
+            // every other row is the same strip: copied
+            for (int v = first + step; v <= v1; v = v + step) {
+                var y = this.SY(v) - ay
+                if (y >= 0 && y + d <= h && y0 + d <= h) { r.BlitRegion(this.gridLayer, 0, y0, w, d, 0, y) }
             }
         }
 
@@ -2402,44 +2444,23 @@ namespace UI {
             }
             this.thin.Color = UI.Color.Rgb(90, 90, 90)
             root.renderer.DrawLine(x0, y0 + h / 2, x1, y0 + h / 2, this.thin)
-            var lo = 0.0
-            var hi = 0.0
+            // the scale and the points of the curve in one native call (a loop per column in the script cost milliseconds per scope)
             var range = Circuits.Symbols.Number(e.Get("range"))
-            if (range != undefined && range > 0.0) {
-                lo = -range
-                hi = range
-            } else {
-                for (int c = first; c < columns; c++) {
-                    var v = trace[c + 1]
-                    if (v < lo) { lo = v }
-                    if (v > hi) { hi = v }
-                }
-                if (hi - lo < 0.000000001) {
-                    hi = hi + 1.0
-                    lo = lo - 1.0
-                }
-                var big = Math.Max(-lo, hi)
-                lo = -big
-                hi = big
-            }
+            if (range == undefined) { range = 0.0 }
+            var scale = Circuits.Scope.TraceRange(trace, range)
+            var lo = scale[0]
+            var hi = scale[1]
             if (trigger != 0 && level > lo && level < hi) {
                 // the trigger level: a short mark at the left edge
                 var ly = y0 + h / 2.0 - (level / (hi - lo) * 2.0) * (h / 2.0 - 2.0)
                 this.thin.Color = UI.Color.Rgb(220, 180, 60)
                 root.renderer.DrawLine(x0 + 1, Math.Round(ly)!int, x0 + this.Dp(6), Math.Round(ly)!int, this.thin)
             }
-            if (first < columns) {
-                var pts = new float[(columns - first) * 2]
-                for (int c = first; c < columns; c++) {
-                    var k = c - first
-                    pts[k * 2] = x0 + 1.0 + c
-                    pts[k * 2 + 1] = y0 + h / 2.0 - (trace[c + 1] / (hi - lo) * 2.0) * (h / 2.0 - 2.0)
-                }
-                if (pts.length >= 4) {
-                    this.thin.Color = UI.Color.Rgb(80, 255, 80)
-                    if (quantity == "power") { this.thin.Color = UI.Color.Rgb(255, 160, 60) }
-                    root.renderer.DrawPath(pts, this.thin)
-                }
+            var curve = Circuits.Scope.TracePoints(trace, x0 + 0.0, y0 + 0.0, h + 0.0, lo, hi)
+            if (curve.length >= 4) {
+                this.thin.Color = UI.Color.Rgb(80, 255, 80)
+                if (quantity == "power") { this.thin.Color = UI.Color.Rgb(255, 160, 60) }
+                root.renderer.DrawPath(curve, this.thin)
             }
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
             var text = label + " = " + UI.CircuitView.Short(trace[columns]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit
@@ -2629,6 +2650,10 @@ namespace UI {
             var els = s.Elements()
             // the current of the wires: from the currents the parts take at their pins, wire by wire from the ends of the nets (a net without loops)
             var wires = this.WireCurrents(els)
+            var cycles = UI.M.Max(1, this.pendingCycles)
+            root.painting = true
+            this.pendingCycles = 0
+            root.painting = false
             var yellow = UI.Color.Rgb(255, 230, 60)
             var i = 0
             foreach (e in els) {
@@ -2639,7 +2664,7 @@ namespace UI {
                     // the speed grows with the logarithm of the current
                     var mag = Math.Log(Math.Abs(cur) * 1000000000.0) / Math.Log(10.0)
                     if (mag < 0.0) { mag = 0.0 }
-                    var speed = mag * 0.05 * this.currentSpeed
+                    var speed = mag * 0.05 * this.currentSpeed * cycles
                     if (cur < 0.0) { speed = -speed }
                     var ph = this.phases[i] + speed
                     while (ph >= 2.0) { ph = ph - 2.0 }
@@ -2674,54 +2699,87 @@ namespace UI {
         }
 
         // the current of every wire (from its first point to its second; 0 for the other elements and where it cannot be told)
-        List WireCurrents(List els) {
-            var result = new List()
-            // the points and how much current the parts take out of each (known), or whether a part with unknown currents is there
+        // the connections of the wires (which points the pins of each element are on, which wires join which points): built only when the elements
+        // change (a cheap signature of their ends and pins), not for every picture - finding the points was most of the time of WireCurrents
+        int wcSignature = -1
+        int wcCount = -1
+        int wcPoints = 0
+        List wcPinStart = undefined
+        List wcPinPoint = undefined
+        List wcWa = undefined
+        List wcWb = undefined
+        List wcWi = undefined
+
+        undefined WireTopology(List els) {
+            var sig = 0
+            foreach (e in els) { sig = (sig * 31 + e.x1 * 7 + e.y1 * 13 + e.x2 * 17 + e.y2 * 19 + e.pins.count) % 1000000007 }
+            if (sig == this.wcSignature && els.count == this.wcCount && this.wcPinPoint != undefined) { return }
             var xs = new List()
             var ys = new List()
-            var need = new List()
-            var known = new List()
+            this.wcPinStart = new List()
+            this.wcPinPoint = new List()
             foreach (e in els) {
-                result.Add(0.0)
-                for (int i = 0; i < e.pins.count / 2; i++) {
-                    var k = this.PointIndex(xs, ys, e.pins[i * 2], e.pins[i * 2 + 1])
-                    if (k == need.count) {
-                        need.Add(0.0)
-                        known.Add(true)
-                    }
-                    if (e.type == "Wire") { continue }
-                    var t = e.type
-                    if (t == "Label" || t == "LogicOutput" || t == "Probe" || t == "Text" || t == "Scope") { continue }
-                    var c = this.CurrentOf(e)
-                    if (c == 0.0 && t != "Resistor" && t != "Capacitor" && t != "Inductor" && t != "Switch" && t != "Diode" && t != "Led" && t != "Zener"
-                        && t != "Source" && t != "Rail" && t != "CurrentSource" && t != "AudioInput" && t != "LogicInput" && t != "Formula") {
-                        known[k] = false
-                        continue
-                    }
-                    // the current enters the part at its first pin and leaves it at the second
-                    if (i == 0) { need[k] = need[k] + c } else { need[k] = need[k] - c }
-                }
+                this.wcPinStart.Add(this.wcPinPoint.count)
+                for (int i = 0; i < e.pins.count / 2; i++) { this.wcPinPoint.Add(this.PointIndex(xs, ys, e.pins[i * 2], e.pins[i * 2 + 1])) }
             }
-            // the wires as edges between points
-            var wa = new List()
-            var wb = new List()
-            var wi = new List()
+            this.wcPoints = xs.count
+            this.wcWa = new List()
+            this.wcWb = new List()
+            this.wcWi = new List()
             var idx = 0
             foreach (e in els) {
                 if (e.type == "Wire" && e.pins.count == 4) {
-                    wa.Add(this.PointIndex(xs, ys, e.pins[0], e.pins[1]))
-                    wb.Add(this.PointIndex(xs, ys, e.pins[2], e.pins[3]))
-                    wi.Add(idx)
+                    int start = this.wcPinStart[idx]
+                    this.wcWa.Add(this.wcPinPoint[start])
+                    this.wcWb.Add(this.wcPinPoint[start + 1])
+                    this.wcWi.Add(idx)
                 }
                 idx = idx + 1
             }
+            this.wcSignature = sig
+            this.wcCount = els.count
+        }
+
+        List WireCurrents(List els) {
+            this.WireTopology(els)
+            var result = new List()
+            // how much current the parts take out of each point (known), or whether a part with unknown currents is there
+            var need = new float[this.wcPoints]
+            var known = new bool[this.wcPoints]
+            for (int p = 0; p < this.wcPoints; p++) {
+                need[p] = 0.0
+                known[p] = true
+            }
+            var idx = 0
+            foreach (e in els) {
+                result.Add(0.0)
+                var t = e.type
+                if (t == "Wire" || t == "Label" || t == "LogicOutput" || t == "Probe" || t == "Text" || t == "Scope") {
+                    idx = idx + 1
+                    continue
+                }
+                int start = this.wcPinStart[idx]
+                var c = this.CurrentOf(e)
+                var unknown = (c == 0.0 && t != "Resistor" && t != "Capacitor" && t != "Inductor" && t != "Switch" && t != "Diode" && t != "Led" && t != "Zener"
+                    && t != "Source" && t != "Rail" && t != "CurrentSource" && t != "AudioInput" && t != "LogicInput" && t != "Formula")
+                for (int i = 0; i < e.pins.count / 2; i++) {
+                    int k = this.wcPinPoint[start + i]
+                    if (unknown) { known[k] = false }
+                    // the current enters the part at its first pin and leaves it at the second
+                    else if (i == 0) { need[k] = need[k] + c } else { need[k] = need[k] - c }
+                }
+                idx = idx + 1
+            }
+            var wa = this.wcWa
+            var wb = this.wcWb
+            var wi = this.wcWi
             var done = new bool[wa.count]
             for (int k = 0; k < wa.count; k++) { done[k] = false }
             // peel the ends: a point with one open wire and a known need gets it through that wire
             var progress = true
             while (progress) {
                 progress = false
-                for (int p = 0; p < need.count; p++) {
+                for (int p = 0; p < this.wcPoints; p++) {
                     if (!known[p]) { continue }
                     var open = -1
                     var count = 0
@@ -2732,7 +2790,7 @@ namespace UI {
                         }
                     }
                     if (count != 1) { continue }
-                    var other = wa[open]
+                    int other = wa[open]
                     var sign = -1.0
                     if (other == p) {
                         other = wb[open]

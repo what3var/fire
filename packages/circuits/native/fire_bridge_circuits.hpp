@@ -2225,6 +2225,49 @@ inline Value RecTrace(Value h, Value chY, Value chX, Value spanV, Value columnsV
 }
 
 /// The last pairs of two channels for an XY display: [x0, y0, x1, y1, ...] of at most `count` samples (the newest last).
+/// The scale of a trace of RecTrace: [lo, hi] - with `range` > 0 -range .. range, otherwise -m .. m with m the largest |value| from the first column with data
+/// (at least ±1 for a flat trace).
+inline Value TraceRange(Value traceV, Value rangeV, OwnList* list) {
+    Arr* trace = arrOf(traceV);
+    int64_t columns = trace->length > 0 ? (int64_t)trace->length - 1 : 0;
+    int64_t first = trace->length > 0 ? std::max<int64_t>(0, std::min<int64_t>(columns, (int64_t)D(trace->items()[0]))) : 0;
+    double lo = 0, hi = 0, range = D(rangeV);
+    if (range > 0) { lo = -range; hi = range; }
+    else {
+        for (int64_t c = first; c < columns; c++) {
+            double v = D(trace->items()[c + 1]);
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+        }
+        if (hi - lo < 1e-9) { hi += 1.0; lo -= 1.0; }
+        double big = std::max(-lo, hi);
+        lo = -big; hi = big;
+    }
+    Arr* out = allocArr(2, list);
+    out->items()[0] = Float((Real)lo);
+    out->items()[1] = Float((Real)hi);
+    return ArrV(out);
+}
+
+/// A trace of RecTrace as the points of a path [x, y, x, y, ...] in a box at (x0, y0) of height h scaled to lo .. hi: column c at x0 + 1 + c, 0 in the
+/// middle - what the view did in a loop of the script per column, in one call.
+inline Value TracePoints(Value traceV, Value x0V, Value y0V, Value hV, Value loV, Value hiV, OwnList* list) {
+    Arr* trace = arrOf(traceV);
+    int64_t columns = trace->length > 0 ? (int64_t)trace->length - 1 : 0;
+    int64_t first = trace->length > 0 ? std::max<int64_t>(0, std::min<int64_t>(columns, (int64_t)D(trace->items()[0]))) : 0;
+    int64_t n = columns - first;
+    Arr* out = allocArr((uint32_t)(2 * n), list);
+    Value* o = out->items();
+    double x0 = D(x0V), y0 = D(y0V), h = D(hV), span = D(hiV) - D(loV);
+    if (span == 0) span = 1;
+    for (int64_t c = first; c < columns; c++) {
+        int64_t k = c - first;
+        o[k * 2] = Float((Real)(x0 + 1.0 + (double)c));
+        o[k * 2 + 1] = Float((Real)(y0 + h / 2.0 - (D(trace->items()[c + 1]) / span * 2.0) * (h / 2.0 - 2.0)));
+    }
+    return ArrV(out);
+}
+
 inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list) {
     Recorder* r = recorder(h);
     if (!r || chX.i < 0 || chY.i < 0 || (size_t)chX.i >= r->channels.size() || (size_t)chY.i >= r->channels.size()) return ArrV(allocArr(0, list));

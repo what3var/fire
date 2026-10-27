@@ -8065,6 +8065,36 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fire.Terminal.Blitter.Blit(d6, src, 0, 0, 4, 4, 0, 0, 4, -4);
         GfxCheck(d6.GetPixel(0, 0).Packed == src.GetPixel(0, 3).Packed && d6.GetPixel(3, 3).Packed == src.GetPixel(3, 0).Packed, "Blit: negative Zielhoehe spiegelt senkrecht");
 
+        // the fast path (RGBA, 1:1, not mirrored) gives exactly what the general path gives: compared with a mirrored blit of a mirrored source,
+        // for copy, transparent and blend, sections partly outside the source and the target, and clip rectangles
+        {
+            var rnd = new Random(7);
+            var bs = new fire.Terminal.Framebuffer(7, 5);
+            var bm = new fire.Terminal.Framebuffer(7, 5);
+            for (int y = 0; y < 5; y++)
+                for (int x = 0; x < 7; x++)
+                {
+                    byte al = (x + y) % 4 == 0 ? (byte)0 : (x + y) % 4 == 1 ? (byte)128 : (byte)255;
+                    var c = new fire.Terminal.PixelColor((byte)rnd.Next(256), (byte)rnd.Next(256), (byte)rnd.Next(256), al);
+                    bs.SetPixel(x, y, c);
+                    bm.SetPixel(6 - x, y, c);
+                }
+            bool same = true;
+            string where = "";
+            foreach (var mode in new[] { fire.Terminal.BlitMode.Copy, fire.Terminal.BlitMode.Transparent, fire.Terminal.BlitMode.Blend })
+                foreach (var (sx, sy, sw, sh, dx, dy) in new[] { (0, 0, 7, 5, 2, 1), (1, 1, 4, 3, -2, 3), (-2, -1, 6, 4, 5, -1), (3, 2, 9, 9, 6, 7), (0, 0, 7, 5, -10, 0) })
+                    foreach (var (cl, ct, cr, cb) in new[] { (0, 0, int.MaxValue, int.MaxValue), (2, 1, 7, 6) })
+                    {
+                        var ba = new fire.Terminal.Framebuffer(10, 9);
+                        var bb = new fire.Terminal.Framebuffer(10, 9);
+                        for (int i = 0; i < ba.Pixels.Length; i++) ba.Pixels[i] = bb.Pixels[i] = (uint)(i * 2654435761u) | 0xFF000000u;
+                        fire.Terminal.Blitter.Blit(ba, bs, sx, sy, sw, sh, dx, dy, sw, sh, mode, -1, true, cl, ct, cr, cb);
+                        fire.Terminal.Blitter.Blit(bb, bm, 7 - sx - sw, sy, sw, sh, dx, dy, -sw, sh, mode, -1, true, cl, ct, cr, cb);
+                        if (!ba.Pixels.AsSpan().SequenceEqual(bb.Pixels)) { same = false; where = $"{mode} ({sx},{sy},{sw},{sh}) -> ({dx},{dy}) clip {cl},{ct},{cr},{cb}"; }
+                    }
+            GfxCheck(same, "Blit: der schnelle Weg (RGBA 1:1) gleicht dem allgemeinen (Kopie, transparent, Blend, Ränder, Clip) " + where);
+        }
+
         // Clipping: target partly outside, source outside, empty sizes
         var d7 = new fire.Terminal.Framebuffer(10, 10);
         fire.Terminal.Blitter.Blit(d7, src, -2, -2);
