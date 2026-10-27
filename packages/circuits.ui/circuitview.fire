@@ -1302,6 +1302,10 @@ namespace UI {
                 this.DrawGated(root, e)
             } else if (t == "Triode") {
                 this.DrawTriode(root, e, L)
+            } else if (t == "Pentode") {
+                this.DrawPentode(root, e, L)
+            } else if (t == "VacuumDiode") {
+                this.DrawVacuumDiode(root, e, L)
             } else if (t == "Ota") {
                 this.DrawOta(root, e)
             } else if (t == "Unijunction") {
@@ -1415,7 +1419,8 @@ namespace UI {
             var t = e.type
             if (t == "Transistor" || t == "Mosfet" || t == "Jfet" || t == "Darlington") { return 3.0 }
             if (t == "Thyristor" || t == "Triac" || t == "Diac") { return 2.6 }
-            if (t == "Triode") { return 4.6 }
+            if (t == "Triode" || t == "Pentode") { return 4.6 }
+            if (t == "VacuumDiode") { return 3.4 }
             if (t == "OpAmp" || t == "Comparator") { return 3.4 }
             if (t == "And" || t == "Nand" || t == "Or" || t == "Nor" || t == "Xor" || t == "Xnor") { return 2.0 * (Circuits.Symbols.Inputs(e) / 2) + 1.6 }
             if (t == "Source" || t == "AudioInput" || t == "CurrentSource") { return 2.0 }
@@ -1702,6 +1707,50 @@ namespace UI {
             // cathode
             this.Seg(root, L - 2.0, -4.0 * fl, L - 1.2, -1.4 * fl, this.VoltageColor(vk))
             this.Seg(root, L - 1.2, -1.4 * fl, L + 1.3, -1.4 * fl, this.VoltageColor(vk))
+            if (this.showValues) { this.Label(root, L + 3.4, -2.6 * fl, e.Get("model"), UI.Color.Rgb(140, 140, 140)) }
+        }
+
+        // a pentode: the envelope, the plate on the side of the plate pin, the control grid along the axis, the screen grid to its pin beyond the tube,
+        // the suppressor grid joined to the cathode
+        undefined DrawPentode(Root root, Circuits.Element e, float L) {
+            var fl = 1.0 * Circuits.Symbols.Dsign(e)
+            if (e.Flag("flip")) { fl = -fl }
+            var vp = e.PinVoltage(0)
+            var vs = e.PinVoltage(1)
+            var vg = e.PinVoltage(2)
+            var vk = e.PinVoltage(3)
+            var white = UI.Color.Rgb(220, 220, 220)
+            this.Arc(root, L, 0.0, 3.0, white)
+            // plate
+            this.Seg(root, L, 4.0 * fl, L, 1.9 * fl, this.VoltageColor(vp))
+            this.Seg(root, L - 1.3, 1.9 * fl, L + 1.3, 1.9 * fl, this.VoltageColor(vp))
+            // control grid
+            this.Seg(root, 0.0, 0.0, L - 3.0, 0.0, this.VoltageColor(vg))
+            for (int i = 0; i < 3; i++) { this.Seg(root, L - 2.0 + i * 1.2, 0.0, L - 1.4 + i * 1.2, 0.0, this.VoltageColor(vg)) }
+            // screen grid, out to its pin
+            for (int i = 0; i < 3; i++) { this.Seg(root, L - 2.0 + i * 1.2, 0.75 * fl, L - 1.4 + i * 1.2, 0.75 * fl, this.VoltageColor(vs)) }
+            this.Seg(root, L + 1.6, 0.75 * fl, L + 4.0, 1.0 * fl, this.VoltageColor(vs))
+            // suppressor grid, joined to the cathode on the left
+            for (int i = 0; i < 3; i++) { this.Seg(root, L - 2.0 + i * 1.2, 1.35 * fl, L - 1.4 + i * 1.2, 1.35 * fl, this.VoltageColor(vk)) }
+            this.Seg(root, L - 2.5, 1.35 * fl, L - 2.5, -1.4 * fl, this.VoltageColor(vk))
+            // cathode
+            this.Seg(root, L - 2.0, -4.0 * fl, L - 1.2, -1.4 * fl, this.VoltageColor(vk))
+            this.Seg(root, L - 2.5, -1.4 * fl, L + 1.3, -1.4 * fl, this.VoltageColor(vk))
+            if (this.showValues) { this.Label(root, L + 3.4, -2.6 * fl, e.Get("model"), UI.Color.Rgb(140, 140, 140)) }
+        }
+
+        // a vacuum diode: the envelope in the middle, the plate bar facing the cathode bar
+        undefined DrawVacuumDiode(Root root, Circuits.Element e, float L) {
+            var m = L / 2
+            var c0 = this.VoltageColor(e.PinVoltage(0))
+            var c1 = this.VoltageColor(e.PinVoltage(1))
+            var white = UI.Color.Rgb(220, 220, 220)
+            this.Arc(root, m, 0.0, 2.4, white)
+            this.Seg(root, 0.0, 0.0, m - 1.0, 0.0, c0)
+            this.Seg(root, m - 1.0, -1.2, m - 1.0, 1.2, c0)
+            this.Seg(root, m + 1.0, -1.2, m + 1.0, 1.2, c1)
+            this.Seg(root, m + 1.0, 0.0, L, 0.0, c1)
+            if (this.showValues) { this.Label(root, m, -3.0, e.Get("model"), UI.Color.Rgb(140, 140, 140)) }
         }
 
         // diac (two diodes against each other), varactor (a diode with a capacitor plate), tunnel diode (a diode with a bracket)
@@ -3124,7 +3173,7 @@ namespace UI {
             else if (t == "Diode" || t == "Zener" || t == "Led") { prefix = "D" }
             else if (t == "Transistor" || t == "Mosfet" || t == "Jfet" || t == "Darlington") { prefix = "Q" }
             else if (t == "Diac" || t == "Varactor" || t == "TunnelDiode" || t == "Thyristor" || t == "Triac") { prefix = "D" }
-            else if (t == "Triode") { prefix = "V" }
+            else if (t == "Triode" || t == "Pentode" || t == "VacuumDiode") { prefix = "V" }
             else if (t == "Unijunction") { prefix = "Q" }
             else if (t == "Ota" || t == "Optocoupler") { prefix = "U" }
             else if (t == "OpAmp" || t == "Comparator" || Circuits.Symbols.IsChip(t)) { prefix = "U" }

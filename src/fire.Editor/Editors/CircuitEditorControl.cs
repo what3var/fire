@@ -442,7 +442,7 @@ namespace fire.Editor
             view.OnSelect = func (v) => { print(SparkHost.Selected(view)) }
             view.OnEdit = func (e) => { print("@edit") }
             print("@catalog\t" + "\n".Join(Circuits.Symbols.Catalog()))
-            foreach (kind in ["D", "NPN", "PNP", "NMOS", "PMOS", "OPAMP", "FORMULA"]) { print("@models\t" + kind + "\t" + ",".Join(Circuits.Models.Names(kind))) }
+            foreach (kind in ["D", "NPN", "PNP", "NMOS", "PMOS", "OPAMP", "FORMULA", "VDIODE", "TRIODE", "PENTODE"]) { print("@models\t" + kind + "\t" + ",".Join(Circuits.Models.Names(kind))) }
             print("@text\t" + circuit.Schematic.ToText())
             print(SparkHost.Circuit(view))
             print(SparkHost.Ports(view))

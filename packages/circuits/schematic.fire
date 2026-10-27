@@ -151,8 +151,10 @@ namespace Circuits {
             l.Add("Semiconductors|Diac|breakdown:V=30;holdCurrent:A=10m;onResistance:Ohm=500;offResistance:Ohm=100M")
             l.Add("Semiconductors|Varactor|capacitance:F=4p")
             l.Add("Semiconductors|TunnelDiode|")
-            l.Add("Semiconductors|Triode|mu:=93;kg1:=680;flip:bool=false")
             l.Add("Semiconductors|Unijunction|flip:bool=false")
+            l.Add("Tubes|VacuumDiode|model:model:VDIODE=EZ81;parameters:text=")
+            l.Add("Tubes|Triode|model:model:TRIODE=12AX7;parameters:text=;flip:bool=false")
+            l.Add("Tubes|Pentode|model:model:PENTODE=EL34;parameters:text=;flip:bool=false")
             l.Add("ICs|OpAmp|model:model:OPAMP=opamp;flip:bool=false")
             l.Add("ICs|AnalogSwitch|threshold:V=2.5;inverting:bool=false;onResistance:Ohm=20;offResistance:Ohm=10G;flip:bool=false")
             l.Add("ICs|AnalogSwitch2|threshold:V=2.5;onResistance:Ohm=20;offResistance:Ohm=10G;swap:bool=false;flip:bool=false")
@@ -385,6 +387,15 @@ namespace Circuits {
         }
 
         // a point at fraction f of the way from (x1, y1) to (x2, y2), moved g grid units sideways (to the right of the direction for g > 0)
+        // the parameters of a tube as written in its property ("mu=95, kg1=1100"): checked here, so that a mistake shows at the element
+        static string TubeParameters(string text) {
+            var t = text.Trim()
+            if (t == "") { return "" }
+            var message = __CirCheckFormula("0", t, false)
+            if (message != "") { throw new ArgumentException(message) }
+            return t
+        }
+
         static undefined Interp(Circuits.Element e, float f, float g, List into) {
             float dx = e.x2 - e.x1
             float dy = e.y2 - e.y1
@@ -458,6 +469,21 @@ namespace Circuits {
             }
             if (t == "Ota") {
                 Circuits.Symbols.OtaPins(e)
+                return
+            }
+            if (t == "Pentode") {
+                // as a triode, and the screen grid 4 units beyond the second point, 1 unit to the side of the plate
+                var fl = Circuits.Symbols.Dsign(e)
+                if (e.Flag("flip")) { fl = -fl }
+                float dx = e.x2 - e.x1
+                float dy = e.y2 - e.y1
+                var len = Math.Sqrt(dx * dx + dy * dy)
+                if (len < 4.0) { len = 4.0 }
+                Circuits.Symbols.Interp(e, 1.0, 4.0 * fl, e.pins)
+                Circuits.Symbols.Interp(e, 1.0 + 4.0 / len, 1.0 * fl, e.pins)
+                e.pins.Add(e.x1)
+                e.pins.Add(e.y1)
+                Circuits.Symbols.Interp(e, 1.0 - 2.0 / len, -4.0 * fl, e.pins)
                 return
             }
             if (t == "Triode") {
@@ -1095,7 +1121,15 @@ namespace Circuits {
             }
             else if (t == "Varactor") { part = new Circuits.Varactor(Circuits.Symbols.Value(e, "capacitance", c)) }
             else if (t == "TunnelDiode") { part = new Circuits.TunnelDiode() }
-            else if (t == "Triode") { part = new Circuits.Triode(Circuits.Symbols.Value(e, "mu", c), Circuits.Symbols.Value(e, "kg1", c)) }
+            else if (t == "Triode") {
+                // (mu and kg1 of a drawing from before the models: they belong to Falstad's tube)
+                var own = e.Get("parameters")
+                if (e.keys.IndexOf("mu") >= 0) { own = own + " mu=" + e.Get("mu") }
+                if (e.keys.IndexOf("kg1") >= 0) { own = own + " kg1=" + e.Get("kg1") }
+                part = new Circuits.Triode(e.Get("model"), Circuits.Symbols.TubeParameters(own.Trim()))
+            }
+            else if (t == "VacuumDiode") { part = new Circuits.VacuumDiode(e.Get("model"), Circuits.Symbols.TubeParameters(e.Get("parameters"))) }
+            else if (t == "Pentode") { part = new Circuits.Pentode(e.Get("model"), Circuits.Symbols.TubeParameters(e.Get("parameters"))) }
             else if (t == "VCVS") { part = new Circuits.VCVS(Circuits.Symbols.Value(e, "gain", c)) }
             else if (t == "VCCS") { part = new Circuits.VCCS(Circuits.Symbols.Value(e, "gain", c)) }
             else if (t == "CCCS") { part = new Circuits.CCCS(Circuits.Symbols.Value(e, "gain", c)) }
@@ -1389,6 +1423,7 @@ namespace Circuits {
             else if (type == "Ground") { stem = "GND" }
             else if (type == "Switch" || type == "Switch2") { stem = "S" }
             else if (type == "OpAmp" || type == "Comparator") { stem = "U" }
+            else if (type == "Triode" || type == "Pentode" || type == "VacuumDiode") { stem = "V" }
             var k = 1
             while (this.Find(stem + k) != undefined || this.PortDefinition(stem + k) != undefined) { k = k + 1 }
             return stem + k

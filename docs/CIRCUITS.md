@@ -106,7 +106,9 @@ with a transmission line keeps its steps (the line needs whole steps).
 | `Varactor(capacitance = 4pF)` | `A`, `B` | a diode whose junction capacitance falls with the reverse voltage |
 | `TunnelDiode()` | `A`, `B` | Falstad's model: 4.7 mA at 0.1 V, a valley near 0.37 V (negative resistance between) |
 | `Unijunction()` | `E`, `B1`, `B2` | Falstad's 2N2646: the emitter diode, its current makes the lower base region conduct (relaxation oscillators) |
-| `Triode(mu = 93, kg1 = 680)` | `Plate`, `Grid`, `Cathode` | a vacuum triode (Koren's 3/2 law, grid current above 0 V) |
+| `Triode(model = "12AX7", parameters = "")` | `Plate`, `Grid`, `Cathode` | a vacuum triode, see [Vacuum tubes](#vacuum-tubes) |
+| `Pentode(model = "EL34", parameters = "")` | `Plate`, `Screen`, `Grid`, `Cathode` | a pentode or beam tetrode |
+| `VacuumDiode(model = "EZ81", parameters = "")` | `Plate`, `Cathode` | a vacuum rectifier or signal diode |
 | `VCVS(gain = 1)`, `VCCS(gain = 1mS)` | `A`, `B`, `InPlus`, `InMinus` | V(A) - V(B) = gain · (V(InPlus) - V(InMinus)); or that many amperes from A through the source to B |
 | `CCCS(gain = 1)`, `CCVS(gain = 1kOhm)` | `A`, `B`, `InPlus`, `InMinus` | controlled by the current from InPlus to InMinus (a short between them) |
 | `CurrentConveyor(gain = 1)` | `X`, `Y`, `Z` | CCII: X follows Y (Y takes no current), the current into Z is `gain` (+1 or -1) times the current into X |
@@ -192,6 +194,37 @@ of its formula, to look at its curve. The library has `tunnel` (a tunnel diode w
 that grows hotter with its voltage).
 
 A mistake in a formula is an `ArgumentException` when the part is made: `')' expected after the arguments of exp (at 19 of '...')`.
+
+### Vacuum tubes
+
+Triodes and pentodes follow Norman Koren's models (as in SPICE), vacuum diodes the law of Child and Langmuir (`Ip = k * Vpk^1.5`); the kernel simulates
+them like the semiconductors, with the capacitances between their electrodes. A tube takes a model of the library or a `Model` of its kind, and parameters
+of its own that change some of the model's (`"kg1=1100"`, also with prefixes: `"ccg=2.3p"`):
+
+| kind | models | parameters |
+|---|---|---|
+| `TRIODE` (`Triode`) | 12AX7, 12AT7, 12AU7, 6DJ8, 300B; `falstad` (the simpler tube of Falstad's simulator: `mu`, `kg1`) | `mu ex kg1 kp kvb rgi`, capacitances `ccg cgp ccp` |
+| `PENTODE` (`Pentode`) | EL34, 6L6GC, KT88, EL84, 6V6 (the suppressor grid is joined to the cathode) | `mu ex kg1 kg2 kp kvb rgi`, capacitances `cin cgp cout` |
+| `VDIODE` (`VacuumDiode`) | 5Y3, 5AR4, EZ81 (rectifiers), 6AL5 (signal diode) | `k ex`, capacitance `cpk` |
+
+Triode: `E1 = Vpk/kp * ln(1 + exp(kp * (1/mu + Vgk/sqrt(kvb + Vpk^2))))`, `Ip = 2 * E1^ex / kg1`. Pentode: `E1 = Vg2k/kp * ln(1 + exp(kp * (1/mu +
+Vg1k/Vg2k)))`, `Ip = 2 * E1^ex / kg1 * atan(Vpk/kvb)`, the screen current `(Vg1k + Vg2k/mu)^ex / kg2`. A positive grid draws current through `rgi`.
+A 12AX7 with 100 kOhm on the plate at 250 V and 1.5 kOhm on the cathode sits at 170 V and 0.8 mA; an EL34 at 250 V with -13.5 V on the grid draws 97 mA.
+The heater is not simulated. `Circuits.Model.Tube(name, kind, parameters)` makes a model of your own (`Circuits.Models.Add` puts it into the library).
+
+```fire
+#import "circuits"
+
+var c = new Circuits.Circuit()
+var t = c.Add(new Circuits.Triode("12AT7"))
+var p = c.Add(new Circuits.Pentode("EL84", "kg1=650"))
+Circuits.Models.Add(Circuits.Model.Tube("my6SN7", "TRIODE", "mu=20 ex=1.4 kg1=1260 kp=50 kvb=300 rgi=2000"))
+print(t.PlateCurrent)
+```
+
+In the schematic the tubes are in the category **Tubes**: `VacuumDiode` (plate at the first point), `Triode` (grid at the first point, plate 4 units to the
+side of the second, cathode on the other side) and `Pentode` (as a triode, the screen grid 4 units beyond the second point); each with `model` (a list of
+the library) and `parameters` (text, as above).
 
 ### Capacitances
 
@@ -586,7 +619,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   `spacing` 4 or 2; the 555 then takes its supply at the Vcc pin, `groundPin`), Potentiometer (`position`; potentiometers with the same `group` turn together, like a stereo potentiometer), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
   Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
   LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail), RelayCoil and RelayContact (`label`), Jfet (`pChannel`, `flip`),
-  Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), Unijunction (`flip`), VCVS, VCCS, CCCS, CCVS,
+  Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Unijunction (`flip`), the tubes VacuumDiode, Triode and Pentode (`model`, `parameters`, `flip`), VCVS, VCCS, CCCS, CCVS,
   CurrentConveyor, Ota, Optocoupler, the logic chips TFlipFlop, Latch, RingCounter, Multiplexer, Demultiplexer, HalfAdder, FullAdder, SipoShift, PisoShift,
   Adc, Dac, SevenSegmentDecoder, SevenSegment, Monostable, PhaseComparator, Vco (always in Falstad's chip layout; `bits`, `spacing` and the options of the
   chip) and TriState (`flip`: the control on the other side); sources and rails also have the waveforms triangle,

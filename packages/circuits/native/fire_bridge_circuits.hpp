@@ -148,7 +148,10 @@ enum NlKind { NlDiode = 0, NlNpn = 1, NlPnp = 2, NlNmos = 3, NlPmos = 4, NlOpAmp
               // resistances that follow a state between the steps (Falstad's startIteration), and a switch driven by a voltage
               NlLamp = 7, NlFuse = 8, NlMemristor = 9, NlSparkGap = 10, NlAnalogSwitch = 11,
               // the switch of a thyristor (anode to its inner node; gate node2, cathode aux) and of a triac (inner node to MT1; gate node2)
-              NlScr = 12, NlTriac = 13 };
+              NlScr = 12, NlTriac = 13,
+              // vacuum tubes (Circuits.VacuumDiode, Triode, Pentode): a diode after Child and Langmuir (plate, cathode), triode and pentode after Norman
+              // Koren's models (plate, grid, cathode; plate, screen, grid, cathode)
+              NlVacuumDiode = 14, NlTriode = 15, NlPentode = 16 };
 inline bool isVarRes(int kind) { return (kind >= NlLamp && kind <= NlSparkGap) || kind == NlScr || kind == NlTriac; }
 
 constexpr double kVt = 0.025852;     // the thermal voltage at 27 degrees Celsius
@@ -377,7 +380,7 @@ inline int stackDepth(const FormulaProgram& prog) {
 /// iteration of Newton's method linearizes it at the present guess: the currents into its terminals and their derivatives by the node voltages.
 struct Nonlinear {
     int kind;
-    int node[3];
+    int node[4];
     int terminals;
     std::shared_ptr<FormulaProgram> f1, f2;   // a formula part: the current into terminal 0 (and into terminal 1)
     // the capacitances: a junction between the terminals a and b with the depletion capacitance of SPICE (cj0, vj, m; fc = 0.5) and a diffusion charge
@@ -390,18 +393,18 @@ struct Nonlinear {
         double qPrev = 0, iPrev = 0;      // after the last step
         bool started = false;
         double v = 0, q = 0, c = 0;       // at the linearization of the last iteration
-    } junction[2];
+    } junction[3];
     int junctions = 0;
-    double p[4];                  // diode: Is, n, breakdown voltage, current at the breakdown voltage; bipolar: Is, beta forward, beta reverse, -; MOSFET: threshold, beta (A/V^2), lambda, -;
+    double p[8];                  // diode: Is, n, breakdown voltage, current at the breakdown voltage; bipolar: Is, beta forward, beta reverse, -; MOSFET: threshold, beta (A/V^2), lambda, -;
                                   // op amp: gain, lowest output, highest output, output resistance
     double lim[2] = {0, 0};       // the junction voltages of the last iteration (limited)
-    double cur[3] = {0, 0, 0};    // the currents into its terminals after the last step
+    double cur[4] = {0, 0, 0, 0}; // the currents into its terminals after the last step
     int aux = -1;                 // a node a state reads besides its terminals (the cathode of a thyristor)
     double st[2] = {0, 0};        // the state of a resistance that follows a state: lamp temperature / resistance, fuse heat / blown, memristor
                                   // doped width / resistance, spark gap on; the analog switch: on
     bool limited = false;         // the last linearization used a limited junction voltage (Newton's method must go on)
     // the linearization: I(V) = i0 + J (V - v0)
-    double i0[3], j[3][3], v0[3];
+    double i0[4], j[4][4], v0[4];
 };
 
 /// The junction limit of SPICE (pnjlim): an exponential junction may not jump by many thermal voltages from one iteration to the next.
@@ -533,10 +536,92 @@ inline void stepState(Nonlinear& e, double v, double i, double dt, double gate) 
     }
 }
 
+/// ln(1 + e^x) without overflow, and its derivative (the logistic function).
+inline double softplus(double x, double& derivative) {
+    if (x > 30) { derivative = 1; return x; }
+    if (x < -30) { double e = std::exp(x); derivative = e; return e; }
+    double e = std::exp(x);
+    derivative = e / (1 + e);
+    return std::log1p(e);
+}
+
+/// The grid current of a tube once the grid is positive against the cathode: about Vgk / rgi (Koren's grid diode with its series resistance), starting
+/// smoothly at 0 V; and its derivative.
+inline double gridCurrent(double vg, double rgi, double& derivative) {
+    if (vg <= 0 || rgi <= 0) { derivative = 0; return 0; }
+    double d = vg + 0.5;
+    derivative = (vg * vg + vg) / (rgi * d * d);
+    return vg * vg / (rgi * d);
+}
+
+/// Linearizes a vacuum tube. Diode: Ip = k * Vpk^ex (Child and Langmuir, ex = 1.5). Triode (Koren): E1 = Vpk / kp * ln(1 + exp(kp * (1/mu + Vgk /
+/// sqrt(kvb + Vpk^2)))), Ip = 2 * E1^ex / kg1. Pentode (Koren): E1 = Vg2k / kp * ln(1 + exp(kp * (1/mu + Vg1k / Vg2k))), Ip = 2 * E1^ex / kg1 *
+/// atan(Vpk / kvb), the screen current (Vg1k + Vg2k / mu)^ex / kg2. A positive grid draws current through rgi.
+template <typename VF> inline void linearizeTube(Nonlinear& e, VF V) {
+    if (e.kind == NlVacuumDiode) {
+        double k = e.p[0], ex = e.p[1];
+        double v = V(0) - V(1);
+        double i = 0, g = 0;
+        if (v > 0) { i = k * std::pow(v, ex); g = k * ex * std::pow(v, ex - 1); }
+        i += kGmin * v; g += kGmin;
+        e.i0[0] = i; e.i0[1] = -i;
+        e.j[0][0] = g; e.j[0][1] = -g; e.j[1][0] = -g; e.j[1][1] = g;
+        return;
+    }
+    if (e.kind == NlTriode) {
+        double mu = e.p[0], ex = e.p[1], kg1 = e.p[2], kp = e.p[3], kvb = e.p[4], rgi = e.p[5];
+        double vp = V(0) - V(2), vg = V(1) - V(2);
+        double s = std::sqrt(kvb + vp * vp);
+        double sig, sp = softplus(kp * (1 / mu + vg / s), sig);
+        double e1 = vp / kp * sp;
+        double de1p = sp / kp - sig * vg * vp * vp / (s * s * s), de1g = vp * sig / s;
+        double ip = 0, dip = 0;
+        if (e1 > 0) { ip = 2 * std::pow(e1, ex) / kg1; dip = 2 * ex * std::pow(e1, ex - 1) / kg1; }
+        double gp = dip * de1p + kGmin, gg = dip * de1g;
+        ip += kGmin * vp;
+        double dig, ig = gridCurrent(vg, rgi, dig);
+        ig += kGmin * vg; dig += kGmin;
+        // rows: plate, grid, cathode; columns: the node voltages of plate, grid, cathode
+        e.i0[0] = ip; e.i0[1] = ig; e.i0[2] = -(ip + ig);
+        double r0[3] = {gp, gg, -(gp + gg)};
+        double r1[3] = {0, dig, -dig};
+        for (int b = 0; b < 3; b++) { e.j[0][b] = r0[b]; e.j[1][b] = r1[b]; e.j[2][b] = -(r0[b] + r1[b]); }
+        return;
+    }
+    // the pentode: plate 0, screen 1, grid 2, cathode 3 (the suppressor is joined to the cathode)
+    double mu = e.p[0], ex = e.p[1], kg1 = e.p[2], kg2 = e.p[3], kp = e.p[4], kvb = e.p[5], rgi = e.p[6];
+    double vp = V(0) - V(3), vs = V(1) - V(3), vg = V(2) - V(3);
+    double vsc = vs > 1e-3 ? vs : 1e-3;
+    double sig, sp = softplus(kp * (1 / mu + vg / vsc), sig);
+    double e1 = vsc / kp * sp;
+    double de1s = vs > 1e-3 ? sp / kp - sig * vg / vsc : 0, de1g = sig;
+    double a = 0, da = 0;
+    if (vp > 0) { double r = vp / kvb; a = std::atan(r); da = 1 / (kvb * (1 + r * r)); }
+    double ip = 0, dpp = 0, dps = 0, dpg = 0;
+    if (e1 > 0) {
+        double pw = std::pow(e1, ex), dpw = ex * std::pow(e1, ex - 1);
+        ip = 2 * pw / kg1 * a;
+        dpp = 2 * pw / kg1 * da;
+        dps = 2 * dpw / kg1 * a * de1s;
+        dpg = 2 * dpw / kg1 * a * de1g;
+    }
+    ip += kGmin * vp; dpp += kGmin;
+    double w = vg + vs / mu, is = 0, dsg = 0, dss = 0;
+    if (w > 0) { is = std::pow(w, ex) / kg2; dsg = ex * std::pow(w, ex - 1) / kg2; dss = dsg / mu; }
+    is += kGmin * vs; dss += kGmin;
+    double dig, ig = gridCurrent(vg, rgi, dig);
+    ig += kGmin * vg; dig += kGmin;
+    e.i0[0] = ip; e.i0[1] = is; e.i0[2] = ig; e.i0[3] = -(ip + is + ig);
+    double r0[4] = {dpp, dps, dpg, -(dpp + dps + dpg)};
+    double r1[4] = {0, dss, dsg, -(dss + dsg)};
+    double r2[4] = {0, 0, dig, -dig};
+    for (int b = 0; b < 4; b++) { e.j[0][b] = r0[b]; e.j[1][b] = r1[b]; e.j[2][b] = r2[b]; e.j[3][b] = -(r0[b] + r1[b] + r2[b]); }
+}
+
 /// Linearizes the part at the node voltages x (with limited junctions).
 inline void linearize(Nonlinear& e, const std::vector<double>& x) {
     auto V = [&](int t) { int n = e.node[t]; return n < 0 ? 0.0 : x[(size_t)n]; };
-    for (int a = 0; a < 3; a++) { e.i0[a] = 0; for (int b = 0; b < 3; b++) e.j[a][b] = 0; e.v0[a] = V(a); }
+    for (int a = 0; a < 4; a++) { e.i0[a] = 0; for (int b = 0; b < 4; b++) e.j[a][b] = 0; e.v0[a] = a < e.terminals ? V(a) : 0; }
     e.limited = false;
     auto check = [&e](double wanted, double used) { if (std::fabs(wanted - used) > 1e-9 + 1e-6 * std::fabs(wanted)) e.limited = true; };
     if (e.kind == NlDiode) {
@@ -589,6 +674,8 @@ inline void linearize(Nonlinear& e, const std::vector<double>& x) {
         e.v0[1] = V(1);
         e.v0[2] = V(1) - pol * vbe;
         e.v0[0] = V(1) - pol * vbc;
+    } else if (e.kind == NlVacuumDiode || e.kind == NlTriode || e.kind == NlPentode) {
+        linearizeTube(e, V);
     } else if (e.kind == NlFormula) {
         bool three = e.terminals == 3;
         int ref = three ? 2 : 1;
@@ -1177,6 +1264,58 @@ inline Value AddNonlinear(Value h, Value kind, Value n0, Value n1, Value n2, Val
     return Int((int64_t)p->nonlinear.size() - 1);
 }
 
+/// A vacuum tube (NlVacuumDiode, NlTriode, NlPentode) on its nodes (diode: plate, cathode; triode: plate, grid, cathode; pentode: plate, screen, grid,
+/// cathode - unused ones -2) with its parameters as text ("mu=100 ex=1.4 kg1=1060 ..."): k ex for a diode; mu ex kg1 kp kvb rgi for a triode; mu ex kg1
+/// kg2 kp kvb rgi for a pentode; and the capacitances between the electrodes (diode cpk; triode ccg cgp ccp; pentode cin cgp cout). Returns its index,
+/// -1 with LastError.
+inline Value AddTube(Value h, Value kind, Value n0, Value n1, Value n2, Value n3, Value parameters) {
+    Plan* p = plan(h);
+    if (!p) return Int(-1);
+    std::vector<std::pair<std::string, double>> params;
+    std::string error;
+    if (!parseParameters(toUtf8(parameters), params, error)) { lastError() = error; return Int(-1); }
+    auto get = [&](const char* name, double fallback) {
+        for (const auto& prm : params) {
+            std::string n = prm.first;
+            for (auto& c : n) c = (char)std::tolower((unsigned char)c);
+            if (n == name) return prm.second;
+        }
+        return fallback;
+    };
+    Nonlinear e{};
+    e.kind = (int)kind.i;
+    int nodes[4] = {(int)n0.i, (int)n1.i, (int)n2.i, (int)n3.i};
+    auto cap = [&](int a, int b, double c) {
+        if (c <= 0) return;
+        auto& j = e.junction[e.junctions++];
+        j.a = a; j.b = b; j.cj0 = c; j.vj = 1; j.m = 0; j.tt = 0;
+    };
+    if (e.kind == NlVacuumDiode) {
+        e.terminals = 2;
+        e.p[0] = get("k", 0.001); e.p[1] = get("ex", 1.5);
+        cap(0, 1, get("cpk", 0));
+    } else if (e.kind == NlTriode) {
+        e.terminals = 3;
+        e.p[0] = get("mu", 100); e.p[1] = get("ex", 1.4); e.p[2] = get("kg1", 1060); e.p[3] = get("kp", 600); e.p[4] = get("kvb", 300); e.p[5] = get("rgi", 2000);
+        cap(1, 2, get("ccg", 0)); cap(1, 0, get("cgp", 0)); cap(0, 2, get("ccp", 0));
+    } else if (e.kind == NlPentode) {
+        e.terminals = 4;
+        e.p[0] = get("mu", 11); e.p[1] = get("ex", 1.35); e.p[2] = get("kg1", 650); e.p[3] = get("kg2", 4200); e.p[4] = get("kp", 60); e.p[5] = get("kvb", 24);
+        e.p[6] = get("rgi", 1000);
+        cap(2, 3, get("cin", 0)); cap(2, 0, get("cgp", 0)); cap(0, 3, get("cout", 0));
+    } else { lastError() = "Not a kind of tube."; return Int(-1); }
+    int count = e.kind == NlVacuumDiode ? 2 : e.kind == NlTriode ? 6 : 7;
+    for (int a = 0; a < count; a++)
+        if (!(e.p[a] > 0)) { lastError() = "The parameters of a tube must be above zero."; return Int(-1); }
+    for (int a = 0; a < e.terminals; a++) e.node[a] = nodes[a];
+    for (int a = e.terminals; a < 4; a++) e.node[a] = -1;
+    for (int a = 0; a < e.terminals; a++)
+        for (int b = 0; b < e.terminals; b++) p->mark(e.node[a], e.node[b]);
+    for (int a = 1; a < e.terminals; a++) p->join(e.node[0], e.node[a]);
+    p->nonlinear.push_back(e);
+    return Int((int64_t)p->nonlinear.size() - 1);
+}
+
 /// A logic part (GateKind) with its inputs (an array of nodes), its outputs, the high level, the threshold and the output resistance; returns its index.
 inline Value AddGate(Value h, Value kind, Value inputs, Value out, Value outNot, Value high, Value threshold, Value rout) {
     Plan* p = plan(h);
@@ -1371,6 +1510,7 @@ inline Value NlState(Value h, Value index, Value what) {
     const Nonlinear& e = p->nonlinear[(size_t)index.i];
     if (what.i >= 0 && what.i < 3) return Float((Real)e.cur[what.i]);
     if (what.i == 4 || what.i == 5) return Float((Real)e.st[what.i - 4]);
+    if (what.i == 7) return Float((Real)e.cur[3]);
     return Float((Real)(p->node(e.node[0]) - p->node(e.node[1])));
 }
 
