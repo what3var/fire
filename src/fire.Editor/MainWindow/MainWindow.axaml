@@ -7,9 +7,74 @@
         DragDrop.AllowDrop="True"
 		TransparencyLevelHint="AcrylicBlur"
         Background="#1B181E"
-        ExtendClientAreaToDecorationsHint="True">
+        ExtendClientAreaToDecorationsHint="True"
+		WindowDecorations="BorderOnly">
 
     <Window.Resources>
+		<ControlTheme x:Key="{x:Type WindowDrawnDecorations}" TargetType="WindowDrawnDecorations">
+			<Setter Property="DefaultTitleBarHeight" Value="32"/>
+			<Setter Property="DefaultFrameThickness" Value="0,0,0,0"/>
+			<Setter Property="DefaultShadowThickness" Value="16"/>
+			<Setter Property="Template">
+				<WindowDrawnDecorationsTemplate>
+					<WindowDrawnDecorationsContent>
+
+						<WindowDrawnDecorationsContent.Underlay>
+							<!-- Full-size: covers shadow area + frame + behind client area -->
+							<Panel>
+								<Border Margin="{TemplateBinding ShadowThickness}"
+										Background="{DynamicResource WindowBackground}"
+										BorderThickness="1"
+										BorderBrush="{DynamicResource WindowBorderBrush}"
+										BoxShadow="0 8 32 0 #40000000"/>
+							</Panel>
+						</WindowDrawnDecorationsContent.Underlay>
+
+						<WindowDrawnDecorationsContent.Overlay>
+							<!-- Positioned over the titlebar area -->
+							<DockPanel Height="{TemplateBinding TitleBarHeight}"
+									   VerticalAlignment="Top"
+									   Margin="{TemplateBinding ShadowThickness}">
+								<StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+									<Button x:Name="PART_MinimizeButton" Content="─"/>
+									<Button x:Name="PART_MaximizeButton" Content="□"/>
+									<Button x:Name="PART_CloseButton" Content="✕"/>
+								</StackPanel>
+								<TextBlock Text="{Binding Title}"
+										   VerticalAlignment="Center"
+										   Margin="12,0"
+										   WindowDecorationProperties.ElementRole="TitleBar"/>
+							</DockPanel>
+						</WindowDrawnDecorationsContent.Overlay>
+
+						<WindowDrawnDecorationsContent.FullscreenPopover>
+							<!-- Shown on hover at top edge in fullscreen -->
+							<DockPanel Height="{TemplateBinding TitleBarHeight}"
+									   Background="#E0000000">
+								<StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+									<Button x:Name="PART_MinimizeButton" Content="─"/>
+									<Button x:Name="PART_MaximizeButton" Content="□"/>
+									<Button x:Name="PART_CloseButton" Content="✕"/>
+								</StackPanel>
+								<TextBlock Text="{Binding Title}"
+										   Foreground="White"
+										   VerticalAlignment="Center"
+										   Margin="12,0"/>
+							</DockPanel>
+						</WindowDrawnDecorationsContent.FullscreenPopover>
+
+					</WindowDrawnDecorationsContent>
+				</WindowDrawnDecorationsTemplate>
+			</Setter>
+
+			<!-- Pseudoclass styling -->
+			<Style Selector="^:maximized /template/ Border">
+				<Setter Property="BorderThickness" Value="0"/>
+			</Style>
+			<Style Selector="^:fullscreen /template/ DockPanel">
+				<Setter Property="IsVisible" Value="False"/>
+			</Style>
+		</ControlTheme>
         <!-- the acrylic behind the title bar, the menu, the tool strips and the trays at the window edges -->
         <ExperimentalAcrylicMaterial x:Key="BarAcrylic" BackgroundSource="Digger" FallbackColor="#1B181E" TintColor="#110022" TintOpacity="1" MaterialOpacity="0.6"/>
         <!-- vector symbols of the tool bars (Material Design Icons), so that no symbol font is needed on any system -->
@@ -57,7 +122,7 @@
 			<TextBlock x:Name="txtTitle"
 					   VerticalAlignment="Center"
 					   FontSize="12"
-					   Text="spark"/>
+					   Text="{Binding $parent[Window].Title}"/>
 		</StackPanel>
 	
 	<DockPanel Grid.Row="1" x:Name="DockArea">

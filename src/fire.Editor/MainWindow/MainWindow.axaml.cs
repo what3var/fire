@@ -825,7 +825,7 @@ namespace fire.Editor
         private static string? WindowTitle(OpenDocument? doc) =>
             doc == null ? null : $"{doc.DisplayName}{(doc.View.IsModified ? "*" : "")}{(doc.View.IsReadOnly ? " (read-only)" : "")}";
 
-        private void UpdateWindowTitle(string? subtitle) => txtTitle.Text = subtitle != null ? $"spark • {subtitle}" : "spark";
+        private void UpdateWindowTitle(string? subtitle) => Title = subtitle != null ? $"spark • {subtitle}" : "spark";
 
         /// <summary>Updates everything that depends on the active document: window title, line display, error list, breakpoints in the debugger panel.</summary>
         private void RefreshActiveUi()
