@@ -248,6 +248,6 @@ static class TestingTests
 
         // the tests of a standard package with natives: usb against its simulated device
         (exit, output) = Forge("test", Path.Combine(StandardSources.DefaultFolder, "usb", "usb.fireproj"));
-        Check("Paket usb: die Tests gegen das simulierte Geraet laufen durch", exit == 0 && output.Contains("5 passed, 0 failed, 0 errors"), output);
+        Check("Paket usb: die Tests gegen das simulierte Geraet laufen durch", exit == 0 && output.Contains("6 passed, 0 failed, 0 errors"), output);
     }
 }
