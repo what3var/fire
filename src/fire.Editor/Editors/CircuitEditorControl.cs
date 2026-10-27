@@ -125,9 +125,13 @@ namespace fire.Editor
                 e.Handled = true;
             }
 
+            /// <summary>Keys the editor handles itself before the view gets them (true: handled).</summary>
+            public Func<KeyEventArgs, bool>? Shortcut;
+
             protected override void OnKeyDown(KeyEventArgs e)
             {
                 base.OnKeyDown(e);
+                if (Shortcut?.Invoke(e) == true) { e.Handled = true; return; }
                 if (KeyCode(e.Key) is { } code)
                 {
                     Session?.Key(code, Modifiers(e.KeyModifiers), true);
@@ -175,9 +179,11 @@ namespace fire.Editor
         // ---- the control ----------------------------------------------------------------------------------------------------------------------
         private readonly Surface _surface = new();
         private readonly StackPanel _palette = new() { Spacing = 2, Margin = new Thickness(6) };
-        private readonly TextBlock _status = new() { Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0), TextTrimming = TextTrimming.CharacterEllipsis };
-        private readonly ToggleButton _run = new() { Content = "Pause", IsChecked = true };
-        private readonly ComboBox _speed = new() { Width = 120 };
+        private readonly ScrollViewer _toolbox;
+        private string _statusText = "";
+        private bool _running = true;
+        private int _stepsPerFrame = 20;
+        private string _findText = "";
         private readonly List<ToggleButton> _placeButtons = new();
         private ToggleButton? _pointerButton;
         private LiveSession? _session;
@@ -210,73 +216,77 @@ namespace fire.Editor
 
         public CircuitEditorControl()
         {
-            Button Tool(string text, string tip, Action click)
-            {
-                var b = new Button { Content = text };
-                b.Classes.Add("tool");
-                ToolTip.SetTip(b, tip);
-                b.Click += (_, _) => { click(); _surface.Focus(); };
-                return b;
-            }
-
-            _run.Classes.Add("tool");
-            ToolTip.SetTip(_run, "Run or pause the simulation (Space in the view)");
-            _run.Click += (_, _) => { Send("run\t" + (_run.IsChecked == true ? "1" : "0")); _run.Content = _run.IsChecked == true ? "Pause" : "Run"; _surface.Focus(); };
-            foreach (var s in new[] { "1", "5", "20", "100", "500" }) _speed.Items.Add(s + " steps");
-            _speed.SelectedIndex = 2;
-            ToolTip.SetTip(_speed, "Time steps of the circuit per picture (the speed of the simulation)");
-            _speed.SelectionChanged += (_, _) => { if (_speed.SelectedItem is string s) Send("steps\t" + s.Split(' ')[0]); };
-
-            var import = Tool("Import Falstad...", "A circuit of Paul Falstad's simulator (its XML file, or the text of File > Export As Text) from a file or from the clipboard", () => { });
-            var importMenu = new ContextMenu();
-            var fromFile = new MenuItem { Header = "From file..." };
-            fromFile.Click += async (_, _) => await ImportFromFile();
-            var fromClipboard = new MenuItem { Header = "From clipboard" };
-            fromClipboard.Click += async (_, _) => await ImportFromClipboard();
-            importMenu.Items.Add(fromFile);
-            importMenu.Items.Add(fromClipboard);
-            import.ContextMenu = importMenu;
-            import.Click += (_, _) => importMenu.Open(import);
-
-            var samples = Tool("Samples", "Example circuits to try out and to start from", () => { });
-            var samplesMenu = new ContextMenu();
-            foreach (var sample in CircuitSamples.All)
-            {
-                var item = new MenuItem { Header = sample.Title };
-                ToolTip.SetTip(item, sample.Description);
-                item.Click += async (_, _) => await LoadSample(sample);
-                samplesMenu.Items.Add(item);
-            }
-            samples.ContextMenu = samplesMenu;
-            samples.Click += (_, _) => samplesMenu.Open(samples);
-
-            var bar = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(4, 2) };
-            foreach (var c in new Control[]
-            {
-                _run, Tool("Reset", "Back to time 0", () => Send("reset")), _speed, Separator(),
-                Tool("Undo", "Undo (Ctrl+Z)", Undo), Tool("Redo", "Redo (Ctrl+Y)", Redo), Separator(),
-                Tool("Rotate", "Turn the selection by 90 degrees (R)", () => Send("rotate")), Tool("Flip", "Mirror the selection (F)", () => Send("flip")),
-                Tool("Duplicate", "Copy the selection (Ctrl+D)", () => Send("duplicate")), Tool("Delete", "Remove the selection (Del)", () => Send("delete")), Separator(),
-                Tool("Wire", "Draw wires (or drag from a pin; W)", () => Send("place\tWire")), Tool("Fit", "Show the whole schematic", () => Send("fit")), Separator(),
-                Tool("Circuit...", "The name of the generated class, the time step of the simulation, the ports of the circuit and the parts bound to devices", () => _ = ShowCircuitDialog()),
-                import, samples, _status,
-            }) bar.Children.Add(c);
-
-            var paletteScroll = new ScrollViewer { Content = _palette, Width = 150 };
-            var paletteBorder = new Border { Child = paletteScroll, BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(0, 0, 1, 0) };
-
-            var dock = new DockPanel();
-            DockPanel.SetDock(bar, Avalonia.Controls.Dock.Top);
-            DockPanel.SetDock(paletteBorder, Avalonia.Controls.Dock.Left);
-            dock.Children.Add(bar);
-            dock.Children.Add(paletteBorder);
-            dock.Children.Add(_surface);
-            Content = dock;
+            // the palette of parts lives in the tool window "Toolbox" of the main window (see Toolbox), the commands in the tool strips "Edit" and "Simulation"
+            _toolbox = new ScrollViewer { Content = _palette };
+            _surface.Shortcut = OnShortcut;
+            Content = _surface;
             ShowProperties(new List<string>());
             _palette.Children.Add(new TextBlock { Text = "Starting the simulation...", Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap });
         }
 
-        private static Control Separator() => new Border { Width = 1, Background = EditorTheme.Border, Margin = new Thickness(6, 2) };
+        // ---- the commands of the tool strips (MainWindow) ---------------------------------------------------------------------------------------------
+        /// <summary>The palette of parts: the main window shows it in its tool window "Toolbox" while this document is the active one.</summary>
+        public Control Toolbox => _toolbox;
+
+        /// <summary>The run state, undo/redo or the selection changed (the tool strips follow).</summary>
+        public event Action? StateChanged;
+
+        /// <summary>A line for the status bar (starting, an error of the simulation, an import, a search).</summary>
+        public string StatusText => _statusText;
+        public event Action<string>? StatusChanged;
+
+        private void SetStatus(string text)
+        {
+            _statusText = text;
+            StatusChanged?.Invoke(text);
+        }
+
+        /// <summary>The simulation runs (false: paused).</summary>
+        public bool Running
+        {
+            get => _running;
+            set { if (_running == value) return; _running = value; Send("run	" + (value ? "1" : "0")); StateChanged?.Invoke(); }
+        }
+
+        /// <summary>The time steps of the circuit per picture: the speed of the simulation.</summary>
+        public int StepsPerFrame
+        {
+            get => _stepsPerFrame;
+            set { if (_stepsPerFrame == value || value < 1) return; _stepsPerFrame = value; Send("steps	" + value.ToString(CultureInfo.InvariantCulture)); StateChanged?.Invoke(); }
+        }
+
+        /// <summary>The steps per picture offered by the tool strip (up to 10k).</summary>
+        public static readonly int[] StepChoices = { 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000 };
+
+        public void ResetSimulation() { Send("reset"); FocusEditor(); }
+        public void RotateClockwise() { Send("rotate"); FocusEditor(); }
+        public void RotateCounterclockwise() { Send("rotateccw"); FocusEditor(); }
+        public void FlipHorizontal() { Send("mirror\th"); FocusEditor(); }
+        public void FlipVertical() { Send("mirror\tv"); FocusEditor(); }
+        public void FitToView() { Send("fit"); FocusEditor(); }
+        public Task ShowCircuitPropertiesAsync() => ShowCircuitDialog();
+        public Task ImportFalstadFileAsync() => ImportFromFile();
+        public Task ImportFalstadClipboardAsync() => ImportFromClipboard();
+        public Task LoadSampleAsync(CircuitSamples.Sample sample) => LoadSample(sample);
+
+        // keys the view does not handle itself: the clipboard and the search (the main window has the rest)
+        private bool OnShortcut(KeyEventArgs e)
+        {
+            bool ctrl = (e.KeyModifiers & (KeyModifiers.Control | KeyModifiers.Meta)) != 0;
+            bool shift = (e.KeyModifiers & KeyModifiers.Shift) != 0;
+            switch (e.Key)
+            {
+                case Key.C when ctrl: Copy(); return true;
+                case Key.X when ctrl: Cut(); return true;
+                case Key.V when ctrl: Paste(); return true;
+                case Key.F when ctrl: Find(); return true;
+                case Key.H when ctrl: FindReplace(); return true;
+                case Key.F3 when shift: FindPrevious(); return true;
+                case Key.F3: FindNext(); return true;
+            }
+            return false;
+        }
+
 
         protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
         {
@@ -306,6 +316,9 @@ namespace fire.Editor
 
         // ---- the program -------------------------------------------------------------------------------------------------------------------------
         /// <summary>The fire program that runs the view: the schematic, the view filling the window, the reports to the editor and the commands from it.</summary>
+        // the accent colour of the IDE as a number of fire (0xRRGGBB)
+        private static string AccentNumber => "0x" + EditorTheme.AccentColor.R.ToString("X2") + EditorTheme.AccentColor.G.ToString("X2") + EditorTheme.AccentColor.B.ToString("X2");
+
         public static string HostScript(string biscuit, int width, int height, double scaling = 1.0) => $$"""
             #import "circuits.ui"
             extern string __HostCommand()
@@ -353,6 +366,16 @@ namespace fire.Editor
                     else if (c == "cancel") { view.CancelPlace() }
                     else if (c == "delete") { view.DeleteSelection() }
                     else if (c == "rotate") { view.RotateSelection() }
+                    else if (c == "rotateccw") { view.RotateSelection(true) }
+                    else if (c == "mirror") { view.MirrorSelection(p[1] == "h") }
+                    else if (c == "copy") { print("@clipboard\t" + view.SelectionText()) }
+                    else if (c == "cut") {
+                        print("@clipboard\t" + view.SelectionText())
+                        view.DeleteSelection()
+                    }
+                    else if (c == "paste") { if (!view.PasteText(command.Substring(6))) { print("@pastefailed") } }
+                    else if (c == "find") { print("@found\t" + view.FindNext(command.Substring(p[0].Length + p[1].Length + 2), p[1] == "b")) }
+                    else if (c == "replace") { print("@replaced\t" + view.ReplaceAll(p[1], p[2])) }
                     else if (c == "flip") { view.FlipSelection() }
                     else if (c == "duplicate") { view.DuplicateSelection() }
                     else if (c == "undo") { view.Undo() }
@@ -387,6 +410,8 @@ namespace fire.Editor
             var fb = new Framebuffer({{Math.Max(width, 64)}}, {{Math.Max(height, 64)}})
             var win = new Window(fb, "circuit")
             var ui = new UI.Root(fb, win)
+            // the accent colour of spark (focus, selection, buttons of the view)
+            ui.Accent = {{AccentNumber}}
             // the scaling of the screen: the view draws at its full resolution (spark shows the picture 1:1)
             ui.Scaling = {{scaling.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
             var circuit = new Circuits.Circuit("schematic")
@@ -470,13 +495,13 @@ namespace fire.Editor
             session.Ended += error => Dispatcher.UIThread.Post(() =>
             {
                 if (!ReferenceEquals(session, _session)) return;
-                _status.Text = error == null ? "The simulation ended." : "The simulation failed: " + error;
+                SetStatus(error == null ? "The simulation ended." : "The simulation failed: " + error);
             });
             int w = (int)Math.Max(64, _surface.Bounds.Width), h = (int)Math.Max(64, _surface.Bounds.Height);
             if (_surface.Bounds.Width < 2) { w = 800; h = 500; }
             string script = HostScript(text, w, h, _surface.Scale);
             string? basePath = FilePath != null ? Path.GetDirectoryName(Path.GetFullPath(FilePath)) : null;
-            _status.Text = "Starting...";
+            SetStatus("Starting the simulation...");
             Task.Run(() =>
             {
                 try
@@ -485,7 +510,7 @@ namespace fire.Editor
                     Dispatcher.UIThread.Post(() =>
                     {
                         if (!ReferenceEquals(session, _session)) return;
-                        _status.Text = "";
+                        SetStatus("");
                         if (_surface.Bounds.Width >= 2) { var (pw, ph) = _surface.PixelSize(_surface.Bounds.Size); session.Resize(pw, ph); }
                         if (_pendingLoad != null) { session.Send("load\t" + _pendingLoad); _pendingLoad = null; }
                         session.Send("fit");
@@ -493,7 +518,7 @@ namespace fire.Editor
                 }
                 catch (Exception ex)
                 {
-                    Dispatcher.UIThread.Post(() => { if (ReferenceEquals(session, _session)) _status.Text = "The circuit editor could not start: " + CompileErrors.Describe(ex); });
+                    Dispatcher.UIThread.Post(() => { if (ReferenceEquals(session, _session)) SetStatus("The circuit editor could not start: " + CompileErrors.Describe(ex)); });
                 }
             });
         }
@@ -515,6 +540,7 @@ namespace fire.Editor
                     break;
                 case "@select":
                     ShowProperties(rest == "" ? new List<string>() : rest.Split('\t').ToList());
+                    StateChanged?.Invoke();
                     break;
                 case "@circuit":
                 {
@@ -539,17 +565,17 @@ namespace fire.Editor
                     PortsChanged?.Invoke();
                     break;
                 case "@circuiterror":
-                    _status.Text = rest == "timeStep" ? "The time step must be a time like 10us (more than 0, at most 1s)." : "That value is not valid.";
+                    SetStatus(rest == "timeStep" ? "The time step must be a time like 10us (more than 0, at most 1s)." : "That value is not valid.");
                     break;
                 case "@state":
                 {
                     var p = rest.Split('\t');
                     if (p.Length >= 3)
                     {
-                        _run.IsChecked = p[0] == "True";
-                        _run.Content = _run.IsChecked == true ? "Pause" : "Run";
+                        _running = p[0] == "True";
                         _canUndo = p[1] == "True";
                         _canRedo = p[2] == "True";
+                        StateChanged?.Invoke();
                     }
                     break;
                 }
@@ -573,7 +599,19 @@ namespace fire.Editor
                     if (_pointerButton != null) _pointerButton.IsChecked = rest == "";
                     break;
                 case "@error":
-                    _status.Text = "The schematic could not be read: " + rest;
+                    SetStatus("The schematic could not be read: " + rest);
+                    break;
+                case "@clipboard":
+                    if (rest != "" && TopLevel.GetTopLevel(this)?.Clipboard is { } clip) _ = clip.SetTextAsync(rest);
+                    break;
+                case "@pastefailed":
+                    SetStatus("The clipboard holds no elements of a circuit.");
+                    break;
+                case "@found":
+                    SetStatus(rest == "True" ? "" : $"'{_findText}' is not in the schematic (names, kinds and values are searched).");
+                    break;
+                case "@replaced":
+                    SetStatus(rest == "0" ? $"'{_findText}' is not in the schematic." : $"Replaced in {rest} element{(rest == "1" ? "" : "s")}.");
                     break;
                 case "@edit":
                     PropertiesChanged?.Invoke(true);
@@ -865,14 +903,37 @@ namespace fire.Editor
         public bool HasSelection => _selectedIndex >= 0;
         public void Undo() => Send("undo");
         public void Redo() => Send("redo");
-        public void Cut() { }
-        public void Copy() { }
-        public void Paste() { }
+        public void Cut() => Send("cut");
+        public void Copy() => Send("copy");
+        public async void Paste()
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard == null) return;
+            string? text = null;
+            try { text = await clipboard.TryGetTextAsync(); } catch (Exception) { }
+            if (string.IsNullOrWhiteSpace(text)) return;
+            // one line: the commands to the view are lines (JSON does not mind)
+            Send("paste\t" + text.Replace("\r", " ").Replace("\n", " "));
+            FocusEditor();
+        }
         public void Delete() => Send("delete");
         public void SelectAll() => Send("selectall");
-        public void Find() { }
-        public void FindNext() { }
-        public void FindPrevious() { }
+        public void Find() => _ = ShowFind(false);
+        public void FindReplace() => _ = ShowFind(true);
+        public void FindNext() { if (_findText == "") Find(); else Send("find\tf\t" + _findText); }
+        public void FindPrevious() { if (_findText == "") Find(); else Send("find\tb\t" + _findText); }
+
+        // the search of the schematic: names, kinds and property values (Find Next selects the next element and moves the view to it); Replace All changes
+        // names and values in one step of undo
+        private async Task ShowFind(bool replace)
+        {
+            var owner = Dialogs.WindowOf(this);
+            if (owner == null) return;
+            var dialog = new CircuitFindDialog(_findText, replace,
+                (text, back) => { _findText = text; Send("find\t" + (back ? "b" : "f") + "\t" + text); },
+                (text, with) => { _findText = text; Send("replace\t" + text.Replace("\t", " ") + "\t" + with.Replace("\t", " ")); });
+            await dialog.ShowDialog(owner);
+        }
         public int LineCount => 0;
         public void GoToLine(int line) { }
     }

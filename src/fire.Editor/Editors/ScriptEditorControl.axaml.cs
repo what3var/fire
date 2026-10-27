@@ -912,6 +912,17 @@ namespace fire.Editor
         public void SelectAll() { Editor.SelectAll(); Editor.Focus(); }
         public void GoToLine(int line) => Editor.GoToLine(line);
 
+        public void FindReplace()
+
+        {
+
+            if (_searchPanel != null) _searchPanel.IsReplaceMode = true;
+
+            Find();
+
+        }
+
+
         public void Find()
         {
             Editor.Focus();

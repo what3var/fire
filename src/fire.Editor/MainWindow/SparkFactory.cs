@@ -23,13 +23,28 @@ namespace fire.Editor
         private readonly List<(string Id, string Title, Control Content)> _rightBottom;
 
         public const string RightBottomToolsId = "tools-right-bottom";
+        /// <summary>The tool dock at the left edge (the toolbox of the circuit editor).</summary>
+        public const string LeftToolsId = "tools-left";
+        private readonly List<(string Id, string Title, Control Content)> _left;
 
-        public SparkFactory(List<(string Id, string Title, Control Content)> bottom, List<(string Id, string Title, Control Content)> right, List<(string Id, string Title, Control Content)> rightBottom)
+        public SparkFactory(List<(string Id, string Title, Control Content)> bottom, List<(string Id, string Title, Control Content)> right, List<(string Id, string Title, Control Content)> rightBottom,
+            List<(string Id, string Title, Control Content)> left)
         {
             _bottom = bottom;
             _right = right;
             _rightBottom = rightBottom;
+            _left = left;
         }
+
+        /// <summary>A new tool dock for the left edge (also for a saved layout that has none yet).</summary>
+        public ToolDock NewLeftDock(params IDockable[] tools) => new()
+        {
+            Id = LeftToolsId,
+            Proportion = 0.13,
+            Alignment = Alignment.Left,
+            VisibleDockables = CreateList(tools),
+            ActiveDockable = tools.Length > 0 ? tools[0] : null,
+        };
 
         public override IRootDock CreateLayout()
         {
@@ -56,7 +71,7 @@ namespace fire.Editor
             var left = new ProportionalDock
             {
                 Id = "left",
-                Proportion = 0.8,
+                Proportion = 0.67,
                 Orientation = Orientation.Vertical,
                 VisibleDockables = CreateList<IDockable>(documents, new ProportionalDockSplitter { Id = "split-bottom" }, bottom),
                 ActiveDockable = documents,
@@ -95,7 +110,8 @@ namespace fire.Editor
             {
                 Id = "main",
                 Orientation = Orientation.Horizontal,
-                VisibleDockables = CreateList<IDockable>(left, new ProportionalDockSplitter { Id = "split-right" }, right),
+                VisibleDockables = CreateList<IDockable>(NewLeftDock(_left.ConvertAll(t => (IDockable)NewTool(t.Id, t.Title, t.Content)).ToArray()),
+                    new ProportionalDockSplitter { Id = "split-left" }, left, new ProportionalDockSplitter { Id = "split-right" }, right),
                 ActiveDockable = left,
             };
 
@@ -108,7 +124,7 @@ namespace fire.Editor
             return root;
         }
 
-        private static Tool NewTool(string id, string title, Control content) =>
+        public static Tool NewTool(string id, string title, Control content) =>
             new() { Id = id, Title = title, Content = content, CanClose = true, CanFloat = true };
 
         public override void InitLayout(IDockable layout)

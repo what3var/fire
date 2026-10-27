@@ -165,6 +165,17 @@ namespace fire.Editor
         }
         public void GoToLine(int line) => Editor.GoToLine(line);
 
+        public void FindReplace()
+
+        {
+
+            if (_searchPanel != null) _searchPanel.IsReplaceMode = true;
+
+            Find();
+
+        }
+
+
         public void Find()
         {
             if (ViewerOnly) return;

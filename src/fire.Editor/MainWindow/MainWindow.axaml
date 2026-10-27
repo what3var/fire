@@ -257,7 +257,19 @@
 						<local:ToolStripButton Click="Open_Click" ToolTip.Tip="Open... (Ctrl+O)" IconData="{StaticResource IconOpen}"/>
 						<local:ToolStripButton x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)" IconData="{StaticResource IconSave}"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="run" Title="Run" Band="0" BandIndex="1">
+					<local:ToolStrip Id="edit" Title="Edit" Band="0" BandIndex="1">
+						<local:ToolStripButton x:Name="tbUndo" Click="Undo_Click" ToolTip.Tip="Undo (Ctrl+Z)" IconSource="/Assets/icons/Edit-Undo.png"/>
+						<local:ToolStripButton x:Name="tbRedo" Click="Redo_Click" ToolTip.Tip="Redo (Ctrl+Y)" IconSource="/Assets/icons/Edit-Redo.png"/>
+						<local:ToolStripButton x:Name="tbCut" Click="Cut_Click" ToolTip.Tip="Cut (Ctrl+X)" IconSource="/Assets/icons/Edit-ContentCut.png"/>
+						<local:ToolStripButton x:Name="tbCopy" Click="Copy_Click" ToolTip.Tip="Copy (Ctrl+C)" IconSource="/Assets/icons/Edit-ContentCopy.png"/>
+						<local:ToolStripButton x:Name="tbPaste" Click="Paste_Click" ToolTip.Tip="Paste (Ctrl+V)" IconSource="/Assets/icons/Edit-ContentPaste.png"/>
+						<local:ToolStripButton x:Name="tbDelete" Click="Delete_Click" ToolTip.Tip="Delete (Del)" IconSource="/Assets/icons/Edit-TrashCanOutline.png"/>
+						<local:ToolStripButton x:Name="tbSelectAll" Click="SelectAll_Click" ToolTip.Tip="Select all (Ctrl+A)" IconSource="/Assets/icons/Edit-SelectAll.png"/>
+						<local:ToolStripButton x:Name="tbFindReplace" Click="FindReplace_Click" ToolTip.Tip="Find and replace (Ctrl+H)" IconSource="/Assets/icons/Edit-FindReplace.png"/>
+						<local:ToolStripButton x:Name="tbGoToDefinition" Click="GoToDefinition_Click" ToolTip.Tip="Go to definition (F12)" IconSource="/Assets/icons/Edit-GoToDefinition.png"/>
+						<local:ToolStripButton x:Name="tbToggleComment" Click="ToggleComment_Click" ToolTip.Tip="Toggle comment (Ctrl+Shift+C)" IconSource="/Assets/icons/Edit-CommentOutline.png"/>
+					</local:ToolStrip>
+					<local:ToolStrip Id="run" Title="Run" Band="0" BandIndex="2">
 						<Image Source="/Assets/icons/Material-ClipboardPulseOutline.png" Width="16" Height="16" Margin="4,2,6,2"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbMode" Width="130" SelectionChanged="cmbMode_SelectionChanged" MinHeight="26" Padding="8,2"
 								  ToolTip.Tip="Execution mode: Debug, Release or Performance">
@@ -270,23 +282,50 @@
 						<local:ToolStripButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
 						<local:ToolStripButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="2">
+					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="3">
 						<local:ToolStripButton Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
 						<local:ToolStripButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
 						<local:ToolStripButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
 						<local:ToolStripButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)" IconSource="/Assets/icons/Material-PauseCircle.png"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="device" Title="Default device" Band="0" BandIndex="3">
+					<local:ToolStrip Id="device" Title="Default device" Band="0" BandIndex="4">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" local:ToolStripPanel.KeepWithNext="True" Text="Default device:" VerticalAlignment="Center" Margin="4,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbDefaultDevice" Width="170" SelectionChanged="cmbDefaultDevice_SelectionChanged" MinHeight="26" Padding="8,2"
 								  ToolTip.Tip="The device a script receives as Device.Default"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="build" Title="Build" Band="0" BandIndex="4">
+					<local:ToolStrip Id="build" Title="Build" Band="0" BandIndex="5">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" local:ToolStripPanel.KeepWithNext="True" Text="Target:" VerticalAlignment="Center" Margin="4,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="26" Padding="8,2"
 						          ToolTip.Tip="The target of a native build (Build native). Default: the target of the project or of the native build settings"/>
 						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..." IconData="{StaticResource IconBuild}"/>
 						<local:ToolStripButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)" IconData="{StaticResource IconSettings}"/>
+					</local:ToolStrip>
+					<!-- the circuit editor: on while a circuit is the active document -->
+					<local:ToolStrip Id="simulation" Title="Simulation" Band="1" BandIndex="0" x:Name="stripSimulation">
+						<local:ToolStripButton x:Name="tbSimPause" Click="SimPause_Click" ToolTip.Tip="Pause the simulation (Space in the view)" IconSource="/Assets/icons/Circuit-Pause.png"/>
+						<local:ToolStripButton Click="SimReset_Click" ToolTip.Tip="Reset the simulation to time 0" IconSource="/Assets/icons/Circuit-Restart.png"/>
+						<Image Classes="dimmable" Source="/Assets/icons/Circuit-PlaySpeed.png" Width="16" Height="16" Margin="6,2,4,2" local:ToolStripPanel.KeepWithNext="True" ToolTip.Tip="The speed of the simulation"/>
+						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbSimSteps" Width="120" SelectionChanged="cmbSimSteps_SelectionChanged" MinHeight="26" Padding="8,2"
+								  ToolTip.Tip="Time steps of the circuit per picture: the speed of the simulation"/>
+						<local:ToolStripButton Click="SimRotateLeft_Click" ToolTip.Tip="Rotate the selection counterclockwise (Shift+R)" IconSource="/Assets/icons/Circuit-RotateLeft.png"/>
+						<local:ToolStripButton Click="SimRotateRight_Click" ToolTip.Tip="Rotate the selection clockwise (R)" IconSource="/Assets/icons/Circuit-RotateRight.png"/>
+						<local:ToolStripButton Click="SimFlipHorizontal_Click" ToolTip.Tip="Flip the selection horizontally (left to right)" IconSource="/Assets/icons/Circuit-FlipHorizontal.png"/>
+						<local:ToolStripButton Click="SimFlipVertical_Click" ToolTip.Tip="Flip the selection vertically (top to bottom)" IconSource="/Assets/icons/Circuit-FlipVertical.png"/>
+						<local:ToolStripButton Click="SimFit_Click" ToolTip.Tip="Fit the whole schematic into the view" IconSource="/Assets/icons/Circuit-FitToScreenOutline.png"/>
+						<local:ToolStripButton Click="SimOpenMenu_Click" ToolTip.Tip="Import a circuit of Paul Falstad's simulator (its XML file, or File > Export As Text)" IconSource="/Assets/icons/Circuits-Import.png">
+							<local:ToolStripButton.Menu>
+								<MenuFlyout>
+									<MenuItem Header="From _file..." Click="SimImportFile_Click"/>
+									<MenuItem Header="From _clipboard" Click="SimImportClipboard_Click"/>
+								</MenuFlyout>
+							</local:ToolStripButton.Menu>
+						</local:ToolStripButton>
+						<local:ToolStripButton x:Name="tbSimSamples" Click="SimOpenMenu_Click" ToolTip.Tip="Example circuits to try out and to start from" IconSource="/Assets/icons/Circuit-Samples.png">
+							<local:ToolStripButton.Menu>
+								<MenuFlyout/>
+							</local:ToolStripButton.Menu>
+						</local:ToolStripButton>
+						<local:ToolStripButton Click="SimProperties_Click" ToolTip.Tip="The circuit: its class, the time step of the simulation, its inputs and outputs" IconSource="/Assets/icons/Circuit-Properties.png"/>
 					</local:ToolStrip>
 				</local:ToolStripTray>
 			</StackPanel>

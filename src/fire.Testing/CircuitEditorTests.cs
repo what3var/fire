@@ -423,6 +423,45 @@ static class CircuitEditorTests
             "editor 0 4.7k 4700Ohm", "read-only: 6 elements, switch False",
         });
 
+        // ---- the commands of the tool strips: rotate both ways, flip, copy and paste as JSON, find and replace ----
+        CheckLines("CircuitView: Drehen links/rechts, Spiegeln, Kopieren/Einfuegen, Suchen/Ersetzen", Run("""
+            #import "circuits.ui"
+            var fb = new Framebuffer(400, 300)
+            var ui = new UI.Root(fb, new Window(fb, "t"))
+            var c = new Circuits.Circuit("x")
+            c.LoadSchematic("{\"biscuit\":1,\"elements\":[{\"type\":\"Resistor\",\"name\":\"R1\",\"from\":[0,0],\"to\":[16,0],\"resistance\":\"4k7\"},{\"type\":\"Transistor\",\"name\":\"Q1\",\"from\":[0,8],\"to\":[8,8]}]}")
+            var view = new UI.CircuitView(c, 0, 0, 400, 300)
+            ui.Add(view)
+            var s = c.Schematic
+            var r = s.Find("R1")
+            view.Select(r, false)
+            view.RotateSelection(true)
+            print(r.x1 + "," + r.y1 + " " + r.x2 + "," + r.y2)
+            view.RotateSelection()
+            print(r.x1 + "," + r.y1 + " " + r.x2 + "," + r.y2)
+            var q = s.Find("Q1")
+            view.Select(q, false)
+            view.MirrorSelection(true)
+            print(q.x1 + "," + q.y1 + " " + q.x2 + "," + q.y2 + " flip " + q.Get("flip"))
+            view.MirrorSelection(false)
+            print(q.x1 + "," + q.y1 + " " + q.x2 + "," + q.y2 + " flip " + q.Get("flip"))
+            view.SelectAll()
+            var clip = view.SelectionText()
+            print(clip)
+            print(view.PasteText(clip) + " " + s.Elements().count + " sel " + view.Selection().count)
+            foreach (e in s.Elements()) { print(e.type + " '" + e.name + "' " + e.x1 + "," + e.y1 + " " + e.Get("resistance")) }
+            print(view.PasteText("hallo") + " " + view.FindNext("4k7") + " " + view.SelectedElement.name)
+            print(view.ReplaceAll("4k7", "10k") + " " + s.Find("R1").Get("resistance"))
+            view.Undo()
+            print(s.Find("R1").Get("resistance"))
+            """), new[]
+        {
+            "0,0 0,-16", "0,0 16,0", "8,8 0,8 flip true", "8,8 0,8 flip false",
+            "[{\"type\": \"Resistor\", \"name\": \"R1\", \"from\": [0, 0], \"to\": [16, 0], \"resistance\": \"4k7\"}, {\"type\": \"Transistor\", \"name\": \"Q1\", \"from\": [8, 8], \"to\": [0, 8]}]",
+            "True 4 sel 2", "Resistor 'R1' 0,0 4k7", "Transistor 'Q1' 8,8 ", "Resistor '' 4,4 4k7", "Transistor '' 12,12 ",
+            "False True R1", "2 10k", "4k7",
+        });
+
         // ---- the live session (spark runs the view in it) ----
         using (var live = new LiveSession())
         {

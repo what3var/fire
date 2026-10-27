@@ -659,7 +659,9 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 | wires | drag from a pin (or `BeginPlace("Wire")`, W); wires go along the grid |
 | select | click, a rectangle on empty space, Ctrl+A; `Selection()`, `SelectedElement`, `OnSelect` |
 | move, stretch | drag the selection; drag an end of a selected element |
-| rotate, flip, copy, delete | R, F, Ctrl+D, Del (or `RotateSelection()`, ...) |
+| rotate, flip, duplicate, delete | R (Shift+R counterclockwise), F, Ctrl+D, Del (or `RotateSelection(ccw)`, `MirrorSelection(horizontal)`, ...) |
+| copy, paste | `SelectionText()` gives the selection as JSON (the format of the file), `PasteText(text)` inserts it a little offset and selects it; names stay when they are free |
+| find, replace | `FindNext(text, backwards)` selects and shows the next element whose name or value contains the text; `ReplaceAll(find, replace, selectionOnly)` |
 | undo, redo | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (`Undo()`, `Redo()`) |
 | properties | double click or Enter: the view's own editor, or `OnEdit` of the program |
 | the circuit | `SetCircuitProperty("class" / "namespace" / "timeStep", text)` and `CircuitProperty(key)` (with undo); `Positions()` lists what can be operated while it runs (potentiometers - a group once -, switches, push buttons, selector switches, logic inputs) and `Operate(index, value)` operates it; `Ports()` lists the Pin elements and the parts bound to devices; `PortLines()` the inputs and outputs (`index|name|direction|pin|color|error`), `AddPort(direction, pin)`, `SetPort(index, key, value)`, `RemovePort(index)` change them with undo |
@@ -675,26 +677,31 @@ The view draws at the full resolution of the screen (a UI.Root with `Scaling` ab
 
 spark opens `.biscuit` files in its circuit editor (Add > New > Circuit makes one). In the middle is the CircuitView itself, running live in a fire program of its own,
 so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`, each with a small picture of its
-symbol) and the tools: run/pause, reset, speed, undo/redo, rotate, flip, duplicate, delete, wire, fit. The properties of the selected element (name, values with
+symbol) and the tools. The palette is the tool window **Toolbox**, docked at the left edge: it appears while a circuit is the active document and hides
+again when another document is active (unless it is pinned). The tool strip **Edit** works for every document - undo, redo, cut, copy, paste, delete, select
+all, find and replace (Ctrl+F / Ctrl+H, F3 and Shift+F3 search on), go to definition and toggle comment (these two only in scripts); in a circuit, copy puts the
+selected elements on the clipboard as JSON and paste inserts them, so they also go from one circuit to another. The tool strip **Simulation** is on while a
+circuit is active: pause/run, reset, the steps per frame (1 to 10k, behind the tempo symbol), rotate clockwise and counterclockwise, flip horizontally and
+vertically, fit to view, **Import** (a Falstad file or the clipboard), **Samples** and **Properties**. The embedded view takes the accent color of spark. The properties of the selected element (name, values with
 units, models of the library, choices) are edited in the tool window **Properties** of spark (View > Properties; by default under the Solution Explorer), the same
 window the UI markup editor uses - a table like the property grid of .NET: names and values with lines between the cells, categories that fold, sorted by
 category or by name, a column border to drag and a description of the selected row; double click or Enter on an element puts the focus into its first field.
 With nothing selected the window shows the **circuit** itself: the class and namespace of the generated class, the **time step** of the simulation, and under
 **Positions** a control for everything that is operated while the circuit runs - a slider for each potentiometer (one for a `group`; dragged, it sets the
 position when it is let go, keys and the wheel at once), an on/off box for
-switches and logic inputs, a button for push buttons (closed while it is held), a list for selector switches. **Circuit...** in the tool bar opens the same
+switches and logic inputs, a button for push buttons (closed while it is held), a list for selector switches. **Properties** in the tool strip Simulation opens the same
 settings as a dialog, with the **inputs and outputs** of the circuit: a row per port with its color (a palette or any `#RRGGBB`), its name, input or output, the
 pin it is bound to (a list of the pins of the schematic, or typed: `R1.2`, `Q1.B`) and what is wrong with it; **Add input** / **Add output** make a new one
 with the next free name and color; the dialog follows every change at once (its rows are bound to a model that the schematic's reports update). Right-clicking
 any pin (also of a wire or a ground) offers **Make Pin an Input/Output of the Circuit** - an element without a name gets one first (R1, W2, ...) - or removes the
 port bound there. The drawing marks every bound pin with a dot in the color of its port and its name (`> In1` for an input, `Out1 >` for an output).
 
-**Samples** next to it loads one of the example circuits of the editor (our own, embedded in `fire.UI.Markup`, `CircuitSamples.All`): an RC
+**Samples** loads one of the example circuits of the editor (our own, embedded in `fire.UI.Markup`, `CircuitSamples.All`): an RC
 low-pass, an LC tank, a bridge rectifier, a Zener regulator, a transistor switch, an inverting amplifier, a Schmitt trigger oscillator, a 555 blinker, a
 counter with a 7-segment display and a full adder. When a circuit is already drawn, the editor asks before it replaces it (Undo brings it back) - the same
 for the import.
 
-**Import Falstad...** takes a circuit of Paul Falstad's simulator - the XML file it saves now (`<cir ...>` with a tag per element), or the older text of File > Export As
+**Import** takes a circuit of Paul Falstad's simulator - the XML file it saves now (`<cir ...>` with a tag per element), or the older text of File > Export As
 Text, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and

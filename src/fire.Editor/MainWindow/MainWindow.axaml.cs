@@ -57,6 +57,7 @@ namespace fire.Editor
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
             ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["properties"] = "Properties",
+            ["toolbox"] = "Toolbox",
         };
 
         /// <summary>What kind of document a tab holds.</summary>
@@ -178,7 +179,8 @@ namespace fire.Editor
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
                 new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("devices", PanelTitles["devices"], _devicesPanel) },
-                new() { ("properties", PanelTitles["properties"], _propertiesPanel) });
+                new() { ("properties", PanelTitles["properties"], _propertiesPanel) },
+                new() { ("toolbox", PanelTitles["toolbox"], _toolboxPanel) });
             var layout = _factory.CreateLayout();
             _factory.InitLayout(layout);
             DockHost.Factory = _factory;
@@ -194,6 +196,7 @@ namespace fire.Editor
 
             RegisterToolchainPrompts();
             Opened += (_, _) => OnFirstShown();
+            InitCircuitUi();
 
             // The hotkeys: a handler that sees the key BEFORE the controls (tunnelling) and also when a control already handled it, so that F5/F10 reach us wherever the focus is.
             AddHandler(KeyDownEvent, Window_KeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -272,6 +275,7 @@ namespace fire.Editor
             _defaultLayout = SerializeLayout();
             LoadLayout();
             LoadToolStrips();
+            RefreshCircuitUi();
             _nativeTargetChoice = _settings.NativeTarget;
             RefreshTargetCombo();
 
@@ -392,6 +396,7 @@ namespace fire.Editor
             var contents = new Dictionary<string, Control>
             {
                 ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["properties"] = _propertiesPanel,
+                ["toolbox"] = _toolboxPanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
             _factory.InitLayout(layout);
@@ -406,6 +411,7 @@ namespace fire.Editor
             EnsureBuildLogTool(layout, contents["buildlog"]);
             EnsureTool(layout, "tests", contents["tests"], "solution");
             EnsureTool(layout, "properties", contents["properties"], "solution");
+            EnsureLeftTool(layout, "toolbox", contents["toolbox"]);
             DockHost.Layout = layout;
 
             var documentDock = DocumentDock as Dock.Model.Avalonia.Controls.DocumentDock
@@ -824,6 +830,7 @@ namespace fire.Editor
         {
             var doc = ActiveDocument;
             _propertiesPanel.Attach(doc?.View as IPropertyHost);
+            RefreshCircuitUi();
             UpdateWindowTitle(WindowTitle(doc));
             CaretText.Text = doc == null ? "" : $"Line {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
@@ -869,6 +876,7 @@ namespace fire.Editor
         private void Delete_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.Delete();
         private void SelectAll_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.SelectAll();
         private void Find_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.Find();
+        private void FindReplace_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.FindReplace();
         private void FindNext_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.FindNext();
         private void FindPrevious_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.FindPrevious();
 

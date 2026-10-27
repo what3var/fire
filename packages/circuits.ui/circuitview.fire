@@ -242,13 +242,11 @@ namespace UI {
             this.Changed()
         }
 
-        /// <summary>Turns the selected elements by 90 degrees (clockwise) around the first point of the first one.</summary>
-        undefined RotateSelection() {
-            if (this.readOnly || this.selection.count == 0) { return }
-            this.Remember()
+        // the point the selection turns or mirrors around: the first point of a single element, else the middle of all (on the grid)
+        undefined SelectionCenter(any c) {
             Circuits.Element first = this.selection[0]
-            var cx = first.x1
-            var cy = first.y1
+            c[0] = first.x1
+            c[1] = first.y1
             if (this.selection.count > 1) {
                 var minX = 1000000
                 var minY = 1000000
@@ -260,13 +258,25 @@ namespace UI {
                     maxX = UI.M.Max(maxX, UI.M.Max(e.x1, e.x2))
                     maxY = UI.M.Max(maxY, UI.M.Max(e.y1, e.y2))
                 }
-                cx = this.Snap((minX + maxX) / 2)
-                cy = this.Snap((minY + maxY) / 2)
+                c[0] = this.Snap((minX + maxX) / 2)
+                c[1] = this.Snap((minY + maxY) / 2)
             }
+        }
+
+        /// <summary>Turns the selected elements by 90 degrees - clockwise, or counterclockwise with `ccw` - around the first point of a single element, else
+        /// around the middle of all (chips keep their orientation).</summary>
+        undefined RotateSelection(bool ccw = false) {
+            if (this.readOnly || this.selection.count == 0) { return }
+            this.Remember()
+            var c = [0, 0]
+            this.SelectionCenter(c)
+            int cx = c[0]
+            int cy = c[1]
             var s = this.Schematic
             foreach (e in this.selection) {
                 if (Circuits.Symbols.IsChip(e.type)) { continue }
-                s.Move(e, cx - (e.y1 - cy), cy + (e.x1 - cx), cx - (e.y2 - cy), cy + (e.x2 - cx))
+                if (ccw) { s.Move(e, cx + (e.y1 - cy), cy - (e.x1 - cx), cx + (e.y2 - cy), cy - (e.x2 - cx)) }
+                else { s.Move(e, cx - (e.y1 - cy), cy + (e.x1 - cx), cx - (e.y2 - cy), cy + (e.x2 - cx)) }
             }
             this.Changed()
         }
@@ -282,6 +292,196 @@ namespace UI {
                 } else if (!Circuits.Symbols.IsChip(e.type)) { s.Move(e, e.x2, e.y2, e.x1, e.y1) }
             }
             this.Changed()
+        }
+
+        /// <summary>Mirrors the selection left to right (`horizontal`) or top to bottom around its middle: the points are mirrored, an element with a "flip"
+        /// property changes it as well (its side follows the mirror); a chip moves to the mirrored place and keeps its orientation.</summary>
+        undefined MirrorSelection(bool horizontal) {
+            if (this.readOnly || this.selection.count == 0) { return }
+            this.Remember()
+            var c = [0, 0]
+            this.SelectionCenter(c)
+            if (this.selection.count == 1) {
+                Circuits.Element only = this.selection[0]
+                c[0] = this.Snap((only.x1 + only.x2) / 2)
+                c[1] = this.Snap((only.y1 + only.y2) / 2)
+            }
+            int cx = c[0]
+            int cy = c[1]
+            var s = this.Schematic
+            foreach (e in this.selection) {
+                if (Circuits.Symbols.IsChip(e.type)) {
+                    var minX = UI.M.Min(e.x1, e.x2)
+                    var maxX = UI.M.Max(e.x1, e.x2)
+                    var minY = UI.M.Min(e.y1, e.y2)
+                    var maxY = UI.M.Max(e.y1, e.y2)
+                    var dx = 0
+                    var dy = 0
+                    if (horizontal) { dx = 2 * cx - maxX - minX } else { dy = 2 * cy - maxY - minY }
+                    s.Move(e, e.x1 + dx, e.y1 + dy, e.x2 + dx, e.y2 + dy)
+                    continue
+                }
+                if (horizontal) { s.Move(e, 2 * cx - e.x1, e.y1, 2 * cx - e.x2, e.y2) }
+                else { s.Move(e, e.x1, 2 * cy - e.y1, e.x2, 2 * cy - e.y2) }
+                if (e.Has("flip")) {
+                    if (e.Flag("flip")) { s.Set(e, "flip", "false") } else { s.Set(e, "flip", "true") }
+                }
+            }
+            this.Changed()
+        }
+
+        /// <summary>The selected elements as text for the clipboard: a JSON list of elements as in a `.biscuit` file ("" when nothing is selected).</summary>
+        string SelectionText() {
+            if (this.selection.count == 0) { return "" }
+            var text = "["
+            for (int i = 0; i < this.selection.count; i++) {
+                Circuits.Element e = this.selection[i]
+                if (i > 0) { text = text + ", " }
+                text = text + e.ToJson()
+            }
+            this.pasteCount = 0
+            return text + "]"
+        }
+
+        // how often the clipboard was pasted since it was copied: each paste lands a bit further away
+        int pasteCount = 0
+
+        /// <summary>Puts elements from the clipboard into the schematic (with undo), a bit away from where they were copied, and selects them: a JSON list of
+        /// elements, or a whole `.biscuit` text. A name an element already has is not given twice (the copy has none). False if the text holds no elements.</summary>
+        bool PasteText(string text) {
+            if (this.readOnly) { return false }
+            any doc = undefined
+            try { doc = Json.Parse(text.Trim()) } catch (Exception ex) { return false }
+            any list = undefined
+            if (doc is of JsonObject) {
+                JsonObject o = doc!JsonObject
+                list = o.Get("elements")
+            } else { list = doc }
+            if (list == undefined || list is of JsonObject || list is of string) { return false }
+            var s = this.Schematic
+            var found = false
+            for (int i = 0; i < list.length; i++) {
+                if (list[i] is of JsonObject) { found = true }
+            }
+            if (!found) { return false }
+            this.Remember()
+            this.pasteCount = this.pasteCount + 1
+            var d = 4 * this.pasteCount
+            this.selection.Clear()
+            for (int i = 0; i < list.length; i++) {
+                if (!(list[i] is of JsonObject)) { continue }
+                JsonObject eo = list[i]!JsonObject
+                var type = "" + eo.Get("type")
+                var a = eo.Get("from")
+                var b = eo.Get("to")
+                if (!Circuits.Symbols.Known(type) || a == undefined || b == undefined) { continue }
+                var name = ""
+                var n = eo.Get("name")
+                if (n != undefined && s.Find("" + n) == undefined && s.PortDefinition("" + n) == undefined) { name = "" + n }
+                var e = s.Add(type, Math.Round(a[0])!int + d, Math.Round(a[1])!int + d, Math.Round(b[0])!int + d, Math.Round(b[1])!int + d, "", name)
+                foreach (k in eo.Keys()) {
+                    string key = k
+                    if (key == "type" || key == "from" || key == "to" || key == "name") { continue }
+                    var value = eo.Get(k)
+                    if (value is of bool) {
+                        if (value) { e.Set(key, "true") } else { e.Set(key, "false") }
+                    } else { e.Set(key, "" + value) }
+                }
+                e.dirty = true
+                this.selection.Add(e)
+            }
+            s.Changed(true)
+            this.SelectionChanged()
+            this.Changed()
+            return true
+        }
+
+        /// <summary>Selects the next element (after the selected one, around to the start) whose name, kind or a property value contains `text` (any case) and
+        /// moves the view to it. False if there is none.</summary>
+        bool FindNext(string text, bool backwards = false) {
+            var t = text.ToLower()
+            if (t == "") { return false }
+            var els = this.Schematic.Elements()
+            var n = els.count
+            if (n == 0) { return false }
+            var start = -1
+            if (this.selection.count > 0) { start = els.IndexOf(this.selection[0]) }
+            for (int k = 1; k <= n; k++) {
+                var i = 0
+                if (backwards) {
+                    i = start - k
+                    while (i < 0) { i = i + n }
+                } else { i = (start + k) % n }
+                if (start < 0 && !backwards) { i = k - 1 }
+                Circuits.Element e = els[i]
+                if (UI.CircuitView.Matches(e, t)) {
+                    this.Select(e, false)
+                    this.ScrollTo(e)
+                    return true
+                }
+            }
+            return false
+        }
+
+        static bool Matches(Circuits.Element e, string lower) {
+            if (e.name.ToLower().Contains(lower) || e.type.ToLower().Contains(lower)) { return true }
+            foreach (v in e.values) {
+                string text = v
+                if (text.ToLower().Contains(lower)) { return true }
+            }
+            return false
+        }
+
+        /// <summary>Replaces `find` with `replace` in the names and property values of all elements (or only the selected ones), in one step of undo; the number
+        /// of elements changed. Names that would clash or be no name are left.</summary>
+        int ReplaceAll(string find, string replace, bool selectionOnly = false) {
+            if (this.readOnly || find == "") { return 0 }
+            var s = this.Schematic
+            var list = new List()
+            foreach (e in s.Elements()) {
+                if (selectionOnly && this.selection.IndexOf(e) < 0) { continue }
+                if (UI.CircuitView.Matches(e, find.ToLower()) && (e.name.Contains(find) || UI.CircuitView.ValueContains(e, find))) { list.Add(e) }
+            }
+            if (list.count == 0) { return 0 }
+            this.Remember()
+            var changed = 0
+            foreach (e in list) {
+                var any = false
+                if (e.name.Contains(find)) {
+                    var name = e.name.Replace(find, replace)
+                    if (Circuits.Schematic.IsName(name) && s.Find(name) == undefined) {
+                        s.Rename(e, name)
+                        any = true
+                    }
+                }
+                for (int i = 0; i < e.keys.count; i++) {
+                    string value = e.values[i]
+                    if (value.Contains(find)) {
+                        s.Set(e, e.keys[i], value.Replace(find, replace))
+                        any = true
+                    }
+                }
+                if (any) { changed = changed + 1 }
+            }
+            this.Changed()
+            return changed
+        }
+
+        static bool ValueContains(Circuits.Element e, string find) {
+            foreach (v in e.values) {
+                string text = v
+                if (text.Contains(find)) { return true }
+            }
+            return false
+        }
+
+        /// <summary>Moves the view so that the element is in the middle (the zoom stays).</summary>
+        undefined ScrollTo(Circuits.Element e) {
+            var mx = (e.x1 + e.x2) / 2.0
+            var my = (e.y1 + e.y2) / 2.0
+            this.offsetX = this.actualWidth / 2.0 - mx * this.scale
+            this.offsetY = this.actualHeight / 2.0 - my * this.scale
+            this.Invalidate()
         }
 
         /// <summary>Copies the selected elements next to themselves (the copies are selected).</summary>
@@ -2973,6 +3173,7 @@ namespace UI {
             else if (ctrl && key == 121) { this.Redo() }
             else if (ctrl && key == 97) { this.SelectAll() }
             else if (ctrl && key == 100) { this.DuplicateSelection() }
+            else if (key == 114 && shift) { this.RotateSelection(true) }
             else if (key == 114) { this.RotateSelection() }
             else if (key == 102) { this.FlipSelection() }
             else if (key == 119) { this.BeginPlace("Wire") }

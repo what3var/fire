@@ -100,6 +100,12 @@ namespace fire.Editor
         public void Delete() { _editor.Delete(); _editor.Focus(); }
         public void SelectAll() { _editor.SelectAll(); _editor.Focus(); }
         public void GoToLine(int line) => _editor.GoToLine(line);
+        public void FindReplace()
+        {
+            if (_searchPanel != null) _searchPanel.IsReplaceMode = true;
+            Find();
+        }
+
         public void Find() { _editor.Focus(); _searchPanel.Open(); }
         public void FindNext() => _searchPanel.FindNext();
         public void FindPrevious() => _searchPanel.FindPrevious();
