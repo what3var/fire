@@ -87,4 +87,21 @@ class UsbTests {
         try { new Usb.Device("999:999") } catch (Usb.UsbException e) { missing = true }
         Testing.Assert.IsTrue(missing)
     }
+
+    [Test "The device framework: UsbDriver lists usb:sim, connected it echoes what is written"]
+    undefined Driver() {
+        Usb.Sim.Clear()
+        DeviceManager.AddDriver(new UsbDriver())
+        var sim = DeviceManager.Get("usb:sim")
+        Testing.Assert.AreEqual("simulated USB device (echo)", sim.Description())
+        Testing.Assert.IsFalse(sim.Connected())
+        Testing.Assert.IsTrue(sim.Connect())
+        Testing.Assert.IsTrue(sim.Write("ping".ToBytes()))
+        var got = sim.Read()
+        Testing.Assert.AreEqual(4, got.length)
+        Testing.Assert.AreEqual(112, got[0])
+        Testing.Assert.AreEqual(0, sim.Read().length)
+        sim.Disconnect()
+        Testing.Assert.IsFalse(sim.Connected())
+    }
 }

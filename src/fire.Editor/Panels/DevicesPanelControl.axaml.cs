@@ -40,6 +40,9 @@ namespace fire.Editor
         /// <summary>The user wants to open the packet tracking of the device with this identifier.</summary>
         public event Action<string>? OpenTraceRequested;
 
+        /// <summary>The user wants a terminal for the device with this identifier.</summary>
+        public event Action<string>? OpenTerminalRequested;
+
         /// <summary>A message for the host's status bar.</summary>
         public event Action<string>? StatusMessage;
 
@@ -59,6 +62,9 @@ namespace fire.Editor
                 new() { Header = "Clear Default D_evice", Execute = ClearDefault, Enabled = () => _service?.Manager.DefaultIdentifier != null },
                 null,
                 new() { Header = "Open Packet _Trace", Execute = OpenTraceForSelected, Enabled = () => SelectedSlot != null },
+                new() { Header = "Open Ter_minal", Execute = OpenTerminalForSelected, Enabled = () => SelectedSlot != null },
+                null,
+                new() { Header = "_Reload Package Drivers", Execute = () => _ = ReloadDriversAsync() },
             });
         }
 
@@ -128,6 +134,10 @@ namespace fire.Editor
         {
             "serial" => "Serial (serial)",
             "loopback" => "Simulation (loopback)",
+            "usb" => "USB (usb)",
+            "gpio" => "GPIO (gpio)",
+            "i2c" => "I2C (i2c)",
+            "spi" => "SPI (spi)",
             _ => driver,
         };
 
@@ -151,6 +161,8 @@ namespace fire.Editor
                 FontWeight = isDefault ? FontWeight.Bold : FontWeight.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
             });
+            if (slot.Device.Description is { Length: > 0 } description)
+                panel.Children.Add(new TextBlock { Text = description, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
             panel.Children.Add(new TextBlock
             {
                 Text = state,
@@ -191,6 +203,7 @@ namespace fire.Editor
             ConnectButton.IsEnabled = slot is { Device.IsConnected: false };
             DisconnectButton.IsEnabled = slot is { Device.IsConnected: true };
             TraceButton.IsEnabled = slot != null;
+            TerminalButton.IsEnabled = slot != null;
             SearchButton.IsEnabled = !_searching;
         }
 
@@ -219,6 +232,23 @@ namespace fire.Editor
         private void Connect_Click(object? sender, RoutedEventArgs e) => _ = ConnectSelectedAsync();
         private void Disconnect_Click(object? sender, RoutedEventArgs e) => _ = DisconnectSelectedAsync();
         private void Trace_Click(object? sender, RoutedEventArgs e) => OpenTraceForSelected();
+        private void Terminal_Click(object? sender, RoutedEventArgs e) => OpenTerminalForSelected();
+        private void Reload_Click(object? sender, RoutedEventArgs e) => _ = ReloadDriversAsync();
+
+        public void OpenTerminalForSelected()
+        {
+            if (SelectedSlot is { } slot) OpenTerminalRequested?.Invoke(slot.Identifier);
+        }
+
+        /// <summary>Loads the device drivers of the installed packages again (after installing or removing a package).</summary>
+        public async Task ReloadDriversAsync()
+        {
+            if (_service == null) return;
+            StatusMessage?.Invoke("Loading the device drivers of the packages...");
+            await _service.StartPackageDriversAsync(reload: true);
+            StatusMessage?.Invoke(_service.PackageDriverStatus);
+            Refresh();
+        }
 
         /// <summary>Searches for devices and checks their availability (background thread).</summary>
         public async Task SearchAsync()

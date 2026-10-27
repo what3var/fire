@@ -12142,6 +12142,81 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         Console.WriteLine(ok ? "OK: Paketprotokoll: fehlerhafte Zeilen werden mit FormatException abgelehnt" : "FEHLER: Paketprotokoll nimmt fehlerhafte Zeilen an");
     }
 
+    // Terminal: Hexdump (16 Bytes je Zeile + Zeichen), ASCII-Darstellung, Hex-Eingabe, Text mit Escapes, Bloecke je Richtung
+    {
+        var dump = fire.Device.Manager.DeviceManager.TerminalLog.HexDump(System.Text.Encoding.ASCII.GetBytes("Hello device!\r\n\0\u0001ABCDEFGHIJ"));
+        var dumpLines = dump.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        bool ok = dumpLines.Length == 2
+            && dumpLines[0] == "0000  48 65 6C 6C 6F 20 64 65  76 69 63 65 21 0D 0A 00  Hello device!..."
+            && dumpLines[1].StartsWith("0010  01 41 42 43 44 45 46 47  48 49 4A ") && dumpLines[1].EndsWith(" .ABCDEFGHIJ")
+            && dumpLines[1].Length == dumpLines[0].Length - 5;
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Terminal: Hexdump mit 16 Bytes je Zeile, Luecke nach 8, dann die Zeichen (Steuerzeichen als '.')" : "FEHLER: Terminal-Hexdump\n" + dump);
+
+        ok = fire.Device.Manager.DeviceManager.TerminalLog.Ascii(new byte[] { 72, 105, 13, 10, 1, 9, 0xE4, 13 }) == "Hi\n<01>\t\u00e4<0D>"
+            && fire.Device.Manager.DeviceManager.TerminalLog.TryParseHex("48 65,0x6c-6C 6f0a", out var hexBytes, out _) && hexBytes.SequenceEqual(new byte[] { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x0A })
+            && !fire.Device.Manager.DeviceManager.TerminalLog.TryParseHex("4G", out _, out var hexError) && hexError.Length > 0
+            && fire.Device.Manager.DeviceManager.TerminalLog.TextToBytes("a\\tb\\x41", "\r\n").SequenceEqual(new byte[] { 97, 9, 98, 0x41, 13, 10 });
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Terminal: ASCII-Anzeige (CR vor LF faellt weg, Steuerzeichen als <NN>), Hex-Eingabe in mehreren Schreibweisen, Text mit \\t \\xNN und Zeilenende" : "FEHLER: Terminal-Umwandlungen");
+
+        var tlog = new fire.Device.Manager.DeviceManager.TerminalLog { Limit = 10 };
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, new byte[] { 1, 2 });
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, new byte[] { 3 });
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost, System.Text.Encoding.ASCII.GetBytes("ok\n"));
+        bool merged = tlog.Blocks.Count == 2 && tlog.Blocks[0].Data.Count == 3;
+        string text = tlog.Render(false, showSent: false);
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, new byte[8]);
+        ok = merged && text == "<< ok\n" && tlog.Blocks.Count == 1 && tlog.Count == 8 && tlog.Blocks[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice;
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Terminal: Bytes einer Richtung bilden einen Block, 'Show sent' blendet Gesendetes aus, das Limit wirft die aeltesten Bloecke weg" : "FEHLER: Terminal-Bloecke: " + text);
+    }
+
+    // Treiber aus Paketen: Manifest-Feld drivers (Projekt -> Paket), der Treiber-Agent bringt usb:sim in einen DeviceManager, Senden und Echo kommen an
+    {
+        var proj = fire.Projects.FireProject.Parse("{\"name\": \"x\", \"type\": \"library\", \"drivers\": [\"A.MyDriver\"]}");
+        var again = fire.Projects.FireProject.Parse(proj.ToJson());
+        var manifest = fire.Package.Manager.PackageManifest.Parse("{\"name\": \"p\", \"version\": \"1.0.0\", \"imports\": [{\"name\": \"p\", \"drivers\": [\"PDriver\"]}]}");
+        bool ok = again.Drivers is { Count: 1 } && again.Drivers[0] == "A.MyDriver" && manifest.Imports[0].Drivers is { Count: 1 }
+            && !fire.Projects.FireProject.Parse("{\"name\": \"y\"}").ToJson().Contains("drivers");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Treiber im Paket: 'drivers' im Projekt und im Manifest (leer wird nicht geschrieben)" : "FEHLER: drivers im Projekt/Manifest");
+
+        var found = fire.Compiler.PackageDriverAgent.FindDrivers();
+        ok = found.Any(d => d.Class == "UsbDriver" && d.Import == "usb") && found.Any(d => d.Class == "GpioDriver");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Treiber im Paket: die installierten Standardpakete melden ihre Treiber (usb, gpio, i2c, spi)" : "FEHLER: FindDrivers: " + string.Join(", ", found));
+
+        using var agent = new fire.Compiler.PackageDriverAgent();
+        ok = agent.Start(new[] { new fire.Compiler.PackageDriver("fire-usb", "usb", "UsbDriver"), new fire.Compiler.PackageDriver("x", "usb", "GibtEsNicht") });
+        var manager = new fire.Device.Manager.DeviceManager.DeviceManager();
+        var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
+        string detail = agent.EndedWith ?? "";
+        if (ok)
+        {
+            agent.Attach(manager);
+            manager.PacketCaptured += p => { lock (captured) captured.Add(p); };
+            manager.RefreshDevices(true);
+            var slot = manager.GetSlotByIdentifier("usb:sim");
+            ok = slot != null && slot.Device.Description == "simulated USB device (echo)" && !slot.Device.IsConnected && agent.StartErrors.Count == 1 && agent.StartErrors[0].Contains("GibtEsNicht");
+            if (ok)
+            {
+                slot!.Device.Connect();
+                ok = slot.Device.IsConnected && slot.Device.Write(System.Text.Encoding.ASCII.GetBytes("ping"));
+                for (int i = 0; i < 300 && ok; i++) { lock (captured) if (captured.Count >= 2) break; Thread.Sleep(10); }
+                lock (captured)
+                    ok = ok && captured.Count == 2 && captured[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice
+                        && captured[1].Direction == fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost && captured.All(c => System.Text.Encoding.ASCII.GetString(c.Data) == "ping");
+                slot.Device.Disconnect();
+                ok = ok && !slot.Device.IsConnected;
+            }
+            detail = string.Join(" | ", manager.GetSlots().Select(s => s.Identifier)) + " / " + string.Join(";", agent.StartErrors) + " / " + captured.Count;
+        }
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Treiber im Paket: der Treiber-Agent bringt usb:sim in den DeviceManager (Beschreibung, Verbinden, Senden, Echo, Trennen); ein Treiber, den es nicht gibt, wird gemeldet" : "FEHLER: Treiber-Agent: " + detail);
+        manager.Shutdown();
+    }
+
     Console.WriteLine(devFailures == 0 ? "Alle Geraete-Pruefungen bestanden." : $"FEHLER: {devFailures} Geraete-Pruefung(en) fehlgeschlagen.");
 }
 

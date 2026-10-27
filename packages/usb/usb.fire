@@ -1,5 +1,6 @@
 #import "io"
 #import "time"
+#import "devices"
 // USB devices (docs/USB.md): the list of devices, control transfers, bulk and interrupt transfers, and a pair of bulk endpoints as an IO.Stream. Through libusb-1.0 on Linux and
 // macOS, WinUSB on Windows; the simulated device "sim" (a loopback) is there everywhere.
 namespace Usb {
@@ -462,11 +463,120 @@ namespace Usb {
         undefined Close() { this.closed = true }
     }
 
+    /// <summary>A USB device as one device of the device framework (`usb:sim`, `usb:001:004`): Connect opens it and takes the first interface with bulk endpoints
+    /// as a stream; Write sends a byte buffer to its bulk OUT endpoint, Read returns what came on its bulk IN endpoint (an empty buffer when nothing came).</summary>
+    class Port : Device {
+        Usb.DeviceInfo info
+        Usb.Device device
+        Usb.UsbStream stream
+
+        construct(Driver driver, Usb.DeviceInfo info) : base(driver, info.Id) {
+            info.TakeTo(this)
+            this.info = info
+            this.device = undefined
+            this.stream = undefined
+        }
+
+        /// <summary>What the bus says about the device (vendor and product id, the texts).</summary>
+        Usb.DeviceInfo Info { get { return this.info } }
+
+        /// <summary>The opened device while connected (undefined otherwise): for control and interrupt transfers of your own.</summary>
+        Usb.Device Opened { get { return this.device } }
+
+        string Description() {
+            var text = Usb.Format.Hex(this.info.VendorId) + ":" + Usb.Format.Hex(this.info.ProductId)
+            var names = (this.info.Manufacturer + " " + this.info.Product).Trim()
+            if (names != "") { text = text + " " + names }
+            if (this.info.Id == "sim") { text = "simulated USB device (echo)" }
+            return text
+        }
+
+        bool Connected() { return this.device != undefined }
+
+        bool Connect() {
+            if (this.device != undefined) { return true }
+            try {
+                var d = new Usb.Device(this.info.Id)
+                d.TakeTo(this)
+                this.device = d
+                // the first interface with bulk endpoints
+                var number = -1
+                foreach (e in d.Endpoints()) {
+                    if (number < 0 && e.Type == 2 && e.AlternateSetting == 0) { number = e.Interface }
+                }
+                if (number >= 0) {
+                    var s = d.OpenStream(number)
+                    s.TakeTo(this)
+                    s.ReadTimeout = 1
+                    this.stream = s
+                }
+            } catch (UsbException e) {
+                this.Disconnect()
+                return false
+            }
+            return true
+        }
+
+        undefined Disconnect() {
+            var s = this.stream
+            this.stream = undefined
+            if (s != undefined) {
+                s.Close()
+                delete s
+            }
+            var d = this.device
+            this.device = undefined
+            if (d != undefined) {
+                try { d.Close() } catch (UsbException e) { }
+                delete d
+            }
+        }
+
+        /// <summary>What came on the bulk IN endpoint (waits about a millisecond; an empty buffer when nothing came).</summary>
+        any Read() {
+            if (this.stream == undefined || !this.stream.CanRead) { return new byte[0] }
+            var buffer = new byte[512]
+            var n = 0
+            try { n = this.stream.Read(buffer, 0, buffer.length) } catch (Usb.TimeoutException e) { n = 0 }
+            var data = new byte[n]
+            for (int i = 0; i < n; i++) { data[i] = buffer[i] }
+            if (n > 0) { DeviceManager.Host.Trace(this, false, data) }
+            return data
+        }
+
+        /// <summary>Sends a byte buffer (or a text, one byte per character) to the bulk OUT endpoint.</summary>
+        bool Write(any data) {
+            if (this.stream == undefined || !this.stream.CanWrite) { return false }
+            byte bytes[] = undefined
+            if (data is of string) { bytes = data.ToBytes() } else { bytes = data }
+            this.stream.Write(bytes, 0, bytes.length)
+            DeviceManager.Host.Trace(this, true, bytes)
+            return true
+        }
+    }
+
     // The simulated device "sim" from the outside (for tests).
     class Sim {
         // 0 bytes written to it, 1 bytes read from it, 2 control transfers, 3 bytes still queued, 4 interface 0 claimed (1/0).
         static int Info(int which) { return __UsbSimInfo(which) }
         // Forgets everything.
         static undefined Clear() { __UsbSimClear() }
+    }
+}
+
+/// <summary>The USB devices of this machine for the device framework: `DeviceManager.AddDriver(new UsbDriver())`. Every device of the bus becomes a port named
+/// by its id (`usb:sim` - the simulated echo device -, `usb:001:004`); a device that is gone stays and reports Availability 0.</summary>
+class UsbDriver : Driver {
+    construct() : base("usb") { }
+
+    undefined Refresh(bool fastScan = true) {
+        List found = undefined
+        try { found = Usb.Bus.Devices() } catch (Usb.UsbException e) { return }
+        foreach (info in found) {
+            if (this.Find(info.Id) == undefined) {
+                var made = new Usb.DeviceInfo(info.id + "|" + info.vendorId + "|" + info.productId + "|" + info.deviceClass + "|" + info.manufacturer + "|" + info.product + "|" + info.serialNumber + "|" + info.bus + "|" + info.address)
+                this.Add(new Usb.Port(this, made))
+            }
+        }
     }
 }

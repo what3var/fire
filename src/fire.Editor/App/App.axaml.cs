@@ -49,7 +49,12 @@ namespace fire.Editor
             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
             main.Show();
             // the standard packages are packed and installed from the projects in Source when they are missing or changed - quick when nothing changed; never in the way of the start
-            Task.Run(() => fire.Compiler.StandardSources.EnsureInstalled());
+            // then the device drivers of the installed packages start (their devices join the device manager)
+            Task.Run(() =>
+            {
+                try { fire.Compiler.StandardSources.EnsureInstalled(); } catch (Exception) { }
+                main.OnStandardPackagesReady();
+            });
 
             if (splash == null) { SplashDone.TrySetResult(); return; }
             splash.SetStatus("Ready");

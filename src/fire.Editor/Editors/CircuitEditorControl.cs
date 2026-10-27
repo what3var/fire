@@ -426,7 +426,8 @@ namespace fire.Editor
             // the scaling of the screen: the view draws at its full resolution (spark shows the picture 1:1)
             ui.Scaling = {{scaling.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
             var circuit = new Circuits.Circuit("schematic")
-            var view = new UI.CircuitView(circuit, 0, 0, fb.Width(), fb.Height())
+            // the view in logical pixels: the framebuffer has grown with the scaling (its pixels are pixels of the screen)
+            var view = new UI.CircuitView(circuit, 0, 0, ui.ToLogical(fb.Width()), ui.ToLogical(fb.Height()))
             ui.Add(view)
             ui.onResize = func (int w, int h) => {
                 view.Width = w

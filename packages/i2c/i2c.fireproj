@@ -4,6 +4,9 @@
   "type": "library",
   "import": "i2c",
   "standard": true,
+  "drivers": [
+    "I2cDriver"
+  ],
   "settings": {
     "version": "1.0.0",
     "author": "fire",

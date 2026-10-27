@@ -81,6 +81,12 @@ it reads whole packets into an internal buffer, so asking for fewer bytes than a
 `UnsupportedException` (6), `TimeoutException` (8), `StallException` (9), `DisconnectedException` (10). Other codes: 1 invalid
 argument, 2 invalid handle (closed device), 7 other, 11 overflow (the device sent more than the buffer holds).
 
+## In the device framework
+
+`#import "usb"` also brings `UsbDriver` (docs/DEVICES.md): `DeviceManager.AddDriver(new UsbDriver())` lists every device of the bus as `usb:<id>`, a `Usb.Port`
+whose `Read`/`Write` go to the bulk endpoints of its first interface that has some. The package names the driver in its project (`"drivers": ["UsbDriver"]`), so the device
+manager of spark lists the USB devices too, and its terminal talks to them.
+
 ## The simulated device `"sim"`
 
 Vendor `0x1209`, product `0x0001`, one interface (class `0xFF`) with:

@@ -4,6 +4,9 @@
   "type": "library",
   "import": "gpio",
   "standard": true,
+  "drivers": [
+    "GpioDriver"
+  ],
   "settings": {
     "version": "1.0.0",
     "author": "fire",

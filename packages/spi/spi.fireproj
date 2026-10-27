@@ -4,6 +4,9 @@
   "type": "library",
   "import": "spi",
   "standard": true,
+  "drivers": [
+    "SpiDriver"
+  ],
   "settings": {
     "version": "1.0.0",
     "author": "fire",

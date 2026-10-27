@@ -137,6 +137,12 @@ What makes these projects special is small: `"standard": true` lets a project ha
 
 Inside its own project a library is the program: `#import "time"` in the tests of `time` means the project's files (and its C++, built for the VM), not the installed package.
 
+### Device drivers
+
+A library with drivers of the device framework names them in its project file, `"drivers": ["MyDriver", "Kit.OtherDriver"]` (classes made with `new Class()`).
+`forge` writes them to the import in `package.json` (`"drivers": [...]`). spark loads the drivers of the installed packages and shows their devices in its device
+manager (docs/DEVICES.md).
+
 ## Making packages
 
 ```

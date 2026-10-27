@@ -94,7 +94,8 @@ namespace fire.Device.Manager.DeviceManager
         {
             lock (_lock)
             {
-                if (_driverSlots.Any(d => (d.Driver.GetType() == instance.GetType()) || (d.Driver.Identifier == instance.Identifier)))
+                // once per identifier (one class may serve several drivers: the proxies of the package drivers)
+                if (_driverSlots.Any(d => d.Driver.Identifier == instance.Identifier))
                     return;
 
                 var handle = GetNewHandle();
