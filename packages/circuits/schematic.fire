@@ -1947,7 +1947,7 @@ namespace Circuits {
             var text = "{\n  \"biscuit\": 1"
             if (this.className != "") { text = text + ",\n  \"class\": " + Circuits.Schematic.Quote(this.className) }
             if (this.namespaceName != "") { text = text + ",\n  \"namespace\": " + Circuits.Schematic.Quote(this.namespaceName) }
-            text = text + ",\n  \"timeStep\": " + Circuits.Schematic.Quote(Circuits.Schematic.Format(c.dt) + "s")
+            text = text + ",\n  \"timeStep\": " + Circuits.Schematic.Quote(Circuits.Schematic.Format(c.StepRaw()) + "s")
             if (c.paramNames.count > 0) {
                 text = text + ",\n  \"parameters\": {"
                 for (int i = 0; i < c.paramNames.count; i++) {
@@ -2035,7 +2035,7 @@ namespace Circuits {
                 var step = o.Get("timeStep")
                 if (step != undefined) {
                     var dt = Circuits.Symbols.Number("" + step)
-                    if (dt != undefined && dt > 0.0) { this.circuit.dt = dt }
+                    if (dt != undefined && dt > 0.0 && Math.Abs(this.circuit.StepRaw() - dt) > dt * 0.000001) { this.circuit.TimeStep = dt * 1s }
                 }
                 var prms = o.Get("parameters")
                 if (prms != undefined && prms is of JsonObject) {

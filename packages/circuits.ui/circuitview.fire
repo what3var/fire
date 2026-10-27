@@ -16,6 +16,10 @@ namespace UI {
         bool running = true
         /// <summary>Time steps of the circuit per cycle of the interface.</summary>
         int stepsPerFrame = 20
+        /// <summary>Real time instead of stepsPerFrame: the circuit keeps pace with the clock (Circuit.RealTime) and the view draws up to 30 times a second;
+        /// the corner shows how much of real time the simulation manages.</summary>
+        bool realTime = false
+        float lastFrame = 0.0
         /// <summary>Pixels per unit of the grid (zoom).</summary>
         float scale = 10.0
         /// <summary>Where the point (0, 0) of the grid is, in pixels from the upper left corner of the view.</summary>
@@ -530,7 +534,7 @@ namespace UI {
                 if (text.EndsWith("s")) { text = text.Substring(0, text.Length - 1) }
                 var dt = Circuits.Symbols.Number(text)
                 if (dt == undefined || dt <= 0.0 || dt > 1.0) { return false }
-                if (Math.Abs(this.circuit.dt - dt) <= dt * 0.000001) { return true }
+                if (Math.Abs(this.circuit.StepRaw() - dt) <= dt * 0.000001) { return true }
                 this.Remember()
                 this.circuit.TimeStep = dt * 1s
             } else {
@@ -544,7 +548,7 @@ namespace UI {
         string CircuitProperty(string key) {
             if (key == "class") { return this.Schematic.className }
             if (key == "namespace") { return this.Schematic.namespaceName }
-            if (key == "timeStep") { return Circuits.Schematic.Format(this.circuit.dt) + "s" }
+            if (key == "timeStep") { return Circuits.Schematic.Format(this.circuit.StepRaw()) + "s" }
             return ""
         }
 
@@ -744,11 +748,21 @@ namespace UI {
 
         undefined Poll(Root root) {
             base.Poll(root)
+            var c = this.circuit
+            if (c.RealTime != this.realTime) { c.RealTime = this.realTime }
+            if (this.realTime && !this.running) { c.RestartRealTime() }
             if (this.running && this.actualWidth > 0) {
+                if (this.realTime) {
+                    // at most 30 pictures a second: between them the program has the time
+                    var now = Circuits.RealTimeClock.Now()
+                    if (now - this.lastFrame < 1.0 / 30) { return }
+                    this.lastFrame = now
+                }
                 root.painting = true
                 try {
-                    var c = this.circuit
-                    for (int i = 0; i < this.stepsPerFrame; i++) { c.Step() }
+                    // in real time a little more than half of a picture's time for the simulation, the rest to draw
+                    if (this.realTime) { c.AdvanceRealTime(0.018) }
+                    else { for (int i = 0; i < this.stepsPerFrame; i++) { c.Step() } }
                 } catch (Exception ex) {
                     this.running = false
                     this.status = "Simulation stopped: " + ex.message
@@ -993,6 +1007,13 @@ namespace UI {
             this.textBrush.Color = UI.Color.Rgb(150, 150, 150)
             var t = "t = " + UI.CircuitView.Short(this.circuit.TimeRaw()) + "s"
             this.DrawString(root, ax + w - this.TextWidth(root, t) - this.Dp(6), ay + this.Dp(4), t, this.textBrush)
+            if (this.realTime) {
+                // how much of real time the simulation manages, and the time step it takes for that
+                var share = Math.Round(this.circuit.RealTimeShare * 100)!int
+                var rt = "real time " + share + "%  (step " + UI.CircuitView.Short(this.circuit.CurrentTimeStep / 1s) + "s)"
+                if (share >= 99) { this.textBrush.Color = UI.Color.Rgb(120, 200, 120) } else { this.textBrush.Color = UI.Color.Rgb(230, 180, 80) }
+                this.DrawString(root, ax + w - this.TextWidth(root, rt) - this.Dp(6), ay + this.Dp(6) + this.TextHeight(root), rt, this.textBrush)
+            }
         }
 
         // While the view draws, text is measured and drawn at the size of the screen (the renderer is at scale 1 then).

@@ -480,6 +480,28 @@ print(led.IsOn)                                     // True
 The schematic has them as elements too (the category Devices of the palette): `GpioLine` (`line`, `supply`), `I2cAdc` (`address` like `0x48`, `channels`,
 `reference`, `bits`), `I2cDac`, `SpiShiftOut` and `SpiShiftIn`.
 
+### Real time
+
+`circuit.RealTime = true` lets the simulation keep pace with the clock - never faster. `circuit.AdvanceRealTime(budget = 20ms)` simulates the time since its last
+call (the first call starts the clock), using at most `budget` of computing time; `circuit.RunRealTime(duration)` does that for `duration` of the clock and
+returns. The circuit simulates with its own `TimeStep` as long as the computer keeps up. When it falls behind for a while, the step doubles (up to
+`MaxTimeStep`, by default 64 times `TimeStep`); with time to spare it halves again. `CurrentTimeStep` is the step it uses now, `RealTimeShare` how much of real
+time it manages (1 = all of it, 0.5 = half as fast as the clock). `TimeStep` and the saved file keep the step the circuit was given; `RealTime = false` goes back
+to it. `RestartRealTime()` starts the clock anew after a pause, so the pause is not made up.
+
+```fire
+var c = new Circuits.Circuit()
+c.TimeStep = 10us
+c.MaxTimeStep = 200us
+// ... the parts ...
+c.RunRealTime(2s)
+print(c.Time)                  // about 2 s, if the computer kept up
+print(c.RealTimeShare)         // 1.0 if it did
+```
+
+A `UI.CircuitView` with `realTime = true` (in spark: **Real time** in the list of steps of the tool strip Simulation) simulates that way and draws at most 30
+times a second. The corner shows how much of real time it manages and the step it takes for that (`real time 100%  (step 10us)`; yellow below 99 %).
+
 ### A circuit that runs alongside the program
 
 `circuit.RunAlongside(speed = 1.0, maxLag = 0.1s)` lets the circuit run **in real time** next to the program: every time the program uses one of the simulated devices,
@@ -681,7 +703,7 @@ symbol) and the tools. The palette is the tool window **Toolbox**, docked at the
 again when another document is active (unless it is pinned); closed while a circuit is active, it stays closed until **View > Toolbox** (there while a circuit is active) brings it back. The tool strip **Edit** works for every document - undo, redo, cut, copy, paste, delete, select
 all, find and replace (Ctrl+F / Ctrl+H, F3 and Shift+F3 search on), go to definition and toggle comment (these two only in scripts); in a circuit, copy puts the
 selected elements on the clipboard as JSON and paste inserts them, so they also go from one circuit to another. The tool strip **Simulation** is on while a
-circuit is active: pause/run, reset, the steps per frame (1 to 10k, behind the tempo symbol), rotate clockwise and counterclockwise, flip horizontally and
+circuit is active: pause/run, reset, the steps per frame (1 to 10k, behind the tempo symbol, or **Real time**, see [Real time](#real-time)), rotate clockwise and counterclockwise, flip horizontally and
 vertically, fit to view, **Import** (a Falstad file or the clipboard), **Samples** and **Properties**. The embedded view takes the accent color of spark. The properties of the selected element (name, values with
 units, models of the library, choices) are edited in the tool window **Properties** of spark (View > Properties; by default under the Solution Explorer), the same
 window the UI markup editor uses - a table like the property grid of .NET: names and values with lines between the cells, categories that fold, sorted by

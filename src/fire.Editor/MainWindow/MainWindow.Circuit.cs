@@ -37,6 +37,10 @@ namespace fire.Editor
         private void InitCircuitUi()
         {
             _fillingSteps = true;
+            // first the real time (Tag 0), then the steps per picture
+            var realTime = new ComboBoxItem { Content = "Real time", Tag = 0 };
+            ToolTip.SetTip(realTime, "The simulation keeps pace with the clock (never faster); it takes a coarser time step when the computer cannot keep up. The view shows how much of real time it manages.");
+            cmbSimSteps.Items.Add(realTime);
             foreach (int n in CircuitEditorControl.StepChoices)
                 cmbSimSteps.Items.Add(new ComboBoxItem { Content = (n >= 1000 ? (n / 1000).ToString(CultureInfo.InvariantCulture) + "k" : n.ToString(CultureInfo.InvariantCulture)) + " steps", Tag = n });
             _fillingSteps = false;
@@ -84,7 +88,8 @@ namespace fire.Editor
                 var icon = circuit.Running ? _pauseIcon : _playIcon;
                 if (!ReferenceEquals(tbSimPause.IconSource, icon)) tbSimPause.IconSource = icon;
                 ToolTip.SetTip(tbSimPause, circuit.Running ? "Pause the simulation (Space in the view)" : "Run the simulation (Space in the view)");
-                if (cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int shown } || shown != circuit.StepsPerFrame) SelectSteps(circuit.StepsPerFrame);
+                int wanted = circuit.RealTime ? 0 : circuit.StepsPerFrame;
+                if (cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int shown } || shown != wanted) SelectSteps(wanted);
             }
         }
 
@@ -163,7 +168,12 @@ namespace fire.Editor
         private void cmbSimSteps_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
             if (_fillingSteps || cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int steps } || ActiveCircuit is not { } c) return;
-            c.StepsPerFrame = steps;
+            if (steps == 0) c.RealTime = true;
+            else
+            {
+                c.RealTime = false;
+                c.StepsPerFrame = steps;
+            }
             c.FocusEditor();
         }
     }

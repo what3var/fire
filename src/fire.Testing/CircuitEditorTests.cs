@@ -423,6 +423,31 @@ static class CircuitEditorTests
             "editor 0 4.7k 4700Ohm", "read-only: 6 elements, switch False",
         });
 
+        // ---- real time: never faster than the clock, a coarser step when it cannot keep up, the given step again after ----
+        CheckLines("Echtzeit: nie schneller als die Uhr, groeberer Schritt wenn es nicht reicht, TimeStep und Datei behalten den gegebenen", Run("""
+            #import "circuits"
+            var c = new Circuits.Circuit("rc")
+            var s = c.Schematic
+            s.Add("Source", 0, 8, 0, 0, "voltage=5V;waveform=sine;frequency=50Hz")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+            s.Add("Capacitor", 8, 0, 8, 8, "capacitance=1uF", "c1")
+            s.Add("Wire", 0, 8, 8, 8)
+            s.Add("Ground", 0, 8, 0, 12)
+            c.TimeStep = 10us
+            var t0 = Circuits.RealTimeClock.Now()
+            c.RunRealTime(0.2s)
+            var wall = Circuits.RealTimeClock.Now() - t0
+            print("in time " + (c.Time / 1s <= wall + 0.001) + " " + (c.Time > 0s) + " " + c.RealTime)
+            c.MaxTimeStep = 40us
+            for (int i = 0; i < 120; i++) {
+                Sleep(5)
+                c.AdvanceRealTime(0.00001s)
+            }
+            print("coarser " + (c.CurrentTimeStep / 1us) + " " + (c.TimeStep / 1us) + " " + (c.RealTimeShare < 0.9) + " " + s.ToText().Contains("\"timeStep\": \"10us\""))
+            c.RealTime = false
+            print("off " + (c.CurrentTimeStep / 1us) + " " + c.RealTimeShare)
+            """), new[] { "in time True True True", "coarser 40 10 True True", "off 10 0" });
+
         // ---- the commands of the tool strips: rotate both ways, flip, copy and paste as JSON, find and replace ----
         CheckLines("CircuitView: Drehen links/rechts, Spiegeln, Kopieren/Einfuegen, Suchen/Ersetzen", Run("""
             #import "circuits.ui"
