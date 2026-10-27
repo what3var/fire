@@ -176,6 +176,13 @@
         "returnsReference": true
       },
       {
+        "name": "__CirRecSpectrum",
+        "arguments": 4,
+        "cpp": "circuits::RecSpectrum",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
         "name": "__CirAddNonlinear",
         "arguments": 9,
         "cpp": "circuits::AddNonlinear"

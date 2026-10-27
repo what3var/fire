@@ -362,6 +362,7 @@ drops the older half then and goes on - the scopes of a schematic roll with 8192
 | `Current(name, part)` | a channel for the current through a part |
 | `Times()`, `Samples(name)` | the recorded times (seconds) and samples (volts, amperes) as `float[]` |
 | `Last(name)`, `Count`, `Clear()` | the last sample, the number of samples, start again |
+| `Spectrum(name, size = 512, fmax = 20kHz)` | the spectrum of a channel, computed natively: `size` samples taken at the rate `2 * fmax` (fmax 0: the rate of the simulation), mean removed, Hann window; `[bin width in Hz, amplitude of bin 1, ..., of bin size/2]` |
 
 **`Multimeter`**: `Multimeter.Volts(a, b = undefined)` (between two ports), `Multimeter.Amps(part)`, `Multimeter.Rms(samples)`.
 
@@ -566,7 +567,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   Adc, Dac, SevenSegmentDecoder, SevenSegment, Monostable, PhaseComparator, Vco (always in Falstad's chip layout; `bits`, `spacing` and the options of the
   chip) and TriState (`flip`: the control on the other side); sources and rails also have the waveforms triangle,
   sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element, `quantity`
-  voltage/current, `display` time or spectrum - an FFT analyzer of the last samples with a Hann window, in dB, up to `maxFrequency` or automatically, `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
+  voltage/current, `display` time or spectrum - an FFT analyzer: the last `fftSize` samples (128 .. 4096, default 512) taken at twice `maxFrequency` (default 20kHz; 0: at the rate of the simulation, the axis automatically), Hann window, in dB, computed natively; `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
 - **Pins:** two-pin elements at their two points (a source and a diode: `-`/anode at the first point); a transistor has its base at the first point and collector and
   emitter 2 units to the sides of the second, an op amp its inputs 2 units to the sides of the first point and the output at the second, a gate its inputs 2 units apart

@@ -4072,6 +4072,10 @@ namespace Circuits {
         /// <summary>The samples of a channel (volts or amperes).</summary>
         float[] Samples(string name) { return __CirRecSamples(this.recorder, this.ChannelOf(name)) }
 
+        /// <summary>The spectrum of a channel for an FFT analyzer: `size` samples (a power of two, 16 .. 8192) at the rate 2 * fmax (fmax 0: the rate of the
+        /// simulation), Hann window. Result: [bin width in Hz, amplitude of bin 1, ..., of bin size/2]; empty while there are too few samples.</summary>
+        float[] Spectrum(string name, int size = 512, float fmax : any = 20000.0) { return __CirRecSpectrum(this.recorder, this.ChannelOf(name), size, Circuits.Units.Hertz(fmax)) }
+
         /// <summary>The last sample of a channel.</summary>
         float Last(string name) { return __CirRecLast(this.recorder, this.ChannelOf(name)) }
 

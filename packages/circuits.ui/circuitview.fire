@@ -1892,11 +1892,11 @@ namespace UI {
             }
             var n = scope.Count
             if (n == 0) { return }
-            var samples = scope.Samples("y")
             if (e.Get("display") == "spectrum") {
-                this.DrawSpectrum(root, e, scope, samples, x0, y0, w, h, label)
+                this.DrawSpectrum(root, e, scope, x0, y0, w, h, label)
                 return
             }
+            var samples = scope.Samples("y")
             var count = w - 2
             var first = samples.length - count
             if (first < 0) { first = 0 }
@@ -1935,30 +1935,24 @@ namespace UI {
             this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), label + " = " + UI.CircuitView.Short(samples[samples.length - 1]) + unit + "  ±" + UI.CircuitView.Short(hi) + unit, this.textBrush)
         }
 
-        // a scope as an FFT analyzer: the spectrum of the last samples (a power of two, at most 2048, with a Hann window), in dB below its strongest line,
-        // from 0 Hz to maxFrequency (0: up to a little above the highest line that is not 60 dB down)
-        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, any samples, int x0, int y0, int w, int h, string label) {
-            var times = scope.Times()
-            var size = 1
-            while (size * 2 <= samples.length && size * 2 <= 2048) { size = size * 2 }
+        // a scope as an FFT analyzer: the spectrum of the last fftSize samples (taken at twice maxFrequency, Hann window; computed natively), in dB below its
+        // strongest line, from 0 Hz to maxFrequency (0: at the rate of the simulation, up to a little above the highest line that is not 60 dB down)
+        undefined DrawSpectrum(Root root, Circuits.Element e, Circuits.Scope scope, int x0, int y0, int w, int h, string label) {
+            var size = 512
+            var sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
+            if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
+            var fmax = 0.0
+            var fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
+            if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
+            var spectrum = scope.Spectrum("y", size, fmax)
             this.textBrush.Color = UI.Color.Rgb(140, 200, 140)
-            if (size < 16 || times.length < 2) {
+            if (spectrum.length < 9) {
                 this.DrawString(root, x0 + this.Dp(4), y0 + this.Dp(2), "FFT " + label, this.textBrush)
                 return
             }
-            var first = samples.length - size
-            var dt = (times[times.length - 1] - times[first]) / (size - 1)
-            if (dt <= 0.0) { return }
-            var rate = 1.0 / dt
-            var windowed = new float[size]
-            var mean = 0.0
-            for (int i = 0; i < size; i++) { mean = mean + samples[first + i] }
-            mean = mean / size
-            for (int i = 0; i < size; i++) {
-                var hann = 0.5 - 0.5 * Math.Cos(2.0 * Math.PI * i / (size - 1))
-                windowed[i] = (samples[first + i] - mean) * hann
-            }
-            var mags = Circuits.Fft.Magnitudes(windowed)
+            // mags[k]: bin k (k >= 1); mags[0] is the bin width
+            var mags = spectrum
+            var binHz = mags[0]
             var peak = 0.0
             var peakBin = 1
             for (int k = 1; k < mags.length; k++) {
@@ -1967,10 +1961,8 @@ namespace UI {
                     peakBin = k
                 }
             }
-            var binHz = rate / size
             var top = mags.length - 1
-            var fmax = Circuits.Symbols.Number(e.Get("maxFrequency"))
-            if (fmax != undefined && fmax > 0.0) {
+            if (fmax > 0.0) {
                 top = UI.M.Min(mags.length - 1, UI.M.Max(4, Math.Ceiling(fmax / binHz)!int))
             } else if (peak > 0.0) {
                 var last = peakBin
