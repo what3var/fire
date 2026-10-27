@@ -310,6 +310,109 @@ namespace UI {
             this.Changed()
         }
 
+        /// <summary>A property of the circuit itself (with undo): "class" and "namespace" of the class generated from the file, "timeStep" (the step of the
+        /// simulation, a number with an SI prefix and an optional "s": "10u", "1us"). False if the value is not valid.</summary>
+        bool SetCircuitProperty(string key, string value) {
+            var s = this.Schematic
+            var v = value.Trim()
+            if (key == "class") {
+                if (s.className == v) { return true }
+                this.Remember()
+                s.className = v
+            } else if (key == "namespace") {
+                if (s.namespaceName == v) { return true }
+                this.Remember()
+                s.namespaceName = v
+            } else if (key == "timeStep") {
+                var text = v
+                if (text.EndsWith("s")) { text = text.Substring(0, text.Length - 1) }
+                var dt = Circuits.Symbols.Number(text)
+                if (dt == undefined || dt <= 0.0 || dt > 1.0) { return false }
+                if (Math.Abs(this.circuit.dt - dt) <= dt * 0.000001) { return true }
+                this.Remember()
+                this.circuit.TimeStep = dt * 1s
+            } else {
+                return false
+            }
+            this.Changed()
+            return true
+        }
+
+        /// <summary>A property of the circuit itself as text: "class", "namespace", "timeStep" (with "s").</summary>
+        string CircuitProperty(string key) {
+            if (key == "class") { return this.Schematic.className }
+            if (key == "namespace") { return this.Schematic.namespaceName }
+            if (key == "timeStep") { return Circuits.Schematic.Format(this.circuit.dt) + "s" }
+            return ""
+        }
+
+        /// <summary>What can be operated while the circuit runs: potentiometers (a group once), switches, push buttons, selector switches and logic inputs.
+        /// Each line: "index|kind|name|value|range", kind slider / switch / button / choice / logic; the value of a slider is the position 0..1.</summary>
+        List Positions() {
+            var lines = new List()
+            var groups = new List()
+            var els = this.Schematic.Elements()
+            for (int i = 0; i < els.count; i++) {
+                Circuits.Element e = els[i]
+                var t = e.type
+                if (t == "Potentiometer") {
+                    var group = e.Get("group")
+                    var name = e.name
+                    if (group != "") {
+                        if (groups.IndexOf(group) >= 0) { continue }
+                        groups.Add(group)
+                        name = group
+                    }
+                    lines.Add(i + "|slider|" + name + "|" + e.Get("position") + "|")
+                } else if (t == "Switch") {
+                    if (e.Get("momentary") == "true") { lines.Add(i + "|button|" + e.name + "|" + e.Get("closed") + "|") }
+                    else { lines.Add(i + "|switch|" + e.name + "|" + e.Get("closed") + "|") }
+                } else if (t == "Switch2") {
+                    lines.Add(i + "|choice|" + e.name + "|" + e.Get("position") + "|" + e.Get("throws"))
+                } else if (t == "LogicInput") {
+                    lines.Add(i + "|logic|" + e.name + "|" + e.Get("high") + "|")
+                }
+            }
+            return lines
+        }
+
+        /// <summary>Operates element number `index` as Positions lists it: the position of a potentiometer (0..1, the whole group), a switch or a logic
+        /// input on or off ("true"/"false"), a push button held ("true") or let go, a selector switch to a throw. Not part of the undo history.</summary>
+        undefined Operate(int index, string value) {
+            var els = this.Schematic.Elements()
+            if (index < 0 || index >= els.count) { return }
+            Circuits.Element e = els[index]
+            var key = ""
+            if (e.type == "Potentiometer") { key = "position" }
+            else if (e.type == "Switch") { key = "closed" }
+            else if (e.type == "Switch2") { key = "position" }
+            else if (e.type == "LogicInput") { key = "high" }
+            if (key == "" || e.Get(key) == value) { return }
+            this.Schematic.Set(e, key, value)
+            this.Changed()
+        }
+
+        /// <summary>The ports of the circuit (its Pin elements) and the parts that connect it to the devices of a program (GPIO line, I2C, SPI): each line
+        /// "index|type|name|key|value" - the key is the property that names the port or binds the device (port, line, address; "" for none).</summary>
+        List Ports() {
+            var lines = new List()
+            var els = this.Schematic.Elements()
+            for (int i = 0; i < els.count; i++) {
+                Circuits.Element e = els[i]
+                var t = e.type
+                var key = ""
+                if (t == "Pin") { key = "port" }
+                else if (t == "GpioLine") { key = "line" }
+                else if (t == "I2cAdc" || t == "I2cDac") { key = "address" }
+                else if (t == "SpiShiftOut" || t == "SpiShiftIn") { key = "-" }
+                else { continue }
+                var value = ""
+                if (key != "-") { value = e.Get(key) } else { key = "" }
+                lines.Add(i + "|" + t + "|" + e.name + "|" + key + "|" + value)
+            }
+            return lines
+        }
+
         /// <summary>Renames an element (with undo).</summary>
         undefined RenameElement(Circuits.Element e, string name) {
             if (e.name == name) { return }

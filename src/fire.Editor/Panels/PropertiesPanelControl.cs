@@ -22,6 +22,10 @@ namespace fire.Editor
         Choice,
         /// <summary>A colour (#RRGGBB) as text with a swatch.</summary>
         Color,
+        /// <summary>A slider from <see cref="PropertyEntry.Minimum"/> to <see cref="PropertyEntry.Maximum"/> (the position of a potentiometer).</summary>
+        Slider,
+        /// <summary>A button that is "true" while it is held down and "false" when it is let go (a push button).</summary>
+        Momentary,
     }
 
     /// <summary>One row of the property window: the name, how it is edited and its value. `IsSet` false: the value is not given (the markup has no attribute of this name) -
@@ -35,6 +39,9 @@ namespace fire.Editor
         public string? Tip { get; init; }
         /// <summary>The group the row is listed under ("" = at the top, without a heading).</summary>
         public string Category { get; init; } = "";
+        /// <summary>The range of a <see cref="PropertyEditKind.Slider"/>.</summary>
+        public double Minimum { get; init; }
+        public double Maximum { get; init; } = 1;
     }
 
     /// <summary>What the property window shows: the selected thing of a document. Built anew by the document whenever its selection or the values change.</summary>
@@ -136,8 +143,46 @@ namespace fire.Editor
         private void Show(PropertySet? set, bool focusFirst)
         {
             if (!ReferenceEquals(set, _shown) && set != null && _shown != null && set.Title != _shown.Title) _selected = null;
+            // the same rows with other values (a slider is dragged, the simulation reports a new position): the fields are kept and only show the new values -
+            // a rebuild would take the slider away from under the mouse
+            if (!focusFirst && set != null && _shown != null && SameRows(set, _shown))
+            {
+                _shown = set;
+                foreach (var entry in set.Entries) if (_cells.TryGetValue(entry.Name, out var cell)) { _cells[entry.Name] = (cell.Name, cell.Field, entry); ShowValue(cell.Field, entry); }
+                _error.Text = set.Error ?? "";
+                _error.IsVisible = !string.IsNullOrEmpty(set.Error);
+                return;
+            }
             _shown = set;
             Rebuild(focusFirst);
+        }
+
+        private bool SameRows(PropertySet a, PropertySet b)
+        {
+            if (a.Title != b.Title || a.Entries.Count != b.Entries.Count) return false;
+            for (int i = 0; i < a.Entries.Count; i++)
+            {
+                var x = a.Entries[i];
+                var y = b.Entries[i];
+                if (x.Name != y.Name || x.Kind != y.Kind || x.Category != y.Category || x.IsSet != y.IsSet || x.Unit != y.Unit) return false;
+                if (!(x.Choices ?? Array.Empty<string>()).SequenceEqual(y.Choices ?? Array.Empty<string>())) return false;
+            }
+            // folded categories have no fields: a rebuild is cheap and right then
+            return a.Entries.All(e => _cells.ContainsKey(e.Name));
+        }
+
+        /// <summary>Puts a new value into a field that is already there (not into the one being edited).</summary>
+        private static void ShowValue(Control field, PropertyEntry entry)
+        {
+            switch (field)
+            {
+                case TextBox box when !box.IsKeyboardFocusWithin: box.Text = entry.IsSet ? entry.Value : ""; break;
+                case CheckBox check: check.IsChecked = entry.Value == "true"; break;
+                case ComboBox combo when !combo.IsDropDownOpen: if (combo.Items.Contains(entry.Value)) combo.SelectedItem = entry.Value; break;
+                case Slider slider when slider.Tag == null:
+                    if (double.TryParse(entry.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v)) slider.Value = v;
+                    break;
+            }
         }
 
         private void Rebuild(bool focusFirst)
@@ -275,10 +320,14 @@ namespace fire.Editor
             _descText.Text = text;
         }
 
-        private void Commit(PropertySet set, PropertyEntry entry, string value)
+        /// <summary>A field was edited: the row's value (as it is shown now) is compared, and the document gets the new one.</summary>
+        private void Commit(Control field, string name, string value)
         {
-            if (!ReferenceEquals(set, _shown)) return;   // an old list (the document reported new values meanwhile)
-            if (entry.IsSet ? value == entry.Value : value == "") return;
+            var set = _shown;
+            // a field of an earlier list (it lost the focus while the list was built anew) changes nothing
+            if (set == null || !_cells.TryGetValue(name, out var cell) || !ReferenceEquals(cell.Field, field)) return;
+            var entry = cell.Entry;
+            if (entry.Kind != PropertyEditKind.Momentary && (entry.IsSet ? value == entry.Value : value == "")) return;
             set.Set?.Invoke(entry.Name, value);
         }
 
@@ -286,10 +335,32 @@ namespace fire.Editor
         {
             switch (entry.Kind)
             {
+                case PropertyEditKind.Slider:
+                {
+                    double.TryParse(entry.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v);
+                    var slider = new Slider
+                    {
+                        Minimum = entry.Minimum, Maximum = entry.Maximum, Value = v, Margin = new Thickness(6, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Center,
+                        SmallChange = (entry.Maximum - entry.Minimum) / 100, LargeChange = (entry.Maximum - entry.Minimum) / 10,
+                    };
+                    // while the thumb is dragged, the values the document reports back do not move it
+                    slider.AddHandler(InputElement.PointerPressedEvent, (_, _) => slider.Tag = "drag", Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+                    slider.AddHandler(InputElement.PointerReleasedEvent, (_, _) => slider.Tag = null, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+                    slider.ValueChanged += (_, e) => Commit(slider, entry.Name, Math.Round(e.NewValue, 4).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    return slider;
+                }
+                case PropertyEditKind.Momentary:
+                {
+                    var button = new Button { Content = "Press", Padding = new Thickness(10, 0), Margin = new Thickness(4, 2), MinHeight = 0, VerticalAlignment = VerticalAlignment.Stretch };
+                    button.AddHandler(InputElement.PointerPressedEvent, (_, _) => Commit(button, entry.Name, "true"), Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+                    button.AddHandler(InputElement.PointerReleasedEvent, (_, _) => Commit(button, entry.Name, "false"), Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+                    button.AddHandler(InputElement.PointerCaptureLostEvent, (_, _) => Commit(button, entry.Name, "false"), Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                    return button;
+                }
                 case PropertyEditKind.Bool:
                 {
                     var check = new CheckBox { IsChecked = entry.Value == "true", Margin = new Thickness(4, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Center };
-                    check.Click += (_, _) => Commit(set, entry, check.IsChecked == true ? "true" : "false");
+                    check.Click += (_, _) => Commit(check, entry.Name, check.IsChecked == true ? "true" : "false");
                     return check;
                 }
                 case PropertyEditKind.Choice:
@@ -307,7 +378,7 @@ namespace fire.Editor
                     combo.SelectedItem = entry.IsSet ? entry.Value : entry.CanClear ? unset : entry.Value;
                     combo.SelectionChanged += (_, _) =>
                     {
-                        if (combo.SelectedItem is string s) Commit(set, entry, s == unset ? "" : s);
+                        if (combo.SelectedItem is string s) Commit(combo, entry.Name, s == unset ? "" : s);
                     };
                     return combo;
                 }
@@ -329,10 +400,10 @@ namespace fire.Editor
                         box.TextChanged += (_, _) => Paint();
                         box.InnerLeftContent = swatch;
                     }
-                    box.LostFocus += (_, _) => Commit(set, entry, box.Text ?? "");
+                    box.LostFocus += (_, _) => Commit(box, entry.Name, box.Text ?? "");
                     box.KeyDown += (_, e) =>
                     {
-                        if (e.Key == Key.Enter) { Commit(set, entry, box.Text ?? ""); _host?.FocusEditor(); e.Handled = true; }
+                        if (e.Key == Key.Enter) { Commit(box, entry.Name, box.Text ?? ""); _host?.FocusEditor(); e.Handled = true; }
                         else if (e.Key == Key.Escape) { box.Text = entry.IsSet ? entry.Value : ""; _host?.FocusEditor(); e.Handled = true; }
                     };
                     return box;

@@ -118,7 +118,7 @@ namespace Circuits {
             l.Add("Basic|Capacitor|capacitance:F=10u;initial:V=0")
             l.Add("Basic|Inductor|inductance:H=1m;initial:A=0")
             l.Add("Basic|Switch|closed:bool=false;momentary:bool=false")
-            l.Add("Basic|Potentiometer|resistance:Ohm=10k;position:=0.5")
+            l.Add("Basic|Potentiometer|resistance:Ohm=10k;position:=0.5;group:text=")
             l.Add("Basic|Transformer|inductance:H=4;ratio:=1;coupling:=0.999;width:int=4;flip:bool=false;reverse:bool=false")
             l.Add("Basic|Switch2|position:int=0;throws:int=2;centerOff:bool=false;link:int=0")
             l.Add("Basic|Lamp|power:W=100;voltage:V=120;warmTime:s=0.4;coolTime:s=0.4")
@@ -1351,6 +1351,19 @@ namespace Circuits {
         /// <summary>Sets a property of an element and applies it.</summary>
         undefined Set(Circuits.Element e, string key, string value) {
             e.Set(key, value)
+            // potentiometers of a group turn together (a stereo potentiometer, a ganged one): one position for all
+            if (e.type == "Potentiometer" && (key == "position" || key == "group") && e.Get("group") != "") {
+                var group = e.Get("group")
+                foreach (other in this.elements) {
+                    if (other == e || other.type != "Potentiometer" || other.Get("group") != group) { continue }
+                    if (key == "position") { other.Set("position", value) }
+                    else {
+                        // joining a group: the position of the group
+                        e.Set("position", other.Get("position"))
+                        break
+                    }
+                }
+            }
             // how a scope shows what it records: only the picture changes (the recording goes on)
             if (e.type == "Scope" && (key == "display" || key == "range" || key == "maxFrequency" || key == "fftSize")) {
                 e.dirty = false

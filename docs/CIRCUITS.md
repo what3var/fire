@@ -559,7 +559,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
   `inverting`), Counter, Timer555 (DFlipFlop, Counter and Timer555 also in Falstad's chip layout: `layout` = falstad puts their pins on all four sides as there,
-  `spacing` 4 or 2; the 555 then takes its supply at the Vcc pin, `groundPin`), Potentiometer (`position`), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
+  `spacing` 4 or 2; the 555 then takes its supply at the Vcc pin, `groundPin`), Potentiometer (`position`; potentiometers with the same `group` turn together, like a stereo potentiometer), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
   Switch2 (`position`, `throws`, `centerOff`, `link`: switches of the same link move together), AnalogSwitch, AnalogSwitch2 (`swap`), Lamp, Fuse, Crystal,
   LightResistor, Thermistor, Memristor, SparkGap, TransmissionLine (`width`), Sweep (one pin, like a rail), RelayCoil and RelayContact (`label`), Jfet (`pChannel`, `flip`),
   Darlington, Thyristor and Triac (`smallGrid`, `legacy`: where Falstad puts the gate), Diac, Varactor, TunnelDiode, Triode (`flip`), Unijunction (`flip`), VCVS, VCCS, CCCS, CCVS,
@@ -627,6 +627,7 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 | rotate, flip, copy, delete | R, F, Ctrl+D, Del (or `RotateSelection()`, ...) |
 | undo, redo | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (`Undo()`, `Redo()`) |
 | properties | double click or Enter: the view's own editor, or `OnEdit` of the program |
+| the circuit | `SetCircuitProperty("class" / "namespace" / "timeStep", text)` and `CircuitProperty(key)` (with undo); `Positions()` lists what can be operated while it runs (potentiometers - a group once -, switches, push buttons, selector switches, logic inputs) and `Operate(index, value)` operates it; `Ports()` lists the Pin elements and the parts bound to devices |
 | zoom, pan | the wheel zooms at the pointer, the middle or right button pans; `FitToView()` |
 | context menu | a right click without dragging: on an element Attach Scope (voltage, current), Attach FFT Analyzer, properties, rotate, flip, duplicate, delete; on a scope time or spectrum; on empty space run, reset, select all, fit, grid, values, current. `AttachScope(element, quantity, display)` does the same from a program |
 
@@ -643,6 +644,10 @@ symbol) and the tools: run/pause, reset, speed, undo/redo, rotate, flip, duplica
 units, models of the library, choices) are edited in the tool window **Properties** of spark (View > Properties; by default under the Solution Explorer), the same
 window the UI markup editor uses - a table like the property grid of .NET: names and values with lines between the cells, categories that fold, sorted by
 category or by name, a column border to drag and a description of the selected row; double click or Enter on an element puts the focus into its first field.
+With nothing selected the window shows the **circuit** itself: the class and namespace of the generated class, the **time step** of the simulation, and under
+**Positions** a control for everything that is operated while the circuit runs - a slider for each potentiometer (one for a `group`), an on/off box for
+switches and logic inputs, a button for push buttons (closed while it is held), a list for selector switches. **Circuit...** in the tool bar opens the same
+settings as a dialog, with the **ports** of the circuit (its Pin elements) and the parts bound to devices (GPIO line, I2C address, SPI), all editable.
 
 **Samples** next to it loads one of the example circuits of the editor (our own, embedded in `fire.UI.Markup`, `CircuitSamples.All`): an RC
 low-pass, an LC tank, a bridge rectifier, a Zener regulator, a transistor switch, an inverting amplifier, a Schmitt trigger oscillator, a 555 blinker, a
