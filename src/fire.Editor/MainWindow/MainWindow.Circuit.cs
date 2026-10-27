@@ -29,6 +29,7 @@ namespace fire.Editor
         private readonly HashSet<CircuitEditorControl> _hookedCircuits = new();
         private DispatcherTimer? _editStripTimer;
         private bool _fillingSteps;
+        private bool _toolboxSynced;
         private IImage? _pauseIcon, _playIcon;
 
         private CircuitEditorControl? ActiveCircuit => ActiveDocument?.View as CircuitEditorControl;
@@ -104,14 +105,17 @@ namespace fire.Editor
                 circuit.StatusChanged += text => { if (ReferenceEquals(ActiveCircuit, circuit) && text != "") UpdateStatus(text); };
                 circuit.StateChanged += () => { if (ReferenceEquals(ActiveCircuit, circuit)) UpdateEditStrip(); };
             }
+            // the toolbox follows the active document only when that changes: closed while a circuit is active, it stays closed (View > Toolbox brings it back)
+            bool changed = !ReferenceEquals(_shownCircuit, circuit) || !_toolboxSynced;
             if (!ReferenceEquals(_shownCircuit, circuit))
             {
                 _shownCircuit = circuit;
                 if (circuit != null) _toolboxPanel.Content = circuit.Toolbox;
                 if (circuit != null && circuit.StatusText != "") UpdateStatus(circuit.StatusText);
             }
-            if (_tools.TryGetValue("toolbox", out var tool))
+            if (changed && _tools.TryGetValue("toolbox", out var tool))
             {
+                _toolboxSynced = true;
                 try
                 {
                     if (circuit != null && !IsToolVisible(tool)) _factory.RestoreDockable(tool);

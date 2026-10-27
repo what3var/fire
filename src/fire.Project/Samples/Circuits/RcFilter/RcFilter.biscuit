@@ -1,0 +1,15 @@
+{
+  "biscuit": 1,
+  "class": "RcFilter",
+  "timeStep": "10us",
+  "ports": [
+    {"name": "In", "direction": "input", "pin": "R1.1", "color": "#E03030"},
+    {"name": "Out", "direction": "output", "pin": "C1.1", "color": "#9040E0"}
+  ],
+  "elements": [
+    {"type": "Text", "from": [0, -8], "to": [4, -8], "text": "RC low-pass: 1 kOhm into 1 uF (tau = 1 ms). In and Out are the ports of the class."},
+    {"type": "Resistor", "name": "R1", "from": [0, 0], "to": [16, 0], "resistance": "1k"},
+    {"type": "Capacitor", "name": "C1", "from": [16, 0], "to": [16, 12], "capacitance": "1uF"},
+    {"type": "Ground", "from": [16, 12], "to": [16, 16]}
+  ]
+}

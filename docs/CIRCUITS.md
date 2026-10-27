@@ -678,7 +678,7 @@ The view draws at the full resolution of the screen (a UI.Root with `Scaling` ab
 spark opens `.biscuit` files in its circuit editor (Add > New > Circuit makes one). In the middle is the CircuitView itself, running live in a fire program of its own,
 so the editor draws and simulates exactly like a program does; around it are the palette of parts (from `Circuits.Symbols.Catalog()`, each with a small picture of its
 symbol) and the tools. The palette is the tool window **Toolbox**, docked at the left edge: it appears while a circuit is the active document and hides
-again when another document is active (unless it is pinned). The tool strip **Edit** works for every document - undo, redo, cut, copy, paste, delete, select
+again when another document is active (unless it is pinned); closed while a circuit is active, it stays closed until **View > Toolbox** (there while a circuit is active) brings it back. The tool strip **Edit** works for every document - undo, redo, cut, copy, paste, delete, select
 all, find and replace (Ctrl+F / Ctrl+H, F3 and Shift+F3 search on), go to definition and toggle comment (these two only in scripts); in a circuit, copy puts the
 selected elements on the clipboard as JSON and paste inserts them, so they also go from one circuit to another. The tool strip **Simulation** is on while a
 circuit is active: pause/run, reset, the steps per frame (1 to 10k, behind the tempo symbol), rotate clockwise and counterclockwise, flip horizontally and
@@ -713,6 +713,10 @@ labels, texts and scopes become elements. What the package has not got (latches 
 listed. Of the 373 example circuits in text form, 336 come over without leaving an element out. In the XML format the values come from the named attributes; pots
 linked there (`li`) get a common `group`, the scopes look at the first value of their plot.
 `forge falstad circuit.txt -o circuit.biscuit` (or `circuit.xml`) does the same on the command line.
+
+**Help > Samples > Circuits** has two projects that use a drawn circuit in a program: *RcFilter* (the class of `RcFilter.biscuit` in a circuit of the
+program, driven at its input `In`, read at `Out`, a part changed while it runs) and *AudioFuzz* (tones through a diode clipper with a tone filter,
+`Fuzz.biscuit`: `ProcessAudio` with its `AudioInput` and the port `Out`, played clean and distorted on the sound device).
 
 ## Coming next
 

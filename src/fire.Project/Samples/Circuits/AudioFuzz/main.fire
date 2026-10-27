@@ -1,0 +1,47 @@
+#import "circuits"
+#import "audio"
+// Sound through a drawn circuit: Fuzz.biscuit is compiled into the class Fuzz. Its AudioInput "Input" takes the samples, the port "Out" gives
+// what comes out. ProcessAudio runs the circuit for every sample (four steps per sample); the circuit keeps its state from one call to the next,
+// so a melody can go through tone by tone. Open Fuzz.biscuit to see the circuit (run it there to watch the scopes).
+
+int rate = 22050
+var out = undefined
+try {
+    out = new Audio.Output("default", rate, 1)
+} catch (Audio.AudioException e) {
+    print("no sound output (" + e.message + ") - using the simulated device")
+    out = new Audio.Output("sim", rate, 1)
+}
+
+var notes = [196, 247, 294, 392, 294, 247, 196]       // a G major arpeggio, in Hz
+var fuzz = new Fuzz()
+
+class Player {
+    // plays the notes: clean (no circuit), or through the circuit
+    static undefined Arpeggio(Audio.Output output, int notes[], int rate, Fuzz circuit = undefined) {
+        foreach (f in notes) {
+            var tone = Audio.Sound.Tone(f, 250, Audio.Wave.Sine, 90, rate)
+            if (circuit == undefined) {
+                output.Play(tone)
+            } else {
+                var samples = circuit.ProcessAudio(tone, circuit.Input, circuit.Out, undefined, 0.7V)   // 0.7 V at Out (the diodes) is full scale
+                output.Play(new Audio.Sound(tone.Rate, 1, samples))
+            }
+        }
+        output.Drain()
+    }
+}
+
+print("clean")
+Player.Arpeggio(out, notes, rate)
+
+print("through the fuzz")
+Player.Arpeggio(out, notes, rate, fuzz)
+
+// change a part of the circuit from the program: a larger capacitor makes the tone darker (about 700 Hz)
+fuzz.C1.Capacitance = 100nF
+print("through the fuzz, darker")
+Player.Arpeggio(out, notes, rate, fuzz)
+
+// the result can also be saved: new Audio.Sound(rate, 1, samples).ToWav() gives the bytes of a .wav file (#import "filesystem" writes them)
+print("done")

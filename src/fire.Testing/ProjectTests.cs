@@ -74,6 +74,21 @@ static class ProjectTests
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} laeuft und gibt etwas aus", lines.Count >= 2 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
             }
+            // the circuit samples are projects: the .biscuit file becomes a class next to main.fire
+            foreach (var sample in samples.Where(x => x.Category == "Circuits"))
+            {
+                var lines = new List<string>();
+                try
+                {
+                    var circuitWs = new Workspace();
+                    circuitWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
+                    var circuitPlan = BuildPlan.Create(circuitWs, circuitWs.Projects[0]);
+                    RuntimeSession.Build(circuitPlan.SourceTexts, null, args => { lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); }, plan: circuitPlan).Run();
+                }
+                catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
+                Check($"Beispiele: {sample.Title} (Projekt mit Schaltung) laeuft", lines.Count >= 4 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
+            }
+            Check("Beispiele: die Kategorie Circuits hat ihre zwei Beispiele", samples.Count(x => x.Category == "Circuits") == 2, string.Join(", ", samples.Select(x => x.Category + "/" + x.Name)));
         }
 
         // ---- settings: the order of precedence ------------------------------------------------------------------------------------------
