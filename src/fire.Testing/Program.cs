@@ -20979,7 +20979,7 @@ else
             res.B.Connect(cap.A)
             cap.B.Connect(c.Ground)
             cap.A.Connect(back.P)
-            c.RunAlongside()
+            c.RunAlongside(0.25)   // a quarter of real time: also a slow VM keeps up, so maxLag never skips
             print("alongside " + c.IsAlongside)
             var o = new Gpio.Pin("sim", 5)
             var i = new Gpio.Pin("sim", 6)
