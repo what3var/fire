@@ -32,8 +32,8 @@
 			<Style Selector="^:pressed"><Setter Property="Background" Value="#44FFFFFF"/></Style>
 		</ControlTheme>
 		<ControlTheme x:Key="SparkCloseButton" TargetType="Button" BasedOn="{StaticResource SparkCaptionButton}">
-			<Style Selector="^:pointerover"><Setter Property="Background" Value="#E81123"/></Style>
-			<Style Selector="^:pressed"><Setter Property="Background" Value="#F1707A"/></Style>
+			<Style Selector="^:pointerover"><Setter Property="Background" Value="#760CAF"/></Style>
+			<Style Selector="^:pressed"><Setter Property="Background" Value="#430E6F"/></Style>
 		</ControlTheme>
 		<ControlTheme x:Key="SparkDecorations" TargetType="WindowDrawnDecorations">
 			<Setter Property="DefaultTitleBarHeight" Value="32"/>
