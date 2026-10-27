@@ -22,7 +22,7 @@ A unit stands directly after a number literal, without a space: `5mm`, `1.5km`, 
 | `B` | byte (8 bit) | `kB`, `MB`, `GB` |
 | `min`, `h`, `d` | minute, hour, day (compatible with `s`) | no prefixes |
 
-Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` (1e-6), `m` (1e-3), `c` (1e-2), `k` (1e3), `M` (1e6), `G` (1e9).
+Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` or `u` (1e-6: `5µs` and `5us` are the same), `m` (1e-3), `c` (1e-2), `k` (1e3), `M` (1e6), `G` (1e9).
 
 Any other word is an **own unit** that is only compatible with itself: `5apples + 3apples` is `8apples`, `5apples + 3pears` is an error.
 
@@ -92,6 +92,24 @@ print(level)           // 3.010299956639812dBm
   A number keeps the unit (`20C * 2` is `40C`).
 - An exception in a conversion function is thrown where the conversion happens.
 
+### Units that become a plain number
+
+`coerce to unitless` and `coerce from unitless` make a unit of its own that **stands for a plain number**, like decibels for a ratio (the package
+`circuits` declares `dB` this way):
+
+```fire
+unit Decibel: dB {
+    coerce to unitless => 10 ^ (value / 20)
+    coerce from unitless => 20 * Math.Log10(value)
+}
+
+print(1V * 6dB)               // 1.9952623149688795V: multiplied it is the factor
+print(3dB + 3dB)              // 6dB: added it stays in decibels
+float k : unitless = 20dB     // 10 - a declaration without a unit (a parameter, a field) takes the factor
+print(20dB:unitless)          // 10
+float:dB g = 2                // a plain number goes the other way: 6.020599913279624dB
+```
+
 ## Calculating with units
 
 - `+`, `-`, `%` and the comparisons need the **same dimension**. Different scales are converted automatically: two `int`s are converted into the **finer** unit
@@ -144,6 +162,9 @@ print(5mm is in m)      // True
 print(5mm is in kg)     // False
 print(3h is in s)       // True
 ```
+
+When the units of a product or a quotient cancel, their factor goes into the number: `5cm / 1mm` is `50`, `1s / 1ms` is `1000`, `1.5ms / 1us` is
+`1500`. Two `int`s stay an `int` when the factor is a whole number or one divided by one (`1ms / 1s` is `0`, like `1 / 1000`).
 
 ## Units in declarations
 

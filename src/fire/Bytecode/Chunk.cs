@@ -176,6 +176,10 @@ namespace fire.Bytecode
 
         public SiteCache?[] EnsureSiteCaches() => SiteCaches ??= new SiteCache?[Code.Count + 1];
 
+        /// <summary>The OverloadHints of the constants (parsed once, by constant index; see OpCode.OverloadHint).</summary>
+        [MemoryPackIgnore]
+        public OverloadHint?[]? ParsedHints;
+
         [MemoryPackIgnore]
         public Value[] ConstantsArray => _constantsArray ??= Constants.ToArray();
 

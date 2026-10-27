@@ -44,6 +44,7 @@ namespace fire.Editor
         private readonly StackPanelControl _stackPanel = new();
         private readonly DevicesPanelControl _devicesPanel = new();
         private readonly SolutionExplorerControl _solutionPanel = new();
+        private readonly PropertiesPanelControl _propertiesPanel = new();
 
         private AssemblyInfo _scriptAssemblyInfo = new();
 
@@ -55,7 +56,8 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
-            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer",
+            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["properties"] = "Properties",
+            ["toolbox"] = "Toolbox",
         };
 
         /// <summary>What kind of document a tab holds.</summary>
@@ -77,6 +79,8 @@ namespace fire.Editor
             Pixel,
             /// <summary>Any file as bytes in the hex editor.</summary>
             Hex,
+            /// <summary>The schematic of a circuit (.biscuit, docs/CIRCUITS.md), edited and simulated live.</summary>
+            Circuit,
         }
 
         /// <summary>An open tab. `Layout` is the docking element that shows the view (the view - the editor control - stays the same when the layout is rebuilt).</summary>
@@ -153,6 +157,7 @@ namespace fire.Editor
             if (ext is ".md" or ".markdown" or ".mdown") return DocumentKind.Markdown;
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
             if (ext == ".fxml") return DocumentKind.UiMarkup;
+            if (ext == ".biscuit") return DocumentKind.Circuit;
             if (ImageExtensions.Contains(ext)) return DocumentKind.Image;
             if (TextExtensions.Contains(ext) || CppHighlighter.IsCppFile(path)) return DocumentKind.Text;
             if (!ScriptExtensions.Contains(ext) && LooksBinary(path)) return DocumentKind.Hex;   // data that is no text: bytes
@@ -162,6 +167,8 @@ namespace fire.Editor
         public MainWindow()
         {
             InitializeComponent();
+            // our caption buttons (see SparkDecorations in MainWindow.axaml): set explicitly, since the decorations do not see Window.Resources
+            WindowDecorationsTheme = (Avalonia.Styling.ControlTheme)Resources["SparkDecorations"]!;
 
             _factory = new SparkFactory(
                 new()
@@ -173,7 +180,9 @@ namespace fire.Editor
                     ("scope", PanelTitles["scope"], _scopePanel),
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
-                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("devices", PanelTitles["devices"], _devicesPanel) });
+                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("devices", PanelTitles["devices"], _devicesPanel) },
+                new() { ("properties", PanelTitles["properties"], _propertiesPanel) },
+                new() { ("toolbox", PanelTitles["toolbox"], _toolboxPanel) });
             var layout = _factory.CreateLayout();
             _factory.InitLayout(layout);
             DockHost.Factory = _factory;
@@ -189,6 +198,7 @@ namespace fire.Editor
 
             RegisterToolchainPrompts();
             Opened += (_, _) => OnFirstShown();
+            InitCircuitUi();
 
             // The hotkeys: a handler that sees the key BEFORE the controls (tunnelling) and also when a control already handled it, so that F5/F10 reach us wherever the focus is.
             AddHandler(KeyDownEvent, Window_KeyDown, RoutingStrategies.Tunnel, handledEventsToo: true);
@@ -205,6 +215,7 @@ namespace fire.Editor
 
             InitProjects();
             InitGit();
+            InitTests();
 
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
@@ -257,7 +268,7 @@ namespace fire.Editor
         private void OnFirstShown()
         {
             // The solution explorer and the devices start collapsed (pinned to the right edge; the explorer opens when a project is opened) - before the default layout is saved.
-            foreach (var id in new[] { "solution", "devices" })
+            foreach (var id in new[] { "solution", "tests", "devices" })
                 if (_tools.TryGetValue(id, out var collapsed))
                 {
                     try { _factory.PinDockable(collapsed); }
@@ -266,6 +277,7 @@ namespace fire.Editor
             _defaultLayout = SerializeLayout();
             LoadLayout();
             LoadToolStrips();
+            RefreshCircuitUi();
             _nativeTargetChoice = _settings.NativeTarget;
             RefreshTargetCombo();
 
@@ -381,11 +393,13 @@ namespace fire.Editor
         private void ApplyLayout(string json)
         {
             var layout = new AvaloniaDockSerializer().Deserialize<IRootDock?>(json) ?? throw new InvalidDataException("empty layout");
+            _toolboxSynced = false;   // the new layout: the toolbox follows the active document again
 
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
             {
-                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel,
+                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["properties"] = _propertiesPanel,
+                ["toolbox"] = _toolboxPanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
             _factory.InitLayout(layout);
@@ -398,6 +412,9 @@ namespace fire.Editor
                 }
             }
             EnsureBuildLogTool(layout, contents["buildlog"]);
+            EnsureTool(layout, "tests", contents["tests"], "solution");
+            EnsureTool(layout, "properties", contents["properties"], "solution");
+            EnsureLeftTool(layout, "toolbox", contents["toolbox"]);
             DockHost.Layout = layout;
 
             var documentDock = DocumentDock as Dock.Model.Avalonia.Controls.DocumentDock
@@ -569,6 +586,7 @@ namespace fire.Editor
 
         private void ViewMenu_SubmenuOpened(object? sender, RoutedEventArgs e)
         {
+            mnuViewToolbox.IsVisible = ActiveCircuit != null;
             foreach (var item in mnuView.Items.OfType<MenuItem>())
                 if (item.Tag is string id && _tools.TryGetValue(id, out var tool))
                     item.IsChecked = IsToolVisible(tool);
@@ -669,6 +687,17 @@ namespace fire.Editor
             _factory.AddDockable(dock, tool);
         }
 
+        /// <summary>A layout saved before a panel existed does not have it: it goes next to the panel `besideId`.</summary>
+        private void EnsureTool(IRootDock layout, string id, Control content, string besideId)
+        {
+            if (AllTools(layout).Any(t => t.Id == id)) return;
+            var dock = _factory.Find(layout, d => d is IToolDock td && td.VisibleDockables != null && td.VisibleDockables.Any(x => x.Id == besideId)).OfType<IToolDock>().FirstOrDefault()
+                ?? _factory.Find(layout, d => d is IToolDock).OfType<IToolDock>().FirstOrDefault();
+            if (dock == null) return;
+            var tool = new DockTool { Id = id, Title = PanelTitles[id], Content = content, CanClose = true, CanFloat = true };
+            _factory.AddDockable(dock, tool);
+        }
+
         /// <summary>Brings a panel to the front (also one that was closed or collapsed).</summary>
         private void RevealTool(string id)
         {
@@ -698,6 +727,7 @@ namespace fire.Editor
                 DocumentKind.Image => new ImageViewerControl(),
                 DocumentKind.Pixel => new PixelEditorControl(),
                 DocumentKind.Hex => new HexEditorControl(),
+                DocumentKind.Circuit => new CircuitEditorControl(),
                 _ => new ScriptEditorControl(),
             };
 
@@ -803,6 +833,8 @@ namespace fire.Editor
         private void RefreshActiveUi()
         {
             var doc = ActiveDocument;
+            _propertiesPanel.Attach(doc?.View as IPropertyHost);
+            RefreshCircuitUi();
             UpdateWindowTitle(WindowTitle(doc));
             CaretText.Text = doc == null ? "" : $"Line {doc.View.GetCaretLine()}";
             UpdateErrorPanel();
@@ -810,7 +842,11 @@ namespace fire.Editor
             RefreshProjectUi();
             RefreshTargetCombo();
             _debugger.Refresh(BreakpointDescriptions());
+            if (!ReferenceEquals(doc, _testsActiveDocument)) { _testsActiveDocument = doc; ScheduleTestDiscovery(activeDocumentChanged: true); }
         }
+
+        // the document the tests were last looked for with (the explorer follows the active document)
+        private OpenDocument? _testsActiveDocument;
 
         /// <summary>Save, Save As and the Save tool bar button are disabled for read-only documents; Save All when nothing is saveable.</summary>
         private void UpdateSaveCommands()
@@ -844,6 +880,7 @@ namespace fire.Editor
         private void Delete_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.Delete();
         private void SelectAll_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.SelectAll();
         private void Find_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.Find();
+        private void FindReplace_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.FindReplace();
         private void FindNext_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.FindNext();
         private void FindPrevious_Click(object? sender, RoutedEventArgs e) => ActiveDocument?.View.FindPrevious();
 
@@ -990,6 +1027,8 @@ namespace fire.Editor
                     Save_Click(this, e); e.Handled = true; break;
                 case Key.G when ctrl:
                     GoToLine_Click(this, e); e.Handled = true; break;
+                case Key.R when ctrl && !shift:
+                    TestsRunAll_Click(this, e); e.Handled = true; break;
                 case Key.F12 when ActiveScript != null && !shift && !ctrl:
                     GoToDefinition_Click(this, e); e.Handled = true; break;
                 case Key.W when ctrl:

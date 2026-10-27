@@ -1,6 +1,8 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
+using fire.Runtime;
 using fire.Values;
 using MemoryPack;
 
@@ -43,6 +45,13 @@ namespace fire.Bytecode
         /// (RuntimeClass.StaticFieldValues/StaticFields), NOT per instance
         /// (ObjectInstance.Fields, see RuntimeClass.Fields).</summary>
         public bool IsStatic { get; set; }
+
+        /// <summary>The declared type with resolved class names (`Geo.Point`, `List<Geo.Point>`, `int[]`, `$0` for the first type parameter of the class,
+        /// "" for `any`, an enum or nothing): what a value read from JSON becomes (fire.Standard.JsonMethods).</summary>
+        public string TypeText { get; set; } = "";
+
+        /// <summary>The attributes before the field (`[NonSerialized]`, `[JsonName "x"]`, SPEC 5.12), null when it has none.</summary>
+        public List<AttributeMeta>? Attributes { get; set; }
     }
 
     [MemoryPackable]
@@ -266,10 +275,20 @@ namespace fire.Bytecode
         /// CheckConstructorAccess.</summary>
         public void AddConstructor(FunctionProto proto)
         {
-            if (!Constructors.TryAdd(proto.ParamCount, proto))
+            if (Constructors.TryAdd(proto.ParamCount, proto)) return;
+            // overloading by type: another constructor with as many parameters, of other types
+            if (Overloads.SameSignature(Constructors[proto.ParamCount], proto) || ExtraConstructors.Any(c => Overloads.SameSignature(c, proto)))
                 throw new System.InvalidOperationException(
                     $"Internal error: a constructor with {proto.ParamCount} parameters was registered twice.");
+            ExtraConstructors.Add(proto);
         }
+
+        /// <summary>Constructors with the same number of parameters as one in Constructors, but other parameter types (overloading by type, see Overloads).</summary>
+        public List<FunctionProto> ExtraConstructors { get; set; } = new();
+
+        /// <summary>All constructors (Constructors and ExtraConstructors).</summary>
+        [MemoryPackIgnore]
+        public IEnumerable<FunctionProto> AllConstructors => Constructors.Values.Concat(ExtraConstructors);
 
         public FunctionProto? Destructor { get; set; }
 
@@ -377,11 +396,118 @@ namespace fire.Bytecode
                 Methods[name] = overloads;
             }
 
-            if (overloads.Any(p => p.ParamCount == proto.ParamCount))
+            // the same number of parameters is an overload by type (Overloads) - unless the types are the same as well
+            if (overloads.Any(p => Overloads.SameSignature(p, proto)))
                 throw new System.InvalidOperationException(
                     $"Internal error: method '{name}' with {proto.ParamCount} parameters was registered twice.");
 
             overloads.Add(proto);
+        }
+
+        /// <summary>The methods a call `name` with `argCount` arguments may reach, in the order of preference for a tie: along the base-class chain (the
+        /// own class first), in a class an exact number of parameters before one that fills in default values (fewer parameters first), then in the
+        /// order of declaration. A method of a base class that a method of a derived class overrides (Overloads.Overrides) is left out. The first
+        /// entry is what a call without overloading by type reaches. `RuntimeChoice`: the types of the arguments decide between them.</summary>
+        public sealed class MethodCandidates
+        {
+            public static readonly MethodCandidates Empty = new(Array.Empty<FunctionProto>(), Array.Empty<RuntimeClass>(), false);
+            public FunctionProto[] Protos { get; }
+            public RuntimeClass[] Declaring { get; }
+            public bool RuntimeChoice { get; }
+            public int Count => Protos.Length;
+
+            public MethodCandidates(FunctionProto[] protos, RuntimeClass[] declaring, bool runtimeChoice)
+            {
+                Protos = protos;
+                Declaring = declaring;
+                RuntimeChoice = runtimeChoice;
+            }
+        }
+
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<(string Name, int ArgCount), MethodCandidates> _candidateCache = new();
+
+        public MethodCandidates Candidates(string name, int argCount) => _candidateCache.GetOrAdd((name, argCount), key => ComputeCandidates(key.Name, key.ArgCount));
+
+        private MethodCandidates ComputeCandidates(string name, int argCount)
+        {
+            var protos = new List<FunctionProto>();
+            var declaring = new List<RuntimeClass>();
+            var seen = new List<FunctionProto>();   // every method of a more derived class (also of other arities: it may override)
+            for (var rc = this; rc != null; rc = rc.Base)
+            {
+                if (!rc.Methods.TryGetValue(name, out var overloads)) continue;
+                var fitting = overloads
+                    .Where(p => p.ParamCount == argCount || p.ParamCount > argCount && AllTrailingHaveDefaults(p, argCount))
+                    .Where(p => !seen.Any(d => Overloads.Overrides(d, p)))
+                    .OrderBy(p => p.ParamCount == argCount ? 0 : 1).ThenBy(p => p.ParamCount)
+                    .ToList();
+                foreach (var p in fitting)
+                {
+                    protos.Add(p);
+                    declaring.Add(rc);
+                }
+                seen.AddRange(overloads);
+            }
+            return protos.Count == 0 ? MethodCandidates.Empty : new MethodCandidates(protos.ToArray(), declaring.ToArray(), NeedsRuntimeChoice(protos, argCount));
+        }
+
+        /// <summary>Several candidates of which one has a typed parameter (or is generic) among the given arguments: the values decide. Otherwise the
+        /// first candidate is always the one (untyped overloads differ only by their number of parameters).</summary>
+        private static bool NeedsRuntimeChoice(IReadOnlyList<FunctionProto> protos, int argCount)
+        {
+            if (protos.Count < 2) return false;
+            foreach (var p in protos)
+            {
+                if (p.TypeParamCount > 0) return true;
+                for (int i = 0; i < argCount && i < p.ParamCount; i++)
+                    if (!string.IsNullOrEmpty(Overloads.TypeAt(p, i))) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Like FindMethodWithAccess(name, argCount), choosing among overloads by type with the values of the arguments (Overloads.Select).
+        /// `owner`: the object whose type parameters a `T` parameter means; `callTypeArgs`: the type arguments of the call (of a generic method);
+        /// `typeArgCount` &gt; 0: the call names type arguments (`M&lt;string&gt;(x)`), so a generic method is meant.</summary>
+        public (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) FindMethodWithAccess(string name, ReadOnlySpan<Value> args, ObjectInstance? owner,
+            string[]? callTypeArgs, int typeArgCount = 0)
+        {
+            var set = Candidates(name, args.Length);
+            if (set.Count == 0) return (null, null, AccessModifier.Public);
+            int index = 0;
+            if (set.RuntimeChoice || typeArgCount > 0)
+            {
+                index = Overloads.Select(set.Protos, args, owner, callTypeArgs, typeArgCount);
+                if (index < 0)
+                {
+                    // nothing fits: the first candidate (of the named generic ones) - its parameter checks report what does not fit
+                    index = 0;
+                    if (typeArgCount > 0)
+                        for (int i = 0; i < set.Count; i++)
+                            if (set.Protos[i].TypeParamCount == typeArgCount) { index = i; break; }
+                }
+            }
+            var proto = set.Protos[index];
+            return (proto, set.Declaring[index], proto.Access ?? AccessModifier.Public);
+        }
+
+        /// <summary>Does the choice among the methods `name` for `argCount` arguments depend on the types of the arguments (no inline cache then)?</summary>
+        public bool IsTypeOverloaded(string name, int argCount) => Candidates(name, argCount).RuntimeChoice;
+
+        /// <summary>Does the choice of the constructor for `argCount` arguments depend on the types of the arguments?</summary>
+        public bool IsConstructorTypeOverloaded(int argCount) => ConstructorCandidates(argCount).Count > 1 && ExtraConstructors.Count > 0;
+
+        public List<FunctionProto> ConstructorCandidates(int argCount) =>
+            AllConstructors.Where(p => p.ParamCount == argCount || p.ParamCount > argCount && AllTrailingHaveDefaults(p, argCount))
+                .OrderBy(p => p.ParamCount == argCount ? 0 : 1).ThenBy(p => p.ParamCount).ToList();
+
+        /// <summary>The constructor for these arguments: among overloads by type the one that fits them most closely (see Overloads).</summary>
+        public FunctionProto? FindConstructor(ReadOnlySpan<Value> args, ObjectInstance? instance)
+        {
+            if (ExtraConstructors.Count == 0) return FindConstructor(args.Length);
+            var candidates = ConstructorCandidates(args.Length);
+            if (candidates.Count == 0) return null;
+            int index = Overloads.Select(candidates, args, instance, null);
+            return candidates[index < 0 ? 0 : index];
         }
 
         /// <summary>Searches for a method along the base-class chain (own
@@ -438,19 +564,11 @@ namespace fire.Bytecode
             if (_methodCache.TryGetValue(key, out var cached))
                 return cached;
 
-            (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) result = (null, null, AccessModifier.Public);
-            for (var rc = this; rc != null; rc = rc.Base)
-                if (rc.Methods.TryGetValue(name, out var overloads))
-                {
-                    var match = FindBestMatch(overloads, argCount);
-                    if (match != null)
-                    {
-                        var access = match.Access ?? AccessModifier.Public;
-                        result = (match, rc, access);
-                        break;
-                    }
-                }
-
+            // the first candidate: the own class first, an exact number of parameters before default values (see Candidates)
+            var set = Candidates(name, argCount);
+            (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) result = set.Count == 0
+                ? (null, null, AccessModifier.Public)
+                : (set.Protos[0], set.Declaring[0], set.Protos[0].Access ?? AccessModifier.Public);
             _methodCache[key] = result;
             return result;
         }

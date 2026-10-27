@@ -1,0 +1,62 @@
+// The checks of Testing.Assert check themselves: `forge test packages/testing/testing.fireproj`.
+#import "testing"
+
+class AssertTests {
+    // the message of the Assertion that `action` throws ("" when it throws none)
+    static string FailureOf(lambda action) {
+        try { action() } catch (Assertion e) { return e.message }
+        return ""
+    }
+
+    [Test "AreEqual compares by value", "units are converted, strings are quoted in the message"]
+    undefined AreEqual() {
+        Testing.Assert.AreEqual(4, 2 + 2)
+        Testing.Assert.AreEqual(100cm, 1m)
+        Testing.Assert.AreEqual("expected \"a\", got \"b\"", AssertTests.FailureOf(() => { Testing.Assert.AreEqual("a", "b") }))
+        Testing.Assert.AreEqual("sum - expected 5, got 4", AssertTests.FailureOf(() => { Testing.Assert.AreEqual(5, 4, "sum") }))
+    }
+
+    [Test]
+    undefined AreNotEqualAndNear() {
+        Testing.Assert.AreNotEqual(1, 2)
+        Testing.Assert.AreNotEqual("", AssertTests.FailureOf(() => { Testing.Assert.AreNotEqual(3, 3) }))
+        Testing.Assert.AreNear(1.0, 1.04, 0.05)
+        Testing.Assert.AreNotEqual("", AssertTests.FailureOf(() => { Testing.Assert.AreNear(1.0, 1.2, 0.05) }))
+    }
+
+    [Test]
+    [Parameters true, false]
+    [Parameters false, true]
+    undefined IsTrueIsFalse(bool value, bool other) {
+        if (value) { Testing.Assert.IsTrue(value) } else { Testing.Assert.IsFalse(value) }
+        Testing.Assert.AreEqual(value, !other)
+    }
+
+    [Test]
+    undefined Sequences() {
+        Testing.Assert.AreSequenceEqual([1, 2, 3], 1..3)
+        Testing.Assert.AreEqual("item 1: expected 9, got 2", AssertTests.FailureOf(() => { Testing.Assert.AreSequenceEqual([1, 9], [1, 2]) }))
+        Testing.Assert.AreEqual("expected 2 items, got 1", AssertTests.FailureOf(() => { Testing.Assert.AreSequenceEqual([1, 2], [1]) }))
+        Testing.Assert.Contains(2, [1, 2, 3])
+        Testing.Assert.Contains("ell", "hello")
+        Testing.Assert.AreNotEqual("", AssertTests.FailureOf(() => { Testing.Assert.Contains(5, [1, 2]) }))
+    }
+
+    [Test]
+    undefined Undefined() {
+        Testing.Assert.IsUndefined(undefined)
+        Testing.Assert.IsNotUndefined(0)
+        Testing.Assert.AreNotEqual("", AssertTests.FailureOf(() => { Testing.Assert.IsUndefined(1) }))
+    }
+
+    [Test "Throws returns the exception, an Assertion inside passes through"]
+    undefined Throws() {
+        var e = Testing.Assert.Throws(() => { throw new ArgumentException("bad") })
+        Testing.Assert.IsTrue(e is of ArgumentException)
+        Testing.Assert.AreEqual("bad", e.message)
+        Testing.Assert.AreEqual("expected an exception", AssertTests.FailureOf(() => { Testing.Assert.Throws(() => { }) }))
+        Testing.Assert.AreEqual("inner", AssertTests.FailureOf(() => { Testing.Assert.Throws(() => { Testing.Assert.Fail("inner") }) }))
+        Testing.Assert.DoesNotThrow(() => { })
+        Testing.Assert.AreEqual("unexpected exception: x", AssertTests.FailureOf(() => { Testing.Assert.DoesNotThrow(() => { throw new Exception("x") }) }))
+    }
+}

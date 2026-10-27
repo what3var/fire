@@ -1,0 +1,119 @@
+namespace UI {
+    // The brushes and pens of the interface (Root.theme) - individual fields can be changed after the root has been created (e.g. `root.theme.back = new SolidBrush(...)`).
+    class Theme {
+        Brush back
+        Brush panel
+        Brush face
+        Brush faceHover
+        Brush facePressed
+        Brush faceDisabled
+        Brush inputBack
+        Brush accent
+        Brush text
+        Brush textDisabled
+        // Listen, Menues, Bildlaufleisten
+        Brush selection
+        Brush selectionText
+        Brush scrollTrack
+        Brush scrollThumb
+        Brush scrollThumbHover
+        Brush menuBack
+        Pen border
+        Pen borderFocus
+        // the caret of the text field
+        Pen caret
+        // The font of all text that does not choose another (Element.font): a name for Fonts.Get - a font added with Fonts.Add, a built-in one ("8x14", "8x8") or one installed
+        // on the system; "" is the console font of the renderer. fontSize is the height of the letters in pixels (TrueType fonts; the bitmap fonts ignore it).
+        string font = ""
+        int fontSize = 14
+
+        construct() {
+            this.back = new SolidBrush(UI.Color.Rgb(240, 240, 240))
+            this.panel = new SolidBrush(UI.Color.Rgb(250, 250, 250))
+            this.face = new SolidBrush(UI.Color.Rgb(225, 225, 225))
+            this.faceHover = new SolidBrush(UI.Color.Rgb(229, 241, 251))
+            this.facePressed = new SolidBrush(UI.Color.Rgb(204, 228, 247))
+            this.faceDisabled = new SolidBrush(UI.Color.Rgb(204, 204, 204))
+            this.inputBack = new SolidBrush(UI.Color.Rgb(255, 255, 255))
+            this.accent = new SolidBrush(UI.Color.Rgb(0, 120, 215))
+            this.text = new SolidBrush(UI.Color.Rgb(0, 0, 0))
+            this.textDisabled = new SolidBrush(UI.Color.Rgb(131, 131, 131))
+            this.selection = new SolidBrush(UI.Color.Rgb(0, 120, 215))
+            this.selectionText = new SolidBrush(UI.Color.Rgb(255, 255, 255))
+            this.scrollTrack = new SolidBrush(UI.Color.Rgb(235, 235, 235))
+            this.scrollThumb = new SolidBrush(UI.Color.Rgb(190, 190, 190))
+            this.scrollThumbHover = new SolidBrush(UI.Color.Rgb(160, 160, 160))
+            this.menuBack = new SolidBrush(UI.Color.Rgb(248, 248, 248))
+            this.border = new Pen(UI.Color.Rgb(120, 120, 120))
+            this.borderFocus = new Pen(UI.Color.Rgb(0, 120, 215))
+            this.caret = new Pen(UI.Color.Rgb(0, 0, 0))
+        }
+
+        // An accent 0xRRGGBB as a colour of the renderer.
+        static int FromRgb(int rgb) { return UI.Color.Rgb((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255) }
+
+        // The colour `t` (0 to 1) of the way from a (0xRRGGBB) to b.
+        static int Mix(int a, int b, float t) {
+            var r = ((a >> 16) & 255) + (((b >> 16) & 255) - ((a >> 16) & 255)) * t
+            var g = ((a >> 8) & 255) + (((b >> 8) & 255) - ((a >> 8) & 255)) * t
+            var bl = (a & 255) + ((b & 255) - (a & 255)) * t
+            return UI.Color.Rgb(Math.Round(r)!int, Math.Round(g)!int, Math.Round(bl)!int)
+        }
+
+        // A brush of the theme gets a colour (a solid one; a brush of another kind that a program put there stays as it is).
+        static undefined Paint(Brush brush, int color) {
+            if (brush is of SolidBrush) {
+                SolidBrush solid = brush!SolidBrush
+                solid.Color = color
+            }
+        }
+
+        // All colours for the light or the dark look with this accent colour (0xRRGGBB): Root.Dark and Root.Accent set them. The brushes and pens stay the same
+        // objects (styles and elements that took one keep it), only their colours change.
+        undefined SetColors(bool dark, int accent) {
+            var a = UI.Theme.FromRgb(accent)
+            if (dark) {
+                UI.Theme.Paint(this.back, UI.Color.Rgb(32, 32, 32))
+                UI.Theme.Paint(this.panel, UI.Color.Rgb(39, 39, 39))
+                UI.Theme.Paint(this.face, UI.Color.Rgb(55, 55, 55))
+                UI.Theme.Paint(this.faceHover, UI.Theme.Mix(0x373737, accent, 0.25))
+                UI.Theme.Paint(this.facePressed, UI.Theme.Mix(0x373737, accent, 0.45))
+                UI.Theme.Paint(this.faceDisabled, UI.Color.Rgb(45, 45, 45))
+                UI.Theme.Paint(this.inputBack, UI.Color.Rgb(25, 25, 25))
+                UI.Theme.Paint(this.text, UI.Color.Rgb(240, 240, 240))
+                UI.Theme.Paint(this.textDisabled, UI.Color.Rgb(120, 120, 120))
+                UI.Theme.Paint(this.scrollTrack, UI.Color.Rgb(40, 40, 40))
+                UI.Theme.Paint(this.scrollThumb, UI.Color.Rgb(90, 90, 90))
+                UI.Theme.Paint(this.scrollThumbHover, UI.Color.Rgb(120, 120, 120))
+                UI.Theme.Paint(this.menuBack, UI.Color.Rgb(43, 43, 43))
+                this.border.Color = UI.Color.Rgb(100, 100, 100)
+                this.caret.Color = UI.Color.Rgb(240, 240, 240)
+            } else {
+                UI.Theme.Paint(this.back, UI.Color.Rgb(240, 240, 240))
+                UI.Theme.Paint(this.panel, UI.Color.Rgb(250, 250, 250))
+                UI.Theme.Paint(this.face, UI.Color.Rgb(225, 225, 225))
+                if (accent == 0x0078D7) {
+                    UI.Theme.Paint(this.faceHover, UI.Color.Rgb(229, 241, 251))
+                    UI.Theme.Paint(this.facePressed, UI.Color.Rgb(204, 228, 247))
+                } else {
+                    UI.Theme.Paint(this.faceHover, UI.Theme.Mix(0xFFFFFF, accent, 0.1))
+                    UI.Theme.Paint(this.facePressed, UI.Theme.Mix(0xFFFFFF, accent, 0.2))
+                }
+                UI.Theme.Paint(this.faceDisabled, UI.Color.Rgb(204, 204, 204))
+                UI.Theme.Paint(this.inputBack, UI.Color.Rgb(255, 255, 255))
+                UI.Theme.Paint(this.text, UI.Color.Rgb(0, 0, 0))
+                UI.Theme.Paint(this.textDisabled, UI.Color.Rgb(131, 131, 131))
+                UI.Theme.Paint(this.scrollTrack, UI.Color.Rgb(235, 235, 235))
+                UI.Theme.Paint(this.scrollThumb, UI.Color.Rgb(190, 190, 190))
+                UI.Theme.Paint(this.scrollThumbHover, UI.Color.Rgb(160, 160, 160))
+                UI.Theme.Paint(this.menuBack, UI.Color.Rgb(248, 248, 248))
+                this.border.Color = UI.Color.Rgb(120, 120, 120)
+                this.caret.Color = UI.Color.Rgb(0, 0, 0)
+            }
+            UI.Theme.Paint(this.accent, a)
+            UI.Theme.Paint(this.selection, a)
+            UI.Theme.Paint(this.selectionText, UI.Color.Rgb(255, 255, 255))
+            this.borderFocus.Color = a
+        }
+    }
+}

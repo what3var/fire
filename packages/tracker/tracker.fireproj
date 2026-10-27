@@ -1,0 +1,91 @@
+{
+  "format": 1,
+  "name": "fire-tracker",
+  "type": "library",
+  "import": "tracker",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'tracker' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_tracker.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__TrackerLastError",
+        "arguments": 0,
+        "cpp": "tracker::LastError"
+      },
+      {
+        "name": "__TrackerLastErrorMessage",
+        "arguments": 0,
+        "cpp": "tracker::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__TrackerOpenCount",
+        "arguments": 0,
+        "cpp": "tracker::OpenCount"
+      },
+      {
+        "name": "__TrackerLoad",
+        "arguments": 4,
+        "cpp": "tracker::Load"
+      },
+      {
+        "name": "__TrackerClose",
+        "arguments": 1,
+        "cpp": "tracker::Close"
+      },
+      {
+        "name": "__TrackerRender",
+        "arguments": 5,
+        "cpp": "tracker::Render"
+      },
+      {
+        "name": "__TrackerGet",
+        "arguments": 2,
+        "cpp": "tracker::Get"
+      },
+      {
+        "name": "__TrackerSet",
+        "arguments": 3,
+        "cpp": "tracker::Set"
+      },
+      {
+        "name": "__TrackerText",
+        "arguments": 3,
+        "cpp": "tracker::Text",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__TrackerSampleInfo",
+        "arguments": 3,
+        "cpp": "tracker::SampleInfo"
+      },
+      {
+        "name": "__TrackerRestart",
+        "arguments": 1,
+        "cpp": "tracker::Restart"
+      },
+      {
+        "name": "__TrackerSeek",
+        "arguments": 3,
+        "cpp": "tracker::Seek"
+      },
+      {
+        "name": "__TrackerPatternCell",
+        "arguments": 5,
+        "cpp": "tracker::PatternCell"
+      }
+    ],
+    "reset": "tracker::reset"
+  }
+}

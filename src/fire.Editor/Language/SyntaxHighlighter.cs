@@ -17,6 +17,8 @@ namespace fire.Editor
         Comment,
         /// <summary>A line of a branch of `#if` that is not taken (greyed out).</summary>
         Inactive,
+        /// <summary>The name of a member with `[Colorize 0xRRGGBB]`: shown in <see cref="HighlightSpan.Rgb"/>.</summary>
+        Colorized,
     }
 
     public readonly struct HighlightSpan
@@ -24,12 +26,15 @@ namespace fire.Editor
         public int Start { get; }
         public int Length { get; }
         public HighlightCategory Category { get; }
+        /// <summary>The color of a <see cref="HighlightCategory.Colorized"/> span (0xRRGGBB).</summary>
+        public int Rgb { get; }
 
-        public HighlightSpan(int start, int length, HighlightCategory category)
+        public HighlightSpan(int start, int length, HighlightCategory category, int rgb = 0)
         {
             Start = start;
             Length = length;
             Category = category;
+            Rgb = rgb;
         }
     }
 

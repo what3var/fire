@@ -5,14 +5,14 @@
 // so this sample runs without hardware. Change the identifier to try a real printer, CNC machine or microcontroller.
 var identifier = "loopback:echo"
 
-var manager = new DeviceManagerFacade()
-manager.Refresh(true)
-print("known devices: " + manager.Count())
+// the serial driver brings the serial ports (and the loopback device); `DeviceManager.AddDriver(new GpioDriver())` would add GPIO ports, and so on
+DeviceManager.AddDriver(new SerialDriver())
+print("known devices: " + DeviceManager.Devices().count)
 var d = undefined
 try {
-    d = manager.GetByIdentifier(identifier)
+    d = DeviceManager.Get(identifier)
 } catch (DeviceNotFoundException e) {
-    print("no device " + identifier + ": in the editor the loopback device is always there (Devices panel); standalone, list yours with manager.GetAt(i).")
+    print("no device " + identifier + ": in the editor the loopback device is always there (Devices panel); standalone, list yours with DeviceManager.Devices().")
     leave
 }
 d.EnsureConnected()

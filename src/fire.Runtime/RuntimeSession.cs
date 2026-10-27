@@ -45,11 +45,14 @@ namespace fire.Runtime
         /// <summary>Cleans up the device bridge after the run (see DeviceBridge.RegisterAll).</summary>
         protected IDisposable? DeviceResources { get; set; }
 
+        /// <summary>Ends the threads of fire's window managers after the run (see WindowManager.StopManagers).</summary>
+        internal Action? StopWindows { get; set; }
+
         public void Run()
         {
             if (VirtualMachine == null) return;
             try { VirtualMachine.Run(); }
-            finally { IoResources?.Dispose(); DeviceResources?.Dispose(); }
+            finally { StopWindows?.Invoke(); IoResources?.Dispose(); DeviceResources?.Dispose(); }
         }
 
         protected void SetVM(VM virtualMachine, Scope globalScope, NativeRegistry natives, int firstUserSourceIndex)
@@ -134,8 +137,9 @@ namespace fire.Runtime
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void RegisterWindows(Session session, NativeRegistry natives, object framebuffers)
         {
-            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v));
+            var windowManager = new fire.Terminal.Windows.WindowManager((fire.Terminal.FramebufferManager)framebuffers, (l, v) => session.CallLambda(l, v), null, FireRuntime.AddHostHold);
             fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
+            session.StopWindows = windowManager.StopManagers;
         }
 
     }

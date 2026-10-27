@@ -1,0 +1,17 @@
+{
+  "biscuit": 1,
+  "timeStep": "10us",
+  "elements": [
+    {"type": "Text", "from": [0, -12], "to": [4, -12], "text": "LC tank: every edge of the square wave makes it ring at 1 / (2 pi sqrt(LC)) = 503 Hz"},
+    {"type": "Source", "name": "V1", "from": [0, 16], "to": [0, 0], "waveform": "square", "voltage": "5V", "frequency": "20Hz", "duty": "0.5"},
+    {"type": "Resistor", "name": "R1", "from": [0, 0], "to": [16, 0], "resistance": "100"},
+    {"type": "Capacitor", "name": "C1", "from": [16, 0], "to": [16, 16], "capacitance": "10uF"},
+    {"type": "Wire", "from": [16, 0], "to": [28, 0]},
+    {"type": "Inductor", "name": "L1", "from": [28, 0], "to": [28, 16], "inductance": "10mH"},
+    {"type": "Wire", "from": [16, 16], "to": [28, 16]},
+    {"type": "Wire", "from": [0, 16], "to": [16, 16]},
+    {"type": "Ground", "from": [0, 16], "to": [0, 20]},
+    {"type": "Scope", "from": [40, -4], "to": [80, 8], "probe": "C1"},
+    {"type": "Scope", "from": [40, 12], "to": [80, 24], "probe": "V1"}
+  ]
+}

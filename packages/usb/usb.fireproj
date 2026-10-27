@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "name": "fire-usb",
+  "type": "library",
+  "import": "usb",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'usb' of fire: USB devices through libusb (Linux, macOS) and WinUSB (Windows) - control, bulk and interrupt transfers, bulk endpoints as streams, and a simulated device."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_usb.hpp"
+    ],
+    "discover": false,
+    "linkLibraries": {
+      "posix": [
+        "dl"
+      ]
+    },
+    "functions": [
+      {
+        "name": "__UsbLastError",
+        "arguments": 0,
+        "cpp": "usb::LastError"
+      },
+      {
+        "name": "__UsbLastErrorMessage",
+        "arguments": 0,
+        "cpp": "usb::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__UsbOpenCount",
+        "arguments": 0,
+        "cpp": "usb::OpenCount"
+      },
+      {
+        "name": "__UsbSupported",
+        "arguments": 0,
+        "cpp": "usb::Supported"
+      },
+      {
+        "name": "__UsbDevices",
+        "arguments": 0,
+        "cpp": "usb::Devices",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__UsbOpen",
+        "arguments": 1,
+        "cpp": "usb::Open"
+      },
+      {
+        "name": "__UsbEndpoints",
+        "arguments": 1,
+        "cpp": "usb::Endpoints",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__UsbInterface",
+        "arguments": 4,
+        "cpp": "usb::Interface"
+      },
+      {
+        "name": "__UsbControl",
+        "arguments": 9,
+        "cpp": "usb::Control"
+      },
+      {
+        "name": "__UsbTransfer",
+        "arguments": 7,
+        "cpp": "usb::Transfer"
+      },
+      {
+        "name": "__UsbClearHalt",
+        "arguments": 2,
+        "cpp": "usb::ClearHalt"
+      },
+      {
+        "name": "__UsbClose",
+        "arguments": 1,
+        "cpp": "usb::Close"
+      },
+      {
+        "name": "__UsbSimInfo",
+        "arguments": 1,
+        "cpp": "usb::SimInfo"
+      },
+      {
+        "name": "__UsbSimClear",
+        "arguments": 0,
+        "cpp": "usb::SimClear"
+      }
+    ],
+    "reset": "usb::reset"
+  }
+}

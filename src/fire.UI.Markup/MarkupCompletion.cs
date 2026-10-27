@@ -13,6 +13,9 @@ namespace fire.UI.Markup
     }
 
     /// <summary>The suggestions at a caret: what they replace (from <see cref="ReplaceStart"/> to the caret) and the items, the best first.</summary>
+    /// <summary>An attribute an element can have: its name, a short description, the property of the schema behind it (null for the special attributes) and whether it names a handler.</summary>
+    public sealed record MarkupAttributeInfo(string Name, string? Detail, PropertyDef? Property, bool IsEvent);
+
     public sealed record MarkupCompletionResult(int ReplaceStart, IReadOnlyList<MarkupCompletionItem> Items)
     {
         public static readonly MarkupCompletionResult None = new(0, Array.Empty<MarkupCompletionItem>());
@@ -188,43 +191,59 @@ namespace fire.UI.Markup
         private static IEnumerable<MarkupCompletionItem> AttributesOf(Open tag, List<Open> stack, DocumentInfo info)
         {
             var items = new List<MarkupCompletionItem>();
-            string t = tag.Tag;
-            bool inTemplate = stack.Any(o => o.Tag.Equals("ControlTemplate", StringComparison.OrdinalIgnoreCase));
-            void Add(string name, string? detail) { if (!tag.Attributes.ContainsKey(name)) items.Add(Attribute(name, detail)); }
+            foreach (var a in AttributesFor(tag.Tag, stack.Select(o => o.Tag)))
+            {
+                if (tag.Attributes.ContainsKey(a.Name)) continue;
+                items.Add(Attribute(a.Name, a.Detail));
+                if (a.Name == "namespace") items.Add(new MarkupCompletionItem("namespace:", MarkupCompletionKind.Namespace, "binds another namespace to a prefix: namespace:m=\"App.Models\"", 0, "namespace:prefix"));
+            }
+            return items;
+        }
+
+        /// <summary>The attributes an element of this tag can have (inside the elements `ancestors`, outermost first): the properties of the schema, the events and the
+        /// attributes of the special elements (Window, Style, Setter, ...). Unknown tags have none. The completion and the property window of the editor list these.</summary>
+        public static IReadOnlyList<MarkupAttributeInfo> AttributesFor(string t, IEnumerable<string> ancestors)
+        {
+            var items = new List<MarkupAttributeInfo>();
+            bool inTemplate = ancestors.Any(o => o.Equals("ControlTemplate", StringComparison.OrdinalIgnoreCase));
+            void Add(string name, string? detail) => items.Add(new MarkupAttributeInfo(name, detail, null, false));
 
             if (t.Equals("Window", StringComparison.OrdinalIgnoreCase) || t.Equals("View", StringComparison.OrdinalIgnoreCase))
             {
-                Add("class", "the class of the code-behind");
-                Add("base", "the name of the generated base class");
+                Add("Class", "the class of the code-behind");
+                Add("Base", "the name of the generated base class");
                 Add("namespace", "the namespace of the markup (local:)");
-                items.Add(new MarkupCompletionItem("namespace:", MarkupCompletionKind.Namespace, "binds another namespace to a prefix: namespace:m=\"App.Models\"", 0, "namespace:prefix"));
-                if (t.Equals("Window", StringComparison.OrdinalIgnoreCase)) Add("title", "the title of the window");
-                Add("width", "pixels");
-                Add("height", "pixels");
+                if (t.Equals("Window", StringComparison.OrdinalIgnoreCase)) Add("Title", "the title of the window");
+                items.Add(new MarkupAttributeInfo("Width", "pixels", new PropertyDef("Width", PropertyKind.Int), false));
+                items.Add(new MarkupAttributeInfo("Height", "pixels", new PropertyDef("Height", PropertyKind.Int), false));
                 return items;
             }
             string[]? fixedAttributes = t.ToLowerInvariant() switch
             {
-                "converter" => new[] { "key", "type" },
-                "style" => new[] { "key", "target", "basedOn" },
-                "setter" => inTemplate ? new[] { "property", "value", "target" } : new[] { "property", "value" },
-                "trigger" or "condition" => inTemplate ? new[] { "property", "value", "source" } : new[] { "property", "value" },
-                "controltemplate" => new[] { "key", "target" },
-                "datatemplate" => new[] { "key" },
+                "converter" => new[] { "Key", "Type" },
+                "style" => new[] { "Key", "Target", "BasedOn" },
+                "setter" => inTemplate ? new[] { "Property", "Value", "Target" } : new[] { "Property", "Value" },
+                "trigger" or "condition" => inTemplate ? new[] { "Property", "Value", "Source" } : new[] { "Property", "Value" },
+                "controltemplate" => new[] { "Key", "Target" },
+                "datatemplate" => new[] { "Key" },
                 "resources" => Array.Empty<string>(),
                 _ => null,
             };
             if (t.Equals("CollectionView", StringComparison.OrdinalIgnoreCase))
-                fixedAttributes = MarkupSchema.CollectionViewDef.Properties.Select(p => p.Name).Prepend("key").ToArray();
+            {
+                Add("Key", null);
+                foreach (var p in MarkupSchema.CollectionViewDef.Properties) items.Add(new MarkupAttributeInfo(p.Name, Describe(p), p, false));
+                return items;
+            }
             if (fixedAttributes != null)
             {
                 foreach (var a in fixedAttributes) Add(a, null);
                 return items;
             }
             if (MarkupSchema.Find(t) is not { } def) return items;
-            if (def.Class.Length > 0) Add("name", "a field of the generated class");
-            foreach (var p in def.Properties) Add(p.Name, Describe(p));
-            foreach (var e in def.Events) Add(e.Name, "event: the name of a method" + (e.Args.Length > 0 ? " (sender, " + string.Join(", ", e.Args) + ")" : " (sender)"));
+            if (def.Class.Length > 0) Add("Name", "a field of the generated class");
+            foreach (var p in def.Properties) items.Add(new MarkupAttributeInfo(p.Name, Describe(p), p, false));
+            foreach (var e in def.Events) items.Add(new MarkupAttributeInfo(e.Name, "event: the name of a method" + (e.Args.Length > 0 ? " (sender, " + string.Join(", ", e.Args) + ")" : " (sender)"), null, true));
             return items;
         }
 
@@ -242,6 +261,7 @@ namespace fire.UI.Markup
             PropertyKind.Collection => "a list: {Binding ...}",
             PropertyKind.Code => "{Expr ...}",
             PropertyKind.Image => "the path of an image",
+            PropertyKind.Geometry => "a symbol (Up, Home, ...) or path data",
             _ => p.Kind.ToString().ToLowerInvariant(),
         };
 
@@ -261,28 +281,29 @@ namespace fire.UI.Markup
                 return new MarkupCompletionResult(valueStart + 1, Rank(Prefixes(info), typed.Substring(1)));
 
             string t = tag.Tag.ToLowerInvariant();
+            string attr = attribute.ToLowerInvariant();
             IEnumerable<MarkupCompletionItem> items = Array.Empty<MarkupCompletionItem>();
             ElementDef? target = TargetOf(stack, tag);
             PropertyDef? property = null;
             switch (t)
             {
-                case "converter" when attribute == "type":
+                case "converter" when attr == "type":
                     items = Prefixes(info);
                     break;
-                case "style" or "controltemplate" when attribute == "target":
+                case "style" or "controltemplate" when attr == "target":
                     items = MarkupSchema.Elements.Where(e => !e.IsPart).Select(e => e.Tag).Append("Element").Select(n => new MarkupCompletionItem(n, MarkupCompletionKind.Value));
                     break;
-                case "style" when attribute == "basedOn":
+                case "style" when attr == "basedon":
                     items = info.Styles.Select(k => new MarkupCompletionItem(k, MarkupCompletionKind.Value, "style"));
                     break;
-                case "setter" or "trigger" or "condition" when attribute == "property":
+                case "setter" or "trigger" or "condition" when attr == "property":
                     if (target != null)
                         items = target.Properties.Select(p => new MarkupCompletionItem(p.Name, MarkupCompletionKind.Value, Describe(p)))
                             .Concat(t == "setter" ? Array.Empty<MarkupCompletionItem>() : MarkupSchema.StateProperties.Select(p => new MarkupCompletionItem(p.Name, MarkupCompletionKind.Value, "state")));
                     break;
-                case "setter" or "trigger" or "condition" when attribute == "value":
+                case "setter" or "trigger" or "condition" when attr == "value":
                     tag.Attributes.TryGetValue("property", out var propertyName);
-                    property = propertyName == null ? null : target?.Property(propertyName) ?? MarkupSchema.StateProperties.FirstOrDefault(p => p.Name == propertyName);
+                    property = propertyName == null ? null : target?.Property(propertyName) ?? MarkupSchema.StateProperty(propertyName);
                     break;
                 default:
                     var def = t == "collectionview" ? MarkupSchema.CollectionViewDef : MarkupSchema.Find(tag.Tag);
@@ -318,6 +339,7 @@ namespace fire.UI.Markup
                 PropertyKind.DataTemplateRef => Words(info.DataTemplates, "data template"),
                 PropertyKind.ViewRef => Words(info.Views, "collection view"),
                 PropertyKind.Color => Words(new[] { "#000000", "#FFFFFF" }, "colour"),
+                PropertyKind.Geometry => Words(MarkupSchema.IconNames, "symbol"),
                 _ => Enumerable.Empty<MarkupCompletionItem>(),
             };
             bool refKind = property.Kind is PropertyKind.StyleRef or PropertyKind.TemplateRef or PropertyKind.DataTemplateRef or PropertyKind.ViewRef;
@@ -395,9 +417,9 @@ namespace fire.UI.Markup
             public Dictionary<string, string> Prefixes = new();
             public string? OwnNamespace;
 
-            private static readonly Regex Keyed = new(@"<(Style|ControlTemplate|DataTemplate|CollectionView|Converter)\b[^>]*?\bkey\s*=\s*[""']([A-Za-z_]\w*)[""']", RegexOptions.Compiled);
-            private static readonly Regex Name = new(@"\bname\s*=\s*[""']([A-Za-z_]\w*)[""']", RegexOptions.Compiled);
-            private static readonly Regex Handler = new(@"\bon[A-Z]\w*\s*=\s*[""']([A-Za-z_]\w*)[""']", RegexOptions.Compiled);
+            private static readonly Regex Keyed = new(@"<(Style|ControlTemplate|DataTemplate|CollectionView|Converter)\b[^>]*?\bkey\s*=\s*[""']([A-Za-z_]\w*)[""']", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            private static readonly Regex Name = new(@"\bname\s*=\s*[""']([A-Za-z_]\w*)[""']", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            private static readonly Regex Handler = new(@"\b[oO]n[A-Z]\w*\s*=\s*[""']([A-Za-z_]\w*)[""']", RegexOptions.Compiled);
             private static readonly Regex Prefix = new(@"\bnamespace:([A-Za-z_]\w*)\s*=\s*[""']([^""']*)[""']", RegexOptions.Compiled);
             private static readonly Regex Own = new(@"\bnamespace\s*=\s*[""']([^""']*)[""']", RegexOptions.Compiled);
 

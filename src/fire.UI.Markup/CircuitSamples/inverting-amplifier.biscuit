@@ -1,0 +1,23 @@
+{
+  "biscuit": 1,
+  "timeStep": "5us",
+  "elements": [
+    {"type": "Text", "from": [0, -20], "to": [4, -20], "text": "Inverting amplifier: gain = -R2 / R1 = -10"},
+    {"type": "Source", "name": "V1", "from": [0, 20], "to": [0, 6], "waveform": "sine", "voltage": "0.5V", "frequency": "1kHz"},
+    {"type": "Ground", "from": [0, 20], "to": [0, 24]},
+    {"type": "Wire", "from": [0, 6], "to": [8, 6]},
+    {"type": "Resistor", "name": "R1", "from": [8, 6], "to": [20, 6], "resistance": "1k"},
+    {"type": "Wire", "from": [20, 6], "to": [24, 6]},
+    {"type": "OpAmp", "name": "U1", "from": [24, 8], "to": [36, 8]},
+    {"type": "Ground", "from": [24, 10], "to": [24, 14]},
+    {"type": "Wire", "from": [20, 6], "to": [20, -6]},
+    {"type": "Resistor", "name": "R2", "from": [20, -6], "to": [40, -6], "resistance": "10k"},
+    {"type": "Wire", "from": [40, -6], "to": [40, 8]},
+    {"type": "Wire", "from": [36, 8], "to": [40, 8]},
+    {"type": "Wire", "from": [40, 8], "to": [48, 8]},
+    {"type": "Resistor", "name": "RL", "from": [48, 8], "to": [48, 20], "resistance": "10k"},
+    {"type": "Ground", "from": [48, 20], "to": [48, 24]},
+    {"type": "Scope", "from": [60, -6], "to": [100, 6], "probe": "V1", "range": "6"},
+    {"type": "Scope", "from": [60, 10], "to": [100, 22], "probe": "RL", "range": "6"}
+  ]
+}

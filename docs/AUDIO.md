@@ -1,6 +1,6 @@
 # Sound (`#import "audio"`, the package `fire-audio`)
 
-Sound output: play samples, generate tones, play WAV files. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `native/bridges/fire_bridge_audio.hpp` over the platform layer `plat::audio`
+Sound output: play samples, generate tones, play WAV files. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/audio/native/fire_bridge_audio.hpp` over the platform layer `plat::audio`
 (`native/platform/std/fire_audio_*.hpp`), so the same code runs in the virtual machine (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build. It needs `time`.
 
 ```
@@ -21,7 +21,7 @@ out.Beep(440, 200)                                 // a 440 Hz sine for 200 ms, 
 out.Tone(523.25, 500, Audio.Wave.Square, 30)       // queue a tone (Hz, ms, wave, volume in percent); returns when it is queued
 out.Drain()                                        // wait until everything queued has been played
 
-var sound = Audio.Sound.FromWav(IO.File.ReadAllBytes("door.wav"))     // needs #import "io"
+var sound = Audio.Sound.FromWav(IO.File.ReadAllBytes("door.wav"))     // needs #import "filesystem"
 var player = sound.Open()                          // an output that fits the sound (its rate and its channels)
 player.Play(sound)
 player.Drain()
@@ -67,7 +67,7 @@ Samples are **16 bit signed, little endian, interleaved** (a *frame* is one samp
 * `Tone(frequency, milliseconds, wave = Audio.Wave.Sine, volume = 100)` generates and queues a tone (the frequency may be a float); the waves are `Sine`, `Square`, `Triangle`, `Saw` and `Noise`. The generation is native (a
   fast loop in C++, the same in the VM and in a native build). `Beep(frequency = 440, milliseconds = 200, volume = 100)` is a tone that is played to its end.
 
-`Audio.Sound` is PCM in memory: `new Audio.Sound(rate, channels, buffer, offset = 0, length = -1)`; `Audio.Sound.FromWav(bytes)` reads PCM WAV files (8 or 16 bit, mono or stereo, any rate; other formats are
+`Audio.Sound` is PCM in memory: `new Audio.Sound(rate, channels, buffer, offset = 0, length = -1)`; `sound.ToWav()` gives the bytes of a WAV file (PCM, 16 bit) and `Audio.Sound.FromWav(bytes)` reads PCM WAV files (8 or 16 bit, mono or stereo, any rate; other formats are
 `Audio.UnsupportedException`); `Audio.Sound.Tone(frequency, milliseconds, wave, volume, rate = 22050)` generates one. `sound.Open(device)` opens an output with the rate and channels of the sound, and `output.Play(sound)` queues it
 (a sound whose rate or channels differ from the output's is an error - open the output with `sound.Open()`).
 

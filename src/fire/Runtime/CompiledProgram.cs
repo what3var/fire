@@ -75,7 +75,7 @@ namespace fire.Runtime
                 foreach (var (_, proto) in rc.StaticFields) RelinkProtoOwner(proto, rc);
                 foreach (var overloads in rc.Methods.Values)
                     foreach (var proto in overloads) RelinkProtoOwner(proto, rc);
-                foreach (var proto in rc.Constructors.Values) RelinkProtoOwner(proto, rc);
+                foreach (var proto in rc.AllConstructors) RelinkProtoOwner(proto, rc);
                 if (rc.Destructor != null) RelinkProtoOwner(rc.Destructor, rc);
             }
         }

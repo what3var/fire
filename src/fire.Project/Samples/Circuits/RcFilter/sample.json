@@ -1,0 +1,6 @@
+{
+  "title": "Circuit: an RC filter in a program",
+  "description": "A drawn circuit (RcFilter.biscuit) becomes a class: the program puts it into a circuit of its own, drives its input and reads its output, and changes a part while it runs.",
+  "open": [ "main.fire", "RcFilter.biscuit" ],
+  "order": 130
+}

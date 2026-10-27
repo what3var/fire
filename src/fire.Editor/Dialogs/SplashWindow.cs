@@ -30,8 +30,7 @@ namespace fire.Editor
             //try { logo = new Image { Source = new Bitmap(AssetLoader.Open(new Uri("avares://spark/Assets/Logo-64.png"))), Width = 96, Height = 96 }; }
             //catch (Exception) { logo = TemplateIcon.Create("script", 96); }
 
-            var version = typeof(SplashWindow).Assembly.GetName().Version;
-            string versionText = version == null ? "" : $"alpha-2610";
+            string versionText = AppInfo.Version;
 
             //var title = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(24, 0, 0, 0) };
             //title.Children.Add(new TextBlock { Text = "spark", FontSize = 52, FontWeight = FontWeight.SemiBold, Foreground = EditorTheme.Magenta });

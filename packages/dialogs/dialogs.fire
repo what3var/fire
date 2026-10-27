@@ -1,0 +1,607 @@
+#import "ui"
+#import "filesystem"
+
+// Dialogs (docs/DIALOGS.md): open, save and folder dialogs and message boxes, like the common dialogs of Windows - built with the user interface library, so they look
+// and work the same on every system that has windows (also in a native program). A dialog is modal for the code that opens it: ShowDialog() returns when the user is
+// done. The quick way:
+//
+//     var path = Dialogs.OpenFileDialog.Show("Pictures|*.png;*.bmp|All files|*.*")    // undefined when cancelled
+//     if (Dialogs.MessageBox.Show("Save the changes?", "Editor", Dialogs.MessageBoxButtons.YesNo) == Dialogs.DialogResult.Yes) { ... }
+namespace Dialogs {
+    enum DialogResult { None, OK, Cancel, Yes, No }
+    enum MessageBoxButtons { OK, OKCancel, YesNo, YesNoCancel }
+
+    // A modal window: its own framebuffer, window and UI.Root on WindowManager.Default, shown with Window.Show(true) until Close() (closing the window with its
+    // frame or Escape cancels).
+    class DialogWindow {
+        Framebuffer framebuffer
+        Window window
+        UI.Root root
+        UI.DockPanel body
+        int result = Dialogs.DialogResult.None
+        bool done = false
+        // what Escape and closing the window give
+        int cancelResult = Dialogs.DialogResult.Cancel
+
+        construct(string title, int width, int height) {
+            this.framebuffer = new Framebuffer(width, height)
+            this.window = new Window(this.framebuffer, title)
+            this.root = new UI.Root(this.framebuffer, this.window)
+            this.body = new UI.DockPanel(0, 0, width, height)
+            this.root.Add(this.body)
+            this.root.onResize = func (int w, int h) on this => {
+                this.body.Width = w
+                this.body.Height = h
+            }
+            this.root.onKeyPreview = func (int key, int mod) on this => {
+                if (key == UI.Keys.Escape()) {
+                    this.Close(this.cancelResult)
+                    return true
+                }
+                return false
+            }
+        }
+
+        // Shows the window modal (Window.Show(true)) until the dialog is closed; its result. Closing the window with its frame cancels.
+        int Run() {
+            this.window.Show(true)
+            if (!this.done) {
+                this.result = this.cancelResult
+                this.done = true
+            }
+            return this.result
+        }
+
+        undefined Close(int result) {
+            this.result = result
+            this.done = true
+            this.window.Close()
+        }
+    }
+
+    // A button that closes its dialog with a result.
+    class DialogButton : UI.Button {
+        Dialogs.DialogWindow dialog
+        int result
+
+        construct(string text, Dialogs.DialogWindow dialog, int result) : base(text, 0, 0, 96, 28) {
+            this.dialog = dialog
+            this.result = result
+            this.OnClick = func () on this => { this.dialog.Close(this.result) }
+        }
+    }
+
+    // A message with buttons: MessageBox.Show("Text", "Caption", Dialogs.MessageBoxButtons.YesNo) gives the DialogResult of the button (Escape: Cancel, No or OK).
+    class MessageBox {
+        static int Show(string text, string caption = "", int buttons = Dialogs.MessageBoxButtons.OK) {
+            var lines = text.Replace("\r", "").Split("\n")
+            var longest = 0
+            for (var i = 0; i < lines.length; i++) { if (lines[i].length > longest) { longest = lines[i].length } }
+            var width = UI.M.Clamp(longest * 8 + 64, 340, 960)
+            var height = UI.M.Clamp(lines.length * 16 + 110, 150, 700)
+            var dialog = new Dialogs.DialogWindow(caption == "" ? "Message" : caption, width, height)
+
+            var row = new UI.StackPanel(0, 0, -1, -1, true, 8, 10)
+            row.HorizontalAlign = UI.HAlign.Right
+            if (buttons == Dialogs.MessageBoxButtons.OK) {
+                row.Add(new Dialogs.DialogButton("OK", dialog, Dialogs.DialogResult.OK))
+                dialog.cancelResult = Dialogs.DialogResult.OK
+            } else if (buttons == Dialogs.MessageBoxButtons.OKCancel) {
+                row.Add(new Dialogs.DialogButton("OK", dialog, Dialogs.DialogResult.OK))
+                row.Add(new Dialogs.DialogButton("Cancel", dialog, Dialogs.DialogResult.Cancel))
+            } else if (buttons == Dialogs.MessageBoxButtons.YesNo) {
+                row.Add(new Dialogs.DialogButton("Yes", dialog, Dialogs.DialogResult.Yes))
+                row.Add(new Dialogs.DialogButton("No", dialog, Dialogs.DialogResult.No))
+                dialog.cancelResult = Dialogs.DialogResult.No
+            } else {
+                row.Add(new Dialogs.DialogButton("Yes", dialog, Dialogs.DialogResult.Yes))
+                row.Add(new Dialogs.DialogButton("No", dialog, Dialogs.DialogResult.No))
+                row.Add(new Dialogs.DialogButton("Cancel", dialog, Dialogs.DialogResult.Cancel))
+            }
+            var first = row.children[0]
+            dialog.body.AddDocked(row, UI.Dock.Bottom)
+
+            var message = new UI.StackPanel(0, 0, -1, -1, false, 2, 16)
+            for (var i = 0; i < lines.length; i++) { message.Add(new UI.Label(lines[i])) }
+            dialog.body.Add(message)
+            dialog.root.SetFocus(first)
+            return dialog.Run()
+        }
+    }
+
+    // A row of the file list.
+    class Entry {
+        string name
+        string path
+        bool folder
+        string size
+        string modified
+
+        construct(string name, string path, bool folder, string size, string modified) {
+            this.name = name
+            this.path = path
+            this.folder = folder
+            this.size = size
+            this.modified = modified
+        }
+    }
+
+    // Patterns like "*.txt" (`*` any text, `?` one character), without case.
+    class Glob {
+        static bool Match(string pattern, string name) {
+            var p = pattern.Trim().ToLower()
+            var n = name.ToLower()
+            if (p == "" || p == "*" || p == "*.*") { return true }
+            var pi = 0
+            var ni = 0
+            var star = -1
+            var mark = 0
+            while (ni < n.length) {
+                if (pi < p.length && (p[pi] == '?' || p[pi] == n[ni])) {
+                    pi++
+                    ni++
+                } else if (pi < p.length && p[pi] == '*') {
+                    star = pi
+                    pi++
+                    mark = ni
+                } else if (star >= 0) {
+                    pi = star + 1
+                    mark++
+                    ni = mark
+                } else {
+                    return false
+                }
+            }
+            while (pi < p.length && p[pi] == '*') { pi++ }
+            return pi == p.length
+        }
+
+        // One of the patterns separated by ";".
+        static bool MatchAny(string patterns, string name) {
+            foreach (p in patterns.Split(";")) {
+                if (Dialogs.Glob.Match(p, name)) { return true }
+            }
+            return false
+        }
+    }
+
+    // The common part of OpenFileDialog, SaveFileDialog and FolderBrowserDialog: a window with the places on the left, the folder on top, its content in the middle
+    // and the name and the file type below. Double click or Enter on a folder opens it, on a file chooses it; Backspace on the list goes up.
+    class FileDialog {
+        // The caption of the window.
+        string Title = ""
+        // The file types: pairs of a text and patterns, "Text files|*.txt|Pictures|*.png;*.bmp|All files|*.*" ("" = all files).
+        string Filter = ""
+        // The type chosen at the start and at the end (counted from 1, like in .NET).
+        int FilterIndex = 1
+        // The chosen file (full path) - also a name or path to start with.
+        string FileName = ""
+        // The folder to start in ("" = the folder of FileName, else the current directory).
+        string InitialDirectory = ""
+        // Appended to a name without an extension ("txt" or ".txt"); "" = the extension of the chosen type if it has exactly one.
+        string DefaultExt = ""
+        // Also names that start with "."
+        bool ShowHiddenFiles = false
+
+        Dialogs.DialogWindow dialog
+        string current = ""
+        UI.ListView list
+        UI.TextBox nameBox
+        UI.TextBox placeBox
+        UI.Label status
+        UI.Button typeButton
+        UI.ListBox places
+        List placePaths
+        List filterNames
+        List filterPatterns
+        int filterAt = 0
+        bool foldersOnly = false
+        string acceptText = "Open"
+        string defaultTitle = "Open"
+
+        // Shows the dialog; Dialogs.DialogResult.OK when a file was chosen (then in FileName), else Cancel.
+        int ShowDialog() {
+            this.ParseFilter()
+            this.dialog = new Dialogs.DialogWindow(this.Title == "" ? this.defaultTitle : this.Title, 760, 480)
+            this.Build()
+            var start = this.InitialDirectory
+            if (start == "" && this.FileName != "" && IO.Path.GetDirectoryName(this.FileName) != "") { start = IO.Path.GetDirectoryName(this.FileName) }
+            if (start == "" || !this.Navigate(start)) { this.Navigate(IO.Directory.GetCurrentDirectory()) }
+            if (this.FileName != "") { this.nameBox.SetText(IO.Path.GetFileName(this.FileName)) }
+            this.dialog.root.SetFocus(this.nameBox)
+            var result = this.dialog.Run()
+            this.FilterIndex = this.filterAt + 1
+            this.dialog = undefined
+            return result
+        }
+
+        undefined Build() {
+            var body = this.dialog.body
+
+            // top: up, home, the folder
+            var top = new UI.Grid()
+            top.Margin = new UI.Thickness(8, 8, 8, 4)
+            top.SetColumns("auto, auto, *")
+            top.SetRows("auto")
+            var up = new UI.Button("Up", 0, 0, 64, 26)
+            up.Icon = UI.Icons.Up()
+            up.IconSize = 12
+            up.OnClick = func () on this => { this.GoUp() }
+            var home = new UI.Button("Home", 0, 0, 80, 26)
+            home.Icon = UI.Icons.Home()
+            home.IconSize = 12
+            home.OnClick = func () on this => { this.Navigate(this.Home()) }
+            this.placeBox = new UI.TextBox("", 0, 0, -1, 26)
+            this.placeBox.Margin = new UI.Thickness(6, 0, 0, 0)
+            this.placeBox.OnEnter = func () on this => { this.Navigate(this.placeBox.Text) }
+            top.AddAt(up, 0, 0)
+            top.AddAt(home, 0, 1)
+            top.AddAt(this.placeBox, 0, 2)
+            body.AddDocked(top, UI.Dock.Top)
+
+            // bottom: name, type, the buttons, a line for problems
+            var bottom = new UI.Grid()
+            bottom.Margin = new UI.Thickness(8, 4, 8, 8)
+            bottom.SetColumns("auto, *, auto")
+            bottom.SetRows("auto, auto, auto")
+            var nameLabel = new UI.Label(this.foldersOnly ? "Folder:" : "File name:")
+            nameLabel.VerticalAlign = UI.VAlign.Center
+            this.nameBox = new UI.TextBox("", 0, 0, -1, 26)
+            this.nameBox.Margin = new UI.Thickness(6, 2, 6, 2)
+            this.nameBox.OnEnter = func () on this => { this.AcceptName() }
+            var accept = new UI.Button(this.acceptText, 0, 0, 96, 28)
+            accept.OnClick = func () on this => { this.AcceptName() }
+            var typeLabel = new UI.Label("Type:")
+            typeLabel.VerticalAlign = UI.VAlign.Center
+            this.typeButton = new UI.Button(this.filterNames[this.filterAt], 0, 0, -1, 28)
+            this.typeButton.Margin = new UI.Thickness(6, 2, 6, 2)
+            this.typeButton.OnClick = func () on this => { this.ChooseType() }
+            var cancel = new Dialogs.DialogButton("Cancel", this.dialog, Dialogs.DialogResult.Cancel)
+            this.status = new UI.Label("")
+            this.status.Color = new SolidBrush(UI.Color.Rgb(230, 90, 90))
+            bottom.AddAt(nameLabel, 0, 0)
+            bottom.AddAt(this.nameBox, 0, 1)
+            bottom.AddAt(accept, 0, 2)
+            if (!this.foldersOnly) {
+                bottom.AddAt(typeLabel, 1, 0)
+                bottom.AddAt(this.typeButton, 1, 1)
+            }
+            bottom.AddAt(cancel, 1, 2)
+            bottom.AddAt(this.status, 2, 0, 1, 3)
+            body.AddDocked(bottom, UI.Dock.Bottom)
+
+            // left: the places
+            this.places = new UI.ListBox(0, 0, 150, -1)
+            this.places.Margin = new UI.Thickness(8, 4, 4, 4)
+            this.FillPlaces()
+            this.places.OnSelect = func () on this => {
+                var i = this.places.SelectedIndex
+                if (i >= 0) { this.Navigate(this.placePaths[i]) }
+            }
+            body.AddDocked(this.places, UI.Dock.Left)
+
+            // the content of the folder
+            this.list = new UI.ListView(0, 0, -1, -1)
+            this.list.Margin = new UI.Thickness(4, 4, 8, 4)
+            this.list.AddColumn("Name", "name", -1)
+            if (!this.foldersOnly) { this.list.AddColumn("Size", "size", 80) }
+            this.list.AddColumn("Modified", "modified", 140)
+            this.list.OnSelect = func () on this => { this.Selected() }
+            this.list.OnActivate = func () on this => { this.Activated() }
+            body.Add(this.list)
+
+            this.dialog.root.onKeyPreview = func (int key, int mod) on this => {
+                if (key == UI.Keys.Escape()) {
+                    this.dialog.Close(Dialogs.DialogResult.Cancel)
+                    return true
+                }
+                if (key == UI.Keys.Backspace() && this.dialog.root.focusElement == this.list) {
+                    this.GoUp()
+                    return true
+                }
+                return false
+            }
+        }
+
+        undefined ParseFilter() {
+            this.filterNames = new List()
+            this.filterPatterns = new List()
+            if (this.Filter != "") {
+                var parts = this.Filter.Split("|")
+                for (var i = 0; i + 1 < parts.length; i = i + 2) {
+                    this.filterNames.Add(parts[i])
+                    this.filterPatterns.Add(parts[i + 1])
+                }
+            }
+            if (this.filterNames.count == 0) {
+                this.filterNames.Add("All files (*.*)")
+                this.filterPatterns.Add("*")
+            }
+            this.filterAt = UI.M.Clamp(this.FilterIndex - 1, 0, this.filterNames.count - 1)
+        }
+
+        // The user's folder: the home directory, else the current one.
+        string Home() {
+            var home = IO.Directory.GetHomeDirectory()
+            if (home == "") { return IO.Directory.GetCurrentDirectory() }
+            return home
+        }
+
+        undefined FillPlaces() {
+            this.placePaths = new List()
+            var home = IO.Directory.GetHomeDirectory()
+            if (home != "") {
+                this.AddPlace("Home", home)
+                foreach (sub in ["Desktop", "Documents", "Downloads", "Pictures", "Music", "Videos"]) {
+                    var folder = IO.Path.Combine(home, sub)
+                    if (IO.Directory.Exists(folder)) { this.AddPlace(sub, folder) }
+                }
+            }
+            this.AddPlace("Current folder", IO.Directory.GetCurrentDirectory())
+            this.AddPlace("Temporary", IO.Path.GetTempPath())
+            foreach (drive in IO.Directory.GetLogicalDrives()) { this.AddPlace(drive == "/" ? "Root (/)" : drive, drive) }
+        }
+
+        undefined AddPlace(string text, string path) {
+            this.places.Add(text)
+            this.placePaths.Add(path)
+        }
+
+        undefined GoUp() {
+            var parent = IO.Directory.GetParent(this.current)
+            if (parent != undefined) { this.Navigate(parent) }
+        }
+
+        // Shows the folder; false (and a message below) if it cannot be read.
+        bool Navigate(string folder) {
+            var full = ""
+            try { full = IO.Path.GetFullPath(folder) } catch (IO.IOException e) {
+                this.status.Text = e.message
+                return false
+            }
+            var rows = new List()
+            try {
+                foreach (dir in IO.Directory.GetDirectories(full)) {
+                    var name = IO.Path.GetFileName(dir)
+                    if (this.ShowHiddenFiles || !name.StartsWith(".")) {
+                        rows.Add(new Dialogs.Entry(name + IO.Path.DirectorySeparatorChar, dir, true, "", Dialogs.FileDialog.Time(dir, true)))
+                    }
+                }
+                if (!this.foldersOnly) {
+                    var patterns = this.filterPatterns[this.filterAt]
+                    foreach (file in IO.Directory.GetFiles(full)) {
+                        var name = IO.Path.GetFileName(file)
+                        if ((this.ShowHiddenFiles || !name.StartsWith(".")) && Dialogs.Glob.MatchAny(patterns, name)) {
+                            rows.Add(new Dialogs.Entry(name, file, false, Dialogs.FileDialog.Size(file), Dialogs.FileDialog.Time(file, false)))
+                        }
+                    }
+                }
+            } catch (IO.IOException e) {
+                this.status.Text = e.message
+                return false
+            }
+            this.current = full
+            this.placeBox.SetText(full)
+            this.list.SetItems(rows)
+            this.status.Text = ""
+            return true
+        }
+
+        static string Size(string file) {
+            var n = 0
+            try { n = IO.File.Size(file) } catch (IO.IOException e) { return "" }
+            if (n < 1024) { return n + " B" }
+            if (n < 1024 * 1024) { return (n + 512) / 1024 + " KB" }
+            if (n < 1024 * 1024 * 1024) { return (n + 524288) / 1048576 + " MB" }
+            return (n + 536870912) / 1073741824 + " GB"
+        }
+
+        static string Time(string path, bool folder) {
+            try {
+                if (folder) { return IO.Directory.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm") }
+                return IO.File.GetLastWriteTime(path).ToString("yyyy-MM-dd HH:mm")
+            } catch (IO.IOException e) { return "" }
+        }
+
+        // A row was selected: a file's name goes into the name box (a folder's too in the folder dialog).
+        undefined Selected() {
+            var entry = this.list.selectedItem
+            if (entry == undefined) { return }
+            if (!entry.folder || this.foldersOnly) { this.nameBox.SetText(IO.Path.GetFileName(entry.path)) }
+        }
+
+        // Double click or Enter on a row: a folder opens, a file is chosen.
+        undefined Activated() {
+            var entry = this.list.selectedItem
+            if (entry == undefined) { return }
+            if (entry.folder) {
+                this.Navigate(entry.path)
+                if (this.foldersOnly) { this.nameBox.SetText("") }
+                return
+            }
+            this.Choose(entry.path)
+        }
+
+        // The name box: a folder opens, a pattern ("*.log") filters, anything else is the file.
+        undefined AcceptName() {
+            var text = this.nameBox.Text.Trim()
+            if (text == "") {
+                if (this.foldersOnly) { this.Choose(this.current) }
+                return
+            }
+            var path = IO.Path.IsPathRooted(text) ? text : IO.Path.Combine(this.current, text)
+            if (text.Contains("*") || text.Contains("?")) {
+                this.filterNames.Add(text)
+                this.filterPatterns.Add(text)
+                this.filterAt = this.filterNames.count - 1
+                this.typeButton.Text = text
+                this.nameBox.SetText("")
+                this.Navigate(this.current)
+                return
+            }
+            if (IO.Directory.Exists(path)) {
+                if (this.foldersOnly) {
+                    this.Choose(IO.Path.GetFullPath(path))
+                    return
+                }
+                if (this.Navigate(path)) { this.nameBox.SetText("") }
+                return
+            }
+            this.Choose(IO.Path.GetFullPath(this.WithExtension(path)))
+        }
+
+        // Appends DefaultExt (or the extension of the chosen type) to a name without one.
+        string WithExtension(string path) {
+            if (this.foldersOnly || IO.Path.HasExtension(path)) { return path }
+            var ext = this.DefaultExt
+            if (ext == "") {
+                var patterns = this.filterPatterns[this.filterAt]
+                if (!patterns.Contains(";") && patterns.StartsWith("*.") && patterns.IndexOf("*", 2) < 0 && patterns != "*.*") { ext = patterns.Substring(1) }
+            }
+            if (ext == "") { return path }
+            return IO.Path.ChangeExtension(path, ext)
+        }
+
+        // Ends the dialog with this path if Confirm allows it.
+        undefined Choose(string path) {
+            if (!this.Confirm(path)) { return }
+            this.FileName = path
+            this.dialog.Close(Dialogs.DialogResult.OK)
+        }
+
+        // Whether the path may be chosen (the subclasses check: the file is there, may be overwritten).
+        bool Confirm(string path) { return true }
+
+        // The file types as a menu below the type button.
+        undefined ChooseType() {
+            var items = new List()
+            for (var i = 0; i < this.filterNames.count; i++) {
+                items.Add(new Dialogs.TypeItem(this, i))
+            }
+            var b = this.typeButton
+            this.dialog.root.ShowMenu(items, b.ax, b.ay + b.actualHeight, b)
+        }
+
+        undefined SetType(int index) {
+            this.filterAt = index
+            this.typeButton.Text = this.filterNames[index]
+            this.Navigate(this.current)
+        }
+    }
+
+    // A row of the type menu.
+    class TypeItem : UI.MenuItem {
+        Dialogs.FileDialog owner
+        int index
+
+        construct(Dialogs.FileDialog owner, int index) : base(owner.filterNames[index]) {
+            this.owner = owner
+            this.index = index
+            this.OnClick = func () on this => { this.owner.SetType(this.index) }
+        }
+    }
+
+    // Chooses an existing file: `var d = new Dialogs.OpenFileDialog(); d.Filter = "..."; if (d.ShowDialog() == Dialogs.DialogResult.OK) { use(d.FileName) }`.
+    class OpenFileDialog : FileDialog {
+        // Only a file that is there can be chosen.
+        bool CheckFileExists = true
+
+        construct() {
+            this.acceptText = "Open"
+            this.defaultTitle = "Open"
+        }
+
+        bool Confirm(string path) {
+            if (this.CheckFileExists && !IO.File.Exists(path)) {
+                this.status.Text = "The file '" + IO.Path.GetFileName(path) + "' does not exist."
+                return false
+            }
+            return true
+        }
+
+        // The quick way: the chosen file, or undefined.
+        static string Show(string filter = "", string title = "", string initialDirectory = "") {
+            var d = new Dialogs.OpenFileDialog()
+            d.Filter = filter
+            d.Title = title
+            d.InitialDirectory = initialDirectory
+            if (d.ShowDialog() == Dialogs.DialogResult.OK) { return d.FileName }
+            return undefined
+        }
+    }
+
+    // Chooses a file to write: a file that is there is only taken after asking (OverwritePrompt).
+    class SaveFileDialog : FileDialog {
+        bool OverwritePrompt = true
+        // The folder of the file must exist.
+        bool CheckPathExists = true
+
+        construct() {
+            this.acceptText = "Save"
+            this.defaultTitle = "Save As"
+        }
+
+        bool Confirm(string path) {
+            if (this.CheckPathExists && !IO.Directory.Exists(IO.Path.GetDirectoryName(path))) {
+                this.status.Text = "The folder '" + IO.Path.GetDirectoryName(path) + "' does not exist."
+                return false
+            }
+            if (this.OverwritePrompt && IO.File.Exists(path)) {
+                var answer = Dialogs.MessageBox.Show(IO.Path.GetFileName(path) + " already exists.\nDo you want to replace it?", "Confirm Save As", Dialogs.MessageBoxButtons.YesNo)
+                return answer == Dialogs.DialogResult.Yes
+            }
+            return true
+        }
+
+        // The quick way: the chosen file, or undefined. `fileName`: the name proposed.
+        static string Show(string filter = "", string fileName = "", string title = "", string initialDirectory = "") {
+            var d = new Dialogs.SaveFileDialog()
+            d.Filter = filter
+            d.FileName = fileName
+            d.Title = title
+            d.InitialDirectory = initialDirectory
+            if (d.ShowDialog() == Dialogs.DialogResult.OK) { return d.FileName }
+            return undefined
+        }
+    }
+
+    // Chooses a folder: the list shows only folders; "Select Folder" takes the selected one (or, with nothing selected, the folder that is open).
+    class FolderBrowserDialog : FileDialog {
+        // The folder chosen (full path) - also where to start.
+        string SelectedPath = ""
+        // A text for the caption.
+        string Description = ""
+
+        construct() {
+            this.foldersOnly = true
+            this.acceptText = "Select Folder"
+            this.defaultTitle = "Select Folder"
+        }
+
+        int ShowDialog() {
+            if (this.Title == "" && this.Description != "") { this.Title = this.Description }
+            if (this.InitialDirectory == "" && this.SelectedPath != "") { this.InitialDirectory = this.SelectedPath }
+            var result = base.ShowDialog()
+            if (result == Dialogs.DialogResult.OK) { this.SelectedPath = this.FileName }
+            return result
+        }
+
+        // The name box names a folder in the open one; empty: the open folder.
+        bool Confirm(string path) {
+            if (!IO.Directory.Exists(path)) {
+                this.status.Text = "The folder '" + path + "' does not exist."
+                return false
+            }
+            return true
+        }
+
+        // The quick way: the chosen folder, or undefined.
+        static string Show(string description = "", string selectedPath = "") {
+            var d = new Dialogs.FolderBrowserDialog()
+            d.Description = description
+            d.SelectedPath = selectedPath
+            if (d.ShowDialog() == Dialogs.DialogResult.OK) { return d.SelectedPath }
+            return undefined
+        }
+    }
+}

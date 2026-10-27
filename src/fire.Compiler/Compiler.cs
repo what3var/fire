@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography.X509Certificates;
 using fire.Ast;
 using fire.Bytecode;
 using fire.Lexing;
@@ -30,6 +31,11 @@ namespace fire.Compiler
         public string Code => ErrorCatalog.CodeOf(ErrorArea.Compiler, RawMessage);
 
         public IReadOnlyList<CompilerException> Errors { get; }
+
+        /// <summary>The index of the source (Parser.ParseMultiple) the error is in; -1 when unknown. The editor shows only the errors of the open file.</summary>
+        public int Source { get; internal set; } = -1;
+
+        internal CompilerException At(int source) { if (Source < 0) Source = source; return this; }
 
         public CompilerException(string message, int line)
             : base($"{message} ({line})")
@@ -422,7 +428,9 @@ namespace fire.Compiler
         /// <summary>What a declaration `C x` (a parameter, a field) with a class, an interface or a type parameter of `owner` that has `where` conditions
         /// promises, checked at run time (GuardLocalType, FieldInfo.RequiredType, DeclaredType); null for a number, a string, an unconstrained type
         /// parameter (or one of a method), an array, a lambda, `any`...</summary>
-        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner)
+        private string? DeclaredTypeOf(TypeRef? type, RuntimeClass? owner) => MapSpec(DeclaredTypeOfCore(type, owner));
+
+        private string? DeclaredTypeOfCore(TypeRef? type, RuntimeClass? owner)
         {
             if (type is not { PointerDepth: 0, ArrayRank: 0, LambdaSignature: null, IsInferred: false } || _knownClassNames == null) return null;
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
@@ -447,7 +455,9 @@ namespace fire.Compiler
             if (_refParams.IsTypeParam(tr.BaseName)) return "";
             switch (tr.BaseName)
             {
-                case "int": case "float": case "bool": case "char": case "string": return tr.BaseName;
+                // a number without a unit is unitless (like a declared `int`); `int : cm` is one in cm, `int : any` one in any unit
+                case "int": case "float": return tr.Unit == null ? tr.BaseName : tr.BaseName + ":" + tr.Unit;
+                case "bool": case "char": case "string": return tr.BaseName;
                 case "any": case "class": return "";
             }
             if (_refParams.EnumNames.Contains(tr.BaseName)) return "int";
@@ -459,12 +469,38 @@ namespace fire.Compiler
             return "";
         }
 
+        /// <summary>In a lambda: the type parameters of the code around it that its body uses (`$k@` of the method, `$k@Class` of the class, as that
+        /// code names them) - the lambda takes them along when it is made (SetTypeArgs for a lambda, LambdaValue.TypeArgs) and names the i-th `$i@`.
+        /// Null outside of a lambda.</summary>
+        private List<string>? _lambdaTypeRefs;
+
+        /// <summary>A type argument text as the code being compiled names it (in a lambda: the type parameter it took along).</summary>
+        private string MapTypeRef(string text)
+        {
+            if (_lambdaTypeRefs == null || !text.StartsWith('$')) return text;
+            int i = _lambdaTypeRefs.IndexOf(text);
+            if (i < 0) { i = _lambdaTypeRefs.Count; _lambdaTypeRefs.Add(text); }
+            return $"${i}@";
+        }
+
+        private string MapTypeRefs(IEnumerable<string> texts) => string.Join("|", texts.Select(MapTypeRef));
+
+        /// <summary>A DeclaredType of a type parameter as the code being compiled names it (in a lambda: the type parameter it took along).</summary>
+        private string? MapSpec(string? spec)
+        {
+            if (spec == null || _lambdaTypeRefs == null || DeclaredType.Parse(spec) is not { TypeParamIndex: >= 0 } parsed) return spec;
+            string mapped = MapTypeRef($"${parsed.TypeParamIndex}@{parsed.TypeParamClass}");
+            int start = spec.IndexOf('\u0001'), end = spec.IndexOf('\u0003');
+            return spec.Substring(0, start + 1) + "@" + mapped.Substring(1, mapped.Length - 2) + "@" + spec.Substring(end);
+        }
+
         /// <summary>`new Box<...>(...)`: the type arguments for the object (SetTypeArgs, right before NewObject/NewObjectOwned); nothing when none is known.</summary>
         private void EmitTypeArgs(NewExpr ne)
         {
+            EmitOverloadHint(ne);
             if (ne.ClassRef.TypeArgs is not { Count: > 0 } typeArgs) return;
             _refParams.ClassDecls.TryGetValue(ResolveNewClassName(ne), out var target);
-            var texts = typeArgs.Select((t, i) => TypeArgText(t, _enclosingClass, target, i)).ToList();
+            var texts = typeArgs.Select((t, i) => MapTypeRef(TypeArgText(t, _enclosingClass, target, i))).ToList();
             if (texts.All(t => t.Length == 0)) return;
             _chunk.EmitOp(OpCode.SetTypeArgs);
             _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", texts))));
@@ -491,6 +527,7 @@ namespace fire.Compiler
             s_unitChecks = resolveResult.UnitChecks;
             s_methodTypeArgs = resolveResult.MethodTypeArgs;
             s_localGuards = resolveResult.LocalGuards;
+            s_overloadHints = resolveResult.OverloadHints;
             var compiler = new Compiler(resolveResult, natives);
             var classes = compiler.CompileClasses(program);
 
@@ -574,6 +611,32 @@ namespace fire.Compiler
         // Classes (pre-pass: name -> RuntimeClass, analogous to the resolver)
         // -----------------------------------------------------------
         /// <summary>The type as it stood in the source (`int`, `Circle`, `lambda<int>`, `float[]`), "" if not given.</summary>
+        /// <summary>The value of an attribute argument as JSON when the compiler knows it (see AttributeMeta.ArgsJson), else null.</summary>
+        private static System.Text.Json.Nodes.JsonNode? ConstantJson(Expr expr)
+        {
+            static System.Text.Json.Nodes.JsonNode Tagged(string tag, System.Text.Json.Nodes.JsonNode? value) => new System.Text.Json.Nodes.JsonObject { [tag] = value };
+            switch (expr)
+            {
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.Int && (v.Unit == null || v.Unit.IsUnitless): return Tagged("i", v.AsInt());
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.Float && (v.Unit == null || v.Unit.IsUnitless): return Tagged("f", v.AsFloat());
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.String: return Tagged("s", v.AsString());
+                case LiteralExpr { Value: var v } when v.Kind == ValueKind.Bool: return Tagged("b", v.AsBool());
+                case UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value: var v } } when (v.Unit == null || v.Unit.IsUnitless) && v.Kind == ValueKind.Int: return Tagged("i", -v.AsInt());
+                case UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value: var v } } when (v.Unit == null || v.Unit.IsUnitless) && v.Kind == ValueKind.Float: return Tagged("f", -v.AsFloat());
+                case ArrayLiteralExpr array:
+                    var items = array.Elements.Select(ConstantJson).ToList();
+                    return items.Any(i => i == null) ? null : Tagged("a", new System.Text.Json.Nodes.JsonArray(items.ToArray()));
+                case RangeExpr range when ConstantJson(range.From) is System.Text.Json.Nodes.JsonObject from && from["i"] is { } f
+                                       && ConstantJson(range.To) is System.Text.Json.Nodes.JsonObject to && to["i"] is { } t:
+                    long a = f.GetValue<long>(), b = t.GetValue<long>();
+                    if (Math.Abs(b - a) > 10000) return null;
+                    var numbers = new List<System.Text.Json.Nodes.JsonNode?>();
+                    for (long n = a; a <= b ? n <= b : n >= b; n += a <= b ? 1 : -1) numbers.Add(Tagged("i", n));
+                    return Tagged("a", new System.Text.Json.Nodes.JsonArray(numbers.ToArray()));
+                default: return null;
+            }
+        }
+
         private static string TypeText(TypeRef? type, int extraArrayRank = 0)
         {
             if (type == null || type.IsInferred) return "";
@@ -587,6 +650,35 @@ namespace fire.Compiler
             AccessModifier.Protected => "protected",
             _ => "public",
         };
+
+        /// <summary>The declared type of a field for JSON (FieldInfo.TypeText): basic types as written, classes resolved, `$k` for a type parameter of the class.</summary>
+        private string JsonTypeText(TypeRef? type, int extraArrayRank, ClassDecl? owner)
+        {
+            if (type == null || type.IsInferred || type.LambdaSignature != null || type.PointerDepth > 0) return "";
+            string arrays = string.Concat(Enumerable.Repeat("[]", type.ArrayRank + extraArrayRank));
+            string b = type.BaseName == "int" && type.BitWidth == 8 && type.Unsigned ? "byte" : type.BaseName;   // (`byte` is `int[8]`: a `byte[]` field is a buffer)
+            if (type.TypeArgs == null && owner?.TypeParams is { } typeParams && typeParams.ToList().FindIndex(tp => tp.Name == b) is var k and >= 0) return "$" + k + arrays;
+            switch (b)
+            {
+                case "int": case "float": case "bool": case "char": case "string": case "byte": case "class":
+                case "int8": case "int16": case "int32": case "int64": case "uint8": case "uint16": case "uint32": case "uint64": case "float32": case "float64":
+                    return b + arrays;
+                case "any": return arrays.Length > 0 ? "any" + arrays : "";
+            }
+            if (_knownClassNames == null) return "";
+            string name = ResolveTypeRef(type);
+            bool isClass = _knownClassNames.Contains(name), isInterface = !isClass && _refParams.InterfaceNames.Contains(type.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n)));
+            if (!isClass && !isInterface) return arrays.Length > 0 ? "any" + arrays : "";   // (an enum is an int at run time)
+            if (isInterface) name = type.ResolveBaseName(n => _refParams.InterfaceNames.Contains(n));
+            if (type.TypeArgs is { Count: > 0 } args)
+                name = GenericClassNames.PlainName(name) + "<" + string.Join(",", args.Select(a => JsonTypeText(a, 0, owner))) + ">";
+            return name + arrays;
+        }
+
+        /// <summary>The attributes of a member for the runtime (names, argument texts and the values the compiler knows), null for none.</summary>
+        private static List<AttributeMeta>? AttributeMetas(IReadOnlyList<AttributeDecl>? attributes) =>
+            attributes is not { Count: > 0 } ? null
+            : attributes.Select(a => new AttributeMeta { Name = a.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = new System.Text.Json.Nodes.JsonArray(a.Args.Select(ConstantJson).ToArray()).ToJsonString() }).ToList();
 
         /// <summary>The reflection metadata of a class: what the runtime otherwise does not keep (type names, parameter names, `readonly`, property form).</summary>
         private static ClassMeta BuildClassMeta(ClassDecl cd)
@@ -613,6 +705,7 @@ namespace fire.Compiler
                         {
                             Name = f.Name, Kind = "field", TypeName = TypeText(f.Type, f.ArrayRanks.Count), Access = AccessText(f.Access),
                             IsStatic = f.IsStatic, IsReadonly = f.IsReadonly, Unit = f.Type?.RequiredUnit ?? "",
+                            Attributes = AttributeMetas(f.Attributes) ?? new(),
                         });
                         break;
                     case PropertyDecl pd:
@@ -620,12 +713,14 @@ namespace fire.Compiler
                         {
                             Name = pd.Name, Kind = "property", TypeName = TypeText(pd.Type), Access = AccessText(pd.Access),
                             IsStatic = pd.IsStatic, CanRead = pd.Getter != null, CanWrite = pd.Setter != null, Unit = pd.Type?.RequiredUnit ?? "",
+                            Attributes = AttributeMetas(pd.Attributes) ?? new(),
                         });
                         break;
                     case MethodDecl md:
                         {
                             var m = new MemberMeta { Name = md.Name, Kind = "method", TypeName = TypeText(md.ReturnType), Access = AccessText(md.Access), IsStatic = md.IsStatic };
                             AddParams(m, md.Params);
+                            m.Attributes = AttributeMetas(md.Attributes) ?? new();
                             meta.Members.Add(m);
                             break;
                         }
@@ -695,9 +790,18 @@ namespace fire.Compiler
             // chain, so it does not need Base to have been preprocessed already).
             foreach (var rc in classes.Values)
             {
+                var set = new HashSet<RuntimeClass>();
                 bool isActor = false;
                 for (var walk = rc; walk != null; walk = walk.Base)
+                {
                     if (walk.Decl.IsActor) { isActor = true; break; }
+                    if (set.Contains(walk))
+                    {
+                        _errors.Add(new CompilerException("Circular class inheritance!", rc.Decl.Line).At(rc.Decl.Source));
+                        break;
+                    }
+                    set.Add(walk);
+                }
                 rc.IsActor = isActor;
             }
 
@@ -789,6 +893,8 @@ namespace fire.Compiler
                                 RequiredKind = fd.ArrayRanks.Count == 0 ? DeclaredKind.Of(fd.Type, fd.Initializer) : (byte)0,
                                 RequiredType = fd.ArrayRanks.Count == 0 ? DeclaredTypeOf(fd.Type, rc) : null,
                                 IsStatic = fd.IsStatic,
+                                TypeText = JsonTypeText(fd.Type, fd.ArrayRanks.Count, rc.Decl),
+                                Attributes = AttributeMetas(fd.Attributes),
                             };
                             // SPEC "Static members": static fields end up
                             // NOT in Fields (the instance init list that EVERY
@@ -845,7 +951,7 @@ namespace fire.Compiler
                 }
                 catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
                 {
-                    _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, member.Line));
+                    _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, member.Line)).At(rc.Decl.Source));
                 }
             }
 
@@ -869,7 +975,7 @@ namespace fire.Compiler
                     }
                     catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
                     {
-                        _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line));
+                        _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, ctor.Line)).At(rc.Decl.Source));
                     }
                 }
             }
@@ -1214,7 +1320,42 @@ namespace fire.Compiler
             foreach (var stmt in body.Statements) inner.CompileStmt(stmt);
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
-            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic) { RefMask = RefMaskOf(parms) };
+            return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
+            {
+                RefMask = RefMaskOf(parms), ParamTypes = inner.OverloadTypesOf(parms, rc), TypeParamCount = typeParams?.Count ?? 0,
+            };
+        }
+
+        /// <summary>The types of the parameters for overloading by type (Overloads; FunctionProto.ParamTypes).</summary>
+        private string?[] OverloadTypesOf(IReadOnlyList<LambdaParam> parms, RuntimeClass? owner) => parms.Select(p => OverloadTypeOf(p, owner)).ToArray();
+
+        private string OverloadTypeOf(LambdaParam p, RuntimeClass? owner)
+        {
+            var t = p.Type;
+            if (p.ByRef) return "";
+            if (p.ArrayRanks.Count > 0 || t is { ArrayRank: > 0 }) return "k:array";
+            if (t == null || t.IsInferred || t.PointerDepth > 0) return "";
+            if (t.LambdaSignature != null || t.BaseName == "lambda") return "k:lambda";
+            bool methodParam = _methodTypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+            bool classParam = owner?.Decl?.TypeParams?.Any(tp => tp.Name == t.BaseName) == true;
+            if (methodParam || classParam) return "g:" + (DeclaredTypeOfCore(t, owner) ?? "");
+            switch (t.BaseName)
+            {
+                case "int": return "k:int";
+                case "float": return "k:float";
+                case "bool": return "k:bool";
+                case "char": return "k:char";
+                case "string": return "k:string";
+                case "class": return "k:class";
+                case "any": return "";
+            }
+            if (_refParams.EnumNames.Contains(t.BaseName)) return "k:int";
+            if (_knownClassNames == null) return "";
+            bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
+            string name = t.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(t, args.Count, Known) : t.ResolveBaseName(Known);
+            if (_refParams.InterfaceNames.Contains(name)) return "i:" + name;
+            if (_knownClassNames.Contains(name)) return "c:" + name;
+            return _refParams.IsTypeParam(t.BaseName) ? "g:" : "";
         }
 
         /// <summary>Constructor proto: [base constructor call (explicit with
@@ -1286,7 +1427,10 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
 
             var paramDefaults = ctor != null ? CompileParamDefaults(rc, ctor.Params) : Array.Empty<FunctionProto?>();
-            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults) { RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0 };
+            return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults)
+            {
+                RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0, ParamTypes = ctor != null ? inner.OverloadTypesOf(ctor.Params, rc) : null,
+            };
         }
 
         // -----------------------------------------------------------
@@ -1311,7 +1455,7 @@ namespace fire.Compiler
             }
             catch (Exception ex) when (ex is NotSupportedException or InvalidOperationException)
             {
-                _errors.Add(ex as CompilerException ?? new CompilerException(ex.Message, stmt.Line));
+                _errors.Add((ex as CompilerException ?? new CompilerException(ex.Message, stmt.Line)).At(CurrentSourceIndex));
                 _currentScopeDepth = scopeDepth;
                 while (_loopStack.Count > loopCount) _loopStack.Pop();
             }
@@ -2049,6 +2193,17 @@ namespace fire.Compiler
         [ThreadStatic] private static Dictionary<Expr, string>? s_unitChecks;
         [ThreadStatic] private static Dictionary<Expr, string[]>? s_methodTypeArgs;
         [ThreadStatic] private static Dictionary<Expr, (TypeRef Type, string What)>? s_localGuards;
+        [ThreadStatic] private static Dictionary<Expr, string>? s_overloadHints;
+        /// <summary>`FIRE_NO_OVERLOAD_HINTS=1`: no OverloadHint is emitted (every call scores its candidates) - to compare and to find a wrong hint.</summary>
+        private static readonly bool NoOverloadHints = Environment.GetEnvironmentVariable("FIRE_NO_OVERLOAD_HINTS") == "1";
+
+        /// <summary>A call of an overload the type checker could tell (ResolveResult.OverloadHints): the hint goes in front of its other prefixes.</summary>
+        private void EmitOverloadHint(Expr call)
+        {
+            if (s_overloadHints == null || NoOverloadHints || !s_overloadHints.TryGetValue(call, out var hint)) return;
+            _chunk.EmitOp(OpCode.OverloadHint);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(hint)));
+        }
 
         /// <summary>A value going into a local whose declaration the type checker could not prove: checked on the stack (GuardTop/GuardTopType).</summary>
         private void EmitLocalGuard(TypeRef type, string what)
@@ -2072,9 +2227,18 @@ namespace fire.Compiler
         /// <summary>A call of a generic method whose type arguments the type checker found: they go to the call (SetTypeArgs, right before it).</summary>
         private void EmitCallTypeArgs(CallExpr call)
         {
+            EmitOverloadHint(call);
+            if (call.TypeArgs is { Count: > 0 } written)
+            {
+                // `Pick<string>(a, b)`: the written type arguments (mode 3: a generic overload is meant)
+                _chunk.EmitOp(OpCode.SetTypeArgs);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(written.Select(t => TypeArgText(t, _enclosingClass, null, 0))))));
+                _chunk.EmitByte(3);
+                return;
+            }
             if (s_methodTypeArgs == null || !s_methodTypeArgs.TryGetValue(call, out var texts) || texts.All(t => t.Length == 0)) return;
             _chunk.EmitOp(OpCode.SetTypeArgs);
-            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", texts))));
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(texts))));
             _chunk.EmitByte(1);
         }
 
@@ -2175,6 +2339,16 @@ namespace fire.Compiler
                 case BaseExpr:
                     throw new NotSupportedException(
                         "'base' is only valid as 'base.Method(...)', not as a standalone value.");
+
+                case RangeExpr range:
+                    // `a..b` runs as `__Range.Of(a, b)` of the prelude
+                    CompileExpr(range.From);
+                    CompileExpr(range.To);
+                    _chunk.EmitOp(OpCode.CallStaticMethod);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("__Range")));
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeString("Of")));
+                    _chunk.EmitByte(2);
+                    break;
 
                 case IsInExpr iin:
                     CompileExpr(iin.Operand);
@@ -2405,6 +2579,13 @@ namespace fire.Compiler
         {
             var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams);
             inner._chunk.OwnerClass = _enclosingClass;
+            // in generic code the lambda takes the type parameters it uses along (it has no `this` and no call of its own to take them from)
+            inner._methodTypeParams = _methodTypeParams;
+            if (_methodTypeParams is { Count: > 0 } || _enclosingClass?.Decl?.TypeParams is { Count: > 0 } || _lambdaTypeRefs != null)
+            {
+                inner._lambdaTypeRefs = new List<string>();
+                inner._chunk.EmitOp(OpCode.TakeCallTypeArgs);
+            }
             for (int i = 0; i < lambda.Params.Count; i++)
                 inner._chunk.MarkLocalName(0, i, lambda.Params[i].Name);
             if (_refs.TryGetValue(lambda, out var nameRef) && nameRef is ResolvedRef.LambdaCaptures named)
@@ -2433,6 +2614,14 @@ namespace fire.Compiler
             bool hasOnTarget = lambda.OnTarget != null;
             if (hasOnTarget)
                 CompileExpr(lambda.OnTarget!); // in the ENCLOSING (current) scope, not in the lambda scope
+
+            if (inner._lambdaTypeRefs is { Count: > 0 } usedTypeParams)
+            {
+                // the type arguments the body uses, as the code here has them (MakeLambda keeps them in the lambda)
+                _chunk.EmitOp(OpCode.SetTypeArgs);
+                _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(MapTypeRefs(usedTypeParams))));
+                _chunk.EmitByte(2);
+            }
 
             if (captures != null)
             {
@@ -2730,7 +2919,7 @@ namespace fire.Compiler
 
                 if (_refParams.IsLambdaField(me.Name))
                 {
-                    // `this.onClick()`: read the field, call the lambda in it
+                    // `this.OnClick()`: read the field, call the lambda in it
                     CompileExpr(me);
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
                     _chunk.EmitOp(OpCode.Call);

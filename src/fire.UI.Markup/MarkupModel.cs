@@ -64,16 +64,16 @@ namespace fire.UI.Markup
         public List<(string Event, string Handler, int Line)> Handlers { get; } = new();
         public List<MarkupElement> Children { get; } = new();
 
-        public MarkupAttribute? Find(string name) => Attributes.FirstOrDefault(a => a.Name == name);
+        public MarkupAttribute? Find(string name) => Attributes.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>`<Converter key="Upper" type="UpperConverter"/>`: a converter that bindings refer to by its key.</summary>
+    /// <summary>`<Converter Key="Upper" Type="UpperConverter"/>`: a converter that bindings refer to by its key.</summary>
     public sealed record ConverterDeclaration(string Key, string Type, int Line);
 
-    /// <summary>`<Setter property="background" value="#336699"/>`: gives a property a value (`Target`: the name of a part, inside a control template).</summary>
+    /// <summary>`<Setter Property="Background" Value="#336699"/>`: gives a property a value (`Target`: the name of a part, inside a control template).</summary>
     public sealed record SetterDeclaration(string Property, MarkupValue Value, string? Target, int Line);
 
-    /// <summary>`<Trigger property="hover" value="true">`: while all conditions hold (the first one is the attribute pair, more come from `<Condition .../>`), the setters apply.</summary>
+    /// <summary>`<Trigger Property="Hover" Value="true">`: while all conditions hold (the first one is the attribute pair, more come from `<Condition .../>`), the setters apply.</summary>
     public sealed class TriggerDeclaration
     {
         public int Line { get; init; }
@@ -82,7 +82,7 @@ namespace fire.UI.Markup
         public List<SetterDeclaration> Setters { get; } = new();
     }
 
-    /// <summary>`<Style key="Primary" target="Button" basedOn="Base">`: setters and triggers for one kind of element. Without a key it is the implicit style of the kind for the whole interface.</summary>
+    /// <summary>`<Style Key="Primary" Target="Button" BasedOn="Base">`: setters and triggers for one kind of element. Without a key it is the implicit style of the kind for the whole interface.</summary>
     public sealed class StyleDeclaration
     {
         public string? Key { get; init; }
@@ -93,7 +93,7 @@ namespace fire.UI.Markup
         public List<TriggerDeclaration> Triggers { get; } = new();
     }
 
-    /// <summary>`<ControlTemplate key="Fancy" target="Button">`: the look of a control as a tree of elements (the single child element; parts have a `name`), with triggers.</summary>
+    /// <summary>`<ControlTemplate Key="Fancy" Target="Button">`: the look of a control as a tree of elements (the single child element; parts have a `name`), with triggers.</summary>
     public sealed class TemplateDeclaration
     {
         public string Key { get; init; } = "";
@@ -103,7 +103,7 @@ namespace fire.UI.Markup
         public List<TriggerDeclaration> Triggers { get; } = new();
     }
 
-    /// <summary>`<DataTemplate key="Person">`: how one data item of a list looks - the single child element. `{Binding Path}` inside it binds to the ITEM (an empty path, `{Binding}`, is the item itself).</summary>
+    /// <summary>`<DataTemplate Key="Person">`: how one data item of a list looks - the single child element. `{Binding Path}` inside it binds to the ITEM (an empty path, `{Binding}`, is the item itself).</summary>
     public sealed class DataTemplateDeclaration
     {
         public string Key { get; init; } = "";
@@ -111,7 +111,7 @@ namespace fire.UI.Markup
         public MarkupElement? Root { get; set; }
     }
 
-    /// <summary>`<CollectionView key="Sorted" source="{Binding People}" sortBy="name" descending="true" filter="{Expr ...}"/>`: a sorted/filtered view of a list that lists show (`view="Sorted"`).
+    /// <summary>`<CollectionView Key="Sorted" Source="{Binding People}" SortBy="name" Descending="true" Filter="{Expr ...}"/>`: a sorted/filtered view of a list that lists show (`view="Sorted"`).
     /// Its attributes are in <see cref="Element"/> (tag `CollectionView`, see <see cref="MarkupSchema.CollectionViewDef"/>).</summary>
     public sealed class ViewDeclaration
     {

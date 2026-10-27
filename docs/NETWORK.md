@@ -1,7 +1,7 @@
 # Networking and hardware buses - design and steps
 
 Status: **networking (`fire-net`, `fire-http`, `fire-tls`) GPIO (`fire-gpio`), I2C (`fire-i2c`), SPI (`fire-spi`) and WiFi (`fire-wifi`) are built**, see the references below; nothing of the hardware is tried on a board yet. The steps are also kept as tasks (Net 1-3, GPIO, I2C, SPI, WiFi). Sound (`fire-audio`) has a document of its own: docs/AUDIO.md. Everything is a **package** (`ember`, docs/PACKAGES.md): the compiler and the
-runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `native/bridges/` over a thin
+runtime do not change, a program that does not `#import` it does not carry it. Like `time`, `io` and `devices`, each one is a prelude in fire plus C++ in `packages/<name>/native/` over a thin
 platform layer in `native/platform/<name>/` (`plat::`), so the same code runs in the VM (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build, and a platform without the
 feature fails with a clear "not supported" error instead of not compiling.
 
@@ -85,7 +85,7 @@ runs in the thread of its server. A route's lambda must not fail with a *runtime
 
 ## TLS (`#import "tls"`, the package `fire-tls`)
 
-TLS over a TCP connection of the net package. The natives are C++ (`native/bridges/fire_bridge_tls.hpp` over `plat::tls`, one backend per platform); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
+TLS over a TCP connection of the net package. The natives are C++ (`packages/tls/native/fire_bridge_tls.hpp` over `plat::tls`, one backend per platform); the classes are in `namespace Tls`. The package needs `net` (`io`, `time`).
 `http` uses it for `https://` URLs and for `Http.Server.UseTls`.
 
 ```
@@ -94,7 +94,7 @@ s.WriteString("GET / HTTP/1.0\r\nHost: example.org\r\n\r\n")
 print(s.Info)                                              // "TLSv1.3 TLS_AES_256_GCM_SHA384"
 
 var o = new Tls.Options()
-o.caPem = IO.File.ReadAllText("my-ca.pem")                 // trust exactly these (or o.caFile = "path")
+o.caPem = IO.File.ReadAllText("my-ca.pem")                 // trust exactly these (or o.caFile = "path"); IO.File needs #import "filesystem"
 // o.verify = false                                        // no checking at all: for tests only
 var t = Tls.Stream.Connect("intranet", 8443, o)
 
@@ -132,7 +132,7 @@ The versions are TLS 1.2 and 1.3; SNI is sent; a server that closes without `clo
 
 ## GPIO (`#import "gpio"`, the package `fire-gpio`)
 
-Digital pins. It needs `time` (the clock of the time limits). The natives are `native/bridges/fire_bridge_gpio.hpp` over `plat::gpio` (`native/platform/std/fire_gpio_*.hpp`): the **GPIO character device** of Linux
+Digital pins. It needs `time` (the clock of the time limits). The natives are `packages/gpio/native/fire_bridge_gpio.hpp` over `plat::gpio` (`native/platform/std/fire_gpio_*.hpp`): the **GPIO character device** of Linux
 (`/dev/gpiochipN`, the v2 ioctl interface of kernel 5.10+ - Raspberry Pi and other boards; used only when the kernel headers are there, `FIRE_NO_GPIO` switches it off), **ESP-IDF `driver/gpio`** on an ESP32
 (add the components `driver` and `esp_timer`), and a stub elsewhere (Windows, macOS: no chips). Every platform has the **simulated chip** `"sim"`, so a program can be written and tested on the PC.
 
@@ -157,14 +157,15 @@ button.Poll()                                              // hands every waitin
   work; `None` when the time ran out) and `Poll()`. `EdgeTime` is when the edge that was taken last happened (microseconds on a clock that only goes forward). At most 16 edges are kept per pin; when nobody takes them the oldest are lost (Linux: the kernel's queue).
   Nothing is debounced: a mechanical button needs a pause in the program.
 * **The simulated chip** has the lines 0..31. `Gpio.Sim.Wire(a, b)` / `Unwire(a, b)` connect two lines (what one drives, the other sees; two outputs that disagree: low wins), `Gpio.Sim.Drive(line, level)` / `Release(line)` drive a line from outside like a button or sensor
-  (`Gpio.Sim.Level(line)` looks at the level), pull resistors work on inputs, `Gpio.Sim.Reset()` removes wires and drives. Edges and busy-ness behave as on the real thing.
+  (`Gpio.Sim.Level(line)` looks at the level, `Gpio.Sim.Output(line)` what the program drives: 1/0, or -1 while the line is no output of it), pull resistors work on inputs, `Gpio.Sim.Reset()` removes wires and drives. Edges and busy-ness behave as on the real thing.
+  A circuit of the package `circuits` can sit on the lines (`Circuits.GpioLine`, docs/CIRCUITS.md).
 * Errors are `Gpio.GpioException` (with a `code`): `NotFoundException` (3: no such chip or line), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `gpio`) and `UnsupportedException` (6).
   Bad use (reading a pin that is not set up, writing an input, taking edges of an output) is code 1.
 * Not tried on hardware yet: the Linux and ESP32 backends are written against the documented interfaces; the ESP32 file compiles against a stand-in of `driver/gpio.h`, the Linux one against the kernel headers.
 
 ## I2C (`#import "i2c"`, the package `fire-i2c`)
 
-The I2C bus as a controller. The natives are `native/bridges/fire_bridge_i2c.hpp` over `plat::i2c` (`native/platform/std/fire_i2c_*.hpp`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
+The I2C bus as a controller. The natives are `packages/i2c/native/fire_bridge_i2c.hpp` over `plat::i2c` (`native/platform/std/fire_i2c_*.hpp`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
 there, `FIRE_NO_I2C` switches it off), the **master driver of ESP-IDF** (`driver/i2c_master.h`, IDF 5.2+; add the component `esp_driver_i2c` or `driver`) on an ESP32, and a stub elsewhere (no buses). Every platform has the **simulated bus** `"sim"`.
 
 ```
@@ -187,13 +188,14 @@ var r2 = bus.WriteRead(0x3C, command, 4)          // the general form: write, re
 * **Pins on the ESP32:** bus 0 uses GPIO 21 (SDA) and 22 (SCL), bus 1 uses 18 and 19; set `FIRE_I2C0_SDA`, `FIRE_I2C0_SCL`, `FIRE_I2C1_SDA`, `FIRE_I2C1_SCL` in the defines of the target to change them. The internal pull-ups are switched on (weak: use external ones for anything but short wires).
 * **The simulated bus:** `I2c.Sim.Add(address)` puts a device on it with 256 registers (all 0) that behaves like a typical sensor chip - the first byte of a write is the register, more bytes are stored from there on (the register counts up), a read returns bytes from the current register on
   (counting up). `I2c.Sim.SetRegister(address, register, value)` changes what it "measures", `GetRegister` shows what the program wrote, `Remove(address)` / `Reset()` take devices off. An address without a device does not answer (`NoAckException`), as on a real bus.
+  Converters of a circuit can sit on the bus (`Circuits.I2cAdc`/`I2cDac`, docs/CIRCUITS.md).
 * Errors are `I2c.I2cException` (with a `code`): `NotFoundException` (3: no such bus), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `i2c`), `UnsupportedException` (6), `NoAckException` (8: nobody answered - no device, no power, wrong wiring) and
   `TimeoutException` (9). Bad arguments (address, buffer range) are code 1.
 * Not tried on hardware yet: the Linux backend is written against the i2c-dev interface and compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver header (the mapping of the driver's error codes to NoAck is a best guess until it runs on a board).
 
 ## SPI (`#import "spi"`, the package `fire-spi`)
 
-The SPI bus as a controller. The natives are `native/bridges/fire_bridge_spi.hpp` over `plat::spi` (`native/platform/std/fire_spi_*.hpp`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
+The SPI bus as a controller. The natives are `packages/spi/native/fire_bridge_spi.hpp` over `plat::spi` (`native/platform/std/fire_spi_*.hpp`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
 `FIRE_NO_SPI` switches it off), the **SPI master driver of ESP-IDF** (`driver/spi_master.h`; add the component `esp_driver_spi` or `driver`) on an ESP32, and a stub elsewhere (no devices). Every platform has the **simulated device** `"sim"`.
 A *device* is a bus with one chip select (that is how the kernel sees it and what a chip on the bus needs).
 
@@ -216,13 +218,14 @@ chip.Mode = 3                                      // clock polarity and phase; 
   through a DMA buffer in pieces of 2048 bytes.
 * **The simulated device** is a loopback by default (MISO tied to MOSI: what is sent comes back - the usual wiring test). `Spi.Sim.Reply(bytes)` makes it a device that answers: one queued byte comes back per byte sent, starting with the first - so the answer to a command
   byte is in the bytes *after* it (queue a leading 0 for the command byte, as the data sheets draw it); when the queue is empty it answers 0. `Spi.Sim.Loopback()` turns the loopback on again. `Spi.Sim.Sent()` is everything the program sent (the first 65536 bytes),
-  `Mode()`, `Speed()`, `LsbFirst()` and `Transfers()` say what a chip would have seen, `Clear()` forgets it.
+  `Mode()`, `Speed()`, `LsbFirst()` and `Transfers()` say what a chip would have seen, `LastSent()` and `TotalSent()` the last byte and how many were sent since the start, `Clear()` forgets it.
+  `Spi.Sim.SetReply(bytes)` is `Reply` that drops the queued answers first. Shift registers of a circuit can sit on the device (`Circuits.SpiShiftOut`/`SpiShiftIn`, docs/CIRCUITS.md).
 * Errors are `Spi.SpiException` (with a `code`): `NotFoundException` (3), `BusyException` (4), `PermissionException` (5: on Linux the user must be in the group `spi`), `UnsupportedException` (6) and `TimeoutException` (8). Bad arguments (mode, speed, buffer range) are code 1.
 * Not tried on hardware yet: the Linux backend compiles against the kernel headers; the ESP32 file compiles against a stand-in of the driver headers.
 
 ## WiFi (`#import "wifi"`, the package `fire-wifi`)
 
-The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `native/bridges/fire_bridge_wifi.hpp` over `plat::wifi` (`native/platform/std/fire_wifi_*.hpp`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
+The radio of a board: scan for networks, join one as a **station**, be an **access point**. It needs `time`. The natives are `packages/wifi/native/fire_bridge_wifi.hpp` over `plat::wifi` (`native/platform/std/fire_wifi_*.hpp`): the **WiFi driver of ESP-IDF** (`esp_wifi`, `esp_event`,
 `esp_netif`, `nvs_flash`) on an ESP32. Where the operating system owns the network (Windows, Linux, macOS) there is no radio for a program to control: the list of interfaces is empty, and the package reports "not supported" (`WiFi.Board.Available()` is false). Every platform has the
 **simulated radio** `"sim"`. Once the station has an address the lwIP sockets of the `net` package (and `http`, `tls`) work - **the network packages do not know about WiFi**; a program joins the network first and then opens its sockets. Ethernet on the ESP32 would follow the same pattern.
 

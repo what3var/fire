@@ -49,8 +49,17 @@ namespace fire.Runtime
         private OwnedSet _owned;
         private List<IOwnedLeaf>? _leaves; // owned arrays and buffers
         private bool _destroyed;
+        // Debug mode: the fields and arrays that were given a reference to this object while it belonged to a call (see DanglingWatch)
+        private List<(object Holder, string? Field)>? _referrers;
 
         public bool IsDestroyed => _destroyed;
+
+        internal void AddReferrer(object holder, string? field)
+        {
+            _referrers ??= new List<(object, string?)>(1);
+            foreach (var (h, f) in _referrers) if (ReferenceEquals(h, holder) && f == field) return;
+            if (_referrers.Count < 8) _referrers.Add((holder, field));
+        }
 
         /// <summary>Destroyed AND the destruction batch has ended (see <see cref="DestroyBatch"/>): from now on any use is an error (SPEC 2.5).
         /// Until then a destructor may still use the other objects of its scope, including those already destroyed.</summary>
@@ -380,6 +389,12 @@ namespace fire.Runtime
 
         private void DestroyCore(IDestructRunner runner)
         {
+            if (_referrers != null)
+            {
+                var referrers = _referrers;
+                _referrers = null;
+                DanglingWatch.Check(this, referrers, runner);
+            }
 
             // Probes live with the object
             if (Probes != null) ProbeRegistry.Forget(Probes.RemoveAll());

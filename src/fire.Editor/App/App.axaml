@@ -81,8 +81,13 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
-        <Style Selector="local|ToolStrip CommandBarButton:disabled, local|ToolStripButton:disabled">
+        <Style Selector="local|ToolStrip CommandBarButton:disabled, Button.toolstrip:disabled, Image.dimmable:disabled">
             <Setter Property="Opacity" Value="0.4"/>
+        </Style>
+        <!-- Fluent paints a grey box behind a disabled button: in a tool strip it is just dimmed -->
+        <Style Selector="Button.toolstrip:disabled /template/ ContentPresenter#PART_ContentPresenter, local|ToolStrip Button:disabled /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
         </Style>
         <!-- the compact tool button (ToolStrips/ToolStripButton.cs): small padding, a 16 x 16 icon, a small label -->
         <Style Selector="local|ToolStripButton">

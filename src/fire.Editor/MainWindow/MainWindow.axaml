@@ -3,13 +3,91 @@
         xmlns:dock="using:Dock.Avalonia.Controls"
         xmlns:local="using:fire.Editor"
         x:Class="fire.Editor.MainWindow"
-        Title="spark" Width="1300" Height="820" Icon="/Assets/Logo-64.png"
+        Title="" Width="1300" Height="820" Icon="/Assets/Logo-64.png"
         DragDrop.AllowDrop="True"
 		TransparencyLevelHint="AcrylicBlur"
         Background="#1B181E"
-        ExtendClientAreaToDecorationsHint="True">
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaTitleBarHeightHint="32">
 
     <Window.Resources>
+		<!-- the caption buttons are drawn by us (Avalonia 12 "drawn decorations"). On Windows they exist only with
+		     ExtendClientAreaToDecorationsHint="True" and WindowDecorations="Full": then Win32 asks for a drawn title bar and
+		     Avalonia builds this theme. The decorations hang below the TopLevelHost, not below the window, so an implicit
+		     theme in Window.Resources is never found and DynamicResource does not see these resources: the theme is set
+		     explicitly (WindowDecorationsTheme in the constructor) and uses StaticResource/fixed colors only. -->
+		<ControlTheme x:Key="SparkCaptionButton" TargetType="Button">
+			<Setter Property="Background" Value="Transparent"/>
+			<Setter Property="Foreground" Value="#E0E0E0"/>
+			<Setter Property="Width" Value="46"/>
+			<Setter Property="VerticalAlignment" Value="Stretch"/>
+			<Setter Property="Template">
+				<ControlTemplate>
+					<ContentPresenter Name="PART_ContentPresenter" Background="{TemplateBinding Background}"
+									  Content="{TemplateBinding Content}"
+									  HorizontalContentAlignment="Center" VerticalContentAlignment="Center"/>
+				</ControlTemplate>
+			</Setter>
+			<Style Selector="^:pointerover"><Setter Property="Background" Value="#22FFFFFF"/></Style>
+			<Style Selector="^:pressed"><Setter Property="Background" Value="#44FFFFFF"/></Style>
+		</ControlTheme>
+		<ControlTheme x:Key="SparkCloseButton" TargetType="Button" BasedOn="{StaticResource SparkCaptionButton}">
+			<Style Selector="^:pointerover"><Setter Property="Background" Value="#760CAF"/></Style>
+			<Style Selector="^:pressed"><Setter Property="Background" Value="#430E6F"/></Style>
+		</ControlTheme>
+		<ControlTheme x:Key="SparkDecorations" TargetType="WindowDrawnDecorations">
+			<Setter Property="DefaultTitleBarHeight" Value="32"/>
+			<Setter Property="DefaultFrameThickness" Value="0"/>
+			<Setter Property="DefaultShadowThickness" Value="0"/>
+			<Setter Property="Template">
+				<WindowDrawnDecorationsTemplate>
+					<WindowDrawnDecorationsContent>
+						<!-- nothing below the window: the title row of the window (acrylic, logo, title) is the title bar -->
+						<WindowDrawnDecorationsContent.Underlay>
+							<Panel/>
+						</WindowDrawnDecorationsContent.Underlay>
+						<!-- above the window: only the caption buttons; the roles give Windows its hit test (snap layouts on maximize) -->
+						<WindowDrawnDecorationsContent.Overlay>
+							<StackPanel x:Name="PART_OverlayPanel" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
+										Height="{TemplateBinding TitleBarHeight}" IsVisible="{TemplateBinding HasTitleBar}">
+								<Button x:Name="PART_MinimizeButton" Theme="{StaticResource SparkCaptionButton}" WindowDecorationProperties.ElementRole="MinimizeButton">
+									<Path Width="10" Height="1" Stretch="Fill" Fill="#E0E0E0" Data="M2048 1229v-205h-2048v205h2048z"/>
+								</Button>
+								<Button x:Name="PART_MaximizeButton" Theme="{StaticResource SparkCaptionButton}" WindowDecorationProperties.ElementRole="MaximizeButton">
+									<Path x:Name="RestoreButtonPath" Width="10" Height="10" Stretch="Uniform" Fill="#E0E0E0" Data="M2048 2048v-2048h-2048v2048h2048zM1843 1843h-1638v-1638h1638v1638z"/>
+								</Button>
+								<Button x:Name="PART_CloseButton" Theme="{StaticResource SparkCloseButton}" WindowDecorationProperties.ElementRole="CloseButton">
+									<Path Width="10" Height="10" Stretch="Uniform" Fill="#E0E0E0" Data="M1169 1024l879 -879l-145 -145l-879 879l-879 -879l-145 145l879 879l-879 879l145 145l879 -879l879 879l145 -145z"/>
+								</Button>
+							</StackPanel>
+						</WindowDrawnDecorationsContent.Overlay>
+						<!-- full screen: a bar at the top edge; its buttons need their own PART names (one name scope for the whole template) -->
+						<WindowDrawnDecorationsContent.FullscreenPopover>
+							<Panel Height="{TemplateBinding DefaultTitleBarHeight}" VerticalAlignment="Top" Background="#E01B181E"
+								   WindowDecorationProperties.ElementRole="DecorationsElement">
+								<TextBlock Text="{TemplateBinding Title}" Foreground="#E0E0E0" FontSize="12" VerticalAlignment="Center" Margin="12,0"/>
+								<StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+									<Button x:Name="PART_PopoverFullScreenButton" Theme="{StaticResource SparkCaptionButton}" WindowDecorationProperties.ElementRole="FullScreenButton">
+										<Path Width="10" Height="10" Stretch="Uniform" Fill="#E0E0E0" Data="M205 1024h819v-819h-205v469l-674 -674l-145 145l674 674h-469v205zM1374 1229h469v-205h-819v819h205v-469l674 674l145 -145z"/>
+									</Button>
+									<Button x:Name="PART_PopoverCloseButton" Theme="{StaticResource SparkCloseButton}" WindowDecorationProperties.ElementRole="CloseButton">
+										<Path Width="10" Height="10" Stretch="Uniform" Fill="#E0E0E0" Data="M1169 1024l879 -879l-145 -145l-879 879l-879 -879l-145 145l879 879l-879 879l145 145l879 -879l879 879l145 -145z"/>
+									</Button>
+								</StackPanel>
+							</Panel>
+						</WindowDrawnDecorationsContent.FullscreenPopover>
+					</WindowDrawnDecorationsContent>
+				</WindowDrawnDecorationsTemplate>
+			</Setter>
+			<!-- maximized: the restore symbol -->
+			<Style Selector="^:maximized /template/ Path#RestoreButtonPath">
+				<Setter Property="Data" Value="M2048 410h-410v-410h-1638v1638h410v410h1638v-1638zM1434 1434h-1229v-1229h1229v1229zM1843 1843h-1229v-205h1024v-1024h205v1229z"/>
+			</Style>
+			<!-- actions the platform does not allow -->
+			<Style Selector="^:not(:has-minimize) /template/ Button#PART_MinimizeButton"><Setter Property="IsVisible" Value="False"/></Style>
+			<Style Selector="^:not(:has-maximize) /template/ Button#PART_MaximizeButton"><Setter Property="IsVisible" Value="False"/></Style>
+			<Style Selector="^:fullscreen /template/ StackPanel#PART_OverlayPanel"><Setter Property="IsVisible" Value="False"/></Style>
+		</ControlTheme>
         <!-- the acrylic behind the title bar, the menu, the tool strips and the trays at the window edges -->
         <ExperimentalAcrylicMaterial x:Key="BarAcrylic" BackgroundSource="Digger" FallbackColor="#1B181E" TintColor="#110022" TintOpacity="1" MaterialOpacity="0.6"/>
         <!-- vector symbols of the tool bars (Material Design Icons), so that no symbol font is needed on any system -->
@@ -27,9 +105,15 @@
         <Style Selector="Menu">
             <Setter Property="Background" Value="Transparent"/>
         </Style>
-        <Style Selector="Menu > MenuItem /template/ Border#PART_LayoutRoot">
-            <Setter Property="Background" Value="Transparent"/>
-        </Style>
+		<Style Selector="Menu > MenuItem /template/ Border#PART_LayoutRoot">
+			<Setter Property="Background" Value="Transparent"/>
+			<Setter Property="Margin" Value="0"/>
+			<Setter Property="Padding" Value="0"/>
+			<Setter Property="MinHeight" Value="0"/>
+		</Style>
+		<Style Selector="Menu > MenuItem">
+			<Setter Property="Height" Value="24"/>
+		</Style>
         <Style Selector="Menu > MenuItem:pointerover /template/ Border#PART_LayoutRoot">
             <Setter Property="Background" Value="#33FFFFFF"/>
         </Style>
@@ -39,10 +123,23 @@
     </Window.Styles>
 	<Grid>
 		<Grid.RowDefinitions>
-			<RowDefinition Height="32"/>
+			<RowDefinition Height="auto"/>
 			<RowDefinition Height="*"/>
 		</Grid.RowDefinitions>
 		<ExperimentalAcrylicBorder IsHitTestVisible="False" Grid.Row="0" Material="{StaticResource BarAcrylic}"/>
+		<!-- the title row is the title bar of the window: dragging, double click and the system menu come from Windows -->
+		<Panel Grid.Row="0" Height="32" Background="Transparent" WindowDecorationProperties.ElementRole="TitleBar"/>
+		<StackPanel Grid.Row="0" Height="32" Orientation="Horizontal" IsHitTestVisible="False">
+			<Image Width="20"
+			    Height="20"
+				   Margin="8,6,8,4"
+			    Source="/Assets/Logo-64.png"/>
+			<TextBlock x:Name="txtTitle"
+					   VerticalAlignment="Center"
+					   FontSize="12"
+					   Text="{Binding $parent[Window].Title}"/>
+		</StackPanel>
+	
 	<DockPanel Grid.Row="1" x:Name="DockArea">
 		<Panel DockPanel.Dock="Top">
 			<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
@@ -65,6 +162,7 @@
 							</MenuItem.Icon>
 						</MenuItem>
 						<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
+						<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
 					</MenuItem>
 					<MenuItem Header="_Open..." Click="Open_Click" InputGesture="Ctrl+O"/>
 					<Separator/>
@@ -87,6 +185,8 @@
 					<MenuItem Header="Build Settings (of the project or the file)" Click="BuildSettings_Click"/>
 					<MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
 					<MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
+					<MenuItem Header="Install Package File (.fpk)..." Click="InstallPackageFile_Click"/>
+					<MenuItem Header="Open the Standard Libraries (Source)" Click="OpenStandardSources_Click"/>
 					<Separator/>
 					<MenuItem Header="E_xit" Click="Exit_Click"/>
 				</MenuItem>
@@ -131,6 +231,7 @@
 					<Separator/>
 					<MenuItem Header="Set as _Startup Project" x:Name="mnuSetStartup" Click="SetStartup_Click"/>
 					<MenuItem Header="_Pack Library as Package (.fpk)..." x:Name="mnuPackLibrary" Click="PackLibrary_Click"/>
+					<MenuItem Header="_Install Library (pack and install)" x:Name="mnuInstallLibrary" Click="InstallLibrary_Click"/>
 					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
 					<MenuItem Header="Project Pr_operties..." x:Name="mnuProjectProperties" Click="ProjectProperties_Click"/>
 				</MenuItem>
@@ -172,6 +273,19 @@
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
 				</MenuItem>
+				<!-- the Test Explorer (docs/TESTING.md): the tests of the solution, the project or the active file -->
+				<MenuItem Header="_Test">
+					<MenuItem Header="Test _Explorer" Click="TestsOpen_Click"/>
+					<Separator/>
+					<MenuItem Header="Run _All Tests (of the Explorer's scope)" Click="TestsRunAll_Click" InputGesture="Ctrl+R"/>
+					<MenuItem Header="Run Tests of This _File" Click="TestsRunFile_Click"/>
+					<MenuItem Header="Run _Failed Tests" Click="TestsRunFailed_Click"/>
+					<MenuItem Header="_Stop Test Run" Click="TestsStop_Click"/>
+					<Separator/>
+					<MenuItem Header="Scope: _Solution" Tag="Solution" Click="TestsScope_Click"/>
+					<MenuItem Header="Scope: _Project" Tag="Project" Click="TestsScope_Click"/>
+					<MenuItem Header="Scope: Current F_ile" Tag="File" Click="TestsScope_Click"/>
+				</MenuItem>
 				<MenuItem Header="_Devices">
 					<MenuItem Header="_Search for Devices" Click="DevicesSearch_Click"/>
 					<MenuItem Header="_Connect" Click="DevicesConnect_Click"/>
@@ -195,6 +309,10 @@
 					<MenuItem Header="S_tack" Tag="stack" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Sol_ution Explorer" Tag="solution" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="Test E_xplorer" Tag="tests" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="_Properties" Tag="properties" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<!-- only while a circuit is the active document -->
+					<MenuItem Header="Tool_box" Tag="toolbox" x:Name="mnuViewToolbox" ToggleType="CheckBox" Click="ViewPanel_Click" IsVisible="False"/>
 					<Separator/>
 					<!-- the tool strips: filled in MainWindow (BuildToolbarsMenu) -->
 					<MenuItem Header="Tool_bars" x:Name="mnuToolbars" SubmenuOpened="ToolbarsMenu_SubmenuOpened"/>
@@ -211,6 +329,8 @@
 					<MenuItem Header="The fire _Language" x:Name="mnuLanguage"/>
 					<Separator/>
 					<MenuItem Header="_Samples..." Click="HelpSamples_Click"/>
+					<Separator/>
+					<MenuItem Header="_About spark..." Click="HelpAbout_Click"/>
 				</MenuItem>
 			</Menu>
 				<!-- the tool strips (ToolStrips/): each can be dragged by its grip to another place in the tray, into another tray at a window edge or out of the window (floating) -->
@@ -226,6 +346,7 @@
 										<MenuItem.Icon><Image Source="/Assets/icons/Material-FileDocumentOutline.png"/></MenuItem.Icon>
 									</MenuItem>
 									<MenuItem Header="_Raster Image" Click="NewPixelImage_Click"/>
+									<MenuItem Header="_Circuit" Click="NewCircuit_Click"/>
 									<Separator/>
 									<MenuItem Header="_Project..." Click="NewProject_Click"/>
 									<MenuItem Header="_Solution..." Click="NewSolution_Click"/>
@@ -235,7 +356,19 @@
 						<local:ToolStripButton Click="Open_Click" ToolTip.Tip="Open... (Ctrl+O)" IconData="{StaticResource IconOpen}"/>
 						<local:ToolStripButton x:Name="btnSave" Click="Save_Click" ToolTip.Tip="Save (Ctrl+S)" IconData="{StaticResource IconSave}"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="run" Title="Run" Band="0" BandIndex="1">
+					<local:ToolStrip Id="edit" Title="Edit" Band="0" BandIndex="1">
+						<local:ToolStripButton x:Name="tbUndo" Click="Undo_Click" ToolTip.Tip="Undo (Ctrl+Z)" IconSource="/Assets/icons/Edit-Undo.png"/>
+						<local:ToolStripButton x:Name="tbRedo" Click="Redo_Click" ToolTip.Tip="Redo (Ctrl+Y)" IconSource="/Assets/icons/Edit-Redo.png"/>
+						<local:ToolStripButton x:Name="tbCut" Click="Cut_Click" ToolTip.Tip="Cut (Ctrl+X)" IconSource="/Assets/icons/Edit-ContentCut.png"/>
+						<local:ToolStripButton x:Name="tbCopy" Click="Copy_Click" ToolTip.Tip="Copy (Ctrl+C)" IconSource="/Assets/icons/Edit-ContentCopy.png"/>
+						<local:ToolStripButton x:Name="tbPaste" Click="Paste_Click" ToolTip.Tip="Paste (Ctrl+V)" IconSource="/Assets/icons/Edit-ContentPaste.png"/>
+						<local:ToolStripButton x:Name="tbDelete" Click="Delete_Click" ToolTip.Tip="Delete (Del)" IconSource="/Assets/icons/Edit-TrashCanOutline.png"/>
+						<local:ToolStripButton x:Name="tbSelectAll" Click="SelectAll_Click" ToolTip.Tip="Select all (Ctrl+A)" IconSource="/Assets/icons/Edit-SelectAll.png"/>
+						<local:ToolStripButton x:Name="tbFindReplace" Click="FindReplace_Click" ToolTip.Tip="Find and replace (Ctrl+H)" IconSource="/Assets/icons/Edit-FindReplace.png"/>
+						<local:ToolStripButton x:Name="tbGoToDefinition" Click="GoToDefinition_Click" ToolTip.Tip="Go to definition (F12)" IconSource="/Assets/icons/Edit-GoToDefinition.png"/>
+						<local:ToolStripButton x:Name="tbToggleComment" Click="ToggleComment_Click" ToolTip.Tip="Toggle comment (Ctrl+Shift+C)" IconSource="/Assets/icons/Edit-CommentOutline.png"/>
+					</local:ToolStrip>
+					<local:ToolStrip Id="run" Title="Run" Band="0" BandIndex="2">
 						<Image Source="/Assets/icons/Material-ClipboardPulseOutline.png" Width="16" Height="16" Margin="4,2,6,2"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbMode" Width="130" SelectionChanged="cmbMode_SelectionChanged" MinHeight="26" Padding="8,2"
 								  ToolTip.Tip="Execution mode: Debug, Release or Performance">
@@ -248,23 +381,50 @@
 						<local:ToolStripButton Click="RunToEnd_Click" ToolTip.Tip="Run to the end without stopping at breakpoints" IconSource="/Assets/icons/Material-PlayOutline.png"/>
 						<local:ToolStripButton Click="Stop_Click" ToolTip.Tip="Stop (Shift+F5)" IconSource="/Assets/icons/Material-Stop.png"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="2">
+					<local:ToolStrip Id="debug" Title="Debug" Band="0" BandIndex="3">
 						<local:ToolStripButton Click="Step_Click" ToolTip.Tip="Step over (F10)" IconSource="/Assets/icons/Material-DebugStepOver.png"/>
 						<local:ToolStripButton Click="StepInto_Click" ToolTip.Tip="Step into (F11)" IconSource="/Assets/icons/Material-DebugStepInto.png"/>
 						<local:ToolStripButton Click="StepOut_Click" ToolTip.Tip="Step out of the current function (Shift+F11)" IconSource="/Assets/icons/Material-DebugStepOut.png"/>
 						<local:ToolStripButton Label="Breakpoint" Click="ToggleBreakpoint_Click" ToolTip.Tip="Toggle breakpoint (F9)" IconSource="/Assets/icons/Material-PauseCircle.png"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="device" Title="Default device" Band="0" BandIndex="3">
+					<local:ToolStrip Id="device" Title="Default device" Band="1" BandIndex="1">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" local:ToolStripPanel.KeepWithNext="True" Text="Default device:" VerticalAlignment="Center" Margin="4,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbDefaultDevice" Width="170" SelectionChanged="cmbDefaultDevice_SelectionChanged" MinHeight="26" Padding="8,2"
 								  ToolTip.Tip="The device a script receives as Device.Default"/>
 					</local:ToolStrip>
-					<local:ToolStrip Id="build" Title="Build" Band="0" BandIndex="4">
+					<local:ToolStrip Id="build" Title="Build" Band="1" BandIndex="2">
 						<TextBlock local:ToolStrip.HorizontalOnly="True" local:ToolStripPanel.KeepWithNext="True" Text="Target:" VerticalAlignment="Center" Margin="4,0,6,0"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbTarget" Width="170" SelectionChanged="cmbTarget_SelectionChanged" MinHeight="26" Padding="8,2"
 						          ToolTip.Tip="The target of a native build (Build native). Default: the target of the project or of the native build settings"/>
 						<local:ToolStripButton Label="Build" Click="BuildNative_Click" ToolTip.Tip="Build native..." IconData="{StaticResource IconBuild}"/>
 						<local:ToolStripButton Click="BuildSettings_Click" ToolTip.Tip="Build settings (name, version, icon, ...)" IconData="{StaticResource IconSettings}"/>
+					</local:ToolStrip>
+					<!-- the circuit editor: on while a circuit is the active document -->
+					<local:ToolStrip Id="simulation" Title="Simulation" Band="1" BandIndex="0" x:Name="stripSimulation">
+						<local:ToolStripButton x:Name="tbSimPause" Click="SimPause_Click" ToolTip.Tip="Pause the simulation (Space in the view)" IconSource="/Assets/icons/Circuit-Pause.png"/>
+						<local:ToolStripButton Click="SimReset_Click" ToolTip.Tip="Reset the simulation to time 0" IconSource="/Assets/icons/Circuit-Restart.png"/>
+						<Image Classes="dimmable" Source="/Assets/icons/Circuit-PlaySpeed.png" Width="16" Height="16" Margin="6,2,4,2" local:ToolStripPanel.KeepWithNext="True" ToolTip.Tip="The speed of the simulation"/>
+						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbSimSteps" Width="120" SelectionChanged="cmbSimSteps_SelectionChanged" MinHeight="26" Padding="8,2"
+								  ToolTip.Tip="Time steps of the circuit per picture: the speed of the simulation"/>
+						<local:ToolStripButton Click="SimRotateLeft_Click" ToolTip.Tip="Rotate the selection counterclockwise (Shift+R)" IconSource="/Assets/icons/Circuit-RotateLeft.png"/>
+						<local:ToolStripButton Click="SimRotateRight_Click" ToolTip.Tip="Rotate the selection clockwise (R)" IconSource="/Assets/icons/Circuit-RotateRight.png"/>
+						<local:ToolStripButton Click="SimFlipHorizontal_Click" ToolTip.Tip="Flip the selection horizontally (left to right)" IconSource="/Assets/icons/Circuit-FlipHorizontal.png"/>
+						<local:ToolStripButton Click="SimFlipVertical_Click" ToolTip.Tip="Flip the selection vertically (top to bottom)" IconSource="/Assets/icons/Circuit-FlipVertical.png"/>
+						<local:ToolStripButton Click="SimFit_Click" ToolTip.Tip="Fit the whole schematic into the view" IconSource="/Assets/icons/Circuit-FitToScreenOutline.png"/>
+						<local:ToolStripButton Click="SimOpenMenu_Click" ToolTip.Tip="Import a circuit of Paul Falstad's simulator (its XML file, or File > Export As Text)" IconSource="/Assets/icons/Circuits-Import.png">
+							<local:ToolStripButton.Menu>
+								<MenuFlyout>
+									<MenuItem Header="From _file..." Click="SimImportFile_Click"/>
+									<MenuItem Header="From _clipboard" Click="SimImportClipboard_Click"/>
+								</MenuFlyout>
+							</local:ToolStripButton.Menu>
+						</local:ToolStripButton>
+						<local:ToolStripButton x:Name="tbSimSamples" Click="SimOpenMenu_Click" ToolTip.Tip="Example circuits to try out and to start from" IconSource="/Assets/icons/Circuit-Samples.png">
+							<local:ToolStripButton.Menu>
+								<MenuFlyout/>
+							</local:ToolStripButton.Menu>
+						</local:ToolStripButton>
+						<local:ToolStripButton Click="SimProperties_Click" ToolTip.Tip="The circuit: its class, the time step of the simulation, its inputs and outputs" IconSource="/Assets/icons/Circuit-Properties.png"/>
 					</local:ToolStrip>
 				</local:ToolStripTray>
 			</StackPanel>

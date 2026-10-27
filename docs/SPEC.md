@@ -44,8 +44,11 @@ var e = 1 var f = 2    // ERROR: neither ';' nor a line break
   declaration with a unit converts into it, `: any` takes every unit, one whose initializer carries a unit takes that unit.
 - A **parameter or field declared with a class** (`Point p`) holds `undefined` or an object of that class or of a class derived from it, checked the same
   way (`ArgumentException`: `Parameter 'p' is a Point, not String.`); likewise an interface (`IEnumerable` also takes arrays, buffers and strings) and a
-  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found -
-  `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float, `Parameter 'v' is a T (int), not String.`). Without a known
+  type parameter (checked against the type argument: an object keeps those of its `new`, a call of a generic method those the type checker found,
+  a lambda made in generic code those it uses - `new Box<int>()` takes only ints, a whole number for `Box<float>` becomes a float,
+  `Parameter 'v' is a T (int), not String.`). A number type argument is what the same declaration means: `Box<int>` holds ints without a unit
+  (`UnitMismatchException` for `5cm`), `Box<int : cm>` ints converted into cm, `Box<int : any m>` lengths in their own unit, `Box<int : any>` ints
+  in any unit. A type argument found for a generic method from a value carries that value's unit (`Max(5cm, 3cm)`: `int : cm`; unknown: `int : any`). Without a known
   type argument (the raw form `new Box()`) a type parameter is checked by its `where` conditions (`is of`, `is in`) and not at all without them;
   `any` and `class` are not checked.
 - A **local variable** declared with int/float/bool, a class, an interface or a type parameter holds the same: a value the type checker cannot
@@ -70,6 +73,7 @@ From loose (far up) to tightly binding (far down):
 &                         bitwise and      (int only)
 == != ##                  equality (`##` is a synonym for `!=`)
 < <= > >=                 comparison
+..                        range (int only): `1..5` is [1, 2, 3, 4, 5], `5..1` counts down
 << >>                     bit shift operators (int only)
 + -                       addition/subtraction
 * / %                     multiplication/division/modulo
@@ -211,6 +215,9 @@ Every object instance (`class`) has **exactly one owner**: either a scope (block
   (there is no destructor), the inner arrays it owns (2.1) are destroyed with it.
 - **Using a destroyed array or buffer is an error**: reading, writing, `Length` and `foreach` throw a catchable `DestroyedException` in the execution modes Debug and Release. In `#performance` mode
   nothing is checked (the behaviour is undefined; natively that is a read of freed memory). A destroyed **object** is treated the same way (2.3): dead objects throw `DestroyedException` (a shallow copy, 2.4, may point to one).
+- **Debug warning for references that outlive their object**: in Debug mode the VM notes when a field or an array element is given an object that belongs to a scope (a local, an
+  argument passed with `take`, or something they own). When that object is destroyed while a holder that lives on still points to it, a warning is printed (once per place):
+  `warning (line N): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (...)`. Release, Performance and native programs do not check.
 - A reference does not keep anything alive: `this.items = tmp` does **not** move `tmp` to the object - `tmp` still belongs to the scope and dies with it. The owner has to be changed explicitly:
   `tmp.TakeTo(this)`. The same holds for an array that is stored in a variable of an outer scope in a loop body (`e = Next()` inside a loop: `e.TakeUpwards()`, or declare it in the loop).
 - **`delete expression`** destroys an object, an array or a buffer at once and detaches it from its owner: for an object the destructor runs and everything it owns is destroyed (2.3), exactly as if its owner
@@ -291,7 +298,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   - `value!` (without an argument) → the type is derived from the context.
   - `value!type` → the type is explicitly forced.
   - Targets: `int`, `float`, `bool`, `string`, `char` (from/to the character code; a float is rounded), a bit width `int[8|16|32|64]` (signed two's complement), `byte` (unsigned 8 bits), `float[32|64]` (`float[32]` rounds to single precision).
-  - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged.
+  - `value!ClassName` (a class or an interface) is a checked **cast**: the static type becomes `ClassName`; at run time an object of another class throws an `ArgumentException` (`Cannot convert a value of type 'Cat' to 'Dog'.`), `undefined` passes unchanged. A class of a namespace is named with it (`value!Shop.Item`, relative names as everywhere): after `!` a dot goes on with the type name while the name so far is a namespace of the program (all files are scanned for `namespace` declarations before parsing); otherwise the dot is a member of the result (`value!Dog.Bark()`).
 - `:` (unit) and `!` (type) are independent operators and can be combined freely: `a:km!`, `a:!`.
 
 ### 3.1.1 `!` depends on the context by position (prefix vs. suffix)
@@ -352,7 +359,7 @@ Prefixes (decimal, implicitly coerced):
 | f      | femto | 1e-15  |
 | p      | pico  | 1e-12  |
 | n      | nano  | 1e-9   |
-| µ      | micro | 1e-6   |
+| µ, u   | micro | 1e-6   |
 | m      | milli | 1e-3   |
 | c      | centi | 1e-2   |
 | k      | kilo  | 1e3    |
@@ -370,6 +377,10 @@ Time units that do not accept prefixes but are dimension-compatible with `s`, wi
 | `d`     | 86400          |
 
 Any other, unrecognized suffix string on a literal is treated as an **atomic unit** (compatible only with itself), e.g. `5apples`.
+
+`u` is the ASCII spelling of `µ` (the micro sign, also the Greek `μ`): `5us` and `5µs` are the same. When the dimensions of a product or a quotient cancel, the
+factor of the units goes into the number and the result has no unit: `5cm / 1mm` is `50`, `1s / 1ms` is `1000`. Two `int`s stay an `int` when the factor is a
+whole number or its inverse is one (`1ms / 1s` is `0`, like `1 / 1000`); otherwise the result is a `float`.
 
 ### 3.3.1 Own units
 
@@ -401,6 +412,11 @@ unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
   conversion functions), they become the static methods `To` and `From` of a hidden class and are called at run time (VM and native) - in the VM
   nested on the VM that converts, like a getter or setter (with the globals of the program). An exception in them is thrown where the conversion
   happens (the same exception object).
+- `coerce to unitless => expression` with `coerce from unitless => expression` makes a unit of a **dimension of its own whose values become plain numbers**
+  (`unit Decibel: dB { coerce to unitless => 10 ^ (value / 20); coerce from unitless => 20 * Math.Log10(value) }`): multiplied or divided
+  such a value is its number (`1V * 6dB` is `1.995V`, `10V / 20dB` is `1V`), stored in a declaration without a unit (a parameter, a field, `float k : unitless`)
+  and coerced with `:unitless` it becomes the number too, a plain number stored in a declaration of the unit is converted back (`float:dB g = 2` is
+  `6.02dB`); added, subtracted and compared it stays in its unit (`3dB + 3dB` is `6dB`). Both directions are needed, no prefixes; VM and native.
 - A unit with an offset or conversion functions takes no prefixes. Converting it into another unit of the same dimension goes through the base unit
   (`to(value) * scale + offset` and back); adding, subtracting and comparing convert the right operand into the unit of the left one. Multiplied or
   divided by another unit it counts as its reference unit (the offset and the functions do not take part: `20C * 2s` is `40K*s`), by a number it
@@ -571,19 +587,16 @@ class Calculator {
 ```
 
 Several methods with the same name are allowed as long as they differ in the
-**number of parameters** – in a dynamically typed
-language that is the only distinguishing feature that is generally reliable at call time
-(overloading by parameter *type* could not be checked
-consistently, since types are attached to values at run time, not to
-variables). Two methods with the same name **and** the same
-number of parameters in the same class are an error. A derived
-class can add an overload with a DIFFERENT arity without hiding the
-inherited overloads of the base class – the call searches across
-the whole inheritance chain for the overload that matches the actual
-number of arguments.
+**number of parameters** or in the **types** of their parameters (5.4.3). Two
+methods with the same name, the same number of parameters and the same
+parameter types in the same class are an error (an untyped parameter and a
+type parameter count as the same type there). A derived class can add
+overloads without hiding the inherited overloads of the base class – the call
+searches across the whole inheritance chain for the overload that matches the
+arguments.
 
 **Constructors** work the same way – several `construct(...)` with
-different numbers of parameters in the same class:
+different numbers or types of parameters in the same class:
 
 ```
 class Point {
@@ -655,6 +668,85 @@ Util.Add10(arr[3])     // a variable, a field (`obj.n`, a bare field name in a c
 - A call is bound to its method only at run time (by name and number of arguments). The caller therefore passes the reference when **any** method of this name
   and number of parameters declares that position `ref`; a method that declares it without `ref` receives the value (a copy for basic types and strings).
 - `ref` is a word only in front of a parameter; as a variable name it stays possible.
+
+### 5.4.3 Overloading by parameter type
+
+Overloads may have the same number of parameters when their parameter types
+differ. The overload that runs is the one **closest to the given values**. The
+values decide at run time (a variable of type `any` holds whatever it holds
+then); the type checker makes the same choice where it knows the types of the
+arguments, and uses the return type of that overload.
+
+```
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(float x) { return "float" }
+    static string Of(string x) { return "string" }
+    static string Of(Animal a) { return "animal" }
+    static string Of(Dog d) { return "dog" }
+    static string Of(IShape s) { return "shape" }
+    static string Of<T>(T x) { return "generic" }
+}
+Show.Of(1)              // int
+Show.Of(new Puppy())    // dog (Puppy : Dog : Animal - the closest class)
+Show.Of(new Square())   // shape (Square implements IShape)
+Show.Of('c')            // generic
+Show.Of<string>("x")    // generic - written type arguments mean the generic method
+```
+
+Per argument the closeness is, from the closest:
+
+1. the exact basic type (`int`, `float`, `bool`, `char`, `string`, a lambda,
+   an array) or the exact class of the object,
+2. a base class of the object – the closer in the chain, the better,
+3. an `int` for a `float` parameter (ranks with a distant base class: below the
+   exact type, above everything that follows),
+4. an interface the object implements,
+5. a type parameter (of the method or the class; its `where` conditions and a
+   known type argument must fit),
+6. `class` (any object),
+7. an untyped or `any` parameter.
+
+So between a derived class, its base class, an interface and a generic
+parameter the priority is exactly that order: **derived > base > interface >
+generic > `class` > `any`**. The scores of all arguments add up; the overload with the best sum
+runs. An overload a value does not fit at all (a `string` for an `int`, an
+object of an unrelated class) is out. Where two overloads fit equally well, the
+one of the most derived class wins, then the one whose number of parameters
+matches without default values, then the one declared first. `undefined` fits
+every parameter equally. When no overload fits, the first one (in that order)
+is called and its parameter check reports the `ArgumentException`.
+
+**Written type arguments.** A generic method can be called with its type
+arguments: `DoThis<string>(that)`. Then only the generic overloads with that
+many type parameters are considered – the call clearly means the generic one –
+and the type arguments are those written (not inferred from the arguments).
+The type checker reports `TC002` when there is no such generic method.
+
+**Overriding.** A method of a derived class overrides the one of a base class
+when it has the same number of parameters and, per parameter, the same type –
+or an untyped parameter or a type parameter on either side (`string Over(int
+x)` in the derived class overrides `string Over(any x)` of the base class).
+With other parameter types it stands next to the inherited method as another
+overload: `Derived.Hello(int)` and the inherited `Base.Hello(string)` are both
+callable on a `Derived`.
+
+**Operators** (5.11) are overloaded the same way: `Vec operator*(float f)` and
+`Vec operator*(Vec o)` can stand side by side.
+
+The native backend chooses the same way: where the values decide, the generated
+code scores the arguments (also for `ref` parameters, static calls, base calls,
+constructors and base-type extensions); elsewhere the call goes directly to the
+one method.
+
+**Chosen at compile time.** Where the type checker knows the types of the
+arguments, it already makes the choice: the call carries the overload and what
+it assumed of the arguments (`OverloadHint`). At run time only these
+assumptions are checked (one test per argument); when they hold, the overload
+runs without scoring the candidates, and the call site caches it like any other
+call. Should a value not be what its static type says (in lax mode after a
+warning), the call scores the candidates as usual - the result is always the
+same as without the shortcut (docs/TYPES.md).
 
 ### 5.5 Extension classes (`class extends`)
 
@@ -782,11 +874,11 @@ return types) – without the resolver reporting "unknown type".
 
 Type ARGUMENTS may be NESTED arbitrarily deeply
 (`new Container<Box<int>>(...)`, `new Container<Box<Box<int>>>(...)`, ...)
-- fully supported syntactically. However, since (see next paragraph) there is
-NO real generic specialization, for the
+- fully supported syntactically. For the
 constraint check (`where`) on a nested type argument only
-its OUTER name counts (`Box`, not `Box<int>`) – the inner arguments
-are read purely syntactically and then discarded.
+its OUTER name counts (`Box`, not `Box<int>`), and the object keeps only that
+outer class as its type argument (see below): an element of a `Container<Box<int>>`
+is checked to be a `Box`, its own type argument is the `Box`'s business.
 
 **Same name as a non-generic class**: A generic class
 may bear the same name as a non-generic one (as in C#):
@@ -817,15 +909,15 @@ the `GetCurrent()` of its enumerator returns). `List<int>` and `List<string>` do
 the number of type parameters (`E4061`), a class that is not generic takes none (`E4045`). `List<T>`, `IEnumerable<T>` and `IEnumerator<T>` of the standard library are
 generic in this way.
 
-**Important limitation**: Since this language is dynamically typed,
-**no real type substitution** takes place (unlike C#, where the
-compiler generates specialized code per instantiation) – the check
-of the type arguments against the `where` conditions happens **once at
-`new Name<...>(...)`**, afterwards `T` behaves in the body of the class like an
-ordinary placeholder type name that is not checked any further. Generic
-**methods** (`RetType Name<T>(params) where T ... { }`) are parsed
-and the type parameters accepted, but **not** checked against explicit
-type arguments at the call site – `Name<T>(x)` as call syntax would be
+**Type arguments at run time.** The type arguments are not erased: the check against the `where` conditions happens
+**once at `new Name<...>(...)`**, and the object keeps its type arguments - a parameter, a field or a local declared `T`
+then takes only what the type argument says (`new Box<int>()`: ints; a whole number for a `float` is converted; see
+section 3 and docs/TYPES.md). There is one class at run time for all instantiations (a `Box<int>` and a `Box<string>`
+are both a `Box`); the native backend additionally makes **specialised copies** of the methods for type arguments
+`int`, `float` and `bool` (typed arithmetic instead of generic values) and sends calls there that fit them.
+Generic **methods** (`RetType Name<T>(params) where T ... { }`) take their type arguments from the arguments
+(the type checker finds them and passes them to the call, where they are kept like those of an object); explicit
+type arguments at the call site are not written – `Name<T>(x)` as call syntax would be
 ambiguous with `<`/`>` as comparison operators at normal expression positions
 (unlike `new Name<...>`, where an argument list must
 follow directly after the class name, which makes it unambiguous). A
@@ -966,6 +1058,23 @@ method infrastructure therefore works automatically.
   not a real array but an object – writing `operator[](...)` and
   `GetIndex(...)`/`SetIndex(...)` by hand are therefore
   equivalent, the former merely being the more explicit, recommended notation.
+
+### 5.12 Attributes
+
+`[Name arg1, arg2, ...]` on the lines before a method (several are allowed, each in its own brackets): a name and arguments without parentheses, as in C#
+(`[Parameters 1..3, "x", {1, 2}, new List<int>()]`; `{a, b}` is an array literal here, the same as `[a, b]`). The arguments are arbitrary expressions; the
+compiler keeps them with the method (and their source text) without evaluating them - a tool that reads the attribute evaluates them where it needs them.
+Reflection (`Member.Attributes`, section on reflection) gives every attribute with its name, the source texts of its arguments and the values of those
+that are constants (numbers, strings, `bool`, arrays of constants, ranges of `int` constants; otherwise `undefined`).
+Attributes stand before methods, fields (`[NonSerialized] int secret`; before a declaration of several fields they belong to all of them) and properties - nowhere
+else. Reflection lists them for every member. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
+and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
+editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
+schematic marks its ports so (docs/CIRCUITS.md).
+
+The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusive, descending when `b < a`; the unit of `a` stays on every element. In
+`[Parameters]` a range runs a test once per element.
 
 ## 6. Test operators: `is in`, `is of`, `is from`
 
@@ -1890,19 +1999,19 @@ method calls, not operators/special syntax - the operator
 overloading of `SPEC 5.11` remains unaffected (different opcodes: `CallMethod`
 here, `BinaryNumericOrOperator` there).
 
-### 8.11 Streams and file access (`#import "io"`)
+### 8.11 Streams (`#import "io"`) and files (`#import "filesystem"`)
 
-`#import "io"` unlocks the namespace `IO` (the package `fire-io`: its prelude and the C++ of `native/bridges/fire_bridge_io.hpp`; in the VM a library built from it, like `graphics`/
-`devices`: native functions `__IO...` plus a fire prelude). Everything lives in `namespace IO`,
-so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
+`#import "io"` unlocks the namespace `IO` with the streams (the package `fire-io`: its prelude and the C++ of `packages/io/native/fire_bridge_io.hpp`; in the VM a library built
+from it, like `graphics`/`devices`: native functions `__IO...` plus a fire prelude). `#import "filesystem"` (the package `fire-filesystem`, fire only, on the natives of `io`)
+adds the file system to the same namespace: `IO.FileStream`, `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileMode`, `IO.FileAccess`, `IO.SearchOption` - named like
+System.IO in .NET (docs/FILESYSTEM.md). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
 namespace is only reachable **fully qualified** (`IO.FileMode.Create`).
 
-Structure: streams (`IO.FileStream`, `IO.MemoryStream`, your own streams), file/directory API
-(`IO.File`, `IO.Directory`, `IO.Path`, `IO.Utf8`), text (`IO.TextReader`, `IO.TextWriter`) and
-standard input/output (`IO.Stdio`) - all described below.
+Structure: streams (`IO.MemoryStream`, your own streams; with `filesystem` also `IO.FileStream`), text (`IO.TextReader`, `IO.TextWriter`, `IO.Utf8`), standard
+input/output (`IO.Stdio`); with `filesystem` the file/directory API (`IO.File`, `IO.Directory`, `IO.Path`) - all described below.
 
 ```
-#import "io"
+#import "filesystem"
 
 var w = new IO.FileStream("out.bin", IO.FileMode.Create)   // without access: Open->Read, Append->Write, otherwise ReadWrite
 w.Write("Hello".ToBytes())          // Write(buffer) / Write(buffer, offset, count) -> number of bytes
@@ -1932,58 +2041,59 @@ var rest = r.ReadAll()              // everything up to the end as a buffer
 `IO.FileMode`: `Open` (must exist), `Create` (create/truncate), `CreateNew` (must be
 new), `OpenOrCreate`, `Append`. `IO.FileAccess`: `Read`, `Write`, `ReadWrite`.
 
-**File and directory API.** Static methods, always written with the namespace
+**File and directory API (`#import "filesystem"`).** Static methods, always written with the namespace
 (`IO.File.Exists(...)`, a static access is only resolved via the exactly written
-name).
+name). The names are those of .NET (docs/FILESYSTEM.md has the full list).
 
 ```
+#import "filesystem"
 var f = IO.Path.Combine("data", "notes.txt")
-IO.Directory.Create("data")
+IO.Directory.CreateDirectory("data")
 IO.File.WriteAllText(f, "Greetings\nsecond line")
 foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // a List of strings (.count, [i])
-print(IO.File.Size(f) + " bytes, modified " + IO.File.ModifiedTime(f))   // seconds since 1970 with unit s
+print(IO.File.Size(f) + " bytes, modified " + IO.File.GetLastWriteTime(f))   // a DateTime (local time)
 IO.File.Copy(f, "backup.txt", true)
-foreach (name in IO.Directory.GetFiles("data", "*.txt")) { print(IO.Path.FileName(name)) }
+foreach (name in IO.Directory.GetFiles("data", "*.txt")) { print(IO.Path.GetFileName(name)) }
 ```
 
 | Class | Methods |
 |---|---|
-| `IO.File` | `Exists`, `Size`, `ModifiedTime`, `Delete` (a missing file is not an error), `Copy(source, target, overwrite = false)`, `Move(source, target, overwrite = false)`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines` (returns a `List`), `WriteAllLines` (List or array) |
-| `IO.Directory` | `Exists`, `Create` (also intermediate directories, an existing one is not an error), `Delete(path, recursive = false)`, `GetFiles(path, pattern = "*", recursive = false)`, `GetDirectories(...)` (full paths as a sorted `List`), `Current()` |
-| `IO.Path` | `Combine(a, b[, c])` (an absolute part discards everything before it), `FileName`, `Stem`, `Extension` (with the dot), `Parent`, `FullPath`, `Temp()`, `IsRooted`, `Separator()` |
-| `IO.Utf8` | `GetBytes(text)`, `GetString(buffer[, offset, count])` |
+| `IO.File` | `Exists`, `Size`, `GetLastWriteTime`/`GetLastWriteTimeUtc` (DateTime), `Delete` (a missing file is not an error), `Copy(source, target, overwrite = false)`, `Move(source, target, overwrite = false)`, `Open(path, mode, access)`, `OpenRead`, `OpenWrite`, `Create`, `OpenText`, `CreateText`, `AppendText`, `ReadAllBytes`, `WriteAllBytes`, `AppendAllBytes`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines` (returns a `List`), `WriteAllLines`, `AppendAllLines` (List or array) |
+| `IO.Directory` | `Exists`, `CreateDirectory` (also intermediate directories, an existing one is not an error), `Delete(path, recursive = false)`, `Move`, `GetFiles(path, pattern = "*", searchOption)`, `GetDirectories(...)`, `GetFileSystemEntries(...)` (full paths as a sorted `List`; `IO.SearchOption.AllDirectories` or `true` for the subdirectories), `GetParent`, `GetDirectoryRoot`, `GetLogicalDrives`, `GetLastWriteTime`, `GetCurrentDirectory`, `SetCurrentDirectory`, `GetHomeDirectory` |
+| `IO.Path` | `Combine(a, b[, c[, d]])` (an absolute part discards everything before it), `GetFileName`, `GetFileNameWithoutExtension`, `GetExtension` (with the dot), `HasExtension`, `ChangeExtension`, `GetDirectoryName`, `GetFullPath`, `GetRelativePath`, `GetPathRoot`, `IsPathRooted`, `IsPathFullyQualified`, `GetTempPath`, `GetTempFileName`, `DirectorySeparatorChar` |
+| `IO.Utf8` (`io`) | `GetBytes(text)`, `GetString(buffer[, offset, count])` |
 
 Text is **UTF-8** (`string.ToBytes()`, on the other hand, is ASCII only): written without a byte order mark,
 read with removal of a BOM, invalid sequences become U+FFFD. `WriteAllLines` terminates every
 line with `\n`, `ReadAllLines` recognizes `\n`, `\r\n` and `\r` (a trailing line break
 does not produce an empty last line). Every path goes through the `IoPolicy` before access (reading:
-`Exists`/`Size`/`ModifiedTime`/`Copy` source; writing: `Create`/`Copy` target/`Move` target;
+`Exists`/`Size`/`GetLastWriteTime`/`Copy` source; writing: `CreateDirectory`/`Copy` target/`Move` target;
 deleting: `Delete`/`Move` source; listing: `GetFiles`/`GetDirectories`); a rejected access
 is an `IO.PermissionException` (code 6), also for `Exists` - a query must not reveal what
 exists outside the permitted area. `IO.Path` itself is pure text processing without
 file access. `Copy`/`Move` onto an existing target without `overwrite` throws
 `IO.FileExistsException`, a missing directory `IO.DirectoryNotFoundException`.
 
-**Text (`IO.TextReader`, `IO.TextWriter`).** UTF-8, line by line, on files or arbitrary streams:
+**Text (`IO.TextReader`, `IO.TextWriter`).** UTF-8, line by line, on streams - files come from `IO.File` (`filesystem`):
 
 ```
-var out = new IO.TextWriter("log.txt")            // overwrites; ("log.txt", true) appends
+var out = IO.File.CreateText("log.txt")            // overwrites; IO.File.AppendText appends
 out.WriteLine("Greetings")
 out.Write("Value: ")
 out.Write(42)                                      // numbers etc. are written as text
 out.Close()
 
-foreach (line in new IO.TextReader("log.txt")) { print(line) }   // line by line
+foreach (line in IO.File.OpenText("log.txt")) { print(line) }   // line by line
 
-var reader = IO.File.OpenText("log.txt")           // also CreateText / AppendText
+var reader = IO.File.OpenText("log.txt")
 var first = reader.ReadLine()                      // undefined at the end
 var rest = reader.ReadAll()                        // the rest as one string
 reader.Close()
 ```
 
-`new IO.TextReader(source[, leaveOpen])` / `new IO.TextWriter(target[, flag])`: with a **path**
-they open the file themselves (writer: `flag` = append); with a **stream** (`IO.IStream`) they read/
-write on it and **close it as well**, unless `leaveOpen`/`flag` is true. Lines end with
+`new IO.TextReader(stream[, leaveOpen])` / `new IO.TextWriter(stream[, leaveOpen])` read/write on a
+**stream** (`IO.IStream`) and **close it as well**, unless `leaveOpen` is true (a path is an `IO.IOException`:
+use `IO.File.OpenText`/`CreateText`/`AppendText`). Lines end with
 `\n` or `\r\n` (the `\r` is not part of the line), `\n` is written. `TextReader`: `ReadLine()`,
 `ReadAll()`, `ReadLines()` (List), `EndOfStream`, `foreach`. Both close themselves in `destruct()`
 and throw `IO.StreamClosedException` if you carry on after `Close()`.
@@ -2102,7 +2212,7 @@ t.Find("radius").Get(circle)            // Member.Get/Set/Call(obj, ...)
 - **`Type`**: `Name`, `Base` (a `Type` or `undefined`), `IsActor`, `Interfaces` (names), `All` (all `Member`s, also inherited ones; a derived class hides same-named ones of the base, constructors only its own),
   `Fields()`/`Properties()`/`Methods()`/`Constructors()`, `Find(name)`/`Has(name)`, `IsSubclassOf(type)`, `New(args)`; `Type.Of(x)`, `Type.Named(name)`, `Type.Names()`.
 - **`Member`**: `Name`, `Kind` (`"field"`, `"property"`, `"method"`, `"constructor"`), `TypeName` (the declared type as in the source, for methods the return type, `""` if not given), `Access` (`"public"`/`"private"`/`"protected"`),
-  `IsStatic`, `IsReadonly`, `CanRead`/`CanWrite` (properties), `Unit` (required unit), `DeclaredIn`, `ParamNames`/`ParamTypes`, `ParamCount()`, plus `Get(obj)`, `Set(obj, value)`, `Call(obj, args)`.
+  `IsStatic`, `IsReadonly`, `CanRead`/`CanWrite` (properties), `Unit` (required unit), `DeclaredIn`, `ParamNames`/`ParamTypes`, `ParamCount()`, `Attributes` (list of `Attribute`: `Name`, `Args`, `ArgTexts`, `ArgCount()`), `FindAttribute(name)`/`HasAttribute(name)`, plus `Get(obj)`, `Set(obj, value)`, `Call(obj, args)`.
 - **Rules:** Reflection bypasses nothing, it runs through the same paths as normal code. `private`/`protected` apply to the code that **called** the library (from a method of the class itself `Reflect.Get(this, "secret")`
   is allowed, from outside not: `AccessDeniedException`; in `Performance` mode the check is omitted as everywhere); a `readonly` field cannot be assigned; units are checked (`UnitMismatchException`); property accessors
   run as normal methods (an exception in them runs to the outer `catch`); for objects of the globals the section rules apply (THREADING_DESIGN.md section 7).
@@ -2212,8 +2322,27 @@ exception in `ToString()` runs to the enclosing `catch`. Without `ToString()` th
 
 ### 8.16 Devices (`#import "devices"`)
 
-The extension controls devices via the **DeviceManager** (`src/fire.Device.Manager`: drivers, devices, handles; the package `fire-devices`: the fire classes and the C++ of `native/bridges/fire_bridge_devices.hpp`, which in the VM asks the host's device manager through the callbacks of the package ABI). A device has an identifier `driver:port`
-(`serial:COM3`, `loopback:echo`). The `serial` driver (115200 baud) is built in; `loopback` is a simulated echo device without hardware (everything you send comes back after a few milliseconds).
+The device framework is fire code (the package `fire-devices`; docs/DEVICES.md): every device is a `Device` with `Read()`/`Write(data)` - a device that cannot do one
+throws `NotSupportedException` - and comes from a `Driver`. `DeviceManager` holds the drivers of the program and finds devices by their identifier `driver:name`:
+
+```
+#import "devices"
+#import "gpio"
+DeviceManager.AddDriver(new SerialDriver())       // serial ports and the loopback device (also the default when no driver was added)
+DeviceManager.AddDriver(new GpioDriver())         // GPIO ports gpioa, gpiob, ... (#import "gpio"); I2cDriver, SpiDriver likewise
+var port = DeviceManager.Get("gpio:gpioa")         // or DeviceManager.Get("gpioa"); DeviceNotFoundException if there is none
+int levels = port.Read()                           // all lines of the port at once (or NotSupportedException)
+foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
+```
+
+Drivers of the standard libraries: `SerialDriver` (`serial:COM3`, `loopback:echo`; the C++ of `packages/devices/native/fire_bridge_devices.hpp`, which in the VM asks the host's device
+manager through the callbacks of the package ABI), `GpioDriver` (`gpio:gpioa`, `gpio:gpiosim`; Read/Write the whole port as an int, `PinAt(n)` for one line), `I2cDriver` (the buses `i2c:i2c-1`,
+`i2c:sim` - Read/Write are NotSupported - and the devices on them `i2c:i2c-1/0x48`, made with `bus.At(0x48)` or by `Get`), `SpiDriver` (`spi:spidev0.0`, `spi:sim`; `Transfer`, `WriteRead`).
+A driver of your own derives from `Driver` (`Refresh` adds its devices with `Add`, `Find` may make one on demand) and its devices from `Device`.
+
+What the host of the program offers comes in through `DeviceManager.Host` (a `DeviceHost`): `DefaultIdentifier()` (the editor's default device; a native build: `FIRE_DEFAULT_DEVICE`),
+`Trace(device, sent, data)` (the packets of the GPIO, I2C and SPI devices; the host's serial devices are traced by the host itself) and `DevicesChanged(list)`. A program may set its own.
+`Device.Default` / `DeviceManager.Default` is the device whose identifier the host chose, `Device.HasDefault` / `DeviceManager.HasDefault` whether there is one.
 
 You work at the **command level**: send text and bytes, wait for certain characters, execute commands as objects.
 
@@ -2252,8 +2381,8 @@ d.DoCommands([home, home])                   // several, stops at the first one 
 | `WriteString(text)` | writes exactly these characters, WITHOUT a line ending (one character = one byte, Latin1; for UTF-8 use `text.ToBytes()` and `Write`); `false` if not connected |
 | `Write(buffer)` | writes raw bytes; `false` if not connected |
 | `WaitForString(text, timeout)` / `WaitFor(buffer, timeout)` | see below |
-| `Identifier()`, `PortName()`, `Availability()`, `TestAvailability()` | identifier, port, availability (0 = unavailable, 1 = unchecked, 2 = available) |
-| `DeviceManagerFacade` | `Refresh(fastScan)`, `Count()`, `GetAt(i)`, `GetByHandle(h)`, `GetByIdentifier(id)`, `IsShared()` |
+| `Identifier()`, `Name`, `PortName()`, `Availability()`, `TestAvailability()` | identifier, name within the driver, port, availability (0 = unavailable, 1 = unchecked, 2 = available) |
+| `DeviceManager` | `AddDriver(d)`, `RemoveDriver(d)`, `Drivers()`, `Devices()`, `Refresh(fastScan)`, `Get(id)`, `Has(id)`, `Default`, `HasDefault`, `Host`, `IsShared()` |
 | `IDevice` | the interface that `Device` fulfills (type argument and parameter type for `Command<IDevice>`) |
 
 **`WaitForString` / `WaitFor`.** Wait until the characters or bytes are in the receive buffer - even if they arrive in several packets - and cut the buffer BEHIND the first match: everything before it and the match
@@ -2264,7 +2393,7 @@ sequence arrived, `false` after the wait time has expired, if the device is (or 
 **`#timeout value`** (top-level directive like `#nosync`, applies to the whole program): sets the default wait time of the wait functions. `value` is a time value (`10s`, `500ms`, `2min`) or a number in milliseconds; the expression is evaluated right at the start
 of the program (so it may not use variables) and also applies in the fire threads. A new program starts with 30 seconds again.
 
-**Shared DeviceManager.** If a script runs in the editor, it uses the editor's common manager (`DeviceManager.IsShared`): devices and open connections survive the run, several scripts one after the other work with
+**Shared devices.** If a script runs in the editor, its serial devices are those of the editor's common manager (`DeviceManager.IsShared()`): devices and open connections survive the run, several scripts one after the other work with
 the same devices. A script can destroy neither the manager nor a shared device (there is no function for it; `DeviceManager.Dispose()` has no effect on a shared manager, only the owner tears it down via `Shutdown()`).
 A standalone program (or `fire.Compiler run`) gets an own, non-shared manager with the built-in drivers, which is released (devices disconnected) after the run. Receive hooks of a run are released at the end.
 
@@ -2317,6 +2446,28 @@ same numbers in the virtual machine, in a native build and on every platform. It
 
 Not for secrets: the sequence can be predicted from a few outputs.
 
+### 8.19a JSON (`#import "json"`)
+
+`Json.Serialize(value[, options])` writes objects, arrays, lists, numbers (with their units), strings, chars and buffers as JSON; `Json.Deserialize<T>(text)` (or
+`Json.Deserialize(text, "TypeName")`) reads them back without running constructors and calls `OnDeserialized()` afterwards; `Json.Parse(text)` reads JSON without
+classes into `JsonObject`s. Shared objects and cycles are kept with `"$id"`/`"$ref"`, the class travels as `"$type"` where the declared type does not give it, a
+field can be left out (`[NonSerialized]`) or renamed (`[JsonName "x"]`). Errors are a `JsonException` with line and column or the path of the value
+(`$.path[1].x`). The same text in the VM and in native builds; the details are in docs/JSON.md.
+
+### 8.19b Circuit simulation (`#import "circuits"`)
+
+The package `fire-circuits` (docs/CIRCUITS.md is the reference), written in fire: `Circuits.Circuit` holds parts with ports (`Resistor`, `Capacitor`, `Inductor`,
+`VoltageSource`, `SineSource`, `SquareSource`, `CurrentSource`, `Switch`, `Ground`, own parts derived from `Part`/`TwoTerminal`) and nested circuits with ports of their
+own; `port.Connect(other)` joins two ports into one node. `Step()`/`Run(duration)` solve the circuit in time steps (modified nodal analysis, trapezoidal rule for `C` and
+`L`). `Scope`, `Multimeter` and `Fft` measure. The first step after a change compiles the circuit into a plan that a C++ kernel of the package runs (a sparse
+LU factorization with a fixed list of operations, many steps per call); parts written in fire (`StampStep`, `Commit`) step in fire around it. The package declares the units `V`, `A`, `Ohm`, `F`, `H` and `Hz` (with prefixes); every value can also be a plain number in
+SI units. A circuit can be drawn instead: `circuit.Schematic` holds elements on a grid (each between two points, as in Falstad's simulator) that make the parts and connect
+them by where their pins are; a `.biscuit` file (JSON) is compiled - like `.fxml` - into one class deriving from `Circuits.Circuit` with a field per named element. The package
+`fire-circuits.ui` (`#import "circuits.ui"`) brings `UI.CircuitView`, the live schematic as a control of the UI library, editable unless `readOnly`.
+`Circuits.Attached` is a part made of fire code (pins it reads and drives every step in `Update`); `GpioLine`, `I2cAdc`, `I2cDac`, `SpiShiftOut` and `SpiShiftIn` are
+attached parts at the simulated devices of `gpio`, `i2c` and `spi` (the package imports them), and `circuit.RunAlongside()` makes a circuit run in real time next to the
+program through `Simulation` of the package `devices` (every access to a simulated device first catches the simulation up with the time).
+
 ### 8.20 Network (`#import "net"`)
 
 The package `fire-net` (docs/NETWORK.md is the reference): `Net.TcpClient` (an `IO.Stream`), `Net.TcpListener`, `Net.UdpSocket` and `Net.Dns`, written in fire over C++ natives on the sockets of the platform (BSD sockets, Winsock, lwIP). It needs
@@ -2365,12 +2516,19 @@ The package `fire-tracker` (docs/TRACKER.md is the reference): `Tracker.Song` (a
 `Seek`, `Mute`, `Separation`, `Interpolate`, `Gain`, `Loop`), `Tracker.Player` (a song on an `Audio.Output`: `Pump()` feeds the output without waiting, `Play()` plays to the end) and `Tracker.Note`. The replayer and the mixer are C++ (the VM calls them through the package ABI, a native build compiles them in; both render the
 same samples). It needs `audio` and `time`. Errors are `Tracker.TrackerException` (with a `code`), `Tracker.BadFormatException` (8) and `Tracker.UnsupportedException` (6).
 
+### 8.28b USB (`#import "usb"`)
+
+The package `fire-usb` (docs/USB.md is the reference): `Usb.Bus` (`Available()`, `Devices()`, `Find(vendorId, productId)`), `Usb.Device` (opened by id or by vendor and product id: `Endpoints()`,
+`ClaimInterface`, control transfers `Control`/`ControlIn`/`ControlOut`, `BulkRead`/`BulkWrite`, `InterruptRead`/`InterruptWrite`, `ClearHalt`, `Close`) and `Usb.UsbStream` (the bulk endpoints of an interface as an
+`IO.Stream`: `device.OpenStream()`). libusb-1.0 (loaded at run time) on Linux and macOS, WinUSB on Windows; every platform has the simulated loopback device `"sim"`. Transfers wait in slices of 20 ms, so a
+program stays abortable. Errors are `Usb.UsbException` (with a `code`) and subclasses (`TimeoutException`, `StallException`, `NotFoundException`, ...).
+
 ### 8.28a Fonts for text at pixel positions (`#import "graphics"`)
 
 `Renderer.DrawText(x, y, text, foreground, background = undefined, font = undefined, size = 0)` draws in the console font of the renderer (the built-in 8x14 or 8x8 bitmap font) or, given a `Font`, in one of the two built-in
 bitmap fonts (`"8x14"`/`"14x8"`, `"8x8"`) or in a TrueType font of `size` pixels. `Fonts.Get(name)` finds a font by name - the built-in ones, then the ones added with `Fonts.Add(new Resource("x.ttf"), alias = "")` (by alias,
 file name, family or full name), then the fonts installed on the system (the font folders and `FIRE_FONT_DIRS`), otherwise the console font; `Fonts.Has`, `Fonts.FromBytes`, `Font.Name/IsBitmap/Release`, `Renderer.TextWidth/TextHeight/TextAscent`.
-The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `font` and `fontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
+The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels in the VM and natively). Every `UI.Element` has `Font` and `FontSize` (inherited, then `theme.font`/`theme.fontSize`). Reference: docs/FONTS.md.
 
 ### 8.28b 3D scenes (`#import "scene3d"`)
 

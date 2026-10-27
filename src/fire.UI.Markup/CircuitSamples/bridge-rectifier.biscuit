@@ -1,0 +1,23 @@
+{
+  "biscuit": 1,
+  "timeStep": "50us",
+  "elements": [
+    {"type": "Text", "from": [0, -12], "to": [4, -12], "text": "Bridge rectifier: both half waves charge the 100 uF capacitor; the 1 kOhm load sees a little ripple"},
+    {"type": "Source", "name": "V1", "from": [0, 24], "to": [0, 0], "waveform": "sine", "voltage": "10V", "frequency": "50Hz"},
+    {"type": "Wire", "from": [0, 0], "to": [20, 0]},
+    {"type": "Wire", "from": [0, 24], "to": [20, 24]},
+    {"type": "Diode", "name": "D1", "from": [20, 0], "to": [32, 12], "model": "1N4001"},
+    {"type": "Diode", "name": "D2", "from": [20, 24], "to": [32, 12], "model": "1N4001"},
+    {"type": "Diode", "name": "D3", "from": [8, 12], "to": [20, 0], "model": "1N4001"},
+    {"type": "Diode", "name": "D4", "from": [8, 12], "to": [20, 24], "model": "1N4001"},
+    {"type": "Ground", "from": [8, 12], "to": [8, 16]},
+    {"type": "Wire", "from": [32, 12], "to": [44, 12]},
+    {"type": "Capacitor", "name": "C1", "from": [44, 12], "to": [44, 24], "capacitance": "100uF"},
+    {"type": "Wire", "from": [44, 12], "to": [56, 12]},
+    {"type": "Resistor", "name": "R1", "from": [56, 12], "to": [56, 24], "resistance": "1k"},
+    {"type": "Wire", "from": [44, 24], "to": [56, 24]},
+    {"type": "Ground", "from": [44, 24], "to": [44, 28]},
+    {"type": "Scope", "from": [68, -2], "to": [108, 10], "probe": "V1"},
+    {"type": "Scope", "from": [68, 14], "to": [108, 26], "probe": "R1"}
+  ]
+}

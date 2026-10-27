@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-linq",
+  "type": "library",
+  "import": "linq",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'linq' of fire: prelude."
+  }
+}

@@ -1,0 +1,141 @@
+// The tests of files, directories and paths: `forge test packages/filesystem/filesystem.fireproj`.
+#import "testing"
+
+class PathTests {
+    [Test]
+    undefined Names() {
+        var p = IO.Path.Combine("dir", "sub", "name.txt")
+        Testing.Assert.AreEqual("name.txt", IO.Path.GetFileName(p))
+        Testing.Assert.AreEqual("name", IO.Path.GetFileNameWithoutExtension(p))
+        Testing.Assert.AreEqual(".txt", IO.Path.GetExtension(p))
+        Testing.Assert.AreEqual(IO.Path.Combine("dir", "sub"), IO.Path.GetDirectoryName(p))
+        Testing.Assert.IsTrue(IO.Path.HasExtension(p))
+        Testing.Assert.IsFalse(IO.Path.HasExtension("dir/readme"))
+    }
+
+    [Test]
+    undefined ChangeExtension() {
+        Testing.Assert.AreEqual("a/b.md", IO.Path.ChangeExtension("a/b.txt", ".md"))
+        Testing.Assert.AreEqual("a/b.md", IO.Path.ChangeExtension("a/b.txt", "md"))
+        Testing.Assert.AreEqual("a/b", IO.Path.ChangeExtension("a/b.txt", undefined))
+        Testing.Assert.AreEqual("a/b.md", IO.Path.ChangeExtension("a/b", ".md"))
+    }
+
+    [Test]
+    undefined Roots() {
+        var full = IO.Path.GetFullPath("x")
+        Testing.Assert.IsTrue(IO.Path.IsPathRooted(full))
+        Testing.Assert.IsTrue(IO.Path.IsPathFullyQualified(full))
+        Testing.Assert.IsFalse(IO.Path.IsPathRooted("a/b"))
+        Testing.Assert.IsTrue(IO.Path.GetPathRoot(full) != "")
+        Testing.Assert.AreEqual("", IO.Path.GetPathRoot("a/b"))
+    }
+
+    [Test]
+    undefined Relative() {
+        var sep = IO.Path.DirectorySeparatorChar
+        var root = IO.Path.GetFullPath("base")
+        Testing.Assert.AreEqual(".." + sep + "c" + sep + "d.txt", IO.Path.GetRelativePath(IO.Path.Combine(root, "a", "b"), IO.Path.Combine(root, "a", "c", "d.txt")))
+        Testing.Assert.AreEqual(".", IO.Path.GetRelativePath(root, root))
+        Testing.Assert.AreEqual("x" + sep + "y", IO.Path.GetRelativePath(root, IO.Path.Combine(root, "x", "y")))
+    }
+}
+
+class FileSystemTests {
+    string folder = ""
+
+    [PrepareTesting]
+    undefined Start() {
+        this.folder = IO.Path.Combine(IO.Path.GetTempPath(), "fire-filesystem-tests")
+        if (IO.Directory.Exists(this.folder)) { IO.Directory.Delete(this.folder, true) }
+        IO.Directory.CreateDirectory(this.folder)
+    }
+
+    [CleanTesting]
+    undefined Stop() { IO.Directory.Delete(this.folder, true) }
+
+    [Test]
+    undefined TextFile() {
+        var f = IO.Path.Combine(this.folder, "t.txt")
+        IO.File.WriteAllText(f, "one\ntwo\n")
+        Testing.Assert.IsTrue(IO.File.Exists(f))
+        Testing.Assert.AreEqual("one\ntwo\n", IO.File.ReadAllText(f))
+        Testing.Assert.AreEqual(8, IO.File.Size(f))
+        IO.File.AppendAllLines(f, ["three"])
+        Testing.Assert.AreEqual(3, IO.File.ReadAllLines(f).count)
+        Testing.Assert.IsTrue(IO.File.GetLastWriteTime(f).Year >= 2024)
+        IO.File.Delete(f)
+        Testing.Assert.IsFalse(IO.File.Exists(f))
+    }
+
+    [Test]
+    undefined Streams() {
+        var f = IO.Path.Combine(this.folder, "s.bin")
+        var w = IO.File.Create(f)
+        w.Write("abc".ToBytes())
+        w.Close()
+        var r = IO.File.OpenRead(f)
+        Testing.Assert.AreEqual(3, r.Length)
+        Testing.Assert.AreEqual(97, r.ReadByte())
+        r.Close()
+        var text = IO.File.CreateText(f)
+        text.WriteLine("hello")
+        text.Close()
+        var reader = IO.File.OpenText(f)
+        Testing.Assert.AreEqual("hello", reader.ReadLine())
+        reader.Close()
+    }
+
+    [Test]
+    undefined Directories() {
+        var a = IO.Path.Combine(this.folder, "a")
+        IO.Directory.CreateDirectory(IO.Path.Combine(a, "inner"))
+        IO.File.WriteAllText(IO.Path.Combine(a, "x.txt"), "x")
+        IO.File.WriteAllText(IO.Path.Combine(a, "inner", "y.txt"), "y")
+        Testing.Assert.AreEqual(1, IO.Directory.GetFiles(a).count)
+        Testing.Assert.AreEqual(2, IO.Directory.GetFiles(a, "*.txt", IO.SearchOption.AllDirectories).count)
+        Testing.Assert.AreEqual(2, IO.Directory.GetFiles(a, "*", true).count)
+        Testing.Assert.AreEqual(1, IO.Directory.GetDirectories(a).count)
+        var entries = IO.Directory.GetFileSystemEntries(a)
+        Testing.Assert.AreEqual(2, entries.count)
+        Testing.Assert.AreEqual("inner", IO.Path.GetFileName(entries[0]))
+        var b = IO.Path.Combine(this.folder, "b")
+        IO.Directory.Move(a, b)
+        Testing.Assert.IsFalse(IO.Directory.Exists(a))
+        Testing.Assert.IsTrue(IO.File.Exists(IO.Path.Combine(b, "inner", "y.txt")))
+        Testing.Assert.AreEqual(IO.Path.GetFullPath(this.folder), IO.Directory.GetParent(b))
+        Testing.Assert.IsTrue(IO.Directory.GetLastWriteTime(b).Year >= 2024)
+        Testing.Assert.Throws(() => { IO.Directory.Delete(b) })
+        IO.Directory.Delete(b, true)
+        Testing.Assert.IsFalse(IO.Directory.Exists(b))
+    }
+
+    [Test]
+    undefined CurrentDirectory() {
+        var before = IO.Directory.GetCurrentDirectory()
+        IO.Directory.SetCurrentDirectory(this.folder)
+        Testing.Assert.AreEqual(IO.Path.GetFullPath(this.folder), IO.Directory.GetCurrentDirectory())
+        IO.Directory.SetCurrentDirectory(before)
+        Testing.Assert.AreEqual(before, IO.Directory.GetCurrentDirectory())
+    }
+
+    [Test]
+    undefined Places() {
+        Testing.Assert.IsTrue(IO.Directory.GetLogicalDrives().count >= 1)
+        Testing.Assert.IsTrue(IO.Directory.GetHomeDirectory() != "")
+        var temp = IO.Path.GetTempFileName()
+        Testing.Assert.IsTrue(IO.File.Exists(temp))
+        Testing.Assert.AreEqual(0, IO.File.Size(temp))
+        IO.File.Delete(temp)
+    }
+
+    [Test]
+    undefined Errors() {
+        var missing = IO.Path.Combine(this.folder, "missing.txt")
+        var nowhere = IO.Path.Combine(this.folder, "nope")
+        var e = Testing.Assert.Throws(() => { IO.File.ReadAllText(missing) })
+        Testing.Assert.IsTrue(e is of IO.FileNotFoundException)
+        var d = Testing.Assert.Throws(() => { IO.Directory.GetFiles(nowhere) })
+        Testing.Assert.IsTrue(d is of IO.DirectoryNotFoundException)
+    }
+}

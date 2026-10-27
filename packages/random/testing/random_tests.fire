@@ -1,0 +1,43 @@
+// The tests of PseudoRandom: `forge test packages/random/random.fireproj`.
+#import "testing"
+
+class RandomTests {
+    [Test "The same seed gives the same sequence"]
+    undefined Seed() {
+        var a = new PseudoRandom(42)
+        var b = new PseudoRandom(42)
+        for (int i = 0; i < 20; i++) { Testing.Assert.AreEqual(a.Next(), b.Next()) }
+        Testing.Assert.AreEqual(2014437610, new PseudoRandom(42).NextUInt32())
+        Testing.Assert.AreNotEqual(new PseudoRandom(42).NextUInt32(), new PseudoRandom(43).NextUInt32())
+    }
+
+    [Test "Next(max) stays in its range"]
+    [Parameters 1..6]
+    undefined Range(int max) {
+        var r = new PseudoRandom(max)
+        for (int i = 0; i < 200; i++) {
+            var n = r.Next(max)
+            Testing.Assert.IsTrue(n >= 0 && n < max, "got " + n)
+        }
+    }
+
+    [Test]
+    undefined Between() {
+        var r = new PseudoRandom(7)
+        for (int i = 0; i < 200; i++) {
+            var n = r.Next(-5, 5)
+            Testing.Assert.IsTrue(n >= -5 && n < 5, "got " + n)
+            var f = r.NextFloat()
+            Testing.Assert.IsTrue(f >= 0.0 && f < 1.0, "got " + f)
+        }
+    }
+
+    [Test]
+    undefined Shuffle() {
+        var list = new List()
+        for (int i = 0; i < 20; i++) { list.Add(i) }
+        var shuffled = new PseudoRandom(1).Shuffle(list)
+        Testing.Assert.AreEqual(20, shuffled.count)
+        for (int i = 0; i < 20; i++) { Testing.Assert.Contains(i, shuffled) }
+    }
+}

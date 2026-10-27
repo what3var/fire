@@ -98,6 +98,8 @@ namespace fire.Terminal.Sdl
             return (moved.X - origin.X, moved.Y - origin.Y);
         }
 
+        private bool _ownsJoystick;
+
         public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle)
         {
             _internalHandle = internalHandle;
@@ -107,7 +109,7 @@ namespace fire.Terminal.Sdl
             if (!SDL.Init(SDL.InitFlags.Video))
                 throw new InvalidOperationException($"SDL.Init failed: {SDL.GetError()}");
             // Joysticks are a bonus: without a driver the window opens anyway. The devices that are already plugged in report themselves afterwards as JoystickAdded.
-            SDL.InitSubSystem(SDL.InitFlags.Joystick);
+            _ownsJoystick = SDL.InitSubSystem(SDL.InitFlags.Joystick);
             SDL.SetHint(SDL.Hints.TouchMouseEvents, _touchMouse ? "1" : "0");
 
             // SDL3-CS offers CreateWindowAndRenderer as ONE call (instead of
@@ -123,6 +125,25 @@ namespace fire.Terminal.Sdl
 
             // SDL3 delivers text input events (EventType.TextInput) only once they are enabled for the window.
             SDL.StartTextInput(_window);
+        }
+
+        /// <summary>Window.SetSize: the new size of the open window (no resize event comes back for it).</summary>
+        private readonly IntPtr[] _cursors = new IntPtr[12];
+        private int _cursor = -1;
+
+        /// <summary>The system cursor over the window (SDL_SystemCursor; made once per kind).</summary>
+        public void SetCursor(int cursor)
+        {
+            if (cursor < 0 || cursor >= _cursors.Length || cursor == _cursor || _window == IntPtr.Zero) return;
+            if (_cursors[cursor] == IntPtr.Zero) _cursors[cursor] = SDL.CreateSystemCursor((SDL.SystemCursor)cursor);
+            if (_cursors[cursor] == IntPtr.Zero) return;
+            SDL.SetCursor(_cursors[cursor]);
+            _cursor = cursor;
+        }
+
+        public void SetSize(int width, int height)
+        {
+            if (_window != IntPtr.Zero && width > 0 && height > 0) SDL.SetWindowSize(_window, width, height);
         }
 
         public WindowPumpResult PumpEvents()
@@ -357,7 +378,9 @@ namespace fire.Terminal.Sdl
             if (_texture != IntPtr.Zero) SDL.DestroyTexture(_texture);
             if (_renderer != IntPtr.Zero) SDL.DestroyRenderer(_renderer);
             if (_window != IntPtr.Zero) SDL.DestroyWindow(_window);
-            SDL.Quit();
+            // only this window's references (SDL counts them per subsystem): SDL.Quit would shut the video down under the other windows
+            if (_ownsJoystick) SDL.QuitSubSystem(SDL.InitFlags.Joystick);
+            SDL.QuitSubSystem(SDL.InitFlags.Video);
         }
     }
 }

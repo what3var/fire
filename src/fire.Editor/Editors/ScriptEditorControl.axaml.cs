@@ -264,6 +264,39 @@ namespace fire.Editor
         /// `#include`, as they are to the build. null: the document stands alone.</summary>
         public Func<IReadOnlyList<(string Path, string Text)>>? ProjectFilesProvider { get; set; }
 
+        private Dictionary<string, int>? _memberColors;
+        private int _memberColorsVersion = -1;
+
+        /// <summary>The members with `[Colorize ...]` in the other files of the project and in the files this one includes (a circuit generated from a `.biscuit`
+        /// colors its ports): name -> 0xRRGGBB. Looked up again after the project changed.</summary>
+        private Dictionary<string, int> ColorizedMembers()
+        {
+            if (_memberColors != null && _memberColorsVersion == TextVersion) return _memberColors;
+            var colors = new Dictionary<string, int>(StringComparer.Ordinal);
+            try
+            {
+                foreach (var (_, text) in ProjectFilesProvider?.Invoke() ?? Array.Empty<(string, string)>()) ColorizeAttributes.Collect(text, colors);
+                // #include "Amp.biscuit" (or a .fire file) next to this one
+                foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(Editor.Text, "^\\s*#include\\s+\"([^\"]+)\"", System.Text.RegularExpressions.RegexOptions.Multiline))
+                {
+                    string dir = BaseDirectory ?? "";
+                    string path = Path.GetFullPath(Path.Combine(dir, m.Groups[1].Value));
+                    if (!File.Exists(path)) continue;
+                    string included = File.ReadAllText(path);
+                    if (fire.UI.Markup.MarkupFiles.IsGenerated(path))
+                    {
+                        try { included = fire.UI.Markup.MarkupFiles.GenerateScript(path, included); }
+                        catch (fire.UI.Markup.MarkupException) { continue; }
+                    }
+                    ColorizeAttributes.Collect(included, colors);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
+            _memberColors = colors;
+            _memberColorsVersion = TextVersion;
+            return colors;
+        }
+
         /// <summary>The symbol index of `source`, reused as long as the text (and the project) does not change.</summary>
         private ScriptSymbolIndex IndexFor(string source)
         {
@@ -618,7 +651,9 @@ namespace fire.Editor
         private void RecomputeHighlighting()
         {
             string text = Editor.Text;
-            _colorizer.Spans = SyntaxHighlighter.Highlight(text, ConditionalSymbolsForView());
+            var spans = SyntaxHighlighter.Highlight(text, ConditionalSymbolsForView());
+            ColorizeAttributes.Apply(spans, text, ColorizedMembers(), ColorizeAttributes.Collect(text));
+            _colorizer.Spans = spans;
             _errorSquiggles.ErrorLines = _diagnostics.Where(d => d.IsError).Select(d => d.Line).ToHashSet();
             _errorSquiggles.WarningLines = _diagnostics.Where(d => d.IsWarning).Select(d => d.Line).ToHashSet();
             Editor.TextArea.TextView.Redraw();
@@ -876,6 +911,17 @@ namespace fire.Editor
         public void Delete() { Editor.Delete(); Editor.Focus(); }
         public void SelectAll() { Editor.SelectAll(); Editor.Focus(); }
         public void GoToLine(int line) => Editor.GoToLine(line);
+
+        public void FindReplace()
+
+        {
+
+            if (_searchPanel != null) _searchPanel.IsReplaceMode = true;
+
+            Find();
+
+        }
+
 
         public void Find()
         {

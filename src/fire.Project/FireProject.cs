@@ -44,6 +44,8 @@ namespace fire.Projects
         public List<fire.Package.Manager.PackageNativeFunction>? Functions { get; set; }
         public List<string>? Exceptions { get; set; }
         public string? Reset { get; set; }
+        /// <summary>false: only the `functions` named here are natives - the `inline Value` functions of the sources are not looked for (the standard libraries name all of theirs).</summary>
+        public bool? Discover { get; set; }
     }
 
     /// <summary>
@@ -57,12 +59,16 @@ namespace fire.Projects
     {
         public const string Extension = ".fireproj";
         public const int CurrentFormat = 1;
-        public static readonly string[] DefaultFiles = { "**/*.{fire,script,fi,fic,fxml}" };
-        /// <summary>The files that are compiled: scripts and the markup of user interfaces (`.fxml`, compiled to the script that is generated from it - no `#include` needed).</summary>
-        public static readonly string[] SourceExtensions = { ".fire", ".script", ".fi", ".fic", ".fxml" };
-
+        public static readonly string[] DefaultFiles = { "**/*.{fire,script,fi,fic,fxml,biscuit}" };
+        /// <summary>The files that are compiled: scripts, the markup of user interfaces (`.fxml`) and schematics of circuits (`.biscuit`) - the last two compiled to the script that is
+        /// generated from them, no `#include` needed.</summary>
+        public static readonly string[] SourceExtensions = { ".fire", ".script", ".fi", ".fic", ".fxml", ".biscuit" };
+        
         public static bool IsSourceFile(string path) => SourceExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
-        public static bool IsMarkupFile(string path) => string.Equals(Path.GetExtension(path), ".fxml", StringComparison.OrdinalIgnoreCase);
+        /// <summary>A file that is compiled as the script generated from it: the markup of a user interface (`.fxml`) or the schematic of a circuit (`.biscuit`).</summary>
+        public static bool IsMarkupFile(string path) => fire.UI.Markup.MarkupFiles.IsGenerated(path);
+        public static bool IsUiMarkupFile(string path) => fire.UI.Markup.MarkupFiles.IsUiMarkup(path);
+        public static bool IsCircuitFile(string path) => fire.UI.Markup.MarkupFiles.IsBiscuit(path);
 
         public int Format { get; set; } = CurrentFormat;
         public string Name { get; set; } = "";
@@ -70,12 +76,17 @@ namespace fire.Projects
         /// <summary>The import name of a library (`#import "name"`); default: the project name (characters that are not allowed become `_`).</summary>
         public string? Import { get; set; }
         public List<string> Files { get; set; } = new();
-        public List<string> Exclude { get; set; } = new();
+        /// <summary>What a new project leaves out: build output (`code`) and binaries. It is written into every project file, so the user can take entries out; a file that has
+        /// `exclude` keeps exactly its list when it is loaded (also an empty one).</summary>
+        public static readonly string[] DefaultExclude = { "**/code", "**/*.exe", "**/*.dll" };
+        public List<string> Exclude { get; set; } = new(DefaultExclude);
         public string? Entry { get; set; }
         public List<ProjectReference> References { get; set; } = new();
         public ProjectSettings Settings { get; set; } = new();
         /// <summary>The C++ natives of the project (folder `native/`); null: none.</summary>
         public ProjectNative? Native { get; set; }
+        /// <summary>A standard library of fire (the projects of `Source/Packages.firesln`, docs/PACKAGES.md): its import may have a name of the compiler (`time`, `io`, ...).</summary>
+        public bool Standard { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -118,7 +129,7 @@ namespace fire.Projects
             var copy = new FireProject
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
-                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native,
+                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -139,21 +150,23 @@ namespace fire.Projects
             {
                 Format = p.Format; Name = p.Name; Type = p.Type; Import = p.Import; Entry = p.Entry;
                 Files = p.Files.Count > 0 ? p.Files : null;
-                Exclude = p.Exclude.Count > 0 ? p.Exclude : null;
+                Exclude = p.Exclude;   // always written, also empty: otherwise loading would bring back the defaults the user took out
                 References = p.References.Count > 0 ? p.References : null;
                 Settings = p.Settings.IsEmpty ? null : p.Settings;
                 Native = p.Native;
+                Standard = p.Standard ? true : null;
             }
             public int Format { get; }
             public string Name { get; }
             public OutputType Type { get; }
             public string? Import { get; }
             public List<string>? Files { get; }
-            public List<string>? Exclude { get; }
+            public List<string> Exclude { get; }
             public string? Entry { get; }
             public List<ProjectReference>? References { get; }
             public ProjectSettings? Settings { get; }
             public ProjectNative? Native { get; }
+            public bool? Standard { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`.</summary>
@@ -180,8 +193,8 @@ namespace fire.Projects
             if (Type == OutputType.Library)
             {
                 string import = ImportName;
-                if (!fire.Package.Manager.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter).");
-                else if (fire.Package.Manager.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
+                if (!fire.Package.Manager.PackageManifest.ImportNamePattern.IsMatch(import)) problems.Add($"The import name '{import}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots).");
+                else if (!Standard && fire.Package.Manager.PackageManifest.ReservedImportNames.Contains(import)) problems.Add($"The import name '{import}' belongs to the compiler; set 'import' to another name.");
             }
             foreach (var r in References ?? new List<ProjectReference>())
             {

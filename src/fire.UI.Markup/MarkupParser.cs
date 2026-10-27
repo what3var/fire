@@ -109,14 +109,14 @@ namespace fire.UI.Markup
                     case "width": width = ReadSize(attribute, width, errors); break;
                     case "height": height = ReadSize(attribute, height, errors); break;
                     default:
-                        errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{name}' of '{root.Name.LocalName}' (known: class, base, namespace, namespace:prefix, {(kind == MarkupRootKind.Window ? "title, " : "")}width, height)."));
+                        errors.Add(new MarkupDiagnostic(line, $"Unknown attribute '{name}' of '{root.Name.LocalName}' (known: Class, Base, namespace, namespace:prefix, {(kind == MarkupRootKind.Window ? "Title, " : "")}Width, Height)."));
                         break;
                 }
             }
 
             if (string.IsNullOrWhiteSpace(className))
             {
-                errors.Add(new MarkupDiagnostic(Line(root), $"'{root.Name.LocalName}' needs the attribute class=\"...\": the name of the class of the code-behind."));
+                errors.Add(new MarkupDiagnostic(Line(root), $"'{root.Name.LocalName}' needs the attribute Class=\"...\": the name of the class of the code-behind."));
                 className = "Ui";
             }
             else if (!MarkupSchema.IsIdentifier(className))
@@ -172,10 +172,10 @@ namespace fire.UI.Markup
                     errors.Add(new MarkupDiagnostic(Line(item), $"Unknown resource '{item.Name.LocalName}' (known: Converter, Style, ControlTemplate, DataTemplate, CollectionView)."));
                     continue;
                 }
-                string? key = (string?)item.Attribute("key"), type = (string?)item.Attribute("type");
+                string? key = Attr(item, "Key"), type = Attr(item, "Type");
                 if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(type))
                 {
-                    errors.Add(new MarkupDiagnostic(Line(item), "A 'Converter' needs key=\"...\" (the name bindings use) and type=\"...\" (the class)."));
+                    errors.Add(new MarkupDiagnostic(Line(item), "A 'Converter' needs Key=\"...\" (the name bindings use) and Type=\"...\" (the class)."));
                     continue;
                 }
                 if (!MarkupSchema.IsIdentifier(key)) errors.Add(new MarkupDiagnostic(Line(item), $"'{key}' is not a valid converter key."));
@@ -185,12 +185,16 @@ namespace fire.UI.Markup
             }
         }
 
+        /// <summary>The value of an attribute, whatever the case of its name (Key, key); null if it is missing.</summary>
+        private static string? Attr(XElement node, string name) =>
+            node.Attributes().FirstOrDefault(a => !a.IsNamespaceDeclaration && a.Name.NamespaceName.Length == 0 && a.Name.LocalName.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
+
         private static string? KeyOf(XElement node, string what, List<MarkupDiagnostic> errors, bool required)
         {
-            string? key = (string?)node.Attribute("key");
+            string? key = Attr(node, "Key");
             if (string.IsNullOrWhiteSpace(key))
             {
-                if (required) errors.Add(new MarkupDiagnostic(Line(node), $"A '{what}' needs key=\"...\"."));
+                if (required) errors.Add(new MarkupDiagnostic(Line(node), $"A '{what}' needs Key=\"...\"."));
                 return null;
             }
             if (!MarkupSchema.IsIdentifier(key))
@@ -204,23 +208,23 @@ namespace fire.UI.Markup
         private static void CheckAttributes(XElement node, string[] known, List<MarkupDiagnostic> errors)
         {
             foreach (var attribute in node.Attributes().Where(a => !a.IsNamespaceDeclaration))
-                if (!known.Contains(attribute.Name.LocalName))
+                if (!known.Contains(attribute.Name.LocalName, StringComparer.OrdinalIgnoreCase))
                     errors.Add(new MarkupDiagnostic(Line(attribute), $"'{node.Name.LocalName}' has no attribute '{attribute.Name.LocalName}' (known: {string.Join(", ", known)})."));
         }
 
         private static void ReadStyle(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
         {
-            CheckAttributes(node, new[] { "key", "target", "basedOn" }, errors);
+            CheckAttributes(node, new[] { "Key", "Target", "BasedOn" }, errors);
             string? key = KeyOf(node, "Style", errors, false);
-            string? targetName = (string?)node.Attribute("target");
+            string? targetName = Attr(node, "Target");
             var target = targetName == null ? null : MarkupSchema.FindTarget(targetName);
             if (target == null)
             {
-                errors.Add(new MarkupDiagnostic(Line(node), targetName == null ? "A 'Style' needs target=\"...\" (the kind of element it is for, e.g. Button)."
+                errors.Add(new MarkupDiagnostic(Line(node), targetName == null ? "A 'Style' needs Target=\"...\" (the kind of element it is for, e.g. Button)."
                     : $"Unknown style target '{targetName}' (an element of the markup, or Element)."));
                 return;
             }
-            var style = new StyleDeclaration { Key = key, Target = target.Tag, BasedOn = (string?)node.Attribute("basedOn"), Line = Line(node) };
+            var style = new StyleDeclaration { Key = key, Target = target.Tag, BasedOn = Attr(node, "BasedOn"), Line = Line(node) };
             foreach (var child in node.Elements())
             {
                 if (string.Equals(child.Name.LocalName, "Setter", StringComparison.OrdinalIgnoreCase))
@@ -238,11 +242,11 @@ namespace fire.UI.Markup
 
         private static SetterDeclaration? ReadSetter(XElement node, ElementDef target, TemplateDeclaration? template, List<MarkupDiagnostic> errors)
         {
-            CheckAttributes(node, template == null ? new[] { "property", "value" } : new[] { "property", "value", "target" }, errors);
-            string? property = (string?)node.Attribute("property"), value = (string?)node.Attribute("value"), part = (string?)node.Attribute("target");
+            CheckAttributes(node, template == null ? new[] { "Property", "Value" } : new[] { "Property", "Value", "Target" }, errors);
+            string? property = Attr(node, "Property"), value = Attr(node, "Value"), part = Attr(node, "Target");
             if (string.IsNullOrWhiteSpace(property) || value == null)
             {
-                errors.Add(new MarkupDiagnostic(Line(node), "A 'Setter' needs property=\"...\" and value=\"...\"."));
+                errors.Add(new MarkupDiagnostic(Line(node), "A 'Setter' needs Property=\"...\" and Value=\"...\"."));
                 return null;
             }
             if (template == null && target.Property(property) == null)
@@ -262,19 +266,19 @@ namespace fire.UI.Markup
 
         private static TriggerDeclaration? ReadTrigger(XElement node, ElementDef target, TemplateDeclaration? template, List<MarkupDiagnostic> errors)
         {
-            CheckAttributes(node, template == null ? new[] { "property", "value" } : new[] { "property", "value", "source" }, errors);
+            CheckAttributes(node, template == null ? new[] { "Property", "Value" } : new[] { "Property", "Value", "Source" }, errors);
             var trigger = new TriggerDeclaration { Line = Line(node) };
             bool ok = true;
             void Condition(XElement from)
             {
-                string? property = (string?)from.Attribute("property"), value = (string?)from.Attribute("value"), source = (string?)from.Attribute("source");
+                string? property = Attr(from, "Property"), value = Attr(from, "Value"), source = Attr(from, "Source");
                 if (string.IsNullOrWhiteSpace(property) || value == null)
                 {
-                    errors.Add(new MarkupDiagnostic(Line(from), "A trigger condition needs property=\"...\" and value=\"...\"."));
+                    errors.Add(new MarkupDiagnostic(Line(from), "A trigger condition needs Property=\"...\" and Value=\"...\"."));
                     ok = false;
                     return;
                 }
-                if (source == null && target.Property(property) == null && !MarkupSchema.StateProperties.Any(p => p.Name == property))
+                if (source == null && target.Property(property) == null && MarkupSchema.StateProperty(property) == null)
                 {
                     errors.Add(new MarkupDiagnostic(Line(from), $"'{target.Tag}' has no property '{property}' to test (known: {string.Join(", ", target.Properties.Select(p => p.Name).Concat(MarkupSchema.StateProperties.Select(p => p.Name)))})."));
                     ok = false;
@@ -304,14 +308,14 @@ namespace fire.UI.Markup
 
         private static void ReadTemplate(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
         {
-            CheckAttributes(node, new[] { "key", "target" }, errors);
+            CheckAttributes(node, new[] { "Key", "Target" }, errors);
             string? key = KeyOf(node, "ControlTemplate", errors, true);
-            string? targetName = (string?)node.Attribute("target");
+            string? targetName = Attr(node, "Target");
             var target = targetName == null ? null : MarkupSchema.FindTarget(targetName);
             if (key == null) return;
             if (target == null)
             {
-                errors.Add(new MarkupDiagnostic(Line(node), targetName == null ? "A 'ControlTemplate' needs target=\"...\" (the kind of control it is for, e.g. Button)."
+                errors.Add(new MarkupDiagnostic(Line(node), targetName == null ? "A 'ControlTemplate' needs Target=\"...\" (the kind of control it is for, e.g. Button)."
                     : $"Unknown template target '{targetName}'."));
                 return;
             }
@@ -332,7 +336,7 @@ namespace fire.UI.Markup
 
         private static void ReadDataTemplate(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
         {
-            CheckAttributes(node, new[] { "key" }, errors);
+            CheckAttributes(node, new[] { "Key" }, errors);
             string? key = KeyOf(node, "DataTemplate", errors, true);
             if (key == null) return;
             var template = new DataTemplateDeclaration { Key = key, Line = Line(node) };
@@ -346,12 +350,12 @@ namespace fire.UI.Markup
         private static void ReadView(XElement node, MarkupDocument document, List<MarkupDiagnostic> errors)
         {
             var def = MarkupSchema.CollectionViewDef;
-            CheckAttributes(node, def.Properties.Select(p => p.Name).Append("key").ToArray(), errors);
+            CheckAttributes(node, def.Properties.Select(p => p.Name).Append("Key").ToArray(), errors);
             string? key = KeyOf(node, "CollectionView", errors, true);
             if (key == null) return;
             if (node.HasElements) errors.Add(new MarkupDiagnostic(Line(node.Elements().First()), "A 'CollectionView' contains no elements."));
             var element = new MarkupElement { Tag = def.Tag, Line = Line(node) };
-            foreach (var attribute in node.Attributes().Where(a => !a.IsNamespaceDeclaration && a.Name.LocalName != "key"))
+            foreach (var attribute in node.Attributes().Where(a => !a.IsNamespaceDeclaration && !a.Name.LocalName.Equals("Key", StringComparison.OrdinalIgnoreCase)))
             {
                 var property = def.Property(attribute.Name.LocalName);
                 if (property == null) continue; // reported by CheckAttributes
@@ -403,8 +407,10 @@ namespace fire.UI.Markup
                 }
                 else
                 {
-                    var known = def.Properties.Select(p => p.Name).Concat(def.Events.Select(e => e.Name)).Append("name");
-                    errors.Add(new MarkupDiagnostic(line, $"'{def.Tag}' has no property or event '{name}' (known: {string.Join(", ", known)})."));
+                    var known = def.Properties.Select(p => p.Name).Concat(def.Events.Select(e => e.Name)).Append("Name");
+                    if (MarkupSchema.RenamedAttributes.TryGetValue(name, out var renamed) && def.Property(renamed) != null)
+                        errors.Add(new MarkupDiagnostic(line, $"'{name}' is now called '{renamed}'."));
+                    else errors.Add(new MarkupDiagnostic(line, $"'{def.Tag}' has no property or event '{name}' (known: {string.Join(", ", known)})."));
                 }
             }
 
@@ -412,9 +418,9 @@ namespace fire.UI.Markup
             var content = string.Concat(node.Nodes().OfType<XText>().Select(t => t.Value)).Trim();
             if (content.Length > 0)
             {
-                if (def.Property("text") == null) errors.Add(new MarkupDiagnostic(Line(node), $"'{def.Tag}' cannot have text content."));
-                else if (element.Find("text") != null) errors.Add(new MarkupDiagnostic(Line(node), "The text is given twice (attribute and content)."));
-                else element.Attributes.Add(new MarkupAttribute("text", ReadValue(Regex.Replace(content, @"\s+", " "), Line(node), errors) ?? new LiteralValue(content), Line(node)));
+                if (def.Property("Text") == null) errors.Add(new MarkupDiagnostic(Line(node), $"'{def.Tag}' cannot have text content."));
+                else if (element.Find("Text") != null) errors.Add(new MarkupDiagnostic(Line(node), "The text is given twice (attribute and content)."));
+                else element.Attributes.Add(new MarkupAttribute("Text", ReadValue(Regex.Replace(content, @"\s+", " "), Line(node), errors) ?? new LiteralValue(content), Line(node)));
             }
 
             foreach (var child in node.Elements())
@@ -660,7 +666,7 @@ namespace fire.UI.Markup
                 if (style.BasedOn != null)
                 {
                     var based = document.Styles.FirstOrDefault(o => o.Key == style.BasedOn);
-                    if (based == null) document.Diagnostics.Add(new MarkupDiagnostic(style.Line, $"The style 'basedOn=\"{style.BasedOn}\"' does not exist (it needs a key)."));
+                    if (based == null) document.Diagnostics.Add(new MarkupDiagnostic(style.Line, $"The style 'BasedOn=\"{style.BasedOn}\"' does not exist (it needs a key)."));
                     else
                     {
                         // a cycle of basedOn
@@ -676,13 +682,13 @@ namespace fire.UI.Markup
             {
                 string key = text.Trim();
                 if (property?.Kind == PropertyKind.StyleRef && !document.Styles.Any(s => s.Key == key))
-                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown style '{key}' (give a <Style key=\"...\"> in the Resources)."));
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown style '{key}' (give a <Style Key=\"...\"> in the Resources)."));
                 if (property?.Kind == PropertyKind.TemplateRef && !document.Templates.Any(t => t.Key == key))
-                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown template '{key}' (give a <ControlTemplate key=\"...\"> in the Resources)."));
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown template '{key}' (give a <ControlTemplate Key=\"...\"> in the Resources)."));
                 if (property?.Kind == PropertyKind.DataTemplateRef && !document.DataTemplates.Any(t => t.Key == key))
-                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown data template '{key}' (give a <DataTemplate key=\"...\"> in the Resources)."));
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown data template '{key}' (give a <DataTemplate Key=\"...\"> in the Resources)."));
                 if (property?.Kind == PropertyKind.ViewRef && !document.Views.Any(v => v.Key == key))
-                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown view '{key}' (give a <CollectionView key=\"...\"> in the Resources)."));
+                    document.Diagnostics.Add(new MarkupDiagnostic(line, $"Unknown view '{key}' (give a <CollectionView Key=\"...\"> in the Resources)."));
             }
             void CheckValueKind(PropertyDef? property, MarkupValue value, int line)
             {
@@ -703,7 +709,7 @@ namespace fire.UI.Markup
                     CheckValueKind(property, attribute.Value, attribute.Line);
                 }
                 if (element.Find("view") != null && element.Find("itemsSource") != null)
-                    document.Diagnostics.Add(new MarkupDiagnostic(element.Line, $"'{element.Tag}' shows a 'view' or an 'itemsSource', not both."));
+                    document.Diagnostics.Add(new MarkupDiagnostic(element.Line, $"'{element.Tag}' shows a 'View' or an 'ItemsSource', not both."));
             }
             foreach (var view in document.Views)
                 foreach (var attribute in view.Element.Attributes)
@@ -712,10 +718,10 @@ namespace fire.UI.Markup
                     CheckValueKind(property, attribute.Value, attribute.Line);
                     if (attribute.Value is BindingValue { Mode: BindingMode.TwoWay })
                         document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "The source of a 'CollectionView' is read only (Mode=OneWay or OneTime)."));
-                    if (attribute.Name == "sortBy" && attribute.Value is LiteralValue sort && !MarkupSchema.IsIdentifier(sort.Text.Trim()))
-                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"'sortBy' needs the name of a property, not '{sort.Text}'."));
-                    if (attribute.Name == "descending" && attribute.Value is not LiteralValue)
-                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'descending' needs true or false."));
+                    if (attribute.Name.Equals("SortBy", StringComparison.OrdinalIgnoreCase) && attribute.Value is LiteralValue sort && !MarkupSchema.IsIdentifier(sort.Text.Trim()))
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"'SortBy' needs the name of a property, not '{sort.Text}'."));
+                    if (attribute.Name.Equals("Descending", StringComparison.OrdinalIgnoreCase) && attribute.Value is not LiteralValue)
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'Descending' needs true or false."));
                 }
             foreach (var style in document.Styles)
                 foreach (var setter in style.Setters.Concat(style.Triggers.SelectMany(t => t.Setters)))
@@ -750,7 +756,7 @@ namespace fire.UI.Markup
                     {
                         if (attribute.Value is BindingValue)
                             document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "'{Binding ...}' is not available inside a ControlTemplate; use '{TemplateBinding Property}'."));
-                        if (attribute.Value is TemplateBindingValue tb && target.Property(tb.OwnerProperty) == null && !MarkupSchema.StateProperties.Any(p => p.Name == tb.OwnerProperty))
+                        if (attribute.Value is TemplateBindingValue tb && target.Property(tb.OwnerProperty) == null && MarkupSchema.StateProperty(tb.OwnerProperty) == null)
                             document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"'{template.Target}' has no property '{tb.OwnerProperty}' to bind to."));
                     }
                 }
@@ -803,7 +809,7 @@ namespace fire.UI.Markup
             foreach (var style in document.Styles)
                 foreach (var trigger in style.Triggers)
                     foreach (var setter in trigger.Setters.Where(x => x.Target != null))
-                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, "'target' is only for the setters of a ControlTemplate."));
+                        document.Diagnostics.Add(new MarkupDiagnostic(setter.Line, "'Target' is only for the setters of a ControlTemplate."));
         }
 
         /// <summary>The checks that need the whole document: unique names, converters and elements that bindings name.</summary>
@@ -833,7 +839,7 @@ namespace fire.UI.Markup
             foreach (var view in document.Views)
                 foreach (var attribute in view.Element.Attributes)
                     if (attribute.Value is BindingValue { ElementName: { } viewElement } && !names.ContainsKey(viewElement))
-                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{viewElement}', which does not exist (give it name=\"...\")."));
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{viewElement}', which does not exist (give it Name=\"...\")."));
 
             foreach (var element in document.AllElements())
                 foreach (var attribute in element.Attributes)
@@ -844,7 +850,7 @@ namespace fire.UI.Markup
                     if (binding.Path.Length == 0)
                         document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, "A binding needs a path like Name or Player.Hp (a binding without a path is for the elements of a DataTemplate)."));
                     if (binding.ElementName != null && !names.ContainsKey(binding.ElementName))
-                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{binding.ElementName}', which does not exist (give it name=\"...\")."));
+                        document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line, $"The binding names the element '{binding.ElementName}', which does not exist (give it Name=\"...\")."));
                     if (binding.Converter != null && !document.Converters.Any(c => c.Key == binding.Converter) && !MarkupSchema.BuiltInConverters.ContainsKey(binding.Converter))
                         document.Diagnostics.Add(new MarkupDiagnostic(attribute.Line,
                             $"Unknown converter '{binding.Converter}' (declare it in <Resources>, or use one of: {string.Join(", ", MarkupSchema.BuiltInConverters.Keys)})."));

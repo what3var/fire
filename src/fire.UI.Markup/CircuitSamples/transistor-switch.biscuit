@@ -1,0 +1,17 @@
+{
+  "biscuit": 1,
+  "timeStep": "10us",
+  "elements": [
+    {"type": "Text", "from": [-8, -28], "to": [-4, -28], "text": "Transistor switch: click the logic input - a small base current switches the LED current"},
+    {"type": "LogicInput", "name": "IN", "from": [4, 8], "to": [0, 8]},
+    {"type": "Resistor", "name": "R1", "from": [4, 8], "to": [16, 8], "resistance": "10k"},
+    {"type": "Transistor", "name": "Q1", "from": [16, 8], "to": [20, 8]},
+    {"type": "Rail", "name": "VCC", "from": [20, -20], "to": [20, -24], "voltage": "5V"},
+    {"type": "Resistor", "name": "R2", "from": [20, -20], "to": [20, -8], "resistance": "220"},
+    {"type": "Led", "name": "D1", "from": [20, -8], "to": [20, 2], "color": "green"},
+    {"type": "Wire", "from": [20, 2], "to": [20, 6]},
+    {"type": "Ground", "from": [20, 10], "to": [20, 14]},
+    {"type": "Scope", "from": [32, -16], "to": [72, -4], "probe": "D1", "quantity": "current"},
+    {"type": "Scope", "from": [32, 0], "to": [72, 12], "probe": "R1", "quantity": "current"}
+  ]
+}

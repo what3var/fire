@@ -236,6 +236,16 @@ namespace fire.Values
                 if (!dimensionOnly) value = MakeUndefined(target);
                 return UnitAdaptation.Ok;
             }
+            // a unit that becomes a plain number (dB) stored without a unit, and a plain number stored in such a unit
+            if (!dimensionOnly && (target.IsUnitless && actual.UnitlessConverter != null || actual.IsUnitless && target.UnitlessConverter != null))
+            {
+                double plain = value.Kind == ValueKind.Float ? value._floatValue : value._intValue;
+                double result = target.IsUnitless ? actual.ToUnitless(plain) : target.FromUnitless(plain);
+                if (value.Kind == ValueKind.Float) { value = MakeFloat(result, target, value.Width); return UnitAdaptation.Ok; }
+                if (Math.Abs(Math.Round(result)) >= 9.2e18) return UnitAdaptation.Overflow;
+                value = MakeInt((long)Math.Round(result), target, value.Width);
+                return UnitAdaptation.Ok;
+            }
             if (!actual.IsCompatibleWith(target)) return UnitAdaptation.Mismatch;
             if (dimensionOnly) return UnitAdaptation.Ok;
             if (!actual.IsLinear || !target.IsLinear)
@@ -468,6 +478,8 @@ namespace fire.Values
 
         public static Value Divide(Value a, Value b)
         {
+            if (a._ref is Values.Unit { UnitlessConverter: not null } ua) a = MakeFloat(ua.ToUnitless(a.ToDouble()));
+            if (b._ref is Values.Unit { UnitlessConverter: not null } ub) b = MakeFloat(ub.ToUnitless(b.ToDouble()));
             // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Divide.
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
@@ -478,6 +490,7 @@ namespace fire.Values
 
             RequireNumeric(a); RequireNumeric(b);
             var resultUnit = Values.Unit.Divide(a.Unit ?? Values.Unit.Unitless, b.Unit ?? Values.Unit.Unitless);
+            if (resultUnit.IsUnitless && resultUnit.Scale != 1.0) return FoldScale(a, b, resultUnit.Scale, divide: true);
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() / b.ToDouble(), resultUnit);
@@ -486,6 +499,8 @@ namespace fire.Values
 
         public static Value Multiply(Value a, Value b)
         {
+            if (a._ref is Values.Unit { UnitlessConverter: not null } ua) a = MakeFloat(ua.ToUnitless(a.ToDouble()));
+            if (b._ref is Values.Unit { UnitlessConverter: not null } ub) b = MakeFloat(ub.ToUnitless(b.ToDouble()));
             // Both without a unit (the same `Unitless` instance): result without a unit, like Unit.Multiply.
             if (BothNumericSameUnit(a, b) && ReferenceEquals(a._ref, Values.Unit.Unitless))
             {
@@ -496,10 +511,37 @@ namespace fire.Values
 
             RequireNumeric(a); RequireNumeric(b);
             var resultUnit = Values.Unit.Multiply(a.Unit ?? Values.Unit.Unitless, b.Unit ?? Values.Unit.Unitless);
+            if (resultUnit.IsUnitless && resultUnit.Scale != 1.0) return FoldScale(a, b, resultUnit.Scale, divide: false);
 
             if (a.Kind == ValueKind.Float || b.Kind == ValueKind.Float)
                 return MakeFloat(a.ToDouble() * b.ToDouble(), resultUnit);
             return MakeInt(a._intValue * b._intValue, resultUnit);
+        }
+
+        /// <summary>A product or quotient whose units cancel but leave a factor (`5cm / 1mm`, `1km * (1/1m)`): the factor goes into the number (50), the
+        /// result has no unit. Two ints stay an int when the factor is a whole number or its inverse is one (`1s / 1ms` is 1000, `1ms / 1s` is 0 like
+        /// `1 / 1000`); otherwise the result is a float. The native runtime does the same (fire_rt.hpp, foldScale).</summary>
+        private static Value FoldScale(Value a, Value b, double scale, bool divide)
+        {
+            scale = Values.Unit.NiceFactor(scale);
+            if (a.Kind == ValueKind.Int && b.Kind == ValueKind.Int)
+            {
+                long x = a._intValue, y = b._intValue;
+                if (scale >= 1 && scale == Math.Floor(scale) && scale < 9.2e18)
+                {
+                    long s = (long)scale;
+                    return divide ? MakeInt(y == -1 ? unchecked(-(x * s)) : unchecked(x * s) / y) : MakeInt(unchecked(x * y * s));
+                }
+                double inv = Values.Unit.NiceFactor(1.0 / scale);
+                if (inv >= 1 && inv == Math.Floor(inv) && inv < 9.2e18)
+                {
+                    long s = (long)inv;
+                    if (divide) { long d = unchecked(y * s); return MakeInt(d == -1 ? unchecked(-x) : x / d); }
+                    return MakeInt(unchecked(x * y) / s);
+                }
+            }
+            double r = divide ? a.ToDouble() / b.ToDouble() : a.ToDouble() * b.ToDouble();
+            return MakeFloat(r * scale);
         }
 
         private double ToDouble() => Kind == ValueKind.Float ? _floatValue : (SingleFloats ? (double)(float)_intValue : _intValue);

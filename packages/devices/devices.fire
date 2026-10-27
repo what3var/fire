@@ -1,0 +1,511 @@
+#import "time"
+
+// Devices (docs/DEVICES.md): every device is a `Device` - a serial port, a GPIO port, an I2C bus or a device on it, an SPI device - and comes from a `Driver`.
+// `DeviceManager` holds the drivers of the program (`DeviceManager.AddDriver(new GpioDriver())`) and finds devices by their identifier (`DeviceManager.Get("gpio:gpioa")`).
+// What the program's host offers (the editor: the default device it chose, its packet trace) comes in through `DeviceManager.Host`.
+
+class DeviceNotFoundException : Exception {
+    construct(string message) { this.message = message }
+}
+
+class DeviceConnectionException : Exception {
+    construct(string message) { this.message = message }
+}
+
+// An invalid specification passed to a device function (e.g. a wait time that is not a duration).
+class DeviceArgumentException : Exception {
+    construct(string message) { this.message = message }
+}
+
+// The device cannot do this (a GPIO port that cannot be read as a whole, a bus that has no data of its own).
+class NotSupportedException : Exception {
+    construct(string message) { this.message = message }
+}
+
+// What every device can do at command level (Device implements it; `Command<IDevice>` is a command that DoCommand executes with the device as context).
+interface IDevice {
+    string Identifier()
+    bool Connect()
+    undefined Disconnect()
+    bool DoCommand(any command)
+    bool DoCommands(any commands)
+    bool HasData()
+    string ReadString()
+    any Read()
+    bool WriteString(string text)
+    bool Write(any data)
+    bool WaitForString(string text, any timeout)
+    bool WaitFor(any data, any timeout)
+}
+
+/// <summary>A device. A driver makes it; its identifier is the driver's name and the device's name (`serial:COM3`, `gpio:gpioa`, `i2c:i2c-1/0x48`). The raw data goes
+/// through Read and Write (a device that cannot do one throws NotSupportedException); text, commands and waiting are built on them - a device can do them better itself
+/// (a serial port does).</summary>
+class Device : IDevice {
+    Driver owner
+    string name
+    // what Read gave that the waiting functions have not handed out yet (see WaitFor)
+    any pending
+
+    construct(Driver driver, string name) {
+        this.owner = driver
+        this.name = name
+        this.pending = undefined
+    }
+
+    /// <summary>The identifier: `driver:name`.</summary>
+    string Identifier() {
+        if (this.owner == undefined) { return this.name }
+        return this.owner.Name() + ":" + this.name
+    }
+
+    /// <summary>The name of the device within its driver (`COM3`, `gpioa`, `i2c-1/0x48`).</summary>
+    string Name { get { return this.name } }
+
+    /// <summary>The driver that made the device (undefined for one made by hand).</summary>
+    Driver Owner() { return this.owner }
+
+    string PortName() { return this.name }
+
+    /// <summary>Connected? (A device without a connection of its own - a GPIO port - always is.)</summary>
+    bool IsConnected { get { return this.Connected() } }
+    bool IsConnected() { return this.Connected() }
+    bool Connected() { return true }
+
+    /// <summary>Does the device belong to the host (the editor) and stay after the program?</summary>
+    bool IsShared { get { return this.Shared() } }
+    bool Shared() { return false }
+
+    /// <summary>0 = Unavailable, 1 = Unchecked, 2 = Available.</summary>
+    int Availability() { return 2 }
+    int TestAvailability() { return this.Availability() }
+
+    bool Connect() { return true }
+    undefined Disconnect() { }
+
+    /// <summary>Connects only if not yet connected; throws DeviceConnectionException if that does not work. Returns the device.</summary>
+    Device EnsureConnected() {
+        if (!this.Connected()) {
+            if (!this.Connect()) {
+                throw new DeviceConnectionException("Connection to '" + this.Identifier() + "' failed")
+            }
+        }
+        return this
+    }
+
+    /// <summary>Reads what the device has (a byte buffer for a data device, the levels as an int for a GPIO port). Throws NotSupportedException when the device cannot.</summary>
+    any Read() {
+        throw new NotSupportedException("The device '" + this.Identifier() + "' cannot be read.")
+    }
+
+    /// <summary>Writes the data (a byte buffer for a data device, the levels as an int for a GPIO port). Throws NotSupportedException when the device cannot.</summary>
+    bool Write(any data) {
+        throw new NotSupportedException("The device '" + this.Identifier() + "' cannot be written.")
+    }
+
+    /// <summary>Is data waiting (from an earlier Read that a wait did not hand out)?</summary>
+    bool HasData() { return this.pending != undefined && this.pending.length > 0 }
+
+    /// <summary>The next data as text, one character per byte (Latin1): "" if nothing is waiting.</summary>
+    string ReadString() {
+        var data = this.TakePending()
+        if (data == undefined) { data = this.Read() }
+        if (data == undefined || data is of int) { return "" }
+        return Device.Latin1(data)
+    }
+
+    /// <summary>Writes exactly these characters (one byte each, Latin1) without a line ending.</summary>
+    bool WriteString(string text) { return this.Write(text.ToBytes()) }
+
+    /// <summary>Sends a command: a text as a line (with a line ending); a command object (anything with `Execute(device)`) is executed with the device as its context.</summary>
+    bool DoCommand(any command) {
+        if (command is of string) { return this.WriteString(command + "\n") }
+        var result = command.Execute(this)
+        if (result is of bool) { return result }
+        return true
+    }
+
+    /// <summary>Executes the commands in order and stops at the first one that returns `false`.</summary>
+    bool DoCommands(any commands) {
+        foreach (c in commands) {
+            if (!this.DoCommand(c)) { return false }
+        }
+        return true
+    }
+
+    /// <summary>Waits until the characters arrive and cuts the data behind them (what came after stays for the next read).</summary>
+    bool WaitForString(string text, any timeout = undefined) { return this.WaitFor(text.ToBytes(), timeout) }
+
+    /// <summary>Waits until the bytes arrive (reading the device over and over) and cuts the data behind them. `timeout`: a TimeSpan, a time value (`5s`) or
+    /// milliseconds (default: 30 seconds). False when the time ran out.</summary>
+    bool WaitFor(any data, any timeout = undefined) {
+        var limit = 30000
+        if (timeout != undefined) {
+            if (!(timeout is of int) && !(timeout is of float) && !(timeout is of TimeSpan)) {
+                throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)")
+            }
+            limit = TimeSpan.Of(timeout).Ticks / 10000
+        }
+        var deadline = DateTime.UtcNow.Ticks + limit * 10000
+        while (true) {
+            if (this.CutThrough(data)) { return true }
+            if (DateTime.UtcNow.Ticks >= deadline) { return false }
+            var more = this.Read()
+            if (more != undefined && !(more is of int) && more.length > 0) { this.Append(more) } else { Sleep(2) }
+        }
+    }
+
+    // ---- the receive buffer of the waiting functions ----
+    any TakePending() {
+        var p = this.pending
+        if (p == undefined || p.length == 0) { return undefined }
+        this.pending = undefined
+        return p
+    }
+
+    undefined Append(any more) {
+        var old = this.pending
+        if (old == undefined) {
+            var fresh = new byte[more.length]
+            for (int i = 0; i < more.length; i++) { fresh[i] = more[i] }
+            this.pending = fresh
+            return
+        }
+        var joined = new byte[old.length + more.length]
+        for (int i = 0; i < old.length; i++) { joined[i] = old[i] }
+        for (int i = 0; i < more.length; i++) { joined[old.length + i] = more[i] }
+        this.pending = joined
+    }
+
+    // Is `pattern` in the buffer? Then everything up to its end is dropped.
+    bool CutThrough(any pattern) {
+        var p = this.pending
+        if (p == undefined || pattern.length == 0 || p.length < pattern.length) { return false }
+        for (int start = 0; start + pattern.length <= p.length; start++) {
+            var match = true
+            for (int k = 0; k < pattern.length; k++) {
+                if (p[start + k] != pattern[k]) {
+                    match = false
+                    break
+                }
+            }
+            if (match) {
+                var restLength = p.length - start - pattern.length
+                if (restLength == 0) { this.pending = undefined }
+                else {
+                    var rest = new byte[restLength]
+                    for (int i = 0; i < restLength; i++) { rest[i] = p[start + pattern.length + i] }
+                    this.pending = rest
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    static string Latin1(any data) {
+        var sb = ""
+        for (int i = 0; i < data.length; i++) { sb = sb + data[i].ToChar() }
+        return sb
+    }
+
+    // Whether the host (e.g. the editor) has chosen a default device.
+    static bool HasDefault { get { return DeviceManager.HasDefault } }
+
+    // The default device chosen by the host (DeviceManager.Default).
+    static Device Default { get { return DeviceManager.Default } }
+}
+
+/// <summary>A driver: it knows a kind of device and makes the devices of this machine (Refresh). Derive from it for devices of your own.</summary>
+class Driver {
+    string name
+    List devices
+
+    construct(string name) {
+        this.name = name
+        this.devices = new List()
+    }
+
+    /// <summary>The name of the driver - the first part of the identifiers of its devices.</summary>
+    string Name() { return this.name }
+
+    /// <summary>The devices it found (Refresh looks again).</summary>
+    List Devices() { return this.devices }
+
+    /// <summary>Looks for devices: new ones are added, known ones stay. `fastScan`: without testing whether each is available.</summary>
+    undefined Refresh(bool fastScan = true) { }
+
+    /// <summary>The device of this name (undefined if there is none). A driver may make one on demand (I2C: `i2c-1/0x48`).</summary>
+    Device Find(string name) {
+        foreach (d in this.devices) {
+            if (d.Name == name) { return d }
+        }
+        return undefined
+    }
+
+    /// <summary>Adds a device it made (it belongs to the driver from now on).</summary>
+    undefined Add(Device device) {
+        device.TakeTo(this)
+        this.devices.Add(device)
+    }
+}
+
+/// <summary>What the host of the program offers the devices (DeviceManager.Host): the editor sets the default device, shows the device list and traces the packets.
+/// The default implementation asks the natives of `devices` (the editor's choice in the VM, FIRE_DEFAULT_DEVICE in a native build); a program may set one of its own.</summary>
+class DeviceHost {
+    construct() { }
+
+    /// <summary>The identifier of the device the host chose as default ("" = none).</summary>
+    string DefaultIdentifier() { return __DEVHostDefault() }
+
+    /// <summary>A packet went out (`sent`) or came in. The devices of the host (serial ports in the editor) are traced by the host itself.</summary>
+    undefined Trace(Device device, bool sent, any data) { }
+
+    /// <summary>The device list of the program has changed (a driver was added, a refresh found new devices).</summary>
+    undefined DevicesChanged(List devices) { }
+}
+
+/// <summary>Something simulated that runs alongside the program - a circuit at the simulated GPIO chip, I2C bus and SPI device (docs/CIRCUITS.md): every time
+/// the program uses one of the simulated devices, the simulation first catches up with the time (Advance). `Simulation.Start(s)` makes `s` the one that runs.</summary>
+class Simulation {
+    static Simulation current
+    static bool busy
+
+    construct() { }
+
+    /// <summary>Brings the simulation up to now (called before every access of the program to a simulated device).</summary>
+    undefined Advance() { }
+
+    /// <summary>The simulation that runs alongside the program (undefined: none).</summary>
+    static Simulation Current() { return Simulation.current }
+
+    /// <summary>Makes `s` the simulation that runs alongside the program (undefined: none any more).</summary>
+    static undefined Start(Simulation s) { Simulation.current = s }
+
+    static undefined Stop() { Simulation.current = undefined }
+
+    /// <summary>A simulated device is used: the running simulation catches up (not again while it is busy with that).</summary>
+    static undefined Touch() {
+        var s = Simulation.current
+        if (s == undefined || Simulation.busy == true) { return }
+        Simulation.busy = true
+        try { s.Advance() } finally { Simulation.busy = false }
+    }
+}
+
+/// <summary>The drivers of the program and their devices. Without a driver of its own the program gets the serial driver (`SerialDriver`) the first time it asks.</summary>
+class DeviceManager {
+    static List drivers
+    static DeviceHost host
+
+    /// <summary>What the host offers (see DeviceHost); a program may set its own.</summary>
+    static DeviceHost Host {
+        get {
+            if (DeviceManager.host == undefined) {
+                var h = new DeviceHost()
+                h.TakeGlobal()
+                DeviceManager.host = h
+            }
+            return DeviceManager.host
+        }
+        set {
+            value.TakeGlobal()
+            DeviceManager.host = value
+        }
+    }
+
+    static List Drivers() {
+        if (DeviceManager.drivers == undefined) {
+            var list = new List()
+            list.TakeGlobal()
+            DeviceManager.drivers = list
+        }
+        return DeviceManager.drivers
+    }
+
+    /// <summary>Adds a driver (once per name) and looks for its devices: `DeviceManager.AddDriver(new GpioDriver())`.</summary>
+    static undefined AddDriver(Driver driver) {
+        var all = DeviceManager.Drivers()
+        foreach (d in all) {
+            if (d.Name() == driver.Name()) { return }
+        }
+        driver.TakeGlobal()
+        all.Add(driver)
+        driver.Refresh(true)
+        DeviceManager.Host.DevicesChanged(DeviceManager.Devices())
+    }
+
+    static undefined RemoveDriver(Driver driver) {
+        var all = DeviceManager.Drivers()
+        for (int i = 0; i < all.count; i++) {
+            if (all[i] == driver) {
+                all.RemoveAt(i)
+                DeviceManager.Host.DevicesChanged(DeviceManager.Devices())
+                return
+            }
+        }
+    }
+
+    // the serial driver, when the program has none of its own
+    static undefined EnsureDrivers() {
+        if (DeviceManager.Drivers().count == 0) { DeviceManager.AddDriver(new SerialDriver()) }
+    }
+
+    /// <summary>All devices of all drivers.</summary>
+    static List Devices() {
+        DeviceManager.EnsureDrivers()
+        var result = new List()
+        foreach (d in DeviceManager.drivers) {
+            foreach (device in d.Devices()) { result.Add(device) }
+        }
+        return result
+    }
+
+    /// <summary>Every driver looks again (`fastScan`: without testing whether the devices are available).</summary>
+    static undefined Refresh(bool fastScan = true) {
+        DeviceManager.EnsureDrivers()
+        foreach (d in DeviceManager.drivers) { d.Refresh(fastScan) }
+        DeviceManager.Host.DevicesChanged(DeviceManager.Devices())
+    }
+
+    /// <summary>The device with this identifier (`gpio:gpioa`) or name (`gpioa`, when only one driver has it); throws DeviceNotFoundException.</summary>
+    static Device Get(string identifier) {
+        var found = DeviceManager.Find(identifier)
+        if (found == undefined) { throw new DeviceNotFoundException("No device with identifier '" + identifier + "'") }
+        return found
+    }
+
+    /// <summary>Is there a device with this identifier?</summary>
+    static bool Has(string identifier) { return DeviceManager.Find(identifier) != undefined }
+
+    static Device Find(string identifier) {
+        DeviceManager.EnsureDrivers()
+        foreach (d in DeviceManager.drivers) {
+            foreach (device in d.Devices()) {
+                if (device.Identifier() == identifier) { return device }
+            }
+        }
+        // `driver:name`: the driver may make it (an I2C device at an address)
+        var colon = identifier.IndexOf(":")
+        if (colon > 0) {
+            var driverName = identifier.Substring(0, colon)
+            var rest = identifier.Substring(colon + 1)
+            foreach (d in DeviceManager.drivers) {
+                if (d.Name() == driverName) {
+                    var made = d.Find(rest)
+                    if (made != undefined) { return made }
+                }
+            }
+            return undefined
+        }
+        // a bare name: the one device of that name
+        Device single = undefined
+        foreach (d in DeviceManager.drivers) {
+            foreach (device in d.Devices()) {
+                if (device.Name == identifier) {
+                    if (single != undefined) { return undefined }
+                    single = device
+                }
+            }
+        }
+        return single
+    }
+
+    /// <summary>Has the host chosen a default device that the program has?</summary>
+    static bool HasDefault {
+        get {
+            var id = DeviceManager.Host.DefaultIdentifier()
+            return id != "" && DeviceManager.Find(id) != undefined
+        }
+    }
+
+    /// <summary>The default device chosen by the host (in the editor: device overview -> "Set as Default Device"). Throws DeviceNotFoundException if none is chosen.</summary>
+    static Device Default {
+        get {
+            var id = DeviceManager.Host.DefaultIdentifier()
+            if (id == "") { throw new DeviceNotFoundException("No default device selected") }
+            var found = DeviceManager.Find(id)
+            if (found == undefined) { throw new DeviceNotFoundException("The default device '" + id + "' is not there") }
+            return found
+        }
+    }
+
+    /// <summary>Does the device list belong to the host (the editor) and stay after the program?</summary>
+    static bool IsShared() { return __DEVMgrIsShared() }
+}
+
+/// <summary>A serial port (or the loopback device `loopback:echo`): the devices of the platform - in the editor those of the editor's device manager, which stay
+/// connected after the program and whose packets the editor traces.</summary>
+class SerialPort : Device {
+    int handle
+
+    construct(Driver driver, int handle) : base(driver, __DEVPortName(handle)) {
+        this.handle = handle
+    }
+
+    string Identifier() { return __DEVIdentifier(this.handle) }
+    bool Connected() { return __DEVIsConnected(this.handle) }
+    bool Shared() { return __DEVIsShared(this.handle) }
+    string PortName() { return __DEVPortName(this.handle) }
+    int Availability() { return __DEVAvailability(this.handle) }
+    int TestAvailability() { return __DEVTestAvailability(this.handle) }
+    bool Connect() { return __DEVConnect(this.handle) }
+    undefined Disconnect() { __DEVDisconnect(this.handle) }
+
+    /// <summary>A text goes out as a line (with a line ending, in the device's encoding); a command object is executed with the device as its context.</summary>
+    bool DoCommand(any command) {
+        if (command is of string) { return __DEVDoCommand(this.handle, command) }
+        var result = command.Execute(this)
+        if (result is of bool) { return result }
+        return true
+    }
+
+    /// <summary>Is received data waiting? Data is read one packet at a time (after a WaitFor: the rest of the packet that was cut).</summary>
+    bool HasData() { return __DEVHasData(this.handle) }
+    /// <summary>The next received packet as text, one character per byte (Latin1); "" if nothing is waiting.</summary>
+    string ReadString() { return __DEVReadString(this.handle) }
+    /// <summary>The next received packet as a byte buffer (empty if nothing is waiting).</summary>
+    any Read() { return __DEVRead(this.handle) }
+    bool WriteString(string text) { return __DEVWriteString(this.handle, text) }
+    bool Write(any data) { return __DEVWrite(this.handle, data) }
+
+    /// <summary>Waits until the characters appear in the receive buffer (also across packets) and cuts the buffer behind them. Without a time limit the program's
+    /// `#timeout` applies, otherwise 30 seconds.</summary>
+    bool WaitForString(string text, any timeout = undefined) {
+        var r = __DEVWaitForString(this.handle, text, timeout)
+        if (r < 0) { throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)") }
+        return r == 1
+    }
+    bool WaitFor(any data, any timeout = undefined) {
+        var r = __DEVWaitFor(this.handle, data, timeout)
+        if (r < 0) { throw new DeviceArgumentException("Invalid wait time (expected: TimeSpan, a time value like 5s, or milliseconds)") }
+        return r == 1
+    }
+}
+
+/// <summary>The serial ports of the platform and the loopback device (in the editor: the devices of the editor). Their identifiers are those of the platform
+/// (`serial:COM3`, `loopback:echo`).</summary>
+class SerialDriver : Driver {
+    construct() : base("serial") { }
+
+    undefined Refresh(bool fastScan = true) {
+        __DEVMgrRefresh(fastScan)
+        var n = __DEVMgrCount()
+        for (int i = 0; i < n; i++) {
+            var h = __DEVMgrHandleAt(i)
+            if (h < 0) { continue }
+            var known = false
+            foreach (d in this.devices) {
+                if (d.handle == h) { known = true }
+            }
+            if (!known) { this.Add(new SerialPort(this, h)) }
+        }
+    }
+
+    Device Find(string name) {
+        foreach (d in this.devices) {
+            if (d.Name == name || d.Identifier() == "serial:" + name) { return d }
+        }
+        return undefined
+    }
+}

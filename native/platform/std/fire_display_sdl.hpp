@@ -21,10 +21,18 @@
 #include <algorithm>
 #include <cstring>
 #include "fire_display_event.hpp"
+#include "fire_systheme.hpp"
 
 namespace fire { namespace plat { namespace disp {
 
 constexpr bool available = true;
+
+/// A thread of the program (not one of SDL's) that used SDL ends: SDL's thread-local data of it is freed (a window manager's thread, fire_bridge_windows.hpp).
+inline void threadDone() {
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+    SDL_TLSCleanup();
+#endif
+}
 
 class Window {
 public:
@@ -34,7 +42,8 @@ public:
         vsync_ = vsync;
         winW_ = width; winH_ = height;
         SDL_SetMainReady();
-        if (SDL_WasInit(SDL_INIT_VIDEO) == 0 && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
+        // every window holds a reference of its own (SDL counts them): closing one window must not shut the video down under the others
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return false;
         ownsVideo_ = true;
         window_ = SDL_CreateWindow(title.c_str(), SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height, SDL_WINDOW_RESIZABLE);
         if (!window_) { close(); return false; }
@@ -44,7 +53,8 @@ public:
         SDL_StartTextInput();
         windowId_ = SDL_GetWindowID(window_);
         // joysticks are an extra: without a driver the window opens all the same (the devices that are plugged in report themselves as SDL_JOYDEVICEADDED)
-        if (SDL_WasInit(SDL_INIT_JOYSTICK) == 0 && SDL_InitSubSystem(SDL_INIT_JOYSTICK) == 0) ownsJoystick_ = true;
+        // (a reference of its own as well, see above)
+        if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) == 0) ownsJoystick_ = true;
         SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, touchMouse_ ? "1" : "0");
 #if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT)
         selftest();
@@ -53,6 +63,16 @@ public:
     }
 
     void setVSync(bool v) { vsync_ = v; if (renderer_) SDL_RenderSetVSync(renderer_, v ? 1 : 0); }
+    /// A new size of the window in pixels of the screen (the program asks for it: no resize event comes back).
+    void setSize(int w, int h) { if (window_ && w > 0 && h > 0) { SDL_SetWindowSize(window_, w, h); winW_ = w; winH_ = h; } }
+    /// The mouse pointer over the window: a system cursor (SDL_SystemCursor: 0 arrow, 1 text, ... 11 hand), made once per kind.
+    void setCursor(int c) {
+        if (!window_ || c < 0 || c >= 12 || c == cursor_) return;
+        if (!cursors_[c]) cursors_[c] = SDL_CreateSystemCursor((SDL_SystemCursor)c);
+        if (!cursors_[c]) return;
+        SDL_SetCursor(cursors_[c]);
+        cursor_ = c;
+    }
     bool vsync() const { return vsync_; }
     /// true (the default): a finger also makes mouse events (as SDL does itself); false: only the touch events.
     void setTouchMouse(bool v) { touchMouse_ = v; SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, v ? "1" : "0"); }
@@ -164,6 +184,8 @@ public:
     }
 
     void close() {
+        for (int k = 0; k < 12; k++) if (cursors_[k]) { SDL_FreeCursor(cursors_[k]); cursors_[k] = nullptr; }
+        cursor_ = -1;
         if (texture_) { SDL_DestroyTexture(texture_); texture_ = nullptr; }
         for (SDL_Joystick* js : joysticks_) SDL_JoystickClose(js);
         joysticks_.clear();
@@ -214,6 +236,8 @@ private:
     }
 
     SDL_Window* window_ = nullptr;
+    SDL_Cursor* cursors_[12] = {};
+    int cursor_ = -1;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* texture_ = nullptr;
     int winW_ = 0, winH_ = 0, texW_ = 0, texH_ = 0, fbWidth_ = 0, fbHeight_ = 0;

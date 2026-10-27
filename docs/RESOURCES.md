@@ -25,6 +25,14 @@ the file system at run time, so the program does not depend on the place it is s
 - The same file is stored **once**, however often it is mentioned (`new Resource("a.png")` twice gives two objects with the same `id`).
 - The resources are part of the program: a large file makes the program (and a native binary) large.
 
+## Resources of libraries and packages
+
+A library (a project of type `library`) uses resources like a program: `new Resource("../icons/up.png")` relative to its file. When it is **packed**
+(`forge build`, *Pack* in spark), the paths are rewritten relative to the project folder (a file outside of it becomes `external/name`) and the files go
+into the `.fpk`, next to the prelude (`imports[].resources` in the `package.json`: the path as the prelude writes it -> the file in the package). Installed,
+the prelude is read from its own folder: a program that `#import`s the package gets the files embedded like its own, in the virtual machine, a packed file and
+a native build. A file that does not exist is an error when the library is packed.
+
 ## The class `Resource` (always available)
 
 | member | |

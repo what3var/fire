@@ -304,10 +304,10 @@ namespace fire.Compiler
                 throw new PreprocessorException($"'{fullPath}' could not be read: {ex.Message}", ex);
             }
 
-            // a markup file of a user interface (docs/UI_MARKUP.md) is included as the script generated from it
-            if (string.Equals(Path.GetExtension(fullPath), ".fxml", StringComparison.OrdinalIgnoreCase))
+            // a markup file of a user interface (docs/UI_MARKUP.md) or a schematic (`.biscuit`, docs/CIRCUITS.md) is included as the script generated from it
+            if (fire.UI.Markup.MarkupFiles.IsGenerated(fullPath))
             {
-                try { includedSource = fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(includedSource), fullPath); }
+                try { includedSource = fire.UI.Markup.MarkupFiles.GenerateScript(fullPath, includedSource); }
                 catch (fire.UI.Markup.MarkupException ex) { throw new PreprocessorException($"'{Path.GetFileName(fullPath)}': {ex.Message}", ex); }
             }
 
@@ -412,6 +412,19 @@ namespace fire.Compiler
                 if (!File.Exists(full))
                     throw new PreprocessorException($"Resource file not found: '{path}' ('{full}', line {lineNo}).");
                 return $"new Resource({table.Add(path, full)})";
+            });
+        }
+
+        /// <summary>Replaces the path of every `new Resource("path")` in the code of a line (not in a comment or a string) by what `map` makes of it (packing a library, see
+        /// ProjectBuilder.Flatten).</summary>
+        public static string MapResourcePaths(string line, Func<string, string> map)
+        {
+            if (line.IndexOf("Resource", StringComparison.Ordinal) < 0) return line;
+            return ResourceCall.Replace(line, m =>
+            {
+                if (!IsCode(line, m.Index)) return m.Value;
+                string mapped = map(Regex.Unescape(m.Groups[1].Value));
+                return "new Resource(\"" + mapped.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\")";
             });
         }
 

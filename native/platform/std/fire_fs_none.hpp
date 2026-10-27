@@ -23,6 +23,11 @@ inline Status moveFile(const std::string&, const std::string&, bool) { return no
 inline Status makeDirs(const std::string&) { return none(); }
 inline Status removeDir(const std::string&, bool) { return none(); }
 inline Status list(const std::string&, const std::string&, bool, bool, std::vector<std::string>&) { return none(); }
+inline Status entryTime(const std::string&, int64_t&) { return none(); }
+inline Status moveDir(const std::string&, const std::string&) { return none(); }
+inline Status setCurrentDir(const std::string&) { return none(); }
+inline std::vector<std::string> roots() { return std::vector<std::string>(); }
+inline std::string homeDir() { return std::string(); }
 inline std::string currentDir() { return "/"; }
 inline std::string tempDir() { return "/tmp/"; }
 inline std::string fullPath(const std::string& path) { return path; }

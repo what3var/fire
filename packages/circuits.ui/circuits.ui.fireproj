@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "fire-circuits.ui",
+  "type": "library",
+  "import": "circuits.ui",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'circuits.ui' of fire: UI.CircuitView shows a circuit as a live schematic (voltages, currents, scopes), lets you switch it and - unless it is read-only - edit it."
+  }
+}

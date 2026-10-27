@@ -1,0 +1,442 @@
+#import "graphics"
+
+// A window that shows a framebuffer. It opens when it is first shown: `Show()` hands it to its WindowManager and goes on (a manager that nobody runs
+// yet gets a thread of its own), `Show(true)` waits until the window is closed (modal: the other windows of its manager take no input meanwhile),
+// `Run()` is the start of a program with windows (it runs the manager on this thread until its windows are closed - unless it already runs), and
+// `Tick()` is one cycle of this window alone.
+class Window {
+    int id
+    // The manager that cycles this window (undefined until it is attached; Show and Run attach it to WindowManager.Default)
+    WindowManager Manager
+    // Called once per cycle of the manager, after the events and before the frame is shown (a UI.Root draws here)
+    lambda onCycle
+    // true once the window has been closed (by the user or Close)
+    bool IsClosed = false
+    // the modal window that blocks this one (see Show(true)): its depth in the manager's modal windows, 0 = none
+    int blockedBy = 0
+
+    construct(Framebuffer framebuffer, string title, WindowManager manager = undefined) {
+        this.id = __GRPHWinCreate(framebuffer.id, title)
+        if (this.id == -1) {
+            throw new HandleUnavailableException("The window could not be created.")
+        }
+        if (manager != undefined) { manager.Attach(this) }
+    }
+
+    destruct() {
+        var manager = this.Manager
+        if (manager != undefined) { manager.Detach(this) }
+        __GRPHWinDestroy(this.id)
+    }
+
+    // Shows the window on its manager (the one given to the constructor, else WindowManager.Default). A manager that nobody runs yet is started with a
+    // thread of its own (Start): it shows the windows, and the program handles their events at its safe points (a loop, a Sleep, ... - and at its end it
+    // waits until the windows are closed). `modal`: waits until this window is closed (or Close is called); meanwhile the other windows of the manager
+    // take no input (they go on being shown) and the cycles run here - also when Show(true) is called from an event of another window.
+    undefined Show(bool modal = false) {
+        if (this.Manager == undefined) { WindowManager.Default.Attach(this) }
+        var manager = this.Manager
+        if (!manager.IsRunning) { manager.Start() }
+        if (modal) { manager.RunModal(this) }
+    }
+
+    // The start of a program with windows (like the main loop of an STA thread): shows the window on its manager (as Show) and - if nobody runs that
+    // manager yet - runs it on this thread until its windows are closed (blocking). Does the manager already run (its thread, a Run further up, an
+    // event of one of its windows), the window is only shown there; no second loop is started. Neither is one while another manager's loop runs on
+    // this thread: then the manager gets a thread of its own (as with Show).
+    undefined Run() {
+        if (this.Manager == undefined) { WindowManager.Default.Attach(this) }
+        this.Manager.Run()
+    }
+
+    // Closes the window: the next cycle of its manager takes it out (and a Show(true) waiting for it returns). Closing it with its frame does the same.
+    undefined Close() { this.IsClosed = true }
+
+    // Does a modal window of its manager block the input of this window? (see Show(true))
+    bool IsBlocked { get { return this.blockedBy > 0 } }
+
+    // One cycle of the manager for this window: events in (callbacks, queue), onCycle, frame out. false once the window is closed.
+    bool Cycle() {
+        if (this.IsClosed) { return false }
+        var open = __GRPHWinPump(this.id)
+        var hook = this.onCycle
+        if (hook != undefined) { hook() }
+        __GRPHWinPresent(this.id)
+        if (!open) { this.IsClosed = true }
+        return !this.IsClosed
+    }
+
+    // Half a cycle for a window that waits below a modal one: its events (without the input, see IsBlocked) and its last frame, without onCycle - it may be
+    // the window whose event opened the modal one, and that is still running.
+    bool Idle() {
+        if (this.IsClosed) { return false }
+        var open = __GRPHWinPump(this.id)
+        __GRPHWinPresent(this.id)
+        if (!open) { this.IsClosed = true }
+        return !this.IsClosed
+    }
+
+    // Fetches the events and shows the current content of the framebuffer. With VSync (the default) every tick waits for the
+    // monitor's refresh (60 Hz = 16.7 ms): ideal for animations and wait loops (`while (win.Tick()) { ... }`),
+    // but a drawing loop with one tick per pass then takes 256 x 16.7 ms = 4.3 s. Whoever draws a lot and only wants to
+    // show now and then calls Tick less often or sets `win.VSync = false` (Tick then returns immediately).
+    bool Tick() {
+        var open = __GRPHWinTick(this.id)
+        if (!open) { this.IsClosed = true }
+        return open
+    }
+
+    int cursor = 0
+
+    /// <summary>The mouse pointer over the window: a pointer of the system in the numbering of SDL (0 arrow, 1 text, 2 wait, 3 crosshair, 4 progress,
+    /// 5 NW-SE, 6 NE-SW, 7 W-E, 8 N-S, 9 move, 10 not allowed, 11 hand - UI.Cursor names them).</summary>
+    int Cursor {
+        get { return this.cursor }
+        set {
+            this.cursor = value
+            __GRPHWinSetCursor(this.id, value)
+        }
+    }
+
+    bool VSync {
+        get { return __GRPHWinGetVSync(this.id) }
+        set { __GRPHWinSetVSync(this.id, value) }
+    }
+
+    // true: if the user drags the window to another size, the framebuffer gets exactly that size (as long as it is valid, see Framebuffer.Resize) - instead of its content
+    // being stretched to the window (default: false, as before). The program receives the event EventType.Resize and redraws at the new size; the mouse positions
+    // are then pixels of the framebuffer 1:1. (A UI.Root switches it on: `root.autoResize`.)
+    bool AutoResize {
+        get { return __GRPHWinGetAutoResize(this.id) }
+        set { __GRPHWinSetAutoResize(this.id, value) }
+    }
+
+    // true (default): when the user asks to close the window (the button in its frame, Alt+F4), it closes - Tick/Cycle say false, a Run or Show(true)
+    // waiting for it ends. Handlers of RegisterCloseRequest still hear of it. false: the request is only reported (EventType.CloseRequest) and the
+    // program decides - e.g. asks whether to save - and closes the window itself with Close().
+    bool AutoClose {
+        get { return __GRPHWinGetAutoClose(this.id) }
+        set { __GRPHWinSetAutoClose(this.id, value) }
+    }
+
+    // Brings the window to a new size in pixels of the screen (before it is shown: the size it opens with). The framebuffer keeps its size; with AutoResize it
+    // follows when the window has its new size. False for a size that is not above 0.
+    bool SetSize(int width, int height) { return __GRPHWinSetSize(this.id, width, height) }
+
+    // true (default): a finger on the touchscreen ALSO triggers mouse events (as SDL does by itself), so a program that only listens to the mouse can be operated with a finger.
+    // false: only the touch events (EventType.TouchDown/TouchMove/TouchUp). A UI.Root switches it off and evaluates the fingers itself.
+    bool TouchMouse {
+        get { return __GRPHWinGetTouchMouse(this.id) }
+        set { __GRPHWinSetTouchMouse(this.id, value) }
+    }
+
+    // Polling style instead of callbacks: EnableEvents() switches a queue on, after which, following each tick,
+    // NextEvent() fetches one event after the other (undefined when none is left). The event is an
+    // array: e[0] is the type (see EventType), the rest depends on the type, positions are whole pixels of the
+    // framebuffer: MouseDown/MouseUp [type, button, x, y], MouseMove [type, x, y, buttons], MouseScroll [type, scrollX,
+    // scrollY, x, y], KeyDown/KeyUp [type, keycode, scancode, modifier, repeated], TextInput [type, text], Resize [type, width, height] (the size of the window; with AutoResize the
+    // framebuffer already has it if it is valid), Close [type]. Touchscreen: TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer; finger
+    // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
+    // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
+    // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
+    // Callbacks.
+    bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
+    any NextEvent() { return __GRPHWinNextEvent(this.id) }
+
+
+    bool RegisterMouseDown(lambda<int,float,float> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.MouseDown!, fn);
+    }
+
+    bool RegisterMouseUp(lambda<int,float,float> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.MouseUp!, fn);
+    }
+
+    bool RegisterMouseMove(lambda<float,float,int> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.MouseMove!, fn);
+    }
+
+    bool RegisterMouseMoveRelative(lambda<float,float,int> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.MouseMoveRelative!, fn);
+    }
+
+    bool RegisterMouseScroll(lambda<float,float,float,float> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.MouseScroll!, fn);
+    }
+
+    bool RegisterKeyDown(lambda<int,int,int,bool> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.KeyDown!, fn);
+    }
+
+    bool RegisterKeyUp(lambda<int,int,int,bool> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.KeyUp!, fn);
+    }
+
+    bool RegisterResize(lambda<int,int> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.Resize!, fn);
+    }
+
+    // Touchscreen: (finger, x, y, druck)
+    bool RegisterTouchDown(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchDown!, fn); }
+    bool RegisterTouchMove(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchMove!, fn); }
+    bool RegisterTouchUp(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchUp!, fn); }
+
+    // Joystick: (joystick, axis, position), (joystick, button), (joystick, hat, directions), (joystick)
+    bool RegisterJoystickAxis(lambda<int,int,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAxis!, fn); }
+    bool RegisterJoystickButtonDown(lambda<int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickButtonDown!, fn); }
+    bool RegisterJoystickButtonUp(lambda<int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickButtonUp!, fn); }
+    bool RegisterJoystickHat(lambda<int,int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickHat!, fn); }
+    bool RegisterJoystickAdded(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAdded!, fn); }
+    bool RegisterJoystickRemoved(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickRemoved!, fn); }
+
+    bool RegisterTextInput(lambda<string> fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);
+    }
+
+    bool RegisterClose(lambda fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.Close!, fn);
+    }
+
+    bool RegisterCloseRequest(lambda fn)
+    {
+        return __GRPHWinRegisterEvent(this.id, EventType.CloseRequest!, fn);
+    }
+
+}
+
+// What the desktop says about the look of programs (SystemTheme.Current()): the scale factor of the display (1.5 = 150 %), dark or light mode, the accent colour
+// (0xRRGGBB) and the font of the interface. The UI library uses it by default (UI.Root: Scaling, Dark, Accent). Windows, Linux (GNOME, KDE), macOS and the browser
+// are asked; what cannot be found keeps its default (scale 1, light, 0x0078D7, no font), and FIRE_SYSTEM_THEME=off in the environment switches the query off.
+// A board without a desktop is `embedded`: the UI then uses its fast built-in font, whole-number scaling and dark violet.
+class SystemTheme {
+    bool embedded = false
+    float scale = 1.0
+    bool dark = false
+    int accent = 0x0078D7
+    // the font of the interface: the first of the candidates that Fonts.Has finds ("" = none, the UI then keeps its own)
+    string font = ""
+    // the height of its letters in logical pixels (0 = not known)
+    int fontSize = 0
+    static SystemTheme cached
+
+    construct() { }
+
+    // The theme of the desktop (asked once; later calls give the same object).
+    static SystemTheme Current() {
+        if (SystemTheme.cached != undefined) { return SystemTheme.cached }
+        var t = new SystemTheme()
+        var info = __GRPHWinSystemTheme()
+        t.embedded = info[0]
+        t.scale = info[1]
+        t.dark = info[2]
+        t.accent = info[3]
+        t.fontSize = info[5]
+        string candidates = info[4]
+        if (candidates != "") {
+            var names = candidates.Split(";")
+            for (int i = 0; i < names.length; i++) {
+                if (names[i] != "" && Fonts.Has(names[i])) {
+                    t.font = names[i]
+                    break
+                }
+            }
+        }
+        t.TakeGlobal()
+        SystemTheme.cached = t
+        return t
+    }
+}
+
+// Cycles windows: shows their framebuffers and gives them their events. `Run()` does it on the calling thread until the windows are closed; `Start()`
+// gives the manager a thread of its own that shows the windows, while the program goes on and handles their events at its safe points. On macOS, where
+// windows may only live on the main thread, that thread only gives the beat and the program shows the windows itself at its safe points. There is a
+// default manager (`WindowManager.Default`) that Window.Show and Window.Run use; a program may make more (`new WindowManager()`), each with its windows.
+class WindowManager {
+    int id
+    List windows
+    bool started = false
+    bool ticking = false
+    // the loops of Run on the calling thread (this manager's)
+    int runs = 0
+    // the modal windows that are open (Window.Show(true)), innermost last
+    int modals = 0
+    static WindowManager defaultManager
+    // the loops of Run of all managers on the program's thread
+    static int loops = 0
+
+    construct() {
+        this.id = __GRPHWinMgrCreate()
+        this.windows = new List()
+    }
+
+    // The manager of the windows that nobody attached to another one
+    static WindowManager Default {
+        get {
+            if (WindowManager.defaultManager == undefined) {
+                var manager = new WindowManager()
+                manager.TakeGlobal()   // it lives as long as the program
+                WindowManager.defaultManager = manager
+            }
+            return WindowManager.defaultManager
+        }
+    }
+
+    // Does a thread of its own show the windows? (see Start)
+    bool IsStarted { get { return this.started } }
+
+    // Does someone cycle the windows: its thread (Start), a Run, or a modal window (Window.Show(true))?
+    bool IsRunning { get { return this.started || this.runs > 0 || this.modals > 0 || this.ticking } }
+
+    // The number of attached windows that are still open
+    int Count { get { return this.windows.count } }
+
+    // Attaches a window (taking it from another manager). The window remembers its manager (Window.Manager). Only the first window waits for the screen
+    // refresh (VSync), otherwise every cycle would take as many frame periods as there are windows.
+    undefined Attach(Window window) {
+        if (window.Manager == this) { return }
+        var old = window.Manager
+        if (old != undefined) { old.Detach(window) }
+        if (this.windows.count > 0) { window.VSync = false }
+        this.windows.Add(window)
+        window.Manager = this
+        __GRPHWinMgrAttach(this.id, window.id)
+    }
+
+    // Takes a window out again: nobody cycles it any more (with a started manager its thread closes it).
+    undefined Detach(Window window) {
+        for (var i = 0; i < this.windows.count; i = i + 1) {
+            if (this.windows[i] == window) {
+                this.windows.RemoveAt(i)
+                break
+            }
+        }
+        if (window.Manager == this) { window.Manager = undefined }
+        __GRPHWinMgrDetach(this.id, window.id)
+    }
+
+    // Starts the manager's thread (once): it opens the windows, fetches their events and shows their frames, about 60 times a second; each cycle the
+    // program runs Tick() at its next safe point. false where the platform has no thread for windows (then use Run or Tick).
+    bool Start() {
+        if (this.started) { return true }
+        this.started = __GRPHWinMgrStart(this.id, func () on this => {
+            __GRPHWinMgrServed(this.id)
+            this.Tick()
+        })
+        return this.started
+    }
+
+    // One cycle of all windows on the calling thread: each gets its events, runs its onCycle and shows its frame. Closed windows are taken out.
+    // false when no window is left.
+    bool Tick() {
+        if (this.ticking) { return this.windows.count > 0 }
+        this.ticking = true
+        var i = 0
+        while (i < this.windows.count) {
+            var window = this.windows[i]
+            if (!window.Cycle()) {
+                this.Detach(window)
+                continue
+            }
+            i = i + 1
+        }
+        this.ticking = false
+        return this.windows.count > 0
+    }
+
+    // Runs until all windows are closed (blocking). Not started: the manager runs on this thread; started: this thread waits while the manager's
+    // thread shows the windows (the cycles run here). Called while the manager already runs on this thread (an event of one of its windows, a modal
+    // window) it returns at once - the running loop goes on with the windows; called while another manager's loop runs here, the manager is started
+    // with a thread of its own instead (a second loop here would stop the first one).
+    undefined Run() {
+        if (this.ticking || this.runs > 0 || this.modals > 0) { return }
+        if (!this.started && WindowManager.loops > 0) {
+            this.Start()
+            return
+        }
+        if (this.started) {
+            while (this.windows.count > 0) { __GRPHWinMgrWait(this.id, 20) }
+            return
+        }
+        this.runs = this.runs + 1
+        WindowManager.loops = WindowManager.loops + 1
+        while (this.Tick()) { }
+        WindowManager.loops = WindowManager.loops - 1
+        this.runs = this.runs - 1
+    }
+
+    // Window.Show(true): cycles until `modal` is closed, here on the calling thread. Meanwhile the other windows take no input (IsBlocked) and only get half
+    // a cycle (Idle) - the window whose event called Show(true) is still in that event. Windows that open on the manager during it work as usual.
+    undefined RunModal(Window modal) {
+        this.modals = this.modals + 1
+        var depth = this.modals
+        for (var i = 0; i < this.windows.count; i = i + 1) {
+            var other = this.windows[i]
+            if (other != modal && other.blockedBy == 0) {
+                other.blockedBy = depth
+                __GRPHWinSetBlocked(other.id, true)
+            }
+        }
+        var wasTicking = this.ticking
+        this.ticking = true   // (the cycles the manager's thread asks for run here meanwhile)
+        while (!modal.IsClosed && modal.Manager == this) {
+            var i = 0
+            while (i < this.windows.count) {
+                var window = this.windows[i]
+                var open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
+                if (!open) {
+                    this.Detach(window)
+                    continue
+                }
+                i = i + 1
+            }
+            if (this.started) { __GRPHWinMgrWait(this.id, 20) }
+        }
+        if (modal.Manager == this) { this.Detach(modal) }
+        this.ticking = wasTicking
+        for (var i = 0; i < this.windows.count; i = i + 1) {
+            var other = this.windows[i]
+            if (other.blockedBy == depth) {
+                other.blockedBy = 0
+                __GRPHWinSetBlocked(other.id, false)
+            }
+        }
+        this.modals = this.modals - 1
+    }
+}
+
+enum EventType
+{
+    Unknown = 0,
+    Close = 1,
+    CloseRequest = 2,
+    TextInput = 3,
+    Resize = 4,
+    TouchDown = 16,
+    TouchMove = 17,
+    TouchUp = 18,
+    MouseDown = 8,
+    MouseMove = 9,
+    MouseMoveRelative = 10,
+    MouseUp = 11,
+    MouseScroll = 12,
+    //MouseEnter = 13,
+    //MouseLeave = 14,
+    KeyDown = 24,
+    KeyUp = 25,
+    JoystickAxis = 32,
+    JoystickButtonDown = 33,
+    JoystickButtonUp = 34,
+    JoystickHat = 35,
+    JoystickAdded = 36,
+    JoystickRemoved = 37
+}

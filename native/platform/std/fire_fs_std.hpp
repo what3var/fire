@@ -9,12 +9,15 @@
 //   Status fileSize / fileTime (unix seconds) / removeFile / copyFile / moveFile
 //   Status makeDirs / removeDir(path, recursive) / list(path, pattern, recursive, directories, out)
 //   std::string currentDir() / tempDir() / fullPath(path) / separator()
+//   Status entryTime (unix seconds of a file or a directory) / moveDir(from, to) / setCurrentDir(path)
+//   std::vector<std::string> roots()  the drives ("C:\\", "D:\\") or "/"      std::string homeDir()  the user's folder ("" when unknown)
 //
 // A board without a file system (or with its own: SPIFFS, FAT) provides its own `fire_fs.hpp` - the bridge only uses these functions.
 #pragma once
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include "fire_fs_common.hpp"
 #ifdef _WIN32
@@ -174,6 +177,56 @@ inline Status list(const std::string& path, const std::string& pattern, bool rec
     if (ec) return fromCode(ec, path);
     std::sort(out.begin(), out.end());
     return Status();
+}
+
+/// The time of the last change of a file or a directory.
+inline Status entryTime(const std::string& path, int64_t& unixSeconds) {
+    bool isDir = false;
+    if (!exists(path, isDir)) return fail(E_NoFile, "Could not find file '" + path + "'.");
+    return fileTime(path, unixSeconds);
+}
+
+/// Directory.Move: the target must not exist.
+inline Status moveDir(const std::string& from, const std::string& to) {
+    bool isDir = false;
+    if (!exists(from, isDir) || !isDir) return fail(E_NoDir, "Could not find a part of the path '" + from + "'.");
+    if (exists(to, isDir)) return fail(E_Exists, "The target '" + to + "' already exists.");
+    std::error_code ec;
+    stdfs::rename(stdfs::u8path(from), stdfs::u8path(to), ec);
+    return fromCode(ec, to);
+}
+
+inline Status setCurrentDir(const std::string& path) {
+    bool isDir = false;
+    if (!exists(path, isDir) || !isDir) return fail(E_NoDir, "Could not find a part of the path '" + path + "'.");
+    std::error_code ec;
+    stdfs::current_path(stdfs::u8path(path), ec);
+    return fromCode(ec, path);
+}
+
+/// Directory.GetLogicalDrives: the drives that are there on Windows, "/" elsewhere.
+inline std::vector<std::string> roots() {
+    std::vector<std::string> out;
+#ifdef _WIN32
+    for (char d = 'A'; d <= 'Z'; d++) {
+        std::string root = std::string(1, d) + ":\\";
+        std::error_code ec;
+        if (stdfs::exists(stdfs::u8path(root), ec)) out.push_back(root);
+    }
+#else
+    out.push_back("/");
+#endif
+    return out;
+}
+
+/// The user's home folder (USERPROFILE on Windows, HOME elsewhere); "" when unknown.
+inline std::string homeDir() {
+#ifdef _WIN32
+    const char* home = std::getenv("USERPROFILE");
+#else
+    const char* home = std::getenv("HOME");
+#endif
+    return home ? std::string(home) : std::string();
 }
 
 inline std::string currentDir() {

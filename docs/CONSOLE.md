@@ -1,7 +1,7 @@
 # fire.Terminal – Framebuffer, Zeichnen und Fenster
 
 Die Grafikschicht von fire in eigenen Projekten, unabhängig vom Editor (`fire.Editor` referenziert sie nicht und wird nicht von ihnen
-referenziert). Die native C++-Runtime hat dieselbe Schicht pixelgleich (`native/bridges/fire_bridge_graphics.hpp`, `fire_bridge_windows.hpp`).
+referenziert). Die native C++-Runtime hat dieselbe Schicht pixelgleich (`packages/graphics/native/fire_bridge_graphics.hpp`, `fire_bridge_windows.hpp`).
 
 ## Projekt-Aufteilung
 
@@ -211,7 +211,7 @@ Pixel-/Index-Array, `MarkDirty`); der `Framebuffer` implementiert es, ein eigene
 (C#: `Renderer.SetClip/ResetClip/GetClip`, `Surface.ClipLeft/ClipTop/ClipRight/ClipBottom`, `Blitter.Blit(..., clipLeft, clipTop, clipRight, clipBottom)`). `Clear`, `Clear(farbe)` und das Scrollen des Terminals gelten immer für den ganzen Framebuffer. Die UI-Bibliothek
 nutzt es für Bildlauf-Ausschnitte und Listen (`Root.PushClip/PopClip`).
 
-C++-Spiegel: `native/bridges/graphics/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
+C++-Spiegel: `packages/graphics/native/fire_gfx.hpp` (`Surface`, `Brush`, `Pen`, `Renderer`) liefert dieselben Pixel; die nativen Funktionen heißen `__GRPHRnd...`, `__GRPHBsh...`, `__GRPHPen...`. Nur der Software-Renderer ist umgesetzt; eine Beschleunigung
 (GPU) bleibt hinter derselben Schnittstelle möglich.
 
 ## Mehr Zeichenfunktionen
@@ -242,7 +242,7 @@ Aus fire (`#import "graphics"`):
 - `Framebuffer.FromFile(pfad, modus = -1)` und `Framebuffer.FromImage(puffer, modus = -1)` (ein `byte`-Puffer mit den Bytes einer Bilddatei, z.B. aus `IO.File.ReadAllBytes` oder einem Stream) legen einen NEUEN Framebuffer in der Größe des Bildes an. `modus -1`: wie das Bild -
   indiziert (PNG mit Palette, GIF, BMP bis 8 Bit) wird ein **Palette-Framebuffer mit der Palette der Datei**, alles andere **RGBA**. `ColorMode.Rgba`/`ColorMode.Palette` erzwingt einen Modus: ein indiziertes Bild in einen RGBA-Framebuffer wird über seine Palette aufgelöst, ein Truecolor-Bild in einen
   Palette-Framebuffer je Pixel auf den nächsten Eintrag der Standard-Palette abgebildet (ohne eigene Palette zu berechnen, Alpha geht dabei verloren).
-- `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe `docs/BYTECODE.md` Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "io"` geladen werden.
+- `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe `docs/BYTECODE.md` Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "filesystem"` geladen werden.
 - `Framebuffer.FromPixels(breite, hoehe, puffer, modus = 0, palette = undefined)`: ein Framebuffer aus rohen Pixeln, zeilenweise von oben nach unten - `Rgba` `breite*hoehe*4` Byte (R, G, B, A je Pixel), `Palette` `breite*hoehe` Byte (je Pixel ein Index) und optional eine Palette (768 oder 1024 Byte).
   `ReadBytes()`/`WriteBytes(puffer)` lesen und schreiben den ganzen Inhalt im selben Format (siehe "Byteweiser Framebuffer-Zugriff").
 - Fehler sind `ImageException` (eine `GraphicsException`): unbekanntes Format, beschädigt, Datei nicht lesbar oder nicht erlaubt, falsche Pufferlänge.
@@ -330,6 +330,52 @@ auf die rohen Pixel-Daten:
   `TickAll()` bedient dabei beliebig viele gleichzeitig offene Fenster und
   räumt automatisch jedes auf, das der Nutzer währenddessen geschlossen hat.
 
+## Fenster-Manager (`WindowManager`, fire)
+
+Im Skript (`#import "windows"`) taktet ein **`WindowManager`** die Fenster, die an ihm hängen: jedes holt seine Ereignisse (Callbacks, Warteschlange), ruft sein `onCycle`
+(ein `UI.Root` zeichnet dort) und zeigt sein Bild.
+
+| | |
+|---|---|
+| `new Window(fb, "Titel", manager)` | das Fenster hängt sich gleich an `manager` (der Parameter ist optional); `window.Manager` ist sein Manager |
+| `window.Show(modal = false)` | zeigt das Fenster auf seinem Manager (dem aus dem Konstruktor, sonst `WindowManager.Default`). Läuft der Manager noch nicht, wird er **gestartet**: ein eigener Thread öffnet die Fenster, holt ihre Ereignisse und zeigt ihre Bilder (etwa 60-mal je Sekunde). Das Programm läuft weiter. Läuft der Manager schon (sein Thread, ein `Run`, ein Ereignis eines seiner Fenster), wird nur angezeigt |
+| `window.Show(true)` | **modal**: wie oben, aber der Aufruf kehrt erst zurück, wenn das Fenster geschlossen ist; solange bekommen die anderen Fenster des Managers keine Eingaben (sie werden weiter gezeigt, `window.IsBlocked`). Die Zyklen laufen auf dem aufrufenden Thread - auch wenn `Show(true)` aus einem Ereignis eines anderen Fensters kommt. Fenster, die währenddessen aufgehen, arbeiten normal; modale Fenster können verschachtelt werden |
+| `window.Run()` | der Startpunkt eines Fensterprogramms (wie die Nachrichtenschleife eines STA-Threads): zeigt das Fenster wie `Show` und lässt den Manager - wenn ihn noch niemand betreibt - **blockierend auf dem aufrufenden Thread** laufen, bis alle seine Fenster geschlossen sind. Ein zweiter Aufruf startet keinen eigenen Loop: läuft der Manager schon, wird das Fenster dort nur gezeigt (aus einem Ereignis kehrt `Run` sofort zurück); läuft auf diesem Thread schon der Loop eines anderen Managers, bekommt dieser Manager einen eigenen Thread. Gestartet wartet `Run`, bis seine Fenster zu sind |
+| `window.AutoClose` | `true` (Vorgabe): fordert der Nutzer das Schließen an (Knopf im Rahmen, Alt+F4), geht das Fenster zu - `Tick`/`Cycle` sagen `false`, ein `Run` oder `Show(true)` endet; Handler von `RegisterCloseRequest` hören es trotzdem. `false`: die Anfrage wird nur gemeldet (`EventType.CloseRequest`), das Programm entscheidet (etwa „Speichern?“) und schließt selbst mit `Close()` |
+| `window.Close()` | schließt das Fenster (der nächste Zyklus nimmt es heraus, ein wartendes `Show(true)` kehrt zurück); `window.IsClosed` |
+| `window.Tick()` | ein Zyklus nur dieses Fensters (wie bisher, ohne Manager) |
+| `WindowManager.Default` | der Manager der Fenster, die keinen anderen haben; ein Programm kann weitere anlegen (`new WindowManager()`) |
+| `manager.Attach(window)`, `manager.Detach(window)` | hängt an (von einem anderen Manager weg) bzw. nimmt heraus; nur das erste Fenster eines Managers wartet auf den Bildaufbau (VSync) |
+| `manager.Start()` | startet den Thread (einmal); `false`, wo die Plattform keine Threads hat (WebAssembly, Geräte ohne Threads) - dort `Run`/`Tick` nehmen. Unter macOS gibt der Thread nur den Takt vor (unten) |
+| `manager.Run()`, `manager.Tick()` | alle Fenster bis zum Schließen bzw. ein Zyklus aller Fenster auf dem aufrufenden Thread (die Regeln von `window.Run()`); `Run` auf einem gestarteten Manager wartet, bis seine Fenster zu sind |
+| `manager.IsStarted`, `manager.IsRunning`, `manager.Count` | läuft der Thread? betreibt jemand die Fenster (Thread, `Run`, ein modales Fenster)? wie viele Fenster sind noch offen? |
+
+**Was auf welchem Thread läuft.** Der Thread des Managers besitzt nur die Fenster des Betriebssystems (SDL bedient ein Fenster nur auf dem Thread, der es erzeugt hat - daher
+öffnet sich ein Fenster erst, wenn der Thread, der es zeigt, es zum ersten Mal pumpt). Alles, was das Programm berührt - Callbacks, `NextEvent`, `onCycle`, das Zeichnen -
+läuft weiter auf dem Programm-Thread: der Thread des Managers bittet das Hauptprogramm nach jedem Zyklus um einen Lauf von `manager.Tick()`, das Hauptprogramm macht ihn an
+seinem nächsten sicheren Punkt (wie Host-Callbacks: nach einem nativen Aufruf, in Schleifen, in `Sleep`, bei `sync globals`; mit `#nosync` nur bei `sync globals`). Das Bild
+gibt das Programm am Ende des Zyklus als Kopie an den Thread weiter. Es gibt also keinen geteilten Speicher und keine Kopien der Objekte.
+
+**macOS.** Dort dürfen Fenster nur auf dem Hauptthread leben. Ein gestarteter Manager hat deshalb einen Thread, der nur den **Takt** gibt: etwa 60-mal je Sekunde bittet er
+das Programm um einen Zyklus, und das Programm öffnet, pumpt und zeigt die Fenster an seinen sicheren Punkten selbst (wie bei `Run`, nur ohne Blockieren). Für das Programm sieht
+das genauso aus wie mit eigenem Thread: `Show` kehrt zurück, die Ereignisse kommen an den sicheren Punkten, am Ende wartet es. Nur: rechnet das Programm lange ohne sicheren Punkt,
+steht das Fenster so lange (anderswo zeigt der Thread des Managers dann wenigstens das letzte Bild). In der VM schaltet `FIRE_WINDOW_COOPERATIVE=1` das auch auf anderen
+Systemen ein, nativ `-D FIRE_WINDOW_COOPERATIVE` (zum Testen).
+
+**Programmende.** Solange ein gestarteter Manager offene Fenster hat, endet das Programm nach seiner letzten Anweisung nicht: es wartet und macht die Zyklen, bis die Fenster zu
+sind (ein `terminate` beendet es trotzdem). So reicht für ein Fensterprogramm:
+
+```
+#import "ui"
+var fb = new Framebuffer(320, 200)
+var win = new Window(fb, "Hallo")
+var ui = new UI.Root(fb, win)
+ui.Add(new UI.Label("Hallo", 20, 20))
+win.Show()                  // oder ui.Show(); das Programm wartet am Ende, bis das Fenster zu ist
+```
+
+Nativ schaltet ein Programm, das `Start` (also auch `Show`) benutzt, die fire-Threads ein (GIL, sichere Punkte); ein Programm, das nur `Run`/`Tick` nimmt, bleibt ohne.
+
 ## VSync und die Dauer von `Tick`
 
 `Tick` zeigt den Framebuffer an. Mit **VSync** (Vorgabe, `IFramebufferRenderer.VSync`, im Skript `window.VSync`) wartet jedes Tick auf die Bildwiederholung des Monitors: bei 60 Hz dauert es 16,7 ms, egal wie wenig
@@ -351,6 +397,12 @@ Größe des Fensters - das Bild wird nicht gestreckt, die Mauspositionen sind Pi
 - VM und natives Backend verhalten sich gleich (`__GRPHFbResize`, `__GRPHWinSetAutoResize`/`GetAutoResize`; die Plattform liefert `EV_RESIZE` mit `width`/`height`).
 
 Die UI-Bibliothek schaltet `AutoResize` selbst ein (siehe docs/UI.md, "Fenstergröße").
+
+
+`window.SetSize(breite, höhe)` gibt dem Fenster selbst eine neue Größe in Bildschirmpixeln (vor dem ersten Zeigen: die Größe, mit der es aufgeht); der Framebuffer behält seine, mit `AutoResize` folgt er.
+
+`SystemTheme.Current()` sagt, wie Programme auf dem Desktop aussehen sollen: `scale` (1.5 = 150 %), `dark`, `accent` (0xRRGGBB), `font` (die erste installierte Schrift der Oberfläche, `""` = keine),
+`fontSize` (logische Pixel) und `embedded` (ein Board ohne Desktop). Die UI-Bibliothek nutzt es von selbst (docs/UI.md "Systemaussehen"); `FIRE_SYSTEM_THEME=off` schaltet die Abfrage ab.
 
 ## Touchscreen und Joystick
 

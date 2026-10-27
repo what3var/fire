@@ -45,16 +45,23 @@ namespace fire.Editor
     /// </summary>
     public static class LiveDiagnostics
     {
-        public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath, null);
+        public static List<Diagnostic> Analyze(string source, string? basePath = null) => Analyze(source, Array.Empty<string>(), basePath, null, null);
+
+        /// <summary>Thrown when one of the other files of the project cannot be read by the parser right now: the analysis is repeated without them.</summary>
+        private sealed class OtherFileBroken : Exception { }
 
         /// <summary>`extraImports`: names of extensions (as in `#import
         /// "name"`) that count as switched on in addition to those occurring in `source`
         /// itself - see AnalyzeInProject.
         /// Unknown names are ignored.</summary>
-        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports, string? basePath, fire.Projects.BuildPlan? plan)
+        /// <param name="otherFiles">The other files of the project (path, text): compiled along like in a real build, so that their classes, namespaces and members are
+        /// known; only the errors of `source` are reported.</param>
+        private static List<Diagnostic> Analyze(string source, IEnumerable<string> extraImports, string? basePath, fire.Projects.BuildPlan? plan,
+            IReadOnlyList<(string Path, string Text)>? otherFiles)
         {
             var diagnostics = new List<Diagnostic>();
             if (string.IsNullOrWhiteSpace(source)) return diagnostics;
+            int documentSource = -1;   // the index of `source` among the sources of the program
 
             // the warnings of the code (`warn 123: "text"`, collected while the parser reads it) are diagnostics, too
             var warnings = new DiagnosticCollector();
@@ -68,8 +75,15 @@ namespace fire.Editor
                 var projectImports = new List<string>();   // libraries of the project that are imported
                 ProjectNativeOverlay.Register(plan);
                 if (ProjectNativeOverlay.OwnKey(plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
+                // as in the linker: a library is its own import (`#import "testing"` in the tests of `testing` means its files), and a standard library of an import the
+                // compiler knows (`graphics`, `windows`, `reflection`, ...) has the natives of the virtual machine, without the installed prelude
+                string? ownImport = plan?.Type == fire.Projects.OutputType.Library ? plan.Project.Project.ImportName : null;
+                bool IsOwn(string name) => ownImport != null && string.Equals(name, ownImport, StringComparison.OrdinalIgnoreCase);
+                var ownBuiltIn = new HashSet<string>();
+                if (ownImport != null && Linker.BuiltInKey(ownImport) is { } ownKey) { ownBuiltIn.Add(ownKey); nativeImports.Add(ownKey); }
                 foreach (var name in extraImports)
                 {
+                    if (IsOwn(name)) continue;
                     if (ProjectLibraries.TryImport(plan, name, projectImports, nativeImports)) continue;
                     try { foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(name))) nativeImports.Add(key); }
                     catch (Exception) { /* unknown extension - reports its own file */ }
@@ -82,10 +96,21 @@ namespace fire.Editor
                 // it is long accepted when actually executing.
                 // The callback remembers the switched-on extensions,
                 // whose preludes are inserted below.
-                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => ProjectLibraries.TryImport(plan, name, projectImports, nativeImports));
+                var registry = RuntimeSession.CreateProjectDirectiveRegistry(name => nativeImports.Add(name), tryLibrary: name => IsOwn(name) || ProjectLibraries.TryImport(plan, name, projectImports, nativeImports));
                 var processed = new List<ProcessedSource>();
-                foreach (var s in new[] { fire.Standard.Prelude.Source, source })
-                    processed.Add(Preprocessor.Process(s, cwd, alreadyIncluded, registry));
+                processed.Add(Preprocessor.Process(fire.Standard.Prelude.Source, cwd, alreadyIncluded, registry));
+                // the other files of the project come before the document (each from its own folder; one that cannot be preprocessed right now is left out)
+                foreach (var (otherPath, otherText) in otherFiles ?? Array.Empty<(string, string)>())
+                {
+                    if (string.IsNullOrWhiteSpace(otherText)) continue;
+                    try
+                    {
+                        var other = Preprocessor.Process(otherText, System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(otherPath)) ?? cwd, alreadyIncluded, registry);
+                        processed.Add(other with { Name = otherPath });
+                    }
+                    catch (Exception) { /* broken right now: its errors are its own */ }
+                }
+                processed.Add(Preprocessor.Process(source, cwd, alreadyIncluded, registry));
                 // the libraries of the project that this document (or another file of the project) imports: their files are known to the analysis like in a real build
                 var libraryFiles = plan != null && projectImports.Count > 0
                     ? ProjectLibraries.Process(plan, projectImports, file => Preprocessor.Process(file.Text, file.Directory, alreadyIncluded, registry))
@@ -95,15 +120,23 @@ namespace fire.Editor
                 // extensions are switched on - as in the linker.
                 ImportedPreludes.Insert(
                     nativeImports, natives, processed,
-                    preludeSource => Preprocessor.Process(preludeSource, cwd, alreadyIncluded, registry));
+                    (preludeSource, folder) => Preprocessor.Process(preludeSource, folder, alreadyIncluded, registry), ownBuiltIn);
                 processed.InsertRange(1, libraryFiles.Select(l => l.Source));
+                documentSource = processed.Count - 1;
 
-                var program = Parser.ParseMultiple(processed);
+                List<fire.Ast.Stmt> program;
+                try { program = Parser.ParseMultiple(processed); }
+                catch (ParseException pe) when (otherFiles is { Count: > 0 } && pe.FileName != null) { throw new OtherFileBroken(); }
+                catch (LexException) when (otherFiles is { Count: > 0 }) { throw new OtherFileBroken(); }
                 var resolveResult = Resolver.Resolve(program, natives.Names);
                 // type conflicts (docs/TYPES.md): the code of the document is the last source; warnings in lax mode, errors in strict mode (the project's setting, `#lax` / `#strict` in the file)
                 var typeMode = string.Equals(plan?.Settings?.TypeChecking, "strict", StringComparison.OrdinalIgnoreCase) ? TypeCheckMode.Strict : TypeCheckMode.Lax;
                 diagnostics.AddRange(TypeChecker.Check(program, resolveResult, typeMode, processed.Count - 1));
                 Compiler.Compiler.Compile(program, resolveResult, natives);
+            }
+            catch (OtherFileBroken)
+            {
+                return Analyze(source, extraImports, basePath, plan, null);
             }
             catch (Exception ex)
             {
@@ -111,9 +144,19 @@ namespace fire.Editor
                 // typing - EVERY kind of exception ends up here as a diagnostic (CompileDiagnostics.Of knows the exceptions of the compiler and takes their line and code; anything
                 // else is a general error in line 1), instead of ending uncaught in the DispatcherTimer tick and dragging the whole editor application down with it.
                 // The resolver and the compiler report ALL their errors, the parser (which does not resume after a syntax error) and the others one.
-                diagnostics.AddRange(CompileDiagnostics.Of(ex));
+                // with the other files of the project: only the errors in the document (the last source); an error whose source is unknown stays
+                if (otherFiles is { Count: > 0 } && ex is ResolverException or CompilerException)
+                {
+                    int doc = documentSource;
+                    var own = ex is ResolverException re
+                        ? re.Errors.Where(e => e.Source < 0 || e.Source == doc).Select(e => new Diagnostic(e.Line, e.RawMessage, DiagnosticSeverity.Error, e.Code)).ToList()
+                        : ((CompilerException)ex).Errors.Where(e => e.Source < 0 || e.Source == doc).Select(e => new Diagnostic(e.Line, e.RawMessage, DiagnosticSeverity.Error, e.Code)).ToList();
+                    diagnostics.AddRange(own);
+                }
+                else diagnostics.AddRange(CompileDiagnostics.Of(ex));
             }
-            diagnostics.AddRange(warnings.Items);
+            // (warnings of the other files carry their file name)
+            diagnostics.AddRange(warnings.Items.Where(w => w.File == null || otherFiles == null || !otherFiles.Any(o => o.Path == w.File)));
 
             // Resolver/compiler errors come in the order of resolution
             // (e.g. first all classes, then the top-level code), not in
@@ -126,47 +169,20 @@ namespace fire.Editor
         private static readonly Regex UnknownClassOrType =
             new(@"^(?:Unknown (?:class|type|exception type) '(?<name>[^']+)'|'(?<name>[^']+)' of class '[^']+' is neither a known class nor a known interface)", RegexOptions.Compiled);
 
-        /// <summary>Like Analyze(source), but suppresses diagnostics that arise ONLY
-        /// because this analysis knows only `source` (+
-        /// prelude), not the ENTIRE project (SPEC "Multiple
-        /// source files") - a valid reference to a class that is defined in
-        /// ONE OF the `otherProjectFiles` would otherwise
-        /// wrongly be reported as "unknown class"/"unknown type".
-        ///
-        /// Deliberately NO complete, combined parser/resolver/
-        /// compiler run over the ENTIRE project: a parse/resolve error
-        /// carries no source index (unlike compiled bytecode, see
-        /// Bytecode.Chunk.MarkLine) - an error in ANOTHER, currently
-        /// broken file could then not be reliably told apart from a
-        /// REAL error in `source` itself, so one would
-        /// risk pinning a red error on the wrong file.
-        /// Instead a TARGETED, low-risk addendum: Analyze(source)
-        /// runs quite normally (finds EVERY real error in `source` itself
-        /// reliably), and only for each resulting "unknown class/
-        /// unknown type 'X'" diagnostic is it checked whether 'X' is defined as a class in ONE OF the
-        /// `otherProjectFiles` (via
-        /// ScriptSymbolIndex, the same lightweight scanner as for
-        /// completion/navigation) - if so, the diagnostic was a false
-        /// positive (the class is in fact known project-wide) and
-        /// is removed. One of the `otherProjectFiles` with a
-        /// typo of its own right now does not crash this check (it is
-        /// simply skipped) - at most it influences whether ONE particular
-        /// false-positive diagnostic remains overlooked, never the
-        /// reliability of the real errors in `source` itself.
-        ///
-        /// Exception: an `#import "..."` in one of the `otherProjectFiles`
-        /// IS actually counted - the extensions (and thus their
-        /// preludes, see ImportedPreludes) apply in the real compiler to
-        /// the whole project, not per file.</summary>
-        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<string> otherProjectFiles, string? basePath = null, fire.Projects.BuildPlan? plan = null)
+        /// <summary>The diagnostics of `source` as a file of a project: the other files of the project are compiled along (each a source of its own, before the
+        /// document), so that their classes, namespaces, members and `#import`s are known as in a real build; the errors of the resolver and the compiler carry the
+        /// source they are in, and only those of the document are reported. If one of the other files cannot be parsed right now, the document is analysed alone
+        /// and an "unknown class/type 'X'" is dropped when one of the other files declares X (ScriptSymbolIndex).</summary>
+        public static List<Diagnostic> AnalyzeInProject(string source, IReadOnlyList<(string Path, string Text)> otherFiles, string? basePath = null, fire.Projects.BuildPlan? plan = null)
         {
+            var otherProjectFiles = otherFiles.Select(f => f.Text).ToList();
             var importsElsewhere = otherProjectFiles
                 .Where(other => !string.IsNullOrWhiteSpace(other))
                 .SelectMany(i => ImportedPreludes.FindImportNames(i))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            var diagnostics = Analyze(source, importsElsewhere, basePath, plan);
+            var diagnostics = Analyze(source, importsElsewhere, basePath, plan, otherFiles);
             if (diagnostics.Count == 0 || otherProjectFiles.Count == 0) return diagnostics;
 
             var knownElsewhere = new HashSet<string>();

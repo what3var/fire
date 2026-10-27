@@ -1,0 +1,340 @@
+{
+  "format": 1,
+  "name": "fire-io",
+  "type": "library",
+  "import": "io",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'io' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_io.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__IOLastError",
+        "arguments": 0,
+        "cpp": "io::LastError"
+      },
+      {
+        "name": "__IOLastErrorMessage",
+        "arguments": 0,
+        "cpp": "io::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOOpenCount",
+        "arguments": 0,
+        "cpp": "io::OpenCount"
+      },
+      {
+        "name": "__IOFileOpen",
+        "arguments": 3,
+        "cpp": "io::FileOpen"
+      },
+      {
+        "name": "__IOMemNew",
+        "arguments": 0,
+        "cpp": "io::MemNew"
+      },
+      {
+        "name": "__IOMemFromBuffer",
+        "arguments": 1,
+        "cpp": "io::MemFromBuffer"
+      },
+      {
+        "name": "__IOClose",
+        "arguments": 1,
+        "cpp": "io::Close"
+      },
+      {
+        "name": "__IORead",
+        "arguments": 4,
+        "cpp": "io::Read"
+      },
+      {
+        "name": "__IOWrite",
+        "arguments": 4,
+        "cpp": "io::Write"
+      },
+      {
+        "name": "__IOReadByte",
+        "arguments": 1,
+        "cpp": "io::ReadByte"
+      },
+      {
+        "name": "__IOWriteByte",
+        "arguments": 2,
+        "cpp": "io::WriteByte"
+      },
+      {
+        "name": "__IOReadRest",
+        "arguments": 1,
+        "cpp": "io::ReadRest",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOFlush",
+        "arguments": 1,
+        "cpp": "io::Flush"
+      },
+      {
+        "name": "__IOSeek",
+        "arguments": 3,
+        "cpp": "io::Seek"
+      },
+      {
+        "name": "__IOPosition",
+        "arguments": 1,
+        "cpp": "io::Position"
+      },
+      {
+        "name": "__IOLength",
+        "arguments": 1,
+        "cpp": "io::Length"
+      },
+      {
+        "name": "__IOSetLength",
+        "arguments": 2,
+        "cpp": "io::SetLength"
+      },
+      {
+        "name": "__IOCanRead",
+        "arguments": 1,
+        "cpp": "io::CanRead"
+      },
+      {
+        "name": "__IOCanWrite",
+        "arguments": 1,
+        "cpp": "io::CanWrite"
+      },
+      {
+        "name": "__IOCanSeek",
+        "arguments": 1,
+        "cpp": "io::CanSeek"
+      },
+      {
+        "name": "__IOMemToBuffer",
+        "arguments": 1,
+        "cpp": "io::MemToBuffer",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOFileExists",
+        "arguments": 1,
+        "cpp": "io::FileExists"
+      },
+      {
+        "name": "__IOFileSize",
+        "arguments": 1,
+        "cpp": "io::FileSize"
+      },
+      {
+        "name": "__IOFileTime",
+        "arguments": 1,
+        "cpp": "io::FileTime"
+      },
+      {
+        "name": "__IOFileDelete",
+        "arguments": 1,
+        "cpp": "io::FileDelete"
+      },
+      {
+        "name": "__IOFileCopy",
+        "arguments": 3,
+        "cpp": "io::FileCopy"
+      },
+      {
+        "name": "__IOFileMove",
+        "arguments": 3,
+        "cpp": "io::FileMove"
+      },
+      {
+        "name": "__IODirExists",
+        "arguments": 1,
+        "cpp": "io::DirExists"
+      },
+      {
+        "name": "__IODirCreate",
+        "arguments": 1,
+        "cpp": "io::DirCreate"
+      },
+      {
+        "name": "__IODirDelete",
+        "arguments": 2,
+        "cpp": "io::DirDelete"
+      },
+      {
+        "name": "__IODirList",
+        "arguments": 4,
+        "cpp": "io::DirList",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOCurrentDir",
+        "arguments": 0,
+        "cpp": "io::CurrentDir",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOEntryTime",
+        "arguments": 1,
+        "cpp": "io::EntryTime"
+      },
+      {
+        "name": "__IODirMove",
+        "arguments": 2,
+        "cpp": "io::DirMove"
+      },
+      {
+        "name": "__IOSetCurrentDir",
+        "arguments": 1,
+        "cpp": "io::SetCurrentDir"
+      },
+      {
+        "name": "__IORoots",
+        "arguments": 0,
+        "cpp": "io::Roots",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOHomeDir",
+        "arguments": 0,
+        "cpp": "io::HomeDir",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathCombine",
+        "arguments": 2,
+        "cpp": "io::PathCombine",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathFileName",
+        "arguments": 1,
+        "cpp": "io::PathFileName",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathStem",
+        "arguments": 1,
+        "cpp": "io::PathStem",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathExtension",
+        "arguments": 1,
+        "cpp": "io::PathExtension",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathParent",
+        "arguments": 1,
+        "cpp": "io::PathParent",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathFull",
+        "arguments": 1,
+        "cpp": "io::PathFull",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathTemp",
+        "arguments": 0,
+        "cpp": "io::PathTemp",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathSeparator",
+        "arguments": 0,
+        "cpp": "io::PathSeparator",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOPathIsRooted",
+        "arguments": 1,
+        "cpp": "io::PathIsRooted"
+      },
+      {
+        "name": "__IOStdHandle",
+        "arguments": 1,
+        "cpp": "io::StdHandle"
+      },
+      {
+        "name": "__IOStdWrite",
+        "arguments": 2,
+        "cpp": "io::StdWrite"
+      },
+      {
+        "name": "__IOStdFlush",
+        "arguments": 1,
+        "cpp": "io::StdFlush"
+      },
+      {
+        "name": "__IOStdReadLine",
+        "arguments": 0,
+        "cpp": "io::StdReadLine",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOStdReadAll",
+        "arguments": 0,
+        "cpp": "io::StdReadAll",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOBufferIndexOf",
+        "arguments": 4,
+        "cpp": "io::BufferIndexOf"
+      },
+      {
+        "name": "__IOUtf8Encode",
+        "arguments": 1,
+        "cpp": "io::Utf8Encode",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOUtf8Decode",
+        "arguments": 3,
+        "cpp": "io::Utf8Decode",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__IOSplitLines",
+        "arguments": 1,
+        "cpp": "io::SplitLines",
+        "needsList": true,
+        "returnsReference": true
+      }
+    ],
+    "exceptions": [
+      "DestroyedException"
+    ],
+    "reset": "io::reset"
+  }
+}

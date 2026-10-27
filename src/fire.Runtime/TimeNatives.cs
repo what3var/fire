@@ -7,7 +7,7 @@ namespace fire.Runtime
     /// <summary>
     /// What the virtual machine does itself for `#import "time"`: the command `Sleep` and the unit of a time value (`__time_unit_ticks`: the units do not cross the package ABI). `Sleep` has to wait the way the VM waits (not deaf: a terminate or an abort ends it), so it is not part of the
     /// C++ library of the package (the `host` functions of the manifest, see <see cref="HostNatives"/>). All the rest of the time functions (DateTime, TimeSpan) are the C++ of
-    /// native/bridges/fire_bridge_time.hpp. Time is counted in ticks (100 ns, like in .NET).
+    /// packages/time/native/fire_bridge_time.hpp. Time is counted in ticks (100 ns, like in .NET).
     /// </summary>
     public static class TimeNatives
     {

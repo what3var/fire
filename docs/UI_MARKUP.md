@@ -8,16 +8,16 @@ The elements are the ones of the library `ui` (docs/UI.md): the layout container
 
 ```xml
 <!-- Greeter.fxml -->
-<Window class="Greeter" title="Greeter" width="420" height="200">
+<Window Class="Greeter" Title="Greeter" Width="420" Height="200">
   <Resources>
-    <Converter key="Upper" type="UpperConverter"/>
+    <Converter Key="Upper" Type="UpperConverter"/>
   </Resources>
-  <Stack x="10" y="10" width="400" height="180" spacing="6">
-    <Label text="Your name:"/>
-    <TextBox name="nameBox" width="220" text="{Binding Name, Mode=TwoWay}"/>
-    <CheckBox text="Shout" isChecked="{Binding Shout, Mode=TwoWay}"/>
-    <Label text="{Binding Name, Converter=Upper}" color="#C00000"/>
-    <Button name="ok" text="OK" onClick="Ok"/>
+  <Stack Left="10" Top="10" Width="400" Height="180" Spacing="6">
+    <Label Text="Your name:"/>
+    <TextBox Name="nameBox" Width="220" Text="{Binding Name, Mode=TwoWay}"/>
+    <CheckBox Text="Shout" IsChecked="{Binding Shout, Mode=TwoWay}"/>
+    <Label Text="{Binding Name, Converter=Upper}" Color="#C00000"/>
+    <Button Name="ok" Text="OK" OnClick="Ok"/>
   </Stack>
 </Window>
 ```
@@ -36,13 +36,20 @@ class Person {
 }
 
 class GreeterWindow : GreeterBase {        // the inheritance is declared here, in the code-behind
-    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of onClick="Ok"
+    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of OnClick="Ok"
 }
 
 var window = new GreeterWindow()
 window.SetDataContext(new Person())
 window.Run()
 ```
+
+`SetDataContext` keeps an object that is handed to it (`new Person()` or `take model`); an object that belongs to someone else stays theirs and
+the window only points to it.
+
+In a project the `#include` is not needed: the `.fxml` files of a project are compiled with it (docs/PROJECTS.md), and the code-behind is simply the `.fire` file of the
+same name next to it. The editor makes both when you add an **FXML Window** or **FXML View** (Add > New), and the solution explorer shows the markup as a node that opens: its
+first row **Designer** opens the markup editor (like a double click on the markup itself), below it is the code-behind.
 
 `#include` treats a file ending in `.fxml` like a script: it is translated on the fly, so there is nothing to keep in sync. `fire.Compiler ui Greeter.fxml [-o Greeter.fire]` writes the generated
 script (to look at it, or to ship it), and the editor shows it too (*Generated script* in the markup editor). Mistakes in the markup are reported with the line of the markup file.
@@ -52,12 +59,12 @@ script (to look at it, or to ship it), and the editor shows it too (*Generated s
 The root element says which namespace the markup belongs to and which other namespaces it uses:
 
 ```xml
-<Window class="Shop" namespace="App" namespace:m="App.Models" namespace:ui2="Widgets">
+<Window Class="Shop" namespace="App" namespace:m="App.Models" namespace:ui2="Widgets">
   <Resources>
-    <Converter key="Price" type="PriceConverter"/>          <!-- unqualified: found in App, App.Models or Widgets -->
-    <Converter key="Name" type="m:NameConverter"/>          <!-- App.Models.NameConverter -->
+    <Converter Key="Price" Type="PriceConverter"/>          <!-- unqualified: found in App, App.Models or Widgets -->
+    <Converter Key="Name" Type="m:NameConverter"/>          <!-- App.Models.NameConverter -->
   </Resources>
-  <Label color="{Enum local:Palette.Accent}" background="[ui2:Gradient #000000, #336699]"/>
+  <Label Color="{Enum local:Palette.Accent}" Background="[ui2:Gradient #000000, #336699]"/>
 </Window>
 ```
 
@@ -71,61 +78,66 @@ The `#using` lines of the generated script also apply to the file that includes 
 
 ## The generated class
 
-For `<Window class="Greeter">` the script defines `class GreeterBase` (`base="..."` chooses another name). It has
+For `<Window Class="Greeter">` the script defines `class GreeterBase` (`Base="..."` chooses another name). It has
 
 | member | |
 |---|---|
 | a field per element with `name="..."` | typed with the class of the element: `UI.TextBox nameBox` |
-| `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (title, width, height from the attributes) |
+| `framebuffer`, `window`, `ui` | a `Window`: the framebuffer, the window and the `UI.Root` that is created for it (`Title`, `Width`, `Height` from the attributes) |
 | `view` | a `View` (below) instead of the three above: a `UI.Panel` |
 | one method per handler name | `undefined Ok(any sender) { }` - empty; the derived class overrides it. `sender` is the element |
-| `Run(other = undefined)`, `OnTick()` | a window: `Run()` loops `ui.Tick()` until the window is closed and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Run(other = undefined)`, `OnTick()` | a window: `Run()` is the start of the program - it runs the window's manager (docs/CONSOLE.md, *Window managers*) on this thread until the windows are closed (if it already runs, the window is only shown there) and calls `OnTick()` once per cycle (override it for a loop of your own); `Run(other)` opens another window first (below) |
+| `Show(modal = false)` | a window: shows it and goes on - a window manager that nobody runs yet gets a thread of its own, the program handles the events at its safe points and waits at its end until the window is closed. `Show(true)`: modal - returns when the window is closed, the other windows of the manager take no input meanwhile |
 | `Open(other)` | a window: another window of the markup (an object of another generated class) or a `UI.Root` is attached to this one: this window's `Run`/`Tick` works it off as well, its own `OnTick()` is called in each cycle, until it is closed. Keep the other window alive as long as it is open (the call moves it under this window) |
 | `Attach(container)` | a view: adds the panel to a container (`ui` itself, a `Panel` or a `Stack`) |
 | `dataContext`, `SetDataContext(obj)` | only with bindings, see below |
 
-The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run OnTick Attach Open`: a named element or a handler must not use them.
+The names of the generated members start with `fx`, plus `framebuffer window ui view dataContext SetDataContext Run Show OnTick Attach Open`: a named element or a handler must not use them.
 
-`<View class="Settings" width="300" height="200">` is the root of a part of an interface: no window of its own, but a panel that a window adds with `Attach` - the same markup language, so
+`<View Class="Settings" Width="300" Height="200">` is the root of a part of an interface: no window of its own, but a panel that a window adds with `Attach` - the same markup language, so
 that a window can be composed of views.
 
 ## Elements and properties
 
-Every element has the properties it shares with all others - `x y width height visible enabled`, `margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `halign` (`Stretch Left Center Right`),
-`valign` (`Stretch Top Center Bottom`), `minWidth minHeight maxWidth maxHeight`, `background` `foreground` (colours), `pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `font` (a font name for `Fonts.Get`, docs/FONTS.md; empty = that of the surrounding element) and `fontSize` (pixels), `style`, `template` (keys of
-resources, see below) - plus `name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
-The attribute names are those of the fire fields (the first letter may be upper case: `Text` = `text`).
+Every element has the properties it shares with all others - `Left Top Width Height Visible Enabled`, `Margin` (`4`, `4,2` = horizontal, vertical, or `1,2,3,4` = left, top, right, bottom), `HorizontalAlign` (`Stretch Left Center Right`),
+`VerticalAlign` (`Stretch Top Center Bottom`), `MinWidth MinHeight MaxWidth MaxHeight`, `Background` `Foreground` (colours), `Pen` (a pen: `#RRGGBB` or `#RRGGBB,3` with the width), `Font` (a font name for `Fonts.Get`, docs/FONTS.md; empty = that of the surrounding element) and `FontSize` (pixels), `Style`, `Template` (keys of
+resources, see below) - plus `Name`, and its own properties. The attached properties of the containers are written as in XAML: `Grid.Row`, `Grid.Column`, `Grid.RowSpan`, `Grid.ColumnSpan`, `DockPanel.Dock` (`Left Top Right Bottom`).
+The attribute names are written in PascalCase (case does not matter when they are read). Each sets the field of the element with exactly the same name
+(`Text` sets `button.Text`, `IsChecked` sets `IsChecked`, `OnClick` sets `OnClick`, `Left`/`Top` set `Left`/`Top`), so code and markup use the same names -
+only the attached properties differ (`Grid.Row` sets `GridRow`, `DockPanel.Dock` sets `Dock`) and `Orientation` of a stack sets `Horizontal`.
+The old names `x`, `y`, `halign`, ... are reported with the new one.
 
 | element | properties | events |
 |---|---|---|
-| `Panel`, `Canvas` (container: children are positioned by `x`/`y`) | `showBorder`, `filled` | |
-| `Stack` (container, one row or column) | `orientation` (`Horizontal`/`Vertical`), `horizontal`, `spacing`, `padding`, `showBorder`, `filled` | |
+| `Panel`, `Canvas` (container: children are positioned by `Left`/`Top`) | `ShowBorder`, `Filled` | |
+| `Stack` (container, one row or column) | `Orientation` (`Horizontal`/`Vertical`), `Horizontal`, `Spacing`, `Padding`, `ShowBorder`, `Filled` | |
 | `StackPanel` (like `Stack`, but fits its content instead of 100 x 100) | the same | |
-| `DockPanel` (container) | `lastChildFill`; the children say `DockPanel.Dock` | |
-| `WrapPanel` (container) | `vertical`, `itemWidth`, `itemHeight` | |
-| `Grid` (container) | `rows`, `columns` (`"60, *, auto"`); the children say `Grid.Row` and so on | |
-| `Border` (one child) | `padding`, `thickness` | |
-| `ScrollViewer` (one child) | `vmode`, `hmode` (`Disabled Auto Visible`) | |
-| `ToolBar` (container: buttons and `Separator`s) | `showBorder`, `filled` | |
-| `Label` | `text`, `color` (the text brush) | |
-| `Button` | `text` | `onClick` |
-| `CheckBox` | `text`, `isChecked` | `onChange` |
-| `TextBox` | `text`, `maxLength` | `onChange`, `onEnter` |
-| `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `text`, `maxLength`, `maxSuggestions`, `displayMember` | `onChange`, `onEnter`, `onChosen` |
-| `ListBox` (`<Item>text</Item>`) | `displayMember`, `selectedIndex` | `onSelect`, `onActivate` |
-| `ListView` (`<Column header="Name" member="name" width="100"/>`) | `displayMember`, `selectedIndex` | `onSelect`, `onActivate` |
-| `TreeView` (`<TreeNode text="..." expanded="true">`, nested) | `indent` | `onSelect` |
-| `RadioButtons` (`<Item>text</Item>`) | `header`, `horizontal`, `spacing`, `selectedIndex` | `onChange` |
-| `MenuBar` (`<Menu header="File">` with `<MenuItem header="Open" shortcut="Ctrl+O" checkable="true" isChecked="true" enabled="false" onClick="Open">`, nested items, `<MenuSeparator/>`) | | `onClick` of the items |
+| `DockPanel` (container) | `LastChildFill`; the children say `DockPanel.Dock` | |
+| `WrapPanel` (container) | `Vertical`, `ItemWidth`, `ItemHeight` | |
+| `Grid` (container) | `Rows`, `Columns` (`"60, *, auto"`); the children say `Grid.Row` and so on | |
+| `Border` (one child) | `Padding`, `Thickness` | |
+| `ScrollViewer` (one child) | `VerticalScrollMode`, `HorizontalScrollMode` (`Disabled Auto Visible`) | |
+| `ToolBar` (container: buttons and `Separator`s) | `ShowBorder`, `Filled` | |
+| `Label` | `Text`, `Color` (the text brush) | |
+| `Button` | `Text`, `Icon` (a symbol of `UI.Icons` such as `Up`, or path data `M 8 1 L 15 8 L 1 8 Z`), `Image` (an image file, embedded), `IconSize` | `OnClick` |
+| `CheckBox` | `Text`, `IsChecked` | `OnChange` |
+| `TextBox` | `Text`, `MaxLength` | `OnChange`, `OnEnter` |
+| `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `Text`, `MaxLength`, `MaxSuggestions`, `DisplayMember` | `OnChange`, `OnEnter`, `OnChosen` |
+| `ListBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
+| `ComboBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex`, `MaxDropDownItems`, `ItemsSource` | `OnSelect` |
+| `ListView` (`<Column Header="Name" Member="name" Width="100"/>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
+| `TreeView` (`<TreeNode Text="..." Expanded="true">`, nested) | `Indent` | `OnSelect` |
+| `RadioButtons` (`<Item>text</Item>`) | `Header`, `Horizontal`, `Spacing`, `SelectedIndex` | `OnChange` |
+| `MenuBar` (`<Menu Header="File">` with `<MenuItem Header="Open" Shortcut="Ctrl+O" Checkable="true" IsChecked="true" Enabled="false" OnClick="Open">`, nested items, `<MenuSeparator/>`) | | `OnClick` of the items |
 | `Separator` | | |
-| `Image` | `source` (a path: the file is embedded, see docs/RESOURCES.md), `stretch` (`None Fill Uniform UniformToFill`) | |
-| `Rectangle`, `Ellipse` | `fill` (colour), `stroke` (pen) | |
-| `Line` | `x1 y1 x2 y2`, `stroke` | |
-| `Path` | `data` (`"M 0 0 L 40 0 L 20 30 Z"`, see docs/UI.md), `fill`, `stroke` | |
-| `DrawingCanvas` | `continuous` | `onPaint(canvas)`, `onMouseDown(x, y, button)`, `onMouseMove(x, y)`, `onMouseUp(x, y, button)` |
+| `Image` | `Source` (a path: the file is embedded, see docs/RESOURCES.md), `Stretch` (`None Fill Uniform UniformToFill`) | |
+| `Rectangle`, `Ellipse` | `Fill` (colour), `Stroke` (pen) | |
+| `Line` | `X1 Y1 X2 Y2`, `Stroke` | |
+| `Path` | `Data` (`"M 0 0 L 40 0 L 20 30 Z"`, see docs/UI.md), `Fill`, `Stroke` | |
+| `DrawingCanvas` | `Continuous` | `OnPaint(canvas)`, `OnMouseDown(x, Top, button)`, `OnMouseMove(x, Top)`, `OnMouseUp(x, Top, button)` |
 
-`<Button>OK</Button>` is `<Button text="OK"/>`, `<Item>Alice</Item>` is `<Item text="Alice"/>`. A `Stack`/`StackPanel`/`DockPanel`/`Grid`/`WrapPanel` lays out its children itself (their `x`/`y` are ignored), in a `Panel` or
-`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `onMouseDown="Down"` calls `Down(sender, x, y, button)`.
+`<Button>OK</Button>` is `<Button Text="OK"/>`, `<Item>Alice</Item>` is `<Item Text="Alice"/>`. A `Stack`/`StackPanel`/`DockPanel`/`Grid`/`WrapPanel` lays out its children itself (their `Left`/`Top` are ignored), in a `Panel` or
+`Canvas` they are positioned. A handler of an event with parameters gets them after `sender`: `OnMouseDown="Down"` calls `Down(sender, Left, Top, button)`.
 
 **Values** are read by the type of the property: a whole number (`12`, `-3`, `0x1F`), `true`/`false`, a text, a colour (`#RRGGBB`, `#RGB` or the raw value, see `UI.Color`; colour properties are **brushes** - the generator wraps the value in `new SolidBrush(...)`),
 `Horizontal`/`Vertical`, one of the names of an enum (`Left`), a margin, a pen. A value that does not fit is an error. In braces a value can be
@@ -136,13 +148,13 @@ The attribute names are those of the fire fields (the first letter may be upper 
 
 A text that starts with a brace is written `{}{like this}`.
 
-**Objects:** `[Type Arg1, Arg2]` assigns a new instance of `Type` - the arguments go to its constructor: `background="[SolidBrush #336699]"`, `itemsSource="[Names 'Ada', 'Bob']"`.
+**Objects:** `[Type Arg1, Arg2]` assigns a new instance of `Type` - the arguments go to its constructor: `Background="[SolidBrush #336699]"`, `ItemsSource="[Names 'Ada', 'Bob']"`.
 An argument is a number (also with a unit: `2.5mm`), a text in quotes (`'it''s'` - single quotes are easiest inside an attribute; two quotes stand for one), `#RRGGBB` (a colour number),
 `true`/`false`/`undefined`, `{Enum ...}`/`{Static ...}`/`{Expr ...}` or another object (`[Pair 1, [Point 2, 3]]`). The value is used as it is: a colour property gets the brush itself, not a
 `SolidBrush` around it. The design view makes objects of the libraries (`UI.*`, `SolidBrush`, `Pen`); objects of your own classes are left out there, like `{Expr ...}`.
 A text that starts with `[` and a name is written `{}[like this]`.
 
-**Handlers:** `onClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
+**Handlers:** `OnClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
 override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)
 
 ## Styles, triggers and templates
@@ -152,59 +164,59 @@ In `<Resources>` (next to the converters):
 ```xml
 <Resources>
   <!-- without a key: the style of ALL buttons (labels, ...) of this interface -->
-  <Style target="Label"><Setter property="color" value="#0000C8"/></Style>
+  <Style Target="Label"><Setter Property="Color" Value="#0000C8"/></Style>
   <!-- with a key: for the elements that say style="Primary" -->
-  <Style key="Primary" target="Button" basedOn="Base">
-    <Setter property="background" value="#3366AA"/>
-    <Setter property="margin" value="2,1"/>
-    <Trigger property="hover" value="true">                <!-- while the button is hovered -->
-      <Setter property="background" value="#4477BB"/>
+  <Style Key="Primary" Target="Button" BasedOn="Base">
+    <Setter Property="Background" Value="#3366AA"/>
+    <Setter Property="Margin" Value="2,1"/>
+    <Trigger Property="Hover" Value="true">                <!-- while the button is hovered -->
+      <Setter Property="Background" Value="#4477BB"/>
     </Trigger>
   </Style>
-  <ControlTemplate key="Fancy" target="Button">             <!-- the look of a control: ONE root element -->
-    <Border name="bd" background="#33AA66" padding="4">
-      <Label name="txt" text="{TemplateBinding text}"/>      <!-- follows the property of the control -->
+  <ControlTemplate Key="Fancy" Target="Button">             <!-- the look of a control: ONE root element -->
+    <Border Name="bd" Background="#33AA66" Padding="4">
+      <Label Name="txt" Text="{TemplateBinding Text}"/>      <!-- follows the property of the control -->
     </Border>
-    <Trigger property="pressed" value="true">
-      <Setter target="bd" property="background" value="#AA3333"/>   <!-- target: a part of the template -->
+    <Trigger Property="Pressed" Value="true">
+      <Setter Target="bd" Property="Background" Value="#AA3333"/>   <!-- target: a part of the template -->
     </Trigger>
   </ControlTemplate>
 </Resources>
-<Button text="Go" style="Primary"/>
-<Button text="Go" template="Fancy"/>
+<Button Text="Go" Style="Primary"/>
+<Button Text="Go" Template="Fancy"/>
 ```
 
-`target` of a style or template is an element of this table (or `Element`: the shared properties). The properties of a setter are the ones of that element; a trigger tests one of them or `hover`, `pressed`, `focused`
-(more conditions with `<Condition property="..." value="..."/>`, in a template with `source="partName"` to test a part). A property that a method sets (`rows`, `data`) cannot be set by a style. Event handlers and `{Binding}` are not available
+`Target` of a style or template is an element of this table (or `Element`: the shared properties). The properties of a setter are the ones of that element; a trigger tests one of them or `Hover`, `Pressed`, `Focused`
+(more conditions with `<Condition Property="..." Value="..."/>`, in a template with `Source="partName"` to test a part). A property that a method sets (`Rows`, `Data`) cannot be set by a style. Event handlers and `{Binding}` are not available
 inside a template (react to the control itself). Everything is explained in docs/UI.md (*Aussehen*); the generated script builds `UI.Style`, `UI.Trigger` and `UI.ControlTemplate` objects (`fxStyle_Key`, `fxTemplate_Key` are fields of the class).
 
-## Lists with data: DataTemplate, CollectionView, itemsSource
+## Lists with data: DataTemplate, CollectionView, ItemsSource
 
 `ListBox` and `ListView` can take their rows from data instead of `<Item>` children:
 
 ```xml
 <Resources>
-  <DataTemplate key="Person">                          <!-- one row: ONE root element; bindings go to the ITEM -->
-    <StackPanel horizontal="true" spacing="6">
-      <Label text="{Binding name, Converter=Upper}"/>
-      <Label text="{Binding address.city}"/>
+  <DataTemplate Key="Person">                          <!-- one row: ONE root element; bindings go to the ITEM -->
+    <StackPanel Horizontal="true" Spacing="6">
+      <Label Text="{Binding name, Converter=Upper}"/>
+      <Label Text="{Binding address.city}"/>
     </StackPanel>
   </DataTemplate>
-  <DataTemplate key="Plain"><Label text="{Binding}"/></DataTemplate>      <!-- {Binding} without a path: the item itself -->
-  <CollectionView key="ByName" source="{Binding people}" sortBy="name" descending="false" filter="{Expr func (p) on this => { return p.age > 17 }}"/>
+  <DataTemplate Key="Plain"><Label Text="{Binding}"/></DataTemplate>      <!-- {Binding} without a path: the item itself -->
+  <CollectionView Key="ByName" Source="{Binding people}" SortBy="name" Descending="false" filter="{Expr func (p) on this => { return p.age > 17 }}"/>
 </Resources>
-<ListBox view="ByName" itemTemplate="Person" selectedIndex="{Binding selected, Mode=TwoWay}"/>
-<ListBox itemsSource="{Binding names}" itemTemplate="Plain"/>
+<ListBox View="ByName" ItemTemplate="Person" SelectedIndex="{Binding selected, Mode=TwoWay}"/>
+<ListBox ItemsSource="{Binding names}" ItemTemplate="Plain"/>
 ```
 
-- **`itemsSource`** is a list: `{Binding path}` (a list of the data context - when the context replaces the list the control follows, when the list changes the rows change) or `{Expr ...}`. The control does not own the list.
-- **`<CollectionView key=...>`** is a sorted / filtered view of a list (`UI.CollectionView`): `source` (`{Binding}` or `{Expr}`, read only), `sortBy` (a property of the items), `descending`, `filter` and `comparer`
-  (`{Expr ...}`: lambdas; write `&lt;` for `<` inside an attribute, as everywhere in XML). A list says `view="Key"`; give either `view` or `itemsSource`. The view is a field of the class, `fxView_Key`, so the code-behind can change it (`fxView_ByName.SortBy("age")`, `Invalidate()`).
-- **`<DataTemplate key=...>`** builds one set of elements per item (`UI.DataTemplate`, the field is `fxData_Key`). `{Binding Path, Mode=..., Converter=...}` inside it binds to the item (`Path` through objects, empty = the item
+- **`ItemsSource`** is a list: `{Binding path}` (a list of the data context - when the context replaces the list the control follows, when the list changes the rows change) or `{Expr ...}`. The control does not own the list.
+- **`<CollectionView Key=...>`** is a sorted / filtered view of a list (`UI.CollectionView`): `Source` (`{Binding}` or `{Expr}`, read only), `SortBy` (a property of the items), `Descending`, `Filter` and `Comparer`
+  (`{Expr ...}`: lambdas; write `&lt;` for `<` inside an attribute, as everywhere in XML). A list says `View="Key"`; give either `View` or `ItemsSource`. The view is a field of the class, `fxView_Key`, so the code-behind can change it (`fxView_ByName.SortBy("age")`, `Invalidate()`).
+- **`<DataTemplate Key=...>`** builds one set of elements per item (`UI.DataTemplate`, the field is `fxData_Key`). `{Binding Path, Mode=..., Converter=...}` inside it binds to the item (`Path` through objects, empty = the item
   itself, which is read only); `TwoWay` writes into the item. There are no names, handlers, `ElementName` or `TemplateBinding` in a data template, and the rows only show data (they do not take input).
-  A text property shows any value as its text. Without `itemTemplate` a row shows the item as text (`displayMember` names the property).
-- `selectedIndex="{Binding selected, Mode=TwoWay}"` ties the selection to the data context in both directions.
-- The design view cannot run the data: a list with `itemsSource` or `view` shows three empty rows, and the bound texts of the data template read `‹path›`.
+  A text property shows any value as its text. Without `ItemTemplate` a row shows the item as text (`DisplayMember` names the property).
+- `SelectedIndex="{Binding selected, Mode=TwoWay}"` ties the selection to the data context in both directions.
+- The design view cannot run the data: a list with `ItemsSource` or `View` shows three empty rows, and the bound texts of the data template read `‹path›`.
 - Keys of styles, templates, data templates and views share one namespace.
 
 ## Data binding
@@ -219,7 +231,7 @@ or, with `ElementName`, to a property of another named element. It is built on `
 - **Mode**: `OneWay` (default; the source changes the property), `TwoWay` (the property writes back to the source as well - a `TextBox` as the user types, a `CheckBox` when it is toggled; a write
   that does not change the value stops there, so a converter that normalizes a value cannot make the two chase each other), `OneTime` (read once when the context is set).
 - **Converter**: the key of a converter that sits between the two sides. A converter is a class with `any Convert(any value)` (source to property) and, for `TwoWay`, `any ConvertBack(any value)`;
-  deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter key="Upper" type="UpperConverter"/></Resources>`; these come with the library
+  deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter Key="Upper" Type="UpperConverter"/></Resources>`; these come with the library
   and need no declaration: `Not`, `IsEmpty`, `NotEmpty`, `Text` (`UI.NotConverter`, ...).
 - `SetDataContext(obj)` disconnects the old context and connects the new one; `SetDataContext(undefined)` leaves the elements as they are.
 
@@ -227,5 +239,9 @@ or, with `ElementName`, to a property of another named element. It is built on `
 
 `.fxml` files open in a markup editor (File > New > Script... > FXML Window or FXML View): XML with colours, next to it the **design view** - the picture of the interface drawn by the library `ui` itself (the same code that runs in your program, so sizes,
 layout, styles and templates are exact; the markup is translated into a script that only draws and is run in the background - no handler and none of your own code runs, `{Enum ...}` and `{Expr ...}` values are left out and a bound text
-is shown as `‹Path›`). It is only for looking; nothing in it reacts to the mouse. The element at the caret is outlined and mistakes of the markup are listed under the picture and underlined in the text (the last good picture stays
-while there are mistakes). Image files (`<Image source="logo.png"/>`) are looked for next to the markup file. *Insert* adds a snippet at the caret, *Generated script* opens the script that the markup becomes.
+is shown as `‹Path›`). A click on an element in the picture puts the caret into it; nothing else in it reacts to the mouse. The element at the caret is outlined and mistakes of the markup are listed under the picture and underlined in the text (the last good picture stays
+while there are mistakes). Image files (`<Image Source="logo.png"/>`) are looked for next to the markup file. *Insert* adds a snippet at the caret, *Generated script* opens the script that the markup becomes.
+
+The tool window **Properties** (View > Properties) lists the attributes the element at the caret can have - its own properties, the ones all elements share, the attached
+properties of the containers and the events - with the ones it has in white. Changing a value writes the attribute into the text (one step of Undo; the rest of the
+file stays as it is), choosing *(default)* or emptying a field removes it. Choices (`HorizontalAlign`, `true`/`false`, enums) are lists, colours show a swatch.

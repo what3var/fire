@@ -60,6 +60,28 @@ namespace fire.Terminal
             long dyStart = Math.Max(Math.Max(0, clipTop) - (long)dy, 0), dyEnd = Math.Min(absDh, Math.Min(dst.Height, clipBottom) - (long)dy);
             if (dxEnd <= dxStart || dyEnd <= dyStart) return;
 
+            // the common case - RGBA to RGBA, 1:1, not mirrored: whole rows (copy) or a plain loop (transparent, blend), no division per pixel
+            if (!srcIndexed && !dstIndexed && !flipX && !flipY && absDw == sw && absDh == sh)
+            {
+                long i0 = Math.Max(dxStart, -(long)sx), i1 = Math.Min(dxEnd, (long)src.Width - sx);
+                long j0 = Math.Max(dyStart, -(long)sy), j1 = Math.Min(dyEnd, (long)src.Height - sy);
+                if (i1 <= i0 || j1 <= j0) return;
+                uint[] from = src.Pixels, to = dst.Pixels;
+                int n = (int)(i1 - i0);
+                for (long j = j0; j < j1; j++)
+                {
+                    int s = (int)((sy + j) * src.Width + sx + i0), d = (int)((dy + j) * dst.Width + dx + i0);
+                    if (mode == BlitMode.Copy) { Array.Copy(from, s, to, d, n); continue; }
+                    for (int k = 0; k < n; k++)
+                    {
+                        uint c = from[s + k];
+                        if (c >> 24 == 0) continue;
+                        to[d + k] = mode == BlitMode.Blend ? Mix(to[d + k], c) : c;
+                    }
+                }
+                return;
+            }
+
             // a cache for lookups in the palette destination with an RGBA source (many identical colours, the search costs 256 comparisons)
             Dictionary<uint, byte>? nearest = !srcIndexed && dstIndexed ? new() : null;
 

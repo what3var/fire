@@ -306,8 +306,114 @@ static class TypeTests
             print(total + " " + names[0] + " " + anything)
             """) == "TC001 TC001|7 n4 3");
 
+        // overloading by parameter type (SPEC 5.4.3): the checker picks the overload of the argument types and knows its return type
+        Check("Ueberladung: der Rueckgabetyp kommt von der passenden Ueberladung", Run("""
+            #strict
+            class U {
+                static int F(int x) { return x + 1 }
+                static string F(string s) { return s + "!" }
+                static string F<T>(T x) { return "g" }
+            }
+            int a = U.F(1)
+            string b = U.F("s")
+            string c = U.F<int>(2)
+            print(a + " " + b + " " + c)
+            """) == "|2 s! g");
+        Check("Ueberladung: falscher Rueckgabetyp der gewaehlten Ueberladung wird gemeldet", Run("""
+            class U {
+                static int F(int x) { return x }
+                static string F(string s) { return s }
+            }
+            int c = U.F("s")
+            """) == "TC001|");
+        Check("Ueberladung: Typargumente ohne generische Methode passender Laenge sind ein Fehler", Run("""
+            class U { static int F(int x) { return x } }
+            print(U.F<string>(1))
+            """, TypeCheckMode.Strict) == "|ERROR TC002");
+        Check("Ueberladung: zwei Methoden mit denselben Parametertypen sind ein Fehler, andere Typen nicht", Run("""
+            class U {
+                int F(int x) { return 1 }
+                int F(int y) { return 2 }
+            }
+            """).StartsWith("|ERROR") && Run("""
+            class U {
+                int F(int x) { return 1 }
+                int F(float y) { return 2 }
+                construct(int a) { }
+                construct(string a) { }
+            }
+            print(new U(1).F(1.5))
+            """) == "|2");
+        Check("Ueberladung: ein typisierter Parameter in der Ableitung ueberschreibt einen untypisierten der Basis", Run("""
+            class B { string Over(any x) { return "base" } }
+            class D : B { string Over(int x) { return "derived" } }
+            print(new D().Over(2))
+            new D().Over("a")
+            """, TypeCheckMode.Strict) == "|ERROR TC002");
+        Check("Ueberladung: ein any-Argument waehlt erst zur Laufzeit (kein Befund)", Run("""
+            #strict
+            class U {
+                static string F(int x) { return "int" }
+                static string F(string s) { return "string" }
+            }
+            any v = "x"
+            print(U.F(v))
+            v = 3
+            print(U.F(v))
+            """) == "|string\nint");
+
+        // the type checker's choice goes to the call (OverloadHint): taken when the arguments are what it assumed, otherwise the run time scores them
+        {
+            long taken = VM.HintsTaken, missed = VM.HintsMissed;
+            string output = Run("""
+                class Animal { }
+                class Dog : Animal { }
+                class Show {
+                    static string Of(int x) { return "int" }
+                    static string Of(string s) { return "string" }
+                    static string Of(Animal a) { return "animal" }
+                    static string Of<T>(T x) { return "generic" }
+                    string Me(int x) { return "me int" }
+                    string Me(float f) { return "me float" }
+                    construct() { }
+                    construct(int a) { }
+                    construct(string s) { }
+                }
+                class SubShow : Show {
+                    string Me(int x) { return "sub int" }
+                }
+                print(Show.Of(1) + " " + Show.Of("s") + " " + Show.Of(new Dog()) + " " + Show.Of(2.5))
+                var s = new Show(3)
+                var t = new Show("x")
+                print(s.Me(1) + " " + s.Me(1.5))
+                Show sub = new SubShow()
+                print(sub.Me(1) + " " + sub.Me(1.5))
+                any v = "dyn"
+                print(Show.Of(v))
+                """, TypeCheckMode.Strict);
+            Check("Ueberladung vorab gewaehlt: statisch, Konstruktor, Objekt (auch abgeleitet) nehmen den Hinweis, any waehlt zur Laufzeit",
+                output == "|int string animal generic\nme int me float\nsub int me float\nstring" && VM.HintsTaken - taken == 10 && VM.HintsMissed == missed,
+                $"{output} taken {VM.HintsTaken - taken} missed {VM.HintsMissed - missed}");
+            taken = VM.HintsTaken; missed = VM.HintsMissed;
+            output = Run("""
+                class Show {
+                    static string Of(int x) { return "int" }
+                    static string Of(string s) { return "string" }
+                }
+                int x = 3
+                x = "text"
+                print(Show.Of(x))
+                """);
+            Check("Ueberladung vorab gewaehlt: passt der Wert nicht zur Annahme (lax), waehlt die Laufzeit richtig",
+                output == "TC001|string" && VM.HintsMissed - missed == 1, $"{output} missed {VM.HintsMissed - missed}");
+            Check("Rueckgabewert: ein unbewiesener Wert wird gegen den deklarierten Typ geprueft", Run("""
+                class U { static int F() { any v = "s"; return v } }
+                try { int z = U.F() } catch (ArgumentException e) { print(e.message) }
+                """) == "|Return value of 'F' is an int, not String.");
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
-        foreach (var import in new[] { "io", "net", "http", "tls", "audio", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
+        foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {
             Environment.SetEnvironmentVariable("FIRE_TYPECHECK_ALL", "1");
             try { Check($"Bibliothek {import}: strikt typgeprueft ohne Befund", Run($"#import \"{import}\"\nprint(1)", TypeCheckMode.Strict) == "|1"); }

@@ -1,0 +1,26 @@
+{
+  "biscuit": 1,
+  "timeStep": "100us",
+  "elements": [
+    {"type": "Text", "from": [-8, -12], "to": [-4, -12], "text": "A 4-bit counter, a 7-segment decoder and a display count 0 to F"},
+    {"type": "Rail", "name": "CLK", "from": [-4, 0], "to": [-8, 0], "waveform": "square", "voltage": "5V", "frequency": "10Hz", "duty": "0.5"},
+    {"type": "Wire", "from": [-4, 0], "to": [0, 0]},
+    {"type": "Counter", "name": "U1", "from": [0, 0], "to": [12, 0], "layout": "falstad", "spacing": "4"},
+    {"type": "Ground", "from": [0, 12], "to": [0, 16]},
+    {"type": "Wire", "from": [12, 0], "to": [24, 0]},
+    {"type": "Wire", "from": [12, 4], "to": [24, 4]},
+    {"type": "Wire", "from": [12, 8], "to": [24, 8]},
+    {"type": "Wire", "from": [12, 12], "to": [24, 12]},
+    {"type": "SevenSegmentDecoder", "name": "U2", "from": [24, 0], "to": [40, 0]},
+    {"type": "Wire", "from": [40, 0], "to": [52, 0]},
+    {"type": "Wire", "from": [40, 4], "to": [52, 4]},
+    {"type": "Wire", "from": [40, 8], "to": [52, 8]},
+    {"type": "Wire", "from": [40, 12], "to": [52, 12]},
+    {"type": "Wire", "from": [40, 16], "to": [60, 16]},
+    {"type": "Wire", "from": [40, 20], "to": [64, 20]},
+    {"type": "Wire", "from": [64, 20], "to": [64, 16]},
+    {"type": "Wire", "from": [40, 24], "to": [68, 24]},
+    {"type": "Wire", "from": [68, 24], "to": [68, 16]},
+    {"type": "SevenSegment", "name": "DS1", "from": [52, 0], "to": [68, 0]}
+  ]
+}

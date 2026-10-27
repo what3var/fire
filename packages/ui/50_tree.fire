@@ -1,0 +1,320 @@
+namespace UI {
+    // A node of a TreeView: text, an arbitrary value (`value`), children (Add), expanded or not.
+    class TreeNode {
+        string Text = ""
+        any value
+        List children
+        bool Expanded = false
+        TreeNode parent
+
+        construct(string text = "", any value = undefined) {
+            this.Text = text
+            this.value = value
+            this.children = new List()
+        }
+
+        // Appends a node as a child; it belongs to this node.
+        UI.TreeNode Add(TreeNode node) {
+            node.TakeTo(this)
+            node.parent = this
+            this.children.Add(node)
+            return node
+        }
+
+        bool HasChildren() { return this.children.count > 0 }
+
+        int Depth() {
+            var d = 0
+            var p = this.parent
+            while (p != undefined) {
+                d = d + 1
+                p = p.parent
+            }
+            return d
+        }
+
+        undefined Expand() { this.Expanded = true }
+        undefined Collapse() { this.Expanded = false }
+    }
+
+    // A tree: `AddNode` appends nodes of the top level. A click on the box expands and collapses, a click on the row selects, keys: Up/Down move, Right expands
+    // (or goes to the first child), Left collapses (or goes to the parent node), Enter toggles.
+    class TreeView : Element {
+        List nodes
+        TreeNode selected
+        int Indent = 16
+        int rowHeight = -1
+        Scroller scroller
+        lambda OnSelect
+        bool changed = false
+        // the visible nodes of the last arrangement, from top to bottom
+        List visibleNodes
+        int hotIndex = -1
+        int seenSignature = -1
+        int viewW = 0
+        int viewH = 0
+
+        construct(int x = 0, int y = 0, int width = 200, int height = 160) : base(x, y, width, height) {
+            this.nodes = new List()
+            this.visibleNodes = new List()
+            this.scroller = new Scroller(false)
+            this.scroller.owner = this
+        }
+
+        string StyleKey() { return "TreeView" }
+
+        bool Focusable() { return true }
+
+        UI.TreeNode AddNode(TreeNode node) {
+            node.TakeTo(this)
+            this.nodes.Add(node)
+            this.Invalidate()
+            return node
+        }
+
+        undefined Clear() {
+            this.selected = undefined
+            this.nodes = new List()
+            this.visibleNodes = new List()
+            this.Invalidate()
+        }
+
+        // A feature of the visible nodes (count, texts, expanded state): if it changes - for example by `node.expanded = true` - it is repainted.
+        int Signature() {
+            var list = new List()
+            for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
+            var sig = list.count
+            for (var i = 0; i < list.count; i = i + 1) {
+                var n = list[i]
+                sig = (sig * 31 + n.Text.Length * 7 + n.Depth()) % 1000000007
+                if (n.Expanded) { sig = (sig * 31 + 1) % 1000000007 }
+            }
+            return sig
+        }
+
+        undefined Poll(Root root) {
+            base.Poll(root)
+            var sig = this.Signature()
+            if (sig != this.seenSignature) {
+                this.seenSignature = sig
+                this.Invalidate()
+            }
+        }
+
+        int RowHeight(Root root) {
+            if (this.rowHeight >= 0) { return this.rowHeight }
+            return this.TextHeight(root) + 6
+        }
+
+        undefined Collect_(List list, TreeNode node) {
+            list.Add(node)
+            if (node.Expanded) {
+                for (var i = 0; i < node.children.count; i = i + 1) { this.Collect_(list, node.children[i]) }
+            }
+        }
+
+        // Rebuilds the list of visible nodes.
+        undefined Flatten() {
+            this.visibleNodes = new List()
+            for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
+        }
+
+        undefined MeasureCore(Root root, int aw, int ah) {
+            this.Flatten()
+            var widest = 0
+            for (var i = 0; i < this.visibleNodes.count; i = i + 1) {
+                var n = this.visibleNodes[i]
+                widest = UI.M.Max(widest, n.Depth() * this.Indent + 20 + this.TextWidth(root, n.Text))
+            }
+            this.cw = widest + 4
+            this.ch = this.visibleNodes.count * this.RowHeight(root) + 2
+        }
+
+        undefined ArrangeCore(Root root, int w, int h) {
+            this.viewH = UI.M.Max(0, h - 2)
+            this.scroller.extent = this.visibleNodes.count * this.RowHeight(root)
+            this.scroller.viewport = this.viewH
+            this.scroller.Set(this.scroller.offset)
+            this.viewW = w - 2
+            if (this.scroller.Needed()) { this.viewW = this.viewW - this.scroller.size }
+        }
+
+        int IndexOfSelected() {
+            if (this.selected == undefined) { return -1 }
+            return this.visibleNodes.IndexOf(this.selected)
+        }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            var r = root.renderer
+            var back = this.Background
+            if (back == undefined) { back = theme.inputBack }
+            if (!this.Enabled) { back = theme.faceDisabled }
+            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            var rh = this.RowHeight(root)
+            var top = ay + 1
+            root.PushClip(ax + 1, top, this.viewW, this.viewH)
+            var first = this.scroller.offset / rh
+            var last = UI.M.Min(this.visibleNodes.count - 1, (this.scroller.offset + this.viewH) / rh)
+            for (var i = first; i <= last; i = i + 1) {
+                var node = this.visibleNodes[i]
+                var y = top + i * rh - this.scroller.offset
+                var text = theme.text
+                if (this.Foreground != undefined) { text = this.Foreground }
+                if (!this.Enabled) { text = theme.textDisabled }
+                if (node == this.selected) {
+                    r.FillRect(ax + 1, y, this.viewW, rh, theme.selection)
+                    text = theme.selectionText
+                } else if (i == this.hotIndex && this.Enabled) {
+                    r.FillRect(ax + 1, y, this.viewW, rh, theme.faceHover)
+                }
+                var x = ax + 3 + node.Depth() * this.Indent
+                if (node.HasChildren()) { this.DrawBox(root, x, y + (rh - 9) / 2, node.Expanded, text) }
+                this.DrawString(root, x + 14, y + (rh - this.TextHeight(root)) / 2, node.Text, text)
+            }
+            root.PopClip()
+            if (this.scroller.Needed()) { this.scroller.Draw(root, ax + this.actualWidth - 1 - this.scroller.size, top, this.viewH) }
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+        }
+
+        // The box with plus (collapsed) or minus (expanded).
+        undefined DrawBox(Root root, int x, int y, bool open, any color) {   // (a brush of the theme: its Color makes the pen)
+            var pen = new Pen(color.Color)
+            root.renderer.DrawRect(x, y, 9, 9, pen)
+            root.renderer.DrawLine(x + 2, y + 4, x + 6, y + 4, pen)
+            if (!open) { root.renderer.DrawLine(x + 4, y + 2, x + 4, y + 6, pen) }
+        }
+
+        int RowAt(Root root, int px, int py) {
+            var top = this.ay + 1
+            if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
+            var index = (py - top + this.scroller.offset) / this.RowHeight(root)
+            if (index >= this.visibleNodes.count) { return -1 }
+            return index
+        }
+
+        bool OverBar(int px, int py) {
+            return this.scroller.Needed() && px >= this.ax + this.actualWidth - 1 - this.scroller.size
+        }
+
+        undefined SelectNode(TreeNode node) {
+            if (node == this.selected) { return }
+            this.selected = node
+            this.changed = true
+            var callback = this.OnSelect
+            if (callback != undefined) { callback() }
+        }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        // Scrolls until the node is visible (it must be visible, i.e. its parent path expanded).
+        undefined EnsureVisible(Root root, TreeNode node) {
+            var index = this.visibleNodes.IndexOf(node)
+            if (index < 0) { return }
+            var h = this.RowHeight(root)
+            if (index * h < this.scroller.offset) { this.scroller.Set(index * h) }
+            else if ((index + 1) * h > this.scroller.offset + this.viewH) { this.scroller.Set((index + 1) * h - this.viewH) }
+        }
+
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.OverBar(px, py)) {
+                this.scroller.Press(py - (this.ay + 1), this.viewH)
+                return
+            }
+            var index = this.RowAt(root, px, py)
+            if (index < 0) { return }
+            var node = this.visibleNodes[index]
+            var boxX = this.ax + 3 + node.Depth() * this.Indent
+            if (node.HasChildren() && px >= boxX && px < boxX + 12) {
+                node.Expanded = !node.Expanded
+                return
+            }
+            this.SelectNode(node)
+        }
+
+        undefined MouseMove(Root root, int px, int py) {
+            if (this.scroller.dragging) { this.scroller.Drag(py - (this.ay + 1), this.viewH) }
+        }
+
+        undefined MouseUp(Root root, int button, int px, int py) { this.scroller.Release() }
+
+        undefined Hover(Root root, int px, int py) {
+            this.hotIndex = this.RowAt(root, px, py)
+            this.scroller.SetHover(this.OverBar(px, py))
+        }
+
+        bool MouseWheel(Root root, int dx, int dy) {
+            if (!this.scroller.Needed()) { return false }
+            this.scroller.By(-dy * this.RowHeight(root) * 3)
+            return true
+        }
+
+        bool CanPan() { return this.scroller.Needed() }
+
+        bool Dragging() { return this.scroller.dragging }
+
+        bool PanBy(Root root, int dx, int dy) {
+            if (!this.scroller.Needed()) { return false }
+            this.scroller.By(-dy)
+            return true
+        }
+
+        // Up and Down select another node (at the edge the tree releases the key), Left and Right collapse/expand
+        bool WantsKey(int key) {
+            var last = this.visibleNodes.count - 1
+            var index = this.IndexOfSelected()
+            if (key == UI.Keys.Down()) { return index < last }
+            if (key == UI.Keys.Up()) { return index > 0 }
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
+        }
+
+        undefined KeyDown(Root root, int key, int mod) {
+            var index = this.IndexOfSelected()
+            var count = this.visibleNodes.count
+            if (count == 0) { return }
+            if (key == UI.Keys.Down()) { index = UI.M.Min(count - 1, index + 1) }
+            else if (key == UI.Keys.Up()) { index = UI.M.Max(0, index - 1) }
+            else if (key == UI.Keys.Home()) { index = 0 }
+            else if (key == UI.Keys.End()) { index = count - 1 }
+            else if (key == UI.Keys.Right()) {
+                if (index < 0) { index = 0 }
+                else {
+                    var n = this.visibleNodes[index]
+                    if (n.HasChildren()) {
+                        if (!n.Expanded) { n.Expanded = true }
+                        else { index = index + 1 }
+                    }
+                }
+            } else if (key == UI.Keys.Left()) {
+                if (index >= 0) {
+                    var n = this.visibleNodes[index]
+                    if (n.HasChildren() && n.Expanded) { n.Expanded = false }
+                    else if (n.parent != undefined) { index = this.visibleNodes.IndexOf(n.parent) }
+                }
+            } else if (key == UI.Keys.Enter()) {
+                if (index >= 0) {
+                    var n = this.visibleNodes[index]
+                    if (n.HasChildren()) { n.Expanded = !n.Expanded }
+                }
+                return
+            } else { return }
+            if (index < 0 || index >= this.visibleNodes.count) { return }
+            var node = this.visibleNodes[index]
+            this.SelectNode(node)
+            this.EnsureVisible(root, node)
+        }
+
+        undefined Collect(List list) {
+            if (this.Visible && this.Enabled && this.Focusable()) { list.Add(this) }
+        }
+    }
+}

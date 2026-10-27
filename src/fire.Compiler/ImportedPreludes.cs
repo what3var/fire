@@ -2,10 +2,10 @@ using fire.Bytecode;
 using fire.Package.Manager;
 using fire.Runtime;
 using fire.Terminal.Bridge;
-using fire.UI.Bridge;
 using fire.Windows.Bridge;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 
@@ -67,17 +67,27 @@ namespace fire.Compiler
             yield return importKey;
         }
 
-        public static string? TrySourceFor(string importName) => importName.ToLowerInvariant() switch
+        /// <remarks>Every prelude comes from an installed package - also those of the imports the compiler knows itself (`graphics`, `windows`, `ui`, `linq`, `reflection`: their
+        /// natives are part of the virtual machine, their fire code is the standard package `fire-name`, docs/PACKAGES.md).</remarks>
+        public static string? TrySourceFor(string importName) => TryPreludeFor(importName)?.Source;
+
+        /// <summary>The prelude of an import and the folder it lies in (its `new Resource("...")` paths are relative to it, docs/RESOURCES.md).</summary>
+        public static (string Source, string Folder)? TryPreludeFor(string importName)
         {
-            "graphics" => GraphicsBridge.PreludeSource,
-            "windows" => WindowsBridge.PreludeSource,
-            "ui" => UiBridge.PreludeSource,
-            "linq" => fire.Standard.LinqPrelude.Source,
-            "reflection" => fire.Standard.ReflectionPrelude.Source,
-            _ => importName.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)
-                ? PackageStore.Default.FindKey(importName)?.ReadPrelude()   // the key of an import of a package (what the editor works with)
-                : PackageStore.Default.FindImport(importName)?.ReadPrelude(),
-        };
+            var import = importName.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)
+                ? PackageStore.Default.FindKey(importName)   // the key of an import of a package (what the editor works with)
+                // (a project's natives stand in the store without a prelude: the prelude is that of the installed package of the same import)
+                : PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i)))
+                    .FirstOrDefault(i => string.Equals(i.Name, importName, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(i.Import.Prelude));
+            return import == null ? null : PreludeOf(import);
+        }
+
+        private static (string Source, string Folder)? PreludeOf(InstalledImport import) =>
+            import.ReadPrelude() is { } text ? (text, Path.GetDirectoryName(import.FullPath(import.Import.Prelude!))!) : null;
+
+        /// <summary>The prelude of an import the compiler knows itself, from its standard package.</summary>
+        private static (string Source, string Folder) BuiltInPrelude(string name) =>
+            TryPreludeFor(name) ?? throw new PreprocessorException($"The standard package '{StandardPackages.PackageNameOf(name)}' for `#import \"{name}\"` is not installed (start ember or spark once, or `ember install {StandardPackages.PackageNameOf(name)}`).");
 
         private static readonly Regex ImportDirective =
             new("^[ \\t]*#import[ \\t]+\"([^\"\\r\\n]+)\"", RegexOptions.Compiled | RegexOptions.Multiline);
@@ -98,53 +108,52 @@ namespace fire.Compiler
         /// effect - only the NAMES count for compiling, the real
         /// implementations are attached only by RuntimeSession.Build, see there)
         /// in `natives`. Returns the number of inserted preludes.</summary>
+        /// <param name="own">Imports whose fire code is the program itself (the project of a standard library, e.g. `graphics`): their natives, but not their prelude.</param>
         public static int Insert(
             IReadOnlySet<string> nativeImports, NativeRegistry natives,
-            List<ProcessedSource> processedSources, Func<string, ProcessedSource> preprocess)
+            List<ProcessedSource> processedSources, Func<string, string, ProcessedSource> preprocessIn, IReadOnlySet<string>? own = null)
         {
             int inserted = 0;
+            // a prelude is processed from its own folder: `new Resource("icons/up.png")` in it means a file of its package
+            ProcessedSource preprocess((string Source, string Folder) prelude) => preprocessIn(prelude.Source, prelude.Folder);
+            bool Wants(string key) => own == null || !own.Contains(key);
 
             if (nativeImports.Contains(NativeImports.Graphics))
             {
-                processedSources.Insert(1, preprocess(GraphicsBridge.PreludeSource));
+                if (Wants(NativeImports.Graphics)) { processedSources.Insert(1, preprocess(BuiltInPrelude("graphics"))); inserted++; }
                 GraphicsBridge.RegisterStubs(natives);
-                inserted++;
             }
 
             if (nativeImports.Contains(NativeImports.Windows))
             {
                 // behind `graphics`: the prelude order (every insertion stands BEFORE the earlier ones) and that of the native functions are independent of each other
-                processedSources.Insert(1, preprocess(WindowsBridge.PreludeSource));
+                if (Wants(NativeImports.Windows)) { processedSources.Insert(1, preprocess(BuiltInPrelude("windows"))); inserted++; }
                 WindowsBridge.RegisterStubs(natives);
-                inserted++;
             }
 
             if (nativeImports.Contains(NativeImports.Ui))
             {
                 // pure fire source on the classes of the graphics bridge: no native functions
-                processedSources.Insert(1, preprocess(UiBridge.PreludeSource));
-                inserted++;
+                if (Wants(NativeImports.Ui)) { processedSources.Insert(1, preprocess(BuiltInPrelude("ui"))); inserted++; }
             }
 
             if (nativeImports.Contains(NativeImports.Linq))
             {
                 // pure fire source, no native functions
-                processedSources.Insert(1, preprocess(fire.Standard.LinqPrelude.Source));
-                inserted++;
+                if (Wants(NativeImports.Linq)) { processedSources.Insert(1, preprocess(BuiltInPrelude("linq"))); inserted++; }
             }
 
             if (nativeImports.Contains(NativeImports.Reflection))
             {
-                processedSources.Insert(1, preprocess(fire.Standard.ReflectionPrelude.Source));
+                if (Wants(NativeImports.Reflection)) { processedSources.Insert(1, preprocess(BuiltInPrelude("reflection"))); inserted++; }
                 ReflectionNatives.Register(natives); // when translating only the names count (the compiler then writes type metadata along)
-                inserted++;
             }
 
             // the imports of packages (last, like their natives): the prelude, and the natives as names (the calls need them; the virtual machine fails when one runs, see PackageImports)
             foreach (var key in nativeImports.Where(k => k.StartsWith(PackageStore.KeyPrefix, StringComparison.Ordinal)).OrderBy(k => k, StringComparer.Ordinal))
             {
                 var package = PackageStore.Default.FindKey(key) ?? throw new Exception($"The import '{key.Substring(PackageStore.KeyPrefix.Length)}' belongs to a package that is not installed.");
-                if (package.ReadPrelude() is { } prelude) { processedSources.Insert(1, preprocess(prelude)); inserted++; }
+                if (PreludeOf(package) is { } prelude) { processedSources.Insert(1, preprocess(prelude)); inserted++; }
                 PackageImports.RegisterNames(natives, package);
             }
 

@@ -12,6 +12,8 @@ namespace fire.Projects
 
         private static readonly string[] SkippedFolders = { "bin", "obj", ".git", ".vs", "node_modules" };
 
+
+
         public static bool IsPattern(string text) => text.IndexOfAny(new[] { '*', '?' }) >= 0;
 
         /// <summary>A pattern (`/` as the separator; `*` any characters but `/`, `**` any folders, `?` one character, `{a,b}` one of the alternatives) as a regular expression over relative paths.</summary>
@@ -48,29 +50,43 @@ namespace fire.Projects
         private static List<string> Walk(string directory)
         {
             var found = new List<string>();
-            void Visit(string dir, string rel)
+
+            void VisitRecusively(string dir, string rel)
             {
                 IEnumerable<string> files;
                 try { files = System.IO.Directory.EnumerateFiles(dir); } catch (Exception) { return; }
-                foreach (var f in files) found.Add(rel + Path.GetFileName(f));
-                IEnumerable<string> subs;
-                try { subs = System.IO.Directory.EnumerateDirectories(dir); } catch (Exception) { return; }
-                foreach (var sub in subs)
+                
+                foreach (var f in files) 
+                    found.Add(rel + Path.GetFileName(f));
+                
+                IEnumerable<string> folders;
+                
+                try { folders = System.IO.Directory.EnumerateDirectories(dir); } catch (Exception) { return; }
+                
+                foreach (var folder in folders)
                 {
-                    string name = Path.GetFileName(sub);
-                    if (SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.')) continue;
+                    var name = Path.GetFileName(folder);
+                    if (SkippedFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || name.StartsWith('.')) 
+                        continue;
+
                     bool nestedProject;
-                    try { nestedProject = System.IO.Directory.EnumerateFiles(sub, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
-                    if (nestedProject) continue;   // another project lives there: its files are its own
-                    Visit(sub, rel + name + "/");
+                    try { nestedProject = System.IO.Directory.EnumerateFiles(folder, "*" + FireProject.Extension).Any(); } catch (Exception) { nestedProject = false; }
+                    
+                    if (nestedProject) 
+                        continue;   // another project lives there: its files are its own
+                    
+                    VisitRecusively(folder, rel + name + "/");
                 }
             }
-            Visit(directory, "");
+            VisitRecusively(directory, "");
             return found;
         }
 
+        /// <summary>The folder of the tests of a project (by convention; a test may stand in any file).</summary>
+        public const string TestingFolder = "testing";
+
         /// <summary>The files of the project as full paths in the order they are compiled; `problems` gets what is wrong (a file that is named but does not exist).</summary>
-        public static List<string> Resolve(FireProject project, List<string>? problems = null)
+        public static List<string> Resolve(FireProject project, List<string>? problems = null, bool tests = false)
         {
             string? dir = project.Directory;
             if (dir == null) return new List<string>();
@@ -95,6 +111,8 @@ namespace fire.Projects
                         if (Excluded(rel)) continue;
                         // the folder `templates/` holds what the project offers as templates (docs/TEMPLATES.md): files with placeholders, not code of the project - unless the files are named
                         if (project.Files.Count == 0 && rel.StartsWith("templates/", StringComparison.OrdinalIgnoreCase)) continue;
+                        // the folder `testing/` holds the tests of the project (docs/TESTING.md): only `forge test` compiles them
+                        if (project.Files.Count == 0 && !tests && rel.StartsWith(TestingFolder + "/", StringComparison.OrdinalIgnoreCase)) continue;
                         string full = Path.GetFullPath(rel, dir);
                         if (seen.Add(full)) result.Add(full);
                     }

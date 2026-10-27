@@ -13,7 +13,7 @@ namespace fire.Windows.Bridge
     /// The window bridge (`#import "windows"`): the SDL window in which a framebuffer of the graphics bridge (`#import "graphics"`) is shown -
     /// separate from `graphics`, so that a program for a platform without a window (embedded) imports only `graphics` and plugs in another
     /// output device (e.g. a display) instead. Registers the <see cref="WindowManager"/> as native functions (prefix <see cref="WindowPrefix"/>)
-    /// and supplies the classes `Window` and `EventType` as fire source (<see cref="PreludeSource"/>). Requires `graphics`
+    /// and supplies the classes `Window` and `EventType` as fire source (the prelude of the standard package). Requires `graphics`
     /// (<c>HandleUnavailableException</c> and `Framebuffer` come from there).
     /// </summary>
     public static class WindowsBridge
@@ -81,6 +81,28 @@ namespace fire.Windows.Bridge
                     return Value.MakeUndefined();
                 },
                 ["GetTouchMouse"] = args => Value.MakeBool(mgr.GetTouchMouse((int)args[0].AsInt())),
+                // the two halves of a cycle (fire's WindowManager): events in, frame out
+                ["Pump"] = args => Value.MakeBool(mgr.Pump((int)args[0].AsInt())),
+                ["Present"] = args => { mgr.Present((int)args[0].AsInt()); return Value.MakeUndefined(); },
+                // window managers
+                ["MgrCreate"] = args => Value.MakeInt(mgr.CreateManager()),
+                ["MgrAttach"] = args => Value.MakeBool(mgr.AttachToManager((int)args[0].AsInt(), (int)args[1].AsInt())),
+                ["MgrDetach"] = args => Value.MakeBool(mgr.DetachFromManager((int)args[0].AsInt(), (int)args[1].AsInt())),
+                ["MgrStart"] = args => args[1].Kind == ValueKind.Lambda && mgr.StartManager((int)args[0].AsInt(), (LambdaValue)args[1].AsLambda()) ? Value.MakeBool(true) : Value.MakeBool(false),
+                ["MgrWait"] = args => { mgr.ManagerWait((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
+                // a modal window of its manager is open: the input of this window is dropped (Window.Show(true))
+                ["SetBlocked"] = args => { mgr.SetBlocked((int)args[0].AsInt(), args[1].AsBool()); return Value.MakeUndefined(); },
+                // the program runs the cycle its manager's thread asked for: the next one may be asked for
+                ["MgrServed"] = args => { mgr.ManagerServed((int)args[0].AsInt()); return Value.MakeUndefined(); },
+                // Window.AutoClose: a close request (the frame's button) closes the window
+                ["SetAutoClose"] = args => { mgr.SetAutoClose((int)args[0].AsInt(), args[1].AsBool()); return Value.MakeUndefined(); },
+                ["GetAutoClose"] = args => Value.MakeBool(mgr.GetAutoClose((int)args[0].AsInt())),
+                // Window.SetSize: the size of the window in pixels of the screen
+                ["SetSize"] = args => { if (args[1].AsInt() <= 0 || args[2].AsInt() <= 0) return Value.MakeBool(false); mgr.SetSize((int)args[0].AsInt(), (int)args[1].AsInt(), (int)args[2].AsInt()); return Value.MakeBool(true); },
+                // SystemTheme.Current(): what the desktop says about the look of programs
+                ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
+                // Window.Cursor: the system cursor over the window
+                ["SetCursor"] = args => { mgr.SetCursor((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
             };
         }
         
@@ -100,161 +122,22 @@ namespace fire.Windows.Bridge
                 ["GetAutoResize"] = args => Value.MakeUndefined() /*STUB*/,
                 ["SetTouchMouse"] = args => Value.MakeUndefined() /*STUB*/,
                 ["GetTouchMouse"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Pump"] = args => Value.MakeUndefined() /*STUB*/,
+                ["Present"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrCreate"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrAttach"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrDetach"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrStart"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrWait"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetBlocked"] = args => Value.MakeUndefined() /*STUB*/,
+                ["MgrServed"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
+                ["GetAutoClose"] = args => Value.MakeUndefined() /*STUB*/,
+                ["SetSize"] = args => Value.MakeBool(false) /*STUB*/,
+                ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
+                ["SetCursor"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
-        /// <summary>fire source of the classes `Window` and `EventType` - to be placed behind the prelude of `graphics` (see ImportedPreludes).</summary>
-        public const string PreludeSource = """
-            class Window {
-                int id
-
-                construct(Framebuffer framebuffer, string title) {
-                    this.id = __GRPHWinCreate(framebuffer.id, title)
-                    if (this.id == -1) {
-                        throw new HandleUnavailableException("The window could not be created.")
-                    }
-                }
-
-                destruct() {
-                    __GRPHWinDestroy(this.id)
-                }
-
-                // Fetches the events and shows the current content of the framebuffer. With VSync (the default) every tick waits for the
-                // monitor's refresh (60 Hz = 16.7 ms): ideal for animations and wait loops (`while (win.Tick()) { ... }`),
-                // but a drawing loop with one tick per pass then takes 256 x 16.7 ms = 4.3 s. Whoever draws a lot and only wants to
-                // show now and then calls Tick less often or sets `win.VSync = false` (Tick then returns immediately).
-                bool Tick() { return __GRPHWinTick(this.id) }
-
-                bool VSync {
-                    get { return __GRPHWinGetVSync(this.id) }
-                    set { __GRPHWinSetVSync(this.id, value) }
-                }
-
-                // true: if the user drags the window to another size, the framebuffer gets exactly that size (as long as it is valid, see Framebuffer.Resize) - instead of its content
-                // being stretched to the window (default: false, as before). The program receives the event EventType.Resize and redraws at the new size; the mouse positions
-                // are then pixels of the framebuffer 1:1. (A UI.Root switches it on: `root.autoResize`.)
-                bool AutoResize {
-                    get { return __GRPHWinGetAutoResize(this.id) }
-                    set { __GRPHWinSetAutoResize(this.id, value) }
-                }
-
-                // true (default): a finger on the touchscreen ALSO triggers mouse events (as SDL does by itself), so a program that only listens to the mouse can be operated with a finger.
-                // false: only the touch events (EventType.TouchDown/TouchMove/TouchUp). A UI.Root switches it off and evaluates the fingers itself.
-                bool TouchMouse {
-                    get { return __GRPHWinGetTouchMouse(this.id) }
-                    set { __GRPHWinSetTouchMouse(this.id, value) }
-                }
-
-                // Polling style instead of callbacks: EnableEvents() switches a queue on, after which, following each tick,
-                // NextEvent() fetches one event after the other (undefined when none is left). The event is an
-                // array: e[0] is the type (see EventType), the rest depends on the type, positions are whole pixels of the
-                // framebuffer: MouseDown/MouseUp [type, button, x, y], MouseMove [type, x, y, buttons], MouseScroll [type, scrollX,
-                // scrollY, x, y], KeyDown/KeyUp [type, keycode, scancode, modifier, repeated], TextInput [type, text], Resize [type, width, height] (the size of the window; with AutoResize the
-                // framebuffer already has it if it is valid), Close [type]. Touchscreen: TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer; finger
-                // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
-                // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
-                // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
-                // Callbacks.
-                bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
-                any NextEvent() { return __GRPHWinNextEvent(this.id) }
-            
-            
-                bool RegisterMouseDown(lambda<int,float,float> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.MouseDown!, fn);
-                }
-            
-                bool RegisterMouseUp(lambda<int,float,float> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.MouseUp!, fn);
-                }
-            
-                bool RegisterMouseMove(lambda<float,float,int> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.MouseMove!, fn);
-                }
-            
-                bool RegisterMouseMoveRelative(lambda<float,float,int> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.MouseMoveRelative!, fn);
-                }
-            
-                bool RegisterMouseScroll(lambda<float,float,float,float> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.MouseScroll!, fn);
-                }
-            
-                bool RegisterKeyDown(lambda<int,int,int,bool> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.KeyDown!, fn);
-                }
-            
-                bool RegisterKeyUp(lambda<int,int,int,bool> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.KeyUp!, fn);
-                }
-            
-                bool RegisterResize(lambda<int,int> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.Resize!, fn);
-                }
-
-                // Touchscreen: (finger, x, y, druck)
-                bool RegisterTouchDown(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchDown!, fn); }
-                bool RegisterTouchMove(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchMove!, fn); }
-                bool RegisterTouchUp(lambda<int,float,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.TouchUp!, fn); }
-
-                // Joystick: (joystick, axis, position), (joystick, button), (joystick, hat, directions), (joystick)
-                bool RegisterJoystickAxis(lambda<int,int,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAxis!, fn); }
-                bool RegisterJoystickButtonDown(lambda<int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickButtonDown!, fn); }
-                bool RegisterJoystickButtonUp(lambda<int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickButtonUp!, fn); }
-                bool RegisterJoystickHat(lambda<int,int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickHat!, fn); }
-                bool RegisterJoystickAdded(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAdded!, fn); }
-                bool RegisterJoystickRemoved(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickRemoved!, fn); }
-
-                bool RegisterTextInput(lambda<string> fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);
-                }
-            
-                bool RegisterClose(lambda fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.Close!, fn);
-                }
-            
-                bool RegisterCloseRequest(lambda fn)
-                {
-                    return __GRPHWinRegisterEvent(this.id, EventType.CloseRequest!, fn);
-                }
-            
-            }
-
-            enum EventType
-            {
-                Unknown = 0,
-                Close = 1,
-                CloseRequest = 2,
-                TextInput = 3,
-                Resize = 4,
-                TouchDown = 16,
-                TouchMove = 17,
-                TouchUp = 18,
-                MouseDown = 8,
-                MouseMove = 9,
-                MouseMoveRelative = 10,
-                MouseUp = 11,
-                MouseScroll = 12,
-                //MouseEnter = 13,
-                //MouseLeave = 14,
-                KeyDown = 24,
-                KeyUp = 25,
-                JoystickAxis = 32,
-                JoystickButtonDown = 33,
-                JoystickButtonUp = 34,
-                JoystickHat = 35,
-                JoystickAdded = 36,
-                JoystickRemoved = 37
-            }
-            """;
     }
 }

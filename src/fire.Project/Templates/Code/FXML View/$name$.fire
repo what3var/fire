@@ -1,0 +1,7 @@
+// $class$: the code-behind of $name$.fxml. The markup defines the class $class$Base (the view and its elements); this class derives from it.
+//
+//     var view = new $class$()
+//     view.Attach(window.ui)   // adds the view to a window (a UI.Root, a Panel or a Stack)
+
+class $class$ : $class$Base {
+}

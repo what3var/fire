@@ -1,0 +1,1998 @@
+namespace UI.Docking {
+    // What releasing a dragged tool window does (DockManager.FindTarget): nothing (it stays floating), dock it at an edge, add it as a tab to a pane, or put it before
+    // or after a pane of an edge.
+    enum Drop { None = 0, Side = 1, Tab = 2, Before = 3, After = 4 }
+
+    // A tool window: a title and one element (`content`) that a DockManager shows docked at an edge, as a tab next to others, or floating above the window.
+    // Show/Hide/Close/Float/DockTo move it; the user drags it by its title or tab.
+    class ToolWindow : UI.Element {
+        string title
+        UI.Geometry Icon
+        UI.Element content
+        bool canClose = true
+        bool canFloat = true
+        // the content fills the window: SetContent gives it no fixed size (width/height = -1) and stretches it
+        bool fillContent = true
+        // called when the user closes the window (or Close() is called); it is hidden afterwards and can be shown again with Show()
+        lambda onClose
+        UI.Docking.DockManager manager
+        // where it was last, for Show() after Hide()/Close()
+        int lastSide = UI.Dock.Left
+        // its pane's place along the edge
+        int lastIndex = -1
+        bool wasFloating = false
+        UI.Docking.DockPane lastPane
+        int floatX = 60
+        int floatY = 60
+        int floatWidth = 260
+        int floatHeight = 200
+
+        construct(string title = "", UI.Element content = undefined) : base(0, 0, -1, -1) {
+            this.title = title
+            if (content != undefined) { this.SetContent(content) }
+        }
+
+        string StyleKey() { return "ToolWindow" }
+
+        // The element the window shows; it belongs to the window (the previous one is destroyed).
+        undefined SetContent(UI.Element content) {
+            if (this.content != undefined) {
+                var old = this.content
+                this.content = undefined
+                old.parent = undefined
+                delete old
+            }
+            content.TakeTo(this)
+            content.parent = this
+            if (this.fillContent) {
+                content.Width = -1
+                content.Height = -1
+                content.HorizontalAlign = UI.HAlign.Stretch
+                content.VerticalAlign = UI.VAlign.Stretch
+            }
+            this.content = content
+            this.Invalidate()
+        }
+
+        // The pane it lies in (undefined: hidden or not added to a manager yet).
+        UI.Docking.DockPane Pane() {
+            any p = this.parent
+            if (p != undefined && p is of UI.Docking.DockPane) { return p }
+            return undefined
+        }
+
+        bool isHidden { get { return this.Pane() == undefined } }
+        bool isFloating {
+            get {
+                var pane = this.Pane()
+                return pane != undefined && pane.floating
+            }
+        }
+        bool isDocked {
+            get {
+                var pane = this.Pane()
+                return pane != undefined && !pane.floating
+            }
+        }
+        // the edge it is docked at (a UI.Dock), -1 when it floats or is hidden
+        int side {
+            get {
+                var pane = this.Pane()
+                if (pane == undefined || pane.floating) { return -1 }
+                return pane.side
+            }
+        }
+
+        undefined Show() {
+            if (this.manager != undefined) { this.manager.ShowTool(this) }
+        }
+
+        undefined Hide() {
+            if (this.manager != undefined) { this.manager.HideTool(this) }
+        }
+
+        // Closes the window like its close button: onClose, then hidden.
+        undefined Close() {
+            var callback = this.onClose
+            if (callback != undefined) { callback() }
+            this.Hide()
+        }
+
+        // Lets the window float (x, y: position in the manager; -1: where it floated last).
+        undefined Float(int x = -1, int y = -1) {
+            if (this.manager != undefined) { this.manager.FloatTool(this, x, y) }
+        }
+
+        // Docks the window at an edge (UI.Dock.Left, Top, Right, Bottom) in a pane of its own.
+        undefined DockTo(int side) {
+            if (this.manager != undefined) { this.manager.DockTool(this, side) }
+        }
+
+        // Makes it the visible tab of its pane.
+        undefined Activate() {
+            var pane = this.Pane()
+            if (pane != undefined) { pane.Select(pane.windows.IndexOf(this)) }
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            if (this.content != undefined) { this.content.Poll(root) }
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            if (this.content == undefined) { return }
+            this.content.Measure(root, aw, ah)
+            this.cw = this.content.dw
+            this.ch = this.content.dh
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            if (this.content != undefined) { this.content.Arrange(root, 0, 0, w, h) }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                var back = this.Background
+                if (back == undefined) { back = root.theme.panel }
+                root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            }
+            var c = this.content
+            if (c != undefined && c.Visible) {
+                root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
+                c.Draw(root, ax + c.rx, ay + c.ry)
+                root.PopClip()
+            }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            if (this.content != undefined) {
+                var hit = this.content.HitTest(px, py)
+                if (hit != undefined) { return hit }
+            }
+            return this
+        }
+
+        undefined Collect(List list) {
+            if (this.content != undefined) { this.content.Collect(list) }
+        }
+
+        UI.Element FindName(string name) {
+            if (this.Name == name) { return this }
+            if (this.content != undefined) { return this.content.FindName(name) }
+            return undefined
+        }
+    }
+
+    // A pane: one or more tool windows on top of each other (tabs at the bottom when there are several), a caption with the title of the visible one and buttons
+    // to float/dock and close it. Panes sit at an edge of the DockManager or float.
+    class DockPane : UI.Element {
+        List windows
+        int active = 0
+        int side = UI.Dock.Left
+        bool floating = false
+        // the share of the edge's length (relative to the other panes there)
+        int weight = 100
+        // where the pane was docked before it floated (double click on the caption docks it there again)
+        int lastSide = UI.Dock.Left
+        UI.Docking.DockManager manager
+        // the part pressed with the mouse: 0 nothing, 1 caption, 2 tab, 3 close button, 4 float button
+        int pressedPart = 0
+        int hotPart = 0
+        bool focusInside = false
+        bool dragging = false
+        int lastClickCycle = -1000
+
+        construct() : base(0, 0, -1, -1) {
+            this.windows = new List()
+        }
+
+        string StyleKey() { return "DockPane" }
+
+        UI.Docking.ToolWindow ActiveWindow() {
+            if (this.windows.count == 0) { return undefined }
+            return this.windows[UI.M.Clamp(this.active, 0, this.windows.count - 1)]
+        }
+
+        // Shows the window in this pane (at `at`, -1: as the last tab) and makes it the visible one.
+        undefined AddWindow(UI.Docking.ToolWindow window, int at = -1) {
+            window.parent = this
+            if (at < 0 || at > this.windows.count) { at = this.windows.count }
+            this.windows.Insert(at, window)
+            this.active = at
+            this.Invalidate()
+        }
+
+        undefined RemoveWindow(UI.Docking.ToolWindow window) {
+            var index = this.windows.IndexOf(window)
+            if (index < 0) { return }
+            this.windows.RemoveAt(index)
+            window.parent = undefined
+            if (index < this.active) { this.active = this.active - 1 }
+            if (this.active >= this.windows.count) { this.active = this.windows.count - 1 }
+            if (this.active < 0) { this.active = 0 }
+            this.Invalidate()
+        }
+
+        undefined Select(int index) {
+            if (index < 0 || index >= this.windows.count || index == this.active) { return }
+            this.active = index
+            this.Invalidate()
+        }
+
+        // Can the pane float (all its windows allow it)?
+        bool CanFloat() {
+            for (var i = 0; i < this.windows.count; i = i + 1) {
+                if (!this.windows[i].canFloat) { return false }
+            }
+            return true
+        }
+
+        int CaptionHeight(UI.Root root) { return this.TextHeight(root) + 8 }
+
+        int TabHeight(UI.Root root) {
+            if (this.windows.count > 1) { return this.TextHeight(root) + 8 }
+            return 0
+        }
+
+        int ButtonSize(UI.Root root) { return this.CaptionHeight(root) - 6 }
+
+        // The left edge of the close button and of the float button (screen coordinates; -1: there is none).
+        int CloseLeft(UI.Root root) {
+            var w = this.ActiveWindow()
+            if (w == undefined || !w.canClose) { return -1 }
+            return this.ax + this.actualWidth - 3 - this.ButtonSize(root)
+        }
+
+        int FloatLeft(UI.Root root) {
+            if (!this.CanFloat() || this.windows.count == 0) { return -1 }
+            var right = this.ax + this.actualWidth - 3
+            var close = this.CloseLeft(root)
+            if (close >= 0) { right = close - 2 }
+            return right - this.ButtonSize(root)
+        }
+
+        int TabWidth(UI.Root root, int index) {
+            var w = this.TextWidth(root, this.windows[index].title) + 16
+            return UI.M.Min(w, UI.M.Max(24, (this.actualWidth - 2) / UI.M.Max(1, this.windows.count)))
+        }
+
+        int TabLeft(UI.Root root, int index) {
+            var x = this.ax + 1
+            for (var i = 0; i < index; i = i + 1) { x = x + this.TabWidth(root, i) }
+            return x
+        }
+
+        int TabAt(UI.Root root, int px) {
+            var x = this.ax + 1
+            for (var i = 0; i < this.windows.count; i = i + 1) {
+                var w = this.TabWidth(root, i)
+                if (px >= x && px < x + w) { return i }
+                x = x + w
+            }
+            return -1
+        }
+
+        // The part at the screen position: 0 the body, 1 caption, 2 tab bar, 3 close button, 4 float button.
+        int PartAt(UI.Root root, int px, int py) {
+            var caption = this.CaptionHeight(root)
+            if (py < this.ay + caption) {
+                var size = this.ButtonSize(root)
+                var by = this.ay + 3
+                if (py >= by && py < by + size) {
+                    var close = this.CloseLeft(root)
+                    if (close >= 0 && px >= close && px < close + size) { return 3 }
+                    var fl = this.FloatLeft(root)
+                    if (fl >= 0 && px >= fl && px < fl + size) { return 4 }
+                }
+                return 1
+            }
+            var tabs = this.TabHeight(root)
+            if (tabs > 0 && py >= this.ay + this.actualHeight - tabs) { return 2 }
+            return 0
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            var extra = this.CaptionHeight(root) + this.TabHeight(root) + 2
+            var win = this.ActiveWindow()
+            if (win == undefined) {
+                this.cw = 60
+                this.ch = extra
+                return
+            }
+            var iw = aw
+            var ih = ah
+            if (iw >= 0) { iw = UI.M.Max(0, iw - 2) }
+            if (ih >= 0) { ih = UI.M.Max(0, ih - extra) }
+            win.Measure(root, iw, ih)
+            this.cw = win.dw + 2
+            this.ch = win.dh + extra
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            var win = this.ActiveWindow()
+            if (win == undefined) { return }
+            var caption = this.CaptionHeight(root)
+            win.Arrange(root, 1, caption, UI.M.Max(0, w - 2), UI.M.Max(0, h - caption - this.TabHeight(root) - 1))
+        }
+
+        bool FocusIn(UI.Root root) {
+            UI.Element e = root.focusElement
+            while (e != undefined) {
+                if (e == this) { return true }
+                e = e.parent
+            }
+            return false
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            for (var i = 0; i < this.windows.count; i = i + 1) { this.windows[i].Poll(root) }
+            var inside = this.FocusIn(root)
+            if (inside != this.focusInside) {
+                this.focusInside = inside
+                this.Invalidate()
+            }
+        }
+
+        undefined DrawButton(UI.Root root, int x, int part, Brush color) {
+            var size = this.ButtonSize(root)
+            var y = this.ay + 3
+            var r = root.renderer
+            if (this.pressedPart == part && this.hotPart == part) { r.FillRect(x, y, size, size, root.theme.facePressed) }
+            else if (this.hotPart == part) { r.FillRect(x, y, size, size, root.theme.faceHover) }
+            var cx = x + size / 2
+            var cy = y + size / 2
+            if (part == 3) {
+                UI.Docking.Paint.Cross(root, cx, cy, color)
+                return
+            }
+            var pen = new Pen(__GRPHBshGetColor(color.id), 1)
+            if (this.floating) {
+                // dock: a window with a thick bar on the left
+                r.DrawRect(cx - 4, cy - 4, 9, 9, pen)
+                r.FillRect(cx - 4, cy - 4, 3, 9, color)
+            } else {
+                // float: a window with a title bar
+                r.DrawRect(cx - 4, cy - 4, 9, 9, pen)
+                r.FillRect(cx - 4, cy - 4, 9, 2, color)
+            }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            var theme = root.theme
+            var r = root.renderer
+            var w = this.actualWidth
+            var h = this.actualHeight
+            var win = this.ActiveWindow()
+            if (root.Needs(ax, ay, w, h)) {
+                r.FillRect(ax, ay, w, h, theme.panel)
+                // the caption
+                var caption = this.CaptionHeight(root)
+                var capBack = theme.face
+                var capText = theme.text
+                if (this.focusInside) {
+                    capBack = theme.accent
+                    capText = theme.selectionText
+                }
+                r.FillRect(ax, ay, w, caption, capBack)
+                var room = w - 8
+                var fl = this.FloatLeft(root)
+                var close = this.CloseLeft(root)
+                if (fl >= 0) { room = fl - ax - 6 }
+                else if (close >= 0) { room = close - ax - 6 }
+                if (win != undefined) {
+                    var tx = ax + 6
+                    if (win.Icon != undefined) {
+                        UI.Docking.Paint.Symbol(root, win.Icon, undefined, 12, tx, ay + (caption - 12) / 2, capText)
+                        tx = tx + 16
+                    }
+                    root.PushClip(ax, ay, UI.M.Max(0, room), caption)
+                    this.DrawString(root, tx, ay + (caption - this.TextHeight(root)) / 2, win.title, capText)
+                    root.PopClip()
+                }
+                if (fl >= 0) { this.DrawButton(root, fl, 4, capText) }
+                if (close >= 0) { this.DrawButton(root, close, 3, capText) }
+                // the tabs
+                var tabs = this.TabHeight(root)
+                if (tabs > 0) {
+                    var ty = ay + h - tabs
+                    r.FillRect(ax, ty, w, tabs, theme.back)
+                    r.DrawLine(ax, ty, ax + w - 1, ty, theme.border)
+                    var x = ax + 1
+                    for (var i = 0; i < this.windows.count; i = i + 1) {
+                        var tw = this.TabWidth(root, i)
+                        var text = theme.text
+                        if (i == this.active) {
+                            r.FillRect(x, ty, tw, tabs - 1, theme.panel)
+                            r.DrawLine(x, ty + tabs - 1, x + tw - 1, ty + tabs - 1, theme.border)
+                            r.DrawLine(x, ty, x, ty + tabs - 1, theme.border)
+                            r.DrawLine(x + tw - 1, ty, x + tw - 1, ty + tabs - 1, theme.border)
+                        } else { text = theme.textDisabled }
+                        root.PushClip(x, ty, tw, tabs)
+                        this.DrawString(root, x + 8, ty + (tabs - this.TextHeight(root)) / 2, this.windows[i].title, text)
+                        root.PopClip()
+                        x = x + tw
+                    }
+                }
+                r.DrawRect(ax, ay, w, h, theme.border)
+            }
+            if (win != undefined && win.Visible) { win.Draw(root, ax + win.rx, ay + win.ry) }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            var win = this.ActiveWindow()
+            if (win != undefined) {
+                var hit = win.HitTest(px, py)
+                if (hit != undefined) { return hit }
+            }
+            return this
+        }
+
+        undefined Collect(List list) {
+            var win = this.ActiveWindow()
+            if (win != undefined) { win.Collect(list) }
+        }
+
+        UI.Element FindName(string name) {
+            if (this.Name == name) { return this }
+            for (var i = 0; i < this.windows.count; i = i + 1) {
+                var found = this.windows[i].FindName(name)
+                if (found != undefined) { return found }
+            }
+            return undefined
+        }
+
+        // Gives the focus to the first element of the visible window that takes it.
+        undefined FocusContent(UI.Root root) {
+            var win = this.ActiveWindow()
+            if (win == undefined) { return }
+            var list = new List()
+            win.Collect(list)
+            if (list.count > 0) { root.SetFocus(list[0]) }
+        }
+
+        undefined Hover(UI.Root root, int px, int py) {
+            var part = this.PartAt(root, px, py)
+            if (part != 3 && part != 4) { part = 0 }
+            if (part != this.hotPart) {
+                this.hotPart = part
+                this.Invalidate()
+            }
+        }
+
+        undefined MouseDown(UI.Root root, int button, int px, int py) {
+            if (button != 1 || this.manager == undefined) { return }
+            var part = this.PartAt(root, px, py)
+            if (part == 3 || part == 4) {
+                this.pressedPart = part
+                this.hotPart = part
+                this.Invalidate()
+                return
+            }
+            if (part == 2) {
+                var tab = this.TabAt(root, px)
+                if (tab < 0) { return }
+                this.Select(tab)
+                this.FocusContent(root)
+                this.pressedPart = 2
+                this.dragging = true
+                this.manager.PressPane(root, this, tab, px, py)
+                return
+            }
+            if (part == 1) {
+                this.FocusContent(root)
+                if (root.cycles - this.lastClickCycle <= 24) {
+                    // a double click on the caption floats or docks the pane
+                    this.lastClickCycle = -1000
+                    this.manager.ToggleFloat(this)
+                    return
+                }
+                this.lastClickCycle = root.cycles
+                this.pressedPart = 1
+                this.dragging = true
+                this.manager.PressPane(root, this, -1, px, py)
+            }
+        }
+
+        undefined MouseMove(UI.Root root, int px, int py) {
+            if (this.dragging && this.manager != undefined) { this.manager.DragMove(root, px, py) }
+            else if (this.pressedPart == 3 || this.pressedPart == 4) {
+                var part = this.PartAt(root, px, py)
+                if (part != this.pressedPart) { part = 0 }
+                if (part != this.hotPart) {
+                    this.hotPart = part
+                    this.Invalidate()
+                }
+            }
+        }
+
+        undefined MouseUp(UI.Root root, int button, int px, int py) {
+            var pressed = this.pressedPart
+            this.pressedPart = 0
+            if (this.dragging) {
+                this.dragging = false
+                if (this.manager != undefined) {
+                    // a drag is no first click of a double click
+                    if (this.manager.dragStarted) { this.lastClickCycle = -1000 }
+                    this.manager.DragEnd(root, px, py)
+                }
+                return
+            }
+            if (!this.Contains(px, py) || this.PartAt(root, px, py) != pressed) {
+                this.Invalidate()
+                return
+            }
+            if (pressed == 3) {
+                var win = this.ActiveWindow()
+                if (win != undefined) { win.Close() }
+            } else if (pressed == 4 && this.manager != undefined) { this.manager.ToggleFloat(this) }
+            this.Invalidate()
+        }
+    }
+
+    // The frame of a floating pane (resizable at its edges) or of a floating toolstrip (with a title bar to drag it and a close button that hides the strip).
+    class FloatWindow : UI.Element {
+        UI.Element body
+        UI.Docking.DockManager manager
+        int border = 3
+        // the edges being dragged: 1 left, 2 top, 4 right, 8 bottom
+        int resizing = 0
+        int pressX = 0
+        int pressY = 0
+        int startX = 0
+        int startY = 0
+        int startW = 0
+        int startH = 0
+        bool dragging = false
+        bool closePressed = false
+        bool closeHot = false
+
+        construct() : base(0, 0, 240, 180) { }
+
+        string StyleKey() { return "FloatWindow" }
+
+        bool HoldsStrip() { return this.body != undefined && this.body is of UI.Docking.ToolStrip }
+
+        int TitleHeight(UI.Root root) {
+            if (this.HoldsStrip()) { return this.TextHeight(root) + 6 }
+            return 0
+        }
+
+        int CloseLeft(UI.Root root) { return this.ax + this.actualWidth - 1 - this.TitleHeight(root) }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            if (this.body == undefined) { return }
+            if (this.HoldsStrip()) {
+                any strip = this.body
+                this.body.Measure(root, -1, -1)
+                var title = this.TitleHeight(root)
+                this.cw = UI.M.Max(this.body.dw + 2, this.TextWidth(root, strip.Text) + title + 16)
+                this.ch = this.body.dh + title + 2
+                return
+            }
+            this.cw = 160
+            this.ch = 100
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            if (this.body == undefined) { return }
+            if (this.HoldsStrip()) {
+                var title = this.TitleHeight(root)
+                this.body.Arrange(root, 1, 1 + title, w - 2, h - title - 2)
+                return
+            }
+            var b = this.border
+            this.body.Measure(root, w - 2 * b, h - 2 * b)
+            this.body.Arrange(root, b, b, w - 2 * b, h - 2 * b)
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            if (this.body == undefined) { return }
+            this.body.Poll(root)
+            if (this.HoldsStrip() && this.Visible != this.body.Visible) { this.Visible = this.body.Visible }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            var theme = root.theme
+            var r = root.renderer
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                r.FillRect(ax, ay, this.actualWidth, this.actualHeight, theme.face)
+                if (this.HoldsStrip()) {
+                    any strip = this.body
+                    var title = this.TitleHeight(root)
+                    r.FillRect(ax + 1, ay + 1, this.actualWidth - 2, title, theme.accent)
+                    var close = this.CloseLeft(root)
+                    root.PushClip(ax, ay, close - ax, title + 1)
+                    this.DrawString(root, ax + 5, ay + 1 + (title - this.TextHeight(root)) / 2, strip.Text, theme.selectionText)
+                    root.PopClip()
+                    if (this.closeHot) { r.FillRect(close, ay + 1, title, title, theme.faceHover) }
+                    var cross = theme.selectionText
+                    if (this.closeHot) { cross = theme.text }
+                    UI.Docking.Paint.Cross(root, close + title / 2, ay + 1 + title / 2, cross)
+                }
+                r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
+            }
+            var b = this.body
+            if (b != undefined && b.Visible) { b.Draw(root, ax + b.rx, ay + b.ry) }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            if (this.body != undefined) {
+                var hit = this.body.HitTest(px, py)
+                if (hit != undefined) { return hit }
+            }
+            return this
+        }
+
+        undefined Collect(List list) {
+            if (this.Visible && this.body != undefined) { this.body.Collect(list) }
+        }
+
+        UI.Element FindName(string name) {
+            if (this.Name == name) { return this }
+            if (this.body != undefined) { return this.body.FindName(name) }
+            return undefined
+        }
+
+        // The edges of a pane frame under the screen position (see resizing).
+        // the edges of a floating window resize it
+        int CursorAt(UI.Root root, int px, int py) {
+            var edges = this.resizing
+            if (edges == 0) { edges = this.EdgesAt(px, py) }
+            var left = edges % 2 == 1
+            var top = (edges / 2) % 2 == 1
+            var right = (edges / 4) % 2 == 1
+            var bottom = (edges / 8) % 2 == 1
+            if ((left && top) || (right && bottom)) { return UI.Cursor.SizeNWSE }
+            if ((right && top) || (left && bottom)) { return UI.Cursor.SizeNESW }
+            if (left || right) { return UI.Cursor.SizeWE }
+            if (top || bottom) { return UI.Cursor.SizeNS }
+            return this.cursor
+        }
+
+        int EdgesAt(int px, int py) {
+            if (this.HoldsStrip()) { return 0 }
+            var grip = this.border + 2
+            var edges = 0
+            if (px < this.ax + grip) { edges = edges + 1 }
+            if (py < this.ay + grip) { edges = edges + 2 }
+            if (px >= this.ax + this.actualWidth - grip) { edges = edges + 4 }
+            if (py >= this.ay + this.actualHeight - grip) { edges = edges + 8 }
+            return edges
+        }
+
+        bool OverClose(UI.Root root, int px, int py) {
+            if (!this.HoldsStrip()) { return false }
+            var title = this.TitleHeight(root)
+            return px >= this.CloseLeft(root) && py < this.ay + 1 + title
+        }
+
+        undefined Hover(UI.Root root, int px, int py) {
+            var hot = this.OverClose(root, px, py)
+            if (hot != this.closeHot) {
+                this.closeHot = hot
+                this.Invalidate()
+            }
+        }
+
+        undefined MouseDown(UI.Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.manager != undefined) { this.manager.BringToFront(this) }
+            if (this.HoldsStrip()) {
+                if (this.OverClose(root, px, py)) {
+                    this.closePressed = true
+                    return
+                }
+                if (this.manager != undefined) {
+                    any strip = this.body
+                    this.dragging = true
+                    this.manager.PressStrip(root, strip, px, py)
+                }
+                return
+            }
+            var edges = this.EdgesAt(px, py)
+            if (edges == 0) { return }
+            this.resizing = edges
+            this.pressX = px
+            this.pressY = py
+            this.startX = this.Left
+            this.startY = this.Top
+            this.startW = this.Width
+            this.startH = this.Height
+        }
+
+        undefined MouseMove(UI.Root root, int px, int py) {
+            if (this.dragging && this.manager != undefined) {
+                this.manager.DragMove(root, px, py)
+                return
+            }
+            if (this.resizing == 0) { return }
+            var dx = px - this.pressX
+            var dy = py - this.pressY
+            var minW = 120
+            var minH = 80
+            if (this.resizing % 2 == 1) {
+                var nw = UI.M.Max(minW, this.startW - dx)
+                this.Left = this.startX + this.startW - nw
+                this.Width = nw
+            }
+            if ((this.resizing / 4) % 2 == 1) { this.Width = UI.M.Max(minW, this.startW + dx) }
+            if ((this.resizing / 2) % 2 == 1) {
+                var nh = UI.M.Max(minH, this.startH - dy)
+                this.Top = this.startY + this.startH - nh
+                this.Height = nh
+            }
+            if ((this.resizing / 8) % 2 == 1) { this.Height = UI.M.Max(minH, this.startH + dy) }
+            root.Invalidate()
+        }
+
+        undefined MouseUp(UI.Root root, int button, int px, int py) {
+            if (this.dragging) {
+                this.dragging = false
+                if (this.manager != undefined) { this.manager.DragEnd(root, px, py) }
+                return
+            }
+            if (this.closePressed) {
+                this.closePressed = false
+                if (this.OverClose(root, px, py) && this.body != undefined) {
+                    // hides the strip (strip.visible = true shows it here again)
+                    this.body.Visible = false
+                    root.Invalidate()
+                }
+                return
+            }
+            this.resizing = 0
+        }
+    }
+
+    // The dock manager: fills its space (by default the whole window) with toolstrip panels at the four edges (`topStrips`, ...), tool windows docked at the
+    // edges in panes (with splitters between them and the centre), the main element in the centre (`SetContent`), floating tool windows and toolstrips above
+    // it, and an optional status bar at the bottom (`SetStatusBar`). Tool windows and strips are dragged by their caption, tab, grip or title; while a tool window
+    // is dragged, guides show where it can be docked and a shaded area where it would go.
+    class DockManager : UI.Element {
+        UI.Element content
+        UI.Docking.ToolStripPanel topStrips
+        UI.Docking.ToolStripPanel bottomStrips
+        UI.Docking.ToolStripPanel leftStrips
+        UI.Docking.ToolStripPanel rightStrips
+        UI.Docking.StatusBar statusBar
+        List leftPanes
+        List topPanes
+        List rightPanes
+        List bottomPanes
+        List floats
+        List hidden
+        List sparePanes
+        List spareFloats
+        int leftSize = 200
+        int topSize = 140
+        int rightSize = 200
+        int bottomSize = 140
+        int splitter = 4
+        int minCenter = 40
+        int guideSize = 26
+        // the element in the centre fills it: SetContent gives it no fixed size (width/height = -1)
+        bool fillContent = true
+        // the dock area (between the strip panels), the four edges (x, y, w, h each; w = 0: no pane there) and the centre, relative to the manager
+        int areaX = 0
+        int areaY = 0
+        int areaW = 0
+        int areaH = 0
+        int sideRects[]
+        int centerX = 0
+        int centerY = 0
+        int centerW = 0
+        int centerH = 0
+        // a drag in progress: 1 a pane, 2 a strip, 3 the splitter of an edge, 4 the splitter between two panes
+        int dragKind = 0
+        bool dragStarted = false
+        int pressX = 0
+        int pressY = 0
+        int grabX = 0
+        int grabY = 0
+        UI.Docking.DockPane dragPane
+        int dragTab = -1
+        UI.Docking.ToolStrip dragStrip
+        UI.Docking.FloatWindow dragFloat
+        int dragSide = -1
+        int dragIndex = -1
+        int startSize = 0
+        int startA = 0
+        int startB = 0
+        int startLenA = 0
+        int startLenB = 0
+        // what releasing the dragged pane would do (see FindTarget), the guide under the pointer and the shaded area
+        int dropKind = 0
+        int dropSide = -1
+        UI.Docking.DockPane dropPane
+        UI.Docking.DockPane compassPane
+        int hotGuide = -1
+        int previewX = 0
+        int previewY = 0
+        int previewW = 0
+        int previewH = 0
+
+        construct(int x = 0, int y = 0, int width = -1, int height = -1) : base(x, y, width, height) {
+            this.leftPanes = new List()
+            this.topPanes = new List()
+            this.rightPanes = new List()
+            this.bottomPanes = new List()
+            this.floats = new List()
+            this.hidden = new List()
+            this.sparePanes = new List()
+            this.spareFloats = new List()
+            this.sideRects = new int[16]
+            this.topStrips = new UI.Docking.ToolStripPanel(UI.Dock.Top)
+            this.bottomStrips = new UI.Docking.ToolStripPanel(UI.Dock.Bottom)
+            this.leftStrips = new UI.Docking.ToolStripPanel(UI.Dock.Left)
+            this.rightStrips = new UI.Docking.ToolStripPanel(UI.Dock.Right)
+            this.topStrips.manager = this
+            this.bottomStrips.manager = this
+            this.leftStrips.manager = this
+            this.rightStrips.manager = this
+            this.topStrips.parent = this
+            this.bottomStrips.parent = this
+            this.leftStrips.parent = this
+            this.rightStrips.parent = this
+        }
+
+        string StyleKey() { return "DockManager" }
+
+        // Something has moved: everything is arranged and painted anew.
+        undefined Changed() {
+            var root = this.host
+            if (root != undefined) { root.Invalidate() }
+        }
+
+        // ---- content, status bar, toolstrips ----
+
+        // The element in the centre; it belongs to the manager (the previous one is destroyed).
+        undefined SetContent(UI.Element element) {
+            if (this.content != undefined) {
+                var old = this.content
+                this.content = undefined
+                old.parent = undefined
+                delete old
+            }
+            element.TakeTo(this)
+            element.parent = this
+            if (this.fillContent) {
+                element.Width = -1
+                element.Height = -1
+                element.HorizontalAlign = UI.HAlign.Stretch
+                element.VerticalAlign = UI.VAlign.Stretch
+            }
+            this.content = element
+            this.Changed()
+        }
+
+        // The status bar at the bottom; it belongs to the manager.
+        UI.Docking.StatusBar SetStatusBar(UI.Docking.StatusBar bar) {
+            if (this.statusBar != undefined) {
+                var old = this.statusBar
+                this.statusBar = undefined
+                old.parent = undefined
+                delete old
+            }
+            bar.TakeTo(this)
+            bar.parent = this
+            this.statusBar = bar
+            this.Changed()
+            return bar
+        }
+
+        UI.Docking.ToolStripPanel PanelOf(int side) {
+            if (side == UI.Dock.Top) { return this.topStrips }
+            if (side == UI.Dock.Bottom) { return this.bottomStrips }
+            if (side == UI.Dock.Left) { return this.leftStrips }
+            return this.rightStrips
+        }
+
+        // Docks the strip at an edge (row: -1 a new row; offset -1: after the strips of the row).
+        UI.Docking.ToolStrip AddToolStrip(UI.Docking.ToolStrip strip, int side = UI.Dock.Top, int row = 0, int offset = -1) {
+            this.UnplaceStrip(strip)
+            strip.manager = this
+            this.PanelOf(side).Add(strip, row, offset)
+            this.Changed()
+            return strip
+        }
+
+        // Lets the strip float at (x, y) in the manager.
+        UI.Docking.ToolStrip FloatToolStrip(UI.Docking.ToolStrip strip, int x, int y) {
+            this.UnplaceStrip(strip)
+            strip.manager = this
+            this.FloatStrip(strip, x, y)
+            this.Changed()
+            return strip
+        }
+
+        // Takes a strip out of its panel or floating frame.
+        undefined UnplaceStrip(UI.Docking.ToolStrip strip) {
+            any p = strip.parent
+            if (p == undefined) { return }
+            if (p is of UI.Docking.ToolStripPanel) { p.Remove(strip) }
+            else if (p is of UI.Docking.FloatWindow) { this.ReleaseFloat(p) }
+            strip.parent = undefined
+        }
+
+        undefined FloatStrip(UI.Docking.ToolStrip strip, int x, int y) {
+            strip.TakeTo(this)
+            strip.CloseOverflow()
+            strip.floating = true
+            strip.Horizontal = true
+            var f = this.NewFloat()
+            f.body = strip
+            strip.parent = f
+            f.Width = -1
+            f.Height = -1
+            f.Left = x
+            f.Top = y
+            this.floats.Add(f)
+        }
+
+        // All strips: docked and floating.
+        List ToolStrips() {
+            var list = new List()
+            for (var side = 0; side < 4; side = side + 1) {
+                var panel = this.PanelOf(side)
+                for (var i = 0; i < panel.strips.count; i = i + 1) { list.Add(panel.strips[i]) }
+            }
+            for (var i = 0; i < this.floats.count; i = i + 1) {
+                var f = this.floats[i]
+                if (f.HoldsStrip()) { list.Add(f.body) }
+            }
+            return list
+        }
+
+        // ---- tool windows ----
+
+        List PanesOf(int side) {
+            if (side == UI.Dock.Top) { return this.topPanes }
+            if (side == UI.Dock.Bottom) { return this.bottomPanes }
+            if (side == UI.Dock.Left) { return this.leftPanes }
+            return this.rightPanes
+        }
+
+        int SizeOf(int side) {
+            if (side == UI.Dock.Top) { return this.topSize }
+            if (side == UI.Dock.Bottom) { return this.bottomSize }
+            if (side == UI.Dock.Left) { return this.leftSize }
+            return this.rightSize
+        }
+
+        // The width (left, right) or height (top, bottom) of an edge's panes.
+        undefined SetSideSize(int side, int size) {
+            size = UI.M.Max(30, size)
+            if (side == UI.Dock.Top) { this.topSize = size }
+            else if (side == UI.Dock.Bottom) { this.bottomSize = size }
+            else if (side == UI.Dock.Left) { this.leftSize = size }
+            else { this.rightSize = size }
+            this.Changed()
+        }
+
+        UI.Docking.DockPane NewPane() {
+            UI.Docking.DockPane pane = undefined
+            if (this.sparePanes.count > 0) {
+                pane = this.sparePanes[this.sparePanes.count - 1]
+                this.sparePanes.RemoveAt(this.sparePanes.count - 1)
+            } else {
+                pane = new UI.Docking.DockPane()
+                pane.TakeTo(this)
+            }
+            pane.manager = this
+            pane.active = 0
+            pane.weight = 100
+            pane.floating = false
+            pane.Visible = true
+            return pane
+        }
+
+        UI.Docking.FloatWindow NewFloat() {
+            UI.Docking.FloatWindow f = undefined
+            if (this.spareFloats.count > 0) {
+                f = this.spareFloats[this.spareFloats.count - 1]
+                this.spareFloats.RemoveAt(this.spareFloats.count - 1)
+            } else {
+                f = new UI.Docking.FloatWindow()
+                f.TakeTo(this)
+            }
+            f.manager = this
+            f.parent = this
+            f.Visible = true
+            f.resizing = 0
+            f.dragging = false
+            return f
+        }
+
+        // A floating frame is no longer needed (its body has gone elsewhere).
+        undefined ReleaseFloat(UI.Docking.FloatWindow f) {
+            var index = this.floats.IndexOf(f)
+            if (index >= 0) { this.floats.RemoveAt(index) }
+            if (f.body != undefined && f.body.parent == f) { f.body.parent = undefined }
+            f.body = undefined
+            this.spareFloats.Add(f)
+        }
+
+        // Takes the pane out of its edge or floating frame (the windows stay in it).
+        undefined UnplacePane(UI.Docking.DockPane pane) {
+            if (pane.floating) {
+                any f = pane.parent
+                if (f != undefined && f is of UI.Docking.FloatWindow) { this.ReleaseFloat(f) }
+                pane.floating = false
+            } else {
+                var list = this.PanesOf(pane.side)
+                var index = list.IndexOf(pane)
+                if (index >= 0) {
+                    list.RemoveAt(index)
+                    pane.lastSide = pane.side
+                }
+            }
+            pane.parent = undefined
+        }
+
+        // An empty pane goes back to the spare ones.
+        undefined RecyclePane(UI.Docking.DockPane pane) {
+            this.UnplacePane(pane)
+            pane.windows.Clear()
+            if (this.sparePanes.IndexOf(pane) < 0) { this.sparePanes.Add(pane) }
+        }
+
+        undefined DockPaneAt(UI.Docking.DockPane pane, int side, int index = -1) {
+            pane.side = side
+            pane.floating = false
+            pane.parent = this
+            var list = this.PanesOf(side)
+            if (index < 0 || index > list.count) { index = list.count }
+            list.Insert(index, pane)
+            for (var i = 0; i < pane.windows.count; i = i + 1) {
+                var w = pane.windows[i]
+                w.lastSide = side
+                w.wasFloating = false
+            }
+            this.Changed()
+        }
+
+        UI.Docking.FloatWindow FloatPane(UI.Docking.DockPane pane, int x, int y, int w, int h) {
+            var f = this.NewFloat()
+            f.body = pane
+            pane.parent = f
+            pane.floating = true
+            f.Left = x
+            f.Top = y
+            f.Width = UI.M.Max(160, w)
+            f.Height = UI.M.Max(100, h)
+            this.floats.Add(f)
+            for (var i = 0; i < pane.windows.count; i = i + 1) { pane.windows[i].wasFloating = true }
+            this.Changed()
+            return f
+        }
+
+        // Takes a window out of its pane (an emptied pane disappears) and remembers where it was.
+        undefined Detach(UI.Docking.ToolWindow window) {
+            var pane = window.Pane()
+            if (pane == undefined) { return }
+            window.lastPane = pane
+            window.wasFloating = pane.floating
+            if (pane.floating) {
+                any f = pane.parent
+                window.floatX = f.Left
+                window.floatY = f.Top
+                window.floatWidth = f.Width
+                window.floatHeight = f.Height
+            } else {
+                window.lastSide = pane.side
+                window.lastIndex = this.PanesOf(pane.side).IndexOf(pane)
+            }
+            pane.RemoveWindow(window)
+            if (pane.windows.count == 0) { this.RecyclePane(pane) }
+            this.Changed()
+        }
+
+        // Takes the window over (it belongs to the manager from now on).
+        undefined Adopt(UI.Docking.ToolWindow window) {
+            if (window.manager != this) {
+                window.TakeTo(this)
+                window.manager = this
+            }
+            var index = this.hidden.IndexOf(window)
+            if (index >= 0) { this.hidden.RemoveAt(index) }
+        }
+
+        // Docks the window at an edge in a pane of its own (at the end of the edge).
+        UI.Docking.ToolWindow Add(UI.Docking.ToolWindow window, int side = UI.Dock.Left) {
+            this.DockTool(window, side)
+            return window
+        }
+
+        // Adds the window as a tab to the pane of `other`.
+        UI.Docking.ToolWindow AddTabbed(UI.Docking.ToolWindow window, UI.Docking.ToolWindow other) {
+            var pane = other.Pane()
+            if (pane == undefined) { return this.Add(window, other.lastSide) }
+            this.Adopt(window)
+            this.Detach(window)
+            pane.AddWindow(window)
+            window.lastSide = pane.side
+            window.wasFloating = pane.floating
+            this.Changed()
+            return window
+        }
+
+        // Lets the window float (x, y relative to the manager; -1: where it floated last).
+        UI.Docking.ToolWindow AddFloating(UI.Docking.ToolWindow window, int x = -1, int y = -1, int width = -1, int height = -1) {
+            if (width > 0) { window.floatWidth = width }
+            if (height > 0) { window.floatHeight = height }
+            this.FloatTool(window, x, y)
+            return window
+        }
+
+        undefined DockTool(UI.Docking.ToolWindow window, int side) {
+            this.Adopt(window)
+            this.Detach(window)
+            var pane = this.NewPane()
+            pane.AddWindow(window)
+            this.DockPaneAt(pane, side, -1)
+        }
+
+        undefined FloatTool(UI.Docking.ToolWindow window, int x = -1, int y = -1) {
+            if (!window.canFloat) { return }
+            this.Adopt(window)
+            this.Detach(window)
+            if (x >= 0) { window.floatX = x }
+            if (y >= 0) { window.floatY = y }
+            var pane = this.NewPane()
+            pane.AddWindow(window)
+            pane.lastSide = window.lastSide
+            this.FloatPane(pane, window.floatX, window.floatY, window.floatWidth, window.floatHeight)
+        }
+
+        undefined HideTool(UI.Docking.ToolWindow window) {
+            if (this.hidden.IndexOf(window) >= 0) { return }
+            this.Adopt(window)
+            var root = this.host
+            if (root != undefined) {
+                UI.Element e = root.focusElement
+                while (e != undefined) {
+                    if (e == window) {
+                        root.SetFocus(undefined)
+                        break
+                    }
+                    e = e.parent
+                }
+            }
+            this.Detach(window)
+            this.hidden.Add(window)
+            this.Changed()
+        }
+
+        // Shows a hidden window again where it was (as a tab of its last pane if that is still there); a visible one becomes the visible tab of its pane.
+        undefined ShowTool(UI.Docking.ToolWindow window) {
+            if (window.Pane() != undefined) {
+                window.Activate()
+                return
+            }
+            this.Adopt(window)
+            if (window.wasFloating) {
+                this.FloatTool(window, -1, -1)
+                return
+            }
+            var last = window.lastPane
+            if (last != undefined && !last.floating && last.windows.count > 0 && this.PanesOf(last.side).IndexOf(last) >= 0) {
+                last.AddWindow(window)
+                this.Changed()
+                return
+            }
+            this.Detach(window)
+            var pane = this.NewPane()
+            pane.AddWindow(window)
+            this.DockPaneAt(pane, window.lastSide, window.lastIndex)
+        }
+
+        // Floats a docked pane, or docks a floating one at the edge it came from.
+        undefined ToggleFloat(UI.Docking.DockPane pane) {
+            if (pane.floating) {
+                var side = pane.lastSide
+                this.UnplacePane(pane)
+                this.DockPaneAt(pane, side, -1)
+                return
+            }
+            if (!pane.CanFloat()) { return }
+            var x = pane.rx + 20
+            var y = pane.ry + 20
+            var w = pane.actualWidth
+            var h = pane.actualHeight
+            this.UnplacePane(pane)
+            this.FloatPane(pane, x, y, w, h)
+        }
+
+        // All tool windows: docked, floating and hidden.
+        List ToolWindows() {
+            var list = new List()
+            for (var side = 0; side < 4; side = side + 1) {
+                var panes = this.PanesOf(side)
+                for (var i = 0; i < panes.count; i = i + 1) {
+                    var p = panes[i]
+                    for (var k = 0; k < p.windows.count; k = k + 1) { list.Add(p.windows[k]) }
+                }
+            }
+            for (var i = 0; i < this.floats.count; i = i + 1) {
+                var f = this.floats[i]
+                if (f.body != undefined && f.body is of UI.Docking.DockPane) {
+                    any p = f.body
+                    for (var k = 0; k < p.windows.count; k = k + 1) { list.Add(p.windows[k]) }
+                }
+            }
+            for (var i = 0; i < this.hidden.count; i = i + 1) { list.Add(this.hidden[i]) }
+            return list
+        }
+
+        UI.Docking.ToolWindow FindToolWindow(string title) {
+            var all = this.ToolWindows()
+            for (var i = 0; i < all.count; i = i + 1) {
+                if (all[i].title == title) { return all[i] }
+            }
+            return undefined
+        }
+
+        undefined BringToFront(UI.Docking.FloatWindow f) {
+            var index = this.floats.IndexOf(f)
+            if (index < 0 || index == this.floats.count - 1) { return }
+            this.floats.RemoveAt(index)
+            this.floats.Add(f)
+            this.Changed()
+        }
+
+        // ---- layout ----
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            var w = aw
+            var h = ah
+            // without a size of its own and from the container: the whole window
+            if (w < 0) { w = UI.M.Max(0, root.width - this.Left) }
+            if (h < 0) { h = UI.M.Max(0, root.height - this.Top) }
+            this.cw = w
+            this.ch = h
+        }
+
+        undefined SetRect(int side, int x, int y, int w, int h) {
+            var i = side * 4
+            this.sideRects[i] = x
+            this.sideRects[i + 1] = y
+            this.sideRects[i + 2] = w
+            this.sideRects[i + 3] = h
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            var bottom = h
+            var sb = this.statusBar
+            if (sb != undefined && sb.Visible) {
+                sb.Measure(root, w, -1)
+                sb.Arrange(root, 0, h - sb.dh, w, sb.dh)
+                bottom = h - sb.dh
+            }
+            var tp = this.topStrips
+            tp.Measure(root, w, -1)
+            tp.Arrange(root, 0, 0, w, tp.dh)
+            var top = tp.dh
+            var bp = this.bottomStrips
+            bp.Measure(root, w, -1)
+            bp.Arrange(root, 0, bottom - bp.dh, w, bp.dh)
+            bottom = bottom - bp.dh
+            var mid = UI.M.Max(0, bottom - top)
+            var lp = this.leftStrips
+            lp.Measure(root, -1, mid)
+            lp.Arrange(root, 0, top, lp.dw, mid)
+            var rp = this.rightStrips
+            rp.Measure(root, -1, mid)
+            rp.Arrange(root, w - rp.dw, top, rp.dw, mid)
+            this.areaX = lp.dw
+            this.areaY = top
+            this.areaW = UI.M.Max(0, w - lp.dw - rp.dw)
+            this.areaH = mid
+
+            // the edges: left and right over the whole height, top and bottom between them
+            var hasL = this.leftPanes.count > 0
+            var hasR = this.rightPanes.count > 0
+            var hasT = this.topPanes.count > 0
+            var hasB = this.bottomPanes.count > 0
+            var lw = 0
+            var rw = 0
+            var gaps = 0
+            if (hasL) {
+                lw = this.leftSize
+                gaps = gaps + this.splitter
+            }
+            if (hasR) {
+                rw = this.rightSize
+                gaps = gaps + this.splitter
+            }
+            var room = UI.M.Max(0, this.areaW - this.minCenter - gaps)
+            if (lw + rw > room) {
+                if (hasL && hasR) {
+                    lw = room * lw / (lw + rw)
+                    rw = room - lw
+                } else if (hasL) { lw = room } else { rw = room }
+            }
+            var cx = this.areaX
+            var cw = this.areaW - lw - rw - gaps
+            if (hasL) { cx = cx + lw + this.splitter }
+            var th = 0
+            var bh = 0
+            gaps = 0
+            if (hasT) {
+                th = this.topSize
+                gaps = gaps + this.splitter
+            }
+            if (hasB) {
+                bh = this.bottomSize
+                gaps = gaps + this.splitter
+            }
+            room = UI.M.Max(0, this.areaH - this.minCenter - gaps)
+            if (th + bh > room) {
+                if (hasT && hasB) {
+                    th = room * th / (th + bh)
+                    bh = room - th
+                } else if (hasT) { th = room } else { bh = room }
+            }
+            var cy = this.areaY
+            var ch = this.areaH - th - bh - gaps
+            if (hasT) { cy = cy + th + this.splitter }
+            this.SetRect(UI.Dock.Left, this.areaX, this.areaY, lw, this.areaH)
+            this.SetRect(UI.Dock.Right, this.areaX + this.areaW - rw, this.areaY, rw, this.areaH)
+            this.SetRect(UI.Dock.Top, cx, this.areaY, cw, th)
+            this.SetRect(UI.Dock.Bottom, cx, this.areaY + this.areaH - bh, cw, bh)
+            this.centerX = cx
+            this.centerY = cy
+            this.centerW = UI.M.Max(0, cw)
+            this.centerH = UI.M.Max(0, ch)
+            for (var side = 0; side < 4; side = side + 1) { this.LayoutSide(root, side) }
+            var c = this.content
+            if (c != undefined) {
+                c.Measure(root, this.centerW, this.centerH)
+                c.Arrange(root, this.centerX, this.centerY, this.centerW, this.centerH)
+            }
+            // the floating frames: inside the manager as far as possible
+            for (var i = 0; i < this.floats.count; i = i + 1) {
+                var f = this.floats[i]
+                f.Measure(root, -1, -1)
+                f.Left = UI.M.Clamp(f.Left, 0, UI.M.Max(0, w - f.dw))
+                f.Top = UI.M.Clamp(f.Top, 0, UI.M.Max(0, h - f.dh))
+                f.Arrange(root, f.Left, f.Top, f.dw, f.dh)
+            }
+        }
+
+        // Arranges the panes of an edge one after the other (below one another at the left and right edge), sharing the length by their weight.
+        undefined LayoutSide(UI.Root root, int side) {
+            var panes = this.PanesOf(side)
+            var n = panes.count
+            if (n == 0) { return }
+            var i0 = side * 4
+            var rx = this.sideRects[i0]
+            var ry = this.sideRects[i0 + 1]
+            var rw = this.sideRects[i0 + 2]
+            var rh = this.sideRects[i0 + 3]
+            var vertical = side == UI.Dock.Left || side == UI.Dock.Right
+            var total = 0
+            for (var i = 0; i < n; i = i + 1) { total = total + UI.M.Max(1, panes[i].weight) }
+            var length = rw
+            if (vertical) { length = rh }
+            length = UI.M.Max(0, length - this.splitter * (n - 1))
+            var pos = 0
+            for (var i = 0; i < n; i = i + 1) {
+                var p = panes[i]
+                var len = length * UI.M.Max(1, p.weight) / total
+                if (i == n - 1) { len = length - pos }
+                if (vertical) {
+                    p.Measure(root, rw, len)
+                    p.Arrange(root, rx, ry + pos + this.splitter * i, rw, len)
+                } else {
+                    p.Measure(root, len, rh)
+                    p.Arrange(root, rx + pos + this.splitter * i, ry, len, rh)
+                }
+                pos = pos + len
+            }
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            if (this.content != undefined) { this.content.Poll(root) }
+            this.topStrips.Poll(root)
+            this.bottomStrips.Poll(root)
+            this.leftStrips.Poll(root)
+            this.rightStrips.Poll(root)
+            if (this.statusBar != undefined) { this.statusBar.Poll(root) }
+            for (var side = 0; side < 4; side = side + 1) {
+                var panes = this.PanesOf(side)
+                for (var i = 0; i < panes.count; i = i + 1) { panes[i].Poll(root) }
+            }
+            for (var i = 0; i < this.floats.count; i = i + 1) { this.floats[i].Poll(root) }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) { root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, root.theme.back) }
+            this.DrawChild(root, this.topStrips)
+            this.DrawChild(root, this.bottomStrips)
+            this.DrawChild(root, this.leftStrips)
+            this.DrawChild(root, this.rightStrips)
+            if (this.statusBar != undefined) { this.DrawChild(root, this.statusBar) }
+            for (var side = 0; side < 4; side = side + 1) {
+                var panes = this.PanesOf(side)
+                for (var i = 0; i < panes.count; i = i + 1) { this.DrawChild(root, panes[i]) }
+            }
+            if (this.content != undefined) {
+                var c = this.content
+                if (c.Visible) {
+                    root.PushClip(ax + this.centerX, ay + this.centerY, this.centerW, this.centerH)
+                    c.Draw(root, ax + c.rx, ay + c.ry)
+                    root.PopClip()
+                }
+            }
+            for (var i = 0; i < this.floats.count; i = i + 1) { this.DrawChild(root, this.floats[i]) }
+            if (this.dragKind == 1 && this.dragStarted) { this.DrawDropOverlay(root) }
+        }
+
+        undefined DrawChild(UI.Root root, UI.Element e) {
+            if (e.Visible) { e.Draw(root, this.ax + e.rx, this.ay + e.ry) }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            var i = this.floats.count - 1
+            while (i >= 0) {
+                var hit = this.floats[i].HitTest(px, py)
+                if (hit != undefined) { return hit }
+                i = i - 1
+            }
+            if (this.statusBar != undefined) {
+                var hs = this.statusBar.HitTest(px, py)
+                if (hs != undefined) { return hs }
+            }
+            for (var side = 0; side < 4; side = side + 1) {
+                var hp = this.PanelOf(side).HitTest(px, py)
+                if (hp != undefined) { return hp }
+                var panes = this.PanesOf(side)
+                for (var k = 0; k < panes.count; k = k + 1) {
+                    var hit = panes[k].HitTest(px, py)
+                    if (hit != undefined) { return hit }
+                }
+            }
+            if (this.content != undefined) {
+                var hc = this.content.HitTest(px, py)
+                if (hc != undefined) { return hc }
+            }
+            return this
+        }
+
+        undefined Collect(List list) {
+            if (!this.Visible || !this.Enabled) { return }
+            this.topStrips.Collect(list)
+            this.leftStrips.Collect(list)
+            for (var side = 0; side < 4; side = side + 1) {
+                var panes = this.PanesOf(side)
+                for (var i = 0; i < panes.count; i = i + 1) { panes[i].Collect(list) }
+            }
+            if (this.content != undefined) { this.content.Collect(list) }
+            this.rightStrips.Collect(list)
+            this.bottomStrips.Collect(list)
+            if (this.statusBar != undefined) { this.statusBar.Collect(list) }
+            for (var i = 0; i < this.floats.count; i = i + 1) { this.floats[i].Collect(list) }
+        }
+
+        UI.Element FindName(string name) {
+            if (this.Name == name) { return this }
+            UI.Element found = undefined
+            if (this.content != undefined) { found = this.content.FindName(name) }
+            for (var side = 0; side < 4 && found == undefined; side = side + 1) { found = this.PanelOf(side).FindName(name) }
+            if (found == undefined && this.statusBar != undefined) { found = this.statusBar.FindName(name) }
+            var all = this.ToolWindows()
+            for (var i = 0; i < all.count && found == undefined; i = i + 1) { found = all[i].FindName(name) }
+            for (var i = 0; i < this.floats.count && found == undefined; i = i + 1) { found = this.floats[i].FindName(name) }
+            return found
+        }
+
+        // ---- splitters ----
+
+        // The splitter at the position relative to the manager: sets dragKind (3 edge, 4 between panes), dragSide and dragIndex; false if there is none.
+        // over a splitter (or while one is dragged): the arrows of its direction
+        int CursorAt(UI.Root root, int px, int py) {
+            var kind = this.dragKind
+            var side = this.dragSide
+            var index = this.dragIndex
+            var over = kind == 3 || kind == 4
+            if (!over) {
+                over = this.SplitterAt(px - this.ax, py - this.ay)
+                if (over) {
+                    // (only looking: what a press would drag stays as it was)
+                    var k2 = this.dragKind
+                    var s2 = this.dragSide
+                    this.dragKind = kind
+                    this.dragSide = side
+                    this.dragIndex = index
+                    kind = k2
+                    side = s2
+                }
+            }
+            if (!over) { return this.cursor }
+            var vertical = side == UI.Dock.Left || side == UI.Dock.Right
+            // the edge of a side moves across it, the splitter between two panes along it
+            if (kind == 3) {
+                if (vertical) { return UI.Cursor.SizeWE }
+                return UI.Cursor.SizeNS
+            }
+            if (vertical) { return UI.Cursor.SizeNS }
+            return UI.Cursor.SizeWE
+        }
+
+        bool SplitterAt(int x, int y) {
+            var s = this.splitter
+            for (var side = 0; side < 4; side = side + 1) {
+                var panes = this.PanesOf(side)
+                if (panes.count == 0) { continue }
+                var i0 = side * 4
+                var rx = this.sideRects[i0]
+                var ry = this.sideRects[i0 + 1]
+                var rw = this.sideRects[i0 + 2]
+                var rh = this.sideRects[i0 + 3]
+                var vertical = side == UI.Dock.Left || side == UI.Dock.Right
+                var hit = false
+                if (side == UI.Dock.Left) { hit = x >= rx + rw && x < rx + rw + s && y >= ry && y < ry + rh }
+                else if (side == UI.Dock.Right) { hit = x >= rx - s && x < rx && y >= ry && y < ry + rh }
+                else if (side == UI.Dock.Top) { hit = y >= ry + rh && y < ry + rh + s && x >= rx && x < rx + rw }
+                else { hit = y >= ry - s && y < ry && x >= rx && x < rx + rw }
+                if (hit) {
+                    this.dragKind = 3
+                    this.dragSide = side
+                    return true
+                }
+                for (var i = 0; i + 1 < panes.count; i = i + 1) {
+                    var a = panes[i]
+                    var b = panes[i + 1]
+                    if (vertical) { hit = x >= rx && x < rx + rw && y >= a.ry + a.actualHeight && y < b.ry }
+                    else { hit = y >= ry && y < ry + rh && x >= a.rx + a.actualWidth && x < b.rx }
+                    if (hit) {
+                        this.dragKind = 4
+                        this.dragSide = side
+                        this.dragIndex = i
+                        return true
+                    }
+                }
+            }
+            return false
+        }
+
+        undefined MouseDown(UI.Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (!this.SplitterAt(px - this.ax, py - this.ay)) { return }
+            this.pressX = px
+            this.pressY = py
+            this.dragStarted = true
+            if (this.dragKind == 3) { this.startSize = this.SizeOf(this.dragSide) }
+            else {
+                var panes = this.PanesOf(this.dragSide)
+                var a = panes[this.dragIndex]
+                var b = panes[this.dragIndex + 1]
+                this.startA = a.weight
+                this.startB = b.weight
+                var vertical = this.dragSide == UI.Dock.Left || this.dragSide == UI.Dock.Right
+                if (vertical) {
+                    this.startLenA = a.actualHeight
+                    this.startLenB = b.actualHeight
+                } else {
+                    this.startLenA = a.actualWidth
+                    this.startLenB = b.actualWidth
+                }
+            }
+        }
+
+        undefined MouseMove(UI.Root root, int px, int py) {
+            var dx = px - this.pressX
+            var dy = py - this.pressY
+            if (this.dragKind == 3) {
+                var delta = dx
+                if (this.dragSide == UI.Dock.Right) { delta = -dx }
+                else if (this.dragSide == UI.Dock.Top) { delta = dy }
+                else if (this.dragSide == UI.Dock.Bottom) { delta = -dy }
+                this.SetSideSize(this.dragSide, this.startSize + delta)
+            } else if (this.dragKind == 4) {
+                var vertical = this.dragSide == UI.Dock.Left || this.dragSide == UI.Dock.Right
+                var delta = dx
+                if (vertical) { delta = dy }
+                var both = this.startLenA + this.startLenB
+                if (both <= 0) { return }
+                var lenA = UI.M.Clamp(this.startLenA + delta, UI.M.Min(24, both / 2), UI.M.Max(both / 2, both - 24))
+                var weights = this.startA + this.startB
+                var panes = this.PanesOf(this.dragSide)
+                var wa = weights * lenA / both
+                panes[this.dragIndex].weight = UI.M.Max(1, wa)
+                panes[this.dragIndex + 1].weight = UI.M.Max(1, weights - wa)
+                this.Changed()
+            }
+        }
+
+        undefined MouseUp(UI.Root root, int button, int px, int py) {
+            if (this.dragKind == 3 || this.dragKind == 4) { this.ResetDrag() }
+        }
+
+        undefined ResetDrag() {
+            this.dragKind = 0
+            this.dragStarted = false
+            this.dragPane = undefined
+            this.dragStrip = undefined
+            this.dragFloat = undefined
+            this.dragTab = -1
+            this.dragSide = -1
+            this.dragIndex = -1
+            this.dropKind = UI.Docking.Drop.None
+            this.dropPane = undefined
+            this.compassPane = undefined
+            this.hotGuide = -1
+            this.Changed()
+        }
+
+        // ---- dragging panes and strips ----
+
+        // The mouse was pressed on the caption (tab = -1) or a tab of a pane: moving it far enough starts a drag.
+        undefined PressPane(UI.Root root, UI.Docking.DockPane pane, int tab, int px, int py) {
+            this.ResetDrag()
+            this.dragKind = 1
+            this.dragPane = pane
+            this.dragTab = tab
+            this.pressX = px
+            this.pressY = py
+        }
+
+        // The mouse was pressed on the grip of a strip (or the title of a floating one).
+        undefined PressStrip(UI.Root root, UI.Docking.ToolStrip strip, int px, int py) {
+            this.ResetDrag()
+            this.dragKind = 2
+            this.dragStrip = strip
+            this.pressX = px
+            this.pressY = py
+        }
+
+        undefined DragMove(UI.Root root, int px, int py) {
+            if (this.dragKind == 1) { this.MovePane(root, px, py) }
+            else if (this.dragKind == 2) { this.MoveStrip(root, px, py) }
+        }
+
+        undefined DragEnd(UI.Root root, int px, int py) {
+            if (this.dragKind == 1 && this.dragStarted) { this.DropPane(root) }
+            this.ResetDrag()
+        }
+
+        bool FarEnough(int px, int py) { return UI.M.Abs(px - this.pressX) + UI.M.Abs(py - this.pressY) >= 5 }
+
+        undefined MovePane(UI.Root root, int px, int py) {
+            if (!this.dragStarted) {
+                if (!this.FarEnough(px, py)) { return }
+                var pane = this.dragPane
+                if (pane == undefined || !pane.CanFloat()) {
+                    this.dragKind = 0
+                    return
+                }
+                this.dragStarted = true
+                if (pane.floating) {
+                    any f = pane.parent
+                    this.dragFloat = f
+                    this.grabX = this.pressX - this.ax - f.Left
+                    this.grabY = this.pressY - this.ay - f.Top
+                    this.BringToFront(f)
+                } else {
+                    var w = UI.M.Max(160, pane.actualWidth)
+                    var h = UI.M.Max(100, pane.actualHeight)
+                    var gx = UI.M.Clamp(this.pressX - pane.ax, 10, w - 30)
+                    var gy = UI.M.Clamp(this.pressY - pane.ay, 4, 12)
+                    if (this.dragTab >= 0 && pane.windows.count > 1) {
+                        // one tab leaves the pane
+                        var win = pane.windows[this.dragTab]
+                        win.lastPane = pane
+                        pane.RemoveWindow(win)
+                        var single = this.NewPane()
+                        single.AddWindow(win)
+                        single.lastSide = pane.side
+                        this.dragFloat = this.FloatPane(single, px - this.ax - gx, py - this.ay - gy, w, h)
+                    } else {
+                        this.UnplacePane(pane)
+                        this.dragFloat = this.FloatPane(pane, px - this.ax - gx, py - this.ay - gy, w, h)
+                    }
+                    this.grabX = gx
+                    this.grabY = gy
+                }
+                any body = this.dragFloat.body
+                this.dragPane = body
+            }
+            var f = this.dragFloat
+            f.Left = px - this.ax - this.grabX
+            f.Top = py - this.ay - this.grabY
+            this.FindTarget(px - this.ax, py - this.ay)
+            this.Changed()
+        }
+
+        // The docked pane at the position relative to the manager.
+        UI.Docking.DockPane DockedPaneAt(int x, int y) {
+            for (var side = 0; side < 4; side = side + 1) {
+                var panes = this.PanesOf(side)
+                for (var i = 0; i < panes.count; i = i + 1) {
+                    var p = panes[i]
+                    if (x >= p.rx && x < p.rx + p.actualWidth && y >= p.ry && y < p.ry + p.actualHeight) { return p }
+                }
+            }
+            return undefined
+        }
+
+        // The top left corner of a guide (relative to the manager): 0-3 the edges (UI.Dock), 4 the centre of the pane under the pointer, 5 before it, 6 after it.
+        int GuideX(int guide) {
+            var g = this.guideSize
+            if (guide == UI.Dock.Left) { return this.areaX + 6 }
+            if (guide == UI.Dock.Right) { return this.areaX + this.areaW - 6 - g }
+            if (guide < 4) { return this.areaX + this.areaW / 2 - g / 2 }
+            var p = this.compassPane
+            var cx = p.rx + p.actualWidth / 2 - g / 2
+            if (guide == 4 || p.side == UI.Dock.Left || p.side == UI.Dock.Right) { return cx }
+            if (guide == 5) { return cx - g - 4 }
+            return cx + g + 4
+        }
+
+        int GuideY(int guide) {
+            var g = this.guideSize
+            if (guide == UI.Dock.Top) { return this.areaY + 6 }
+            if (guide == UI.Dock.Bottom) { return this.areaY + this.areaH - 6 - g }
+            if (guide < 4) { return this.areaY + this.areaH / 2 - g / 2 }
+            var p = this.compassPane
+            var cy = p.ry + p.actualHeight / 2 - g / 2
+            if (guide == 4 || p.side == UI.Dock.Top || p.side == UI.Dock.Bottom) { return cy }
+            if (guide == 5) { return cy - g - 4 }
+            return cy + g + 4
+        }
+
+        bool OverGuide(int guide, int x, int y) {
+            var gx = this.GuideX(guide)
+            var gy = this.GuideY(guide)
+            return x >= gx && x < gx + this.guideSize && y >= gy && y < gy + this.guideSize
+        }
+
+        undefined SetPreview(int x, int y, int w, int h) {
+            this.previewX = x
+            this.previewY = y
+            this.previewW = w
+            this.previewH = h
+        }
+
+        // What releasing the dragged pane at (x, y) relative to the manager would do: dropKind, dropSide, dropPane and the shaded area.
+        undefined FindTarget(int x, int y) {
+            this.dropKind = UI.Docking.Drop.None
+            this.dropPane = undefined
+            this.hotGuide = -1
+            this.compassPane = this.DockedPaneAt(x, y)
+            var p = this.compassPane
+            if (p != undefined) {
+                var vertical = p.side == UI.Dock.Left || p.side == UI.Dock.Right
+                for (var guide = 4; guide <= 6; guide = guide + 1) {
+                    if (!this.OverGuide(guide, x, y)) { continue }
+                    this.hotGuide = guide
+                    this.dropPane = p
+                    this.dropSide = p.side
+                    if (guide == 4) {
+                        this.dropKind = UI.Docking.Drop.Tab
+                        this.SetPreview(p.rx, p.ry, p.actualWidth, p.actualHeight)
+                    } else {
+                        if (guide == 5) { this.dropKind = UI.Docking.Drop.Before } else { this.dropKind = UI.Docking.Drop.After }
+                        if (vertical) {
+                            var half = p.actualHeight / 2
+                            if (guide == 5) { this.SetPreview(p.rx, p.ry, p.actualWidth, half) }
+                            else { this.SetPreview(p.rx, p.ry + half, p.actualWidth, p.actualHeight - half) }
+                        } else {
+                            var halfW = p.actualWidth / 2
+                            if (guide == 5) { this.SetPreview(p.rx, p.ry, halfW, p.actualHeight) }
+                            else { this.SetPreview(p.rx + halfW, p.ry, p.actualWidth - halfW, p.actualHeight) }
+                        }
+                    }
+                    return
+                }
+            }
+            for (var side = 0; side < 4; side = side + 1) {
+                if (!this.OverGuide(side, x, y)) { continue }
+                this.hotGuide = side
+                this.dropKind = UI.Docking.Drop.Side
+                this.dropSide = side
+                var i0 = side * 4
+                var rx = this.sideRects[i0]
+                var ry = this.sideRects[i0 + 1]
+                var rw = this.sideRects[i0 + 2]
+                var rh = this.sideRects[i0 + 3]
+                if (this.PanesOf(side).count > 0) {
+                    // a new pane at the end of the edge
+                    if (side == UI.Dock.Left || side == UI.Dock.Right) { this.SetPreview(rx, ry + rh / 2, rw, rh - rh / 2) }
+                    else { this.SetPreview(rx + rw / 2, ry, rw - rw / 2, rh) }
+                } else {
+                    var size = UI.M.Min(this.SizeOf(side), UI.M.Max(40, this.areaW / 2))
+                    if (side == UI.Dock.Left) { this.SetPreview(this.areaX, this.areaY, size, this.areaH) }
+                    else if (side == UI.Dock.Right) { this.SetPreview(this.areaX + this.areaW - size, this.areaY, size, this.areaH) }
+                    else {
+                        size = UI.M.Min(this.SizeOf(side), UI.M.Max(40, this.areaH / 2))
+                        if (side == UI.Dock.Top) { this.SetPreview(this.areaX, this.areaY, this.areaW, size) }
+                        else { this.SetPreview(this.areaX, this.areaY + this.areaH - size, this.areaW, size) }
+                    }
+                }
+                return
+            }
+        }
+
+        undefined DropPane(UI.Root root) {
+            var f = this.dragFloat
+            if (f == undefined || f.body == undefined) { return }
+            any pane = f.body
+            var kind = this.dropKind
+            if (kind == UI.Docking.Drop.Side) {
+                this.UnplacePane(pane)
+                this.DockPaneAt(pane, this.dropSide, -1)
+            } else if (kind == UI.Docking.Drop.Tab && this.dropPane != undefined) {
+                var target = this.dropPane
+                var first = target.windows.count
+                while (pane.windows.count > 0) {
+                    var w = pane.windows[0]
+                    pane.RemoveWindow(w)
+                    target.AddWindow(w)
+                    w.lastSide = target.side
+                    w.wasFloating = false
+                }
+                target.Select(first)
+                this.RecyclePane(pane)
+            } else if ((kind == UI.Docking.Drop.Before || kind == UI.Docking.Drop.After) && this.dropPane != undefined) {
+                var at = this.dropPane
+                var list = this.PanesOf(at.side)
+                var index = list.IndexOf(at)
+                if (kind == UI.Docking.Drop.After) { index = index + 1 }
+                this.UnplacePane(pane)
+                var share = UI.M.Max(1, at.weight / 2)
+                pane.weight = share
+                at.weight = UI.M.Max(1, at.weight - share)
+                this.DockPaneAt(pane, at.side, index)
+            }
+            this.Changed()
+        }
+
+        // The panel whose zone contains the position (relative to the manager): its strips plus a margin towards the inside, an empty panel a band at its edge.
+        UI.Docking.ToolStripPanel PanelZoneAt(int x, int y, UI.Docking.ToolStrip strip) {
+            any current = strip.parent
+            if (current != undefined && current is of UI.Docking.ToolStripPanel && this.InZone(current, x, y, 26)) { return current }
+            for (var side = 0; side < 4; side = side + 1) {
+                var panel = this.PanelOf(side)
+                if (panel != current && this.InZone(panel, x, y, 14)) { return panel }
+            }
+            return undefined
+        }
+
+        bool InZone(UI.Docking.ToolStripPanel panel, int x, int y, int margin) {
+            var px = panel.rx
+            var py = panel.ry
+            var pw = panel.actualWidth
+            var ph = panel.actualHeight
+            if (panel.side == UI.Dock.Top) { return y >= py - margin && y < py + ph + margin && x >= px && x < px + pw }
+            if (panel.side == UI.Dock.Bottom) { return y >= py - margin && y < py + ph + margin && x >= px && x < px + pw }
+            if (panel.side == UI.Dock.Left) { return x >= px - margin && x < px + pw + margin && y >= py && y < py + ph }
+            return x >= px - margin && x < px + pw + margin && y >= py && y < py + ph
+        }
+
+        undefined MoveStrip(UI.Root root, int px, int py) {
+            var strip = this.dragStrip
+            if (strip == undefined) { return }
+            if (!this.dragStarted) {
+                if (!this.FarEnough(px, py)) { return }
+                this.dragStarted = true
+                if (strip.floating) {
+                    any f = strip.parent
+                    this.grabX = this.pressX - this.ax - f.Left
+                    this.grabY = this.pressY - this.ay - f.Top
+                    this.BringToFront(f)
+                } else {
+                    this.grabX = this.pressX - strip.ax
+                    this.grabY = this.pressY - strip.ay
+                }
+            }
+            var x = px - this.ax
+            var y = py - this.ay
+            var panel = this.PanelZoneAt(x, y, strip)
+            if (panel == undefined) {
+                if (!strip.floating) {
+                    this.UnplaceStrip(strip)
+                    this.FloatStrip(strip, x - 6, y - 6)
+                    this.grabX = 6
+                    this.grabY = 6
+                }
+                any f = strip.parent
+                f.Left = x - this.grabX
+                f.Top = y - this.grabY
+                this.Changed()
+                return
+            }
+            if (strip.parent != panel) {
+                this.UnplaceStrip(strip)
+                panel.Add(strip, 0, 0)
+                this.grabX = 5
+                this.grabY = 5
+            }
+            var horizontal = panel.Horizontal()
+            var across = x - panel.rx
+            var along = y - panel.ry - this.grabY
+            if (horizontal) {
+                across = y - panel.ry
+                along = x - panel.rx - this.grabX
+            }
+            var row = panel.RowAt(across)
+            if (row < 0) {
+                panel.InsertRow(0)
+                row = 0
+            }
+            strip.row = row
+            strip.offset = UI.M.Max(0, along)
+            panel.Compact()
+            this.Changed()
+        }
+
+        // ---- the guides and the shaded area while a pane is dragged ----
+
+        undefined DrawGuide(UI.Root root, int guide, int arrow) {
+            var g = this.guideSize
+            var x = this.ax + this.GuideX(guide)
+            var y = this.ay + this.GuideY(guide)
+            var theme = root.theme
+            var r = root.renderer
+            var back = theme.panel
+            var mark = theme.accent
+            if (guide == this.hotGuide) {
+                back = theme.accent
+                mark = theme.selectionText
+            }
+            r.FillRect(x, y, g, g, back)
+            r.DrawRect(x, y, g, g, theme.borderFocus)
+            var cx = x + g / 2
+            var cy = y + g / 2
+            if (arrow == UI.Dock.Left) { r.FillTriangle(cx + 4, cy - 6, cx + 4, cy + 6, cx - 5, cy, mark) }
+            else if (arrow == UI.Dock.Right) { r.FillTriangle(cx - 4, cy - 6, cx - 4, cy + 6, cx + 5, cy, mark) }
+            else if (arrow == UI.Dock.Top) { r.FillTriangle(cx - 6, cy + 4, cx + 6, cy + 4, cx, cy - 5, mark) }
+            else if (arrow == UI.Dock.Bottom) { r.FillTriangle(cx - 6, cy - 4, cx + 6, cy - 4, cx, cy + 5, mark) }
+            else { r.FillRect(cx - 5, cy - 5, 10, 10, mark) }
+        }
+
+        undefined DrawDropOverlay(UI.Root root) {
+            var r = root.renderer
+            var theme = root.theme
+            if (this.dropKind != UI.Docking.Drop.None) {
+                var color = __GRPHBshGetColor(theme.accent.id)
+                var rgb = color % 16777216
+                if (rgb < 0) { rgb = rgb + 16777216 }
+                var shade = new SolidBrush(rgb + 1342177280)
+                var blending = r.AlphaBlending
+                r.AlphaBlending = true
+                r.FillRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, shade)
+                r.AlphaBlending = blending
+                r.DrawRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, new Pen(color, 2))
+            }
+            for (var side = 0; side < 4; side = side + 1) { this.DrawGuide(root, side, side) }
+            var p = this.compassPane
+            if (p != undefined) {
+                var vertical = p.side == UI.Dock.Left || p.side == UI.Dock.Right
+                this.DrawGuide(root, 4, 4)
+                if (vertical) {
+                    this.DrawGuide(root, 5, UI.Dock.Top)
+                    this.DrawGuide(root, 6, UI.Dock.Bottom)
+                } else {
+                    this.DrawGuide(root, 5, UI.Dock.Left)
+                    this.DrawGuide(root, 6, UI.Dock.Right)
+                }
+            }
+        }
+    }
+}

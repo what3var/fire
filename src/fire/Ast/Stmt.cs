@@ -243,7 +243,7 @@ namespace fire.Ast
     /// of this stage.</summary>
     public sealed record FieldDecl(
         int Source, int Line, TypeRef? Type, IReadOnlyList<Expr?> ArrayRanks, string Name, Expr? Initializer, bool IsReadonly = false,
-        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false, IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
 
     // ---------------------------------------------------------------
     // Generics: Typ-Parameter mit Constraints ('where T is of X, is of Y')
@@ -275,7 +275,12 @@ namespace fire.Ast
         Stmt.BlockStmt Body,
         IReadOnlyList<TypeParam>? TypeParams = null,
         AccessModifier Access = AccessModifier.Public,
-        bool IsStatic = false) : Stmt(Source, Line);
+        bool IsStatic = false,
+        IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
+
+    /// <summary>`[Name arg1, arg2, ...]` before a method (SPEC "Attributes"): a name and expressions, known at compile time (the test runner reads
+    /// `Test`, `Parameters`, `PrepareTest`, ...; reflection lists them). `ArgTexts` are the arguments as source text (a test driver evaluates them).</summary>
+    public sealed record AttributeDecl(int Line, string Name, IReadOnlyList<Expr> Args, IReadOnlyList<string> ArgTexts);
 
     public sealed record ConstructorDecl(
         int Source,
@@ -350,7 +355,7 @@ namespace fire.Ast
     /// ObjectInstance.Fields entry of their own name.</summary>
     public sealed record PropertyDecl(
         int Source, int Line, TypeRef? Type, string Name, Stmt.BlockStmt? Getter, Stmt.BlockStmt? Setter,
-        AccessModifier Access = AccessModifier.Public, bool IsStatic = false) : Stmt(Source, Line);
+        AccessModifier Access = AccessModifier.Public, bool IsStatic = false, IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);
 
     /// <summary>`class extends Name { new members... }` - adds the
     /// members directly to the EXISTING class `Name` (Ruby-like

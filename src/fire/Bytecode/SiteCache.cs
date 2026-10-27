@@ -33,8 +33,14 @@ namespace fire.Bytecode
         /// <summary>A field assignment: the class, interface or constrained type parameter the field demands (DeclaredType, null: none).</summary>
         public readonly string? RequiredType;
 
-        public SiteCache(RuntimeClass? @class, FunctionProto? proto, int fieldIndex, NativeForwarder? forwarder = null, int forwarderFieldIndex = -1, byte requiredKind = 0, string? requiredType = null)
+        /// <summary>A call of an overload the type checker chose (OverloadHint): the entry holds only while the arguments are what it assumed;
+        /// otherwise the call takes the slow route, which scores the candidates. Null for every other entry.</summary>
+        public readonly OverloadHint? Guard;
+
+        public SiteCache(RuntimeClass? @class, FunctionProto? proto, int fieldIndex, NativeForwarder? forwarder = null, int forwarderFieldIndex = -1, byte requiredKind = 0, string? requiredType = null,
+            OverloadHint? guard = null)
         {
+            Guard = guard;
             RequiredKind = requiredKind;
             RequiredType = requiredType;
             Class = @class;

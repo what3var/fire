@@ -4,6 +4,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdlib>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -177,6 +178,33 @@ inline Status list(const std::string& path, const std::string& pattern, bool rec
     Status s = listInto(path, pattern, recursive, directories, out);
     std::sort(out.begin(), out.end());
     return s;
+}
+
+inline Status entryTime(const std::string& path, int64_t& unixSeconds) {
+    struct stat st;
+    if (::stat(path.c_str(), &st) != 0) return fromErrno(errno, path);
+    unixSeconds = (int64_t)st.st_mtime;
+    return Status();
+}
+
+inline Status moveDir(const std::string& from, const std::string& to) {
+    bool isDir = false;
+    if (!exists(from, isDir) || !isDir) return fail(E_NoDir, "Could not find a part of the path '" + from + "'.");
+    if (exists(to, isDir)) return fail(E_Exists, "The target '" + to + "' already exists.");
+    if (::rename(from.c_str(), to.c_str()) != 0) return fromErrno(errno, to);
+    return Status();
+}
+
+inline Status setCurrentDir(const std::string& path) {
+    if (::chdir(path.c_str()) != 0) return fromErrno(errno, path, true);
+    return Status();
+}
+
+inline std::vector<std::string> roots() { return std::vector<std::string>{ FIRE_FS_ROOT }; }
+
+inline std::string homeDir() {
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) : std::string(FIRE_FS_ROOT);
 }
 
 inline std::string currentDir() {

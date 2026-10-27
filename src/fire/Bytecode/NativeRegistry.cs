@@ -140,6 +140,7 @@ namespace fire.Bytecode
             Register(fire.Standard.CharMethods.NativeName, fire.Standard.CharMethods.Call);
             Register(fire.Standard.ResourceMethods.NativeName, args => fire.Standard.ResourceMethods.Call(args, resources));
             Register(fire.Standard.MathMethods.NativeName, fire.Standard.MathMethods.Call);
+            Register(fire.Standard.JsonMethods.NativeName, fire.Standard.JsonMethods.Call);
         }
     }
 }

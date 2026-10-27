@@ -43,6 +43,8 @@ namespace fire.Editor
         void Delete();
         void SelectAll();
         void Find();
+        /// <summary>Find with replace (a text editor opens its search with the replace field).</summary>
+        void FindReplace() => Find();
         void FindNext();
         void FindPrevious();
         int LineCount { get; }

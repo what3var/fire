@@ -1,7 +1,7 @@
 # 3D scenes (`#import "scene3d"`, the package `fire-scene3d`)
 
 A small 3D engine for programs: a **scene** is a space that holds objects, cameras, lights and textures; a **camera** is the link between the scene and a framebuffer - `camera.Render()` draws what
-the camera sees into it. The renderer is a **software renderer** written in C++ (`native/bridges/scene3d/s3d_engine.hpp`), so it runs everywhere fire runs - on a PC, in a native build, on an ESP32,
+the camera sees into it. The renderer is a **software renderer** written in C++ (`packages/scene3d/native/s3d_engine.hpp`), so it runs everywhere fire runs - on a PC, in a native build, on an ESP32,
 in the browser (WebAssembly) - and **the picture is the same pixel for pixel** in the virtual machine and in a native build. Like every bridge it is a package (`ember`, docs/PACKAGES.md): a prelude in
 fire (`Scene3DPrelude.cs`: the scene, the units, the objects) plus the C++ of the renderer. It needs `graphics`.
 

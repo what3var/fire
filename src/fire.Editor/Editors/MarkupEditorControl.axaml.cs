@@ -17,7 +17,7 @@ namespace fire.Editor
 {
     /// <summary>Editor of a UI markup file (.fxml, docs/UI_MARKUP.md): the XML text with colours, and next to it the design view - a picture of the interface (only to look at,
     /// see <see cref="MarkupPreviewControl"/>) that follows the text while it is typed; mistakes of the markup are listed under the picture and underlined in the text.</summary>
-    public partial class MarkupEditorControl : UserControl, IDocumentView
+    public partial class MarkupEditorControl : UserControl, IDocumentView, IPropertyHost
     {
         public string? FilePath { get; set; }
         public bool IsModified { get; private set; }
@@ -65,7 +65,9 @@ namespace fire.Editor
                 int line = GetCaretLine();
                 Preview.HighlightLine = line;
                 CaretLineChanged?.Invoke(line);
+                UpdateProperties();
             };
+            Preview.ElementClicked += SelectElementAtLine;
             Editor.AddHandler(PointerPressedEvent, (object? _, PointerPressedEventArgs e) =>
             {
                 if (e.GetCurrentPoint(Editor).Properties.IsRightButtonPressed) Editor.PlaceCaretForContextMenu(e);
@@ -76,7 +78,7 @@ namespace fire.Editor
             Editor.ContextMenu = EditorCommands.BuildMenu(EditorCommands.StandardEntries(Editor, Find).ToList());
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-            _timer.Tick += (_, _) => { _timer.Stop(); Refresh(); };
+            _timer.Tick += (_, _) => { _timer.Stop(); Refresh(); UpdateProperties(); };
             Refresh();
         }
 
@@ -193,6 +195,104 @@ namespace fire.Editor
         private void Script_Click(object? sender, RoutedEventArgs e) => ShowScriptRequested?.Invoke();
 
         // -----------------------------------------------------------
+        // Properties: the element at the caret in the tool window "Properties"; changing a value changes its attribute in the text
+        // -----------------------------------------------------------
+
+        public PropertySet? Properties { get; private set; }
+        public event Action<bool>? PropertiesChanged;
+        // what the shown properties were built from (the window is only rebuilt when it changes)
+        private string _propertiesKey = "\0";
+
+        private void UpdateProperties()
+        {
+            string text = Editor.Text;
+            var element = MarkupText.ElementAt(text, Editor.CaretOffset);
+            string key = element == null ? "" : element.Tag + "\u0001" + element.Start + "\u0001" + string.Join("\u0001", element.Ancestors) + "\u0001" +
+                string.Join("\u0001", element.Attributes.Select(a => a.Name + "=" + a.Value));
+            if (key == _propertiesKey) return;
+            _propertiesKey = key;
+            Properties = element == null ? new PropertySet
+            {
+                Title = "No element",
+                Hint = "Put the caret into an element of the markup, or click an element in the design view, to see and change its attributes.",
+            } : BuildProperties(element);
+            PropertiesChanged?.Invoke(false);
+        }
+
+        private PropertySet BuildProperties(MarkupTextElement element)
+        {
+            var entries = new List<PropertyEntry>();
+            var known = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string? Present(string name) => element.Attributes.FirstOrDefault(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
+            foreach (var info in MarkupCompletion.AttributesFor(element.Tag, element.Ancestors))
+            {
+                known.Add(info.Name);
+                string? value = Present(info.Name);
+                var (kind, choices) = info.Property?.Kind switch
+                {
+                    PropertyKind.Bool => (PropertyEditKind.Choice, new[] { "true", "false" }),
+                    PropertyKind.Orientation => (PropertyEditKind.Choice, new[] { "Horizontal", "Vertical" }),
+                    PropertyKind.Enum => (PropertyEditKind.Choice, info.Property.Choices ?? Array.Empty<string>()),
+                    PropertyKind.Color => (PropertyEditKind.Color, null),
+                    _ => (PropertyEditKind.Text, (string[]?)null),
+                };
+                entries.Add(new PropertyEntry(info.Name, kind, value ?? "")
+                {
+                    IsSet = value != null, CanClear = true, Choices = choices, Tip = info.Detail,
+                    Category = info.IsEvent ? "Events" : info.Name.Contains('.') ? "Layout in the container" : "",
+                });
+            }
+            // attributes the schema does not know (namespaces, misspelt names): they can be changed or removed too
+            foreach (var a in element.Attributes.Where(a => !known.Contains(a.Name)))
+                entries.Add(new PropertyEntry(a.Name, PropertyEditKind.Text, a.Value) { CanClear = true, Category = "Other" });
+            // the groups after each other (the order of the schema inside a group)
+            string[] order = { "", "Layout in the container", "Events", "Other" };
+            entries = entries.OrderBy(e => Array.IndexOf(order, e.Category)).ToList();
+
+            string? name = Present("name") ?? Present("key");
+            int start = element.Start;
+            string tag = element.Tag;
+            return new PropertySet
+            {
+                Title = "<" + tag + ">" + (name != null ? "  " + name : ""),
+                Error = known.Count == 0 && !IsSpecialTag(tag) ? $"'{tag}' is no element of the library ui." : null,
+                Entries = entries,
+                Set = (attribute, value) => SetAttribute(start, tag, attribute, value),
+            };
+        }
+
+        private static bool IsSpecialTag(string tag) =>
+            new[] { "Window", "View", "Resources", "Converter", "Style", "Setter", "Trigger", "Condition", "ControlTemplate", "DataTemplate", "CollectionView", "Item", "Suggestion", "Column", "TreeNode" }
+                .Contains(tag, StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Sets (an empty value: removes) an attribute of the element that starts at `start`, as an edit of the text (one undo step).</summary>
+        private void SetAttribute(int start, string tag, string attribute, string value)
+        {
+            string text = Editor.Text;
+            var element = MarkupText.Elements(text).FirstOrDefault(e => e.Start == start && e.Tag == tag);
+            if (element == null) return;
+            var change = MarkupText.SetAttribute(text, element, attribute, value == "" ? null : value);
+            if (change is not { } c) return;
+            int caret = Editor.CaretOffset;
+            Editor.Document.Replace(c.Start, c.End - c.Start, c.Text);
+            // the caret stays in the element (a caret behind the change moves with it)
+            if (caret > c.Start) Editor.CaretOffset = Math.Max(c.Start, Math.Min(Editor.Document.TextLength, caret + c.Text.Length - (c.End - c.Start)));
+            UpdateProperties();
+        }
+
+        /// <summary>A click on an element in the design view: the caret goes into its start tag.</summary>
+        private void SelectElementAtLine(int line)
+        {
+            if (line < 1 || line > Editor.Document.LineCount) return;
+            var l = Editor.Document.GetLineByNumber(line);
+            string text = Editor.Document.GetText(l);
+            int lt = text.IndexOf('<');
+            Editor.CaretOffset = l.Offset + (lt < 0 ? 0 : lt + 1);
+            Editor.TextArea.Caret.BringCaretToView();
+            UpdateProperties();
+        }
+
+        // -----------------------------------------------------------
         // IntelliSense: the logic is MarkupCompletion (fire.UI.Markup), here only the list of AvaloniaEdit
         // -----------------------------------------------------------
 
@@ -256,33 +356,34 @@ namespace fire.Editor
 
         private static readonly (string Title, string Snippet)[] Snippets =
         {
-            ("Label", "<Label text=\"Text\"/>"),
-            ("Button", "<Button name=\"ok\" text=\"OK\" onClick=\"Ok\"/>"),
-            ("CheckBox", "<CheckBox name=\"flag\" text=\"Option\" isChecked=\"{Binding Flag, Mode=TwoWay}\"/>"),
-            ("TextBox", "<TextBox name=\"name\" width=\"200\" text=\"{Binding Name, Mode=TwoWay}\"/>"),
-            ("Stack", "<Stack width=\"200\" height=\"100\" orientation=\"Vertical\" spacing=\"6\">\n  \n</Stack>"),
-            ("Panel", "<Panel x=\"0\" y=\"0\" width=\"200\" height=\"100\" showBorder=\"true\">\n  \n</Panel>"),
-            ("StackPanel", "<StackPanel spacing=\"6\" padding=\"4\">\n  \n</StackPanel>"),
-            ("Grid", "<Grid rows=\"auto, *\" columns=\"100, *\">\n  <Label Grid.Row=\"0\" Grid.Column=\"0\" text=\"Name:\"/>\n  <TextBox Grid.Row=\"0\" Grid.Column=\"1\"/>\n</Grid>"),
-            ("DockPanel", "<DockPanel width=\"400\" height=\"300\">\n  <ToolBar DockPanel.Dock=\"Top\">\n    <Button text=\"Open\"/>\n  </ToolBar>\n  \n</DockPanel>"),
-            ("ScrollViewer", "<ScrollViewer width=\"200\" height=\"100\">\n  <StackPanel>\n    \n  </StackPanel>\n</ScrollViewer>"),
-            ("ListBox", "<ListBox name=\"list\" width=\"160\" height=\"100\" onSelect=\"Picked\">\n  <Item>One</Item>\n  <Item>Two</Item>\n</ListBox>"),
-            ("ListView", "<ListView width=\"240\" height=\"120\">\n  <Column header=\"Name\" member=\"name\" width=\"120\"/>\n  <Column header=\"Age\" member=\"age\"/>\n</ListView>"),
-            ("TreeView", "<TreeView width=\"200\" height=\"120\">\n  <TreeNode text=\"root\" expanded=\"true\">\n    <TreeNode text=\"child\"/>\n  </TreeNode>\n</TreeView>"),
-            ("RadioButtons", "<RadioButtons header=\"Size\" selectedIndex=\"0\">\n  <Item>Small</Item>\n  <Item>Large</Item>\n</RadioButtons>"),
-            ("AutoSuggestBox", "<AutoSuggestBox width=\"160\">\n  <Suggestion>apple</Suggestion>\n  <Suggestion>banana</Suggestion>\n</AutoSuggestBox>"),
-            ("MenuBar", "<MenuBar>\n  <Menu header=\"File\">\n    <MenuItem header=\"Open\" onClick=\"OpenFile\"/>\n    <MenuSeparator/>\n    <MenuItem header=\"Quit\" onClick=\"Quit\"/>\n  </Menu>\n</MenuBar>"),
-            ("ToolBar", "<ToolBar>\n  <Button text=\"One\" onClick=\"One\"/>\n  <Separator/>\n  <Button text=\"Two\"/>\n</ToolBar>"),
-            ("Image", "<Image source=\"logo.png\" width=\"64\" height=\"64\" stretch=\"Uniform\"/>"),
-            ("Rectangle", "<Rectangle width=\"60\" height=\"30\" fill=\"#FFCC00\" stroke=\"#000000\"/>"),
-            ("Path", "<Path data=\"M 0 0 L 40 0 L 20 30 Z\" fill=\"#66AAFF\" stroke=\"#003366\"/>"),
-            ("DrawingCanvas", "<DrawingCanvas name=\"canvas\" width=\"200\" height=\"120\" onPaint=\"Paint\"/>"),
-            ("Converter", "<Resources>\n  <Converter key=\"Upper\" type=\"UpperConverter\"/>\n</Resources>"),
-            ("Style", "<Resources>\n  <Style key=\"Primary\" target=\"Button\">\n    <Setter property=\"background\" value=\"#3366AA\"/>\n    <Setter property=\"foreground\" value=\"#FFFFFF\"/>\n    <Trigger property=\"hover\" value=\"true\">\n      <Setter property=\"background\" value=\"#4477BB\"/>\n    </Trigger>\n  </Style>\n</Resources>"),
-            ("DataTemplate", "<Resources>\n  <DataTemplate key=\"Person\">\n    <StackPanel horizontal=\"true\" spacing=\"6\">\n      <Label text=\"{Binding name}\"/>\n      <Label text=\"{Binding age}\"/>\n    </StackPanel>\n  </DataTemplate>\n</Resources>"),
-            ("CollectionView", "<Resources>\n  <CollectionView key=\"ByName\" source=\"{Binding people}\" sortBy=\"name\"/>\n</Resources>"),
-            ("List from data", "<ListBox view=\"ByName\" itemTemplate=\"Person\" width=\"200\" height=\"120\"/>"),
-            ("ControlTemplate", "<Resources>\n  <ControlTemplate key=\"Fancy\" target=\"Button\">\n    <Border name=\"bd\" background=\"#33AA66\" padding=\"4\">\n      <Label text=\"{TemplateBinding text}\"/>\n    </Border>\n    <Trigger property=\"pressed\" value=\"true\">\n      <Setter target=\"bd\" property=\"background\" value=\"#AA3333\"/>\n    </Trigger>\n  </ControlTemplate>\n</Resources>"),
+            ("Label", "<Label Text=\"Text\"/>"),
+            ("Button", "<Button Name=\"ok\" Text=\"OK\" OnClick=\"Ok\"/>"),
+            ("CheckBox", "<CheckBox Name=\"flag\" Text=\"Option\" IsChecked=\"{Binding Flag, Mode=TwoWay}\"/>"),
+            ("TextBox", "<TextBox Name=\"name\" Width=\"200\" Text=\"{Binding Name, Mode=TwoWay}\"/>"),
+            ("Stack", "<Stack Width=\"200\" Height=\"100\" Orientation=\"Vertical\" Spacing=\"6\">\n  \n</Stack>"),
+            ("Panel", "<Panel Left=\"0\" Top=\"0\" Width=\"200\" Height=\"100\" ShowBorder=\"true\">\n  \n</Panel>"),
+            ("StackPanel", "<StackPanel Spacing=\"6\" Padding=\"4\">\n  \n</StackPanel>"),
+            ("Grid", "<Grid Rows=\"auto, *\" Columns=\"100, *\">\n  <Label Grid.Row=\"0\" Grid.Column=\"0\" Text=\"Name:\"/>\n  <TextBox Grid.Row=\"0\" Grid.Column=\"1\"/>\n</Grid>"),
+            ("DockPanel", "<DockPanel Width=\"400\" Height=\"300\">\n  <ToolBar DockPanel.Dock=\"Top\">\n    <Button Text=\"Open\"/>\n  </ToolBar>\n  \n</DockPanel>"),
+            ("ScrollViewer", "<ScrollViewer Width=\"200\" Height=\"100\">\n  <StackPanel>\n    \n  </StackPanel>\n</ScrollViewer>"),
+            ("ListBox", "<ListBox Name=\"list\" Width=\"160\" Height=\"100\" OnSelect=\"Picked\">\n  <Item>One</Item>\n  <Item>Two</Item>\n</ListBox>"),
+            ("ComboBox", "<ComboBox Name=\"choice\" Width=\"140\" SelectedIndex=\"0\">\n  <Item>One</Item>\n  <Item>Two</Item>\n</ComboBox>"),
+            ("ListView", "<ListView Width=\"240\" Height=\"120\">\n  <Column Header=\"Name\" Member=\"name\" Width=\"120\"/>\n  <Column Header=\"Age\" Member=\"age\"/>\n</ListView>"),
+            ("TreeView", "<TreeView Width=\"200\" Height=\"120\">\n  <TreeNode Text=\"root\" Expanded=\"true\">\n    <TreeNode Text=\"child\"/>\n  </TreeNode>\n</TreeView>"),
+            ("RadioButtons", "<RadioButtons Header=\"Size\" SelectedIndex=\"0\">\n  <Item>Small</Item>\n  <Item>Large</Item>\n</RadioButtons>"),
+            ("AutoSuggestBox", "<AutoSuggestBox Width=\"160\">\n  <Suggestion>apple</Suggestion>\n  <Suggestion>banana</Suggestion>\n</AutoSuggestBox>"),
+            ("MenuBar", "<MenuBar>\n  <Menu Header=\"File\">\n    <MenuItem Header=\"Open\" OnClick=\"OpenFile\"/>\n    <MenuSeparator/>\n    <MenuItem Header=\"Quit\" OnClick=\"Quit\"/>\n  </Menu>\n</MenuBar>"),
+            ("ToolBar", "<ToolBar>\n  <Button Text=\"One\" OnClick=\"One\"/>\n  <Separator/>\n  <Button Text=\"Two\"/>\n</ToolBar>"),
+            ("Image", "<Image Source=\"logo.png\" Width=\"64\" Height=\"64\" Stretch=\"Uniform\"/>"),
+            ("Rectangle", "<Rectangle Width=\"60\" Height=\"30\" Fill=\"#FFCC00\" Stroke=\"#000000\"/>"),
+            ("Path", "<Path Data=\"M 0 0 L 40 0 L 20 30 Z\" Fill=\"#66AAFF\" Stroke=\"#003366\"/>"),
+            ("DrawingCanvas", "<DrawingCanvas Name=\"canvas\" Width=\"200\" Height=\"120\" OnPaint=\"Paint\"/>"),
+            ("Converter", "<Resources>\n  <Converter Key=\"Upper\" Type=\"UpperConverter\"/>\n</Resources>"),
+            ("Style", "<Resources>\n  <Style Key=\"Primary\" Target=\"Button\">\n    <Setter Property=\"Background\" Value=\"#3366AA\"/>\n    <Setter Property=\"Foreground\" Value=\"#FFFFFF\"/>\n    <Trigger Property=\"Hover\" Value=\"true\">\n      <Setter Property=\"Background\" Value=\"#4477BB\"/>\n    </Trigger>\n  </Style>\n</Resources>"),
+            ("DataTemplate", "<Resources>\n  <DataTemplate Key=\"Person\">\n    <StackPanel Horizontal=\"true\" Spacing=\"6\">\n      <Label Text=\"{Binding name}\"/>\n      <Label Text=\"{Binding age}\"/>\n    </StackPanel>\n  </DataTemplate>\n</Resources>"),
+            ("CollectionView", "<Resources>\n  <CollectionView Key=\"ByName\" Source=\"{Binding people}\" SortBy=\"name\"/>\n</Resources>"),
+            ("List from data", "<ListBox View=\"ByName\" ItemTemplate=\"Person\" Width=\"200\" Height=\"120\"/>"),
+            ("ControlTemplate", "<Resources>\n  <ControlTemplate Key=\"Fancy\" Target=\"Button\">\n    <Border Name=\"bd\" Background=\"#33AA66\" Padding=\"4\">\n      <Label Text=\"{TemplateBinding Text}\"/>\n    </Border>\n    <Trigger Property=\"Pressed\" Value=\"true\">\n      <Setter Target=\"bd\" Property=\"Background\" Value=\"#AA3333\"/>\n    </Trigger>\n  </ControlTemplate>\n</Resources>"),
         };
 
         private void Template_Click(object? sender, RoutedEventArgs e)
@@ -323,6 +424,12 @@ namespace fire.Editor
         public void Delete() { Editor.Delete(); Editor.Focus(); }
         public void SelectAll() { Editor.SelectAll(); Editor.Focus(); }
         public void GoToLine(int line) => Editor.GoToLine(line);
+        public void FindReplace()
+        {
+            if (_searchPanel != null) _searchPanel.IsReplaceMode = true;
+            Find();
+        }
+
         public void Find() { Editor.Focus(); _searchPanel?.Open(); }
         public void FindNext() => _searchPanel?.FindNext();
         public void FindPrevious() => _searchPanel?.FindPrevious();
@@ -337,6 +444,7 @@ namespace fire.Editor
             Editor.CaretOffset = 0;
             Editor.ScrollToHome();
             Refresh();
+            UpdateProperties();
             SetModified(false);
         }
 

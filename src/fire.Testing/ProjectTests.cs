@@ -74,6 +74,21 @@ static class ProjectTests
                 catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
                 Check($"Beispiele: {sample.Title} laeuft und gibt etwas aus", lines.Count >= 2 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
             }
+            // the circuit samples are projects: the .biscuit file becomes a class next to main.fire
+            foreach (var sample in samples.Where(x => x.Category == "Circuits"))
+            {
+                var lines = new List<string>();
+                try
+                {
+                    var circuitWs = new Workspace();
+                    circuitWs.Load(Path.Combine(sample.Folder, sample.ProjectFile));
+                    var circuitPlan = BuildPlan.Create(circuitWs, circuitWs.Projects[0]);
+                    RuntimeSession.Build(circuitPlan.SourceTexts, null, args => { lines.Add(args.Length > 0 ? args[0].ToString()! : ""); return Value.MakeUndefined(); }, plan: circuitPlan).Run();
+                }
+                catch (Exception ex) { lines.Add("AUSNAHME " + Describe(ex)); }
+                Check($"Beispiele: {sample.Title} (Projekt mit Schaltung) laeuft", lines.Count >= 4 && !lines.Any(l => l.StartsWith("AUSNAHME")), string.Join("\n", lines));
+            }
+            Check("Beispiele: die Kategorie Circuits hat ihre zwei Beispiele", samples.Count(x => x.Category == "Circuits") == 2, string.Join(", ", samples.Select(x => x.Category + "/" + x.Name)));
         }
 
         // ---- settings: the order of precedence ------------------------------------------------------------------------------------------
@@ -94,7 +109,15 @@ static class ProjectTests
         string json = File.ReadAllText(projPath);
         var back = FireProject.Load(projPath);
         Check("Projektdatei: speichern und laden", back.Name == "Round" && back.Type == OutputType.Library && back.Settings.Mode == "performance" && back.References.Count == 1 && back.References[0].Package == "fire-http");
-        Check("Projektdatei: was leer ist, steht nicht in der Datei", !json.Contains("\"files\"") && !json.Contains("\"exclude\"") && !json.Contains("floatWidth") && json.Contains("\"type\": \"library\""), json);
+        Check("Projektdatei: die Standard-Ausschluesse stehen in der Datei", json.Contains("\"exclude\"") && json.Contains("**/*.dll") && back.Exclude.SequenceEqual(FireProject.DefaultExclude), json);
+        back.Exclude.Clear();
+        back.Exclude.Add("old/**");
+        back.Save();
+        Check("Projektdatei: eine eigene Ausschlussliste wird beim Laden nicht durch die Standardwerte ersetzt", FireProject.Load(projPath).Exclude.SequenceEqual(new[] { "old/**" }), File.ReadAllText(projPath));
+        back.Exclude.Clear();
+        back.Save();
+        Check("Projektdatei: eine leere Ausschlussliste bleibt leer", FireProject.Load(projPath).Exclude.Count == 0, File.ReadAllText(projPath));
+        Check("Projektdatei: was leer ist, steht nicht in der Datei", !json.Contains("\"files\"") && !json.Contains("floatWidth") && json.Contains("\"type\": \"library\""), json);
         Check("Projektdatei: Importname aus dem Namen", new FireProject { Name = "my-lib 2" }.ImportName == "my_lib_2" && new FireProject { Name = "3d" }.ImportName == "L3d" && new FireProject { Name = "x", Import = "Y" }.ImportName == "Y");
         Check("Projektdatei: ein reservierter Importname wird gemeldet", new FireProject { Name = "net", Type = OutputType.Library }.Validate().Any(p => p.Contains("belongs to the compiler")));
         Check("Projektdatei: ungueltiges JSON ist ein ProjectException", Throws(() => FireProject.Parse("{ not json")));
@@ -216,7 +239,7 @@ static class ProjectTests
         created.AddFile(prog, extra);
         Check("Aenderungen: eine Datei ausserhalb wird namentlich aufgenommen, die Muster bleiben", prog.Contains(extra) && prog.Contains(Path.Combine(c, "Prog", "main.fire")));
         created.RemoveFile(prog, Path.Combine(c, "Prog", "main.fire"));
-        Check("Aenderungen: eine Datei, die ein Muster nimmt, wird ausgeschlossen", !prog.Contains(Path.Combine(c, "Prog", "main.fire")) && prog.Project.Exclude.Count == 1 && File.Exists(Path.Combine(c, "Prog", "main.fire")));
+        Check("Aenderungen: eine Datei, die ein Muster nimmt, wird ausgeschlossen", !prog.Contains(Path.Combine(c, "Prog", "main.fire")) && prog.Project.Exclude.Except(FireProject.DefaultExclude).Count() == 1 && File.Exists(Path.Combine(c, "Prog", "main.fire")));
         created.RemoveProject(lib);
         Check("Aenderungen: ein Projekt aus der Mappe nehmen (die Dateien bleiben)", created.Projects.Count == 1 && File.Exists(Path.Combine(c, "Lib", "Lib.fireproj")) && !File.ReadAllText(Path.Combine(c, "New.firesln")).Contains("Lib.fireproj"));
         int changed = 0; created.Changed += () => changed++;
@@ -280,8 +303,8 @@ static class ProjectTests
             File.Exists(Path.Combine(t, "T", "T.firesln")) && File.Exists(Path.Combine(t, "T", "T", "T.fireproj")) && File.Exists(Path.Combine(t, "T", "T", "main.fire")) && terminal.Projects.Count == 1 && terminal.Projects[0].Name == "T");
         Check("Vorlagen: Terminal gibt Hello, World! aus", RunPlan(BuildPlan.Create(terminal, terminal.Projects[0])).Trim() == "Hello, World!");
 
-        // Desktop comes with the package fire-windows (PackageTemplates/windows, packed by bridge-packages); the folder has the same layout as a Templates folder
-        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(AppContext.BaseDirectory, "PackageTemplates", "windows"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
+        // Desktop comes with the package fire-windows (Source/windows/templates, packed with the project); the folder has the same layout as a Templates folder
+        var windowsTemplates = TemplateCatalog.Load(builtinRoot: Path.Combine(StandardSources.DefaultFolder, "windows", "templates"), userRoot: Path.Combine(root, "no-user-templates"), store: new fire.Package.Manager.PackageStore(Path.Combine(root, "no-packages")));
         Check("Vorlagen: Desktop gehoert zum Paket fire-windows, nicht zu den eingebauten", catalog.Find(TemplateScope.Project, "Desktop") == null && windowsTemplates.Find(TemplateScope.Project, "Desktop") != null);
         var desktop = Workspace.CreateSolution(windowsTemplates.Find(TemplateScope.Project, "Desktop") ?? throw new InvalidOperationException("no template Desktop"), Path.Combine(t, "D"), "D");
         var desktopPlan = BuildPlan.Create(desktop, desktop.Projects[0]);
@@ -353,7 +376,7 @@ static class ProjectTests
 
         // ---- templates as folders (docs/TEMPLATES.md): code templates, placeholders in names and text, the user's folder, packages ---------------------------
         var codeTitles = catalog.Code.Select(x => x.Title).ToList();
-        Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "FXML Window", "FXML View" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
+        Check("Vorlagen: die eingebauten Code-Vorlagen", codeTitles.SequenceEqual(new[] { "Script", "Fire Class", "Test Class", "FXML Window", "FXML View", "Circuit" }) && catalog.Code.All(x => x.Source == "Local" && x.Description != null && x.Scope == TemplateScope.Code), string.Join(",", codeTitles));
         Check("Vorlagen: die Erweiterung kommt aus der Datei mit $name$ im Namen", Tpl(TemplateScope.Code, "Script").Extension == ".fire" && Tpl(TemplateScope.Code, "Fire Class").Extension == ".fire" && Tpl(TemplateScope.Code, "FXML Window").Extension == ".fxml" && Tpl(TemplateScope.Code, "FXML View").Extension == ".fxml");
         Check("Vorlagen: ein vorgeschlagener Name", Tpl(TemplateScope.Code, "Fire Class").DefaultName == "MyClass" && Tpl(TemplateScope.Code, "FXML Window").DefaultName == "MainWindow");
 
@@ -369,10 +392,13 @@ static class ProjectTests
         var winProject = terminal.Projects[0];
         var winFiles = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name));
         var viewFiles = TemplateInstaller.Instantiate(Tpl(TemplateScope.Code, "FXML View"), winProject.Directory, new TemplateValues("SettingsView", winProject.Name));
-        terminal.AddFile(winProject, winFiles[0]);
-        terminal.AddFile(winProject, viewFiles[0]);
+        foreach (var f in winFiles.Concat(viewFiles)) terminal.AddFile(winProject, f);
         var winPlan = BuildPlan.Create(terminal, terminal.Projects[0]);
-        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winFiles[0]).Contains("<Window class=\"Main\"") && File.ReadAllText(viewFiles[0]).Contains("<View class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        string winMarkup = winFiles.First(f => f.EndsWith(".fxml")), viewMarkup = viewFiles.First(f => f.EndsWith(".fxml"));
+        Check("Vorlagen: ein FXML-Fenster und eine FXML-View uebersetzen im Projekt", winPlan.IsValid && Ok(() => ProjectBuilder.Check(winPlan)) && File.ReadAllText(winMarkup).Contains("<Window Class=\"Main\"") && File.ReadAllText(viewMarkup).Contains("<View Class=\"SettingsView\""), string.Join("\n", winPlan.Errors) + Catch(() => ProjectBuilder.Check(winPlan)));
+        Check("Vorlagen: FXML-Fenster und -View bringen den Code-behind gleichen Namens mit (class Name : NameBase), geoeffnet wird das Markup",
+            winFiles.Count == 2 && viewFiles.Count == 2 && File.ReadAllText(Path.ChangeExtension(winMarkup, ".fire")).Contains("class Main : MainBase {") && File.ReadAllText(Path.ChangeExtension(viewMarkup, ".fire")).Contains("class SettingsView : SettingsViewBase {")
+            && TemplateInstaller.FilesToOpen(Tpl(TemplateScope.Code, "FXML Window"), winProject.Directory, new TemplateValues("Main", winProject.Name), winFiles).SequenceEqual(new[] { winMarkup }), string.Join(", ", winFiles.Concat(viewFiles)));
 
         // the user's folder: with and without template.json, placeholders in paths (in both spellings) and in the text, binary files as they are
         string userRoot = Path.Combine(t, "user-templates");
@@ -490,10 +516,91 @@ static class ProjectTests
         var resWs = Workspace.Open(Path.Combine(m0, "R", "R.fireproj"));
         Check("Inhalt: new Resource(...) holt die Datei aus dem Projektordner (Pfad relativ zur Quelldatei)", RunPlan(BuildPlan.Create(resWs, resWs.Projects[0])).Trim() == "hello from a resource" && !resWs.Projects[0].Files.Any(f => f.EndsWith("hello.txt")));
 
+        // a library with resources: packing rewrites the paths relative to the project and puts the files into the package; installed, the program that imports it finds them
+        Write(m0, "ResLib/ResLib.fireproj", """{ "name": "ResLib", "type": "library", "settings": { "version": "1.0.0" } }""");
+        Write(m0, "ResLib/assets/greeting.txt", "hello from a package");
+        Write(m0, "ResLib/assets/more/second.txt", "second file");
+        Write(m0, "ResLib/code/reslib.script", "class ResLib {\n    static string Greeting() { return new Resource(\"../assets/greeting.txt\").Text() }\n    // new Resource(\"in a comment stays\")\n    static string Second() { return new Resource(\"../assets/more/second.txt\").Text() }\n}\n");
+        var resLibWs = Workspace.Open(Path.Combine(m0, "ResLib", "ResLib.fireproj"));
+        string resLibPack = ProjectBuilder.PackLibrary(BuildPlan.Create(resLibWs, resLibWs.Projects[0]), Path.Combine(m0, "out"));
+        var resLibManifest = fire.Package.Manager.Fpk.ReadManifest(resLibPack);
+        var resLibEntries = System.IO.Compression.ZipFile.OpenRead(resLibPack).Entries.Select(e => e.FullName).ToList();
+        Check("Paket-Ressourcen: die Dateien gehen ins Paket, neben das Prelude", resLibManifest.Imports[0].Resources is { Count: 2 } r2 && r2["assets/greeting.txt"] == "ResLib/assets/greeting.txt"
+            && resLibEntries.Contains("ResLib/assets/greeting.txt") && resLibEntries.Contains("ResLib/assets/more/second.txt"), string.Join(", ", resLibEntries));
+        string resLibExtracted = Path.Combine(m0, "extracted");
+        fire.Package.Manager.Fpk.Extract(resLibPack, resLibExtracted);
+        string resLibPrelude = File.ReadAllText(Path.Combine(resLibExtracted, "ResLib", "ResLib.fire"));
+        Check("Paket-Ressourcen: das Prelude nennt die Pfade relativ zum Projekt, Kommentare bleiben", resLibPrelude.Contains("new Resource(\"assets/greeting.txt\")") && resLibPrelude.Contains("new Resource(\"assets/more/second.txt\")") && resLibPrelude.Contains("new Resource(\"in a comment stays\")"), resLibPrelude);
+        var storeBefore = fire.Package.Manager.PackageStore.Default;
+        try
+        {
+            storeBefore.Install(resLibPack);
+            var usesOutput = new StringBuilder();
+            var usesSession = RuntimeSession.Build(new[] { "#import \"ResLib\"\nprint(ResLib.Greeting())\nprint(ResLib.Second())\n" }, null, args => { usesOutput.AppendLine(args[0].ToString()); return Value.MakeUndefined(); });
+            usesSession.Run();
+            Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", usesOutput.ToString().Replace("\r\n", "\n") == "hello from a package\nsecond file\n", usesOutput.ToString());
+        }
+        catch (Exception ex) { Check("Paket-Ressourcen: ein Programm, das das installierte Paket importiert, bekommt dessen Dateien eingebettet", false, Describe(ex)); }
+        finally { storeBefore.Remove("ResLib"); }
+        Write(m0, "BadRes/BadRes.fireproj", """{ "name": "BadRes", "type": "library" }""");
+        Write(m0, "BadRes/bad.script", "class BadRes { static string T() { return new Resource(\"missing.txt\").Text() } }\n");
+        var badResWs = Workspace.Open(Path.Combine(m0, "BadRes", "BadRes.fireproj"));
+        Check("Paket-Ressourcen: eine fehlende Datei ist ein Fehler", Throws(() => ProjectBuilder.PackLibrary(BuildPlan.Create(badResWs, badResWs.Projects[0]), Path.Combine(m0, "out"))));
+
+        // ---- live diagnostics of the editor in a project: the other files are compiled along, only the errors of the open file are shown ---------------------
+        string nsDir = Path.Combine(root, "ns");
+        Write(nsDir, "NsLib/NsLib.fireproj", """{ "name": "NsLib", "type": "library" }""");
+        string nsA = Write(nsDir, "NsLib/a.fire", "namespace Geo {\n    class Shape {\n        int area = 3\n        int Area() { return this.area }\n    }\n    class M { static int Max(int a, int b) { return a > b ? a : b } }\n    enum Kind { Square, Round }\n}\n");
+        string nsB = Write(nsDir, "NsLib/b.fire", "namespace Geo {\n    class Square : Shape {\n        int Side() { return Geo.M.Max(1, 2) + this.Area() + this.area + Geo.Kind.Round! }\n    }\n}\n");
+        string nsC = Write(nsDir, "NsLib/c.fire", "namespace Geo {\n    class Broken {\n        int X() { return missingInOtherFile }\n    }\n}\n");
+        var nsWs = Workspace.Open(Path.Combine(nsDir, "NsLib", "NsLib.fireproj"));
+        var nsPlan = BuildPlan.Create(nsWs, nsWs.Projects[0]);
+        List<(string Path, string Text)> OthersOf(string self) => nsPlan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
+        var bDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
+        Check("Editor: Namespaces, Basisklassen und Enums aus anderen Dateien des Projekts sind bekannt; Fehler anderer Dateien erscheinen nicht", bDiag.Count(d => d.IsError) == 0, string.Join("\n", bDiag.Select(d => d.Line + ": " + d.Message)));
+        var bBroken = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB).Replace("this.area +", "this.area + notThere +"), OthersOf(nsB), Path.GetDirectoryName(nsB), nsPlan);
+        Check("Editor: ein Fehler in der offenen Datei wird mit Zeile gemeldet", bBroken.Any(d => d.IsError && d.Line == 3 && d.Message.Contains("notThere")), string.Join("\n", bBroken.Select(d => d.Line + ": " + d.Message)));
+        var cDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsC), OthersOf(nsC), Path.GetDirectoryName(nsC), nsPlan);
+        Check("Editor: der Fehler der anderen Datei steht in ihr selbst", cDiag.Any(d => d.IsError && d.Line == 3 && d.Message.Contains("missingInOtherFile")), string.Join("\n", cDiag.Select(d => d.Line + ": " + d.Message)));
+        File.WriteAllText(nsC, "namespace Geo { class Broken { int X( { } }\n");
+        var bWithUnparsable = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(nsB), OthersOf(nsB), Path.GetDirectoryName(nsB), BuildPlan.Create(nsWs, nsWs.Projects[0]));
+        Check("Editor: eine andere Datei, die gerade nicht lesbar ist, macht in der offenen keine Fehler", !bWithUnparsable.Any(d => d.IsError && d.Message.Contains("Broken")), string.Join("\n", bWithUnparsable.Select(d => d.Line + ": " + d.Message)));
+        // the standard libraries themselves (the solution packages/Packages.firesln): a file of `ui` knows the namespace UI of the other files
+        string uiSource = Path.Combine(StandardSources.DefaultFolder, "ui", "ui.fireproj");
+        if (File.Exists(uiSource))
+        {
+            var uiWs = Workspace.Open(uiSource);
+            var uiLibPlan = BuildPlan.Create(uiWs, uiWs.Projects[0]);
+            string controls = uiLibPlan.Sources.First(f => Path.GetFileName(f.Path) == "30_controls.fire").Path;
+            var uiDiag = fire.Editor.LiveDiagnostics.AnalyzeInProject(File.ReadAllText(controls), uiLibPlan.Sources.Where(f => f.Path != controls).Select(f => (f.Path, f.Text)).ToList(), Path.GetDirectoryName(controls), uiLibPlan);
+            Check("Editor: packages/ui/30_controls.fire ohne Fehler (UI aus den anderen Dateien bekannt)", uiDiag.Count(d => d.IsError) == 0, string.Join("\n", uiDiag.Take(10).Select(d => d.Line + ": " + d.Message)));
+        }
+        else Check("Editor: die Quellen der Standardbibliotheken liegen neben dem Programm", false, uiSource);
+        // every file of every standard library (the solution packages/Packages.firesln), its tests included: no error in the editor
+        string packagesSln = Path.Combine(StandardSources.DefaultFolder, "Packages.firesln");
+        if (File.Exists(packagesSln))
+        {
+            var pkgWs = Workspace.Open(packagesSln);
+            var problems = new List<string>();
+            foreach (var project in pkgWs.Projects)
+            {
+                var pkgPlan = BuildPlan.Create(pkgWs, project);
+                var files = pkgPlan.Sources.Select(f => (f.Path, f.Text)).ToList();
+                foreach (var testFile in Directory.Exists(Path.Combine(project.Directory, "testing")) ? Directory.GetFiles(Path.Combine(project.Directory, "testing"), "*.fire") : Array.Empty<string>())
+                    if (!files.Any(f => ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), Path.GetFullPath(testFile)))) files.Add((testFile, File.ReadAllText(testFile)));
+                foreach (var (file, text) in files)
+                {
+                    var diag = fire.Editor.LiveDiagnostics.AnalyzeInProject(text, files.Where(f => f.Path != file).ToList(), Path.GetDirectoryName(file), pkgPlan);
+                    foreach (var d in diag.Where(d => d.IsError).Take(3)) problems.Add($"{project.Name}/{Path.GetFileName(file)}:{d.Line}: {d.Message}");
+                }
+            }
+            Check("Editor: in den Standardbibliotheken (Packages.firesln) zeigt keine Datei Fehler", problems.Count == 0, string.Join("\n", problems.Take(40)));
+        }
+
         // ---- the code of a project is included on its own: no #include, markup files too ---------------------------------------------------
         string m = Path.Combine(root, "markup");
         Write(m, "Ui/Ui.fireproj", """{ "name": "Ui" }""");
-        Write(m, "Ui/win.fxml", "<Window class=\"MainWindow\" title=\"x\" width=\"100\" height=\"100\">\n  <Label text=\"Hi\"/>\n</Window>\n");
+        Write(m, "Ui/win.fxml", "<Window Class=\"MainWindow\" Title=\"x\" Width=\"100\" Height=\"100\">\n  <Label Text=\"Hi\"/>\n</Window>\n");
         Write(m, "Ui/helper.script", "class Helper { static int Two() { return 2 } }\n");
         Write(m, "Ui/main.script", "#include \"helper.script\"\n#include \"win.fxml\"\nprint(Helper.Two())\n");
         var ui = Workspace.Open(Path.Combine(m, "Ui", "Ui.fireproj"));

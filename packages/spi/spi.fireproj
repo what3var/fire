@@ -1,0 +1,116 @@
+{
+  "format": 1,
+  "name": "fire-spi",
+  "type": "library",
+  "import": "spi",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'spi' of fire: prelude and C++ sources."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_spi.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__SpiLastError",
+        "arguments": 0,
+        "cpp": "spi::LastError"
+      },
+      {
+        "name": "__SpiLastErrorMessage",
+        "arguments": 0,
+        "cpp": "spi::LastErrorMessage",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SpiOpenCount",
+        "arguments": 0,
+        "cpp": "spi::OpenCount"
+      },
+      {
+        "name": "__SpiSupported",
+        "arguments": 0,
+        "cpp": "spi::Supported"
+      },
+      {
+        "name": "__SpiDevices",
+        "arguments": 0,
+        "cpp": "spi::Devices",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__SpiOpen",
+        "arguments": 4,
+        "cpp": "spi::Open"
+      },
+      {
+        "name": "__SpiConfigure",
+        "arguments": 4,
+        "cpp": "spi::Configure"
+      },
+      {
+        "name": "__SpiTransfer",
+        "arguments": 6,
+        "cpp": "spi::Transfer"
+      },
+      {
+        "name": "__SpiWrite",
+        "arguments": 4,
+        "cpp": "spi::Write"
+      },
+      {
+        "name": "__SpiRead",
+        "arguments": 4,
+        "cpp": "spi::Read"
+      },
+      {
+        "name": "__SpiClose",
+        "arguments": 1,
+        "cpp": "spi::Close"
+      },
+      {
+        "name": "__SpiSimReply",
+        "arguments": 3,
+        "cpp": "spi::SimReply"
+      },
+      {
+        "name": "__SpiSimSetReply",
+        "arguments": 3,
+        "cpp": "spi::SimSetReply"
+      },
+      {
+        "name": "__SpiSimLoopback",
+        "arguments": 0,
+        "cpp": "spi::SimLoopback"
+      },
+      {
+        "name": "__SpiSimSentCount",
+        "arguments": 0,
+        "cpp": "spi::SimSentCount"
+      },
+      {
+        "name": "__SpiSimSentByte",
+        "arguments": 1,
+        "cpp": "spi::SimSentByte"
+      },
+      {
+        "name": "__SpiSimInfo",
+        "arguments": 1,
+        "cpp": "spi::SimInfo"
+      },
+      {
+        "name": "__SpiSimClear",
+        "arguments": 0,
+        "cpp": "spi::SimClear"
+      }
+    ],
+    "reset": "spi::reset"
+  }
+}

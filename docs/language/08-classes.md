@@ -51,8 +51,8 @@ print(c.Greet("World"))         // Hello, World
 print(c.Greet("World", "Hi"))   // Hi, World
 ```
 
-- **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters. The number of
-  arguments decides which one runs.
+- **Overloads**: several methods (and constructors) with the same name are allowed when they have a different **number** of parameters or different
+  parameter **types**. The overload closest to the given values runs (see [Overloading by type](#overloading-by-type)).
 - **Default values**: `Type name = value` makes a parameter optional. Optional parameters stand at the end.
 - A parameter without a type is `any` (`TC004`).
 - **Passing**: numbers, `bool`, `char` and strings are copied; objects, arrays and lambdas are passed by reference.
@@ -192,6 +192,44 @@ class Handle {
 print("after")          // open A, using A, close A, after
 ```
 
+## Overloading by type
+
+Overloads with the same number of parameters are told apart by the types of their parameters. The one **closest to the values** runs: per argument
+the exact type or class first, then a base class (the closer, the better), then an interface, then a type parameter, then `class` (any object),
+then an untyped (`any`) parameter - so **derived class > base class > interface > generic > `class` > `any`**.
+
+```fire
+interface IShape { float Area() }
+class Animal { }
+class Dog : Animal { }
+class Puppy : Dog { }
+class Square : IShape { float Area() { return 4.0 } }
+
+class Show {
+    static string Of(int x) { return "int" }
+    static string Of(float x) { return "float" }
+    static string Of(Animal a) { return "animal" }
+    static string Of(Dog d) { return "dog" }
+    static string Of(IShape s) { return "shape" }
+    static string Of<T>(T x) { return "generic" }
+}
+print(Show.Of(1))               // int
+print(Show.Of(2.5))             // float
+print(Show.Of(new Puppy()))     // dog - Dog is closer to Puppy than Animal
+print(Show.Of(new Animal()))    // animal
+print(Show.Of(new Square()))    // shape
+print(Show.Of("text"))          // generic
+print(Show.Of<int>(1))          // generic - written type arguments mean the generic method
+```
+
+- The values decide at run time: a variable of type `any` picks the overload of what it holds then. Where the type checker knows the argument types,
+  it makes the same choice and knows the return type of that overload.
+- An `int` goes into a `float` parameter, but an exact `int` overload wins.
+- Two methods with the same parameter types in one class are an error.
+- In a derived class, a method with the same parameter types (or untyped ones) **overrides** the inherited one; with other types it is one more
+  overload next to it.
+- Constructors and operators (`Vec operator*(float f)`, `Vec operator*(Vec o)`) are overloaded the same way.
+
 ## Operator overloading
 
 A class can define the operators `+ - * / % ^ & | # << >> == != < <= > >=` and the index `[]`. `this` is the left operand; the right one is the
@@ -226,6 +264,50 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 
 `print`, `+` with a string and format strings use the method `string ToString()` of the class if it has one; otherwise an object prints as
 `<object Name>`.
+
+## Attributes
+
+An attribute is a name in square brackets on the line before a method, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
+new List<int>()]`; `{...}` is an array here, like `[...]`). A method may have several. Attributes do nothing by themselves; tools read them (reflection: `Member.Attributes`, see [Probes and reflection](16-probes-and-reflection.md)) - `forge test`
+runs the methods with `[Test]` (docs/TESTING.md):
+
+```fire
+class CalcTests {
+    [Test "Adds", "2 + 2 is 4"]
+    undefined Adds() { print(2 + 2) }
+
+    [Test]
+    [Parameters 1..3, 10]
+    undefined Commutes(int a, int b) { print(a + b == b + a) }
+}
+```
+
+The arguments are ordinary expressions; they are evaluated when a tool uses them (the test runner: when the test runs).
+
+The editor reads one attribute itself: `[Colorize 0x6010C0]` before a field, property or method shows its name in that color - in the declaration and
+wherever it is used as a member. The program does not change; a circuit drawn in spark marks its inputs and outputs so, in the colors of the schematic:
+
+```fire
+class Mixer {
+    [Colorize 0xE03030]
+    float Left = 0.0
+    [Colorize "#3070E0"]
+    float Right = 0.0
+}
+```
+
+Fields and properties can have attributes too. `#import "json"` reads two of them (docs/JSON.md):
+
+```fire
+class Account {
+    string owner
+    [JsonName "pin_hash"]
+    string pinHash
+    [NonSerialized]
+    int cachedBalance
+    construct() { }
+}
+```
 
 ## Static members and the top level
 

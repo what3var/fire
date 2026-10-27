@@ -156,7 +156,7 @@ namespace fire.Runtime
         }
     }
 
-    public sealed partial class VM : IDestructRunner
+    public sealed partial class VM : IDestructRunner, IDanglingReporter
     {
         // The chunk currently running together with array copies of code/constants (see Chunk.CodeArray) - every
         // assignment to _currentChunk (call, return, exception jump, ...) updates them along.
@@ -298,6 +298,7 @@ namespace fire.Runtime
             Unit.ConverterCall = (className, method, value) =>
                 (_currentThreadVm ?? throw new InvalidOperationException("A unit with conversion functions can only be converted while the program runs."))
                     .CallUnitConverter(className, method, value);
+            fire.Standard.JsonMethods.Host = () => _currentThreadVm;
         }
 
         /// <summary>Calls a conversion function of a unit (`coerce to`/`coerce from`) nested on this VM, like a getter or setter: in the middle of the
@@ -725,6 +726,7 @@ namespace fire.Runtime
             _globalScope = globalScope;
             globalScope.EarlyAccess = true;   // (a global used before its declaration: see Scope.EarlyAccess)
             _natives = natives;
+            _watchDangling = executionMode == VmExecutionMode.Debug && natives.Has("print");
             _classes = classes ?? new Dictionary<string, RuntimeClass>();
             _externs = externs ?? new ExternRegistry();
             _externSignatures = externSignatures ?? new Dictionary<string, ExternSignature>();
@@ -905,11 +907,27 @@ namespace fire.Runtime
                     // A leave/terminate called in nested execution is only now unwound in an orderly way;
                     // afterwards the halt chunk is there again and the next read lands here again.
                     if (FinishDeferredShutdown()) continue;
+                    // Windows that a window manager's thread shows keep the program alive: it serves them until they are closed.
+                    if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) { WaitForHostHolds(); if (FinishDeferredShutdown()) continue; }
                     // Normal end or orderly leave/terminate (not the halt chunk of an unhandled exception).
                     if (!_stopExecutionRequested || _shutdownReleasePending) ReleaseGlobalScopeAtEnd();
                     return;
                 }
                 Step(op);
+            }
+        }
+
+        /// <summary>The program has run its last statement, but the host still holds it (open windows of a window manager's thread, see
+        /// FireRuntime.AddHostHold): it waits and runs what is posted to it (the managers' cycles, callbacks, jobs of fire threads) until the holds are
+        /// gone or the program is ended (`leave`/`terminate` in a callback).</summary>
+        private void WaitForHostHolds()
+        {
+            while (FireRuntime.HostHolds > 0 && !_stopExecutionRequested)
+            {
+                if (!_inbound.IsEmpty) DrainInbound();
+                if (!_stopExecutionRequested && _ownerBroker != null && _ownerBroker.HasPending) _ownerBroker.Drain();
+                if (_stopExecutionRequested) break;
+                if (_inbound.IsEmpty) FireRuntime.WaitForWake(5);
             }
         }
 
@@ -1117,7 +1135,7 @@ namespace fire.Runtime
                 return false;
 
             var rc = ResolveClass(actor.ClassName);
-            var proto = rc.FindMethod(message.MethodName, message.Args.Length)
+            var proto = FindOverload(rc, message.MethodName, message.Args, actor).Proto
                 ?? throw MethodNotFound(rc, message.MethodName, message.Args.Length);
             CheckArity(proto, message.Args.Length);
             var args = FillDefaultArgs(proto, message.Args, actor);
@@ -1198,6 +1216,7 @@ namespace fire.Runtime
         /// debugger may have stopped them). Returns false (ended).</summary>
         private bool FinishAtHalt()
         {
+            if (!_stopExecutionRequested && !IsFireThreadVm && FireRuntime.HostHolds > 0) WaitForHostHolds();
             if ((!_stopExecutionRequested || _shutdownReleasePending) && DestroyGlobalsAtEnd) ReleaseGlobalScopeAfterStop(_shutdownReleasePending);
             _shutdownReleasePending = false;
             IsHalted = true;
@@ -2046,7 +2065,7 @@ namespace fire.Runtime
             bool hasOnTarget = ReadByte() != 0;
             var proto = _currentChunk.Functions[protoIdx];
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
-            var lambdaValue = new LambdaValue(proto, onTarget);
+            var lambdaValue = new LambdaValue(proto, onTarget) { TypeArgs = TakeLambdaTypeArgs() };
             Push(Value.MakeLambda(lambdaValue));
             return;
         }
@@ -2061,7 +2080,7 @@ namespace fire.Runtime
             object? onTarget = hasOnTarget ? BoxValueForOnTarget(Pop()) : null;
             var captures = new Value[captureCount];
             for (int i = captureCount - 1; i >= 0; i--) captures[i] = Pop();
-            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures)));
+            Push(Value.MakeLambda(new LambdaValue(proto, onTarget, null, captures) { TypeArgs = TakeLambdaTypeArgs() }));
         }
 
         // -----------------------------------------------------------
@@ -2208,6 +2227,8 @@ namespace fire.Runtime
                 && fastCallee.AsLambda() is LambdaValue fastLambda
                 && fastLambda.Proto.ParamCount == argCount)
             {
+                _pendingCallTypeArgs = fastLambda.TypeArgs;   // (taken by the TakeCallTypeArgs of a lambda made in generic code)
+                _pendingExplicitTypeArgs = false;
                 EnterCall(fastLambda.Proto, argCount, dropBelow: true, fastLambda.OnTarget, copyMask: copyMask, captures: fastLambda.Captures);
                 return;
             }
@@ -2237,6 +2258,8 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
+            _pendingExplicitTypeArgs = false;
             ApplyCopyMask(funcScope, copyMask, lambda.Proto.RefMask);
 
             _currentThis = lambda.OnTarget;
@@ -2415,8 +2438,10 @@ namespace fire.Runtime
 
             // Fast path (inline cache): class and constructor of this site are known, access and
             // argument check already passed.
-            if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor })
+            if (LookupSite(site) is { Class: { } cachedClass, Proto: { } cachedCtor } ctorEntry
+                && (ctorEntry.Guard == null || ctorEntry.Guard.Holds(_stack.AsSpan(_sp - argCount, argCount))))
             {
+                if (ctorEntry.Guard != null) TakeGuardedHit(cachedCtor);
                 var created = new ObjectInstance(cachedClass.Name, _currentScope, cachedClass);
                 if (cachedClass.IsActor) created.Mailbox = new ActorMailbox();
                 TakeTypeArgs(created);
@@ -2433,7 +2458,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
@@ -2443,8 +2468,8 @@ namespace fire.Runtime
                 return;
             }
 
-            if (ctorProto.ParamCount == argCount)
-                StoreSite(site, new SiteCache(rc, ctorProto, 0));
+            if (ctorProto.ParamCount == argCount && (!rc.IsConstructorTypeOverloaded(argCount) || _hintTaken != null))
+                StoreSite(site, new SiteCache(rc, ctorProto, 0, guard: _hintTaken));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
             TakeTypeArgs(instance);
@@ -2465,7 +2490,7 @@ namespace fire.Runtime
             var owner = RequireObjectInstance(Pop(), "Object creation with owner");
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             if (ExecutionMode != VmExecutionMode.Performance
                 && !IsMemberAccessAllowed(rc, ctorProto.Access ?? AccessModifier.Public))
@@ -2494,7 +2519,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(_constants[classNameIdx].AsString());
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             args = FillDefaultArgs(ctorProto, args, _currentThis);
 
@@ -2644,6 +2669,7 @@ namespace fire.Runtime
             {
                 var assigned = _stack[_sp - 1];
                 cachedObj.Fields.SetAt(fieldEntry.FieldIndex, assigned);
+                if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, cachedObj, _constants[fieldNameIdx].AsString());
                 _sp--;
                 _stack[_sp - 1] = assigned;
                 return;
@@ -2652,6 +2678,28 @@ namespace fire.Runtime
             OpSetFieldSlow(site, fieldNameIdx);
             return;
         }
+        }
+
+        // Debug mode: stores of objects that belong to a call are noted, their holders checked when they die (see DanglingWatch)
+        private readonly bool _watchDangling;
+        private HashSet<string>? _danglingReported;
+
+        private static void NoteStore(Value value, object holder, string? field)
+        {
+            if (value.AsObjectRef() is ObjectInstance target && target.Owner is Scope or ObjectInstance) DanglingWatch.Note(target, holder, field);
+        }
+
+        public void ReportDangling(ObjectInstance dying, object holder, string? field)
+        {
+            if (!_watchDangling) return;
+            // each place once (a loop would repeat it)
+            var (sourceIndex, line) = CurrentLocation;
+            string key = dying.ClassName + "|" + (holder is ObjectInstance o ? o.ClassName + "." + field : "[]") + "|" + sourceIndex + ":" + line;
+            if (!(_danglingReported ??= new HashSet<string>()).Add(key)) return;
+            int print = _natives.IndexOf("print");
+            if (print < 0) return;
+            try { _natives[print](new[] { Value.MakeString($"warning (line {line}): " + DanglingWatch.Describe(dying, holder, field)) }); }
+            catch (Exception) { /* a warning never stops the program */ }
         }
 
         private void OpSetFieldSlow(int site, int fieldNameIdx) => SetFieldSlow(_constants[fieldNameIdx].AsString(), site);
@@ -2718,6 +2766,7 @@ namespace fire.Runtime
                     && obj.RtClass.FieldIndex.TryGetValue(fieldName, out int setIndex))
                     StoreSite(site, new SiteCache(obj.RtClass, null, setIndex, requiredKind: requiredKind, requiredType: requiredType));
                 obj.SetFieldLocked(fieldName, value);
+                if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
                 Push(value);
                 return true;
             }
@@ -2751,6 +2800,7 @@ namespace fire.Runtime
             // simply create a new field (dynamic language, no
             // up-front declaration obligation for fields).
             obj.SetFieldLocked(fieldName, value);
+            if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, obj, fieldName);
             Push(value);
             return true;
         }
@@ -2842,8 +2892,10 @@ namespace fire.Runtime
                 && cachedTarget.AsObjectRef() is ObjectInstance cachedObj
                 && ReferenceEquals(cachedObj.RtClass, siteEntry.Class)
                 && cachedObj.Mailbox == null
-                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain))
+                && (_threadBroker == null || _sectionDepth > 0 || !cachedObj.InGlobalsDomain)
+                && (siteEntry.Guard == null || siteEntry.Guard.Holds(_stack.AsSpan(_sp - argCount, argCount))))
             {
+                if (siteEntry.Guard != null) TakeGuardedHit(cachedMethod);
                 // A method that only calls a native function with `this.field` and its parameters (all methods of the
                 // bridge preludes): call the native function directly, without scope/frame (see NativeForwarder).
                 if (siteEntry.Forwarder is { } forwarder && copyMask == 0 && cachedObj.ThreadLock == null)
@@ -2909,7 +2961,7 @@ namespace fire.Runtime
                 // `this` is the value itself. Before the fixed built-in conversions below.
                 if (_baseTypeClasses[(int)target.Kind] is { } extensionRc)
                 {
-                    var (extProto, extDeclaringRc, extAccess) = extensionRc.FindMethodWithAccess(methodName, args.Length);
+                    var (extProto, extDeclaringRc, extAccess) = FindOverload(extensionRc, methodName, args, null);
                     if (extProto != null)
                     {
                         if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(extDeclaringRc!, extAccess))
@@ -2978,7 +3030,7 @@ namespace fire.Runtime
             }
 
             var rc = ResolveClass(obj.ClassName);
-            var (proto, declaringRcCall, accessCall) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcCall, accessCall) = FindOverload(rc, methodName, args, obj);
             if (proto == null)
             {
                 // The ownership transfer (SPEC 2.2) is there for every object, without the class declaring it.
@@ -2997,13 +3049,13 @@ namespace fire.Runtime
                 return;
             }
             CheckArity(proto, args.Length);
-            if (proto.ParamCount == argCount && obj.RtClass != null)
+            if (proto.ParamCount == argCount && obj.RtClass != null && (!rc.IsTypeOverloaded(methodName, argCount) || _hintTaken != null))
             {
                 var forwarder = proto.Forwarder;
                 int forwarderField = -1;
                 if (forwarder != null && !obj.RtClass.FieldIndex.TryGetValue(forwarder.FieldName, out forwarderField))
                     forwarder = null;
-                StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField));
+                StoreSite(site, new SiteCache(obj.RtClass, proto, 0, forwarder, forwarderField, guard: _hintTaken));
             }
             args = FillDefaultArgs(proto, args, obj);
 
@@ -3169,7 +3221,7 @@ namespace fire.Runtime
             for (int i = argCount - 1; i >= 0; i--) args[i] = Pop();
 
             var rc = ResolveClass(baseClassName);
-            var (proto, declaringRcBase, accessBase) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcBase, accessBase) = FindOverload(rc, methodName, args, _currentThis as ObjectInstance);
             if (proto == null)
                 throw MethodNotFound(rc, methodName, args.Length);
             if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(declaringRcBase!, accessBase))
@@ -3340,8 +3392,10 @@ namespace fire.Runtime
 
             // Fast path: the same site has already resolved once (class/method are fixed as constants
             // in the bytecode, see SiteCache) - no more lookup by class and method name.
-            if (LookupSite(site) is { Proto: { } cachedStatic })
+            if (LookupSite(site) is { Proto: { } cachedStatic } staticEntry
+                && (staticEntry.Guard == null || staticEntry.Guard.Holds(_stack.AsSpan(_sp - callArgCount, callArgCount))))
             {
+                if (staticEntry.Guard != null) TakeGuardedHit(cachedStatic);
                 EnterCall(cachedStatic, callArgCount, dropBelow: false, newThis: null, copyMask: copyMask);
                 return;
             }
@@ -3360,7 +3414,7 @@ namespace fire.Runtime
             for (int i = callArgCount - 1; i >= 0; i--) callArgs[i] = Pop();
 
             var callRc = ResolveClass(callClassName);
-            var (callProto, declaringRcCall, accessCall) = callRc.FindMethodWithAccess(callMethodName, callArgs.Length);
+            var (callProto, declaringRcCall, accessCall) = FindOverload(callRc, callMethodName, callArgs, null);
             if (callProto == null)
                 throw MethodNotFound(callRc, callMethodName, callArgs.Length);
             if (!callProto.IsStatic)
@@ -3377,8 +3431,8 @@ namespace fire.Runtime
             CheckArity(callProto, callArgs.Length);
             callArgs = FillDefaultArgs(callProto, callArgs, null);
 
-            if (callProto.ParamCount == callArgCount)
-                StoreSite(site, new SiteCache(null, callProto, 0));
+            if (callProto.ParamCount == callArgCount && (!callRc.IsTypeOverloaded(callMethodName, callArgCount) || _hintTaken != null))
+                StoreSite(site, new SiteCache(null, callProto, 0, guard: _hintTaken));
 
             _frames.Push(new CallFrame(_currentChunk, _ip, _currentScope, _currentThis, null));
             var callScope = new Scope(_globalScope);
@@ -3590,6 +3644,7 @@ namespace fire.Runtime
                 {
                     var assigned = _stack[_sp - 1];
                     items[i] = assigned;
+                    if (_watchDangling && assigned.Kind == ValueKind.Class) NoteStore(assigned, fastArray, null);
                     _sp -= 2;
                     _stack[_sp - 1] = assigned;
                     return;
@@ -3624,7 +3679,10 @@ namespace fire.Runtime
                 {
                     long idx = indexVal.AsInt();
                     if (target.AsArray().TrySet(idx, value))
+                    {
+                        if (_watchDangling && value.Kind == ValueKind.Class) NoteStore(value, target.AsArray(), null);
                         Push(value);
+                    }
                     else
                         // No push here - ThrowIndexOutOfBounds has already
                         // redirected _currentChunk/_ip, an
@@ -4234,6 +4292,13 @@ namespace fire.Runtime
 
                 case OpCode.GuardLocal: OpGuardLocal(); break;
                 case OpCode.SetTypeArgs: OpSetTypeArgs(); break;
+                case OpCode.OverloadHint:
+                {
+                    int hintIdx = ReadU16();
+                    var parsed = _chunk.ParsedHints ??= new OverloadHint?[_constants.Length];
+                    _pendingHint = parsed[hintIdx] ??= OverloadHint.Of(_constants[hintIdx].AsString());
+                    break;
+                }
                 case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; break;
                 case OpCode.GuardTop: OpGuardTop(); break;
                 case OpCode.GuardTopType: OpGuardTopType(); break;
@@ -5339,6 +5404,8 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
+            _pendingExplicitTypeArgs = false;
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -5404,6 +5471,8 @@ namespace fire.Runtime
             var funcScope = new Scope(_globalScope);
             foreach (var a in args) funcScope.DefineSlot(a);
             if (lambda.Captures != null) foreach (var c in lambda.Captures) funcScope.DefineSlot(c);
+            _pendingCallTypeArgs = lambda.TypeArgs;
+            _pendingExplicitTypeArgs = false;
 
             _currentThis = lambda.OnTarget;
             _currentScope = funcScope;
@@ -5432,7 +5501,7 @@ namespace fire.Runtime
         private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
         {
             var rc = ResolveClass(obj.ClassName);
-            var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcNested, accessNested) = FindOverload(rc, methodName, args, obj);
             if (proto == null)
                 throw new InvalidOperationException(
                     $"Method '{methodName}' not found on '{rc.Name}' (needed for a property or operator overload).");
@@ -5481,7 +5550,7 @@ namespace fire.Runtime
         /// instance properties).</summary>
         private Value? CallStaticMethodNested(RuntimeClass rc, string methodName, Value[] args)
         {
-            var (proto, declaringRcNested, accessNested) = rc.FindMethodWithAccess(methodName, args.Length);
+            var (proto, declaringRcNested, accessNested) = FindOverload(rc, methodName, args, null);
             if (proto == null)
                 throw new InvalidOperationException(
                     $"Static method '{methodName}' not found on '{rc.Name}' (needed for a property).");
@@ -5529,7 +5598,7 @@ namespace fire.Runtime
         /// to recursively build yet ANOTHER exception for it.</summary>
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
-            var ctorProto = rc.FindConstructor(args.Length)
+            var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
             if (rc.IsActor) instance.Mailbox = new ActorMailbox();
@@ -6032,7 +6101,11 @@ namespace fire.Runtime
             var callTypeArgs = _currentScope.TypeArgs;    // (a `U` of the method: the type argument of the call - the prologue runs in its scope)
             if (DeclaredType.Fits(guarded, requiredType, owner, callTypeArgs)) return;
             var checkedValue = guarded;
-            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs)) { guarded = checkedValue; return; }
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand))
+            {
+                if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) guarded = checkedValue;
+                return;
+            }
             ThrowArgumentError(DeclaredType.Mismatch(guarded, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
@@ -6057,7 +6130,11 @@ namespace fire.Runtime
             var callTypeArgs = CallScopeTypeArgs();
             if (DeclaredType.Fits(top, requiredType, owner, callTypeArgs)) return;
             var checkedValue = top;
-            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs)) { top = checkedValue; return; }
+            if (DeclaredType.FitsOrConvert(ref checkedValue, requiredType, owner, callTypeArgs, out var unitDemand))
+            {
+                if (unitDemand == null || AdaptFieldUnit(ref checkedValue, unitDemand)) top = checkedValue;
+                return;
+            }
             ThrowArgumentError(DeclaredType.Mismatch(top, requiredType, _constants[whatIdx].AsString(), owner, callTypeArgs));
         }
 
@@ -6072,7 +6149,8 @@ namespace fire.Runtime
         /// <summary>A field declared with a class, an interface or a constrained type parameter takes `undefined` or what that says (DeclaredType); false: an ArgumentException is thrown.</summary>
         private bool GuardFieldType(ref Value value, string? requiredType, string fieldName, ObjectInstance? owner)
         {
-            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner)) return true;
+            // (a number type argument with a unit: converted into it, a UnitMismatchException for another dimension)
+            if (DeclaredType.FitsOrConvert(ref value, requiredType, owner, null, out var unitDemand)) return unitDemand == null || AdaptFieldUnit(ref value, unitDemand);
             ThrowArgumentError(DeclaredType.Mismatch(value, requiredType!, $"Field '{fieldName}'", owner));
             return false;
         }
@@ -6085,7 +6163,7 @@ namespace fire.Runtime
         private void OpSetTypeArgs()
         {
             string text = _constants[ReadU16()].AsString();
-            bool forCall = ReadByte() != 0;
+            byte forCall = ReadByte();
             if (!_typeArgTemplates.TryGetValue(text, out var template)) _typeArgTemplates[text] = template = text.Split('|');
             string[] args;
             if (!text.Contains('$')) args = template;   // (the same array for every object: it is never changed)
@@ -6108,12 +6186,96 @@ namespace fire.Runtime
                     else args[i] = DeclaredType.TypeArgOf(_currentThis as ObjectInstance, t.Substring(at + 1), k) ?? "";
                 }
             }
-            if (forCall) _pendingCallTypeArgs = args;
+            if (forCall is 1 or 3)
+            {
+                _pendingCallTypeArgs = args;
+                _pendingExplicitTypeArgs = forCall == 3;   // (3: written at the call, `M<string>(x)`)
+            }
+            else if (forCall == 2) _pendingLambdaTypeArgs = args;
             else _pendingTypeArgs = args;
         }
 
         /// <summary>The type arguments for the next call of a generic method (SetTypeArgs with `forCall`; TakeCallTypeArgs, the first instruction of the method, gives them to the scope of the call).</summary>
         private string[]? _pendingCallTypeArgs;
+
+        /// <summary>The call names its type arguments (`M&lt;string&gt;(x)`, SetTypeArgs with `forCall` 3): a generic overload is meant.</summary>
+        private bool _pendingExplicitTypeArgs;
+
+        /// <summary>The method a call `name(args)` on `rc` reaches: among overloads by type the one that fits the arguments most closely (Overloads).
+        /// `owner`: the object whose type parameters a `T` parameter means. A method that is not generic leaves the type arguments of the call alone.</summary>
+        private (FunctionProto? Proto, RuntimeClass? DeclaringClass, AccessModifier Access) FindOverload(RuntimeClass rc, string name, Value[] args, ObjectInstance? owner)
+        {
+            int explicitCount = _pendingExplicitTypeArgs ? _pendingCallTypeArgs?.Length ?? 0 : 0;
+            _pendingExplicitTypeArgs = false;
+            // the overload the type checker chose (OverloadHint): taken when the arguments are what it assumed - no scoring
+            var hint = _pendingHint;
+            _hintTaken = null;
+            if (hint != null)
+            {
+                _pendingHint = null;
+                if (hint.Method == name && hint.Holds(args) && hint.Resolve(rc, _classByName) is { Proto: { } chosen } resolved)
+                {
+                    System.Threading.Interlocked.Increment(ref HintsTaken);
+                    _hintTaken = hint;
+                    if (chosen.TypeParamCount == 0) _pendingCallTypeArgs = null;
+                    return (chosen, resolved.Declaring, chosen.Access ?? AccessModifier.Public);
+                }
+                System.Threading.Interlocked.Increment(ref HintsMissed);
+            }
+            var found = explicitCount > 0 || rc.IsTypeOverloaded(name, args.Length)
+                ? rc.FindMethodWithAccess(name, args, owner, _pendingCallTypeArgs, explicitCount)
+                : rc.FindMethodWithAccess(name, args.Length);
+            if (found.Proto is { TypeParamCount: 0 }) _pendingCallTypeArgs = null;
+            return found;
+        }
+
+        /// <summary>The overload the next call takes when its arguments meet the type checker's assumptions (OpCode.OverloadHint); FindOverload and
+        /// FindConstructorFor take it.</summary>
+        private OverloadHint? _pendingHint;
+        /// <summary>The hint the last FindOverload/FindConstructorFor took (null: it scored): the call site may cache its choice, guarded by the hint.</summary>
+        private OverloadHint? _hintTaken;
+
+        /// <summary>A cache hit of a site guarded by a hint (SiteCache.Guard): what the slow route would do with the pending prefixes.</summary>
+        private void TakeGuardedHit(FunctionProto proto)
+        {
+            _pendingHint = null;
+            _pendingExplicitTypeArgs = false;
+            if (proto.TypeParamCount == 0) _pendingCallTypeArgs = null;
+        }
+        /// <summary>How often a call took the overload of its hint, and how often its arguments did not meet the assumptions (all VMs; for tests).</summary>
+        public static long HintsTaken, HintsMissed;
+        private Func<string, RuntimeClass?>? _classByNameCache;
+        private Func<string, RuntimeClass?> _classByName => _classByNameCache ??= n => _classes.TryGetValue(n, out var c) ? c : null;
+
+        /// <summary>The constructor `new` runs for these arguments: the one the type checker chose (OverloadHint) when they meet its assumptions,
+        /// otherwise the one that fits them most closely.</summary>
+        private FunctionProto? FindConstructorFor(RuntimeClass rc, Value[] args)
+        {
+            var hint = _pendingHint;
+            _hintTaken = null;
+            if (hint != null)
+            {
+                _pendingHint = null;
+                if (hint.IsConstructor && hint.Holds(args) && hint.Resolve(rc, _classByName) is { Proto: { } chosen })
+                {
+                    System.Threading.Interlocked.Increment(ref HintsTaken);
+                    _hintTaken = hint;
+                    return chosen;
+                }
+                System.Threading.Interlocked.Increment(ref HintsMissed);
+            }
+            return rc.FindConstructor(args, null);
+        }
+
+        /// <summary>The type arguments the next lambda takes along (SetTypeArgs with `forCall` 2).</summary>
+        private string[]? _pendingLambdaTypeArgs;
+
+        private string[]? TakeLambdaTypeArgs()
+        {
+            var args = _pendingLambdaTypeArgs;
+            _pendingLambdaTypeArgs = null;
+            return args;
+        }
 
         /// <summary>A new object takes the type arguments of its `new` (SetTypeArgs right before it), if there are any.</summary>
         private void TakeTypeArgs(ObjectInstance instance)

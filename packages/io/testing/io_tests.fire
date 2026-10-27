@@ -1,0 +1,33 @@
+// The tests of streams and text: `forge test packages/io/io.fireproj` (the C++ of native/ is built for the virtual machine). Files: packages/filesystem.
+#import "testing"
+
+class IoTests {
+    [Test]
+    undefined MemoryStream() {
+        var m = new IO.MemoryStream()
+        m.Write("Hello".ToBytes())
+        m.Position = 0
+        Testing.Assert.AreEqual(72, m.ReadByte())
+        Testing.Assert.AreEqual(5, m.Length)
+    }
+
+    [Test]
+    undefined TextOnStreams() {
+        var m = new IO.MemoryStream()
+        var w = new IO.TextWriter(m, true)
+        w.WriteLine("one")
+        w.Write("zwei ä")
+        w.Close()
+        m.Position = 0
+        var r = new IO.TextReader(m)
+        Testing.Assert.AreEqual("one", r.ReadLine())
+        Testing.Assert.AreEqual("zwei ä", r.ReadLine())
+        Testing.Assert.IsUndefined(r.ReadLine())
+    }
+
+    [Test "A path is no stream", "TextReader/TextWriter take streams; files come from IO.File (filesystem)"]
+    undefined NoPaths() {
+        Testing.Assert.Throws(() => { new IO.TextReader("x.txt") })
+        Testing.Assert.Throws(() => { new IO.TextWriter("x.txt") })
+    }
+}

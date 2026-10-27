@@ -165,6 +165,7 @@ struct Zombies { Owned* head; int32_t depth; };
     X(uint32_t, g_callDepth, 0)         /* the number of fire functions that are running on this thread (only kept when the program uses `try x.Take...`) */ \
     X(uint32_t, g_reflCaller, 0xFFFFFFFFu)   /* the class of the code that called into the reflection library */ \
     X(const void*, g_callTArgs, nullptr)     /* the type arguments for the next call of a generic method (TArgs) */ \
+    X(int32_t, g_explicitTArgs, 0)           /* the call names its type arguments (`M<string>(x)`): their number - only generic overloads with that many count */ \
     X(Zombies, g_zombies, (Zombies{nullptr, 0}))          /* destroyed objects whose memory is freed at the end of the batch */ \
     X(BridgeError, g_ioError, (BridgeError{0, {0}}))      /* the IO bridge: the last error of this thread */ \
     X(BridgeError, g_deviceError, (BridgeError{0, {0}}))  /* the device bridge */ \
@@ -202,6 +203,7 @@ inline ThreadLocals& tl() {
 #define g_scopeCount (::fire::tl().g_scopeCount)
 #define g_reflCaller (::fire::tl().g_reflCaller)
 #define g_callTArgs (::fire::tl().g_callTArgs)
+#define g_explicitTArgs (::fire::tl().g_explicitTArgs)
 #define g_zombies (::fire::tl().g_zombies)
 #define g_ioError (::fire::tl().g_ioError)
 #define g_deviceError (::fire::tl().g_deviceError)
@@ -328,7 +330,7 @@ inline int formatReal(Real v, char* out) { return formatFloating<Real>(v, out); 
 /// The base symbols, in the order of the dimension vectors (sorted like the VM prints them). Defined by the generated code.
 extern const char* const g_dimNames[];
 
-struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; double offset; int32_t conv; };
+struct UnitInit { int32_t dims[FIRE_NDIMS]; double scale; const char* display; double offset; int32_t conv; int32_t ulconv; };
 struct UnitDef {
     int32_t dims[FIRE_NDIMS];
     double scale;
@@ -336,6 +338,7 @@ struct UnitDef {
     const char* name;      // Unit.ToString()
     double offset;         // Unit.Offset: value_in_base = value * scale + offset (`unit Celsius: C { coerce K => value + 273.15 }`)
     int32_t conv;          // Unit.Converter: the index of the conversion functions of the unit (g_unitTo/g_unitFrom), -1 for none
+    int32_t ulconv;        // Unit.UnitlessConverter: the index of the functions that make a plain number of a value of the unit (dB), -1 for none
 };
 struct Value;
 /// The conversion functions of the units that have them (the static methods To and From of their hidden classes, generated).
@@ -406,6 +409,7 @@ inline void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* to
         g_ud[i].name = unitBuildName(init[i].dims, init[i].scale, init[i].display);
         g_ud[i].offset = init[i].offset;
         g_ud[i].conv = init[i].conv;
+        g_ud[i].ulconv = init[i].ulconv;
     }
     g_udCount = count;
 }
@@ -414,7 +418,7 @@ inline void unitsInit(const UnitInit* init, uint32_t count, const UnitConvFn* to
 inline uint32_t unitIntern(const int32_t* dims, double scale, const char* display) {
     for (uint32_t i = 0; i < g_udCount; i++) {
         const UnitDef& d = g_ud[i];
-        if (d.scale == scale && d.offset == 0 && d.conv < 0 && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
+        if (d.scale == scale && d.offset == 0 && d.conv < 0 && d.ulconv < 0 && std::memcmp(d.dims, dims, sizeof d.dims) == 0 && ((d.display == nullptr) == (display == nullptr)) && (!display || std::strcmp(d.display, display) == 0)) return i;
     }
     if (g_udCount == g_udCap) {
         g_udCap *= 2;
@@ -428,13 +432,14 @@ inline uint32_t unitIntern(const int32_t* dims, double scale, const char* displa
     d.name = unitBuildName(dims, scale, display);
     d.offset = 0;
     d.conv = -1;
+    d.ulconv = -1;
     return g_udCount++;
 }
 
 inline bool unitCompatible(uint32_t a, uint32_t b) { return a == b || std::memcmp(g_ud[a].dims, g_ud[b].dims, sizeof g_ud[a].dims) == 0; }
 /// Unit.Equals: same dimensions and the scales differ by less than 1e-12.
 inline bool unitEq(uint32_t a, uint32_t b) {
-    return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12 && g_ud[a].offset == g_ud[b].offset && g_ud[a].conv == g_ud[b].conv);
+    return a == b || (unitCompatible(a, b) && std::fabs(g_ud[a].scale - g_ud[b].scale) < 1e-12 && g_ud[a].offset == g_ud[b].offset && g_ud[a].conv == g_ud[b].conv && g_ud[a].ulconv == g_ud[b].ulconv);
 }
 /// Unit.IsLinear: only a factor of its base unit (no offset, no conversion functions).
 inline bool unitLinear(uint32_t u) { return g_ud[u].offset == 0 && g_ud[u].conv < 0; }
@@ -541,6 +546,13 @@ struct Str : Ref {
 };
 
 /// A lambda value: the function, the values it captured when it was created (copies, SPEC 4.2.1) and the `on` target (`this`).
+/// A type argument (`int`, `Dog`, `in cm`) of an object (`new Box<int>()`) or of a call of a generic method: what a declaration with that type
+/// parameter takes (generated once per text, see DeclaredType of the VM).
+/// A number type argument also has its kind and the conversion into its unit (`int`: into no unit, `int : cm`: into cm; null for `int : any`).
+struct TArg { const char* display; bool (*holds)(Value); bool isFloat; uint8_t kind; Value (*adapt)(Value); };
+/// The type arguments of an object or a call, one per type parameter (nullptr: not known); interned, never freed.
+using TArgs = const TArg* const*;
+
 struct alignas(alignof(Value)) Lam : Ref {
     uint32_t nparams;
     uint32_t ncaps;
@@ -548,6 +560,7 @@ struct alignas(alignof(Value)) Lam : Ref {
     Value on;
     Value (*fn)(Value lam, const Value* args);
     Value (*dflt)(Value lam, uint32_t index);   // the default value of parameter `index` (null: the lambda has none)
+    TArgs targs;      // the type arguments of the generic code it was made in that its body uses (nullptr: none)
 #ifdef FIRE_REFLECTION
     const char* const* sel;   // a selector lambda (`c => c.radius`): the member chain (SPEC 8.13), else null
     uint32_t nsel;
@@ -747,8 +760,8 @@ FIRE_COLD inline Value intOpFailed(const char* op, Value a, Value b) {
 struct VPair { Value a, b; };
 
 /// Calls a conversion function of a unit (`To`: into the reference unit, `From`: back); false when it threw (the unwinding flag is set) or gave no number.
-FIRE_COLD inline bool unitCallConv(uint32_t u, bool to, double v, double& out) {
-    Value r = (to ? g_unitTo : g_unitFrom)[g_ud[u].conv](Float((Real)v));
+FIRE_COLD inline bool unitCallConv(uint32_t u, bool to, double v, double& out, bool plain = false) {
+    Value r = (to ? g_unitTo : g_unitFrom)[plain ? g_ud[u].ulconv : g_ud[u].conv](Float((Real)v));
     if (g_unwind.active) return false;
     if (r.kind == K_Int) { out = (double)r.i; return true; }
     if (r.kind == K_Float) { out = (double)r.f; return true; }
@@ -781,6 +794,7 @@ FIRE_COLD inline bool unitConvert(double v, uint32_t from, uint32_t to, double& 
 }
 /// Unit.ToBase: the number in the base unit (`20C` is 293.15) - for `x:unitless`.
 FIRE_COLD inline bool unitToBase(double v, uint32_t u, double& out) {
+    if (g_ud[u].ulconv >= 0) return unitCallConv(u, true, v, out, true);   // a unit that becomes a plain number (dB)
     double x = v;
     if (g_ud[u].conv >= 0 && !unitCallConv(u, true, v, x)) return false;
     out = x * g_ud[u].scale + g_ud[u].offset;
@@ -840,13 +854,57 @@ FIRE_COLD inline Value modUnits(Value a, Value b) {
     }
     return Float(std::fmod(toR(p.a), toR(p.b)), p.a.unit);
 }
+/// A product or quotient whose units cancel but leave a factor (`5cm / 1mm` is 50): like Value.FoldScale of the VM.
+FIRE_COLD inline Value foldScale(Value a, Value b, double scale, bool divide) {
+    scale = unitNiceFactor(scale);
+    if (a.kind == K_Int && b.kind == K_Int) {
+        int64_t x = a.i, y = b.i;
+        if (scale >= 1 && scale == std::floor(scale) && scale < 9.2e18) {
+            uint64_t s = (uint64_t)scale;
+            if (!divide) return Int((int64_t)((uint64_t)x * (uint64_t)y * s));
+            if (FIRE_UNLIKELY(y == 0)) return divideByZero();
+            int64_t xs = (int64_t)((uint64_t)x * s);
+            if (FIRE_UNLIKELY(y == -1)) return Int((int64_t)(0 - (uint64_t)xs));
+            return Int(xs / y);
+        }
+        double inv = unitNiceFactor(1.0 / scale);
+        if (inv >= 1 && inv == std::floor(inv) && inv < 9.2e18) {
+            uint64_t s = (uint64_t)inv;
+            if (!divide) return Int((int64_t)((uint64_t)x * (uint64_t)y) / (int64_t)s);
+            int64_t d = (int64_t)((uint64_t)y * s);
+            if (FIRE_UNLIKELY(d == 0)) return divideByZero();
+            if (FIRE_UNLIKELY(d == -1)) return Int((int64_t)(0 - (uint64_t)x));
+            return Int(x / d);
+        }
+    }
+    Real r = divide ? toR(a) / toR(b) : toR(a) * toR(b);
+    return Float((Real)(r * scale));
+}
+/// A value of a unit that becomes a plain number (dB) in a product or quotient: that number; false when its function threw.
+FIRE_COLD inline bool unitPlain(Value& v) {
+    if (g_ud[v.unit].ulconv < 0) return true;
+    double x;
+    if (!unitCallConv(v.unit, true, v.kind == K_Int ? (double)v.i : (double)v.f, x, true)) return false;
+    v = Float((Real)x);
+    return true;
+}
 FIRE_COLD inline Value mulUnits(Value a, Value b) {
+    if (FIRE_UNLIKELY(g_ud[a.unit].ulconv >= 0 || g_ud[b.unit].ulconv >= 0)) {
+        if (!unitPlain(a) || !unitPlain(b)) return Undef();
+        if (a.unit == 0 && b.unit == 0) return Float(toR(a) * toR(b));
+    }
     uint32_t u = unitMul(a.unit, b.unit);
+    if (FIRE_UNLIKELY(unitIsUnitless(u) && g_ud[u].scale != 1.0)) return foldScale(a, b, g_ud[u].scale, false);
     if (a.kind == K_Int && b.kind == K_Int) return Int((int64_t)((uint64_t)a.i * (uint64_t)b.i), u);
     return Float(toR(a) * toR(b), u);
 }
 FIRE_COLD inline Value divUnits(Value a, Value b) {
+    if (FIRE_UNLIKELY(g_ud[a.unit].ulconv >= 0 || g_ud[b.unit].ulconv >= 0)) {
+        if (!unitPlain(a) || !unitPlain(b)) return Undef();
+        if (a.unit == 0 && b.unit == 0) return Float(toR(a) / toR(b));
+    }
     uint32_t u = unitDiv(a.unit, b.unit);
+    if (FIRE_UNLIKELY(unitIsUnitless(u) && g_ud[u].scale != 1.0)) return foldScale(a, b, g_ud[u].scale, true);
     if (a.kind == K_Int && b.kind == K_Int) {
         if (FIRE_UNLIKELY(b.i == 0)) return divideByZero();
         if (FIRE_UNLIKELY(b.i == -1)) return Int((int64_t)(0 - (uint64_t)a.i), u);
@@ -1142,12 +1200,6 @@ inline bool truthy(Value v) {
 // Differences to the VM: a reference to a destroyed *object* is not detected (the VM keeps destroyed objects readable); a destroyed
 // array or buffer is (see the handles above).
 // ---------------------------------------------------------------------------------------------------------------------
-/// A type argument (`int`, `Dog`, `in cm`) of an object (`new Box<int>()`) or of a call of a generic method: what a declaration with that type
-/// parameter takes (generated once per text, see DeclaredType of the VM).
-struct TArg { const char* display; bool (*holds)(Value); bool isFloat; };
-/// The type arguments of an object or a call, one per type parameter (nullptr: not known); interned, never freed.
-using TArgs = const TArg* const*;
-
 struct alignas(alignof(Value)) Obj : Owned {
     uint32_t cls;      // class id (assigned by the generator)
     uint32_t nfields;
@@ -1404,6 +1456,7 @@ inline Lam* allocLam(uint32_t nparams, uint32_t ncaps, Value (*fn)(Value, const 
     l->on = Undef();
     l->fn = fn;
     l->dflt = nullptr;
+    l->targs = nullptr;
 #ifdef FIRE_REFLECTION
     l->sel = nullptr;
     l->nsel = 0;
@@ -1439,6 +1492,7 @@ inline Value rebindLam(Value lam, Value on, OwnList* list) {
     Lam* l = allocLam(a->nparams, a->ncaps, a->fn, list);
     l->nreq = a->nreq;
     l->dflt = a->dflt;
+    l->targs = a->targs;
 #ifdef FIRE_REFLECTION
     l->sel = a->sel;
     l->nsel = a->nsel;
@@ -1517,6 +1571,14 @@ inline Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat,
     if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   // a float declaration: a whole number becomes one (`float f = 3` holds 3.0)
     if (unitEq(v.unit, unit)) return v;
     if (v.kind == K_Undefined) { if (!dimensionOnly) v.unit = unit; return v; }
+    // a unit that becomes a plain number (dB) stored without a unit, and a plain number stored in such a unit
+    if (!dimensionOnly && ((unitIsUnitless(unit) && g_ud[v.unit].ulconv >= 0) || (unitIsUnitless(v.unit) && g_ud[unit].ulconv >= 0))) {
+        double x, plain = v.kind == K_Int ? (double)v.i : (double)v.f;
+        bool toPlain = unitIsUnitless(unit);
+        if (!unitCallConv(toPlain ? v.unit : unit, toPlain, plain, x, true)) return v;
+        if (v.kind == K_Float) return Float((Real)x, unit);
+        return Int((int64_t)std::nearbyint(x), unit);
+    }
     if (FIRE_UNLIKELY(!unitCompatible(v.unit, unit))) { unitMismatch(v, expectedText); return v; }
     if (dimensionOnly) return v;
     double converted;
@@ -2156,6 +2218,7 @@ struct RfMember {
     uint8_t flags;                    // 1 static, 2 readonly, 4 can read, 8 can write
     const char* unit; const char* declared;
     const char* const* pnames; const char* const* ptypes; uint32_t pcount;
+    Value (*attrs)(OwnList* list);    // the attributes as [[name, values, texts], ...] (generated), nullptr: none
 };
 struct RfClass {
     const char* name; const char* base; uint8_t isActor;
@@ -2309,33 +2372,37 @@ FIRE_COLD inline void guardTArgFailed(Value v, const char* param, const TArg* ta
     guardClassFailed(v, display, what);
 }
 
-/// A declaration with a type parameter: the value fits its type argument (a whole number for a `float` becomes one); false: it does not.
+/// A declaration with a type parameter: the value fits its type argument; a number of its kind (a whole number for a `float`) is converted into its
+/// unit (another dimension: a UnitMismatchException, which leaves the unwinding set); false: it does not fit.
 inline bool fitsTArg(Value& v, const TArg* ta) {
     if (v.kind == K_Undefined || ta->holds(v) || (v.kind == K_Class && !leafAlive(v))) return true;
-    if (ta->isFloat && v.kind == K_Int) { v = Float(static_cast<Real>(v.i), v.unit); return true; }
+    if (ta->kind != 0 && (v.kind == ta->kind || (ta->isFloat && v.kind == K_Int))) {
+        if (ta->adapt) v = ta->adapt(v);
+        else if (v.kind == K_Int && ta->isFloat) v = Float(static_cast<Real>(v.i), v.unit);
+        return true;
+    }
     return false;
 }
 
 /// The type arguments of a `new` or a call that names a type parameter of the running code (`new Box<T>()`): the same list for the same arguments.
-inline TArgs internTArgs(std::initializer_list<const TArg*> items) {
+inline TArgs internTArgsN(const TArg* const* items, uint32_t n) {
     struct Entry { Entry* next; uint32_t n; const TArg* a[1]; };
     static Entry* s_head = nullptr;
-    uint32_t n = static_cast<uint32_t>(items.size());
     for (Entry* e = s_head; e; e = e->next) {
         if (e->n != n) continue;
         uint32_t i = 0;
-        for (const TArg* t : items) { if (e->a[i] != t) break; i++; }
+        while (i < n && e->a[i] == items[i]) i++;
         if (i == n) return e->a;
     }
     Entry* e = static_cast<Entry*>(std::malloc(sizeof(Entry) + (n > 0 ? n - 1 : 0) * sizeof(const TArg*)));
     if (FIRE_UNLIKELY(!e)) allocFailed();
     e->n = n;
-    uint32_t i = 0;
-    for (const TArg* t : items) e->a[i++] = t;
+    for (uint32_t i = 0; i < n; i++) e->a[i] = items[i];
     e->next = s_head;
     s_head = e;
     return e->a;
 }
+inline TArgs internTArgs(std::initializer_list<const TArg*> items) { return internTArgsN(items.begin(), static_cast<uint32_t>(items.size())); }
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Exceptions (SPEC 7): throw, try/catch/finally and resume.
@@ -4297,6 +4364,28 @@ inline Value (*g_terminateFn)(Value) = nullptr;
 inline void registerThreadsCatch(int32_t typeId, Value (*fn)(Value)) { g_threadsCatches.push_back({typeId, fn}); }
 inline void registerTerminateCatch(Value (*fn)(Value)) { g_terminateFn = fn; }
 
+// Host services: native code on a thread of its own (the thread of a window manager, `#import "windows"`) asks the main program to run something at its
+// next safe point - with the GIL and the real globals, like a job. Holds keep the program alive at its end (windows that are still open).
+inline std::atomic<uint32_t> g_hostPending{0};
+inline std::atomic<int32_t> g_hostHolds{0};
+inline std::vector<void (*)()> g_hostServices;   // registered by the main program
+/// From any thread: the main program runs the host services at its next safe point.
+inline void hostRequest() {
+    g_hostPending.store(1, std::memory_order_relaxed);
+    g_attn.fetch_or(ATTN_SECT, std::memory_order_relaxed);
+    notifyEvent();
+}
+/// From any thread: adds (or removes, negative) holds on the end of the program.
+inline void hostHold(int32_t delta) {
+    g_hostHolds.fetch_add(delta, std::memory_order_relaxed);
+    notifyEvent();
+}
+/// The main program: runs the host services if one was asked for.
+inline void hostServe() {
+    if (g_hostPending.exchange(0, std::memory_order_relaxed) == 0) return;
+    for (void (*service)() : g_hostServices) service();
+}
+
 /// The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`).
 inline int drainQueue();
 inline bool g_autoSync = true;
@@ -4312,7 +4401,7 @@ inline void mainPoll() {
         (void)r;
     }
     if (g_pendingExc.empty()) g_attn.fetch_and(~ATTN_MAIN, std::memory_order_relaxed);
-    if (g_autoSync && !g_unwind.active) drainQueue();
+    if (g_autoSync && !g_unwind.active) { drainQueue(); hostServe(); }
 }
 
 FIRE_COLD inline bool pollSlow() {
@@ -4333,7 +4422,7 @@ inline bool pollSignals() {
 /// `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0.
 inline int64_t syncGlobals() {
     int64_t handled = 0;
-    if (!g_isThread) { mainPoll(); handled = drainQueue(); }
+    if (!g_isThread) { mainPoll(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
     gilYield();
     return handled;
 }
@@ -4362,7 +4451,12 @@ inline void mainFinish() {
         clearUnwind();
         g_leaving = 0;
     }
-    blockUntil([] { mainPoll(); drainQueue(); return g_threadsLive == 0 && g_pendingExc.empty() && g_reqs.empty(); }, false);
+    // (open windows of a window manager's thread hold the program, unless it is terminating; their cycles run here meanwhile)
+    blockUntil([] {
+        mainPoll(); drainQueue();
+        if (!g_unwind.active) hostServe();
+        return g_threadsLive == 0 && g_pendingExc.empty() && g_reqs.empty() && (g_hostHolds.load(std::memory_order_relaxed) <= 0 || g_terminate.requested);
+    }, false);
     for (plat::Thread* t : g_threadList) plat::threadJoin(t);
     g_threadList.clear();
     g_leaving = 1;   // the globals are destroyed now: nothing interrupts the destructors

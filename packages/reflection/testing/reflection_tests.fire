@@ -1,0 +1,41 @@
+// The tests of reflection: `forge test packages/reflection/reflection.fireproj`.
+#import "testing"
+
+class Sample {
+    int count = 3
+    int Twice() { return 2 * this.count }
+}
+
+class ReflectionTests {
+    [Test]
+    undefined TypeOfObject() {
+        Testing.Assert.AreEqual("Sample", Type.Of(new Sample()).Name)
+    }
+}
+
+class Tagged {
+    [Info "title", 2]
+    [Range 1..3, {4, -0.5}, false, new List()]
+    undefined Run() { }
+    undefined Plain() { }
+}
+
+class AttributeTests {
+    [Test]
+    undefined NamesAndConstants() {
+        var m = Type.Of("Tagged").Find("Run")
+        Testing.Assert.AreEqual(2, m.Attributes.count)
+        Testing.Assert.IsTrue(m.HasAttribute("Info"))
+        Testing.Assert.IsFalse(m.HasAttribute("Nope"))
+        var info = m.FindAttribute("Info")
+        Testing.Assert.AreEqual("title", info.Args[0])
+        Testing.Assert.AreEqual(2, info.Args[1])
+        var range = m.FindAttribute("Range")
+        Testing.Assert.AreSequenceEqual([1, 2, 3], range.Args[0])
+        Testing.Assert.AreEqual(-0.5, range.Args[1][1])
+        Testing.Assert.AreEqual(false, range.Args[2])
+        Testing.Assert.IsUndefined(range.Args[3])
+        Testing.Assert.AreEqual("new List()", range.ArgTexts[3])
+        Testing.Assert.AreEqual(0, Type.Of("Tagged").Find("Plain").Attributes.count)
+    }
+}

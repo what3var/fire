@@ -1,0 +1,17 @@
+{
+  "biscuit": 1,
+  "timeStep": "250us",
+  "elements": [
+    {"type": "Text", "from": [0, -12], "to": [4, -12], "text": "Zener regulator: the input moves between 7 and 13 V, the load stays near 5.6 V"},
+    {"type": "Source", "name": "V1", "from": [0, 16], "to": [0, 0], "waveform": "triangle", "voltage": "3V", "offset": "10V", "frequency": "10Hz"},
+    {"type": "Resistor", "name": "R1", "from": [0, 0], "to": [16, 0], "resistance": "220"},
+    {"type": "Zener", "name": "D1", "from": [16, 16], "to": [16, 0], "voltage": "5.6V"},
+    {"type": "Wire", "from": [16, 0], "to": [28, 0]},
+    {"type": "Resistor", "name": "RL", "from": [28, 0], "to": [28, 16], "resistance": "1k"},
+    {"type": "Wire", "from": [0, 16], "to": [16, 16]},
+    {"type": "Wire", "from": [16, 16], "to": [28, 16]},
+    {"type": "Ground", "from": [0, 16], "to": [0, 20]},
+    {"type": "Scope", "from": [40, -4], "to": [80, 8], "probe": "V1", "range": "14"},
+    {"type": "Scope", "from": [40, 12], "to": [80, 24], "probe": "RL", "range": "14"}
+  ]
+}

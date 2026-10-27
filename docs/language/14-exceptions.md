@@ -107,6 +107,7 @@ The runtime reports its errors as exceptions of the standard library:
 | `DestroyedException` | using an object, array or buffer that was destroyed |
 | `UnitMismatchException` | units of different dimensions (`5mm + 2kg`) |
 | `OverflowException` | a converted number does not fit into its declared unit |
+| `Assertion` | a check of a test did not hold (`Testing.Assert`, docs/TESTING.md) - thrown by tests, never by the runtime |
 
 All derive from `Exception` and can be caught:
 

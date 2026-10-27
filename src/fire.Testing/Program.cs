@@ -8,12 +8,21 @@ using fire.Resolving;
 using fire.Runtime;
 using fire.Values;
 
-// The standard bridges that run as packages (time, ...): built and installed into a store of their own for this run (the C++ libraries of their natives are built on first use).
+// The standard libraries (time, io, graphics, ...): packed from their projects (Source next to the program, copied from packages/ of the repository) and installed into a store of their
+// own for this run (the C++ libraries of their natives are built on first use).
+// the look of the UI must not depend on the desktop of the machine that runs the tests (SystemTheme: scaling, dark mode, accent, font)
+Environment.SetEnvironmentVariable("FIRE_SYSTEM_THEME", "off");
 var standardRoot = Path.Combine(Path.GetTempPath(), "fire-test-standard-" + Guid.NewGuid().ToString("N"));
-StandardBridgePackages.Build(Path.Combine(standardRoot, "PackageSource"));
 fire.Package.Manager.PackageStore.Default = new fire.Package.Manager.PackageStore(Path.Combine(standardRoot, "Packages"));
-foreach (var problem in fire.Package.Manager.StandardPackages.EnsureInstalled(m => Console.WriteLine(m), Path.Combine(standardRoot, "PackageSource")).Count == 0 ? new[] { "the standard packages were not installed" } : System.Array.Empty<string>())
-    Console.WriteLine(problem);
+var standardInstalled = StandardSources.EnsureInstalled(m => Console.WriteLine(m), prebuiltFolder: null);
+static void CopyTree(string from, string to)
+{
+    Directory.CreateDirectory(to);
+    foreach (var file in Directory.GetFiles(from)) File.Copy(file, Path.Combine(to, Path.GetFileName(file)), true);
+    foreach (var dir in Directory.GetDirectories(from)) CopyTree(dir, Path.Combine(to, Path.GetFileName(dir)));
+}
+if (standardInstalled.Count != fire.Package.Manager.StandardPackages.Bridges.Count)
+    Console.WriteLine($"FEHLER: Standardpakete: nur {standardInstalled.Count} von {fire.Package.Manager.StandardPackages.Bridges.Count} installiert ({string.Join(", ", standardInstalled)})");
 
 // Fonts for the tests: a synthetic TrueType font of about 1 KB (square, round and compound glyphs, a kern table; family "Fire Test"), written as "FireSans.ttf" into a folder that FIRE_FONT_DIRS names.
 // The system lookup of fonts finds it by file name ("firesans"), full name and family name - in the VM and in the native programs (they inherit the variable).
@@ -29,16 +38,24 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
-string IoPreludeSource() => fire.Package.Manager.PackageStore.Default.FindImport("io")!.ReadPrelude()!;
+// the prelude of a standard library (from its installed package)
+string StdPrelude(string import) => fire.Package.Manager.PackageStore.Default.FindImport(import)!.ReadPrelude()!;
+// `io` with `filesystem` (files, directories, paths) and `time` (which filesystem uses for DateTime): their preludes as one source.
+string IoPreludeSource() => string.Join("\n", new[] { "io", "time", "filesystem" }.Select(i => fire.Package.Manager.PackageStore.Default.FindImport(i)!.ReadPrelude()!));
 IDisposable UseIoPackage(NativeRegistry natives, fire.IO.Bridge.IoPolicy? policy, fire.IO.Bridge.IoStdio? stdio)
 {
-    var ioImport = fire.Package.Manager.PackageStore.Default.FindImport("io")!;
-    var (ioNames, ioLibraries) = fire.Compiler.PackageImports.NativesOf(new[] { ioImport.Key });
-    string ioLibrary = fire.Compiler.PackageLibrary.Ensure(ioImport);
-    fire.Runtime.PackageNativeBinding.Register(natives, ioNames, ioLibraries, _ => ioLibrary);
+    var imports = new[] { "io", "time" }.Select(i => fire.Package.Manager.PackageStore.Default.FindImport(i)!).ToList();
+    var (names, libraries) = fire.Compiler.PackageImports.NativesOf(imports.Select(i => i.Key));
+    var paths = imports.ToDictionary(i => fire.Compiler.PackageLibrary.FileNameFor(i), i => fire.Compiler.PackageLibrary.Ensure(i));
+    fire.Runtime.PackageNativeBinding.Register(natives, names, libraries, file => paths.TryGetValue(file, out var path) ? path : null);
     return fire.Runtime.PackageHost.Begin(policy, stdio);
 }
 
@@ -5261,9 +5278,10 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     CheckCompletion("Interface-Mitglieder", "interface I { Foo() }\nclass A : I { Bar() {} }\nI a\na.|", "Foo", "Bar", exact: true);
     CheckCompletion("Prelude-Klasse", "var l = new List()\nl.|", "Add,GetEnumerator", "Speak");
     CheckCompletion("Erweiterung per #import", "#import \"graphics\"\nvar fb = new Framebuffer(1, 2)\nfb.|", "Width,Height,ReadByte");
-    CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "FileStream,MemoryStream,Stream,IStream,FileMode,SeekOrigin,IOException");
-    CheckCompletion("#import io: Stream-Mitglieder", "#import \"io\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
-    CheckCompletion("#import io: IO.FileMode.", "#import \"io\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
+    CheckCompletion("#import io: IO. zeigt Streams und Enums", "#import \"io\"\nIO.|", "MemoryStream,Stream,IStream,SeekOrigin,IOException,TextReader", "FileStream,FileMode,Directory");
+    CheckCompletion("#import filesystem: IO. zeigt dazu Dateien, Verzeichnisse, Pfade", "#import \"filesystem\"\nIO.|", "FileStream,FileMode,File,Directory,Path,SearchOption,MemoryStream,Stream");
+    CheckCompletion("#import io: Stream-Mitglieder", "#import \"filesystem\"\nvar s = new IO.FileStream(\"a.bin\")\ns.|", "ReadBytes,ReadAll,CopyTo,Position,Length,Close,Seek,Name", "ToBuffer,Throw");
+    CheckCompletion("#import io: IO.FileMode.", "#import \"filesystem\"\nvar m = IO.FileMode.|", "Open,Create,CreateNew,OpenOrCreate,Append", exact: true);
     CheckCompletion("nach 'new' nur Klassen (keine Interfaces)", "interface I { Foo() }\nclass A { }\nvar x = new |", "A", "I,var");
     CheckCompletion("bool hat keine Mitglieder", "var b = true\nb.|", "", exact: true);
     CheckCompletion("Variable aus fremder Methode nicht sichtbar -> Fallback", "class A { M() { var q = new B() }\n N() { q.| } }\nclass B { Z() {} }", "Z");
@@ -5485,7 +5503,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.ReadAllLines(f).count)
         IO.File.WriteAllLines(f, lines)
         print(IO.File.Size(f))
-        print(IO.File.ModifiedTime(f) > 1000000000s)
+        print(IO.File.GetLastWriteTime(f).Year >= 2001)
         print(IO.File.ReadAllBytes(f).length)
         IO.File.WriteAllBytes(f, "AB".ToBytes())
         print(IO.File.ReadAllText(f))
@@ -5513,30 +5531,30 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         var d = "{{apiDir}}"
         IO.File.WriteAllLines(IO.Path.Combine(d, "l.txt"), ["eins", "zwei"])
         foreach (line in IO.File.ReadAllLines(IO.Path.Combine(d, "l.txt"))) { print(line) }
-        foreach (name in IO.Directory.GetFiles(d, "l*")) { print(IO.Path.FileName(name)) }
+        foreach (name in IO.Directory.GetFiles(d, "l*")) { print(IO.Path.GetFileName(name)) }
         """, new[] { "eins", "zwei", "l.txt" });
 
     CheckIo("Directory und Path", $$"""
         var d = "{{apiDir}}"
         var sub = IO.Path.Combine(d, "a", "b")
         print(IO.Directory.Exists(sub))
-        IO.Directory.Create(sub)
-        IO.Directory.Create(sub)
+        IO.Directory.CreateDirectory(sub)
+        IO.Directory.CreateDirectory(sub)
         print(IO.Directory.Exists(sub))
         IO.File.WriteAllText(IO.Path.Combine(sub, "x.txt"), "1")
         IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
         IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
         var files = IO.Directory.GetFiles(sub)
-        print(files.count + " " + IO.Path.FileName(files[0]) + " " + IO.Path.FileName(files[1]))
+        print(files.count + " " + IO.Path.GetFileName(files[0]) + " " + IO.Path.GetFileName(files[1]))
         print(IO.Directory.GetFiles(sub, "*.txt").count)
         print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).count)
-        print(IO.Path.FileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
+        print(IO.Path.GetFileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
         try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
         IO.Directory.Delete(IO.Path.Combine(d, "a"), true)
         print(IO.Directory.Exists(IO.Path.Combine(d, "a")))
         var p = "dir/sub/name.tar.gz"
-        print(IO.Path.FileName(p) + " " + IO.Path.Stem(p) + " " + IO.Path.Extension(p) + " " + IO.Path.Parent(p))
-        print(IO.Path.IsRooted(p) + " " + IO.Path.IsRooted(IO.Path.FullPath(p)))
+        print(IO.Path.GetFileName(p) + " " + IO.Path.GetFileNameWithoutExtension(p) + " " + IO.Path.GetExtension(p) + " " + IO.Path.GetDirectoryName(p))
+        print(IO.Path.IsPathRooted(p) + " " + IO.Path.IsPathRooted(IO.Path.GetFullPath(p)))
         print(IO.Path.Combine("a", "/abs") == "/abs" || IO.Path.Combine("a", "/abs") == "/abs")
         try { IO.Directory.GetFiles(IO.Path.Combine(d, "gibtsnicht")) } catch (IO.DirectoryNotFoundException e) { print("kein Verzeichnis " + e.code) }
         """, new[] { "False", "True", "2 x.txt y.log", "1", "2", "b", "nicht leer", "False", "name.tar.gz name.tar .gz dir/sub", "False True", "True", "kein Verzeichnis 4" });
@@ -5547,7 +5565,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.Exists(f))
         try { IO.File.WriteAllText(IO.Path.Combine(d, "w.txt"), "x") } catch (IO.PermissionException e) { print("write " + e.code) }
         try { IO.File.Delete(f) } catch (IO.PermissionException e) { print("delete " + e.code) }
-        try { IO.Directory.Create(IO.Path.Combine(d, "n")) } catch (IO.PermissionException e) { print("mkdir " + e.code) }
+        try { IO.Directory.CreateDirectory(IO.Path.Combine(d, "n")) } catch (IO.PermissionException e) { print("mkdir " + e.code) }
         try { IO.Directory.GetFiles("/") } catch (IO.PermissionException e) { print("list " + e.code) }
         try { IO.File.Copy(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("copy " + e.code) }
         try { IO.File.Move(f, IO.Path.Combine(d, "k.txt")) } catch (IO.PermissionException e) { print("move " + e.code) }
@@ -5560,7 +5578,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("TextWriter und TextReader: Zeilen, UTF-8, EndOfStream", $$"""
         var f = "{{textDir}}/t.txt"
-        var w = new IO.TextWriter(f)
+        var w = IO.File.CreateText(f)
         w.WriteLine("Grüße")
         w.Write("zwei")
         w.Write(" ")
@@ -5570,7 +5588,7 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         w.Write("ohne Ende")
         w.Close()
         print(IO.File.Size(f))
-        var r = new IO.TextReader(f)
+        var r = IO.File.OpenText(f)
         var l = r.ReadLine()
         while (l != undefined) { print("[" + l + "]"); l = r.ReadLine() }
         print(r.EndOfStream)
@@ -5579,14 +5597,14 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("TextReader: foreach, ReadAll, ReadLines, Anhaengen, OpenText", $$"""
         var f = "{{textDir}}/t.txt"
-        foreach (zeile in new IO.TextReader(f)) { print("f:" + zeile) }
-        var a = new IO.TextWriter(f, true)
+        foreach (zeile in IO.File.OpenText(f)) { print("f:" + zeile) }
+        var a = IO.File.AppendText(f)
         a.WriteLine("!")
         a.Close()
         var rd = IO.File.OpenText(f)
         print(rd.ReadAll())
         rd.Close()
-        print(new IO.TextReader(f).ReadLines().count)
+        print(IO.File.OpenText(f).ReadLines().count)
         var cw = IO.File.CreateText(f)
         cw.WriteLine("neu")
         cw.Close()
@@ -5618,13 +5636,13 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
 
     CheckIo("TextReader/TextWriter: destruct() schliesst, Fehler bleiben Exceptions", $$"""
         {
-            var r = new IO.TextReader("{{textDir}}/t.txt")
-            var w = new IO.TextWriter("{{textDir}}/d.txt")
+            var r = IO.File.OpenText("{{textDir}}/t.txt")
+            var w = IO.File.CreateText("{{textDir}}/d.txt")
             print("offen " + __IOOpenCount())
         }
         print("offen " + __IOOpenCount())
-        try { var x = new IO.TextReader("{{textDir}}/gibtsnicht.txt") } catch (IO.FileNotFoundException e) { print("fehlt") }
-        try { var w = new IO.TextWriter("{{textDir}}/x.txt"); w.Close(); w.WriteLine("z") } catch (IO.StreamClosedException e) { print("geschlossen") }
+        try { var x = IO.File.OpenText("{{textDir}}/gibtsnicht.txt") } catch (IO.FileNotFoundException e) { print("fehlt") }
+        try { var w = IO.File.CreateText("{{textDir}}/x.txt"); w.Close(); w.WriteLine("z") } catch (IO.StreamClosedException e) { print("geschlossen") }
         print("offen " + __IOOpenCount())
         """, new[] { "offen 3", "offen 0", "fehlt", "geschlossen", "offen 0" });
 
@@ -6417,6 +6435,33 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         """, new[] { "offen", "1", "verweigert", "feld verweigert", "offen", "1", "verweigert", "feld verweigert" },
         new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
+    // Debug: a field or an array that was given only a reference to an object of a call is reported when the call ends (DanglingWatch)
+    const string danglingScript = """
+        class Item { int n; construct(int n) { this.n = n } }
+        class Shelf {
+            Item slots[] = new Item[2]
+            Item last
+            PutWrong(Item item) { this.slots[0] = item }
+            PutRight(Item item) { this.slots[1] = take item }
+            Remember() { Item local = new Item(7); this.last = local }
+            Fine() { Item tmp[] = new Item[1]; Item a = new Item(1); tmp[0] = a }
+        }
+        Shelf s = new Shelf()
+        s.PutWrong(take new Item(1))
+        s.PutRight(take new Item(2))
+        s.Remember()
+        s.Remember()
+        s.Fine()
+        print(s.slots[1].n)
+        """;
+    CheckPerf("Debug: Warnung, wenn ein Aufruf beim Ende ein Objekt zerstoert, auf das ein Feld oder Array noch zeigt", danglingScript, new[]
+        {
+            "warning (line 5): an Item is destroyed at the end of the call it belonged to, but the array in the field 'slots' of a Shelf still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).",
+            "warning (line 7): an Item is destroyed at the end of the call it belonged to, but the field 'last' of a Shelf still points to it (it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).",
+            "2",
+        }, new[] { VmExecutionMode.Debug });
+    CheckPerf("Release: keine Warnung fuer Referenzen auf zerstoerte Objekte", danglingScript, new[] { "2" }, new[] { VmExecutionMode.Release, VmExecutionMode.Performance });
+
     CheckPerf("Feld mit Einheit: jede Zuweisung wird geprueft (auch nach dem ersten Erfolg)", """
         class M { int len : mm = 0mm; construct() { this.len = 1mm } }
         var m = new M()
@@ -7158,6 +7203,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
             {
                 var lines = RunLife($$"""
                     #import "io"
+                    #import "filesystem"
                     var w = new IO.FileStream("{{leaveFile}}", IO.FileMode.Create)
                     w.Write("Hallo".ToBytes())
                     var Work = func () => {
@@ -8019,6 +8065,36 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         fire.Terminal.Blitter.Blit(d6, src, 0, 0, 4, 4, 0, 0, 4, -4);
         GfxCheck(d6.GetPixel(0, 0).Packed == src.GetPixel(0, 3).Packed && d6.GetPixel(3, 3).Packed == src.GetPixel(3, 0).Packed, "Blit: negative Zielhoehe spiegelt senkrecht");
 
+        // the fast path (RGBA, 1:1, not mirrored) gives exactly what the general path gives: compared with a mirrored blit of a mirrored source,
+        // for copy, transparent and blend, sections partly outside the source and the target, and clip rectangles
+        {
+            var rnd = new Random(7);
+            var bs = new fire.Terminal.Framebuffer(7, 5);
+            var bm = new fire.Terminal.Framebuffer(7, 5);
+            for (int y = 0; y < 5; y++)
+                for (int x = 0; x < 7; x++)
+                {
+                    byte al = (x + y) % 4 == 0 ? (byte)0 : (x + y) % 4 == 1 ? (byte)128 : (byte)255;
+                    var c = new fire.Terminal.PixelColor((byte)rnd.Next(256), (byte)rnd.Next(256), (byte)rnd.Next(256), al);
+                    bs.SetPixel(x, y, c);
+                    bm.SetPixel(6 - x, y, c);
+                }
+            bool same = true;
+            string where = "";
+            foreach (var mode in new[] { fire.Terminal.BlitMode.Copy, fire.Terminal.BlitMode.Transparent, fire.Terminal.BlitMode.Blend })
+                foreach (var (sx, sy, sw, sh, dx, dy) in new[] { (0, 0, 7, 5, 2, 1), (1, 1, 4, 3, -2, 3), (-2, -1, 6, 4, 5, -1), (3, 2, 9, 9, 6, 7), (0, 0, 7, 5, -10, 0) })
+                    foreach (var (cl, ct, cr, cb) in new[] { (0, 0, int.MaxValue, int.MaxValue), (2, 1, 7, 6) })
+                    {
+                        var ba = new fire.Terminal.Framebuffer(10, 9);
+                        var bb = new fire.Terminal.Framebuffer(10, 9);
+                        for (int i = 0; i < ba.Pixels.Length; i++) ba.Pixels[i] = bb.Pixels[i] = (uint)(i * 2654435761u) | 0xFF000000u;
+                        fire.Terminal.Blitter.Blit(ba, bs, sx, sy, sw, sh, dx, dy, sw, sh, mode, -1, true, cl, ct, cr, cb);
+                        fire.Terminal.Blitter.Blit(bb, bm, 7 - sx - sw, sy, sw, sh, dx, dy, -sw, sh, mode, -1, true, cl, ct, cr, cb);
+                        if (!ba.Pixels.AsSpan().SequenceEqual(bb.Pixels)) { same = false; where = $"{mode} ({sx},{sy},{sw},{sh}) -> ({dx},{dy}) clip {cl},{ct},{cr},{cb}"; }
+                    }
+            GfxCheck(same, "Blit: der schnelle Weg (RGBA 1:1) gleicht dem allgemeinen (Kopie, transparent, Blend, Ränder, Clip) " + where);
+        }
+
         // Clipping: target partly outside, source outside, empty sizes
         var d7 = new fire.Terminal.Framebuffer(10, 10);
         fire.Terminal.Blitter.Blit(d7, src, -2, -2);
@@ -8609,7 +8685,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     List<string> RunGf(string script, VmExecutionMode mode, Func<string, byte[]>? reader = null)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, StdPrelude("graphics"), StdPrelude("windows"), script };
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase))).ToList());
         var natives = new NativeRegistry();
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
@@ -9121,34 +9197,34 @@ string uiDrawScript = """
     lay.SetRows("24, *")
     lay.AddAt(new UI.Button("grid", 0, 0, -1, -1), 0, 0)
     var bd = new UI.Border()
-    bd.padding = new UI.Thickness(2)
+    bd.Padding = new UI.Thickness(2)
     bd.SetChild(new UI.Label("border"))
     lay.AddAt(bd, 0, 1)
     lay.AddAt(new UI.Label("auto"), 0, 2)
     var wr = new UI.WrapPanel()
-    for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.margin = new UI.Thickness(2); wr.Add(wb) }
+    for (var i = 0; i < 6; i++) { var wb = new UI.Button("w" + i, 0, 0, 44, 18); wb.Margin = new UI.Thickness(2); wr.Add(wb) }
     lay.AddAt(wr, 1, 0, 1, 3)
     ui.Add(lay)
     // styles and templates: an implicit style for labels, a button whose look is a template with a part bound to its text and a hover trigger
     var sty = new UI.Style("Label")
-    sty.Set("brush", new SolidBrush(UI.Color.Rgb(0, 0, 200)))
+    sty.Set("Color", new SolidBrush(UI.Color.Rgb(0, 0, 200)))
     ui.resources.AddStyle(sty)
     var tpl = new UI.ControlTemplate(func (owner) => {
         var tb = new UI.Border()
-        tb.name = "tb"
-        tb.background = new SolidBrush(UI.Color.Rgb(40, 160, 80))
-        tb.padding = new UI.Thickness(2)
+        tb.Name = "tb"
+        tb.Background = new SolidBrush(UI.Color.Rgb(40, 160, 80))
+        tb.Padding = new UI.Thickness(2)
         var tl = new UI.Label("")
-        tl.name = "tl"
+        tl.Name = "tl"
         tb.SetChild(tl)
         return tb
     })
-    tpl.Bind("tl", "text", "text")
-    var tt = new UI.Trigger("hover", true)
-    tt.Set("background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
+    tpl.Bind("tl", "Text", "Text")
+    var tt = new UI.Trigger("Hover", true)
+    tt.Set("Background", new SolidBrush(UI.Color.Rgb(200, 60, 60)), "tb")
     tpl.AddTrigger(tt)
     var tbtn = new UI.Button("tpl", 200, 100, -1, -1)
-    tbtn.template = tpl
+    tbtn.Template = tpl
     panel.Add(tbtn)
     // scrolling with the clip rectangle, lists, a tree, radio buttons, shapes, a drawing canvas and a menu with its popup
     var sv = new UI.ScrollViewer(330, 8, 120, 90)
@@ -9165,7 +9241,7 @@ string uiDrawScript = """
     top.Add(new UI.TreeNode("child a"))
     var cb = top.Add(new UI.TreeNode("child b"))
     cb.Add(new UI.TreeNode("leaf"))
-    top.expanded = true
+    top.Expanded = true
     ui.Add(tv)
     var rbs = new UI.RadioButtons(460, 108)
     rbs.Add("one")
@@ -9174,11 +9250,11 @@ string uiDrawScript = """
     ui.Add(rbs)
     var shp = new UI.Path(undefined, 570, 8)
     shp.SetData("M 0 0 L 50 0 C 60 20 60 40 25 50 Z")
-    shp.fill = new SolidBrush(UI.Color.Rgb(200, 120, 40))
-    shp.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+    shp.Fill = new SolidBrush(UI.Color.Rgb(200, 120, 40))
+    shp.Stroke = new Pen(UI.Color.Rgb(0, 0, 0))
     ui.Add(shp)
     var dcv = new UI.DrawingCanvas(570, 70, 60, 40)
-    dcv.onPaint = func (c) => {
+    dcv.OnPaint = func (c) => {
         c.renderer.FillRect(0, 0, 60, 40, new SolidBrush(UI.Color.Rgb(30, 30, 90)))
         c.renderer.DrawLine(0, 0, 59, 39, new Pen(UI.Color.Rgb(255, 255, 255)))
     }
@@ -9192,14 +9268,14 @@ string uiDrawScript = """
     ui.Add(mbar)
     // fonts: a TrueType font found on the system (the folder FIRE_FONT_DIRS), a built-in bitmap font, the font and size passed on to the elements inside, a text field that scrolls
     var fnp = new UI.Panel(330, 236, 300, 62)
-    fnp.font = "firesans"
-    fnp.fontSize = 16
+    fnp.Font = "firesans"
+    fnp.FontSize = 16
     fnp.Add(new UI.Label("AVAVHO iAi.", 4, 4))
     var fl2 = new UI.Label("Small", 130, 4)
-    fl2.font = "8x8"
+    fl2.Font = "8x8"
     fnp.Add(fl2)
     var fbt = new UI.Button("HOAV", 4, 28, -1, -1)
-    fbt.fontSize = 12
+    fbt.FontSize = 12
     fnp.Add(fbt)
     fnp.Add(new UI.TextBox("AVA HO iii AVAV", 80, 30, 90, 24))
     ui.Add(fnp)
@@ -9231,7 +9307,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     List<string> RunUi(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, fire.Standard.ReflectionPrelude.Source, fire.UI.Bridge.UiBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, StdPrelude("graphics"), StdPrelude("windows"), StdPrelude("reflection"), StdPrelude("ui"), script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -9368,7 +9444,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print(win.TouchMouse)
         var clicks = 0
         var b = new UI.Button("OK", 10, 10, 80, 26)
-        b.onClick = func () => { clicks = clicks + 1 }
+        b.OnClick = func () => { clicks = clicks + 1 }
         ui.Add(b)
         ui.Draw()
         __TestEvent(16, 1, 20.0, 20.0)
@@ -9379,7 +9455,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         __TestEvent(17, 1, 40.0, 22.0)
         __TestEvent(18, 1, 200.0, 150.0)
         ui.Tick()
-        print("daneben " + clicks + " hover " + b.hover + " pressed " + b.pressed)
+        print("daneben " + clicks + " hover " + b.Hover + " pressed " + b.Pressed)
         __TestEvent(16, 1, 20.0, 20.0)
         __TestEvent(16, 2, 200.0, 150.0)
         __TestEvent(18, 2, 200.0, 150.0)
@@ -9395,7 +9471,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         var col = new UI.StackPanel()
         for (var i = 0; i < 8; i = i + 1) {
             var bt = new UI.Button("b" + i, 0, 0, 60, 30)
-            bt.onClick = inc
+            bt.OnClick = inc
             col.Add(bt)
         }
         sv.SetContent(col)
@@ -9429,8 +9505,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         var b = new UI.Button("B", 90, 10, 60, 24)
         var c = new UI.Button("C", 10, 50, 60, 24)
         var d = new UI.Button("D", 90, 50, 60, 24)
-        a.onClick = func () => { log = log + "A" }
-        d.onClick = func () => { log = log + "D" }
+        a.OnClick = func () => { log = log + "A" }
+        d.OnClick = func () => { log = log + "D" }
         ui.Add(a)
         ui.Add(b)
         ui.Add(c)
@@ -9438,39 +9514,39 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         __TestEvent(35, 1, 0, 2)
         ui.Tick()
-        print("erstes " + a.focused)
+        print("erstes " + a.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 2)
         ui.Tick()
-        print("rechts " + b.focused)
+        print("rechts " + b.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 4)
         ui.Tick()
-        print("runter " + d.focused)
+        print("runter " + d.Focused)
         __TestEvent(33, 1, 0)
         ui.Tick()
         print("Knopf 0 " + log)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 8)
         ui.Tick()
-        print("links " + c.focused)
+        print("links " + c.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(35, 1, 0, 1)
         ui.Tick()
-        print("hoch " + a.focused)
+        print("hoch " + a.Focused)
         __TestEvent(35, 1, 0, 0)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("Taste runter " + c.focused)
+        print("Taste runter " + c.Focused)
         __TestEvent(24, 1073741903, 0)
         ui.Tick()
-        print("Taste rechts " + d.focused)
+        print("Taste rechts " + d.Focused)
         __TestEvent(33, 1, 5)
         ui.Tick()
-        print("Knopf 5 (Tab) " + a.focused)
+        print("Knopf 5 (Tab) " + a.Focused)
         __TestEvent(33, 1, 4)
         ui.Tick()
-        print("Knopf 4 (Umschalt-Tab) " + d.focused)
+        print("Knopf 4 (Umschalt-Tab) " + d.Focused)
         """, new[] { "erstes True", "rechts True", "runter True", "Knopf 0 D", "links True", "hoch True", "Taste runter True", "Taste rechts True", "Knopf 5 (Tab) True", "Knopf 4 (Umschalt-Tab) True" });
 
     CheckUi("Joystick: der Stick wiederholt eine gehaltene Richtung; Totzone und Loslassen", uiHead + """
@@ -9489,21 +9565,21 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.joyRepeatInterval = 1
         __TestEvent(32, 1, 1, 0.4)
         ui.Tick()
-        print("Totzone " + e1.focused + " " + e2.focused)
+        print("Totzone " + e1.Focused + " " + e2.Focused)
         __TestEvent(32, 1, 1, 0.9)
         ui.Tick()
-        print("ausgeschlagen " + e1.focused)
+        print("ausgeschlagen " + e1.Focused)
         ui.Tick()
-        print("wiederholt " + e2.focused)
+        print("wiederholt " + e2.Focused)
         ui.Tick()
         ui.Tick()
-        print("am Ende " + e4.focused)
+        print("am Ende " + e4.Focused)
         __TestEvent(32, 1, 1, 0.0)
         ui.Tick()
         __TestEvent(32, 1, 0, -0.9)
         ui.Tick()
         ui.Tick()
-        print("Achse 0 links, kein Kandidat: " + e4.focused)
+        print("Achse 0 links, kein Kandidat: " + e4.Focused)
         """, new[] { "Totzone False False", "ausgeschlagen True", "wiederholt True", "am Ende True", "Achse 0 links, kein Kandidat: True" });
 
     CheckUi("Pfeiltasten: Textfeld behaelt Links/Rechts, eine Liste gibt die Taste am Rand frei, ein Element im ScrollViewer wird sichtbar", uiHead + """
@@ -9520,26 +9596,26 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.SetFocus(tb)
         __TestEvent(24, 1073741904, 0)
         ui.Tick()
-        print("Links " + tb.caret + " " + tb.focused)
+        print("Links " + tb.caret + " " + tb.Focused)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("Runter " + btn.focused)
+        print("Runter " + btn.Focused)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("Liste " + lb.focused)
+        print("Liste " + lb.Focused)
         __TestEvent(24, 1073741905, 0)
         __TestEvent(24, 1073741905, 0)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("gewaehlt " + lb.selectedIndex)
+        print("gewaehlt " + lb.SelectedIndex)
         __TestEvent(24, 1073741905, 0)
         ui.Tick()
-        print("am Ende bleibt " + lb.focused + " " + lb.selectedIndex)
+        print("am Ende bleibt " + lb.Focused + " " + lb.SelectedIndex)
         __TestEvent(24, 1073741906, 0)
         __TestEvent(24, 1073741906, 0)
         __TestEvent(24, 1073741906, 0)
         ui.Tick()
-        print("oben raus " + btn.focused + " " + lb.selectedIndex)
+        print("oben raus " + btn.Focused + " " + lb.SelectedIndex)
         var sv = new UI.ScrollViewer(200, 0, 100, 60)
         var col = new UI.StackPanel()
         var last = undefined
@@ -9630,13 +9706,13 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Add(b)
         __TestEvent(9, 20.0, 20.0)
         ui.Tick()
-        print("hover " + b.hover)
+        print("hover " + b.Hover)
         __TestEvent(8, 1, 20.0, 20.0)
         ui.Tick()
-        print("pressed " + b.pressed)
+        print("pressed " + b.Pressed)
         __TestEvent(11, 1, 20.0, 20.0)
         ui.Tick()
-        print("pressed " + b.pressed)
+        print("pressed " + b.Pressed)
         print("geklickt " + b.TakeClicked())
         print("nochmal " + b.TakeClicked())
         """, new[] { "hover True", "pressed True", "pressed False", "geklickt True", "nochmal False" });
@@ -9653,7 +9729,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Button: onClick-Lambda sieht die echten globalen Variablen", uiHead + """
         var clicks = 0
         var b = new UI.Button("OK", 10, 10, 80, 26)
-        b.onClick = func () => { clicks = clicks + 1 }
+        b.OnClick = func () => { clicks = clicks + 1 }
         ui.Add(b)
         __TestEvent(8, 1, 20.0, 20.0)
         __TestEvent(11, 1, 20.0, 20.0)
@@ -9691,10 +9767,10 @@ string[] uiDrawExpected = Array.Empty<string>();
         __TestEvent(8, 1, 15.0, 15.0)
         __TestEvent(11, 1, 15.0, 15.0)
         ui.Tick()
-        print("an " + c.isChecked + " " + c.TakeChanged())
+        print("an " + c.IsChecked + " " + c.TakeChanged())
         __TestEvent(24, 32, 0)
         ui.Tick()
-        print("aus " + c.isChecked)
+        print("aus " + c.IsChecked)
         """, new[] { "an True True", "aus False" });
 
     CheckUi("TextBox: Fokus per Klick, Eingabe, Rueck-/Entf-Taste, Pfeile, Enter", uiHead + """
@@ -9703,23 +9779,23 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         __TestEvent(3, "Hallo")
         ui.Tick()
-        print("ohne Fokus '" + t.text + "'")
+        print("ohne Fokus '" + t.Text + "'")
         __TestEvent(8, 1, 20.0, 20.0)
         __TestEvent(11, 1, 20.0, 20.0)
         __TestEvent(3, "Hallo")
         ui.Tick()
-        print("eingegeben '" + t.text + "' caret " + t.caret)
+        print("eingegeben '" + t.Text + "' caret " + t.caret)
         __TestEvent(24, 8, 0)
         ui.Tick()
-        print("rueck '" + t.text + "'")
+        print("rueck '" + t.Text + "'")
         __TestEvent(24, 1073741904, 0)
         __TestEvent(24, 1073741904, 0)
         __TestEvent(3, "X")
         ui.Tick()
-        print("links+X '" + t.text + "' caret " + t.caret)
+        print("links+X '" + t.Text + "' caret " + t.caret)
         __TestEvent(24, 127, 0)
         ui.Tick()
-        print("entf '" + t.text + "'")
+        print("entf '" + t.Text + "'")
         __TestEvent(24, 1073741898, 0)
         ui.Tick()
         print("pos1 " + t.caret)
@@ -9733,7 +9809,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("TextBox: Klick setzt die Einfuegemarke, maxLength, scrollt bei langem Text", uiHead + """
         var t = new UI.TextBox("abcdef", 10, 10, 160, 24)
-        t.maxLength = 8
+        t.MaxLength = 8
         ui.Add(t)
         ui.Draw()
         __TestEvent(8, 1, 10.0 + 4.0 + 8.0 * 2.0 + 1.0, 20.0)
@@ -9742,7 +9818,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("caret " + t.caret)
         __TestEvent(3, "123456")
         ui.Tick()
-        print("max '" + t.text + "'")
+        print("max '" + t.Text + "'")
         t.SetText("0123456789012345678901234567890123456789")
         ui.Draw()
         print("scroll " + (t.scroll > 0) + " caret " + t.caret)
@@ -9753,24 +9829,24 @@ string[] uiDrawExpected = Array.Empty<string>();
         var b = new UI.Button("B", 10, 50)
         var c = new UI.TextBox("", 10, 90)
         var d = new UI.Button("D", 10, 130)
-        b.enabled = false
-        d.visible = false
+        b.Enabled = false
+        d.Visible = false
         ui.Add(a)
         ui.Add(b)
         ui.Add(c)
         ui.Add(d)
         __TestEvent(24, 9, 0)
         ui.Tick()
-        print("1: " + a.focused + " " + c.focused)
+        print("1: " + a.Focused + " " + c.Focused)
         __TestEvent(24, 9, 0)
         ui.Tick()
-        print("2: " + a.focused + " " + c.focused)
+        print("2: " + a.Focused + " " + c.Focused)
         __TestEvent(24, 9, 0)
         ui.Tick()
-        print("3: " + a.focused + " " + c.focused)
+        print("3: " + a.Focused + " " + c.Focused)
         __TestEvent(24, 9, 1)
         ui.Tick()
-        print("zurueck: " + a.focused + " " + c.focused)
+        print("zurueck: " + a.Focused + " " + c.Focused)
         """, new[] { "1: True False", "2: False True", "3: True False", "zurueck: False True" });
 
     CheckUi("Stack ordnet an; Panel verschachtelt Koordinaten; deaktiviert bekommt keine Klicks", uiHead + """
@@ -9788,7 +9864,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         __TestEvent(11, 1, 120.0, 44.0)
         ui.Tick()
         print("b1 " + b1.TakeClicked() + " b2 " + b2.TakeClicked())
-        b2.enabled = false
+        b2.Enabled = false
         __TestEvent(8, 1, 120.0, 65.0)
         __TestEvent(11, 1, 120.0, 65.0)
         ui.Tick()
@@ -9807,7 +9883,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         Helper.Build(ui)
         ui.Draw()
         var first = ui.content.children[0]
-        print(first.text + " " + first.ax)
+        print(first.Text + " " + first.ax)
         print(ui.content.children[1].actualWidth)
         """, new[] { "Lokal 10", "32" });
 
@@ -9825,7 +9901,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("label " + la.rx + "," + la.ry + " " + la.actualWidth + "x" + la.actualHeight)
         print("btn1 " + ba.rx + "," + ba.ry + " " + ba.actualWidth + "x" + ba.actualHeight)
         print("btn2 " + bb.rx + "," + bb.ry + " abs " + bb.ax + "," + bb.ay)
-        ba.visible = false
+        ba.Visible = false
         ui.Draw()
         print("ohne btn1: btn2 " + bb.rx + "," + bb.ry)
         """, new[] { "label 2,2 196x14", "btn1 2,21 100x20", "btn2 2,46 abs 12,56", "ohne btn1: btn2 2,21" });
@@ -9833,16 +9909,16 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Schrift: font und fontSize des Elements, vom umgebenden Element geerbt, sonst die der Theme; Textfeld mit Proportionalschrift (Caret, Scrollen)", uiHead + """
         var plain = new UI.Label("AVA")
         var big = new UI.Label("AVA")
-        big.font = "firesans"
-        big.fontSize = 20
+        big.Font = "firesans"
+        big.FontSize = 20
         var sp = new UI.StackPanel(0, 40, 300, 150)
-        sp.font = "firesans"
-        sp.fontSize = 10
+        sp.Font = "firesans"
+        sp.FontSize = 10
         var inh = new UI.Label("AVA")
         var own = new UI.Label("AVA")
-        own.fontSize = 20
+        own.FontSize = 20
         var bit = new UI.Label("AVA")
-        bit.font = "8x8"
+        bit.Font = "8x8"
         var btn = new UI.Button("AVA", 0, 0, -1, -1)
         sp.Add(inh)
         sp.Add(own)
@@ -9864,8 +9940,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.theme.font = ""
         ui.Draw()
         var tb = new UI.TextBox("AVA", 0, 100, 100, 24)
-        tb.font = "firesans"
-        tb.fontSize = 20
+        tb.Font = "firesans"
+        tb.FontSize = 20
         ui.Add(tb)
         ui.Draw()
         tb.MouseDown(ui, 1, tb.ax + 4 + 20, tb.ay + 5)
@@ -9880,8 +9956,8 @@ string[] uiDrawExpected = Array.Empty<string>();
         tb.caret = 0
         ui.Draw()
         print("scroll " + tb.scroll)
-        tb.font = ""
-        tb.fontSize = 0
+        tb.Font = ""
+        tb.FontSize = 0
         ui.Draw()
         print("plain box scroll " + tb.scroll)
         """, new[] { "plain 24x14", "big 37x22", "inh 19x11", "own 37x22", "bit 24x8", "btn 43x23", "plain after theme 24x8", "caret 2", "caret 1", "caret 3", "scroll 5 caret 12", "scroll 0", "plain box scroll 0" });
@@ -9889,18 +9965,18 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Layout: Ausrichtung, Rand, Mindest- und Hoechstgroesse", uiHead + """
         var sp2 = new UI.StackPanel(0, 0, 200, 100)
         var c = new UI.Button("c", 0, 0, 60, 20)
-        c.halign = UI.HAlign.Center
+        c.HorizontalAlign = UI.HAlign.Center
         var r = new UI.Button("r", 0, 0, 60, 20)
-        r.halign = UI.HAlign.Right
-        r.margin = new UI.Thickness(5)
+        r.HorizontalAlign = UI.HAlign.Right
+        r.Margin = new UI.Thickness(5)
         sp2.Add(c)
         sp2.Add(r)
         ui.Add(sp2)
         var sp3 = new UI.StackPanel(0, 100, 300, 100)
         var m1 = new UI.Button("m", 0, 0, 10, 10)
-        m1.minWidth = 30
+        m1.MinWidth = 30
         var m2 = new UI.Button("m", 0, 0, 100, 10)
-        m2.maxWidth = 40
+        m2.MaxWidth = 40
         sp3.Add(m1)
         sp3.Add(m2)
         ui.Add(sp3)
@@ -9927,7 +10003,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         for (var i = 0; i < 7; i = i + 1) { var it = new UI.Button("w", 0, 0, 30, 10); w.Add(it) }
         ui.Add(w)
         var bo = new UI.Border(150, 100, 100, 60)
-        bo.padding = new UI.Thickness(3)
+        bo.Padding = new UI.Thickness(3)
         var inner = new UI.Label("in")
         bo.SetChild(inner)
         ui.Add(bo)
@@ -9961,12 +10037,12 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Styles: impliziter Style (Setter, Trigger mit Zurueckstellen, basedOn), expliziter Style, Gueltigkeitsbereich", uiHead + """
         var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
         var baseStyle = new UI.Style("Button")
-        baseStyle.Set("margin", new UI.Thickness(3))
+        baseStyle.Set("Margin", new UI.Thickness(3))
         var st = new UI.Style("Button")
         st.basedOn = baseStyle
-        st.Set("background", red)
-        var tr = new UI.Trigger("hover", true)
-        tr.Set("width", 150)
+        st.Set("Background", red)
+        var tr = new UI.Trigger("Hover", true)
+        tr.Set("Width", 150)
         st.AddTrigger(tr)
         ui.resources.AddStyle(st)
         var sp = new UI.StackPanel(0, 0, 300, 200)
@@ -9974,92 +10050,92 @@ string[] uiDrawExpected = Array.Empty<string>();
         sp.Add(b1)
         ui.Add(sp)
         ui.Draw()
-        print("b1 " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth + " " + b1.rx + "," + b1.ry)
-        b1.hover = true
+        print("b1 " + b1.Margin.left + " " + (b1.Background == red) + " " + b1.actualWidth + " " + b1.rx + "," + b1.ry)
+        b1.Hover = true
         ui.Draw()
         print("hover " + b1.actualWidth)
-        b1.hover = false
+        b1.Hover = false
         ui.Draw()
         print("zurueck " + b1.actualWidth)
         // a style in the panel only applies below it and before that of the root
         var inner = new UI.StackPanel(0, 100, 300, 100)
         var local = new UI.Style("Button")
-        local.Set("margin", new UI.Thickness(7))
+        local.Set("Margin", new UI.Thickness(7))
         inner.Resources().AddStyle(local)
         var b2 = new UI.Button("two", 0, 0, 100, 20)
         inner.Add(b2)
         ui.Add(inner)
         ui.Draw()
-        print("inner " + b2.margin.left + " " + (b2.background == red) + " " + b2.ry)
+        print("inner " + b2.Margin.left + " " + (b2.Background == red) + " " + b2.ry)
         var s2 = new UI.Style()
-        s2.Set("margin", new UI.Thickness(9))
+        s2.Set("Margin", new UI.Thickness(9))
         s2.Set("nichtda", 1)
-        b1.style = s2
+        b1.Style = s2
         ui.Draw()
-        print("explizit " + b1.margin.left + " " + (b1.background == red) + " " + b1.actualWidth)
+        print("explizit " + b1.Margin.left + " " + (b1.Background == red) + " " + b1.actualWidth)
         """, new[] { "b1 3 True 100 3,3", "hover 150", "zurueck 100", "inner 7 False 7", "explizit 9 True 100" });
 
     CheckUi("Vorlagen: ControlTemplate (Teile, Bindung ans Element, Trigger auf einen Teil), Bindung zwischen Elementen, Ressourcen", uiHead + """
         var red = new SolidBrush(UI.Color.Rgb(255, 0, 0))
         var tpl = new UI.ControlTemplate(func (owner) => {
             var bd = new UI.Border()
-            bd.name = "bd"
-            bd.background = new SolidBrush(UI.Color.Rgb(0, 255, 0))
-            bd.padding = new UI.Thickness(4)
+            bd.Name = "bd"
+            bd.Background = new SolidBrush(UI.Color.Rgb(0, 255, 0))
+            bd.Padding = new UI.Thickness(4)
             var t = new UI.Label("")
-            t.name = "txt"
+            t.Name = "txt"
             bd.SetChild(t)
             return bd
         })
-        tpl.Bind("txt", "text", "text")
-        var tr = new UI.Trigger("pressed", true)
-        tr.Set("background", red, "bd")
+        tpl.Bind("txt", "Text", "Text")
+        var tr = new UI.Trigger("Pressed", true)
+        tr.Set("Background", red, "bd")
         tpl.AddTrigger(tr)
         var sp = new UI.StackPanel(0, 0, 300, 200)
         var b = new UI.Button("hello", 0, 0, -1, -1)
-        b.halign = UI.HAlign.Left
-        b.template = tpl
+        b.HorizontalAlign = UI.HAlign.Left
+        b.Template = tpl
         sp.Add(b)
         ui.Add(sp)
         ui.Draw()
         print("groesse " + b.actualWidth + "x" + b.actualHeight)
         var part = b.FindPart("bd")
-        var green = part.background
-        print("teil " + (part != undefined) + " " + (part.background != red) + " " + b.FindPart("txt").text)
-        b.pressed = true
+        var green = part.Background
+        print("teil " + (part != undefined) + " " + (part.Background != red) + " " + b.FindPart("txt").Text)
+        b.Pressed = true
         ui.Draw()
-        print("gedrueckt " + (part.background == red))
-        b.pressed = false
+        print("gedrueckt " + (part.Background == red))
+        b.Pressed = false
         ui.Draw()
-        print("losgelassen " + (part.background == green))
-        b.text = "hi"
+        print("losgelassen " + (part.Background == green))
+        b.Text = "hi"
         ui.Draw()
-        print("text " + b.FindPart("txt").text + " " + b.actualWidth)
+        print("text " + b.FindPart("txt").Text + " " + b.actualWidth)
         var tb = new UI.TextBox("abc")
         var l2 = new UI.Label("")
         var l3 = new UI.TextBox("")
         sp.Add(tb)
         sp.Add(l2)
         sp.Add(l3)
-        l2.Bind("text", tb, "text")
-        l3.Bind("text", tb, "text", true)
+        l2.Bind("Text", tb, "Text")
+        l3.Bind("Text", tb, "Text", true)
         ui.Draw()
-        print("bindung " + l2.text + " " + l3.text)
-        tb.text = "xyz"
+        print("bindung " + l2.Text + " " + l3.Text)
+        tb.Text = "xyz"
         ui.Draw()
-        print("quelle " + l2.text + " " + l3.text)
-        l3.text = "zurueck"
+        print("quelle " + l2.Text + " " + l3.Text)
+        l3.Text = "zurueck"
         ui.Draw()
         ui.Draw()
-        print("ziel " + tb.text + " " + l2.text)
+        print("ziel " + tb.Text + " " + l2.Text)
         var tplStyle = new UI.Style("CheckBox")
-        tplStyle.Set("template", tpl)
+        tplStyle.Set("Template", tpl)
         ui.resources.AddStyle(tplStyle)
         var cb = new UI.CheckBox("kaestchen")
-        cb.halign = UI.HAlign.Left
+        cb.HorizontalAlign = UI.HAlign.Left
         sp.Add(cb)
         ui.Draw()
-        print("stilvorlage " + cb.FindPart("txt").text + " " + cb.actualWidth)
+        print("stilvorlage " + cb.FindPart("txt").Text + " " + cb.actualWidth)
         sp.Resources().Set("akzent", 42)
         ui.resources.Set("rot", red)
         print("ressource " + b.FindResource("akzent") + " " + b.FindResource("fehlt") + " " + (b.FindResource("rot") == red))
@@ -10067,7 +10143,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("ScrollViewer: Leisten, Ausschnitt, Mausrad, Ziehen am Griff, Umbrechen ohne waagerechte Leiste", uiHead + """
         var sv = new UI.ScrollViewer(0, 0, 100, 80)
-        sv.hmode = UI.ScrollMode.Auto
+        sv.HorizontalScrollMode = UI.ScrollMode.Auto
         var big = new UI.Canvas(0, 0, 300, 200)
         big.Add(new UI.Button("x", 280, 180, 20, 20))
         sv.SetContent(big)
@@ -10110,6 +10186,32 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("umbrechen " + sv3.showV + " " + sv3.showH + " " + wp.actualWidth + "x" + wp.actualHeight + " Ausschnitt " + sv3.viewW)
         """, new[] { "beide Leisten True True Ausschnitt 88x68 Inhalt 300x200", "ganz unten rechts 212,132 Kind bei -212,-132", "Rad nach oben 90", "Rad nach unten 132", "Rad seitlich 212", "gezogen 132", "klein False False", "umbrechen True False 88x120 Ausschnitt 88" });
 
+    CheckUi("Listen: Doppelklick aktiviert (wie Enter), zwei Klicks auf verschiedene Zeilen nicht; onKeyPreview sieht Tasten zuerst", uiHead + """
+        var lb = new UI.ListBox(10, 10, 100, 80)
+        for (var i = 0; i < 5; i = i + 1) { lb.Add("item " + i) }
+        ui.Add(lb)
+        ui.Draw()
+        var activated = 0
+        lb.OnActivate = func () => { activated = activated + 1 }
+        ui.MouseDown(1, 20, 15)
+        ui.MouseUp(1, 20, 15)
+        ui.MouseDown(1, 20, 35)
+        ui.MouseUp(1, 20, 35)
+        print("verschiedene Zeilen " + activated)
+        ui.MouseDown(1, 20, 35)
+        ui.MouseUp(1, 20, 35)
+        print("Doppelklick " + activated + " " + lb.SelectedIndex)
+        var seen = 0
+        ui.onKeyPreview = func (int key, int mod) => {
+            seen = seen + 1
+            return key == 27
+        }
+        ui.SetFocus(lb)
+        ui.KeyDown(27, 0)
+        ui.KeyDown(13, 0)
+        print("Vorschau " + seen + " " + activated)
+        """, new[] { "verschiedene Zeilen 0", "Doppelklick 1 1", "Vorschau 2 2" });
+
     CheckUi("Listen: ListBox (Auswahl, Tastatur, Rad), ListView (Spalten, Sortieren per Kopfzeile), CollectionView (Filter, Sortierung, aktuelles Element)", uiHead + """
         class Person {
             string name
@@ -10130,26 +10232,26 @@ string[] uiDrawExpected = Array.Empty<string>();
         lv.Add(new Person("Bob", 25))
         ui.Add(lv)
         ui.Draw()
-        print("Liste " + lb.selectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
+        print("Liste " + lb.SelectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
         ui.MouseDown(1, 20, 25)
         ui.MouseUp(1, 20, 25)
         ui.Draw()
-        print("Klick " + lb.selectedIndex + " " + lb.selectedItem + " " + lb.TakeChanged() + " " + lb.TakeChanged())
+        print("Klick " + lb.SelectedIndex + " " + lb.selectedItem + " " + lb.TakeChanged() + " " + lb.TakeChanged())
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
-        print("Pfeil " + lb.selectedIndex + " " + lb.selectedItem)
+        print("Pfeil " + lb.SelectedIndex + " " + lb.selectedItem)
         ui.KeyDown(1073741898, 0)
-        print("Pos1 " + lb.selectedIndex)
+        print("Pos1 " + lb.SelectedIndex)
         ui.KeyDown(1073741901, 0)
         ui.Draw()
-        print("Ende " + lb.selectedIndex + " Versatz " + lb.scroller.offset)
+        print("Ende " + lb.SelectedIndex + " Versatz " + lb.scroller.offset)
         ui.MouseWheel(0, 1, 20, 30)
         ui.Draw()
         print("Rad " + lb.scroller.offset)
         lb.selectedItem = "item 3"
-        print("per selectedItem " + lb.selectedIndex)
+        print("per selectedItem " + lb.SelectedIndex)
         var entered = 0
-        lb.onActivate = func () => { entered = entered + 1 }
+        lb.OnActivate = func () => { entered = entered + 1 }
         ui.KeyDown(13, 0)
         print("Enter " + entered + " " + lb.TakeActivated())
         // Kopfzeile: Klick sortiert
@@ -10162,19 +10264,19 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.Draw()
         print("umgekehrt " + lv.Rows()[0].name)
         var cv = new UI.CollectionView(lv.items)
-        cv.filter = func (p) => p.age > 26
+        cv.Filter = func (p) => p.age > 26
         cv.SortBy("age", true)
         cv.Update()
         print("Sicht " + cv.count + " " + cv[0].name + " " + cv[1].name)
         cv.MoveCurrentToFirst()
         cv.MoveCurrentToNext()
         print("aktuell " + cv.CurrentItem().name + " " + cv.MoveCurrentTo(5))
-        cv.comparer = func (a, b) => a.age - b.age
+        cv.Comparer = func (a, b) => a.age - b.age
         cv.Invalidate()
         cv.Update()
         print("eigener Vergleich " + cv[0].name + " aktuell " + cv.CurrentItem().name)
         var names = new UI.ListBox(10, 100, 100, 80)
-        names.displayMember = "name"
+        names.DisplayMember = "name"
         names.SetView(new UI.CollectionView(lv.items))
         ui.Add(names)
         ui.Draw()
@@ -10196,34 +10298,34 @@ string[] uiDrawExpected = Array.Empty<string>();
         a.Add(new UI.TreeNode("Cats"))
         var b = tv.AddNode(new UI.TreeNode("Plants"))
         b.Add(new UI.TreeNode("Oak"))
-        a.expanded = true
+        a.Expanded = true
         ui.Add(tv)
         ui.Draw()
         print("sichtbar " + tv.visibleNodes.count)
         ui.MouseDown(1, 32, 36)
         ui.MouseUp(1, 32, 36)
         ui.Draw()
-        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.expanded + " ausgewaehlt " + (tv.selected == undefined))
+        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.Expanded + " ausgewaehlt " + (tv.selected == undefined))
         ui.MouseDown(1, 80, 36)
         ui.MouseUp(1, 80, 36)
         ui.Draw()
-        print("gewaehlt " + tv.selected.text + " " + tv.TakeChanged())
+        print("gewaehlt " + tv.selected.Text + " " + tv.TakeChanged())
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
-        print("Pfeil ab " + tv.selected.text)
+        print("Pfeil ab " + tv.selected.Text)
         ui.KeyDown(1073741904, 0)
-        print("Links zum Eltern " + tv.selected.text)
+        print("Links zum Eltern " + tv.selected.Text)
         ui.KeyDown(1073741904, 0)
         ui.Draw()
-        print("Links klappt zu " + d.expanded + " " + tv.visibleNodes.count)
+        print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.count)
         ui.KeyDown(1073741903, 0)
         ui.KeyDown(1073741903, 0)
-        print("Rechts klappt auf, dann zum Kind " + d.expanded + " " + tv.selected.text)
+        print("Rechts klappt auf, dann zum Kind " + d.Expanded + " " + tv.selected.Text)
         ui.KeyDown(1073741898, 0)
-        print("Pos1 " + tv.selected.text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
+        print("Pos1 " + tv.selected.Text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("Enter klappt um " + a.expanded + " " + tv.visibleNodes.count)
+        print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.count)
         """, new[] { "sichtbar 4", "Dogs aufgeklappt 6 True ausgewaehlt True", "gewaehlt Dogs True", "Pfeil ab Fido", "Links zum Eltern Dogs", "Links klappt zu False 4", "Rechts klappt auf, dann zum Kind True Cats", "Pos1 Animals Tiefe 0 2", "Enter klappt um False 2" });
 
     CheckUi("Menues: MenuBar, Untermenue, Haken, gesperrte Zeile, Tastatur, Kontextmenue, Klick daneben", uiHead + """
@@ -10235,9 +10337,9 @@ string[] uiDrawExpected = Array.Empty<string>();
         var rec = file.Add(new UI.MenuItem("Recent"))
         rec.Add(new UI.MenuItem("a.txt", func () => { cnt = cnt + 10 }))
         var chk = file.Add(new UI.MenuItem("Check"))
-        chk.checkable = true
+        chk.Checkable = true
         var off = file.Add(new UI.MenuItem("Off", func () => { cnt = cnt + 100 }))
-        off.enabled = false
+        off.Enabled = false
         mb.Add(file)
         var edit = new UI.MenuItem("Edit")
         edit.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 1000 }))
@@ -10294,7 +10396,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, dx, dy)
         ui.MouseUp(1, dx, dy)
         ui.Draw()
-        print("Haken " + chk.isChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
+        print("Haken " + chk.IsChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
         ui.KeyDown(27, 0)
         print("Escape " + ui.popups.count)
         // Kontextmenue
@@ -10324,7 +10426,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("RadioButtons, AutoSuggestBox, ToolBar und Image (alle Dehnungsarten)", uiHead + """
         var rb = new UI.RadioButtons(10, 10)
-        rb.header = "Size"
+        rb.Header = "Size"
         rb.Add("Small")
         rb.Add("Medium")
         rb.Add("Large")
@@ -10346,12 +10448,12 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 20, 30)
         ui.MouseUp(1, 20, 30)
         ui.Draw()
-        print("gewaehlt " + rb.selectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
+        print("gewaehlt " + rb.SelectedIndex + " " + rb.selectedItem + " " + rb.TakeChanged())
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
-        print("Pfeile " + rb.selectedIndex)
+        print("Pfeile " + rb.SelectedIndex)
         ui.KeyDown(1073741906, 0)
-        print("hoch " + rb.selectedIndex)
+        print("hoch " + rb.SelectedIndex)
         ui.MouseDown(1, 160, 20)
         ui.MouseUp(1, 160, 20)
         ui.TextInput("ap")
@@ -10359,10 +10461,10 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Vorschlaege " + ui.popups.count + " " + asb.popupList.count)
         ui.KeyDown(1073741905, 0)
         ui.Draw()
-        print("Auswahl " + asb.popupList.selectedIndex)
+        print("Auswahl " + asb.popupList.SelectedIndex)
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("uebernommen " + asb.text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
+        print("uebernommen " + asb.Text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
         asb.SetText("")
         ui.TextInput("B")
         ui.Draw()
@@ -10370,7 +10472,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 160, 10 + 24 + 12)
         ui.MouseUp(1, 160, 10 + 24 + 12)
         ui.Draw()
-        print("Klick auf Vorschlag " + asb.text + " " + ui.popups.count)
+        print("Klick auf Vorschlag " + asb.Text + " " + ui.popups.count)
         asb.SetText("")
         ui.TextInput("x")
         ui.Draw()
@@ -10397,13 +10499,13 @@ string[] uiDrawExpected = Array.Empty<string>();
         var im = new UI.Image(img, 10, 160, 60, 30)
         ui.Add(im)
         var im2 = new UI.Image(img, 100, 160, 60, 30)
-        im2.stretch = UI.Stretch.UniformToFill
+        im2.Stretch = UI.Stretch.UniformToFill
         ui.Add(im2)
         var im3 = new UI.Image(img, 180, 160, 60, 30)
-        im3.stretch = UI.Stretch.Fill
+        im3.Stretch = UI.Stretch.Fill
         ui.Add(im3)
         var im4 = new UI.Image(img, 250, 160, 20, 20)
-        im4.stretch = UI.Stretch.None
+        im4.Stretch = UI.Stretch.None
         ui.Add(im4)
         ui.Draw()
         var R = UI.Color.Rgb(255, 0, 0)
@@ -10417,47 +10519,47 @@ string[] uiDrawExpected = Array.Empty<string>();
     CheckUi("Formen: Rectangle, Ellipse, Line, Path (Pfaddaten, Kurven), Geometry, DrawingCanvas", uiHead + """
         print(UI.M.Sin(30) + " " + UI.M.Sin(90) + " " + UI.M.Cos(60) + " " + UI.M.Sin(-30) + " " + UI.M.Sin(210) + " " + UI.M.Cos(0))
         var r = new UI.Rectangle(10, 10, 60, 40)
-        r.fill = new SolidBrush(UI.Color.Rgb(255, 200, 0))
-        r.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        r.Fill = new SolidBrush(UI.Color.Rgb(255, 200, 0))
+        r.Stroke = new Pen(UI.Color.Rgb(0, 0, 0))
         ui.Add(r)
         var e = new UI.Ellipse(80, 10, 60, 40)
-        e.fill = new SolidBrush(UI.Color.Rgb(0, 200, 100))
+        e.Fill = new SolidBrush(UI.Color.Rgb(0, 200, 100))
         ui.Add(e)
         var l = new UI.Line(0, 0, 50, 30)
-        l.stroke = new Pen(UI.Color.Rgb(200, 0, 0))
+        l.Stroke = new Pen(UI.Color.Rgb(200, 0, 0))
         var lc = new UI.Canvas(150, 10, 60, 40)
         lc.Add(l)
         ui.Add(lc)
         var p = new UI.Path(undefined, 10, 70)
         p.SetData("M 0 0 L 40 0 L 40 30 L 20 50 L 0 30 Z")
-        p.fill = new SolidBrush(UI.Color.Rgb(100, 100, 255))
-        p.stroke = new Pen(UI.Color.Rgb(0, 0, 80))
+        p.Fill = new SolidBrush(UI.Color.Rgb(100, 100, 255))
+        p.Stroke = new Pen(UI.Color.Rgb(0, 0, 80))
         ui.Add(p)
         var p2 = new UI.Path(undefined, 80, 70)
         p2.SetData("M 0 40 c 10 -40 40 -40 50 0 q -25 -30 -50 0 z")
-        p2.fill = new SolidBrush(UI.Color.Rgb(255, 120, 120))
+        p2.Fill = new SolidBrush(UI.Color.Rgb(255, 120, 120))
         ui.Add(p2)
         var g = new UI.Geometry()
         g.AddEllipse(30, 30, 28, 20)
         var p3 = new UI.Path(g, 150, 70)
-        p3.stroke = new Pen(UI.Color.Rgb(0, 0, 0))
+        p3.Stroke = new Pen(UI.Color.Rgb(0, 0, 0))
         ui.Add(p3)
         ui.Draw()
-        print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
-        print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
-        print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
-        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
-        print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
+        print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.Stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
+        print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.Fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
+        print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.Stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.Stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
+        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.Stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
+        print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.Fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
         print("Ellipse-Pfad " + g.figures[0].Count() + " " + p3.actualWidth + "x" + p3.actualHeight + " " + (Px.Get(ui.renderer, 150 + 30, 70 + 30) == ui.theme.back.Color))
         var dc = new UI.DrawingCanvas(10, 150, 120, 40)
         var paints = 0
-        dc.onPaint = func (c) => {
+        dc.OnPaint = func (c) => {
             paints = paints + 1
             c.renderer.FillRect(0, 0, c.framebuffer.Width(), c.framebuffer.Height(), new SolidBrush(UI.Color.Rgb(30, 30, 60)))
         }
         var downs = 0
         var lastX = -1
-        dc.onMouseDown = func (x, y, b) => {
+        dc.OnMouseDown = func (x, y, b) => {
             downs = downs + 1
             lastX = x
         }
@@ -10468,7 +10570,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         dc.Invalidate()
         ui.Draw()
         print("neu gemalt " + paints)
-        dc.width = 80
+        dc.Width = 80
         ui.Draw()
         ui.Draw()
         print("Groesse geaendert " + paints + " " + dc.framebuffer.Width())
@@ -10486,7 +10588,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     CheckUi("Listen mit DataTemplate und das Beschneidungsrechteck des Renderers", uiHead + """
         var lb = new UI.ListBox(10, 10, 90, 80)
-        lb.itemTemplate = new UI.DataTemplate(func (item) => {
+        lb.ItemTemplate = new UI.DataTemplate(func (item) => {
             var st = new UI.StackPanel(0, 0, -1, -1, true, 4, 1)
             st.Add(new UI.Label("#"))
             st.Add(new UI.Label(item))
@@ -10497,7 +10599,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         lb.Add("three")
         ui.Add(lb)
         ui.Draw()
-        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].text)
+        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].Text)
         ui.renderer.SetClip(150, 20, 10, 10)
         ui.renderer.FillRect(100, 0, 100, 100, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
         ui.renderer.DrawText(148, 20, "AB", new SolidBrush(UI.Color.Rgb(0, 255, 0)))
@@ -10566,57 +10668,59 @@ string[] uiDrawExpected = Array.Empty<string>();
             string.Join(" | ", fire.UI.Markup.MarkupParser.Parse(markup).Diagnostics.Select(d => d.ToString()));
 
         CheckMarkup("Markup: ein gueltiges Dokument hat keine Diagnosen",
-            fire.UI.Markup.MarkupParser.Parse("<Window class=\"A\"><Button name=\"b\" text=\"x\" onClick=\"Go\"/></Window>").Diagnostics.Count == 0);
+            fire.UI.Markup.MarkupParser.Parse("<Window Class=\"A\"><Button Name=\"b\" Text=\"x\" OnClick=\"Go\"/></Window>").Diagnostics.Count == 0);
 
         void ExpectDiagnostic(string title, string markup, string expected)
         {
             string actual = Diagnose(markup);
             CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
         }
-        ExpectDiagnostic("Fehler im XML mit Zeile", "<Window class=\"A\">\n<Button>\n</Window>", "line 3");
+        ExpectDiagnostic("Fehler im XML mit Zeile", "<Window Class=\"A\">\n<Button>\n</Window>", "line 3");
         ExpectDiagnostic("das Wurzelelement", "<Foo class=\"A\"/>", "must be 'Window' or 'View'");
-        ExpectDiagnostic("class fehlt", "<Window/>", "needs the attribute class");
-        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
-        ExpectDiagnostic("unbekannte Eigenschaft", "<Window class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
-        ExpectDiagnostic("ein Button hat keine Kinder", "<Window class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
-        ExpectDiagnostic("Name doppelt", "<Window class=\"A\"><Label name=\"a\"/><Label name=\"a\"/></Window>", "used twice");
-        ExpectDiagnostic("reservierter Name", "<Window class=\"A\"><Label name=\"ui\"/></Window>", "used by the generated class");
-        ExpectDiagnostic("Handlername gleich Elementname", "<Window class=\"A\"><Label name=\"a\"/><Button onClick=\"a\"/></Window>", "already used");
-        ExpectDiagnostic("unbekannter Converter", "<Window class=\"A\"><Label text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
-        ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window class=\"A\"><Label text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
-        ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window class=\"A\"><Label text=\"{Bind X}\"/></Window>", "Unknown markup extension");
-        ExpectDiagnostic("Binding ohne Pfad", "<Window class=\"A\"><Label text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
-        ExpectDiagnostic("ein Teil ausserhalb seines Containers", "<Window class=\"A\"><Item>x</Item></Window>", "'Item' can only be inside");
-        ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
-        ExpectDiagnostic("Border nimmt nur ein Kind", "<Window class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
-        ExpectDiagnostic("Style ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"k\"/></Resources></Window>", "needs target");
-        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window class=\"A\"><Resources><Style target=\"Slider\"/></Resources></Window>", "Unknown style target");
-        ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"nope\" value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
-        ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window class=\"A\"><Resources><Style target=\"Button\"/><Style target=\"Button\"/></Resources></Window>", "two styles without a key");
-        ExpectDiagnostic("basedOn ohne Ziel", "<Window class=\"A\"><Resources><Style key=\"a\" target=\"Button\" basedOn=\"b\"/></Resources></Window>", "does not exist");
-        ExpectDiagnostic("Stil, den es nicht gibt", "<Window class=\"A\"><Button style=\"Nope\"/></Window>", "Unknown style 'Nope'");
-        ExpectDiagnostic("TemplateBinding ausserhalb einer Vorlage", "<Window class=\"A\"><Label text=\"{TemplateBinding text}\"/></Window>", "only for the elements inside a ControlTemplate");
-        ExpectDiagnostic("Binding in einer Vorlage", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
-        ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window class=\"A\"><Resources><ControlTemplate key=\"t\" target=\"Button\"><Label name=\"a\"/><Trigger property=\"hover\" value=\"true\"><Setter target=\"b\" property=\"text\" value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
-        ExpectDiagnostic("unbekannter Binding-Modus", "<Window class=\"A\"><Label text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
-        const string dtHead = "<Window class=\"A\"><Resources>";
-        ExpectDiagnostic("DataTemplate: ein Binding ohne Pfad ausserhalb", "<Window class=\"A\"><Label text=\"{Binding}\"/></Window>", "without a path is for the elements of a DataTemplate");
-        ExpectDiagnostic("DataTemplate: genau ein Element", dtHead + "<DataTemplate key=\"d\"><Label/><Label/></DataTemplate></Resources></Window>", "contains exactly one element");
-        ExpectDiagnostic("DataTemplate: ohne Schluessel", dtHead + "<DataTemplate><Label/></DataTemplate></Resources></Window>", "needs key");
-        ExpectDiagnostic("DataTemplate: keine Namen", dtHead + "<DataTemplate key=\"d\"><Label name=\"a\"/></DataTemplate></Resources></Window>", "have no name");
-        ExpectDiagnostic("DataTemplate: keine Handler", dtHead + "<DataTemplate key=\"d\"><Button onClick=\"Go\"/></DataTemplate></Resources></Window>", "Event handlers are not available inside a DataTemplate");
-        ExpectDiagnostic("DataTemplate: kein ElementName", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, ElementName=y}\"/></DataTemplate></Resources></Window>", "'ElementName' is not available inside a DataTemplate");
-        ExpectDiagnostic("DataTemplate: das Element selbst ist nur lesbar", dtHead + "<DataTemplate key=\"d\"><TextBox text=\"{Binding Mode=TwoWay}\"/></DataTemplate></Resources></Window>", "read only");
-        ExpectDiagnostic("DataTemplate: unbekannter Converter", dtHead + "<DataTemplate key=\"d\"><Label text=\"{Binding x, Converter=Nope}\"/></DataTemplate></Resources></Window>", "Unknown converter 'Nope'");
-        ExpectDiagnostic("DataTemplate: Schluessel doppelt", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><DataTemplate key=\"d\"><Label/></DataTemplate></Resources></Window>", "used twice");
-        ExpectDiagnostic("itemTemplate, das es nicht gibt", "<Window class=\"A\"><ListBox itemTemplate=\"Nope\"/></Window>", "Unknown data template 'Nope'");
-        ExpectDiagnostic("view, die es nicht gibt", "<Window class=\"A\"><ListBox view=\"Nope\"/></Window>", "Unknown view 'Nope'");
-        ExpectDiagnostic("itemsSource nimmt keinen festen Wert", "<Window class=\"A\"><ListBox itemsSource=\"abc\"/></Window>", "is a list: give {Binding ...} or {Expr ...}");
-        ExpectDiagnostic("view und itemsSource zusammen", dtHead + "<CollectionView key=\"v\"/></Resources><ListBox view=\"v\" itemsSource=\"{Binding xs}\"/></Window>", "a 'view' or an 'itemsSource', not both");
-        ExpectDiagnostic("CollectionView: nur Lesen", dtHead + "<CollectionView key=\"v\" source=\"{Binding xs, Mode=TwoWay}\"/></Resources></Window>", "read only");
-        ExpectDiagnostic("CollectionView: filter ist Code", dtHead + "<CollectionView key=\"v\" filter=\"abc\"/></Resources></Window>", "is code: give {Expr ...}");
-        ExpectDiagnostic("CollectionView: unbekanntes Attribut", dtHead + "<CollectionView key=\"v\" sorted=\"a\"/></Resources></Window>", "no attribute 'sorted'");
-        ExpectDiagnostic("Schluessel von Vorlage und View teilen sich den Namensraum", dtHead + "<DataTemplate key=\"d\"><Label/></DataTemplate><CollectionView key=\"d\"/></Resources></Window>", "used twice");
+        ExpectDiagnostic("class fehlt", "<Window/>", "needs the attribute Class");
+        ExpectDiagnostic("unbekanntes Element mit Zeile", "<Window Class=\"A\">\n<Slider/>\n</Window>", "line 2: Unknown element 'Slider'");
+        ExpectDiagnostic("alter Name eines Attributs", "<Window Class=\"A\"><Label x=\"1\" halign=\"Left\"/></Window>", "'x' is now called 'Left'");
+        ExpectDiagnostic("alter Name eines Attributs (Ausrichtung)", "<Window Class=\"A\"><Label halign=\"Left\"/></Window>", "'halign' is now called 'HorizontalAlign'");
+        ExpectDiagnostic("unbekannte Eigenschaft", "<Window Class=\"A\"><Label colour=\"#fff\"/></Window>", "has no property or event 'colour'");
+        ExpectDiagnostic("ein Button hat keine Kinder", "<Window Class=\"A\"><Button><Label/></Button></Window>", "cannot contain elements");
+        ExpectDiagnostic("Name doppelt", "<Window Class=\"A\"><Label Name=\"a\"/><Label Name=\"a\"/></Window>", "used twice");
+        ExpectDiagnostic("reservierter Name", "<Window Class=\"A\"><Label Name=\"ui\"/></Window>", "used by the generated class");
+        ExpectDiagnostic("Handlername gleich Elementname", "<Window Class=\"A\"><Label Name=\"a\"/><Button OnClick=\"a\"/></Window>", "already used");
+        ExpectDiagnostic("unbekannter Converter", "<Window Class=\"A\"><Label Text=\"{Binding X, Converter=Nope}\"/></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("Binding auf ein Element, das es nicht gibt", "<Window Class=\"A\"><Label Text=\"{Binding text, ElementName=x}\"/></Window>", "does not exist");
+        ExpectDiagnostic("unbekannte Markup-Erweiterung", "<Window Class=\"A\"><Label Text=\"{Bind X}\"/></Window>", "Unknown markup extension");
+        ExpectDiagnostic("Binding ohne Pfad", "<Window Class=\"A\"><Label Text=\"{Binding Mode=TwoWay}\"/></Window>", "needs a path");
+        ExpectDiagnostic("ein Teil ausserhalb seines Containers", "<Window Class=\"A\"><Item>x</Item></Window>", "'Item' can only be inside");
+        ExpectDiagnostic("ein Container, der nur Teile nimmt", "<Window Class=\"A\"><ListBox><Button/></ListBox></Window>", "can only contain 'Item'");
+        ExpectDiagnostic("Border nimmt nur ein Kind", "<Window Class=\"A\"><Border><Label/><Label/></Border></Window>", "contains only one element");
+        ExpectDiagnostic("Style ohne Ziel", "<Window Class=\"A\"><Resources><Style Key=\"k\"/></Resources></Window>", "needs Target");
+        ExpectDiagnostic("Style mit unbekanntem Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Slider\"/></Resources></Window>", "Unknown style target");
+        ExpectDiagnostic("Setter mit unbekannter Eigenschaft", "<Window Class=\"A\"><Resources><Style Target=\"Button\"><Setter Property=\"nope\" Value=\"1\"/></Style></Resources></Window>", "has no property 'nope'");
+        ExpectDiagnostic("zwei Styles ohne Schluessel fuer dasselbe Ziel", "<Window Class=\"A\"><Resources><Style Target=\"Button\"/><Style Target=\"Button\"/></Resources></Window>", "two styles without a key");
+        ExpectDiagnostic("basedOn ohne Ziel", "<Window Class=\"A\"><Resources><Style Key=\"a\" Target=\"Button\" BasedOn=\"b\"/></Resources></Window>", "does not exist");
+        ExpectDiagnostic("Stil, den es nicht gibt", "<Window Class=\"A\"><Button Style=\"Nope\"/></Window>", "Unknown style 'Nope'");
+        ExpectDiagnostic("TemplateBinding ausserhalb einer Vorlage", "<Window Class=\"A\"><Label Text=\"{TemplateBinding Text}\"/></Window>", "only for the elements inside a ControlTemplate");
+        ExpectDiagnostic("Binding in einer Vorlage", "<Window Class=\"A\"><Resources><ControlTemplate Key=\"t\" Target=\"Button\"><Label Text=\"{Binding X}\"/></ControlTemplate></Resources></Window>", "not available inside a ControlTemplate");
+        ExpectDiagnostic("Vorlage mit unbekanntem Teil im Trigger", "<Window Class=\"A\"><Resources><ControlTemplate Key=\"t\" Target=\"Button\"><Label Name=\"a\"/><Trigger Property=\"Hover\" Value=\"true\"><Setter Target=\"b\" Property=\"Text\" Value=\"x\"/></Trigger></ControlTemplate></Resources></Window>", "has no part 'b'");
+        ExpectDiagnostic("unbekannter Binding-Modus", "<Window Class=\"A\"><Label Text=\"{Binding X, Mode=Sideways}\"/></Window>", "Unknown binding mode");
+        const string dtHead = "<Window Class=\"A\"><Resources>";
+        ExpectDiagnostic("DataTemplate: ein Binding ohne Pfad ausserhalb", "<Window Class=\"A\"><Label Text=\"{Binding}\"/></Window>", "without a path is for the elements of a DataTemplate");
+        ExpectDiagnostic("DataTemplate: genau ein Element", dtHead + "<DataTemplate Key=\"d\"><Label/><Label/></DataTemplate></Resources></Window>", "contains exactly one element");
+        ExpectDiagnostic("DataTemplate: ohne Schluessel", dtHead + "<DataTemplate><Label/></DataTemplate></Resources></Window>", "needs Key");
+        ExpectDiagnostic("DataTemplate: keine Namen", dtHead + "<DataTemplate Key=\"d\"><Label Name=\"a\"/></DataTemplate></Resources></Window>", "have no name");
+        ExpectDiagnostic("DataTemplate: keine Handler", dtHead + "<DataTemplate Key=\"d\"><Button OnClick=\"Go\"/></DataTemplate></Resources></Window>", "Event handlers are not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: kein ElementName", dtHead + "<DataTemplate Key=\"d\"><Label Text=\"{Binding x, ElementName=y}\"/></DataTemplate></Resources></Window>", "'ElementName' is not available inside a DataTemplate");
+        ExpectDiagnostic("DataTemplate: das Element selbst ist nur lesbar", dtHead + "<DataTemplate Key=\"d\"><TextBox Text=\"{Binding Mode=TwoWay}\"/></DataTemplate></Resources></Window>", "read only");
+        ExpectDiagnostic("DataTemplate: unbekannter Converter", dtHead + "<DataTemplate Key=\"d\"><Label Text=\"{Binding x, Converter=Nope}\"/></DataTemplate></Resources></Window>", "Unknown converter 'Nope'");
+        ExpectDiagnostic("DataTemplate: Schluessel doppelt", dtHead + "<DataTemplate Key=\"d\"><Label/></DataTemplate><DataTemplate Key=\"d\"><Label/></DataTemplate></Resources></Window>", "used twice");
+        ExpectDiagnostic("itemTemplate, das es nicht gibt", "<Window Class=\"A\"><ListBox ItemTemplate=\"Nope\"/></Window>", "Unknown data template 'Nope'");
+        ExpectDiagnostic("view, die es nicht gibt", "<Window Class=\"A\"><ListBox View=\"Nope\"/></Window>", "Unknown view 'Nope'");
+        ExpectDiagnostic("itemsSource nimmt keinen festen Wert", "<Window Class=\"A\"><ListBox ItemsSource=\"abc\"/></Window>", "is a list: give {Binding ...} or {Expr ...}");
+        ExpectDiagnostic("view und itemsSource zusammen", dtHead + "<CollectionView Key=\"v\"/></Resources><ListBox View=\"v\" ItemsSource=\"{Binding xs}\"/></Window>", "a 'View' or an 'ItemsSource', not both");
+        ExpectDiagnostic("CollectionView: nur Lesen", dtHead + "<CollectionView Key=\"v\" Source=\"{Binding xs, Mode=TwoWay}\"/></Resources></Window>", "read only");
+        ExpectDiagnostic("CollectionView: filter ist Code", dtHead + "<CollectionView Key=\"v\" Filter=\"abc\"/></Resources></Window>", "is code: give {Expr ...}");
+        ExpectDiagnostic("CollectionView: unbekanntes Attribut", dtHead + "<CollectionView Key=\"v\" sorted=\"a\"/></Resources></Window>", "no attribute 'sorted'");
+        ExpectDiagnostic("Schluessel von Vorlage und View teilen sich den Namensraum", dtHead + "<DataTemplate Key=\"d\"><Label/></DataTemplate><CollectionView Key=\"d\"/></Resources></Window>", "used twice");
 
         string Generate(string markup) => fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), "T.fxml");
         void ExpectGenerateError(string title, string markup, string expected)
@@ -10626,21 +10730,21 @@ string[] uiDrawExpected = Array.Empty<string>();
             catch (fire.UI.Markup.MarkupException ex) { actual = ex.Message; }
             CheckMarkup($"Markup: {title}", actual.Contains(expected, StringComparison.Ordinal), $"erwartet '{expected}', erhalten '{actual}'");
         }
-        ExpectGenerateError("Zahl erwartet", "<Window class=\"A\"><Label x=\"abc\"/></Window>", "needs a whole number");
-        ExpectGenerateError("true/false erwartet", "<Window class=\"A\"><Label visible=\"yes\"/></Window>", "needs true or false");
-        ExpectGenerateError("Ausrichtung erwartet", "<Window class=\"A\"><Stack orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
-        ExpectGenerateError("Abstand erwartet", "<Window class=\"A\"><Label margin=\"1,2,3\"/></Window>", "needs 1 number");
-        ExpectGenerateError("Auswahl erwartet", "<Window class=\"A\"><Label halign=\"Middle\"/></Window>", "needs one of Stretch, Left, Center, Right");
-        ExpectGenerateError("Stift erwartet", "<Window class=\"A\"><Rectangle stroke=\"black\"/></Window>", "needs a pen");
-        ExpectGenerateError("eine Eigenschaft, die eine Methode setzt, ist nicht bindbar", "<Window class=\"A\"><Grid rows=\"{Binding R}\"/></Window>", "cannot be bound");
-        ExpectGenerateError("Farbe erwartet", "<Window class=\"A\"><Label color=\"red\"/></Window>", "needs a colour");
+        ExpectGenerateError("Zahl erwartet", "<Window Class=\"A\"><Label Left=\"abc\"/></Window>", "needs a whole number");
+        ExpectGenerateError("true/false erwartet", "<Window Class=\"A\"><Label Visible=\"yes\"/></Window>", "needs true or false");
+        ExpectGenerateError("Ausrichtung erwartet", "<Window Class=\"A\"><Stack Orientation=\"Diagonal\"/></Window>", "needs Horizontal or Vertical");
+        ExpectGenerateError("Abstand erwartet", "<Window Class=\"A\"><Label Margin=\"1,2,3\"/></Window>", "needs 1 number");
+        ExpectGenerateError("Auswahl erwartet", "<Window Class=\"A\"><Label HorizontalAlign=\"Middle\"/></Window>", "needs one of Stretch, Left, Center, Right");
+        ExpectGenerateError("Stift erwartet", "<Window Class=\"A\"><Rectangle Stroke=\"black\"/></Window>", "needs a pen");
+        ExpectGenerateError("eine Eigenschaft, die eine Methode setzt, ist nicht bindbar", "<Window Class=\"A\"><Grid Rows=\"{Binding R}\"/></Window>", "cannot be bound");
+        ExpectGenerateError("Farbe erwartet", "<Window Class=\"A\"><Label Color=\"red\"/></Window>", "needs a colour");
 
-        string script = Generate("<Window class=\"Settings\" title=\"Hi &quot;you&quot;\" width=\"200\" height=\"100\"><Button name=\"ok\" text=\"OK\" onClick=\"Save\" x=\"0x10\"/></Window>");
+        string script = Generate("<Window Class=\"Settings\" Title=\"Hi &quot;you&quot;\" Width=\"200\" Height=\"100\"><Button Name=\"ok\" Text=\"OK\" OnClick=\"Save\" Left=\"0x10\"/></Window>");
         CheckMarkup("Markup: die erzeugte Basisklasse, der Handler und das Fenster",
             script.Contains("class SettingsBase {") && script.Contains("undefined Save(any sender) { }") && script.Contains("new Framebuffer(200, 100)")
-            && script.Contains("UI.Button ok") && script.Contains("e0.x = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
+            && script.Contains("UI.Button ok") && script.Contains("e0.Left = 0x10") && script.Contains("#import \"ui\"") && script.Contains("\"Hi \\\"you\\\"\""), script);
         CheckMarkup("Markup: eine View hat Attach statt Run",
-            Generate("<View class=\"V\" base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
+            Generate("<View Class=\"V\" Base=\"VBase2\"/>") is var viewScript && viewScript.Contains("class VBase2 {") && viewScript.Contains("Attach(any container)") && !viewScript.Contains("Run()"));
 
         // the generated classes against the library: a window (events through the fake window) and a view (bindings)
         string dir = Path.Combine(Path.GetTempPath(), "fire-markup-" + Guid.NewGuid().ToString("N"));
@@ -10649,12 +10753,12 @@ string[] uiDrawExpected = Array.Empty<string>();
         {
             string P(string name) => Path.Combine(dir, name).Replace('\\', '/');
             File.WriteAllText(P("Form.fxml"), """
-                <Window class="Form" title="Form" width="320" height="200">
-                  <Stack name="box" x="10" y="10" width="300" height="180" orientation="Vertical" spacing="6">
-                    <Label name="caption">Name:</Label>
-                    <TextBox name="field" width="200" onChange="FieldChanged"/>
-                    <CheckBox name="flag" text="Flag" onChange="FlagChanged"/>
-                    <Button name="go" text="Go" width="60" onClick="Go"/>
+                <Window Class="Form" Title="Form" Width="320" Height="200">
+                  <Stack Name="box" Left="10" Top="10" Width="300" Height="180" Orientation="Vertical" Spacing="6">
+                    <Label Name="caption">Name:</Label>
+                    <TextBox Name="field" Width="200" OnChange="FieldChanged"/>
+                    <CheckBox Name="flag" Text="Flag" OnChange="FlagChanged"/>
+                    <Button Name="go" Text="Go" Width="60" OnClick="Go"/>
                   </Stack>
                 </Window>
                 """);
@@ -10663,13 +10767,13 @@ string[] uiDrawExpected = Array.Empty<string>();
                 class MyForm : FormBase {
                     int clicks = 0
                     Go(sender) { this.clicks = this.clicks + 1 }
-                    FieldChanged(sender) { print("text " + sender.text) }
-                    FlagChanged(sender) { print("flag " + sender.isChecked) }
+                    FieldChanged(sender) { print("text " + sender.Text) }
+                    FlagChanged(sender) { print("flag " + sender.IsChecked) }
                 }
                 var f = new MyForm()
                 f.ui.Draw()
                 f.ui.Draw()   // labels and check boxes know their height only after the first drawing, which moves the elements below them in a Stack
-                print(f.box.horizontal + " " + f.field.width + " " + f.caption.text)
+                print(f.box.Horizontal + " " + f.field.Width + " " + f.caption.Text)
                 // a click on the button (its screen position is known after drawing)
                 var bx = f.go.ax + 5
                 var by = f.go.ay + 5
@@ -10685,23 +10789,23 @@ string[] uiDrawExpected = Array.Empty<string>();
                 __TestEvent(3, "h")
                 __TestEvent(3, "i")
                 f.ui.Tick()
-                print("field " + f.field.text)
+                print("field " + f.field.Text)
                 f.flag.Toggle()
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
 
             File.WriteAllText(P("Panel.fxml"), """
-                <View class="Panel1" width="300" height="200">
-                  <Panel width="300" height="200">
-                    <TextBox name="src" x="5" y="5" width="120" text="abc"/>
-                    <Label name="mirror" x="5" y="40" text="{Binding Path=text, ElementName=src}"/>
-                    <Label name="player" x="5" y="60" text="{Binding Player.Name}"/>
-                    <Label name="once" x="5" y="80" text="{Binding Title, Mode=OneTime}"/>
-                    <TextBox name="edit" x="5" y="100" width="120" text="{Binding Player.Name, Mode=TwoWay}"/>
-                    <Label name="shout" x="5" y="120" text="{Binding Player.Name, Converter=Upper}"/>
-                    <CheckBox name="cb" x="5" y="130" text="{Binding Title}" isChecked="{Binding Player.Active, Converter=Not, Mode=TwoWay}"/>
-                    <Label name="empty" x="5" y="150" visible="{Binding Title, Converter=IsEmpty}" color="{Enum Colors.Red}"/>
+                <View Class="Panel1" Width="300" Height="200">
+                  <Panel Width="300" Height="200">
+                    <TextBox Name="src" Left="5" Top="5" Width="120" Text="abc"/>
+                    <Label Name="mirror" Left="5" Top="40" Text="{Binding Path=Text, ElementName=src}"/>
+                    <Label Name="player" Left="5" Top="60" Text="{Binding Player.Name}"/>
+                    <Label Name="once" Left="5" Top="80" Text="{Binding Title, Mode=OneTime}"/>
+                    <TextBox Name="edit" Left="5" Top="100" Width="120" Text="{Binding Player.Name, Mode=TwoWay}"/>
+                    <Label Name="shout" Left="5" Top="120" Text="{Binding Player.Name, Converter=Upper}"/>
+                    <CheckBox Name="cb" Left="5" Top="130" Text="{Binding Title}" IsChecked="{Binding Player.Active, Converter=Not, Mode=TwoWay}"/>
+                    <Label Name="empty" Left="5" Top="150" Visible="{Binding Title, Converter=IsEmpty}" Color="{Enum Colors.Red}"/>
                   </Panel>
-                  <Resources><Converter key="Upper" type="UpperConverter"/></Resources>
+                  <Resources><Converter Key="Upper" Type="UpperConverter"/></Resources>
                 </View>
                 """);
             CheckUi("Markup: Bindings mit Probes - Pfad, Element, TwoWay, Converter, OneTime, Austausch im Pfad, Trennen", $$"""
@@ -10716,28 +10820,28 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var m = new Model()
                 m.Player = new Player()
                 d.SetDataContext(m)
-                print(d.mirror.text + " " + d.player.text + " " + d.once.text + " " + d.edit.text + " " + d.shout.text + " " + d.cb.text + " " + d.cb.isChecked + " " + d.empty.visible + " " + d.empty.brush.Color)
-                d.src.text = "xyz"
-                print(d.mirror.text)
+                print(d.mirror.Text + " " + d.player.Text + " " + d.once.Text + " " + d.edit.Text + " " + d.shout.Text + " " + d.cb.Text + " " + d.cb.IsChecked + " " + d.empty.Visible + " " + d.empty.Color.Color)
+                d.src.Text = "xyz"
+                print(d.mirror.Text)
                 m.Player.Name = "p2"
-                print(d.player.text + " " + d.edit.text + " " + d.shout.text)
-                d.edit.text = "p3"
-                print(m.Player.Name + " " + d.player.text + " " + d.shout.text)
-                d.cb.isChecked = true
+                print(d.player.Text + " " + d.edit.Text + " " + d.shout.Text)
+                d.edit.Text = "p3"
+                print(m.Player.Name + " " + d.player.Text + " " + d.shout.Text)
+                d.cb.IsChecked = true
                 print(m.Player.Active)
                 var np = new Player()
                 np.Name = "other"
                 m.Player = np
-                print(d.player.text + " " + d.edit.text)
+                print(d.player.Text + " " + d.edit.Text)
                 np.Name = "other2"
-                print(d.player.text)
-                d.edit.text = "p4"
+                print(d.player.Text)
+                d.edit.Text = "p4"
                 print(np.Name)
                 m.Title = ""
-                print(d.once.text + "|" + d.cb.text + "|" + d.empty.visible)
+                print(d.once.Text + "|" + d.cb.Text + "|" + d.empty.Visible)
                 d.SetDataContext(undefined)
                 np.Name = "after"
-                print(d.player.text)
+                print(d.player.Text)
                 """, new[]
                 {
                     "abc p1 T1 p1 P1 T1 False False 255", "xyz", "p2 p2 P2", "p3 p3 P3", "False",
@@ -10745,11 +10849,11 @@ string[] uiDrawExpected = Array.Empty<string>();
                 });
 
             File.WriteAllText(P("Prop.fxml"), """
-                <View class="Prop1" width="300" height="100">
-                  <Panel width="300" height="100">
-                    <Label name="vol" x="5" y="5" text="{Binding Volume, Converter=Text}"/>
-                    <TextBox name="ed" x="5" y="30" width="120" text="{Binding Label, Mode=TwoWay}"/>
-                    <Label name="sum" x="5" y="60" text="{Binding Summary}"/>
+                <View Class="Prop1" Width="300" Height="100">
+                  <Panel Width="300" Height="100">
+                    <Label Name="vol" Left="5" Top="5" Text="{Binding Volume, Converter=Text}"/>
+                    <TextBox Name="ed" Left="5" Top="30" Width="120" Text="{Binding Label, Mode=TwoWay}"/>
+                    <Label Name="sum" Left="5" Top="60" Text="{Binding Summary}"/>
                   </Panel>
                 </View>
                 """);
@@ -10765,14 +10869,14 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var d = new Prop1Base()
                 var m = new Model()
                 d.SetDataContext(m)
-                print(d.vol.text + " " + d.ed.text + " " + d.sum.text)
+                print(d.vol.Text + " " + d.ed.Text + " " + d.sum.Text)
                 m.Volume = 7
-                print(d.vol.text)
-                d.ed.text = "x"
-                print(m.Label + " " + d.ed.text)
-                print(d.sum.text)
+                print(d.vol.Text)
+                d.ed.Text = "x"
+                print(m.Label + " " + d.ed.Text)
+                print(d.sum.Text)
                 m.Label = "y"
-                print(d.ed.text + " " + d.sum.text)
+                print(d.ed.Text + " " + d.sum.Text)
                 """, new[] { "1 a a1", "7", "x! x", "x!7", "y! y!7" });
 
             // IntelliSense of the markup editor: `|` is the caret
@@ -10785,68 +10889,68 @@ string[] uiDrawExpected = Array.Empty<string>();
             bool Has(List<string> list, params string[] names) => names.All(list.Contains);
             var sRoot = Suggest("<|");
             CheckMarkup("Markup-IntelliSense: im leeren Dokument Window und View", sRoot.SequenceEqual(new[] { "Window", "View" }), string.Join(",", sRoot));
-            var sChildren = Suggest("<Window class=\"A\">\n  <St|");
+            var sChildren = Suggest("<Window Class=\"A\">\n  <St|");
             CheckMarkup("Markup-IntelliSense: Elemente im Fenster, gefiltert nach dem Getippten", sChildren.Count > 0 && sChildren.All(x => x.Contains("St", StringComparison.OrdinalIgnoreCase)) && Has(sChildren, "Stack", "StackPanel"), string.Join(",", sChildren));
-            var sParts = Suggest("<Window class=\"A\"><ListView><|");
+            var sParts = Suggest("<Window Class=\"A\"><ListView><|");
             CheckMarkup("Markup-IntelliSense: in einer Liste nur ihre Teile", sParts.SequenceEqual(new[] { "Column", "Item" }), string.Join(",", sParts));
-            var sRes = Suggest("<Window class=\"A\"><Resources><|");
+            var sRes = Suggest("<Window Class=\"A\"><Resources><|");
             CheckMarkup("Markup-IntelliSense: in Resources die Ressourcen", Has(sRes, "Converter", "Style", "ControlTemplate", "DataTemplate", "CollectionView") && sRes.Count == 5, string.Join(",", sRes));
-            var sClose = Suggest("<Window class=\"A\"><Stack><Label/></|");
+            var sClose = Suggest("<Window Class=\"A\"><Stack><Label/></|");
             CheckMarkup("Markup-IntelliSense: </ schliesst das offene Element", sClose.SequenceEqual(new[] { "Stack>" }), string.Join(",", sClose));
-            var sAttr = Suggest("<Window class=\"A\"><Button text=\"x\" |");
-            CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "name", "onClick", "margin", "Grid.Row") && !sAttr.Contains("text"), string.Join(",", sAttr));
+            var sAttr = Suggest("<Window Class=\"A\"><Button text=\"x\" |");
+            CheckMarkup("Markup-IntelliSense: Attribute eines Elements (Eigenschaften, Ereignisse, name), ohne die schon gesetzten", Has(sAttr, "Name", "OnClick", "Margin", "Grid.Row") && !sAttr.Contains("Text"), string.Join(",", sAttr));
             var sRootAttr = Suggest("<Window |");
-            CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "class", "namespace", "namespace:prefix", "title"), string.Join(",", sRootAttr));
-            var sEnum = Suggest("<Window class=\"A\"><Label halign=\"|");
+            CheckMarkup("Markup-IntelliSense: Attribute des Wurzelelements mit Namespaces", Has(sRootAttr, "Class", "namespace", "namespace:prefix", "Title"), string.Join(",", sRootAttr));
+            var sEnum = Suggest("<Window Class=\"A\"><Label HorizontalAlign=\"|");
             CheckMarkup("Markup-IntelliSense: Werte einer Auswahl", Has(sEnum, "Stretch", "Left", "Center", "Right", "{Binding }"), string.Join(",", sEnum));
-            var sBool = Suggest("<Window class=\"A\"><Label visible=\"f|");
+            var sBool = Suggest("<Window Class=\"A\"><Label Visible=\"f|");
             CheckMarkup("Markup-IntelliSense: true/false, gefiltert", sBool.SequenceEqual(new[] { "false" }), string.Join(",", sBool));
-            var sStyle = Suggest("<Window class=\"A\"><Resources><Style key=\"Primary\" target=\"Button\"/><Style key=\"Big\" target=\"Label\"/></Resources><Button style=\"|");
+            var sStyle = Suggest("<Window Class=\"A\"><Resources><Style Key=\"Primary\" Target=\"Button\"/><Style Key=\"Big\" Target=\"Label\"/></Resources><Button Style=\"|");
             CheckMarkup("Markup-IntelliSense: Schluessel der Styles", sStyle.SequenceEqual(new[] { "Primary", "Big" }), string.Join(",", sStyle));
-            var sSetter = Suggest("<Window class=\"A\"><Resources><Style target=\"Button\"><Setter property=\"back|");
-            CheckMarkup("Markup-IntelliSense: Setter-Eigenschaften des Style-Ziels", sSetter.SequenceEqual(new[] { "background" }), string.Join(",", sSetter));
-            var sSetterValue = Suggest("<Window class=\"A\"><Resources><Style target=\"Label\"><Setter property=\"halign\" value=\"|");
+            var sSetter = Suggest("<Window Class=\"A\"><Resources><Style Target=\"Button\"><Setter Property=\"back|");
+            CheckMarkup("Markup-IntelliSense: Setter-Eigenschaften des Style-Ziels", sSetter.SequenceEqual(new[] { "Background" }), string.Join(",", sSetter));
+            var sSetterValue = Suggest("<Window Class=\"A\"><Resources><Style Target=\"Label\"><Setter Property=\"HorizontalAlign\" Value=\"|");
             CheckMarkup("Markup-IntelliSense: Setter-Wert nach der Eigenschaft", Has(sSetterValue, "Left", "Center"), string.Join(",", sSetterValue));
-            var sExt = Suggest("<Window class=\"A\"><Label text=\"{B|");
+            var sExt = Suggest("<Window Class=\"A\"><Label Text=\"{B|");
             CheckMarkup("Markup-IntelliSense: Markup-Erweiterungen, was mit dem Getippten anfaengt zuerst", sExt.SequenceEqual(new[] { "Binding", "TemplateBinding" }), string.Join(",", sExt));
-            var sConv = Suggest("<Window class=\"A\"><Resources><Converter key=\"Upper\" type=\"U\"/></Resources><Label text=\"{Binding Name, Converter=|");
+            var sConv = Suggest("<Window Class=\"A\"><Resources><Converter Key=\"Upper\" Type=\"U\"/></Resources><Label Text=\"{Binding Name, Converter=|");
             CheckMarkup("Markup-IntelliSense: Converter einer Bindung (eigene und eingebaute)", Has(sConv, "Upper", "Not", "IsEmpty"), string.Join(",", sConv));
-            var sMode = Suggest("<Window class=\"A\"><TextBox text=\"{Binding Name, |");
+            var sMode = Suggest("<Window Class=\"A\"><TextBox Text=\"{Binding Name, |");
             CheckMarkup("Markup-IntelliSense: Optionen einer Bindung", Has(sMode, "Mode=", "Converter=", "ElementName="), string.Join(",", sMode));
-            var sNs = Suggest("<Window class=\"A\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"|");
+            var sNs = Suggest("<Window Class=\"A\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter Key=\"U\" Type=\"|");
             CheckMarkup("Markup-IntelliSense: Namespace-Praefixe bei Typnamen", sNs.SequenceEqual(new[] { "local:", "m:" }), string.Join(",", sNs));
-            var sHandler = Suggest("<Window class=\"A\"><Button onClick=\"Save\"/><Button onClick=\"|");
+            var sHandler = Suggest("<Window Class=\"A\"><Button OnClick=\"Save\"/><Button OnClick=\"|");
             CheckMarkup("Markup-IntelliSense: vorhandene Handler-Namen", sHandler.SequenceEqual(new[] { "Save" }), string.Join(",", sHandler));
-            var sComment = Suggest("<Window class=\"A\"><!-- <|");
+            var sComment = Suggest("<Window Class=\"A\"><!-- <|");
             CheckMarkup("Markup-IntelliSense: in einem Kommentar nichts", sComment.Count == 0, string.Join(",", sComment));
-            var sAttrItem = fire.UI.Markup.MarkupCompletion.Suggest("<Window class=\"A\"><Button ", 27).Items.First(x => x.Label == "onClick");
-            CheckMarkup("Markup-IntelliSense: ein Attribut wird mit =\"\" eingefuegt, der Cursor kommt zwischen die Anfuehrungszeichen", sAttrItem.Text == "onClick=\"\"" && sAttrItem.CaretBack == 1);
+            var sAttrItem = fire.UI.Markup.MarkupCompletion.Suggest("<Window Class=\"A\"><Button ", 27).Items.First(x => x.Label == "OnClick");
+            CheckMarkup("Markup-IntelliSense: ein Attribut wird mit =\"\" eingefuegt, der Cursor kommt zwischen die Anfuehrungszeichen", sAttrItem.Text == "OnClick=\"\"" && sAttrItem.CaretBack == 1);
 
             // namespaces of the markup and object values
-            string nsScript = Generate("<Window class=\"N\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter key=\"U\" type=\"m:Upper\"/><Converter key=\"L\" type=\"local:Lower\"/></Resources>"
-                + "<Label background=\"[SolidBrush #FF0000]\" text=\"{Binding Name, Converter=U}\"/><Label color=\"{Enum m:Colors.Red}\"/></Window>");
+            string nsScript = Generate("<Window Class=\"N\" namespace=\"App\" namespace:m=\"App.Models\"><Resources><Converter Key=\"U\" Type=\"m:Upper\"/><Converter Key=\"L\" Type=\"local:Lower\"/></Resources>"
+                + "<Label Background=\"[SolidBrush #FF0000]\" Text=\"{Binding Name, Converter=U}\"/><Label Color=\"{Enum m:Colors.Red}\"/></Window>");
             CheckMarkup("Markup: Namespaces - #using, namespace-Block, Praefixe werden qualifiziert, Objektwerte",
                 nsScript.Contains("#using App.Models") && nsScript.Contains("namespace App {") && nsScript.Contains("App.Models.Upper fxConv_U") && nsScript.Contains("App.Lower fxConv_L")
                 && nsScript.Contains("new SolidBrush(UI.Color.Rgb(255, 0, 0))") && !nsScript.Contains("new SolidBrush(new SolidBrush") && nsScript.Contains("App.Models.Colors.Red"), nsScript);
-            ExpectGenerateError("unbekanntes Namespace-Praefix", "<Window class=\"A\"><Label color=\"{Enum x:Colors.Red}\"/></Window>", "Unknown namespace prefix 'x'");
-            ExpectGenerateError("Objektwert: Argument ohne Anfuehrungszeichen", "<Window class=\"A\"><Label background=\"[SolidBrush red]\"/></Window>", "is no argument value");
-            ExpectGenerateError("Objektwert: offener Text", "<Window class=\"A\"><Label background=\"[X 'a]\"/></Window>", "is not closed");
+            ExpectGenerateError("unbekanntes Namespace-Praefix", "<Window Class=\"A\"><Label Color=\"{Enum x:Colors.Red}\"/></Window>", "Unknown namespace prefix 'x'");
+            ExpectGenerateError("Objektwert: Argument ohne Anfuehrungszeichen", "<Window Class=\"A\"><Label Background=\"[SolidBrush red]\"/></Window>", "is no argument value");
+            ExpectGenerateError("Objektwert: offener Text", "<Window Class=\"A\"><Label Background=\"[X 'a]\"/></Window>", "is not closed");
             CheckMarkup("Markup: Objektwert - Texte in '' (zwei stehen fuer eines), verschachtelte Objekte, Zahlen mit Einheit",
-                Generate("<Window class=\"A\"><ListBox itemsSource=\"[Names 'it''s', &quot;b&quot;, [Pair 1, 2.5mm], true]\"/></Window>") is var objScript
+                Generate("<Window Class=\"A\"><ListBox ItemsSource=\"[Names 'it''s', &quot;b&quot;, [Pair 1, 2.5mm], true]\"/></Window>") is var objScript
                 && objScript.Contains("new Names(\"it's\", \"b\", new Pair(1, 2.5mm), true)"), objScript);
             CheckMarkup("Markup: local: ohne namespace ist der Name selbst; ohne Namespace kein namespace-Block",
-                Generate("<Window class=\"A\"><Resources><Converter key=\"U\" type=\"local:Up\"/></Resources></Window>") is var localScript
+                Generate("<Window Class=\"A\"><Resources><Converter Key=\"U\" Type=\"local:Up\"/></Resources></Window>") is var localScript
                 && localScript.Contains("Up fxConv_U") && !localScript.Contains("namespace ") && !localScript.Contains("#using"), localScript);
             File.WriteAllText(P("Ns.fxml"), """
-                <View class="NsView" namespace="Shop" namespace:m="Shop.Models" namespace:x="Shop.Extra" width="200" height="100">
+                <View Class="NsView" namespace="Shop" namespace:m="Shop.Models" namespace:x="Shop.Extra" Width="200" Height="100">
                   <Resources>
-                    <Converter key="Up" type="Upper"/>
-                    <Converter key="Ex" type="x:Shout"/>
+                    <Converter Key="Up" Type="Upper"/>
+                    <Converter Key="Ex" Type="x:Shout"/>
                   </Resources>
-                  <Stack name="box">
-                    <Label name="title" text="{Binding Name, Converter=Up}" background="[SolidBrush #102030]"/>
-                    <Label name="other" text="{Binding Name, Converter=Ex}"/>
-                    <ListBox name="names" itemsSource="[Names 'Ada', 'it''s']"/>
+                  <Stack Name="box">
+                    <Label Name="title" Text="{Binding Name, Converter=Up}" Background="[SolidBrush #102030]"/>
+                    <Label Name="other" Text="{Binding Name, Converter=Ex}"/>
+                    <ListBox Name="names" ItemsSource="[Names 'Ada', 'it''s']"/>
                   </Stack>
                 </View>
                 """);
@@ -10865,13 +10969,13 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var v = new MyView()
                 v.Attach(ui.content)
                 v.SetDataContext(new Item())
-                print(v.title.text + " " + v.other.text + " " + (v.title.background is of SolidBrush))
-                print(v.names.itemsSource.count + " " + v.names.itemsSource[1])
+                print(v.title.Text + " " + v.other.Text + " " + (v.title.Background is of SolidBrush))
+                print(v.names.ItemsSource.count + " " + v.names.ItemsSource[1])
                 """, new[] { "FIRE xfire True", "2 it's" });
             File.WriteAllText(P("Amb.fxml"), """
-                <View class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
-                  <Resources><Converter key="Up" type="Upper"/></Resources>
-                  <Label text="{Binding Name, Converter=Up}"/>
+                <View Class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
+                  <Resources><Converter Key="Up" Type="Upper"/></Resources>
+                  <Label Text="{Binding Name, Converter=Up}"/>
                 </View>
                 """);
             CheckUi("Markup: Namespaces - ein Name in zwei gebundenen Namespaces muss qualifiziert werden", $$"""
@@ -10881,71 +10985,71 @@ string[] uiDrawExpected = Array.Empty<string>();
                 """, new[] { "AUSNAHME: 'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (12)\n'Upper' is ambiguous: Amb.A.Upper, Amb.B.Upper (more than one '#using' brings it); write the full name (20)" });
 
             File.WriteAllText(P("Rich.fxml"), """
-                <Window class="Rich" title="Rich" width="480" height="320">
+                <Window Class="Rich" Title="Rich" Width="480" Height="320">
                   <Resources>
-                    <Style target="Label">
-                      <Setter property="color" value="#0000C8"/>
+                    <Style Target="Label">
+                      <Setter Property="Color" Value="#0000C8"/>
                     </Style>
-                    <Style key="Primary" target="Button">
-                      <Setter property="background" value="#3366AA"/>
-                      <Setter property="foreground" value="#FFFFFF"/>
-                      <Setter property="margin" value="2,1"/>
-                      <Trigger property="hover" value="true">
-                        <Setter property="background" value="#4477BB"/>
+                    <Style Key="Primary" Target="Button">
+                      <Setter Property="Background" Value="#3366AA"/>
+                      <Setter Property="Foreground" Value="#FFFFFF"/>
+                      <Setter Property="Margin" Value="2,1"/>
+                      <Trigger Property="Hover" Value="true">
+                        <Setter Property="Background" Value="#4477BB"/>
                       </Trigger>
                     </Style>
-                    <ControlTemplate key="Fancy" target="Button">
-                      <Border name="bd" background="#33AA66" padding="4">
-                        <Label name="txt" text="{TemplateBinding text}"/>
+                    <ControlTemplate Key="Fancy" Target="Button">
+                      <Border Name="bd" Background="#33AA66" Padding="4">
+                        <Label Name="txt" Text="{TemplateBinding Text}"/>
                       </Border>
-                      <Trigger property="pressed" value="true">
-                        <Setter target="bd" property="background" value="#AA3333"/>
+                      <Trigger Property="Pressed" Value="true">
+                        <Setter Target="bd" Property="Background" Value="#AA3333"/>
                       </Trigger>
                     </ControlTemplate>
                   </Resources>
-                  <DockPanel x="0" y="0" width="480" height="320">
-                    <MenuBar name="bar" DockPanel.Dock="Top">
-                      <Menu header="File">
-                        <MenuItem header="Open" shortcut="Ctrl+O" onClick="OpenFile"/>
+                  <DockPanel Left="0" Top="0" Width="480" Height="320">
+                    <MenuBar Name="bar" DockPanel.Dock="Top">
+                      <Menu Header="File">
+                        <MenuItem Header="Open" Shortcut="Ctrl+O" OnClick="OpenFile"/>
                         <MenuSeparator/>
-                        <MenuItem header="Recent">
-                          <MenuItem header="a.txt"/>
+                        <MenuItem Header="Recent">
+                          <MenuItem Header="a.txt"/>
                         </MenuItem>
-                        <MenuItem header="Check" checkable="true" isChecked="true"/>
+                        <MenuItem Header="Check" Checkable="true" IsChecked="true"/>
                       </Menu>
-                      <Menu header="Edit"><MenuItem header="Copy"/></Menu>
+                      <Menu Header="Edit"><MenuItem Header="Copy"/></Menu>
                     </MenuBar>
                     <ToolBar DockPanel.Dock="Top">
-                      <Button name="one" text="One" onClick="One"/>
+                      <Button Name="one" Text="One" OnClick="One"/>
                       <Separator/>
-                      <Button text="Two"/>
+                      <Button Text="Two"/>
                     </ToolBar>
-                    <Grid rows="*,auto" columns="150,*">
-                      <ListBox name="names" Grid.Row="0" Grid.Column="0" margin="4" onSelect="Picked">
+                    <Grid Rows="*,auto" Columns="150,*">
+                      <ListBox Name="names" Grid.Row="0" Grid.Column="0" Margin="4" OnSelect="Picked">
                         <Item>Alice</Item>
                         <Item>Bob</Item>
-                        <Item text="Carol"/>
+                        <Item Text="Carol"/>
                       </ListBox>
-                      <ScrollViewer Grid.Row="0" Grid.Column="1" margin="4">
-                        <StackPanel spacing="4" padding="4">
-                          <TreeView name="tree" height="80">
-                            <TreeNode text="root" expanded="true">
-                              <TreeNode text="child a"/>
-                              <TreeNode text="child b"><TreeNode text="leaf"/></TreeNode>
+                      <ScrollViewer Grid.Row="0" Grid.Column="1" Margin="4">
+                        <StackPanel Spacing="4" Padding="4">
+                          <TreeView Name="tree" Height="80">
+                            <TreeNode Text="root" Expanded="true">
+                              <TreeNode Text="child a"/>
+                              <TreeNode Text="child b"><TreeNode Text="leaf"/></TreeNode>
                             </TreeNode>
                           </TreeView>
-                          <RadioButtons name="radio" header="Size" selectedIndex="1"><Item>Small</Item><Item>Large</Item></RadioButtons>
-                          <Button name="styled" text="Styled" style="Primary"/>
-                          <Button name="templated" text="Templated" template="Fancy"/>
-                          <AutoSuggestBox name="sugg" width="150"><Suggestion>apple</Suggestion><Suggestion>banana</Suggestion></AutoSuggestBox>
-                          <Rectangle name="rect" width="60" height="20" fill="#FFCC00" stroke="#000000"/>
-                          <Path data="M 0 0 L 30 0 L 15 20 Z" fill="#66AAFF" stroke="#003366,2"/>
-                          <DrawingCanvas name="canvas" width="80" height="40" onPaint="Paint" onMouseDown="Down"/>
+                          <RadioButtons Name="radio" Header="Size" SelectedIndex="1"><Item>Small</Item><Item>Large</Item></RadioButtons>
+                          <Button Name="styled" Text="Styled" Style="Primary"/>
+                          <Button Name="templated" Text="Templated" Template="Fancy"/>
+                          <AutoSuggestBox Name="sugg" Width="150"><Suggestion>apple</Suggestion><Suggestion>banana</Suggestion></AutoSuggestBox>
+                          <Rectangle Name="rect" Width="60" Height="20" Fill="#FFCC00" Stroke="#000000"/>
+                          <Path Data="M 0 0 L 30 0 L 15 20 Z" Fill="#66AAFF" Stroke="#003366,2"/>
+                          <DrawingCanvas Name="canvas" Width="80" Height="40" OnPaint="Paint" OnMouseDown="Down"/>
                         </StackPanel>
                       </ScrollViewer>
-                      <ListView name="table" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" height="60">
-                        <Column header="Name" member="name" width="120"/>
-                        <Column header="Age" member="age"/>
+                      <ListView Name="table" Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Height="60">
+                        <Column Header="Name" Member="name" Width="120"/>
+                        <Column Header="Age" Member="age"/>
                       </ListView>
                     </Grid>
                   </DockPanel>
@@ -10971,9 +11075,9 @@ string[] uiDrawExpected = Array.Empty<string>();
                 c.MouseDown(app.ui, 1, c.ax + 5, c.ay + 6)
                 app.ui.MouseDown(1, app.one.ax + 5, app.one.ay + 5)
                 app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
-                print("Stil " + (app.styled.background != undefined) + " " + app.styled.margin.left + " " + (app.styled.style == app.fxStyle_Primary))
-                print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").text)
-                print("implizit " + (app.rect.stroke != undefined) + " " + app.radio.selectedIndex + " " + app.radio.items.count)
+                print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
+                print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").Text)
+                print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.count)
                 app.bar.Open(app.ui, 0)
                 app.ui.Draw()
                 var menu = app.ui.popups[0]
@@ -10994,33 +11098,33 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var styledRect = shot.Rects.FirstOrDefault(r => r.Index == styledAt);
                 uint styledColor = 51u | (102u << 8) | (170u << 16) | (255u << 24);
                 CheckMarkup("Markup: Entwurfsansicht - der Style steckt im Bild (Hintergrund des Buttons mit style=\"Primary\")", shot.Ok && styledRect != null && shot.Pixels[(styledRect.Y + 3) * shot.Width + styledRect.X + 3] == styledColor);
-                var bound = fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\" width=\"200\" height=\"100\"><Label text=\"{Binding Name}\"/><Label color=\"{Enum Colors.Red}\" text=\"x\"/><Button onClick=\"Nope\"/></Window>");
+                var bound = fire.UI.Markup.MarkupParser.Parse("<Window Class=\"B\" Width=\"200\" Height=\"100\"><Label Text=\"{Binding Name}\"/><Label Color=\"{Enum Colors.Red}\" Text=\"x\"/><Button OnClick=\"Nope\"/></Window>");
                 string previewScript = fire.UI.Markup.FireUiGenerator.GeneratePreview(bound);
                 CheckMarkup("Markup: Entwurfsansicht - ein gebundener Text zeigt den Pfad, Code des Programms und Handler fehlen", previewScript.Contains("\u2039Name\u203A") && !previewScript.Contains("Colors.Red") && !previewScript.Contains("Nope(") && fire.Compiler.UiPreview.Render(bound).Ok);
-                CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window class=\"B\"><Label x=\"abc\"/></Window>")).Ok);
+                CheckMarkup("Markup: Entwurfsansicht - ein Fehler im Markup wird gemeldet, nichts wird ausgefuehrt", !fire.Compiler.UiPreview.Render(fire.UI.Markup.MarkupParser.Parse("<Window Class=\"B\"><Label Left=\"abc\"/></Window>")).Ok);
             }
 
             // DataTemplate, CollectionView, itemsSource/itemTemplate/view im Markup
             File.WriteAllText(P("Data.fxml"), """
-                <Window class="Data" title="Data" width="360" height="240">
+                <Window Class="Data" Title="Data" Width="360" Height="240">
                   <Resources>
-                    <Converter key="Up" type="UpperConverter"/>
-                    <DataTemplate key="Person">
-                      <StackPanel horizontal="true" spacing="6">
-                        <Label text="{Binding name, Converter=Up}"/>
-                        <Label text="{Binding age}"/>
+                    <Converter Key="Up" Type="UpperConverter"/>
+                    <DataTemplate Key="Person">
+                      <StackPanel Horizontal="true" Spacing="6">
+                        <Label Text="{Binding name, Converter=Up}"/>
+                        <Label Text="{Binding age}"/>
                       </StackPanel>
                     </DataTemplate>
-                    <DataTemplate key="Plain">
-                      <Label text="{Binding}"/>
+                    <DataTemplate Key="Plain">
+                      <Label Text="{Binding}"/>
                     </DataTemplate>
-                    <CollectionView key="ByName" source="{Binding people}" sortBy="name" descending="true"/>
-                    <CollectionView key="Young" source="{Binding people}" sortBy="age" filter="{Expr func (p) on this => { return p.age &lt; 30 }}"/>
+                    <CollectionView Key="ByName" Source="{Binding people}" SortBy="name" Descending="true"/>
+                    <CollectionView Key="Young" Source="{Binding people}" SortBy="age" filter="{Expr func (p) on this => { return p.age &lt; 30 }}"/>
                   </Resources>
-                  <StackPanel padding="4" spacing="4">
-                    <ListBox name="viaView" width="200" height="90" view="ByName" itemTemplate="Person" selectedIndex="{Binding sel, Mode=TwoWay}"/>
-                    <ListBox name="direct" width="200" height="60" itemsSource="{Binding names}" itemTemplate="Plain"/>
-                    <ListBox name="young" width="200" height="40" view="Young" itemTemplate="Person"/>
+                  <StackPanel Padding="4" Spacing="4">
+                    <ListBox Name="viaView" Width="200" Height="90" View="ByName" ItemTemplate="Person" SelectedIndex="{Binding sel, Mode=TwoWay}"/>
+                    <ListBox Name="direct" Width="200" Height="60" ItemsSource="{Binding names}" ItemTemplate="Plain"/>
+                    <ListBox Name="young" Width="200" Height="40" View="Young" ItemTemplate="Person"/>
                   </StackPanel>
                 </Window>
                 """);
@@ -11057,14 +11161,14 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.ui.Draw()
                 app.ui.Draw()
                 print("zeilen " + app.viaView.count + " " + app.direct.count + " " + app.young.count + " erste " + app.viaView.selectedItem)
-                print("zeile " + app.viaView.rowElements[0].children[0].text + " " + app.viaView.rowElements[0].children[1].text + " " + app.direct.rowElements[1].text)
+                print("zeile " + app.viaView.rowElements[0].children[0].Text + " " + app.viaView.rowElements[0].children[1].Text + " " + app.direct.rowElements[1].Text)
                 m.people.Add(new Person("Dave", 22))
                 m.names.Add("three")
                 app.ui.Draw()
                 print("mehr " + app.viaView.count + " " + app.direct.count + " jung " + app.young.count + " " + app.young.view[0].name)
                 m.sel = 1
                 app.ui.Draw()
-                print("Auswahl " + app.viaView.selectedIndex + " " + app.viaView.selectedItem.name)
+                print("Auswahl " + app.viaView.SelectedIndex + " " + app.viaView.selectedItem.name)
                 app.viaView.Select(3)
                 app.ui.Draw()
                 print("zurueck " + m.sel)
@@ -11095,11 +11199,11 @@ string[] uiDrawExpected = Array.Empty<string>();
                 print("idle " + ui.Update())
                 var sentinel = UI.Color.Rgb(1, 2, 3)
                 ui.renderer.SetPixel(250, 20, sentinel)
-                b.hover = true
+                b.Hover = true
                 print("hover " + ui.Update() + " rest bleibt " + (Px.Get(ui.renderer, 250, 20) == sentinel))
                 print("idle " + ui.Update())
                 ui.renderer.SetPixel(250, 20, sentinel)
-                c.x = 190
+                c.Left = 190
                 print("Layout " + ui.Update() + " alles neu " + (Px.Get(ui.renderer, 250, 20) != sentinel))
                 ui.renderer.SetPixel(250, 20, sentinel)
                 ui.theme.back = new SolidBrush(UI.Color.Rgb(10, 10, 10))
@@ -11137,8 +11241,8 @@ string[] uiDrawExpected = Array.Empty<string>();
                 """, new[] { "angehaengt 1", "True", "True", "ticks 2 gezeichnet True", "nach Detach 2" });
 
             // several windows: one window opens another, Tick processes both
-            File.WriteAllText(P("Main.fxml"), "<Window class=\"Main\" width=\"120\" height=\"80\"><Button name=\"b\" text=\"main\"/></Window>");
-            File.WriteAllText(P("Tool.fxml"), "<Window class=\"Tool\" title=\"Tool\" width=\"100\" height=\"60\"><Label name=\"l\" text=\"tool\"/></Window>");
+            File.WriteAllText(P("Main.fxml"), "<Window Class=\"Main\" Width=\"120\" Height=\"80\"><Button Name=\"b\" Text=\"main\"/></Window>");
+            File.WriteAllText(P("Tool.fxml"), "<Window Class=\"Tool\" Title=\"Tool\" Width=\"100\" Height=\"60\"><Label Name=\"l\" Text=\"tool\"/></Window>");
             CheckUi("Markup: Open/Run(other) - das erzeugte Fenster haengt ein anderes an, ein Tick arbeitet beide ab", $$"""
                 #include "{{P("Main.fxml")}}"
                 #include "{{P("Tool.fxml")}}"
@@ -11152,7 +11256,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 a.ui.Tick()
                 a.ui.Tick()
                 print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.count)
-                t.l.text = "changed"
+                t.l.Text = "changed"
                 print("Update " + t.ui.Update())
                 """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
         }
@@ -11174,7 +11278,7 @@ string[] uiDrawExpected = Array.Empty<string>();
     List<string> RunCb(string script, VmExecutionMode mode)
     {
         var lines = new List<string>();
-        var sources = new[] { fire.Standard.Prelude.Source, fire.Terminal.Bridge.GraphicsBridge.PreludeSource, fire.Windows.Bridge.WindowsBridge.PreludeSource, script };
+        var sources = new[] { fire.Standard.Prelude.Source, StdPrelude("graphics"), StdPrelude("windows"), script };
         var alreadyIncluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var program = Parser.ParseMultiple(sources.Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), alreadyIncluded)).ToList());
         var natives = new NativeRegistry();
@@ -11761,15 +11865,13 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckDev("IsShared: Geraet und Manager eines geteilten Managers melden es, ein eigener Manager nicht", """
         #import "devices"
-        var m = new DeviceManagerFacade()
-        print(m.IsShared())
-        print(m.GetByIdentifier("loopback:echo").IsShared)
+        print(DeviceManager.IsShared())
+        print(DeviceManager.Get("loopback:echo").IsShared)
         """, new[] { "True", "True" }, shared: true);
     CheckDev("IsShared: ein nicht geteilter Manager meldet false", """
         #import "devices"
-        var m = new DeviceManagerFacade()
-        print(m.IsShared())
-        print(m.GetByIdentifier("loopback:echo").IsShared)
+        print(DeviceManager.IsShared())
+        print(DeviceManager.Get("loopback:echo").IsShared)
         """, new[] { "False", "False" }, shared: false);
 
     CheckDev("Geteilter Manager ueberlebt den Lauf: verbundenes Geraet bleibt verbunden, Manager ist nicht abgebaut", """
@@ -11786,7 +11888,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
 
     CheckDev("Eigener Manager wird nach dem Lauf freigegeben (Geraete getrennt)", """
         #import "devices"
-        var d = new DeviceManagerFacade().GetByIdentifier("loopback:echo")
+        var d = DeviceManager.Get("loopback:echo")
         d.EnsureConnected()
         print(d.IsConnected)
         """, new[] { "True" }, shared: false, after: m =>
@@ -12001,11 +12103,12 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         #import "linq"
         #import "devices"
         #import "io"
+        #import "filesystem"
         var fb = new Framebuffer(8, 4)
         print(fb.Width() + "x" + fb.Height())
         print(DateTime.Now.Year > 2000)
         print(Type.Of(fb).Name)
-        print(new DeviceManagerFacade().Count())
+        print(DeviceManager.Devices().count)
         print(IO.File.Exists("/gibt/es/nicht"))
         var con = new Renderer(fb)
         con.AlphaBlending = false      // without blending the value including alpha 0 is simply copied
@@ -12205,8 +12308,8 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         {
             // linq brings reflection along (SelectProperty/SelectField)
             fire.Runtime.ReflectionNatives.Register(natives);
-            sources.Add(fire.Standard.ReflectionPrelude.Source);
-            sources.Add(fire.Standard.LinqPrelude.Source);
+            sources.Add(StdPrelude("reflection"));
+            sources.Add(StdPrelude("linq"));
         }
         if (script.Contains("#import \"time\""))
         {
@@ -12699,7 +12802,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         natives.Register("print", args => { lock (lines) lines.Add(args[0].ToString()); return Value.MakeUndefined(); });
         natives.RegisterBaseTypeNatives();
         fire.Runtime.ReflectionNatives.Register(natives);
-        var sources = new List<string> { fire.Standard.Prelude.Source, fire.Standard.ReflectionPrelude.Source, script };
+        var sources = new List<string> { fire.Standard.Prelude.Source, StdPrelude("reflection"), script };
         var program = Parser.ParseMultiple(sources
             .Select(src => Preprocessor.Process(src, Directory.GetCurrentDirectory(), new HashSet<string>(StringComparer.OrdinalIgnoreCase),
                 fire.Compiler.RuntimeSession.CreateProjectDirectiveRegistry())).ToList());
@@ -14192,6 +14295,11 @@ ProjectTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
+TestingTests.Run();
+WindowManagerTests.Run();
+DialogTests.Run();
+DockingTests.Run();
+CircuitEditorTests.Run();
 ImageTests.Run();
 GitTests.Run();
 
@@ -14237,6 +14345,248 @@ else
 
     var natCases = new (string Name, string Source)[]
     {
+        ("Ueberladung vorab gewaehlt (OverloadHint): statisch, Konstruktor, Objekt einer abgeleiteten Klasse, any zur Laufzeit", """
+            class Animal { }
+            class Dog : Animal { }
+            class Show {
+                static string Of(int x) { return "int" }
+                static string Of(string s) { return "string" }
+                static string Of(Animal a) { return "animal" }
+                static string Of<T>(T x) { return "generic" }
+                string Me(int x) { return "me int" }
+                string Me(float f) { return "me float" }
+                construct() { }
+                construct(int a) { }
+                construct(string s) { }
+            }
+            class SubShow : Show {
+                string Me(int x) { return "sub int" }
+            }
+            print(Show.Of(1))
+            print(Show.Of("s"))
+            print(Show.Of(new Dog()))
+            print(Show.Of(2.5))
+            var s = new Show(3)
+            var t = new Show("x")
+            print(s.Me(1) + " " + s.Me(1.5))
+            Show sub = new SubShow()
+            print(sub.Me(1) + " " + sub.Me(1.5))
+            any v = "dyn"
+            print(Show.Of(v))
+            """),
+        ("Ueberladung vorab gewaehlt: wechselnder Argumenttyp an derselben Stelle (lax) nimmt abwechselnd Hinweis und Bewertung", """
+            class Show {
+                static string Of(int x) { return "int" }
+                static string Of(string s) { return "string" }
+                string Me(int x) { return "me int" }
+                string Me(string s) { return "me string" }
+                string made
+                construct(int a) { this.made = "ctor int" }
+                construct(string s) { this.made = "ctor string" }
+            }
+            var sh = new Show(1)
+            for (int i = 0; i < 6; i++) {
+                int x = i
+                if (i % 2 == 1) { x = "odd" }
+                print(Show.Of(x) + " / " + sh.Me(x) + " / " + new Show(x).made)
+            }
+            """),
+        ("Ueberladung nach Typ: ref-Parameter, statisch und Instanz gemischt, Basistyp-Erweiterung, generic vor class vor any", """
+            class Inc {
+                static string Bump(ref int x) { x = x + 1; return "ref int" }
+                static string Bump(string s) { return "string " + s }
+                string Twice(ref float f) { f = f * 2.0; return "ref float" }
+                string Twice(int i) { return "int" }
+                construct() { }
+                construct(ref int n) { n = n + 10 }
+                construct(string s) { }
+            }
+            int a = 1
+            print(Inc.Bump(a) + " " + a)
+            print(Inc.Bump("q"))
+            float g = 1.5
+            var inc = new Inc()
+            print(inc.Twice(g) + " " + g)
+            print(inc.Twice(3))
+            int k = 5
+            var made = new Inc(k)
+            print(k)
+
+            class Mixed {
+                static string Go(int x) { return "static int" }
+                string Go(string s) { return "instance string" }
+            }
+            print(Mixed.Go(1))
+            print(new Mixed().Go("s"))
+
+            class extends string {
+                string Tag(int n) { return this + "#" + n }
+                string Tag(string s) { return this + "/" + s }
+                string Tag<T>(T x) { return this + "?" }
+            }
+            print("a".Tag(1))
+            print("b".Tag("c"))
+            print("d".Tag(2.5))
+
+            class Thing { }
+            class Prio {
+                static string P(class c) { return "class" }
+                static string P<T>(T x) { return "generic" }
+                static string Q(class c) { return "class" }
+                static string Q(any x) { return "any" }
+            }
+            print(Prio.P(new Thing()))
+            print(Prio.Q(new Thing()))
+            print(Prio.Q(3))
+            """),
+        ("Ueberladung nach Typ: statisch - Basistypen, Klasse vor Basisklasse vor Interface vor generic vor any, int nach float", """
+            interface IShape { float Area() }
+            class Animal {
+                string name
+                construct(string n) { this.name = n }
+            }
+            class Dog : Animal {
+                construct(string n) : base(n) { }
+            }
+            class Puppy : Dog {
+                construct(string n) : base(n) { }
+            }
+            class Square : IShape {
+                float Area() { return 4.0 }
+            }
+            class Show {
+                static string Of(int x) { return "int " + x }
+                static string Of(float x) { return "float " + x }
+                static string Of(string x) { return "string " + x }
+                static string Of(bool x) { return "bool " + x }
+                static string Of(Animal a) { return "animal " + a.name }
+                static string Of(Dog d) { return "dog " + d.name }
+                static string Of(IShape s) { return "shape " + s.Area() }
+                static string Of<T>(T x) { return "generic" }
+
+                static string Num(float x) { return "float" }
+                static string Num(any x) { return "any" }
+            }
+            print(Show.Of(1))
+            print(Show.Of(1.5))
+            print(Show.Of("a"))
+            print(Show.Of(true))
+            print(Show.Of(new Animal("rex")))
+            print(Show.Of(new Dog("bello")))
+            print(Show.Of(new Puppy("tiny")))
+            print(Show.Of(new Square()))
+            print(Show.Of('c'))
+            print(Show.Num(3))
+            print(Show.Num("x"))
+            any v = 7
+            print(Show.Of(v))
+            """),
+        ("Ueberladung nach Typ: DoThis<string>(x) meint die generische, Basis-/abgeleitete Klasse, Konstruktoren, any-Werte zur Laufzeit", """
+            #strict
+            class Util {
+                static string DoThis(string s) { return "string" }
+                static string DoThis<T>(T x) { return "generic" }
+                static T Echo<T>(T x) { return x }
+            }
+            print(Util.DoThis("x"))
+            print(Util.DoThis<string>("x"))
+            print(Util.DoThis(5))
+            int e = Util.Echo<int>(4)
+            print(e + 1)
+
+            class Base {
+                string Hello(int x) { return "base int" }
+                string Hello(string x) { return "base string" }
+                string Over(any x) { return "base any" }
+            }
+            class Derived : Base {
+                string Hello(int x) { return "derived int" }
+                string Over(int x) { return "derived int" }
+            }
+            var d = new Derived()
+            print(d.Hello(1))
+            print(d.Hello("a"))
+
+            print(d.Over(2))
+
+            class Point {
+                string made
+                construct(int x) { this.made = "int" }
+                construct(string s) { this.made = "string" }
+                construct(float f) { this.made = "float" }
+            }
+            print(new Point(1).made + " " + new Point("a").made + " " + new Point(2.5).made)
+            string r = Util.DoThis("y")
+            print(r)
+            for (int i = 0; i < 3; i++) {
+                any v = i
+                if (i == 1) { v = "s" }
+                print(Util.DoThis(v))
+            }
+            """),
+        ("Ueberladung nach Typ: Dispatcher, base-Aufruf, Operatoren, Klassen-Typparameter, Basis-Konstruktor mit any", """
+            interface IShape { float Area() }
+            class Animal {
+                string name
+                construct(string n) { this.name = n }
+            }
+            class Dog : Animal { construct(string n) : base(n) { } }
+            class Puppy : Dog { construct(string n) : base(n) { } }
+            class Square : IShape { float Area() { return 4.0 } }
+
+            class Vec {
+                float x
+                construct(float x) { this.x = x }
+                Vec operator*(float f) { return new Vec(this.x * f) }
+                Vec operator*(Vec o) { return new Vec(this.x * o.x) }
+            }
+
+            class Pick {
+                string Of<T>(T x) { return "generic" }
+                string Of(IShape s) { return "interface" }
+                string Of(Animal a) { return "base " + a.name }
+                string Of(Dog d) { return "derived " + d.name }
+                string Num(int i) { return "int" }
+                string Num(float f) { return "float" }
+            }
+            class SubPick : Pick {
+                string Num(int i) { return "sub int / " + base.Num(i) + " / " + base.Num(1.5) }
+            }
+
+            class Box<T> {
+                string Put(T x) { return "T" }
+                string Put(string s) { return "string" }
+            }
+
+            class Basis {
+                string made
+                construct(int x) { this.made = "int" }
+                construct(string s) { this.made = "string" }
+            }
+            class Child : Basis {
+                construct(any v) : base(v) { }
+            }
+
+            var p = new Pick()
+            print(p.Of(new Puppy("tiny")))
+            print(p.Of(new Dog("rex")))
+            print(p.Of(new Animal("cat")))
+            print(p.Of(new Square()))
+            print(p.Of(42))
+            print(p.Of<int>(42))
+            print(p.Num(1) + " " + p.Num(1.0))
+            var sp = new SubPick()
+            print(sp.Num(3))
+            print(sp.Num(3.5))
+            var v = new Vec(2.0)
+            print((v * 3.0).x)
+            print((v * new Vec(5.0)).x)
+            var b = new Box<int>()
+            print(b.Put(1) + " " + b.Put("a"))
+            print(new Child(1).made + " " + new Child("x").made)
+            any items = [1, "a", 2.5, new Dog("d"), new Square()]
+            foreach (it in items) { print(p.Of(it)) }
+            """),
         ("Laufzeitfehler: Operanden falschen Typs, Bedingungen, Index und Einheitenkonflikte sind abfangbar (gleiche Texte)", """
             try { print(undefined * 2) } catch (ArgumentException e) { print("1 " + e.message) }
             try { print(-"a") } catch (ArgumentException e) { print("2 " + e.message) }
@@ -14741,6 +15091,74 @@ else
             print(total + " " + ft)
             print(new Box<string>().Twice("ab") + " " + U.Max(2, 3.5) + " " + U.Max(4, 3.5))
             try { viaAny.Twice(s) } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Bereiche a..b: aufwaerts, abwaerts, mit Einheit, in foreach, Testing.Assert", """
+            #import "testing"
+            foreach (i in 1..3) { print(i) }
+            var down = 4..2
+            print(down.length + " " + down[0] + " " + down[2])
+            var steps = 1cm..3cm
+            print(steps[2])
+            var n = 4
+            print((1..n - 1).length)
+            Testing.Assert.AreSequenceEqual([2, 3], 2..3)
+            try { Testing.Assert.AreEqual(1, 2, "msg") } catch (Assertion e) { print(e.message) }
+            """),
+        ("Typen: Typargumente mit Einheit (Box<int> ohne, Box<int : cm>, Box<int : any>, Box<float : any m>), Lambdas nehmen Typargumente mit, typisierte Felder in der Kopie", """
+            class Box<T> {
+                T value
+                undefined Put(T v) { value = v }
+                undefined PutAll(any items[]) {
+                    undefined lambda<any> put = (any x) => { T kept = x; print(kept) }
+                    foreach (x in items) { try { put(x) } catch (ArgumentException e) { print(e.message) } }
+                }
+            }
+            class Acc<T> {
+                T sum
+                T best
+                construct(T start) { sum = start; best = start }
+                undefined Add(T v) { sum = sum + v; if (v > best) best = v }
+                T Scaled(T k) { return sum * k - best }
+            }
+            class U {
+                static any Via<V>(V v) {
+                    any lambda<V> wrap = (V x) => { var b = new Box<V>(); b.Put(x); return b }
+                    return wrap(v)
+                }
+                static V Max<V>(V a, V b) { if (a > b) return a; return b }
+            }
+            any s = "x"
+            var b = new Box<int : cm>()
+            b.Put(5mm)
+            b.Put(2m)
+            print(b.value)
+            try { b.Put(3kg) } catch (UnitMismatchException e) { print(e.message) }
+            var u = new Box<int>()
+            u.Put(4)
+            try { u.Put(4cm) } catch (UnitMismatchException e) { print(e.message) }
+            var a = new Box<int : any>()
+            a.Put(7kg)
+            print(a.value)
+            var l = new Box<float : any m>()
+            l.Put(3cm)
+            try { l.Put(3s) } catch (UnitMismatchException e) { print(e.message) }
+            var fc = new Box<float : km>()
+            fc.Put(1500m)
+            print(l.value + " " + fc.value)
+            try { b.Put(s) } catch (ArgumentException e) { print(e.message) }
+            print(U.Max(5cm, 3cm) + " " + U.Max(2, 3))
+            var list = new List<int : cm>()
+            list.Add(3m)
+            print(list[0])
+            new Box<int>().PutAll([1, "two", 3])
+            any boxed = U.Via(2.5)
+            try { boxed.Put(s) } catch (ArgumentException e) { print(e.message) }
+            var acc = new Acc<int>(0)
+            int t = 0
+            for (int i = 0; i < 1000; i++) { acc.Add(i % 13); t = t + acc.Scaled(2) % 7 }
+            var facc = new Acc<float>(0.0)
+            for (int i = 0; i < 100; i++) { facc.Add(0.5) }
+            print(t + " " + acc.sum + " " + facc.Scaled(0.5))
             """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
@@ -16677,6 +17095,8 @@ else
                 construct(float r) { this.radius = r; this.secret = 42 }
                 float Diameter { get { return this.radius * 2 } set { this.radius = value / 2 } }
                 float Area { get { return this.radius * this.radius * 3 } }
+                [Doc "scales", "the radius"]
+                [Values 1..3, {10, -2.5}, true, -4, new List()]
                 float Scale(float k) { return this.radius * k }
                 Grow() { this.radius = this.radius + 1 }
             }
@@ -16724,6 +17144,10 @@ else
             var mem = Type.Of(c).Find("Scale")
             print(mem.Kind + " " + mem.ParamCount() + " " + mem.TypeName)
             print(mem.Call(c, [3.0]))
+            print(mem.Attributes.count + " " + mem.HasAttribute("Doc") + " " + mem.HasAttribute("Nope") + " " + Type.Of(c).Find("Grow").Attributes.count)
+            var vals = mem.FindAttribute("Values")
+            for (int ai = 0; ai < vals.ArgCount(); ai++) { print(vals.ArgTexts[ai] + " = " + vals.Args[ai]) }
+            print(vals.Args[0][2] + " " + vals.Args[1][1] + " " + vals.Args[1].length + " " + (vals.Args[4] == undefined) + " " + mem.FindAttribute("Doc").Args[1])
             class Cfg {
                 int volume
                 string name
@@ -17414,9 +17838,10 @@ else
     {
         ("IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)", """
             #import "io"
-            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i1")
+            #import "filesystem"
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_io_test_i1")
             if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
-            IO.Directory.Create(IO.Path.Combine(dir, "sub/deeper"))
+            IO.Directory.CreateDirectory(IO.Path.Combine(dir, "sub/deeper"))
             print(IO.Directory.Exists(dir))
             var f = IO.Path.Combine(dir, "a.txt")
             IO.File.WriteAllText(f, "Hallo Welt\nZeile 2 äöü €\r\nZeile 3 é 😀\n\nletzte")
@@ -17425,7 +17850,7 @@ else
             foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
             IO.File.AppendAllText(f, "\nangehaengt")
             print(IO.File.ReadAllLines(f).count)
-            var reader = new IO.TextReader(f)
+            var reader = IO.File.OpenText(f)
             print(reader.ReadLine())
             print(reader.ReadLine())
             reader.Close()
@@ -17436,16 +17861,16 @@ else
             print(IO.File.ReadAllText(IO.Path.Combine(dir, "b.txt")))
             IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"))
             IO.File.Move(IO.Path.Combine(dir, "b.txt"), IO.Path.Combine(dir, "sub/deeper/d.txt"))
-            foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.FileName(p)) }
-            foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.FileName(p)) }
-            foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.FileName(p)) }
+            foreach (p in IO.Directory.GetFiles(dir, "*", true)) { print(IO.Path.GetFileName(p)) }
+            foreach (p in IO.Directory.GetFiles(dir, "*.txt")) { print("top " + IO.Path.GetFileName(p)) }
+            foreach (p in IO.Directory.GetDirectories(dir, "*", true)) { print("dir " + IO.Path.GetFileName(p)) }
             try { IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt")) } catch (IO.FileExistsException e) { print("exists") }
             IO.File.Copy(f, IO.Path.Combine(dir, "sub/c.txt"), true)
             try { IO.File.ReadAllText(IO.Path.Combine(dir, "nope.txt")) } catch (IO.FileNotFoundException e) { print("not found") }
             try { IO.File.WriteAllText(IO.Path.Combine(dir, "nodir/x.txt"), "x") } catch (IO.DirectoryNotFoundException e) { print("no dir") }
             try { IO.Directory.Delete(dir) } catch (IO.IOException e) { print("not empty") }
-            var t = IO.File.ModifiedTime(f)
-            print(t > 1000000000s)
+            var t = IO.File.GetLastWriteTime(f)
+            print(t.Year >= 2001)
             IO.File.Delete(f)
             IO.File.Delete(f)
             print(IO.File.Exists(f))
@@ -17454,6 +17879,7 @@ else
             """),
         ("IO: MemoryStream, UTF-8, Pfade", """
             #import "io"
+            #import "filesystem"
             var m = new IO.MemoryStream()
             m.Write(IO.Utf8.GetBytes("0123456789"))
             print(m.Length + " " + m.Position)
@@ -17491,20 +17917,21 @@ else
             bom[3] = 65
             print(IO.Utf8.GetString(bom))
             print(IO.Path.Combine("a", "b") + " " + IO.Path.Combine("a/", "b") + " " + IO.Path.Combine("a", "/b") + " [" + IO.Path.Combine("", "b") + "]")
-            print(IO.Path.FileName("/x/y/z.tar.gz") + " " + IO.Path.Stem("/x/y/z.tar.gz") + " " + IO.Path.Extension("/x/y/z.tar.gz"))
-            print("[" + IO.Path.Extension(".gitignore") + "] [" + IO.Path.Stem(".gitignore") + "] [" + IO.Path.Extension("noext") + "] [" + IO.Path.Extension("dot.") + "] [" + IO.Path.FileName("dir/") + "]")
-            print(IO.Path.Parent("/x/y/z") + "|" + IO.Path.Parent("/x") + "|" + IO.Path.Parent("x") + "|" + IO.Path.Parent("a/b/") + "|" + IO.Path.Parent("a//b") + "|" + IO.Path.Parent("/"))
-            print(IO.Path.IsRooted("/x") + " " + IO.Path.IsRooted("x") + " " + IO.Path.Separator())
-            print(IO.Path.FullPath("/a/b/../c/./d//e") )
-            print(IO.Path.FullPath("x/../y") == IO.Path.Combine(IO.Directory.Current(), "y"))
-            print(IO.Path.Temp().length > 1)
+            print(IO.Path.GetFileName("/x/y/z.tar.gz") + " " + IO.Path.GetFileNameWithoutExtension("/x/y/z.tar.gz") + " " + IO.Path.GetExtension("/x/y/z.tar.gz"))
+            print("[" + IO.Path.GetExtension(".gitignore") + "] [" + IO.Path.GetFileNameWithoutExtension(".gitignore") + "] [" + IO.Path.GetExtension("noext") + "] [" + IO.Path.GetExtension("dot.") + "] [" + IO.Path.GetFileName("dir/") + "]")
+            print(IO.Path.GetDirectoryName("/x/y/z") + "|" + IO.Path.GetDirectoryName("/x") + "|" + IO.Path.GetDirectoryName("x") + "|" + IO.Path.GetDirectoryName("a/b/") + "|" + IO.Path.GetDirectoryName("a//b") + "|" + IO.Path.GetDirectoryName("/"))
+            print(IO.Path.IsPathRooted("/x") + " " + IO.Path.IsPathRooted("x") + " " + IO.Path.DirectorySeparatorChar)
+            print(IO.Path.GetFullPath("/a/b/../c/./d//e") )
+            print(IO.Path.GetFullPath("x/../y") == IO.Path.Combine(IO.Directory.GetCurrentDirectory(), "y"))
+            print(IO.Path.GetTempPath().length > 1)
             print("done")
             """),
         ("IO: FileStream (Modi, Zugriff, Position, Laenge, Fehlercodes), TextReader/TextWriter", """
             #import "io"
-            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_io_test_i4")
+            #import "filesystem"
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_io_test_i4")
             if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
-            IO.Directory.Create(dir)
+            IO.Directory.CreateDirectory(dir)
             var p = IO.Path.Combine(dir, "data.bin")
             var s = new IO.FileStream(p, IO.FileMode.Create)
             print(s.CanRead + " " + s.CanWrite + " " + s.CanSeek)
@@ -17560,7 +17987,7 @@ else
             w.Close()
             print(IO.File.Size(p))
             IO.File.WriteAllLines(IO.Path.Combine(dir, "lines.txt"), ["alpha", "beta", "", "gamma"])
-            var rd = new IO.TextReader(IO.Path.Combine(dir, "lines.txt"))
+            var rd = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
             print(rd.EndOfStream)
             var count = 0
             foreach (l in rd) { count = count + 1 }
@@ -17914,12 +18341,13 @@ else
         ("Grafik: Bild aus einer Datei laden (IO-Richtlinie)", """
             #import "graphics"
             #import "io"
+            #import "filesystem"
             class Img {
                 static Bytes(a) { var b = new byte[a.length]; for (var i = 0; i < a.length; i++) { b[i] = a[i] } return b }
             }
             var bmp = Img.Bytes([66,77,78,0,0,0,0,0,0,0,54,0,0,0,40,0,0,0,3,0,0,0,2,0,0,0,1,0,24,0,0,0,0,0,24,0,0,0,19,11,0,0,19,11,0,0,0,0,0,0,0,0,0,0,30,20,10,60,50,40,90,80,70,0,0,0,0,0,255,0,255,0,255,0,0,0,0,0])
-            var dir = IO.Path.Combine(IO.Path.Temp(), "fire_gfx_test_g3")
-            IO.Directory.Create(dir)
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_gfx_test_g3")
+            IO.Directory.CreateDirectory(dir)
             var path = IO.Path.Combine(dir, "t.bmp")
             IO.File.WriteAllBytes(path, bmp)
             var fb = Framebuffer.FromFile(path)
@@ -18588,6 +19016,2035 @@ else
             var same = true
             for (var i = 0; i < 100; i = i + 1) { if (s1.Next(1000) != s2.Next(1000)) { same = false } }
             print("gleicher Seed " + same)
+            """),
+    }).ToArray();
+
+    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.hpp) write and read the same text
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler", """
+            #import "json"
+            class Point {
+                float x : cm
+                float y : cm
+                construct(float x : cm, float y : cm) { this.x = x; this.y = y }
+            }
+            class Person {
+                string name
+                int age
+                Person friend
+                List<Point> path
+                [NonSerialized]
+                int secret
+                [JsonName "nick"]
+                string nickname
+                any extra
+                construct() { }
+            }
+            var a = new Person()
+            a.name = "Ann \"A\"\n"
+            a.age = 41
+            a.secret = 7
+            a.nickname = "annie"
+            a.path = new List<Point>()
+            a.path.Add(new Point(1.5cm, 2cm))
+            a.path.Add(new Point(3cm, 4mm))
+            a.extra = [1, 2.5, "x", 'c', true, undefined, 5m]
+            var b = new Person()
+            b.name = "Bob"
+            b.friend = a
+            a.friend = b
+            string text = Json.Serialize(a)
+            print(text)
+            print(Json.Serialize(a, new JsonOptions(true)))
+            Person c = Json.Deserialize<Person>(text)
+            print(c.name + " " + c.age + " " + c.secret + " " + c.nickname + " " + c.friend.name + " " + (c.friend.friend == c))
+            print(c.path.count + " " + c.path[1].y + " " + c.path[0].x)
+            print(c.extra[1] + " " + c.extra[3] + " " + c.extra[6])
+            var tree = Json.Parse("{\"a\": [1, {\"b\": null}], \"c\": \"d\"}")
+            print(tree.Get("c") + " " + tree.Get("a")[0] + " " + tree.Get("a")[1].Has("b"))
+            print(Json.Serialize(tree))
+            try { Json.Parse("{\"a\": }") } catch (JsonException e) { print(e.message) }
+            """),
+        ("Json: generische Klasse, abgeleitete Klasse, geteilte Arrays, Puffer, char, NaN, OnDeserialized, ohne Typnamen, Fehlertexte", """
+            #import "json"
+
+            class Box<T> {
+                T value
+                construct() { }
+            }
+
+            class Shape {
+                string name
+                construct() { }
+            }
+
+            class Circle : Shape {
+                float : cm radius
+                construct() { }
+            }
+
+            class Node {
+                string label
+                Node next
+                int shared[]
+                int other[]
+                byte data[]
+                char mark
+                float ratio
+                construct() { }
+                undefined OnDeserialized() { print("hook " + this.label) }
+            }
+
+            class Pair {
+                any left
+                any right
+                construct() { }
+            }
+
+            // a generic class: the type argument travels in $type
+            var box = new Box<int>()
+            box.value = 42
+            string boxText = Json.Serialize(box)
+            print(boxText)
+            Box<int> box2 = Json.Deserialize<Box<int>>(boxText)
+            print(box2.value)
+
+            // a derived class in a slot of the base class
+            var c = new Circle()
+            c.name = "c1"
+            c.radius = 2.5cm
+            Shape s = c
+            var holder = new Pair()
+            holder.left = s
+            holder.right = [c, c]
+            string pairText = Json.Serialize(holder)
+            print(pairText)
+            Pair back = Json.Deserialize<Pair>(pairText)
+            print(back.left.name + " " + back.left.radius + " " + (back.right[0] == back.left) + " " + (back.right[1] == back.left))
+
+            // shared arrays, buffers, chars, NaN, hooks
+            var n1 = new Node()
+            n1.label = "one"
+            n1.shared = [1, 2, 3]
+            n1.other = n1.shared
+            n1.data = new byte[3]
+            n1.data[0] = 1
+            n1.data[1] = 200
+            n1.data[2] = 3
+            n1.mark = 'x'
+            n1.ratio = 0.0 / 0.0
+            var n2 = new Node()
+            n2.label = "two"
+            n2.ratio = 1000000000000000000000000000000.0
+            n1.next = n2
+            string nodeText = Json.Serialize(n1)
+            print(nodeText)
+            Node m = Json.Deserialize<Node>(nodeText)
+            print(m.label + " " + m.next.label + " " + m.shared[2] + " " + (m.shared == m.other) + " " + m.data[1] + " " + m.mark + " " + m.next.ratio)
+
+            // without type names: plain JSON for other programs
+            var plain = new JsonOptions()
+            plain.typeNames = false
+            print(Json.Serialize(n2, plain))
+            Node fromPlain = Json.Deserialize<Node>("{\"label\":\"p\",\"Next\":{\"label\":\"q\"},\"shared\":[5,6],\"data\":\"AQID\",\"unknown\":1}")
+            print(fromPlain.label + " " + fromPlain.next.label + " " + fromPlain.shared[1] + " " + fromPlain.data[2])
+
+            // by name, lists of lists, numbers
+            any byName = Json.Deserialize("{\"value\": 7}", "Box<int>")
+            print(Json.Serialize(byName))
+            var nested = new List<List<int>>()
+            var inner = new List<int>()
+            inner.Add(1)
+            inner.Add(2)
+            nested.Add(inner)
+            print(Json.Serialize(nested))
+            print(Json.Serialize([0.1, 1.0, -0.00000025, 123456789012, 3]))
+            any tree = Json.Parse("[1, 2.5, -3e2, \"a\\u0041\\n\", true, false, null, {}]")
+            print(Json.Serialize(tree))
+
+            // errors
+            try { Json.Deserialize<Box<int>>("{\"$type\":\"Nope\"}") } catch (JsonException e) { print(e.message) }
+            try { Json.Deserialize<Node>("{\"ratio\": \"x\"}") } catch (JsonException e) { print(e.message) }
+            try { Json.Deserialize("{\"value\": 1.5}", "Box<int>") } catch (JsonException e) { print(e.message) }
+            try { Json.Parse("[1, 2") } catch (JsonException e) { print(e.message) }
+            try { Json.Parse("\"abc") } catch (JsonException e) { print(e.message) }
+            try { Json.Parse("{\"a\":1} x") } catch (JsonException e) { print(e.message) }
+            try { Json.Deserialize<Node>("{\"next\":{\"$ref\":9}}") } catch (JsonException e) { print(e.message) }
+            """),
+    }).ToArray();
+
+    // The look of the system (SystemTheme; the tests switch the query off: FIRE_SYSTEM_THEME=off) and its overrides Root.Scaling/Dark/Accent
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("UI: Systemaussehen - Scaling (logische Pixel, Fenster/Framebuffer wachsen, Maus umgerechnet), Dark, Accent", """
+            #import "ui"
+            var sys = SystemTheme.Current()
+            print("system " + sys.embedded + " " + sys.scale + " " + sys.dark + " " + sys.accent + " '" + sys.font + "' " + sys.fontSize)
+            var fb = new Framebuffer(200, 100)
+            var win = new Window(fb, "t")
+            var root = new UI.Root(fb, win)
+            print("start " + root.Scaling + " " + root.Dark + " " + root.Accent + " " + root.width + "x" + root.height)
+            var b = new UI.Button("Hi", 10, 10)
+            root.Add(b)
+            root.Draw()
+            print("light " + fb.Width() + "x" + fb.Height() + " " + root.renderer.GetPixel(150, 80))
+            root.Dark = true
+            root.Accent = 0xFF0000
+            root.Draw()
+            print("dark " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
+            root.Scaling = 2.0
+            root.Draw()
+            print("scaled " + root.Scaling + " fb " + fb.Width() + "x" + fb.Height() + " logical " + root.width + "x" + root.height + " button " + b.actualWidth + "x" + b.actualHeight)
+            print("pixels " + fb.Width() + " " + root.renderer.GetPixel(150, 80) + " " + root.renderer.GetPixel(12, 12))
+            root.Dispatch([8, 1, 30, 30])
+            print("pressed " + b.Pressed)
+            root.Scaling = 1.0
+            root.Draw()
+            print("back " + fb.Width() + "x" + fb.Height())
+            """),
+    }).ToArray();
+
+    // The device framework (docs/DEVICES.md): drivers of gpio, i2c and spi with their simulated devices
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Devices: DeviceManager.AddDriver/Get, GPIO-Port (ganzer Port, PinAt), I2C-Bus und Geraet an Adresse, SPI, NotSupportedException, eigener Treiber", """
+            #import "gpio"
+            #import "i2c"
+            #import "spi"
+            class Thermometer : Device {
+                construct(Driver driver) : base(driver, "thermo0") { }
+                any Read() { return 21 }
+            }
+            class ThermometerDriver : Driver {
+                construct() : base("thermo") { }
+                undefined Refresh(bool fastScan = true) {
+                    if (this.Find("thermo0") == undefined) { this.Add(new Thermometer(this)) }
+                }
+            }
+            DeviceManager.AddDriver(new GpioDriver())
+            DeviceManager.AddDriver(new I2cDriver())
+            DeviceManager.AddDriver(new SpiDriver())
+            DeviceManager.AddDriver(new ThermometerDriver())
+            DeviceManager.AddDriver(new GpioDriver())
+            foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
+            print(DeviceManager.Drivers().count)
+            any port = DeviceManager.Get("gpiosim")
+            print("port " + port.Identifier() + " " + port.Lines)
+            Gpio.Sim.Wire(0, 8)
+            port.PinAt(8).Input()
+            port.PinAt(0).Output(true)
+            print("pin8 " + port.PinAt(8).Read())
+            try { port.Write(5) } catch (NotSupportedException e) { print("write not supported") }
+            I2c.Sim.Add(0x48)
+            I2c.Sim.SetRegister(0x48, 1, 42)
+            any t = DeviceManager.Get("i2c:sim/0x48")
+            print("i2c " + t.Identifier() + " " + t.ReadRegister(1) + " " + (DeviceManager.Get("i2c:sim/72") == t))
+            var reg = new byte[1]
+            reg[0] = 1
+            t.Write(reg)
+            print("read " + t.Read(1)[0])
+            any spi = DeviceManager.Get("spi:sim")
+            Spi.Sim.Loopback()
+            print("spi " + spi.Transfer("ab".ToBytes())[1])
+            spi.WriteString("xyz")
+            print("thermo " + DeviceManager.Get("thermo:thermo0").Read() + " " + DeviceManager.Has("thermo0") + " " + DeviceManager.Has("nope"))
+            try { DeviceManager.Get("nope") } catch (DeviceNotFoundException e) { print(e.message) }
+            try { DeviceManager.Get("i2c:sim").Read() } catch (NotSupportedException e) { print(e.message) }
+            print("default " + DeviceManager.HasDefault)
+            """),
+        ("Einheiten: Praefix u neben µ (10uF, 5us), gekuerzte Einheiten mit Faktor (5cm / 1mm ist 50, 1s / 1ms ist 1000, int bleibt int)", """
+            prefixed unit Farad: F
+            print(5us == 5µs)
+            print(1uF is in F)
+            print(3us + 2µs)
+            print(5cm / 1mm)
+            print(1s / 1ms)
+            print(1ms / 1s)
+            print(1.5ms / 1us)
+            print(2km * 3 / 1m)
+            print(0.5km / 1m)
+            print(1 / 3s * 1ms)
+            """),
+        ("Circuits: RC-Glied, Spannungsteiler, LC-Schwingkreis mit FFT, Sinus und RMS, Schalter, Stromquelle, geschachtelte Schaltung", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var c = new Circuits.Circuit("rc")
+            var src = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            src.A.Connect(r.A)
+            r.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            src.B.Connect(c.Ground)
+            c.TimeStep = 10us
+            var scope = new Circuits.Scope(c)
+            scope.Voltage("out", cap.A)
+            scope.Current("i", r)
+            c.Run(1ms)
+            print(H.R(scope.Last("out")) + " " + H.R(scope.Last("i") * 1000) + " " + scope.Count)
+            c.Run(4ms)
+            print(H.R(scope.Last("out")) + " " + scope.Count + " " + H.R(c.Time / 1ms))
+            c.Reset()
+            print(H.R(cap.VoltageRaw()) + " " + c.Time)
+            var d = new Circuits.Circuit()
+            var s2 = d.Add(new Circuits.VoltageSource(12))
+            var r1 = d.Add(new Circuits.Resistor(2kOhm))
+            var r2 = d.Add(new Circuits.Resistor(1kOhm))
+            s2.A.Connect(r1.A)
+            r1.B.Connect(r2.A)
+            r2.B.Connect(d.Ground)
+            s2.B.Connect(d.Ground)
+            d.Step()
+            print(H.R(r2.A.Voltage / 1V) + " " + H.R(r1.Current / 1mA) + " " + H.R(s2.Current / 1mA) + " " + H.R(Circuits.Multimeter.Volts(r1.A, r1.B) / 1V))
+            r2.Resistance = 4kOhm
+            d.Step()
+            print(H.R(r2.A.Raw()) + " " + r2.Resistance)
+            var lc = new Circuits.Circuit()
+            var l = lc.Add(new Circuits.Inductor(1mH))
+            var c2 = lc.Add(new Circuits.Capacitor(1uF, 1V))
+            l.A.Connect(c2.A)
+            l.B.Connect(lc.Ground)
+            c2.B.Connect(lc.Ground)
+            lc.TimeStep = 1us
+            var sc = new Circuits.Scope(lc)
+            sc.Voltage("v", c2.A)
+            lc.Run(10ms)
+            print(Math.Round(Circuits.Fft.Dominant(sc.Samples("v"), 1MHz) / 1Hz))
+            var ac = new Circuits.Circuit()
+            var sin = ac.Add(new Circuits.SineSource(10V, 50Hz))
+            var rl = ac.Add(new Circuits.Resistor(100))
+            sin.A.Connect(rl.A)
+            rl.B.Connect(ac.Ground)
+            sin.B.Connect(ac.Ground)
+            ac.TimeStep = 100us
+            var s3 = new Circuits.Scope(ac)
+            s3.Voltage("v", sin.A)
+            ac.Run(20ms)
+            print(H.R(Circuits.Multimeter.Rms(s3.Samples("v"))))
+            var sw = new Circuits.Circuit()
+            var b = sw.Add(new Circuits.VoltageSource(9V))
+            var k = sw.Add(new Circuits.Switch())
+            var rr = sw.Add(new Circuits.Resistor(9Ohm))
+            b.A.Connect(k.A)
+            k.B.Connect(rr.A)
+            rr.B.Connect(sw.Ground)
+            b.B.Connect(sw.Ground)
+            sw.Step()
+            print(H.R(rr.CurrentRaw()))
+            k.Toggle()
+            sw.Step()
+            print(H.R(rr.CurrentRaw()) + " " + k.Closed)
+            var cs = new Circuits.Circuit()
+            var i = cs.Add(new Circuits.CurrentSource(2mA))
+            var ri = cs.Add(new Circuits.Resistor(1kOhm))
+            i.A.Connect(cs.Ground)
+            i.B.Connect(ri.A)
+            ri.B.Connect(cs.Ground)
+            cs.Step()
+            print(H.R(ri.A.Raw()))
+            var outer = new Circuits.Circuit("outer")
+            var inner = outer.Add(new Circuits.Circuit("divider"))
+            var pin = inner.AddPort("in")
+            var pout = inner.AddPort("out")
+            var ra = inner.Add(new Circuits.Resistor(1kOhm))
+            var rb = inner.Add(new Circuits.Resistor(1kOhm))
+            pin.Connect(ra.A)
+            ra.B.Connect(rb.A)
+            rb.B.Connect(inner.Ground)
+            pout.Connect(ra.B)
+            var vs = outer.Add(new Circuits.VoltageSource(10V))
+            vs.A.Connect(inner.PortAt("in"))
+            vs.B.Connect(outer.Ground)
+            outer.Step()
+            print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().count + " " + outer.Parts().count)
+            try { new Circuits.Resistor(3V) } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Circuits: kompilierter Plan - eigene Bauteile in fire (nur Stamp / StampStep+Commit), FunctionSource, Scope auf eigenes Bauteil, Schalter und Pegel mitten im Lauf, PlanInfo", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            /// a lamp: only Stamp (the circuit stops calling it after the first step)
+            class Lamp : Circuits.TwoTerminal {
+                construct() : base("lamp") { }
+                undefined Stamp(Circuits.Solver solver) { solver.Conductance(this.A, this.B, 1.0 / 50) }
+                float CurrentRaw() { return this.VoltageRaw() / 50 }
+            }
+            /// a current source written in fire: StampStep every step
+            class Pump : Circuits.TwoTerminal {
+                float amps
+                int steps = 0
+                construct(float amps) : base("pump") { this.amps = amps }
+                undefined StampStep(Circuits.Solver solver) {
+                    solver.CurrentInto(this.A, -this.amps)
+                    solver.CurrentInto(this.B, this.amps)
+                }
+                undefined Commit(Circuits.Solver solver) { this.steps = this.steps + 1 }
+                float CurrentRaw() { return this.amps }
+            }
+            var c = new Circuits.Circuit()
+            var b = c.Add(new Circuits.VoltageSource(10V))
+            var lamp = c.Add(new Lamp())
+            b.A.Connect(lamp.A)
+            b.B.Connect(c.Ground)
+            lamp.B.Connect(c.Ground)
+            c.Run(1ms)
+            print(H.R(lamp.CurrentRaw()) + " " + c.PlanInfo(5) + " " + H.R(b.Current / 1A))
+            var p = new Circuits.Circuit()
+            var pump = p.Add(new Pump(0.002))
+            var r = p.Add(new Circuits.Resistor(1kOhm))
+            pump.A.Connect(p.Ground)
+            pump.B.Connect(r.A)
+            r.B.Connect(p.Ground)
+            var sc = new Circuits.Scope(p)
+            sc.Current("pump", pump)
+            sc.Voltage("v", r.A)
+            p.Run(1ms)
+            print(H.R(r.A.Raw()) + " " + pump.steps + " " + sc.Count + " " + H.R(sc.Last("pump") * 1000) + " " + H.R(sc.Last("v")))
+            var f = new Circuits.Circuit()
+            var fs = f.Add(new Circuits.FunctionSource((float t) => 3 + t * 1000))
+            var rf = f.Add(new Circuits.Resistor(1kOhm))
+            fs.A.Connect(rf.A)
+            fs.B.Connect(f.Ground)
+            rf.B.Connect(f.Ground)
+            f.TimeStep = 100us
+            f.Run(2ms)
+            print(H.R(rf.A.Raw()) + " " + H.R(f.Time / 1ms))
+            // changes in the middle of a run: the capacitor keeps its charge, the level changes without a new plan
+            var rc = new Circuits.Circuit()
+            var src = rc.Add(new Circuits.VoltageSource(5V))
+            var sw = rc.Add(new Circuits.Switch(true))
+            var res = rc.Add(new Circuits.Resistor(1kOhm))
+            var cap = rc.Add(new Circuits.Capacitor(1uF))
+            src.A.Connect(sw.A)
+            sw.B.Connect(res.A)
+            res.B.Connect(cap.A)
+            cap.B.Connect(rc.Ground)
+            src.B.Connect(rc.Ground)
+            var s2 = new Circuits.Scope(rc)
+            s2.Voltage("cap", cap.A)
+            rc.Run(1ms)
+            var before = cap.VoltageRaw()
+            sw.Closed = false
+            print(rc.IsCompiled)
+            rc.Run(1ms)
+            print(H.R(before) + " " + H.R(cap.VoltageRaw()) + " " + s2.Count + " " + rc.IsCompiled)
+            sw.Closed = true
+            rc.Run(1ms)
+            src.Level = 0V
+            print(rc.IsCompiled)
+            rc.Run(5ms)
+            print(H.R(cap.VoltageRaw()) + " " + s2.Count + " " + H.R(s2.Times()[0] * 1000000) + " " + H.R(rc.Time / 1ms))
+            print(rc.PlanInfo(0) + " " + rc.PlanInfo(1) + " " + rc.PlanInfo(3) + " " + rc.PlanInfo(4))
+            """),
+        ("Circuits: Dioden (Modelle 1N4148/Zener/LED), Transistor (Saettigung, aktiv), MOSFET, OpAmp (Verstaerker, Begrenzung), Gatter, D-Flipflop, Modellbibliothek", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            // diode + resistor: 5V, 1k
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var d = c.Add(new Circuits.Diode())
+            v.A.Connect(r.A)
+            r.B.Connect(d.A)
+            d.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("diode " + H.R(d.VoltageRaw()) + " V " + H.R(d.CurrentRaw() * 1000) + " mA it " + c.PlanInfo(7) + " bad " + c.PlanInfo(8))
+            // LED red with 330 Ohm from 5V
+            var l = new Circuits.Circuit()
+            var v2 = l.Add(new Circuits.VoltageSource(5V))
+            var r2 = l.Add(new Circuits.Resistor(330))
+            var led = l.Add(new Circuits.Led("red"))
+            v2.A.Connect(r2.A)
+            r2.B.Connect(led.A)
+            led.B.Connect(l.Ground)
+            v2.B.Connect(l.Ground)
+            l.Step()
+            print("led " + H.R(led.VoltageRaw()) + " V " + H.R(led.CurrentRaw() * 1000) + " mA " + H.R(led.Brightness) + " " + led.IsOn)
+            // zener regulator 12V -> 1k -> 5.1V zener
+            var z = new Circuits.Circuit()
+            var v3 = z.Add(new Circuits.VoltageSource(12V))
+            var r3 = z.Add(new Circuits.Resistor(1kOhm))
+            var zd = z.Add(new Circuits.Diode("1N4733"))
+            v3.A.Connect(r3.A)
+            r3.B.Connect(zd.B)
+            zd.A.Connect(z.Ground)
+            v3.B.Connect(z.Ground)
+            z.Step()
+            print("zener " + H.R(-zd.VoltageRaw()) + " V")
+            // NPN switch: 5V, Rb 10k from 5V, Rc 1k
+            var q = new Circuits.Circuit()
+            var vcc = q.Add(new Circuits.VoltageSource(5V))
+            var rb = q.Add(new Circuits.Resistor(10kOhm))
+            var rc = q.Add(new Circuits.Resistor(1kOhm))
+            var t = q.Add(new Circuits.Transistor("2N3904"))
+            vcc.A.Connect(rb.A)
+            vcc.A.Connect(rc.A)
+            rb.B.Connect(t.B)
+            rc.B.Connect(t.C)
+            t.E.Connect(q.Ground)
+            vcc.B.Connect(q.Ground)
+            q.Step()
+            print("npn vce " + H.R(t.C.Raw()) + " vbe " + H.R(t.B.Raw()) + " ic " + H.R(t.CollectorCurrent / 1mA) + " ib " + H.R(t.BaseCurrent / 1uA) + " ie " + H.R(t.EmitterCurrent / 1mA))
+            // NPN in the active region: Rb 1M
+            rb.Resistance = 1MOhm
+            q.Step()
+            print("active ic " + H.R(t.CollectorCurrent / 1mA) + " beta " + Math.Round(t.CollectorCurrent / t.BaseCurrent))
+            // NMOS: 2N7000, gate 5V, drain via 100 Ohm from 5V
+            var m = new Circuits.Circuit()
+            var vd = m.Add(new Circuits.VoltageSource(5V))
+            var vg = m.Add(new Circuits.VoltageSource(5V))
+            var rd = m.Add(new Circuits.Resistor(100))
+            var fet = m.Add(new Circuits.Mosfet("2N7000"))
+            vd.A.Connect(rd.A)
+            rd.B.Connect(fet.D)
+            vg.A.Connect(fet.G)
+            fet.S.Connect(m.Ground)
+            vd.B.Connect(m.Ground)
+            vg.B.Connect(m.Ground)
+            m.Step()
+            print("nmos vds " + H.R(fet.D.Raw()) + " id " + H.R(fet.DrainCurrent / 1mA))
+            vg.Level = 0V
+            m.Step()
+            print("nmos off vds " + H.R(fet.D.Raw()))
+            // op amp: non-inverting amplifier gain 1 + 9k/1k = 10, input 0.5V sine
+            var o = new Circuits.Circuit()
+            var vin = o.Add(new Circuits.VoltageSource(0.5V))
+            var op = o.Add(new Circuits.OpAmp())
+            var rf = o.Add(new Circuits.Resistor(9kOhm))
+            var rg = o.Add(new Circuits.Resistor(1kOhm))
+            vin.A.Connect(op.Plus)
+            vin.B.Connect(o.Ground)
+            op.Out.Connect(rf.A)
+            rf.B.Connect(op.Minus)
+            rg.A.Connect(op.Minus)
+            rg.B.Connect(o.Ground)
+            o.Step()
+            print("opamp out " + H.R(op.Out.Raw()))
+            vin.Level = 3V
+            o.Step()
+            print("opamp clipped " + H.R(op.Out.Raw()))
+            // gates: NAND of two logic inputs, D flip-flop as toggle with a square clock
+            var g = new Circuits.Circuit()
+            var a = g.Add(new Circuits.LogicInput(true))
+            var b = g.Add(new Circuits.LogicInput(false))
+            var nand = g.Add(new Circuits.Gate("NAND"))
+            var load = g.Add(new Circuits.Resistor(10kOhm))
+            a.A.Connect(nand.In(0))
+            b.A.Connect(nand.In(1))
+            a.B.Connect(g.Ground)
+            b.B.Connect(g.Ground)
+            nand.Out.Connect(load.A)
+            load.B.Connect(g.Ground)
+            g.Step()
+            g.Step()
+            print("nand(1,0) " + nand.State + " " + H.R(nand.Out.Raw()))
+            b.High = true
+            g.Step()
+            g.Step()
+            print("nand(1,1) " + nand.State + " " + H.R(nand.Out.Raw()))
+            var ff = new Circuits.Circuit()
+            var clk = ff.Add(new Circuits.SquareSource(5V, 1kHz))
+            var dff = ff.Add(new Circuits.FlipFlop())
+            clk.A.Connect(dff.Clock)
+            clk.B.Connect(ff.Ground)
+            dff.NotQ.Connect(dff.D)
+            ff.TimeStep = 10us
+            var sc = new Circuits.Scope(ff)
+            sc.Voltage("q", dff.Q)
+            ff.Run(10ms)
+            var changes = 0
+            var qs = sc.Samples("q")
+            for (int i = 1; i < qs.length; i++) {
+                if ((qs[i] > 2.5) != (qs[i - 1] > 2.5)) { changes++ }
+            }
+            print("toggle changes " + changes)
+            print(Circuits.Models.Names("NPN").count + " " + Circuits.Models.Get("1n4148").Name)
+            Circuits.Models.Add(new Circuits.Model("mydiode", "D", 0.000000001, 1.5))
+            var c2 = new Circuits.Circuit()
+            var d2 = c2.Add(new Circuits.Diode("mydiode"))
+            try { new Circuits.Transistor("1N4148") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Casts mit Namespace: x!Shop.Item, relativ im Namespace (x!Deep.Thing), verschachtelt; x!Dog.Bark() bleibt Aufruf auf dem Ergebnis", """
+            namespace Shop {
+                class Item {
+                    string n
+                    construct(string n) { this.n = n }
+                }
+                class Box {
+                    static Shop.Item Take(any x) {
+                        Shop.Item i = x!Shop.Item
+                        return i
+                    }
+                }
+            }
+            any a = new Shop.Item("apple")
+            Shop.Item b = a!Shop.Item
+            print(b.n)
+            print(Shop.Box.Take(a).n)
+            print((a!Shop.Item).n)
+            class Dog {
+                string name = "rex"
+                string Bark() { return "wuff " + this.name }
+            }
+            any d = new Dog()
+            print(d!Dog.Bark())
+            print(d!Dog.name)
+            try { var bad = a!Dog } catch (Exception e) { print("cast failed") }
+            namespace Shop {
+                namespace Deep {
+                    class Thing {
+                        int n = 7
+                    }
+                }
+                class User {
+                    static int Get(any x) { return (x!Deep.Thing).n }
+                }
+            }
+            any th = new Shop.Deep.Thing()
+            print(Shop.User.Get(th))
+            print((th!Shop.Deep.Thing).n)
+            print(th!Shop.Deep.Thing.n)
+            """),
+        ("Circuits: Formel-Bauteile (Diode als Formel, Widerstand, Set, VCCS mit drei Anschluessen, Formel-Modelle, Fehlertexte)", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            // a diode written as a formula against the built-in one: the same operating point
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var d = c.Add(new Circuits.Formula("Is*(exp(V/(n*Vt))-1)", "Is=1e-14 n=1"))
+            v.A.Connect(r.A)
+            r.B.Connect(d.A)
+            d.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("formula diode " + H.R(d.VoltageRaw()) + " V " + H.R(d.CurrentRaw() * 1000) + " mA")
+            // a resistor as a formula: 1k
+            var c2 = new Circuits.Circuit()
+            var v2 = c2.Add(new Circuits.VoltageSource(10V))
+            var f = c2.Add(new Circuits.Formula("V/R", "R=2k"))
+            v2.A.Connect(f.A)
+            v2.B.Connect(c2.Ground)
+            f.B.Connect(c2.Ground)
+            c2.Step()
+            print("formula resistor " + H.R(f.CurrentRaw() * 1000) + " mA")
+            f.Set("R=500")
+            c2.Step()
+            print("after Set " + H.R(f.CurrentRaw() * 1000) + " mA")
+            // a voltage-controlled current source with three terminals: I(x) = gm * V2 (V2 is Y against Ref)
+            var c3 = new Circuits.Circuit()
+            var vin = c3.Add(new Circuits.VoltageSource(2V))
+            var vcc = c3.Add(new Circuits.VoltageSource(10V))
+            var rl = c3.Add(new Circuits.Resistor(1kOhm))
+            var g = c3.Add(new Circuits.Formula3("gm*V2", "", "gm=1m"))
+            vcc.A.Connect(rl.A)
+            rl.B.Connect(g.X)
+            vin.A.Connect(g.Y)
+            g.Ref.Connect(c3.Ground)
+            vin.B.Connect(c3.Ground)
+            vcc.B.Connect(c3.Ground)
+            c3.Step()
+            print("vccs out " + H.R(g.X.Raw()) + " V, ix " + H.R(g.CurrentX / 1mA) + " mA")
+            // models with formulas: the tunnel diode of the library, a model of one's own
+            var tm = Circuits.Models.Get("tunnel")
+            print("tunnel at 0.1V " + H.R(tm.Evaluate(0.1) * 1000) + " mA, at 0.3V " + H.R(tm.Evaluate(0.3) * 1000) + " mA")
+            Circuits.Models.Add(Circuits.Model.Formula("square-law", "k*V*abs(V)", "k=1m"))
+            var c4 = new Circuits.Circuit()
+            var v4 = c4.Add(new Circuits.VoltageSource(3V))
+            var sq = c4.Add(new Circuits.Formula("square-law", "k=2m"))
+            v4.A.Connect(sq.A)
+            v4.B.Connect(c4.Ground)
+            sq.B.Connect(c4.Ground)
+            c4.Step()
+            print("square-law " + H.R(sq.CurrentRaw() * 1000) + " mA")
+            try { new Circuits.Formula("Is*(exp(V/(n*Vt)-1", "Is=1e-14 n=1") } catch (ArgumentException e) { print(e.message) }
+            try { new Circuits.Formula("foo(V)") } catch (ArgumentException e) { print(e.message) }
+            try { new Circuits.Formula("V/R2", "R=1k") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Circuits: Timer555 astabil, Zaehler aus Flipflops, Parameter und Bindungen einer Teilschaltung (Value, Get, Vererbung)", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+            }
+            // 555 astable: RA 1k, RB 10k, C 100nF -> f = 1.44 / ((RA + 2 RB) C) = 686 Hz
+            var c = new Circuits.Circuit()
+            var t = c.Add(new Circuits.Timer555(5V))
+            var ra = c.Add(new Circuits.Resistor(1kOhm))
+            var rb = c.Add(new Circuits.Resistor(10kOhm))
+            var cap = c.Add(new Circuits.Capacitor(100nF))
+            var vcc = c.Add(new Circuits.VoltageSource(5V))
+            vcc.B.Connect(c.Ground)
+            vcc.A.Connect(ra.A)
+            ra.B.Connect(t.Discharge)
+            t.Discharge.Connect(rb.A)
+            rb.B.Connect(t.Threshold)
+            t.Threshold.Connect(t.Trigger)
+            t.Trigger.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            c.TimeStep = 2us
+            var sc = new Circuits.Scope(c)
+            sc.Voltage("out", t.Output)
+            sc.Voltage("cap", cap.A)
+            c.Run(20ms)
+            var out = sc.Samples("out")
+            var rises = 0
+            var first = -1
+            var last = -1
+            for (int i = 1; i < out.length; i++) {
+                if (out[i] > 2.5 && out[i - 1] <= 2.5) {
+                    rises++
+                    if (first < 0) { first = i }
+                    last = i
+                }
+            }
+            var period = (last - first) * 2.0 / (rises - 1)
+            print("555 rises " + rises + " f " + Math.Round(1000000.0 / period) + " Hz")
+            var capv = sc.Samples("cap")
+            var lo = 10.0
+            var hi = 0.0
+            for (int i = out.length / 2; i < out.length; i++) {
+                if (capv[i] < lo) { lo = capv[i] }
+                if (capv[i] > hi) { hi = capv[i] }
+            }
+            print("cap between " + H.R(lo) + " and " + H.R(hi))
+            // counter on a 1 kHz clock: 10 rising edges in 10 ms
+            var k = new Circuits.Circuit()
+            var clk = k.Add(new Circuits.SquareSource(5V, 1kHz))
+            var cnt = k.Add(new Circuits.Counter(4))
+            clk.A.Connect(cnt.Clock)
+            clk.B.Connect(k.Ground)
+            k.TimeStep = 10us
+            k.Run(10.5ms)
+            print("counter " + cnt.Count + " q0 " + H.R(cnt.Q(0).Raw()) + " q1 " + H.R(cnt.Q(1).Raw()) + " q3 " + H.R(cnt.Q(3).Raw()))
+            // parameters and bindings: an RC low pass whose R and C come from parameters
+            class LowPass : Circuits.Circuit {
+                construct(float r : any, float cap : any) : base("lowpass") {
+                    this.Parameter("R", r)
+                    this.Parameter("C", cap)
+                    var input = this.AddPort("in")
+                    var output = this.AddPort("out")
+                    var res = this.Add(new Circuits.Resistor(1))
+                    var c = this.Add(new Circuits.Capacitor(1))
+                    input.Connect(res.A)
+                    res.B.Connect(c.A)
+                    c.B.Connect(this.Ground)
+                    output.Connect(res.B)
+                    this.Bind((Circuits.Circuit p) => res.Resistance = p.Get("R"))
+                    this.Bind((Circuits.Circuit p) => c.Capacitance = p.Get("C"))
+                }
+                float Cutoff() { return this.Value("1/(2*pi*R*C)") }
+            }
+            var top = new Circuits.Circuit()
+            var lp = top.Add(new LowPass(1kOhm, 1uF))
+            print("cutoff " + Math.Round(lp.Cutoff()) + " Hz")
+            lp.Parameter("R", 2kOhm)
+            print("cutoff " + Math.Round(lp.Cutoff()) + " Hz " + lp.Value("R*2") + " " + lp.HasParameter("C") + " " + top.HasParameter("R"))
+            top.Parameter("scale", 3)
+            print(lp.Value("scale*R") + " " + lp.Get("scale"))
+            try { lp.Get("nope") } catch (ArgumentException e) { print(e.message) }
+            """),
+        ("Circuits: Kapazitaeten der Halbleiter (Sperrverzug 1N4001/1N4148, Schaltzeiten 2N3904)", """
+            #import "circuits"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+                // the most negative current after the source turns negative at 50 us, and how long it stays below -0.5 mA
+                static string Recovery(string model) {
+                    var c = new Circuits.Circuit()
+                    var src = c.Add(new Circuits.SquareSource(5V, 10kHz, -5V))
+                    var r = c.Add(new Circuits.Resistor(1kOhm))
+                    var d = c.Add(new Circuits.Diode(model))
+                    src.A.Connect(r.A)
+                    r.B.Connect(d.A)
+                    d.B.Connect(c.Ground)
+                    src.B.Connect(c.Ground)
+                    c.TimeStep = 50ns
+                    var sc = new Circuits.Scope(c)
+                    sc.Current("i", d)
+                    c.Run(100us)
+                    var i = sc.Samples("i")
+                    var lowest = 0.0
+                    var below = 0
+                    for (int k = 1000; k < i.length; k++) {
+                        if (i[k] < lowest) { lowest = i[k] }
+                        if (i[k] < -0.0005) { below++ }
+                    }
+                    return model + " peak " + H.R(lowest * 1000) + " mA for " + H.R(below * 0.05) + " us, it " + c.PlanInfo(7) + " bad " + c.PlanInfo(8)
+                }
+            }
+            print(H.Recovery("1N4001"))
+            print(H.Recovery("1N4148"))
+            print(H.Recovery("diode"))
+            // NPN switch: input steps to 5V at t=0 through 10k; collector through 1k; the time until the collector falls below 1 V
+            var q = new Circuits.Circuit()
+            var vin = q.Add(new Circuits.SquareSource(5V, 50kHz))
+            var vcc = q.Add(new Circuits.VoltageSource(5V))
+            var rb = q.Add(new Circuits.Resistor(10kOhm))
+            var rc = q.Add(new Circuits.Resistor(1kOhm))
+            var t = q.Add(new Circuits.Transistor("2N3904"))
+            vin.A.Connect(rb.A)
+            rb.B.Connect(t.B)
+            vcc.A.Connect(rc.A)
+            rc.B.Connect(t.C)
+            t.E.Connect(q.Ground)
+            vin.B.Connect(q.Ground)
+            vcc.B.Connect(q.Ground)
+            q.TimeStep = 5ns
+            var sc = new Circuits.Scope(q)
+            sc.Voltage("c", t.C)
+            q.Run(20us)
+            var vc = sc.Samples("c")
+            var tOn = -1
+            var tOff = -1
+            for (int k = 1; k < vc.length; k++) {
+                if (tOn < 0 && vc[k] < 1.0) { tOn = k }
+                if (tOn >= 0 && tOff < 0 && k * 5 > 10000 && vc[k] > 4.0) { tOff = k }
+            }
+            print("npn on after " + H.R(tOn * 0.005) + " us, off after " + H.R(tOff * 0.005 - 10) + " us")
+            """),
+        ("Circuits: Audio durch die Schaltung (Tiefpass, Dioden-Clipper, in Stuecken, WAV hin und zurueck)", """
+            #import "circuits"
+            #import "audio"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+                static float Rms(byte data[], int offset, int frames) {
+                    var sum = 0.0
+                    for (int i = frames / 2; i < frames; i++) {
+                        var v = data[offset + i * 2] + (data[offset + i * 2 + 1] << 8)
+                        if (v >= 32768) { v = v - 65536 }
+                        sum = sum + (v / 32768.0) * (v / 32768.0)
+                    }
+                    return Math.Sqrt(sum / (frames - frames / 2))
+                }
+            }
+            // a 1 kHz tone through an RC low pass (1k, 1uF: 159 Hz) - about 0.157 of the input is left
+            var tone = Audio.Sound.Tone(1000, 100, 0, 100, 22050)
+            print("tone " + tone.Frames + " frames, rms " + H.R(H.Rms(tone.Data, tone.Offset, tone.Frames)))
+            var c = new Circuits.Circuit()
+            var input = c.Add(new Circuits.AudioInput(1V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            input.A.Connect(r.A)
+            input.B.Connect(c.Ground)
+            r.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            var out = c.ProcessAudio(tone, input, cap.A)
+            var filtered = new Audio.Sound(tone.Rate, 1, out)
+            var ratio = H.Rms(out, 0, filtered.Frames) / H.Rms(tone.Data, tone.Offset, tone.Frames)
+            print("low pass ratio " + H.R(ratio) + " clipped " + c.Clipped + " time " + H.R(c.Time / 1ms) + " ms")
+            // a diode clipper: 3V amplitude, two antiparallel 1N4148 after 1k - the output stays below about 0.7 V
+            var d = new Circuits.Circuit()
+            var inp = d.Add(new Circuits.AudioInput(3V))
+            var rs = d.Add(new Circuits.Resistor(1kOhm))
+            var d1 = d.Add(new Circuits.Diode("1N4148"))
+            var d2 = d.Add(new Circuits.Diode("1N4148"))
+            inp.A.Connect(rs.A)
+            inp.B.Connect(d.Ground)
+            rs.B.Connect(d1.A)
+            d1.B.Connect(d.Ground)
+            d2.A.Connect(d.Ground)
+            d2.B.Connect(rs.B)
+            var clippedOut = d.ProcessAudio(tone, inp, rs.B, undefined, 1V)
+            var peak = 0.0
+            for (int i = 0; i < tone.Frames; i++) {
+                var v = clippedOut[i * 2] + (clippedOut[i * 2 + 1] << 8)
+                if (v >= 32768) { v = v - 65536 }
+                if (Math.Abs(v / 32768.0) > peak) { peak = Math.Abs(v / 32768.0) }
+            }
+            print("clipper peak " + H.R(peak) + " V, iterations " + d.PlanInfo(7))
+            // in two pieces: the circuit keeps its state
+            var c2 = new Circuits.Circuit()
+            var in2 = c2.Add(new Circuits.AudioInput(1V))
+            var r2 = c2.Add(new Circuits.Resistor(1kOhm))
+            var cap2 = c2.Add(new Circuits.Capacitor(1uF))
+            in2.A.Connect(r2.A)
+            in2.B.Connect(c2.Ground)
+            r2.B.Connect(cap2.A)
+            cap2.B.Connect(c2.Ground)
+            var half = tone.Frames / 2
+            var a = c2.ProcessSamples(in2, cap2.A, tone.Data, tone.Offset, half, 1, tone.Rate)
+            var b = c2.ProcessSamples(in2, cap2.A, tone.Data, tone.Offset + half * 2, tone.Frames - half, 1, tone.Rate)
+            var same = true
+            for (int i = 0; i < half * 2; i++) {
+                if (a[i] != out[i]) { same = false }
+            }
+            for (int i = 0; i < (tone.Frames - half) * 2; i++) {
+                if (b[i] != out[half * 2 + i]) { same = false }
+            }
+            print("in pieces the same: " + same)
+            // WAV out and back in
+            var wav = filtered.ToWav()
+            var back = Audio.Sound.FromWav(wav)
+            print("wav " + wav.length + " bytes, " + back.Rate + " Hz, " + back.Channels + " channel, " + back.Frames + " frames")
+            """),
+        ("Circuits: Schaltplan (Elemente im Raster, Netze aus Punkten und Draehten, Speichern und Laden, Verschieben trennt, Zahlen mit Praefix)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var c = new Circuits.Circuit("rc")
+            var s = c.Schematic
+            s.Add("Source", 0, 8, 0, 0, "voltage=5V")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+            s.Add("Capacitor", 8, 0, 8, 8, "capacitance=1uF", "c1")
+            s.Add("Wire", 0, 8, 8, 8)
+            s.Add("Ground", 0, 8, 0, 12)
+            s.Add("Scope", 12, 0, 28, 8, "probe=c1")
+            c.TimeStep = 10us
+            c.Run(1ms)
+            var cap = s.Find("c1")
+            print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().count + " scope " + s.Elements()[5].scope.Count)
+            var text = s.ToText()
+            print(text)
+            var c2 = new Circuits.Circuit("copy")
+            c2.LoadSchematic(text)
+            c2.Run(1ms)
+            print("copy Vc " + H.R(c2.Schematic.Find("c1").PinVoltage(0)))
+            print(Circuits.Symbols.Number("4.7k") + " " + H.R(Circuits.Symbols.Number("10uF") * 1000000) + " " + Circuits.Symbols.Number("1meg") + " " + Circuits.Symbols.Number("5V") + " " + Circuits.Symbols.Number("1F") + " " + Circuits.Symbols.Number("x"))
+            s.Move(cap, 20, 0, 20, 8)
+            c.Run(1ms)
+            print("moved: r1 carries " + H.R(s.Find("r1").part.Current / 1mA) + " mA, version " + s.Version)
+            s.Remove(s.Find("r1"))
+            print("removed: " + s.Elements().count + " elements, " + c.Parts().count + " parts")
+            """),
+        ("Circuits: Schaltplan mit Op-Amp, Transistor, LED, Gattern und 555 (Pins wie bei Falstad)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var c = new Circuits.Circuit("amp")
+            var s = c.Schematic
+            s.Add("Rail", 0, 0, -4, 0, "voltage=0.5")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k")
+            var u = s.Add("OpAmp", 8, 2, 16, 2, "", "u1")
+            s.Add("Ground", 8, 4, 8, 8)
+            s.Add("Resistor", 8, 0, 8, -6, "resistance=10k")
+            s.Add("Wire", 8, -6, 16, -6)
+            s.Add("Wire", 16, -6, 16, 2)
+            c.Run(1ms)
+            print("op amp pins " + u.PinX(0) + "," + u.PinY(0) + " " + u.PinX(1) + "," + u.PinY(1) + " out " + H.R(u.PinVoltage(2)))
+            var d = new Circuits.Circuit("switch")
+            var t = d.Schematic
+            t.Add("Rail", 0, 0, 0, -4, "voltage=5")
+            t.Add("Resistor", 0, 0, 8, 0, "resistance=10k")
+            var q = t.Add("Transistor", 8, 0, 16, 0, "", "q1")
+            t.Add("Ground", 16, 2, 16, 6)
+            t.Add("Led", 16, -10, 16, -2, "", "led")
+            t.Add("Resistor", 16, -18, 16, -10, "resistance=330")
+            t.Add("Rail", 16, -18, 16, -22, "voltage=5")
+            d.Run(1ms)
+            Circuits.Led led = t.Find("led").part!Circuits.Led
+            print("transistor pins " + q.PinX(1) + "," + q.PinY(1) + " " + q.PinX(2) + "," + q.PinY(2) + " led " + led.IsOn + " " + Math.Round(led.Current / 1mA))
+            var g = new Circuits.Circuit("logic")
+            var l = g.Schematic
+            l.Add("LogicInput", 0, 0, -4, 0, "high=true")
+            l.Add("LogicInput", 0, 4, -4, 4, "high=true")
+            var gate = l.Add("And", 0, 2, 8, 2)
+            l.Add("LogicOutput", 8, 2, 12, 2, "", "y")
+            var tm = l.Add("Timer555", 20, 0, 32, 0)
+            g.Run(50us)
+            print("and pins " + gate.PinX(0) + "," + gate.PinY(0) + " " + gate.PinX(1) + "," + gate.PinY(1) + " y " + H.R(l.Find("y").PinVoltage(0)) + " 555 pins " + tm.PinCount + " '" + tm.Error + "'")
+            var bad = l.Add("Diode", 40, 0, 48, 0, "model=nosuch")
+            print("bad model: " + bad.Error)
+            """),
+        ("Circuits: Potentiometer, Transformator, JK-Flipflop, Schmitt-Trigger und Relais (Kern und Schaltplan)", """
+            #import "circuits"
+            // potentiometer: 10 V over 10k, wiper at 0.25 -> 7.5 V
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(10V))
+            var pot = c.Add(new Circuits.Potentiometer(10kOhm, 0.25))
+            v.A.Connect(pot.A)
+            pot.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("pot wiper " + Math.Round(pot.Wiper.Voltage / 1V * 1000) / 1000)
+            pot.Position = 0.9
+            c.Step()
+            print("pot wiper " + Math.Round(pot.Wiper.Voltage / 1V * 1000) / 1000)
+
+            // transformer: 10 V 50 Hz sine on the primary, ratio 0.5, 1k load
+            var t = new Circuits.Circuit()
+            t.TimeStep = 20us
+            var s = t.Add(new Circuits.SineSource(10V, 50Hz))
+            var tr = t.Add(new Circuits.Transformer(4H, 0.5))
+            var load = t.Add(new Circuits.Resistor(1kOhm))
+            s.A.Connect(tr.P1)
+            tr.P2.Connect(t.Ground)
+            s.B.Connect(t.Ground)
+            tr.S1.Connect(load.A)
+            tr.S2.Connect(load.B)
+            load.B.Connect(t.Ground)
+            var peak = 0.0
+            for (int i = 0; i < 4000; i++) {
+                t.Step()
+                if (i > 2000) { peak = Math.Max(peak, Math.Abs(tr.S1.Voltage / 1V)) }
+            }
+            print("secondary peak " + Math.Round(peak * 100) / 100)
+
+            // JK flip-flop: J = K = 1 toggles on every rising edge of a 1 kHz clock
+            var j = new Circuits.Circuit()
+            var clk = j.Add(new Circuits.SquareSource(5V, 1kHz))
+            var hi = j.Add(new Circuits.VoltageSource(5V))
+            var ff = j.Add(new Circuits.JKFlipFlop())
+            clk.B.Connect(j.Ground)
+            hi.B.Connect(j.Ground)
+            clk.A.Connect(ff.Clock)
+            hi.A.Connect(ff.J)
+            hi.A.Connect(ff.K)
+            var toggles = 0
+            var last = ff.State
+            for (int i = 0; i < 1000; i++) {
+                j.Step()
+                if (ff.State != last) { toggles++; last = ff.State }
+            }
+            print("jk toggles in 10 ms " + toggles)
+
+            // Schmitt trigger on a 1 kHz triangle-ish sine 0..5 V: switches at 3.33 up and 1.66 down
+            var st = new Circuits.Circuit()
+            var sin = st.Add(new Circuits.SineSource(2.5V, 1kHz, 2.5V))
+            var trig = st.Add(new Circuits.SchmittTrigger())
+            sin.B.Connect(st.Ground)
+            sin.A.Connect(trig.In)
+            var ups = new List()
+            var prev = trig.State
+            for (int i = 0; i < 200; i++) {
+                st.Step()
+                if (trig.State != prev) {
+                    ups.Add(Math.Round(trig.In.Voltage / 1V * 10) / 10)
+                    prev = trig.State
+                }
+            }
+            print("schmitt switches at " + ups[0] + " " + ups[1])
+
+            // relay: 12 V on a 20 Ohm coil (0.6 A) pulls in; the contact then lights a 1k load from 5 V
+            var r = new Circuits.Circuit()
+            var sup = r.Add(new Circuits.VoltageSource(12V))
+            var sw = r.Add(new Circuits.Switch(true))
+            var rel = r.Add(new Circuits.Relay())
+            var five = r.Add(new Circuits.VoltageSource(5V))
+            var lamp = r.Add(new Circuits.Resistor(1kOhm))
+            sup.B.Connect(r.Ground)
+            sup.A.Connect(sw.A)
+            sw.B.Connect(rel.Coil1)
+            rel.Coil2.Connect(r.Ground)
+            five.B.Connect(r.Ground)
+            five.A.Connect(rel.Common)
+            rel.NormallyOpen.Connect(lamp.A)
+            lamp.B.Connect(r.Ground)
+            r.Run(1ms)
+            print("relay after 1ms " + rel.Energized + " lamp " + Math.Round(lamp.A.Voltage / 1V * 100) / 100)
+            r.Run(20ms)
+            print("relay after 21ms " + rel.Energized + " lamp " + Math.Round(lamp.A.Voltage / 1V * 100) / 100)
+            sw.Closed = false
+            r.Run(50ms)
+            print("relay after release " + rel.Energized + " lamp " + Math.Round(lamp.A.Voltage / 1V * 100) / 100)
+
+            // the same parts placed in a schematic: pins as in Falstad
+            var sc = new Circuits.Circuit()
+            var sm = sc.Schematic
+            var ep = sm.Add("Potentiometer", 0, 0, 8, 0, "position=0.25", "pot")
+            var et = sm.Add("Transformer", 20, 0, 26, 0, "ratio=0.5", "tr")
+            var ek = sm.Add("Relay", 40, 0, 48, 0, "", "k1")
+            var ej = sm.Add("JKFlipFlop", 60, 0, 72, 0, "reset=true", "jk")
+            var es = sm.Add("SchmittTrigger", 80, 0, 88, 0, "inverting=true", "st")
+            foreach (e in sm.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            """),
+        ("Circuits: Lampe, Sicherung, Funkenstrecke, Memristor, Analogschalter, Umschalter, LDR, NTC, Leitung, Dreieck/Saegezahn/Rauschen/Sweep, Quarz", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // lamp: 120 V on a 100 W lamp warms up, the current drops
+            var c = new Circuits.Circuit()
+            c.TimeStep = 100us
+            var v = c.Add(new Circuits.VoltageSource(120V))
+            var lamp = c.Add(new Circuits.Lamp())
+            v.A.Connect(lamp.A)
+            lamp.B.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            c.Step()
+            print("lamp cold " + H.R(lamp.Current / 1A) + " A, " + Math.Round(lamp.Temperature) + " K")
+            c.Run(2s)
+            print("lamp hot " + H.R(lamp.Current / 1A) + " A, " + Math.Round(lamp.Temperature) + " K, power " + Math.Round(lamp.PowerRaw()) + " W, brightness " + H.R(lamp.Brightness))
+            // fuse: 10 A through a fuse with i2t 6.73 blows after about 0.07 s
+            var f = new Circuits.Circuit()
+            f.TimeStep = 1ms
+            var s2 = f.Add(new Circuits.VoltageSource(10V))
+            var fuse = f.Add(new Circuits.Fuse())
+            var rl = f.Add(new Circuits.Resistor(1Ohm))
+            s2.A.Connect(fuse.A)
+            fuse.B.Connect(rl.A)
+            rl.B.Connect(f.Ground)
+            s2.B.Connect(f.Ground)
+            var blownAt = -1.0
+            for (int i = 0; i < 200; i++) {
+                f.Step()
+                if (fuse.Blown && blownAt < 0.0) { blownAt = f.TimeRaw() }
+            }
+            print("fuse blown at " + H.R(blownAt) + " s, current now " + H.R(fuse.Current / 1A))
+            // spark gap: a capacitor charged through 1 MOhm from 2 kV fires at 1 kV (relaxation oscillator)
+            var g = new Circuits.Circuit()
+            g.TimeStep = 1ms
+            var hv = g.Add(new Circuits.VoltageSource(2000V))
+            var rr = g.Add(new Circuits.Resistor(10MOhm))
+            var cc = g.Add(new Circuits.Capacitor(100nF))
+            var gap = g.Add(new Circuits.SparkGap())
+            hv.A.Connect(rr.A)
+            rr.B.Connect(cc.A)
+            cc.B.Connect(g.Ground)
+            hv.B.Connect(g.Ground)
+            gap.A.Connect(cc.A)
+            gap.B.Connect(g.Ground)
+            var fires = 0
+            var was = false
+            for (int i = 0; i < 3000; i++) {
+                g.Step()
+                if (gap.IsOn && !was) { fires++ }
+                was = gap.IsOn
+            }
+            print("spark gap fired " + fires + " times in 3 s")
+            // memristor driven by a sine: the resistance moves
+            var m = new Circuits.Circuit()
+            m.TimeStep = 1ms
+            var sine = m.Add(new Circuits.SineSource(1V, 1Hz))
+            var mem = m.Add(new Circuits.Memristor())
+            sine.A.Connect(mem.A)
+            mem.B.Connect(m.Ground)
+            sine.B.Connect(m.Ground)
+            var lo = 1000000.0
+            var hi = 0.0
+            for (int i = 0; i < 2000; i++) {
+                m.Step()
+                var r = mem.Resistance / 1Ohm
+                if (r < lo) { lo = r }
+                if (r > hi) { hi = r }
+            }
+            print("memristor between " + Math.Round(lo) + " and " + Math.Round(hi) + " Ohm")
+            // analog switch driven by a square wave
+            var a = new Circuits.Circuit()
+            var five = a.Add(new Circuits.VoltageSource(5V))
+            var ctl = a.Add(new Circuits.SquareSource(5V, 1kHz))
+            var sw = a.Add(new Circuits.AnalogSwitch())
+            var load = a.Add(new Circuits.Resistor(1kOhm))
+            five.A.Connect(sw.A)
+            sw.B.Connect(load.A)
+            load.B.Connect(a.Ground)
+            five.B.Connect(a.Ground)
+            ctl.A.Connect(sw.Control)
+            ctl.B.Connect(a.Ground)
+            a.Run(200us)
+            print("analog switch on " + sw.IsOn + " load " + H.R(load.A.Voltage / 1V))
+            a.Run(500us)
+            print("analog switch on " + sw.IsOn + " load " + H.R(load.A.Voltage / 1V))
+            // two-way switch
+            var t = new Circuits.Circuit()
+            var src = t.Add(new Circuits.VoltageSource(5V))
+            var s3 = t.Add(new Circuits.Switch2())
+            var r1 = t.Add(new Circuits.Resistor(1kOhm))
+            var r2 = t.Add(new Circuits.Resistor(1kOhm))
+            src.A.Connect(s3.Common)
+            s3.Throw(0).Connect(r1.A)
+            s3.Throw(1).Connect(r2.A)
+            r1.B.Connect(t.Ground)
+            r2.B.Connect(t.Ground)
+            src.B.Connect(t.Ground)
+            t.Step()
+            print("switch2 pos 0: " + H.R(r1.A.Voltage / 1V) + " " + H.R(r2.A.Voltage / 1V))
+            s3.Toggle()
+            t.Step()
+            print("switch2 pos 1: " + H.R(r1.A.Voltage / 1V) + " " + H.R(r2.A.Voltage / 1V))
+            // LDR and NTC
+            var ldr = new Circuits.LightResistor(10.0)
+            print("ldr at 10 lux " + Math.Round(ldr.Resistance / 1Ohm) + ", at 1000 lux " + Math.Round(new Circuits.LightResistor(1000.0).Resistance / 1Ohm))
+            print("ntc at 25 C " + Math.Round(new Circuits.Thermistor().Resistance / 1Ohm) + ", at 50 C " + Math.Round(new Circuits.Thermistor(50.0).Resistance / 1Ohm))
+            // transmission line: 1 us, 50 Ohm, open at the end: a 1 V step through 50 Ohm arrives doubled after 1 us
+            var l = new Circuits.Circuit()
+            l.TimeStep = 10ns
+            var step = l.Add(new Circuits.VoltageSource(2V))
+            var rs = l.Add(new Circuits.Resistor(50Ohm))
+            var line = l.Add(new Circuits.TransmissionLine(50Ohm, 1us))
+            step.A.Connect(rs.A)
+            rs.B.Connect(line.A1)
+            line.B1.Connect(l.Ground)
+            line.B2.Connect(l.Ground)
+            step.B.Connect(l.Ground)
+            l.Run(500ns)
+            print("line at 0.5 us: in " + H.R(line.A1.Voltage / 1V) + " end " + H.R(line.A2.Voltage / 1V))
+            l.Run(1us)
+            print("line at 1.5 us: in " + H.R(line.A1.Voltage / 1V) + " end " + H.R(line.A2.Voltage / 1V))
+            l.Run(1us)
+            print("line at 2.5 us: in " + H.R(line.A1.Voltage / 1V) + " end " + H.R(line.A2.Voltage / 1V))
+            // sources: triangle peak, sweep, noise
+            var w = new Circuits.Circuit()
+            w.TimeStep = 10us
+            var tri = w.Add(new Circuits.TriangleSource(1V, 1kHz))
+            var saw = w.Add(new Circuits.TriangleSource(1V, 1kHz, 0V, 0.0, true))
+            var noise = w.Add(new Circuits.NoiseSource(1V))
+            var sweep = w.Add(new Circuits.SweepSource(1V, 100Hz, 1kHz, 10ms))
+            foreach (p in [tri, saw, noise, sweep]) {
+                Circuits.VoltageSource vs = p!Circuits.VoltageSource
+                var rx = w.Add(new Circuits.Resistor(1kOhm))
+                vs.A.Connect(rx.A)
+                rx.B.Connect(w.Ground)
+                vs.B.Connect(w.Ground)
+            }
+            var tmax = -9.0
+            var smin = 9.0
+            var nmax = -9.0
+            var crossings = 0
+            var last = 0.0
+            for (int i = 0; i < 1000; i++) {
+                w.Step()
+                tmax = Math.Max(tmax, tri.A.Voltage / 1V)
+                smin = Math.Min(smin, saw.A.Voltage / 1V)
+                nmax = Math.Max(nmax, Math.Abs(noise.A.Voltage / 1V))
+                var y = sweep.A.Voltage / 1V
+                if (last < 0.0 && y >= 0.0) { crossings++ }
+                last = y
+            }
+            print("triangle max " + H.R(tmax) + " sawtooth min " + H.R(smin) + " noise within 1 V " + (nmax <= 1.0) + " sweep periods in 10 ms " + crossings)
+            // crystal: series resonance near 1/(2 pi sqrt(L Cs))
+            print("crystal series resonance " + Math.Round(1.0 / (2.0 * Math.PI * Math.Sqrt(0.0025 * 0.0000000000001)) / 1000) + " kHz")
+
+            // in a schematic: the pins as in Falstad
+            var sc = new Circuits.Circuit()
+            var sm = sc.Schematic
+            sm.Add("Switch2", 0, 0, 8, 0, "throws=3", "sw")
+            sm.Add("AnalogSwitch", 10, 0, 18, 0, "", "as")
+            sm.Add("AnalogSwitch2", 20, 0, 28, 0, "", "as2")
+            sm.Add("TransmissionLine", 30, 0, 42, 0, "", "tl")
+            sm.Add("Lamp", 44, 0, 52, 0, "", "lamp")
+            sm.Add("Sweep", 54, 0, 50, 0, "", "sweep")
+            foreach (e in sm.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            """),
+        ("Circuits: Thyristor, Triac, Diac, JFET, Darlington, Triode, Varaktor, gesteuerte Quellen, Stromkonverter, OTA, Optokoppler, UJT", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // SCR: 12 V through 100 Ohm; a gate pulse fires it, it stays on, the supply going down puts it out
+            var c = new Circuits.Circuit()
+            c.TimeStep = 10us
+            var v = c.Add(new Circuits.VoltageSource(12V))
+            var rl = c.Add(new Circuits.Resistor(100Ohm))
+            var scr = c.Add(new Circuits.Thyristor())
+            var vg = c.Add(new Circuits.VoltageSource(5V))
+            var rg = c.Add(new Circuits.Resistor(300Ohm))
+            var sw = c.Add(new Circuits.Switch(false))
+            v.A.Connect(rl.A)
+            rl.B.Connect(scr.Anode)
+            scr.Cathode.Connect(c.Ground)
+            v.B.Connect(c.Ground)
+            vg.A.Connect(sw.A)
+            sw.B.Connect(rg.A)
+            rg.B.Connect(scr.Gate)
+            vg.B.Connect(c.Ground)
+            c.Run(1ms)
+            print("scr before " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            sw.Closed = true
+            c.Run(1ms)
+            print("scr gate " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            sw.Closed = false
+            c.Run(1ms)
+            print("scr held " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            v.Level = 1V
+            c.Run(1ms)
+            print("scr low " + scr.IsOn + " " + H.R(rl.Current / 1A))
+            // triac: 100 V 50 Hz through 100 Ohm, the gate from the line through 2 kOhm: it fires in both half waves
+            var t = new Circuits.Circuit()
+            t.TimeStep = 20us
+            var ac = t.Add(new Circuits.SineSource(100V, 50Hz))
+            var load = t.Add(new Circuits.Resistor(100Ohm))
+            var tr = t.Add(new Circuits.Triac())
+            var rgt = t.Add(new Circuits.Resistor(2kOhm))
+            ac.A.Connect(load.A)
+            load.B.Connect(tr.MT2)
+            tr.MT1.Connect(t.Ground)
+            ac.B.Connect(t.Ground)
+            load.B.Connect(rgt.A)
+            rgt.B.Connect(tr.Gate)
+            var pos = 0.0
+            var neg = 0.0
+            for (int i = 0; i < 1000; i++) {
+                t.Step()
+                var ii = load.Current / 1A
+                if (ii > pos) { pos = ii }
+                if (ii < neg) { neg = ii }
+            }
+            print("triac peaks " + H.R(pos) + " " + H.R(neg))
+            // diac: relaxation oscillator from 50 V through 100 kOhm on 1 uF
+            var d = new Circuits.Circuit()
+            d.TimeStep = 100us
+            var hv = d.Add(new Circuits.VoltageSource(50V))
+            var rr = d.Add(new Circuits.Resistor(100kOhm))
+            var cc = d.Add(new Circuits.Capacitor(1uF))
+            var diac = d.Add(new Circuits.Diac())
+            var rs = d.Add(new Circuits.Resistor(10Ohm))
+            hv.A.Connect(rr.A)
+            rr.B.Connect(cc.A)
+            cc.B.Connect(d.Ground)
+            hv.B.Connect(d.Ground)
+            diac.A.Connect(cc.A)
+            diac.B.Connect(rs.A)
+            rs.B.Connect(d.Ground)
+            var fires = 0
+            var was = false
+            for (int i = 0; i < 5000; i++) {
+                d.Step()
+                if (diac.IsOn && !was) { fires++ }
+                was = diac.IsOn
+            }
+            print("diac fires in 0.5 s " + fires)
+            // JFET: Vgs 0 and -2 V, 10 V drain
+            var j = new Circuits.Circuit()
+            var vd = j.Add(new Circuits.VoltageSource(10V))
+            var vgs = j.Add(new Circuits.VoltageSource(0V))
+            var jf = j.Add(new Circuits.Jfet())
+            vd.A.Connect(jf.D)
+            jf.S.Connect(j.Ground)
+            vd.B.Connect(j.Ground)
+            vgs.A.Connect(jf.G)
+            vgs.B.Connect(j.Ground)
+            j.Step()
+            print("jfet idss " + H.R(jf.DrainCurrent / 1mA) + " mA")
+            vgs.Level = -2V
+            j.Step()
+            print("jfet at -2 V " + H.R(jf.DrainCurrent / 1mA) + " mA")
+            vgs.Level = -5V
+            j.Step()
+            print("jfet at -5 V " + H.R(jf.DrainCurrent / 1mA) + " mA")
+            // Darlington: base through 1 MOhm from 5 V
+            var q = new Circuits.Circuit()
+            var vq = q.Add(new Circuits.VoltageSource(5V))
+            var rb = q.Add(new Circuits.Resistor(1MOhm))
+            var rc = q.Add(new Circuits.Resistor(1kOhm))
+            var dar = q.Add(new Circuits.Darlington())
+            vq.A.Connect(rb.A)
+            rb.B.Connect(dar.B)
+            vq.A.Connect(rc.A)
+            rc.B.Connect(dar.C)
+            dar.E.Connect(q.Ground)
+            vq.B.Connect(q.Ground)
+            q.Step()
+            print("darlington vbe " + H.R(dar.B.Voltage / 1V) + " vce " + H.R(dar.C.Voltage / 1V))
+            // triode: 250 V through 100 kOhm on the plate, grid on ground
+            var tri = new Circuits.Circuit()
+            var vp = tri.Add(new Circuits.VoltageSource(250V))
+            var rp = tri.Add(new Circuits.Resistor(100kOhm))
+            var tube = tri.Add(new Circuits.Triode())
+            vp.A.Connect(rp.A)
+            rp.B.Connect(tube.Plate)
+            tube.Grid.Connect(tri.Ground)
+            tube.Cathode.Connect(tri.Ground)
+            vp.B.Connect(tri.Ground)
+            tri.Step()
+            print("triode plate " + H.R(tube.Plate.Voltage / 1V) + " V, " + H.R(rp.Current / 1mA) + " mA")
+            // pentode (EL34 at 250 V, grid -13.5 V) and a vacuum rectifier diode (5Y3 into 5 kOhm)
+            var pc = new Circuits.Circuit()
+            var pb = pc.Add(new Circuits.VoltageSource(250V))
+            var pg = pc.Add(new Circuits.VoltageSource(-13.5V))
+            var pen = pc.Add(new Circuits.Pentode("EL34"))
+            pb.A.Connect(pen.Plate)
+            pb.A.Connect(pen.Screen)
+            pg.A.Connect(pen.Grid)
+            pen.Cathode.Connect(pc.Ground)
+            pb.B.Connect(pc.Ground)
+            pg.B.Connect(pc.Ground)
+            pc.Step()
+            print("pentode " + H.R(pen.PlateCurrent / 1mA) + " mA, screen " + H.R(pen.ScreenCurrent / 1mA) + " mA")
+            var dc = new Circuits.Circuit()
+            var dv = dc.Add(new Circuits.VoltageSource(100V))
+            var vdi = dc.Add(new Circuits.VacuumDiode("5Y3"))
+            var dl = dc.Add(new Circuits.Resistor(5kOhm))
+            dv.A.Connect(vdi.Plate)
+            vdi.Cathode.Connect(dl.A)
+            dl.B.Connect(dc.Ground)
+            dv.B.Connect(dc.Ground)
+            dc.Step()
+            print("vacuum diode " + H.R(dl.A.Voltage / 1V) + " V")
+            // varactor: reverse biased through 1 MOhm, runs
+            var va = new Circuits.Circuit()
+            va.TimeStep = 1us
+            var vv = va.Add(new Circuits.SineSource(1V, 1kHz, 5V))
+            var rv = va.Add(new Circuits.Resistor(1kOhm))
+            var var1 = va.Add(new Circuits.Varactor())
+            vv.A.Connect(rv.A)
+            rv.B.Connect(var1.B)
+            var1.A.Connect(va.Ground)
+            vv.B.Connect(va.Ground)
+            va.Run(1ms)
+            print("varactor ok " + H.R(var1.B.Voltage / 1V))
+            // controlled sources
+            var g = new Circuits.Circuit()
+            var e = g.Add(new Circuits.VCVS(10.0))
+            var re = g.Add(new Circuits.Resistor(1kOhm))
+            var vin2 = g.Add(new Circuits.VoltageSource(0.5V))
+            vin2.B.Connect(g.Ground)
+            e.InPlus.Connect(vin2.A)
+            e.InMinus.Connect(g.Ground)
+            e.A.Connect(re.A)
+            re.B.Connect(g.Ground)
+            e.B.Connect(g.Ground)
+            var gs = g.Add(new Circuits.VCCS(0.001))
+            var rgs = g.Add(new Circuits.Resistor(1kOhm))
+            gs.InPlus.Connect(vin2.A)
+            gs.InMinus.Connect(g.Ground)
+            gs.A.Connect(g.Ground)
+            gs.B.Connect(rgs.A)
+            rgs.B.Connect(g.Ground)
+            // sense: 1 V through 1 kOhm into F/H's InPlus
+            var v1 = g.Add(new Circuits.VoltageSource(1V))
+            var rsn = g.Add(new Circuits.Resistor(1kOhm))
+            v1.B.Connect(g.Ground)
+            v1.A.Connect(rsn.A)
+            var f = g.Add(new Circuits.CCCS(2.0))
+            rsn.B.Connect(f.InPlus)
+            var h = g.Add(new Circuits.CCVS(1kOhm))
+            f.InMinus.Connect(h.InPlus)
+            h.InMinus.Connect(g.Ground)
+            var rf = g.Add(new Circuits.Resistor(1kOhm))
+            f.A.Connect(g.Ground)
+            f.B.Connect(rf.A)
+            rf.B.Connect(g.Ground)
+            var rh = g.Add(new Circuits.Resistor(1kOhm))
+            h.A.Connect(rh.A)
+            rh.B.Connect(g.Ground)
+            h.B.Connect(g.Ground)
+            // CCII+: Y on 1 V, X through 1 kOhm to ground, Z into 2 kOhm
+            var cv = g.Add(new Circuits.CurrentConveyor(1.0))
+            var rx = g.Add(new Circuits.Resistor(1kOhm))
+            var rz = g.Add(new Circuits.Resistor(2kOhm))
+            cv.Y.Connect(v1.A)
+            cv.X.Connect(rx.A)
+            rx.B.Connect(g.Ground)
+            cv.Z.Connect(rz.A)
+            rz.B.Connect(g.Ground)
+            g.Step()
+            print("vcvs " + H.R(e.A.Voltage / 1V) + " vccs " + H.R(gs.B.Voltage / 1V) + " cccs " + H.R(f.B.Voltage / 1V) + " ccvs " + H.R(h.A.Voltage / 1V))
+            print("cc2 x " + H.R(cv.X.Voltage / 1V) + " z " + H.R(cv.Z.Voltage / 1V) + " y current " + H.R(rsn.Current / 1mA))
+            // OTA: Iabc 100 uA from +9 V through a resistor into the Iabc pin (it sits near -9 V + 2 Vbe), output into 10 kOhm
+            var oc = new Circuits.Circuit()
+            var ota = oc.Add(new Circuits.Ota())
+            var ovin = oc.Add(new Circuits.VoltageSource(0.01V))
+            var rabc = oc.Add(new Circuits.Resistor(166kOhm))
+            var vplus = oc.Add(new Circuits.VoltageSource(9V))
+            var orl = oc.Add(new Circuits.Resistor(10kOhm))
+            ovin.A.Connect(ota.InPlus)
+            ovin.B.Connect(oc.Ground)
+            ota.InMinus.Connect(oc.Ground)
+            vplus.B.Connect(oc.Ground)
+            vplus.A.Connect(rabc.A)
+            rabc.B.Connect(ota.Iabc)
+            ota.Out.Connect(orl.A)
+            orl.B.Connect(oc.Ground)
+            oc.Step()
+            print("ota out " + H.R(ota.Out.Voltage / 1V) + " V, iabc " + H.R(rabc.Current / 1uA) + " uA")
+            ovin.Level = -0.01V
+            oc.Step()
+            print("ota out " + H.R(ota.Out.Voltage / 1V) + " V")
+            // optocoupler: 10 mA through the LED, the transistor from 5 V through 1 kOhm
+            var oo = new Circuits.Circuit()
+            var opto = oo.Add(new Circuits.Optocoupler())
+            var vled = oo.Add(new Circuits.VoltageSource(5V))
+            var rled = oo.Add(new Circuits.Resistor(330Ohm))
+            var ovcc = oo.Add(new Circuits.VoltageSource(5V))
+            var orc = oo.Add(new Circuits.Resistor(1kOhm))
+            vled.A.Connect(rled.A)
+            rled.B.Connect(opto.Anode)
+            opto.Cathode.Connect(oo.Ground)
+            vled.B.Connect(oo.Ground)
+            ovcc.A.Connect(orc.A)
+            orc.B.Connect(opto.Collector)
+            opto.Emitter.Connect(oo.Ground)
+            ovcc.B.Connect(oo.Ground)
+            oo.Step()
+            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(orc.Current / 1mA) + " mA")
+            vled.Level = 1.5V
+            oo.Step()
+            print("opto led " + H.R(rled.Current / 1mA) + " mA, collector " + H.R(orc.Current / 1mA) + " mA")
+            // UJT: the emitter through 1 kOhm, B2 through 470 Ohm from 10 V, B1 through 47 Ohm; it fires between 5 and 7 V
+            foreach (ve in [5.0, 7.0]) {
+                var ucc = new Circuits.Circuit()
+                var u = ucc.Add(new Circuits.Unijunction())
+                var v10 = ucc.Add(new Circuits.VoltageSource(10V))
+                var vu = ucc.Add(new Circuits.VoltageSource(ve * 1V))
+                var ru = ucc.Add(new Circuits.Resistor(1kOhm))
+                var r2 = ucc.Add(new Circuits.Resistor(470Ohm))
+                var r1 = ucc.Add(new Circuits.Resistor(47Ohm))
+                v10.B.Connect(ucc.Ground)
+                vu.B.Connect(ucc.Ground)
+                vu.A.Connect(ru.A)
+                ru.B.Connect(u.E)
+                v10.A.Connect(r2.A)
+                r2.B.Connect(u.B2)
+                u.B1.Connect(r1.A)
+                r1.B.Connect(ucc.Ground)
+                for (int k = 0; k < 50; k++) { ucc.Step() }
+                print("ujt at " + ve + " V: ie " + Math.Round(ru.Current / 1uA) + " uA, ib2 " + Math.Round(r2.Current / 1uA) + " uA")
+            }
+            // the relaxation oscillator of the UJT: 10 V through 100 kOhm on 10 nF at the emitter
+            var uo = new Circuits.Circuit()
+            uo.TimeStep = 5us
+            var uj = uo.Add(new Circuits.Unijunction())
+            var uv = uo.Add(new Circuits.VoltageSource(10V))
+            var ur = uo.Add(new Circuits.Resistor(100kOhm))
+            var uc = uo.Add(new Circuits.Capacitor(10nF))
+            var ub2 = uo.Add(new Circuits.Resistor(470Ohm))
+            var ub1 = uo.Add(new Circuits.Resistor(47Ohm))
+            uv.B.Connect(uo.Ground)
+            uv.A.Connect(ur.A)
+            ur.B.Connect(uj.E)
+            uc.A.Connect(uj.E)
+            uc.B.Connect(uo.Ground)
+            uv.A.Connect(ub2.A)
+            ub2.B.Connect(uj.B2)
+            uj.B1.Connect(ub1.A)
+            ub1.B.Connect(uo.Ground)
+            var peak = 0.0
+            var fired = 0
+            var uprev = 0.0
+            for (int k = 0; k < 4000; k++) {
+                uo.Step()
+                var vc = uj.E.Raw()
+                if (vc > peak) { peak = vc }
+                if (uprev - vc > 2.0) { fired++ }
+                uprev = vc
+            }
+            print("ujt oscillator fires " + fired + " times in 20 ms, peak " + H.R(peak) + " V")
+            // with 1 us the step at the peak point does not converge: it is done again in smaller steps, the oscillator goes on
+            uo.TimeStep = 1us
+            var high = false
+            var fires1 = 0
+            for (int k = 0; k < 20000; k++) {
+                uo.Step()
+                var ve1 = uj.E.Raw()
+                if (ve1 > 5.0) { high = true }
+                if (high && ve1 < 3.0) { high = false; fires1++ }
+            }
+            print("ujt oscillator at 1 us fires " + fires1 + " times in 20 ms, steps done again: " + (uo.PlanInfo(9) > 0))
+            """),
+        ("Circuits: die aktiven Bauteile im Schaltplan (Pins wie bei Falstad, Gate auf Falstads Raster)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // a thyristor on the schematic: 12 V through 100 Ohm, the gate from 5 V through 300 Ohm
+            var c = new Circuits.Circuit()
+            c.TimeStep = 10us
+            var sm = c.Schematic
+            sm.Add("Rail", 0, -8, 0, -12, "voltage=12")
+            sm.Add("Resistor", 0, -8, 0, 0, "resistance=100")
+            var scr = sm.Add("Thyristor", 0, 0, 0, 8, "", "SCR1")
+            sm.Add("Ground", 0, 8, 0, 12)
+            sm.Add("Rail", 10, 8, 14, 8, "voltage=5")
+            var gate = sm.Add("Resistor", 4, 8, 10, 8, "resistance=300")
+            c.Run(1ms)
+            Circuits.Thyristor th = sm.PartOf("SCR1")!Circuits.Thyristor
+            print("scr on " + th.IsOn + " anode " + H.R(scr.PinVoltage(0)))
+            // every new kind: where its pins are
+            var l = new Circuits.Circuit()
+            var s2 = l.Schematic
+            var kinds = ["Jfet", "Darlington", "Thyristor", "Triac", "Diac", "Varactor", "TunnelDiode", "Triode", "VCVS", "VCCS", "CCCS", "CCVS", "CurrentConveyor", "Ota", "Optocoupler", "Unijunction"]
+            var x = 0
+            foreach (k in kinds) {
+                s2.Add(k, x, 0, x + 8, 0)
+                x = x + 20
+            }
+            s2.Add("Thyristor", 0, 20, 7, 20, "smallGrid=true")
+            s2.Add("Thyristor", 0, 40, 2, 56, "legacy=true")
+            s2.Add("Triac", 20, 20, 20, 30)
+            s2.Add("Triode", 40, 20, 40, 28)
+            foreach (e in s2.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            """),
+        ("Circuits: 555, D-Flipflop und Zaehler im Chip-Layout von Falstad, 555 mit Vcc-Pin", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // the pins of the chips in Falstad's layout
+            var sc = new Circuits.Circuit()
+            var sm = sc.Schematic
+            sm.Add("Timer555", 0, 0, 16, 0, "layout=falstad;groundPin=true")
+            sm.Add("DFlipFlop", 30, 0, 42, 0, "layout=falstad;resetPin=true")
+            sm.Add("Counter", 50, 0, 56, 0, "layout=falstad;bits=3;spacing=2")
+            foreach (e in sm.Elements()) {
+                var pins = ""
+                for (int i = 0; i < e.PinCount; i++) { pins = pins + " " + e.PinX(i) + "," + e.PinY(i) }
+                print(e.Type + pins + " '" + e.Error + "'")
+            }
+            // a 555 astable powered at its Vcc pin from 9 V: 1k, 10k, 100 nF; the output swings up to Vcc
+            var c = new Circuits.Circuit()
+            c.TimeStep = 20us
+            var t = c.Add(new Circuits.Timer555(5V, true))
+            var v = c.Add(new Circuits.VoltageSource(9V))
+            var ra = c.Add(new Circuits.Resistor(1kOhm))
+            var rb = c.Add(new Circuits.Resistor(10kOhm))
+            var ct = c.Add(new Circuits.Capacitor(100nF))
+            var rl = c.Add(new Circuits.Resistor(10kOhm))
+            v.B.Connect(c.Ground)
+            v.A.Connect(t.Vcc)
+            v.A.Connect(t.Reset)
+            v.A.Connect(ra.A)
+            ra.B.Connect(t.Discharge)
+            t.Discharge.Connect(rb.A)
+            rb.B.Connect(t.Threshold)
+            t.Threshold.Connect(t.Trigger)
+            t.Trigger.Connect(ct.A)
+            ct.B.Connect(c.Ground)
+            t.Output.Connect(rl.A)
+            rl.B.Connect(c.Ground)
+            var edges = 0
+            var last = false
+            var top = 0.0
+            for (int i = 0; i < 2500; i++) {
+                c.Step()
+                var vo = t.Output.Raw()
+                if (vo > top) { top = vo }
+                var h = vo > 4.5
+                if (h && !last) { edges++ }
+                last = h
+            }
+            print("555 at 9 V: " + edges + " periods in 50 ms (about 34: a period is 0.693 * 21k * 100n), output up to " + H.R(top) + " V")
+            """),
+        ("Circuits: Chips im Kern (T-Flipflop, Latch, Ringzaehler, Mux/Demux, Addierer, Schieberegister, ADC/DAC, 7-Segment, Monoflop, Tri-State, VCO, Phasenkomparator)", """
+            #import "circuits"
+            class H {
+                static Circuits.LogicInput In(Circuits.Circuit c, Circuits.Port p, bool high) {
+                    var s = c.Add(new Circuits.LogicInput(high))
+                    s.A.Connect(p)
+                    s.B.Connect(c.Ground)
+                    return s
+                }
+                static float R(float v) { return Math.Round(v * 100) / 100 }
+            }
+            // T flip-flop: T high, 8 clock pulses -> 8 toggles
+            var c = new Circuits.Circuit()
+            var t = c.Add(new Circuits.TFlipFlop())
+            var clk = H.In(c, t.Clock, false)
+            var th = H.In(c, t.T, true)
+            var flips = 0
+            var last = t.State
+            for (int k = 0; k < 8; k++) {
+                clk.High = true
+                c.Run(0.1ms)
+                clk.High = false
+                c.Run(0.1ms)
+                if (t.State != last) { flips++ }
+                last = t.State
+            }
+            th.High = false
+            clk.High = true
+            c.Run(0.1ms)
+            print("tff flips " + flips + " of 8, with T low it stays: " + (t.State == last) + ", /Q " + H.R(t.NotQ.Raw()) + " V")
+
+            // latch 4 bit: D = 1010 (10), load edge
+            var c2 = new Circuits.Circuit()
+            var la = c2.Add(new Circuits.Latch(4))
+            var ins = new List()
+            for (int i = 0; i < 4; i++) { ins.Add(H.In(c2, la.D(i), i % 2 == 1)) }
+            var ld = H.In(c2, la.Load, false)
+            c2.Run(0.1ms)
+            var before = la.Value
+            ld.High = true
+            c2.Run(0.1ms)
+            var loaded = la.Value
+            ins[0].High = true
+            c2.Run(0.1ms)
+            print("latch " + before + " -> " + loaded + ", D changes while loaded high: still " + la.Value)
+
+            // ring counter 5 bits: 7 clocks -> position 2
+            var c3 = new Circuits.Circuit()
+            var rc = c3.Add(new Circuits.RingCounter(5))
+            var rclk = H.In(c3, rc.Clock, false)
+            var rr = H.In(c3, rc.Reset, true)
+            var ce = H.In(c3, rc.ports[7], false)
+            c3.Run(0.1ms)
+            for (int k = 0; k < 7; k++) {
+                rclk.High = true
+                c3.Run(0.1ms)
+                rclk.High = false
+                c3.Run(0.1ms)
+            }
+            print("ring counter after 7 clocks: Q" + rc.Position)
+
+            // mux 2 select bits: inputs 0,1,0,1 ; select 3 -> 1, select 2 -> 0 ; demux
+            var c4 = new Circuits.Circuit()
+            var mx = c4.Add(new Circuits.Multiplexer(2))
+            for (int i = 0; i < 4; i++) { H.In(c4, mx.In(i), i % 2 == 1) }
+            var s0 = H.In(c4, mx.Select(0), true)
+            var s1 = H.In(c4, mx.Select(1), true)
+            c4.Run(0.1ms)
+            var q3 = H.R(mx.Out.Raw())
+            s0.High = false
+            c4.Run(0.1ms)
+            print("mux I3 " + q3 + " V, I2 " + H.R(mx.Out.Raw()) + " V")
+            var dm = c4.Add(new Circuits.Demultiplexer(2))
+            H.In(c4, dm.In, true)
+            H.In(c4, dm.Select(0), true)
+            H.In(c4, dm.Select(1), false)
+            c4.Run(0.1ms)
+            print("demux outputs " + H.R(dm.Out(0).Raw()) + " " + H.R(dm.Out(1).Raw()) + " " + H.R(dm.Out(2).Raw()) + " " + H.R(dm.Out(3).Raw()))
+
+            // adders: half 1+1 ; full 4 bit 9 + 7 + 1 = 17
+            var c5 = new Circuits.Circuit()
+            var ha = c5.Add(new Circuits.HalfAdder())
+            H.In(c5, ha.A, true)
+            H.In(c5, ha.B, true)
+            var fa = c5.Add(new Circuits.FullAdder(4))
+            for (int i = 0; i < 4; i++) {
+                H.In(c5, fa.A(i), ((9 >> i) & 1) == 1)
+                H.In(c5, fa.B(i), ((7 >> i) & 1) == 1)
+            }
+            H.In(c5, fa.CarryIn, true)
+            c5.Run(0.1ms)
+            print("half adder 1+1: S " + H.R(ha.Sum.Raw()) + " C " + H.R(ha.Carry.Raw()) + "; full adder 9+7+1 = " + fa.Sum)
+
+            // shift registers: SIPO shifts 1,0,1,1 in -> Q0..Q3 = 1,1,0,1 -> 11 ; PISO 0xA5 out bit by bit
+            var c6 = new Circuits.Circuit()
+            var sr = c6.Add(new Circuits.SipoShift(4))
+            var sd = H.In(c6, sr.D, false)
+            var sc = H.In(c6, sr.Clock, false)
+            foreach (b in [true, false, true, true]) {
+                sd.High = b
+                c6.Run(0.1ms)
+                sc.High = true
+                c6.Run(0.1ms)
+                sc.High = false
+                c6.Run(0.1ms)
+            }
+            print("sipo value " + sr.Value)
+            var ps = c6.Add(new Circuits.PisoShift(8))
+            var pl = H.In(c6, ps.Load, false)
+            var pc = H.In(c6, ps.Clock, false)
+            for (int i = 0; i < 8; i++) { H.In(c6, ps.ports[3 + i], ((0xA5 >> (7 - i)) & 1) == 1) }
+            c6.Run(0.1ms)
+            pl.High = true
+            c6.Run(0.1ms)
+            var bitsOut = ""
+            for (int k = 0; k < 8; k++) {
+                pc.High = true
+                c6.Run(0.1ms)
+                if (ps.Q.Raw() > 2.5) { bitsOut = bitsOut + "1" } else { bitsOut = bitsOut + "0" }
+                pc.High = false
+                c6.Run(0.1ms)
+            }
+            print("piso out " + bitsOut)
+
+            // ADC 8 bit of 3.3 V at V+ = 5 V -> 168 ; DAC back
+            var c7 = new Circuits.Circuit()
+            var ad = c7.Add(new Circuits.Adc(8))
+            var vin = c7.Add(new Circuits.VoltageSource(3.3V))
+            vin.B.Connect(c7.Ground)
+            vin.A.Connect(ad.In)
+            var vref = c7.Add(new Circuits.VoltageSource(5V))
+            vref.B.Connect(c7.Ground)
+            vref.A.Connect(ad.Reference)
+            var da = c7.Add(new Circuits.Dac(8))
+            for (int i = 0; i < 8; i++) { ad.D(i).Connect(da.D(i)) }
+            vref.A.Connect(da.Reference)
+            var load = c7.Add(new Circuits.Resistor(10kOhm))
+            da.Out.Connect(load.A)
+            load.B.Connect(c7.Ground)
+            c7.Run(0.2ms)
+            print("adc 3.3 V -> " + ad.Value + ", dac back " + H.R(da.Out.Raw()) + " V")
+
+            // 7-segment decoder + display: 0..9
+            var c8 = new Circuits.Circuit()
+            var dec = c8.Add(new Circuits.SevenSegmentDecoder())
+            var disp = c8.Add(new Circuits.SevenSegment())
+            var bitIn = new List()
+            for (int i = 0; i < 4; i++) { bitIn.Add(H.In(c8, dec.In(i), false)) }
+            for (int i = 0; i < 7; i++) { dec.Segment(i).Connect(disp.ports[i]) }
+            var shown = ""
+            for (int d = 0; d < 16; d++) {
+                for (int i = 0; i < 4; i++) { bitIn[i].High = ((d >> i) & 1) == 1 }
+                c8.Run(0.1ms)
+                shown = shown + disp.Digit + " "
+            }
+            print("7-segment shows " + shown)
+
+            // monostable 1 ms
+            var c9 = new Circuits.Circuit()
+            c9.TimeStep = 10us
+            var mono = c9.Add(new Circuits.Monostable(1ms))
+            var trig = H.In(c9, mono.Trigger, false)
+            c9.Run(0.1ms)
+            trig.High = true
+            c9.Run(0.5ms)
+            var during = mono.Q.Raw() > 2.5
+            c9.Run(0.7ms)
+            print("monostable high after 0.5 ms " + during + ", after 1.2 ms " + (mono.Q.Raw() > 2.5))
+
+            // tri-state
+            var c10 = new Circuits.Circuit()
+            var ts = c10.Add(new Circuits.TriState())
+            H.In(c10, ts.In, true)
+            var en = H.In(c10, ts.Control, true)
+            var pull = c10.Add(new Circuits.Resistor(1kOhm))
+            ts.Out.Connect(pull.A)
+            pull.B.Connect(c10.Ground)
+            c10.Run(0.1ms)
+            var onV = H.R(ts.Out.Raw())
+            en.High = false
+            c10.Run(0.1ms)
+            print("tri-state enabled " + onV + " V, disabled " + H.R(ts.Out.Raw()) + " V")
+
+            foreach (vin in [2.5]) {
+                var cv = new Circuits.Circuit()
+                cv.TimeStep = 0.1us
+                var v = cv.Add(new Circuits.Vco())
+                var src = cv.Add(new Circuits.VoltageSource(vin * 1V))
+                src.B.Connect(cv.Ground)
+                src.A.Connect(v.In)
+                var r1 = cv.Add(new Circuits.Resistor(10kOhm))
+                v.R1.Connect(r1.A)
+                r1.B.Connect(cv.Ground)
+                var r2 = cv.Add(new Circuits.Resistor(100kOhm))
+                v.R2.Connect(r2.A)
+                r2.B.Connect(cv.Ground)
+                var cap = cv.Add(new Circuits.Capacitor(1nF))
+                v.C1.Connect(cap.A)
+                cap.B.Connect(v.C2)
+                var edges = 0
+                var last = false
+                var first = 0.0
+                var lastT = 0.0
+                for (int k = 0; k < 20000; k++) {
+                    cv.Step()
+                    var high = v.Out.Raw() > 2.5
+                    if (high && !last) {
+                        edges++
+                        if (edges == 2) { first = cv.TimeRaw() }
+                        lastT = cv.TimeRaw()
+                    }
+                    last = high
+                }
+                var f = 0.0
+                if (edges > 3) { f = (edges - 2) / (lastT - first) }
+                var expected = (vin / 10000.0 + 5.0 / 100000.0) / (8.0 * 0.000000001)
+                print("vco at " + vin + " V: " + Math.Round(f) + " Hz (Falstad's formula " + Math.Round(expected) + " Hz)")
+            }
+            // phase comparator: I2 a quarter period after I1, into 10 kOhm and 100 nF
+            var cp = new Circuits.Circuit()
+            cp.TimeStep = 1us
+            var phc = cp.Add(new Circuits.PhaseComparator())
+            var pa = cp.Add(new Circuits.VoltageSource(0V))
+            pa.B.Connect(cp.Ground)
+            pa.A.Connect(phc.I1)
+            var pb = cp.Add(new Circuits.VoltageSource(0V))
+            pb.B.Connect(cp.Ground)
+            pb.A.Connect(phc.I2)
+            var pr = cp.Add(new Circuits.Resistor(10kOhm))
+            phc.Out.Connect(pr.A)
+            var cf = cp.Add(new Circuits.Capacitor(100nF))
+            pr.B.Connect(cf.A)
+            cf.B.Connect(cp.Ground)
+            for (int k = 0; k < 20000; k++) {
+                var ph = k % 1000
+                if (ph < 500) { pa.Level = 5V } else { pa.Level = 0V }
+                var ph2 = (k + 750) % 1000
+                if (ph2 < 500) { pb.Level = 5V } else { pb.Level = 0V }
+                cp.Step()
+            }
+            print("phase comparator, I2 a quarter period late: filter at " + Math.Round(cf.A.Raw() * 100) / 100 + " V")
+            """),
+        ("Circuits: eine .biscuit-Datei wird eine Klasse (Felder der benannten Elemente, Ausdruck eines Parameters, Bindung)", fire.UI.Markup.BiscuitGenerator.Generate("""
+            {
+              "biscuit": 1,
+              "timeStep": "10us",
+              "parameters": {"gain": "10"},
+              "elements": [
+                {"type": "Rail", "name": "vin", "from": [0, 0], "to": [-4, 0], "voltage": "0.5"},
+                {"type": "Resistor", "name": "rin", "from": [0, 0], "to": [8, 0], "resistance": "1k"},
+                {"type": "OpAmp", "name": "u1", "from": [8, 2], "to": [16, 2]},
+                {"type": "Ground", "from": [8, 4], "to": [8, 8]},
+                {"type": "Resistor", "name": "rf", "from": [8, 0], "to": [8, -6], "resistance": "gain*1k"},
+                {"type": "Wire", "from": [8, -6], "to": [16, -6]},
+                {"type": "Wire", "from": [16, -6], "to": [16, 2]},
+                {"type": "LogicOutput", "name": "out", "from": [16, 2], "to": [20, 2]},
+                {"type": "Scope", "name": "sc", "from": [24, -6], "to": [40, 4], "probe": "out"}
+              ]
+            }
+            """, "Amp.biscuit") + """
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var amp = new Amp()
+            amp.Run(1ms)
+            print("out " + H.R(amp.out.PinVoltage(0)) + " rf " + amp.rf.Resistance + " scope " + H.R(amp.sc.Last("y")))
+            amp.Parameter("gain", 4)
+            amp.Run(1ms)
+            print("gain 4: out " + H.R(amp.out.PinVoltage(0)) + " rf " + amp.rf.Resistance)
+            amp.vin.Level = 1V
+            amp.Run(1ms)
+            print("vin 1: " + H.R(amp.out.PinVoltage(0)))
+            """),
+        ("Circuits: Attached-Bauteile in fire und Bauteile an den simulierten Geraeten (GPIO-Leitung, I2C-ADC/DAC, SPI-Schieberegister)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            // a part in fire: drives its pin with a 1 kHz square wave
+            class Blinker : Circuits.Attached {
+                construct() : base("blink") { this.AddPin("out") }
+                undefined Update(float time) { this.DriveHigh(0, (Math.Floor(time * 2000)!int) % 2 == 0) }
+            }
+            var c = new Circuits.Circuit()
+            var b = c.Add(new Blinker())
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            b.Pin(0).Connect(r.A)
+            r.B.Connect(c.Ground)
+            c.TimeStep = 10us
+            c.Run(0.1ms)
+            print("blink " + H.R(r.A.Raw()) + " V, " + H.R(b.CurrentAt(0) * 1000) + " mA")
+            c.Run(0.5ms)
+            print("blink " + H.R(r.A.Raw()) + " V")
+            // the program drives GPIO line 3, the circuit has an LED on it
+            var g = c.Add(new Circuits.GpioLine(3))
+            var led = c.Add(new Circuits.Led("red"))
+            var rl = c.Add(new Circuits.Resistor(100))
+            g.P.Connect(rl.A)
+            rl.B.Connect(led.A)
+            led.B.Connect(c.Ground)
+            var pin = new Gpio.Pin("sim", 3)
+            pin.Output(true)
+            c.Run(1ms)
+            print("led " + led.IsOn + " at " + H.R(g.P.Raw()) + " V")
+            pin.Write(false)
+            c.Run(1ms)
+            print("led " + led.IsOn)
+            // a button of the circuit at line 4
+            var g4 = c.Add(new Circuits.GpioLine(4))
+            var vs = c.Add(new Circuits.VoltageSource(3.3V))
+            var sw = c.Add(new Circuits.Switch(false))
+            var pd = c.Add(new Circuits.Resistor(10kOhm))
+            vs.B.Connect(c.Ground)
+            vs.A.Connect(sw.A)
+            sw.B.Connect(g4.P)
+            pd.A.Connect(g4.P)
+            pd.B.Connect(c.Ground)
+            var button = new Gpio.Pin("sim", 4)
+            button.Input()
+            c.Run(1ms)
+            print("button " + button.Read())
+            sw.Closed = true
+            c.Run(1ms)
+            print("button " + button.Read())
+            // I2C: an ADC measures a divider, a DAC puts out what the program writes
+            var adc = c.Add(new Circuits.I2cAdc(0x48, 2, 5V))
+            var adc16 = c.Add(new Circuits.I2cAdc(0x4A, 1, 5V, 12))
+            var d1 = c.Add(new Circuits.Resistor(1kOhm))
+            var d2 = c.Add(new Circuits.Resistor(1kOhm))
+            var v5 = c.Add(new Circuits.VoltageSource(5V))
+            v5.B.Connect(c.Ground)
+            v5.A.Connect(d1.A)
+            d1.B.Connect(d2.A)
+            d2.B.Connect(c.Ground)
+            d1.B.Connect(adc.In(1))
+            d1.B.Connect(adc16.In(0))
+            var dac = c.Add(new Circuits.I2cDac(0x60))
+            var bus = new I2c.Bus("sim")
+            bus.WriteRegister(0x60, 0, 51)
+            c.Run(1ms)
+            print("adc " + bus.ReadRegister(0x48, 0) + " " + bus.ReadRegister(0x48, 1) + " 12 bit " + (bus.ReadRegister(0x4A, 0) * 256 + bus.ReadRegister(0x4A, 1)))
+            print("dac " + H.R(dac.Out(0).Raw()) + " V")
+            // SPI: a shift register with outputs feeds one with inputs
+            var so = c.Add(new Circuits.SpiShiftOut())
+            var si = c.Add(new Circuits.SpiShiftIn())
+            so.Q(0).Connect(si.D(7))
+            so.Q(2).Connect(si.D(0))
+            var spi = new Spi.Device("sim")
+            var tx = new byte[1]
+            tx[0] = 0xA5
+            spi.Transfer(tx)
+            c.Run(1ms)
+            print("shift out " + so.Value + ", q0 " + H.R(so.Q(0).Raw()) + " V")
+            var rx = spi.Transfer(tx)
+            print("shift in " + rx[0])
+            // the same from a drawing
+            var d = new Circuits.Circuit("drawn")
+            var s = d.Schematic
+            s.Add("GpioLine", 0, 0, 4, 0, "line=7", "out7")
+            s.Add("Resistor", 0, 0, 0, 8, "resistance=220")
+            s.Add("Led", 0, 8, 0, 16, "", "d1")
+            s.Add("Ground", 0, 16, 0, 20)
+            s.Add("I2cAdc", 10, 0, 22, 0, "address=0x49;channels=2", "u1")
+            s.Add("Rail", 10, 0, 6, 0, "voltage=2.5")
+            var sr = s.Add("SpiShiftOut", 30, 0, 42, 0, "", "u2")
+            var bad = s.Add("I2cDac", 30, 20, 42, 20, "address=0x99")
+            d.TimeStep = 10us
+            var pin7 = new Gpio.Pin("sim", 7)
+            pin7.Output(true)
+            d.Run(1ms)
+            Circuits.Led d1led = s.Find("d1").part!Circuits.Led
+            print("drawn: led " + d1led.IsOn + ", adc " + bus.ReadRegister(0x49, 0) + ", pins " + sr.PinCount + ", bad: " + bad.Error)
+            """),
+        ("Circuits: eine Schaltung laeuft neben dem Programm her (Simulation.Touch bei jedem Zugriff auf ein simuliertes Geraet)", """
+            #import "circuits"
+            class Counting : Simulation {
+                int n = 0
+                construct() : base() { }
+                undefined Advance() { this.n = this.n + 1 }
+            }
+            var counting = new Counting()
+            Simulation.Start(counting)
+            var p = new Gpio.Pin("sim", 9)
+            p.Output(true)
+            p.Write(false)
+            var r = p.Read()
+            print("touched " + counting.n + " times")
+            Simulation.Stop()
+            p.Write(true)
+            print("after stop " + counting.n)
+            // an RC low pass behind line 5, read back at line 6: the circuit runs in real time while the program waits
+            var c = new Circuits.Circuit()
+            c.TimeStep = 100us
+            var out = c.Add(new Circuits.GpioLine(5))
+            var back = c.Add(new Circuits.GpioLine(6))
+            var res = c.Add(new Circuits.Resistor(10kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            out.P.Connect(res.A)
+            res.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            cap.A.Connect(back.P)
+            c.RunAlongside(0.25)   // a quarter of real time: also a slow VM keeps up, so maxLag never skips
+            print("alongside " + c.IsAlongside)
+            var o = new Gpio.Pin("sim", 5)
+            var i = new Gpio.Pin("sim", 6)
+            o.Output(false)
+            i.Input()
+            Sleep(5)
+            print("low at first " + !i.Read())
+            o.Write(true)
+            var start = c.TimeRaw()
+            var t0 = DateTime.UtcNow.Ticks
+            while (!i.Read() && DateTime.UtcNow.Ticks - t0 < 20000000) { Sleep(1) }
+            var took = c.TimeRaw() - start
+            print("rose " + i.Read() + ", after RC*ln2 or a little more: " + (took > 0.004 && took < 0.05))
+            c.StopAlongside()
+            print("alongside " + c.IsAlongside)
+            """),
+        ("Einheiten: eine Einheit, die eine reine Zahl wird (coerce to/from unitless, dB): mal/durch als Faktor, plus in dB, ohne Einheit gespeichert", """
+            unit Decibel: dB {
+                coerce to unitless => 10 ^ (value / 20)
+                coerce from unitless => 20 * Math.Log10(value)
+            }
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            class Box { float k
+                construct(any v) { this.k = v } }
+            var g = 6dB
+            print(g)
+            print(1V * g)
+            print(10V / 20dB)
+            print(3dB + 3dB)
+            print(H.R(3dB * 1))
+            float k : unitless = 20dB
+            print(k + " " + 20dB:unitless + " " + new Box(40dB).k + " " + H.R(6dB))
+            float:dB back = 2
+            print(H.R(back / 1dB * 1))
+            print(20dB > 6dB)
             """),
     }).ToArray();
 
@@ -19832,7 +22289,7 @@ else
             }
 
             // the libraries that the program asks for (`// fire-link: ssl` from the `linkLibraries` of a package)
-            string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+            string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
             string build;
             int buildExit;
             buildGate.Wait();
@@ -19878,7 +22335,7 @@ else
                     string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
                     string cppFile = Path.Combine(workDir, "schannel.cpp"), exeFile = Path.Combine(workDir, "schannel.exe");
                     File.WriteAllText(cppFile, cpp);
-                    string linkFlags = string.Concat(cpp.Split('\n').Take(400).Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                    string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                     string Run(string tool, string arguments, out int exit)
                     {
                         var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir };
@@ -20081,6 +22538,30 @@ else
             }
             print(win.NextEvent())
             """, new[] { "keydown 97 4 1 False", "keyup 97 4 0 False", "down 1 32 24", "up 1 32 24", "move 10 12 1", "rel 3 -2 1", "scroll 0 1.5", "text éx 2", "closerequest", "close", "open False", "queued 24 97 4 1 False ", "queued 25 97 4 0 False ", "queued 8 1 32 24 ", "queued 11 1 32 24 ", "queued 9 10 12 1 ", "queued 10 3 -2 1 ", "queued 12 0 1.5 0 0 ", "queued 3 éx ", "queued 2 ", "queued 1 ", "undefined" }, "-DFIRE_DISPLAY_SELFTEST "),
+                ("Fenster: WindowManager.Run auf dem Programm-Thread (Konstruktor-Parameter, onCycle, Callbacks)", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var mine = new WindowManager()
+            var win = new Window(fb, "run", mine)
+            var cycles = 0
+            win.onCycle = func () => { cycles++ }
+            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k) })
+            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+            print("mine " + (win.Manager == mine) + ", started " + mine.IsStarted)
+            win.Run()
+            print("done: cycles " + (cycles > 0) + ", closed " + win.IsClosed + ", left " + mine.Count)
+            """, new[] { "mine True, started False", "key 97", "down 1 32 24", "done: cycles True, closed True, left 0" }, "-DFIRE_DISPLAY_SELFTEST "),
+                ("Fenster: Window.Show startet den Thread des Managers, das Programm geht weiter und wartet am Ende", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "shown")
+            var cycles = 0
+            win.onCycle = func () => { cycles++ }
+            win.RegisterKeyDown(func(int k, int s, int m, bool r) => { print("key " + k + " in cycle " + (cycles >= 0)) })
+            win.RegisterMouseDown(func(int b, float x, float y) => { print("down " + b + " " + x + " " + y) })
+            win.Show()
+            print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
+            """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
             };
             var windowTarget = TargetProfile.Host;
             foreach (var wc in windowCases)
@@ -20493,29 +22974,34 @@ else
             catch (fire.Native.NativeNotSupportedException ex) { refused = ex.Message.Contains("pkgwin") && ex.Message.Contains("windows"); }
             CheckNat("Paket: ein natives Paket nur fuer andere Plattformen wird fuers Ziel abgelehnt", refused);
 
-            // the standard bridges as packages: built into a folder, installed when missing, not again when nothing changed; the compiler still resolves the names to its built-in bridges
+            // the standard libraries as projects: packed and installed when missing, not again when nothing changed, again when a file changed
             {
-                string bridgeSource = Path.Combine(pkgDir, "BridgeSource");
-                var built = fire.Compiler.StandardBridgePackages.Build(bridgeSource);
-                var ioPackage = fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-io-")));
+                string sourceCopy = Path.Combine(pkgDir, "Source");
+                CopyTree(StandardSources.DefaultFolder, sourceCopy);
                 var bridgeStore = new fire.Package.Manager.PackageStore(Path.Combine(pkgDir, "BridgePackages"));
                 var savedDefault = fire.Package.Manager.PackageStore.Default;
                 fire.Package.Manager.PackageStore.Default = bridgeStore;
                 try
                 {
-                    var first = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
-                    var second = fire.Package.Manager.StandardPackages.EnsureInstalled(null, bridgeSource);
-                    CheckNat("Bruecken-Pakete: je Standard-Bridge ein Paket mit Prelude und C++-Quellen, als standard markiert",
-                        built.Count == fire.Package.Manager.StandardPackages.Bridges.Count && ioPackage.Imports[0].Standard && ioPackage.Imports[0].Name == "io" && ioPackage.Imports[0].Prelude != null && ioPackage.Imports[0].Native?.Sources.Count > 0
-                        && fire.Package.Manager.Fpk.ReadManifest(built.First(f => Path.GetFileName(f).StartsWith("fire-linq-"))).Dependencies.Contains("fire-reflection"));
-                    CheckNat("Bruecken-Pakete: beim Start werden fehlende installiert (mit Abhaengigkeiten), danach nichts mehr",
-                        first.Count > 0 && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0 && bridgeStore.Find("fire-time") != null && bridgeStore.Find("fire-reflection") != null);
+                    var first = StandardSources.EnsureInstalled(null, sourceCopy, bridgeStore, prebuiltFolder: null);
+                    var second = StandardSources.EnsureInstalled(null, sourceCopy, bridgeStore, prebuiltFolder: null);
+                    File.AppendAllText(Path.Combine(sourceCopy, "random", "random.fire"), "\nclass AddedByTheTest { }\n");
+                    var third = StandardSources.EnsureInstalled(null, sourceCopy, bridgeStore, prebuiltFolder: null);
+                    var io = bridgeStore.FindImport("io")!;
+                    var linq = bridgeStore.Find("fire-linq")!;
+                    CheckNat("Standardpakete: je Projekt ein Paket mit Prelude und C++-Quellen, als standard markiert, ohne die Tests",
+                        io.Import.Standard && io.Import.Prelude != null && io.Import.Native?.Sources.Count > 0 && linq.Manifest.Dependencies.Contains("fire-reflection")
+                        && bridgeStore.FindImport("random")!.Import.Requires.Contains("time") && !Directory.Exists(Path.Combine(bridgeStore.Find("fire-random")!.Directory, "testing"))
+                        && !(bridgeStore.FindImport("random")!.ReadPrelude() ?? "").Contains("RandomTests"));
+                    CheckNat("Standardpakete: beim Start werden fehlende installiert, danach nichts mehr, nach einer Aenderung nur das geaenderte",
+                        first.Count == fire.Package.Manager.StandardPackages.Bridges.Count && bridgeStore.Installed().Count == fire.Package.Manager.StandardPackages.Bridges.Count && second.Count == 0
+                        && third.SequenceEqual(new[] { "fire-random" }) && (bridgeStore.FindImport("random")!.ReadPrelude() ?? "").Contains("AddedByTheTest"), string.Join(",", first) + " / " + string.Join(",", second) + " / " + string.Join(",", third));
                     var windowsPackage = bridgeStore.Find("fire-windows");
                     CheckNat("Bruecken-Pakete: fire-windows bringt die Vorlage Desktop mit; sie steht nach dem Installieren im Katalog",
                         windowsPackage != null && File.Exists(Path.Combine(windowsPackage.Directory, "templates", "Project", "Desktop", "template.json"))
                         && fire.Projects.TemplateCatalog.Load(builtinRoot: Path.Combine(pkgDir, "none"), userRoot: Path.Combine(pkgDir, "none"), store: bridgeStore).Find(fire.Projects.TemplateScope.Project, "Desktop") is { } desktopTemplate && desktopTemplate.Source.Contains("fire-windows"));
-                    string builtIn = vmOutput("#import \"time\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
-                    CheckNat("Bruecken-Pakete: #import \"time\" nimmt weiter die eingebaute Bridge (kein doppelter Import)", builtIn == "90\n", builtIn);
+                    string builtIn = vmOutput("#import \"time\"\n#import \"ui\"\nprint(TimeSpan.FromSeconds(90).TotalSeconds)");
+                    CheckNat("Standardpakete: #import \"time\" und \"ui\" (Prelude aus dem Paket, Natives der VM) laufen", builtIn == "90\n", builtIn);
                 }
                 finally { fire.Package.Manager.PackageStore.Default = savedDefault; }
             }

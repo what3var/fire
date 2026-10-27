@@ -52,6 +52,7 @@ namespace fire.Compiler
 
         public void CloseHostResources()
         {
+            WindowManager?.StopManagers();   // the threads of fire's window managers end with the run
             IoResources?.Dispose();
             DeviceResources?.Dispose();
         }
@@ -128,7 +129,7 @@ namespace fire.Compiler
             return registry;
         }
 
-        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, Func<IFramebufferRenderer>? windowRenderer = null, fire.Runtime.NetPolicy? netPolicy = null, fire.Projects.BuildPlan? plan = null)
+        public static RuntimeSession Build(IReadOnlyList<string> sources, VmExecutionMode? executionMode, Func<Value[], Value>? debugWriter = null, string? outname = null, fire.IO.Bridge.IoPolicy? ioPolicy = null, fire.IO.Bridge.IoStdio? ioStdio = null, string? basePath = null, fire.Device.Manager.DeviceManager.DeviceManager? deviceManager = null, int? floatWidth = null, IReadOnlyList<string>? defines = null, Func<IFramebufferRenderer>? windowRenderer = null, fire.Runtime.NetPolicy? netPolicy = null, fire.Projects.BuildPlan? plan = null, ExternRegistry? externs = null)
         {
             // with a project: its files are the sources (`sources` is then the text of those files, see BuildPlan.SourceTexts) and its settings go before the tags
             var linker = new Linker { BasePath = basePath, Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() };
@@ -173,7 +174,7 @@ namespace fire.Compiler
                 // `#import "windows"`: the SDL window for the framebuffer (registered directly behind graphics, as when translating)
                 if (linkedProgram.NativeImports.Contains(NativeImports.Windows))
                 {
-                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer);   // windowRenderer: null = a SDL window
+                    windowManager = new WindowManager(fbManager, (l, v) => session.CallLambda(l, v), windowRenderer, FireRuntime.AddHostHold);   // windowRenderer: null = a SDL window
                     fire.Windows.Bridge.WindowsBridge.RegisterAll(natives, windowManager);
                 }
             }
@@ -193,7 +194,7 @@ namespace fire.Compiler
             
             fire.Values.Unit.UseCustomUnits(linkedProgram.Program.CustomUnits);   // the units the program declares (`unit Inch: in { ... }`)
             var mainVm = new VM(linkedProgram.Program.TopLevel, globalScope, natives, linkedProgram.Program.Classes,
-                externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
+                externs: externs, externSignatures: linkedProgram.Program.ExternSignatures, isMainThreadVm: true, executionMode: linkedProgram.ExecutionMode);
 
             session.SetVM(mainVm, windowManager, globalScope, natives, fbManager, rendererManager, linkedProgram.FirstUserSource);
             session.SourceFiles = linkedProgram.SourceFiles;

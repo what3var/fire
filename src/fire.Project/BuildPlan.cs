@@ -75,7 +75,8 @@ namespace fire.Projects
             return File.ReadAllText(path);
         }
 
-        public static BuildPlan Create(Workspace workspace, LoadedProject project, Func<string, string?>? textOf = null)
+        /// <param name="tests">Also the files of `testing/` (`forge test`, docs/TESTING.md).</param>
+        public static BuildPlan Create(Workspace workspace, LoadedProject project, Func<string, string?>? textOf = null, bool tests = false)
         {
             var errors = new List<string>();
             project.Refresh();
@@ -145,7 +146,7 @@ namespace fire.Projects
             }
 
             var sources = new List<SourceFile>();
-            foreach (var f in project.Files)
+            foreach (var f in tests ? project.Files.Concat(project.TestFiles) : project.Files)
             {
                 if (TryReadSource(f, textOf, project.Name, errors, "") is { } source) sources.Add(source);
             }
@@ -174,8 +175,7 @@ namespace fire.Projects
         }
 
         /// <summary>The script generated from the markup of a user interface (docs/UI_MARKUP.md); throws MarkupException when the markup is not valid.</summary>
-        public static string GenerateMarkupScript(string path, string markup) =>
-            fire.UI.Markup.FireUiGenerator.Generate(fire.UI.Markup.MarkupParser.Parse(markup), path);
+        public static string GenerateMarkupScript(string path, string markup) => fire.UI.Markup.MarkupFiles.GenerateScript(path, markup);
 
         private static ProjectSettings Merge(LoadedProject p, Workspace workspace)
         {

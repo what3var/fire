@@ -1,0 +1,21 @@
+{
+  "biscuit": 1,
+  "timeStep": "50us",
+  "elements": [
+    {"type": "Text", "from": [0, -16], "to": [4, -16], "text": "Relaxation oscillator: an inverting Schmitt trigger charges and discharges C1 through R1"},
+    {"type": "Resistor", "name": "R1", "from": [4, -8], "to": [24, -8], "resistance": "10k"},
+    {"type": "Wire", "from": [4, -8], "to": [4, 0]},
+    {"type": "Wire", "from": [4, 0], "to": [8, 0]},
+    {"type": "SchmittTrigger", "name": "U1", "from": [8, 0], "to": [20, 0], "inverting": "true"},
+    {"type": "Wire", "from": [20, 0], "to": [24, 0]},
+    {"type": "Wire", "from": [24, -8], "to": [24, 0]},
+    {"type": "Capacitor", "name": "C1", "from": [4, 0], "to": [4, 12], "capacitance": "1uF"},
+    {"type": "Ground", "from": [4, 12], "to": [4, 16]},
+    {"type": "Wire", "from": [24, 0], "to": [32, 0]},
+    {"type": "Resistor", "name": "R2", "from": [32, 0], "to": [32, 8], "resistance": "330"},
+    {"type": "Led", "name": "D1", "from": [32, 8], "to": [32, 16], "color": "yellow"},
+    {"type": "Ground", "from": [32, 16], "to": [32, 20]},
+    {"type": "Scope", "from": [44, -10], "to": [84, 2], "probe": "C1"},
+    {"type": "Scope", "from": [44, 6], "to": [84, 18], "probe": "D1", "quantity": "current"}
+  ]
+}

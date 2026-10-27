@@ -1,0 +1,406 @@
+namespace UI {
+    class Label : Element {
+        string Text
+        // Text colour: undefined = `foreground`, then the brush `text` of the theme
+        Brush Color
+
+        construct(string text, int x = 0, int y = 0) : base(x, y, -1, -1) {
+            this.Text = text
+        }
+
+        undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = this.TextWidth(root, this.Text)
+            this.ch = this.TextHeight(root)
+        }
+
+        string StyleKey() { return "Label" }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var c = this.Color
+            if (c == undefined) { c = this.Foreground }
+            if (c == undefined) { c = root.theme.text }
+            if (!this.Enabled) { c = root.theme.textDisabled }
+            this.DrawString(root, ax, ay, this.Text, c)
+        }
+    }
+
+    // A button: its text and/or a symbol in front of it - `icon` (a UI.Geometry, a vector shape such as UI.Icons.Up(), drawn in the colour of the text) or
+    // `image` (a Framebuffer, such as Framebuffer.FromResource(new Resource("icons/home.png"))), each `iconSize` pixels big.
+    class Button : Element {
+        string Text
+        lambda OnClick
+        bool clicked = false
+        UI.Geometry Icon
+        Framebuffer Image
+        int IconSize = 16
+
+        construct(string text, int x = 0, int y = 0, int width = 90, int height = 26) : base(x, y, width, height) {
+            this.Text = text
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "Button" }
+
+        // Without a fixed size (width/height = -1) as big as the symbol and the text plus margin
+        undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = this.ContentWidth(root) + 24
+            this.ch = UI.M.Max(this.TextHeight(root), this.HasSymbol() ? this.IconSize : 0) + 12
+        }
+
+        bool HasSymbol() { return this.Icon != undefined || this.Image != undefined }
+
+        // symbol, gap, text
+        int ContentWidth(Root root) {
+            var w = 0
+            if (this.HasSymbol()) { w = this.IconSize }
+            if (this.Text != undefined && this.Text != "") {
+                if (w > 0) { w = w + 6 }
+                w = w + this.TextWidth(root, this.Text)
+            }
+            return w
+        }
+
+        // Draws the symbol into the square (x, y, size): the picture scaled to fit, the geometry scaled to fit and filled (closed figures) or drawn (open ones) with `brush`.
+        undefined DrawSymbol(Root root, int x, int y, Brush brush) {
+            var size = this.IconSize
+            var picture = this.Image
+            if (picture != undefined) {
+                var sw = picture.Width()
+                var sh = picture.Height()
+                if (sw > 0 && sh > 0) {
+                    var dw = size
+                    var dh = sh * size / sw
+                    if (dh > size) {
+                        dh = size
+                        dw = sw * size / sh
+                    }
+                    root.renderer.BlitScaled(picture, 0, 0, sw, sh, x + (size - dw) / 2, y + (size - dh) / 2, UI.M.Max(1, dw), UI.M.Max(1, dh), 2)
+                }
+                return
+            }
+            var g = this.Icon
+            if (g == undefined) { return }
+            var box = UI.M.Max(g.Width(), g.Height()) + 1
+            var scale = size * 1.0 / box
+            var pen = new Pen(__GRPHBshGetColor(brush.id), UI.M.Max(1, size / 8))
+            for (var i = 0; i < g.figures.count; i = i + 1) {
+                var f = g.figures[i]
+                if (f.Count() < 2) { continue }
+                var pts = new float[f.points.count]
+                for (var k = 0; k < f.points.count; k = k + 2) {
+                    pts[k] = x + f.points[k] * scale
+                    pts[k + 1] = y + f.points[k + 1] * scale
+                }
+                if (f.closed && f.Count() >= 3) { root.renderer.FillPolygon(pts, brush) }
+                else { root.renderer.DrawPath(pts, pen, f.closed) }
+            }
+        }
+
+        // Has the button been clicked since the last query? (resets the flag)
+        bool TakeClicked() {
+            var was = this.clicked
+            this.clicked = false
+            return was
+        }
+
+        undefined Click() {
+            this.clicked = true
+            var callback = this.OnClick
+            if (callback != undefined) { callback() }
+        }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+            var theme = root.theme
+            var face = theme.face
+            if (!this.Enabled) { face = theme.faceDisabled }
+            else if (this.Background != undefined) { face = this.Background }
+            else if (this.Pressed && this.Hover) { face = theme.facePressed }
+            else if (this.Hover) { face = theme.faceHover }
+            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, face)
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+
+            var color = theme.text
+            if (this.Foreground != undefined) { color = this.Foreground }
+            if (!this.Enabled) { color = theme.textDisabled }
+            var tx = ax + (this.actualWidth - this.ContentWidth(root)) / 2
+            if (this.HasSymbol()) {
+                this.DrawSymbol(root, tx, ay + (this.actualHeight - this.IconSize) / 2, color)
+                tx = tx + this.IconSize + 6
+            }
+            if (this.Text != undefined && this.Text != "") {
+                var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
+                this.DrawString(root, tx, ty, this.Text, color)
+            }
+        }
+
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button == 1) { this.Pressed = true }
+        }
+
+        undefined MouseUp(Root root, int button, int px, int py) {
+            var was = this.Pressed
+            this.Pressed = false
+            if (was && button == 1 && this.Contains(px, py)) { this.Click() }
+        }
+
+        undefined KeyDown(Root root, int key, int mod) {
+            if (key == UI.Keys.Enter() || key == UI.Keys.Space()) { this.Click() }
+        }
+    }
+
+    class CheckBox : Element {
+        string Text
+        bool IsChecked = false
+        lambda OnChange
+        bool changed = false
+
+        construct(string text, int x = 0, int y = 0, bool isChecked = false) : base(x, y, -1, -1) {
+            this.Text = text
+            this.IsChecked = isChecked
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "CheckBox" }
+
+        // Has the state changed since the last query? (resets the flag)
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        undefined Toggle() {
+            this.IsChecked = !this.IsChecked
+            this.changed = true
+            var callback = this.OnChange
+            if (callback != undefined) { callback() }
+        }
+
+        // the box, 6 pixels of spacing, the text
+        undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = 14 + 6 + this.TextWidth(root, this.Text)
+            this.ch = UI.M.Max(this.TextHeight(root), 14)
+        }
+
+        undefined Draw(Root root, int ax, int ay) {
+            var box = 14
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            if (this.DrawTemplate(root, ax, ay)) { return }
+
+            var theme = root.theme
+            var by = ay + (this.actualHeight - box) / 2
+            var back = theme.inputBack
+            if (!this.Enabled) { back = theme.faceDisabled }
+            else if (this.Background != undefined) { back = this.Background }
+            else if (this.Hover) { back = theme.faceHover }
+            root.renderer.FillRect(ax, by, box, box, back)
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            root.renderer.DrawRect(ax, by, box, box, border)
+            if (this.IsChecked) {
+                var mark = theme.accent
+                if (!this.Enabled) { mark = theme.textDisabled }
+                root.renderer.FillRect(ax + 3, by + 3, box - 6, box - 6, mark)
+            }
+            var color = theme.text
+            if (this.Foreground != undefined) { color = this.Foreground }
+            if (!this.Enabled) { color = theme.textDisabled }
+            this.DrawString(root, ax + box + 6, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.Text, color)
+        }
+
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button == 1) { this.Pressed = true }
+        }
+
+        undefined MouseUp(Root root, int button, int px, int py) {
+            var was = this.Pressed
+            this.Pressed = false
+            if (was && button == 1 && this.Contains(px, py)) { this.Toggle() }
+        }
+
+        undefined KeyDown(Root root, int key, int mod) {
+            if (key == UI.Keys.Space() || key == UI.Keys.Enter()) { this.Toggle() }
+        }
+    }
+
+    // Single-line text field with caret (arrow keys, Home/End, Backspace/Del, mouse click). Enter triggers `onEnter`
+    // or `TakeEntered()`, every change of the text `onChange`/`TakeChanged()`.
+    class TextBox : Element {
+        string Text
+        int caret = 0
+        int scroll = 0
+        int MaxLength = 0
+        lambda OnChange
+        lambda OnEnter
+        bool changed = false
+        bool entered = false
+
+        construct(string text, int x = 0, int y = 0, int width = 160, int height = 24) : base(x, y, width, height) {
+            this.cursor = UI.Cursor.IBeam
+            this.Text = text
+            this.caret = text.Length
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "TextBox" }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        bool TakeEntered() {
+            var was = this.entered
+            this.entered = false
+            return was
+        }
+
+        undefined SetText(string value) {
+            this.Text = value
+            this.caret = value.Length
+            this.scroll = 0
+        }
+
+        undefined Changed() {
+            this.changed = true
+            var callback = this.OnChange
+            if (callback != undefined) { callback() }
+        }
+
+        // The width of the text between two character positions (`start` and `count` characters) in the font of the field.
+        int Span(Root root, int start, int count) {
+            if (count <= 0) { return 0 }
+            return this.TextWidth(root, this.Text.Substring(start, count))
+        }
+
+        // Is the field in the font of the renderer (monospaced, so that columns can be counted instead of measured)?
+        bool Plain(Root root) { return this.FontName(root) == "" }
+
+        // How many characters, from `scroll` on, fit into the field?
+        int Fit(Root root) {
+            var room = this.actualWidth - 8
+            if (this.Plain(root)) { return room / root.cw }
+            var count = 0
+            while (this.scroll + count < this.Text.Length && this.Span(root, this.scroll, count + 1) <= room) { count = count + 1 }
+            return count
+        }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            var back = theme.inputBack
+            if (!this.Enabled) { back = theme.faceDisabled }
+            else if (this.Background != undefined) { back = this.Background }
+            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+
+            // the caret stays visible: the visible section moves along
+            var room = this.actualWidth - 8
+            if (this.caret < this.scroll) { this.scroll = this.caret }
+            if (this.Plain(root)) {
+                var fit = room / root.cw
+                if (this.caret > this.scroll + fit) { this.scroll = this.caret - fit }
+            } else {
+                while (this.scroll < this.caret && this.Span(root, this.scroll, this.caret - this.scroll) > room) { this.scroll = this.scroll + 1 }
+            }
+            if (this.scroll < 0) { this.scroll = 0 }
+
+            var count = this.Text.Length - this.scroll
+            var fits = this.Fit(root)
+            if (count > fits) { count = fits }
+            if (count < 0) { count = 0 }
+            var color = theme.text
+            if (this.Foreground != undefined) { color = this.Foreground }
+            if (!this.Enabled) { color = theme.textDisabled }
+            var ty = ay + (this.actualHeight - this.TextHeight(root)) / 2
+            if (count > 0) {
+                this.DrawString(root, ax + 4, ty, this.Text.Substring(this.scroll, count), color)
+            }
+            if (this.Focused) {
+                var cx = ax + 4 + this.Span(root, this.scroll, this.caret - this.scroll)
+                root.renderer.DrawLine(cx, ay + 3, cx, ay + this.actualHeight - 4, theme.caret)
+            }
+        }
+
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            // round to the next character boundary (monospaced: add half a cell width, then divide; otherwise measure the text up to each boundary)
+            var column = 0
+            if (this.Plain(root)) {
+                column = (px - (this.ax + 4) + root.cw / 2) / root.cw
+            } else {
+                var rest = this.Text.Length - this.scroll
+                var before = 0
+                while (column < rest) {
+                    var edge = this.Span(root, this.scroll, column + 1)
+                    if (this.ax + 4 + edge > px) {
+                        if (px - (this.ax + 4 + before) >= this.ax + 4 + edge - px) { column = column + 1 }
+                        break
+                    }
+                    before = edge
+                    column = column + 1
+                }
+            }
+            if (px < this.ax + 4) { column = 0 }
+            this.caret = this.scroll + column
+            if (this.caret < 0) { this.caret = 0 }
+            if (this.caret > this.Text.Length) { this.caret = this.Text.Length }
+        }
+
+        // Left/Right move the caret, Home/End jump; Up/Down belong to the focus (to the element above/below)
+        bool WantsKey(int key) {
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Home() || key == UI.Keys.End()
+        }
+
+        undefined KeyDown(Root root, int key, int mod) {
+            var length = this.Text.Length
+            if (key == UI.Keys.Left()) {
+                if (this.caret > 0) { this.caret = this.caret - 1 }
+            } else if (key == UI.Keys.Right()) {
+                if (this.caret < length) { this.caret = this.caret + 1 }
+            } else if (key == UI.Keys.Home()) {
+                this.caret = 0
+            } else if (key == UI.Keys.End()) {
+                this.caret = length
+            } else if (key == UI.Keys.Backspace()) {
+                if (this.caret > 0) {
+                    this.Text = this.Text.Substring(0, this.caret - 1) + this.Text.Substring(this.caret, length - this.caret)
+                    this.caret = this.caret - 1
+                    this.Changed()
+                }
+            } else if (key == UI.Keys.Delete()) {
+                if (this.caret < length) {
+                    this.Text = this.Text.Substring(0, this.caret) + this.Text.Substring(this.caret + 1, length - this.caret - 1)
+                    this.Changed()
+                }
+            } else if (key == UI.Keys.Enter()) {
+                this.entered = true
+                var callback = this.OnEnter
+                if (callback != undefined) { callback() }
+            }
+        }
+
+        undefined TextInput(Root root, string value) {
+            var length = this.Text.Length
+            if (this.MaxLength > 0 && length + value.Length > this.MaxLength) { return }
+            this.Text = this.Text.Substring(0, this.caret) + value + this.Text.Substring(this.caret, length - this.caret)
+            this.caret = this.caret + value.Length
+            this.Changed()
+        }
+    }
+}

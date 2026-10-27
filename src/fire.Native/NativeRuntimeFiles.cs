@@ -22,7 +22,7 @@ namespace fire.Native
         {
             Directory.CreateDirectory(directory);
             WriteResource("fire_rt.hpp", directory);
-            foreach (string name in Names().Where(n => n.StartsWith("bridges/", StringComparison.Ordinal) || n.StartsWith("abi/", StringComparison.Ordinal)))
+            foreach (string name in Names().Where(n => n.StartsWith("abi/", StringComparison.Ordinal)))
                 WriteResource(name, directory);
             var wanted = platform == null ? AllPackages() : PackageClosure(platform);
             foreach (string package in wanted)

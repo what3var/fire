@@ -1,0 +1,90 @@
+// The tests of the usb package against the simulated device "sim": `forge test packages/usb/usb.fireproj`.
+#import "testing"
+#import "usb"
+
+class UsbTests {
+    [Test "The simulated device is listed first"]
+    undefined Listing() {
+        var devices = Usb.Bus.Devices()
+        Testing.Assert.IsTrue(devices.count >= 1)
+        Testing.Assert.AreEqual("sim", devices[0].Id)
+        Testing.Assert.AreEqual(0x1209, devices[0].VendorId)
+        Testing.Assert.AreEqual(1, Usb.Bus.Find(0x1209, 0x0001).count)
+        Testing.Assert.AreEqual("1209", Usb.Format.Hex(0x1209))
+    }
+
+    [Test "Endpoints, control transfers and stalls"]
+    undefined Control() {
+        Usb.Sim.Clear()
+        var dev = new Usb.Device(0x1209, 0x0001)
+        var eps = dev.Endpoints()
+        Testing.Assert.AreEqual(3, eps.count)
+        Testing.Assert.AreEqual(0x81, eps[1].Address)
+        Testing.Assert.IsTrue(eps[1].IsIn)
+        var data = new byte[3]
+        data[0] = 7
+        data[1] = 8
+        data[2] = 9
+        Testing.Assert.AreEqual(3, dev.ControlOut(Usb.Request.VendorOut, 1, 0, 0, data))
+        var back = dev.ControlIn(Usb.Request.VendorIn, 1, 0, 0, 64)
+        Testing.Assert.AreEqual(3, back.length)
+        Testing.Assert.AreEqual(9, back[2])
+        var stalled = false
+        try { dev.ControlIn(Usb.Request.VendorIn, 99, 0, 0, 8) } catch (Usb.StallException e) { stalled = true }
+        Testing.Assert.IsTrue(stalled)
+        dev.Close()
+    }
+
+    [Test "Bulk loopback, interrupt counter and read timeout"]
+    undefined Bulk() {
+        Usb.Sim.Clear()
+        var dev = new Usb.Device("sim")
+        dev.ClaimInterface(0)
+        Testing.Assert.AreEqual(1, Usb.Sim.Info(4))
+        var w = new byte[100]
+        for (int i = 0; i < 100; i++) { w[i] = i }
+        Testing.Assert.AreEqual(100, dev.BulkWrite(0x01, w))
+        var first = dev.BulkRead(0x81, 512)
+        Testing.Assert.AreEqual(64, first.length)
+        var rest = dev.BulkRead(0x81, 512)
+        Testing.Assert.AreEqual(36, rest.length)
+        Testing.Assert.AreEqual(99, rest[35])
+        var a = dev.InterruptRead(0x82, 8)
+        var b = dev.InterruptRead(0x82, 8)
+        Testing.Assert.AreEqual((a[0] + 1) & 255, b[0])
+        var timedOut = false
+        try { dev.BulkRead(0x81, 64, 30) } catch (Usb.TimeoutException e) { timedOut = true }
+        Testing.Assert.IsTrue(timedOut)
+        dev.Close()
+        Testing.Assert.AreEqual(0, Usb.Sim.Info(4))
+    }
+
+    [Test "Bulk endpoints as a stream"]
+    undefined Stream() {
+        Usb.Sim.Clear()
+        var dev = new Usb.Device("sim")
+        var stream = dev.OpenStream()
+        stream.WriteText("hello usb")
+        var buf = new byte[4]
+        Testing.Assert.AreEqual(4, stream.Read(buf, 0, 4))
+        Testing.Assert.AreEqual(104, buf[0])
+        var more = new byte[32]
+        Testing.Assert.AreEqual(5, stream.Read(more, 0, 32))
+        Testing.Assert.AreEqual(98, more[4])
+        stream.Close()
+        dev.Close()
+    }
+
+    [Test "A closed device refuses transfers"]
+    undefined Closed() {
+        var dev = new Usb.Device("sim")
+        dev.Close()
+        Testing.Assert.IsTrue(dev.IsClosed)
+        var refused = false
+        try { dev.BulkRead(0x81, 64, 10) } catch (Usb.UsbException e) { refused = true }
+        Testing.Assert.IsTrue(refused)
+        var missing = false
+        try { new Usb.Device("999:999") } catch (Usb.UsbException e) { missing = true }
+        Testing.Assert.IsTrue(missing)
+    }
+}

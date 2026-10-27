@@ -57,12 +57,13 @@ namespace fire.Package.Manager
         }
 
         public static readonly Regex NamePattern = new(@"^[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.Compiled);
-        public static readonly Regex ImportNamePattern = new(@"^[A-Za-z][A-Za-z0-9_]*$", RegexOptions.Compiled);
+        // letters, digits and '_', starting with a letter; several such parts may be joined by dots ("ui.docking")
+        public static readonly Regex ImportNamePattern = new(@"^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$", RegexOptions.Compiled);
 
         /// <summary>The imports of the compiler itself: a package must not take one of these names.</summary>
         public static readonly IReadOnlySet<string> ReservedImportNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "print", "graphics", "windows", "devices", "io", "ui", "linq", "reflection", "time", "random", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "tracker", "scene3d",
+            "print", "graphics", "windows", "devices", "io", "filesystem", "dialogs", "ui", "linq", "reflection", "time", "random", "testing", "net", "tls", "http", "gpio", "i2c", "spi", "wifi", "audio", "usb", "tracker", "scene3d", "ui.docking", "json", "circuits", "circuits.ui",
         };
 
         /// <summary>All problems of the description (empty: it is fine). <paramref name="fileExists"/> decides whether a referenced file exists (relative to the root of the
@@ -78,11 +79,17 @@ namespace fire.Package.Manager
             foreach (var import in Imports ?? new List<PackageImport>())
             {
                 string where = $"Import '{import.Name}': ";
-                if (!ImportNamePattern.IsMatch(import.Name ?? "")) { problems.Add($"Import name '{import.Name}' is not a name (letters, digits and '_', starting with a letter)."); continue; }
+                if (!ImportNamePattern.IsMatch(import.Name ?? "")) { problems.Add($"Import name '{import.Name}' is not a name (letters, digits and '_', starting with a letter; parts may be joined by dots)."); continue; }
                 if (!import.Standard && ReservedImportNames.Contains(import.Name!)) problems.Add(where + "this name belongs to the compiler.");
                 if (!seen.Add(import.Name)) problems.Add(where + "the name is used twice.");
                 if (string.IsNullOrWhiteSpace(import.Prelude) && import.Native == null) problems.Add(where + "needs a 'prelude' and/or a 'native' part.");
                 if (!string.IsNullOrWhiteSpace(import.Prelude) && fileExists != null && !fileExists(import.Prelude)) problems.Add(where + $"the prelude '{import.Prelude}' does not exist.");
+                foreach (var (name, file) in import.Resources ?? new())
+                {
+                    if (string.IsNullOrWhiteSpace(import.Prelude)) { problems.Add(where + "has resources but no prelude that uses them."); break; }
+                    if (Path.IsPathRooted(name) || name.Replace('\\', '/').Split('/').Any(part => part == ".." || part.Length == 0)) problems.Add(where + $"the resource '{name}' must be a path below the prelude's folder.");
+                    else if (fileExists != null && !fileExists(file)) problems.Add(where + $"the resource '{name}' ('{file}') does not exist.");
+                }
                 if (import.Native is { } native)
                 {
                     if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
@@ -114,10 +121,13 @@ namespace fire.Package.Manager
         public List<string> Requires { get; set; } = new();
         /// <summary>The natives as C++ source (only for the native backend). Optional.</summary>
         public PackageNative? Native { get; set; }
+        /// <summary>The files the prelude embeds with `new Resource("path")` (docs/RESOURCES.md): the key is the path as the prelude writes it (relative to the prelude's folder,
+        /// with `/`), the value the file - in a forge file where it is now, in a package where it lies in the package (the prelude's folder + the key).</summary>
+        public Dictionary<string, string>? Resources { get; set; }
     }
 
     /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need
-    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see native/bridges/ of the compiler for examples). The virtual machine has no
+    /// themselves and put their functions into `namespace fire`, taking and returning `Value` (see packages/<name>/native/ of the compiler for examples). The virtual machine has no
     /// way to run C++: calling such a native there is an error that says so; a prelude that has no natives works in both.</summary>
     public sealed class PackageNative
     {

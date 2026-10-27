@@ -226,11 +226,14 @@ namespace fire.UI.Markup
                 code.Line("// called once per cycle of this window (in Run(), also when it is attached to another window) - override it for a loop of your own");
                 code.Line("undefined OnTick() { }");
                 code.Line();
-                code.Line("// shows the window and runs until it is closed; with `other` (another window of the markup, or a UI.Root) that window is opened as well and worked off by the same loop");
+                code.Line("// the start of the program: shows the window and runs its window manager on this thread until the windows are closed (if nobody runs it yet, else it is only shown); with `other` (another window of the markup, or a UI.Root) that window is opened as well");
                 code.Line("undefined Run(any other = undefined) {");
                 code.Line("    if (other != undefined) { this.Open(other) }");
-                code.Line("    while (this.ui.Tick()) { }");
+                code.Line("    this.ui.Run()");
                 code.Line("}");
+                code.Line();
+                code.Line("// shows the window on its window manager (started with a thread of its own if nobody runs it yet), the events are handled at the program's safe points (and at its end); `modal`: returns when the window is closed, the other windows take no input meanwhile");
+                code.Line("undefined Show(bool modal = false) { this.ui.Show(modal) }");
                 code.Line();
                 code.Line("// opens another window (another object of a window of the markup, or a UI.Root): this window's Run/Tick works it off from now on until its window is closed");
                 code.Line("undefined Open(any other) {");
@@ -298,7 +301,7 @@ namespace fire.UI.Markup
                 if (element.Name != null || bound)
                 {
                     partName = element.Name ?? "fxPart" + local.Substring(1);
-                    code.Line($"{local}.name = {Quote(partName)}");
+                    code.Line($"{local}.Name = {Quote(partName)}");
                 }
             }
 
@@ -329,7 +332,7 @@ namespace fire.UI.Markup
                     if (partBindings != null && partName != null)
                     {
                         string ownerField = templateTarget?.Property(binding.OwnerProperty)?.FieldName
-                            ?? MarkupSchema.StateProperties.FirstOrDefault(p => p.Name == binding.OwnerProperty)?.FieldName ?? binding.OwnerProperty;
+                            ?? MarkupSchema.StateProperty(binding.OwnerProperty)?.FieldName ?? binding.OwnerProperty;
                         partBindings.Add((partName, property.FieldName, ownerField));
                     }
                     continue;
@@ -350,7 +353,7 @@ namespace fire.UI.Markup
             {
                 var args = info.Def.Event(eventName)!.Args;
                 string parameters = string.Join(", ", args);
-                code.Line($"{local}.{eventName} = func ({parameters}) on this => {{ {handler}({local}{string.Concat(args.Select(a => ", " + a))}) }}");
+                code.Line($"{local}.{info.Def.Event(eventName)!.FieldName} = func ({parameters}) on this => {{ {handler}({local}{string.Concat(args.Select(a => ", " + a))}) }}");
             }
 
             foreach (var child in element.Children) EmitElement(code, infos, child, local, info.Def, errors, partBindings, templateTarget, dataItem);
@@ -410,7 +413,7 @@ namespace fire.UI.Markup
                     {
                         var (propertyName, value, source, line) = trigger.Conditions[c];
                         var sourceDef = source != null && parts != null && parts.TryGetValue(source, out var part) ? MarkupSchema.Find(part.Tag) : def;
-                        var property = sourceDef?.Property(propertyName) ?? MarkupSchema.StateProperties.FirstOrDefault(p => p.Name == propertyName);
+                        var property = sourceDef?.Property(propertyName) ?? MarkupSchema.StateProperty(propertyName);
                         if (property == null) continue;
                         string? code1 = ValueCode(property, new MarkupAttribute(property.Name, value, line), errors);
                         if (code1 == null) continue;
@@ -467,15 +470,16 @@ namespace fire.UI.Markup
                 string? sortBy = element.Find("sortBy")?.Value is LiteralValue sort ? sort.Text.Trim() : null;
                 bool descending = element.Find("descending")?.Value is LiteralValue desc && desc.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase);
                 if (element.Find("descending")?.Value is LiteralValue d2 && !d2.Text.Trim().Equals("true", StringComparison.OrdinalIgnoreCase) && !d2.Text.Trim().Equals("false", StringComparison.OrdinalIgnoreCase))
-                    errors.Add(new MarkupDiagnostic(element.Find("descending")!.Line, $"'descending' needs true or false, not '{d2.Text}'."));
+                    errors.Add(new MarkupDiagnostic(element.Find("descending")!.Line, $"'Descending' needs true or false, not '{d2.Text}'."));
                 if (sortBy != null) code.Line($"{v}.SortBy({Quote(sortBy)}, {(descending ? "true" : "false")})");
-                else if (descending) code.Line($"{v}.descending = true");
-                foreach (var name in new[] { "filter", "comparer", "source" })
+                else if (descending) code.Line($"{v}.Descending = true");
+                foreach (var name in new[] { "Filter", "Comparer", "Source" })
                 {
                     var attribute = element.Find(name);
                     if (attribute == null || attribute.Value is BindingValue) continue; // a binding makes the source
-                    string? value = ValueCode(MarkupSchema.CollectionViewDef.Property(name)!, attribute, errors);
-                    if (value != null) code.Line($"{v}.{name} = {value}");
+                    var property = MarkupSchema.CollectionViewDef.Property(name)!;
+                    string? value = ValueCode(property, attribute, errors);
+                    if (value != null) code.Line($"{v}.{property.FieldName} = {value}");
                 }
                 code.Line($"{resources}.Set({Quote(view.Key)}, {v})");
                 code.Line($"this.fxView_{view.Key} = {v}");
@@ -582,6 +586,14 @@ namespace fire.UI.Markup
                         return null;
                     }
                     return $"Framebuffer.FromResource(new Resource({Quote(trimmed)}))";
+                case PropertyKind.Geometry:
+                    if (trimmed.Length == 0)
+                    {
+                        errors.Add(new MarkupDiagnostic(line, $"'{property.Name}' needs the name of a symbol ({string.Join(", ", MarkupSchema.IconNames)}) or path data like M 8 1 L 15 8 L 1 8 Z."));
+                        return null;
+                    }
+                    if (MarkupSchema.IconNames.FirstOrDefault(n => n.Equals(trimmed, StringComparison.OrdinalIgnoreCase)) is { } icon) return $"UI.Icons.{icon}()";
+                    return $"UI.Geometry.Parse({Quote(trimmed)})";
                 case PropertyKind.StyleRef:
                     return "this.fxStyle_" + trimmed;
                 case PropertyKind.TemplateRef:
@@ -621,6 +633,9 @@ namespace fire.UI.Markup
             code.Line("// sets the object the bindings read from (and write to) and connects them; null disconnects");
             code.Line("undefined SetDataContext(any context) {");
             code.Line("    this.fxUnbindAll()");
+            code.Line("    // a context handed to the call (`SetDataContext(new Model())`) stays alive: the view keeps it, like List.Add");
+            code.Line("    if (context is of class)");
+            code.Line("        try context.TakeTo(this)");
             code.Line("    this.dataContext = context");
             code.Line("    this.fxBindAll()");
             code.Line("}");

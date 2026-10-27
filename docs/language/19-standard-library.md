@@ -26,18 +26,25 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 |---|---|
 | `"time"` | `Sleep(duration)`, `DateTime` (`Now`, `UtcNow`, `Today`, `Parse`, arithmetic), `TimeSpan` |
 | `"random"` | `PseudoRandom`: `Next()`, `Next(max)`, `Next(min, max)`, `NextFloat()`, `NextBool()`, `Pick(list)`, `Shuffle(list)` (a `List` or an array) |
+| `"json"` | `Json.Serialize(value)`, `Json.Deserialize<T>(text)`, `Json.Parse(text)` (`JsonObject`), `[NonSerialized]`/`[JsonName "x"]` on fields - see docs/JSON.md |
+| `"circuits"` | circuit simulation after Falstad: `Circuits.Circuit`, parts (`Resistor`, `Capacitor`, `Inductor`, sources, `Switch`) with ports, nested circuits, `Scope`, `Multimeter`, `Fft`; the units `V`, `A`, `Ohm`, `F`, `H`, `Hz` - see docs/CIRCUITS.md |
+| `"testing"` | namespace `Testing`: `Assert` (`AreEqual`, `IsTrue`, `Throws`, ...) for the tests that `forge test` runs - see docs/TESTING.md |
 | `"linq"` | queries over arrays, lists and `IEnumerable`s - see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq) |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
-| `"io"` | namespace `IO`: `File`, `Directory`, `Path`, text and binary streams, console input |
+| `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
+| `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see docs/FILESYSTEM.md |
+| `"ui.docking"` | namespace `UI.Docking`: a `DockManager` for tool windows (docked, tabbed, floating) and movable toolstrips with an overflow menu, a `StatusBar` - see docs/DOCKING.md |
+| `"dialogs"` | open, save and folder dialogs and message boxes: `Dialogs.OpenFileDialog`, `SaveFileDialog`, `FolderBrowserDialog`, `MessageBox` - see docs/DIALOGS.md |
 | `"net"` | namespace `Net`: TCP clients and servers, UDP, DNS |
 | `"http"` | namespace `Http`: HTTP client and server (HTTPS with `"tls"`) |
 | `"tls"` | namespace `Tls`: encrypted connections |
-| `"devices"` | serial ports and device packets |
-| `"gpio"`, `"i2c"`, `"spi"`, `"wifi"` | hardware access on boards like the Raspberry Pi and the ESP32 |
+| `"devices"` | the device framework: `Device`, `Driver`, `DeviceManager` (`AddDriver`, `Get`), serial ports (`SerialDriver`) - see docs/DEVICES.md |
+| `"gpio"`, `"i2c"`, `"spi"`, `"wifi"` | hardware access on boards like the Raspberry Pi and the ESP32; `GpioDriver`, `I2cDriver`, `SpiDriver` make them devices of the device framework |
 | `"graphics"` | framebuffers, drawing, images, fonts |
-| `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events |
+| `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events; `WindowManager` cycles windows (`window.Show()` goes on - a manager nobody runs gets a thread of its own; `window.Show(true)` is modal; `window.Run()` is the start of the program, on this thread) |
 | `"ui"` | the UI library (controls, layout, styles, data binding, `.fxml` markup) |
 | `"audio"` | sound output |
+| `"usb"` | USB devices (libusb, WinUSB): control, bulk and interrupt transfers, bulk endpoints as a stream |
 | `"tracker"` | a MOD music player |
 | `"scene3d"` | 3D scenes |
 
@@ -90,23 +97,33 @@ print(rnd.Pick(cards) >= 1)
 ### Files
 
 ```fire
-#import "io"
-var path = IO.Path.Combine(IO.Path.Temp(), "fire-doc.txt")
+#import "filesystem"
+var path = IO.Path.Combine(IO.Path.GetTempPath(), "fire-doc.txt")
 IO.File.WriteAllText(path, "hello file")
 print(IO.File.ReadAllText(path))
 print(IO.File.Exists(path))         // True
 IO.File.Delete(path)
 ```
 
-`IO.File`: `Exists`, `Size`, `Delete`, `Copy`, `Move`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines`, `WriteAllLines`, `ReadAllBytes`,
-`WriteAllBytes`, `OpenText`, `CreateText`, `AppendText`. `IO.Directory`: `Exists`, `Create`, `Delete`, ... `IO.Path`: `Combine`, `FileName`, `Stem`,
-`Extension`, `Parent`, `FullPath`, `Temp`, `Separator`. Errors are `IO.IOException`s (`FileNotFoundException`, `DirectoryNotFoundException`, ...).
+`IO.File`: `Exists`, `Size`, `GetLastWriteTime`, `Delete`, `Copy`, `Move`, `ReadAllText`, `WriteAllText`, `AppendAllText`, `ReadAllLines`, `WriteAllLines`, `ReadAllBytes`,
+`WriteAllBytes`, `OpenRead`, `OpenText`, `CreateText`, `AppendText`. `IO.Directory`: `Exists`, `CreateDirectory`, `Delete`, `Move`, `GetFiles`, `GetDirectories`, ... `IO.Path`:
+`Combine`, `GetFileName`, `GetFileNameWithoutExtension`, `GetExtension`, `ChangeExtension`, `GetDirectoryName`, `GetFullPath`, `GetRelativePath`, `GetTempPath`, ...
+Errors are `IO.IOException`s (`FileNotFoundException`, `DirectoryNotFoundException`, ...).
+
+### Dialogs
+
+```
+#import "dialogs"
+var path = Dialogs.OpenFileDialog.Show("Text files|*.txt|All files|*.*")   // undefined when cancelled
+if (path != undefined) { print(IO.File.ReadAllText(path)) }
+if (Dialogs.MessageBox.Show("Quit?", "Demo", Dialogs.MessageBoxButtons.YesNo) == Dialogs.DialogResult.Yes) { print("bye") }
+```
 Streams are closed by their destructor when their owner ends (see [Ownership](13-ownership.md)).
 
 ## More documentation
 
 The libraries for graphics, UI, network, devices, sound and 3D have their own documents in the `docs` folder of the repository (`UI.md`,
-`UI_MARKUP.md`, `NETWORK.md`, `AUDIO.md`, `SCENE3D.md`, `TRACKER.md`, `FONTS.md`, `RESOURCES.md`). The editor completes the members of every
+`UI_MARKUP.md`, `NETWORK.md`, `AUDIO.md`, `USB.md`, `SCENE3D.md`, `TRACKER.md`, `FONTS.md`, `RESOURCES.md`). The editor completes the members of every
 imported library while you type and shows their documentation comments.
 
 ## Exercises

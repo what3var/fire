@@ -19,7 +19,7 @@ using fire.Projects;
 
 namespace fire.Editor
 {
-    internal enum ExplorerKind { Solution, SolutionFolder, Project, References, Reference, Folder, File, Content }
+    internal enum ExplorerKind { Solution, SolutionFolder, Project, References, Reference, Folder, File, Content, Designer }
 
     /// <summary>A row of the solution explorer.</summary>
     internal sealed class ExplorerNode : INotifyPropertyChanged
@@ -83,11 +83,11 @@ namespace fire.Editor
             _tree.ContextMenu = _menu;
             _menu.Opening += (_, e) => { if (!FillMenu()) e.Cancel = true; };
             _tree.AddHandler(PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
-            _tree.DoubleTapped += (_, e) => { if (_tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; } };
+            _tree.DoubleTapped += (_, e) => { if (_tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content or ExplorerKind.Designer, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; } };
             _tree.KeyDown += (_, e) =>
             {
-                if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; }
-                else if (e.Key == Key.Delete && _tree.SelectedItem is ExplorerNode node) { CommandRequested?.Invoke("remove", node); e.Handled = true; }
+                if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content or ExplorerKind.Designer, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; }
+                else if (e.Key == Key.Delete && _tree.SelectedItem is ExplorerNode { Kind: not ExplorerKind.Designer } node) { CommandRequested?.Invoke("remove", node); e.Handled = true; }
             };
 
             _empty = new StackPanel { Margin = new Thickness(12), Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
@@ -268,8 +268,31 @@ namespace fire.Editor
                 FolderOf(parts, parts.Length - 1).Children.Add(new ExplorerNode { Kind = ExplorerKind.Content, Text = parts[^1], Path = file, Project = project, Key = "content:" + file });
             }
             SortProjectChildren(node);
+            NestMarkup(node);
             return node;
         }
+
+        /// <summary>The markup of an interface (`X.fxml`) opens like a folder: its first row is "Designer" (opens the markup editor, as the file does), below it
+        /// the code-behind `X.fire` of the same folder if there is one.</summary>
+        private void NestMarkup(ExplorerNode parent)
+        {
+            foreach (var folder in parent.Children.Where(c => c.Kind == ExplorerKind.Folder).ToList()) NestMarkup(folder);
+            foreach (var markup in parent.Children.Where(c => c.Kind == ExplorerKind.File && c.Path != null && FireProject.IsMarkupFile(c.Path)).ToList())
+            {
+                markup.Children.Add(new ExplorerNode { Kind = ExplorerKind.Designer, Text = "Designer", Path = markup.Path, Project = markup.Project, Key = "designer:" + markup.Path });
+                string codeBehind = System.IO.Path.ChangeExtension(markup.Path!, ".fire");
+                var code = parent.Children.FirstOrDefault(c => c.Kind == ExplorerKind.File && c.Path != null && ProjectFiles.PathComparer.Equals(c.Path, codeBehind));
+                if (code != null)
+                {
+                    parent.Children.Remove(code);
+                    markup.Children.Add(code);
+                }
+                // closed the first time it is seen
+                if (_seenMarkup.Add(markup.Key)) _collapsed.Add(markup.Key);
+            }
+        }
+
+        private readonly HashSet<string> _seenMarkup = new();
 
         /// <summary>Puts the git state on the files, and a mark on every folder, project and solution that has a changed file below it.</summary>
         private bool MarkGit(IEnumerable<ExplorerNode> nodes)
@@ -335,6 +358,7 @@ namespace fire.Editor
             ("Fire Class", "t:Fire Class"),
             ("FXML Window", "t:FXML Window"),
             ("FXML View", "t:FXML View"),
+            ("Circuit", "t:Circuit"),
             null,
             ("Markdown Document...", "markdown"),
             ("Raster Image...", "image"),
@@ -390,7 +414,7 @@ namespace fire.Editor
                     Add("Add Reference...", "add-reference");
                     _menu.Items.Add(new Separator());
                     if (node.Project!.Project.Type == OutputType.Exe) Add("Set as Startup Project", "set-startup");
-                    if (node.Project.Project.Type == OutputType.Library) Add("Pack as Package (.fpk)...", "pack");
+                    if (node.Project.Project.Type == OutputType.Library) { Add("Pack as Package (.fpk)...", "pack"); Add("Install (pack and install)", "install-library"); }
                     Add("Build / Run This Project", "run-project");
                     _menu.Items.Add(new Separator());
                     Add("Reload (read the folder again)", "refresh");
@@ -418,6 +442,9 @@ namespace fire.Editor
                     Add("Open as Hex", "open-hex");
                     Add("Show in Folder", "reveal");
                     Add("Delete File...", "delete-file");
+                    break;
+                case ExplorerKind.Designer:
+                    Add("Open Designer", "open");
                     break;
                 case ExplorerKind.File:
                     if (_git != null) AddGitFileItems(node);

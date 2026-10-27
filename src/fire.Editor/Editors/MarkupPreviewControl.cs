@@ -12,7 +12,7 @@ using fire.UI.Markup;
 namespace fire.Editor
 {
     /// <summary>The design view of a UI markup file: the picture of the interface as the library `ui` itself draws it (see <see cref="UiPreview"/>: the same code that runs in the program, so sizes, layout,
-    /// styles and templates are exact). Only for looking - nothing in it reacts to the mouse. Elements whose text is a binding show the path in angle brackets.</summary>
+    /// styles and templates are exact). A click on an element puts the caret of the editor into it (<see cref="ElementClicked"/>). Elements whose text is a binding show the path in angle brackets.</summary>
     internal sealed class MarkupPreviewControl : Control
     {
         private const int Margin = 16;
@@ -22,6 +22,24 @@ namespace fire.Editor
         private WriteableBitmap? _bitmap;
         private List<MarkupElement> _elements = new();
         private int _highlightLine;
+
+        /// <summary>An element was clicked: the line of its start tag.</summary>
+        public event Action<int>? ElementClicked;
+
+        protected override void OnPointerPressed(Avalonia.Input.PointerPressedEventArgs e)
+        {
+            base.OnPointerPressed(e);
+            if (_result is not { Ok: true } || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            var p = e.GetPosition(this) - new Point(Margin, Margin);
+            // the smallest element under the mouse (the innermost one)
+            PreviewRect? hit = null;
+            foreach (var r in _result.Rects)
+                if (p.X >= r.X && p.Y >= r.Y && p.X < r.X + r.Width && p.Y < r.Y + r.Height && r.Index < _elements.Count && (hit == null || r.Width * r.Height <= hit.Width * hit.Height))
+                    hit = r;
+            if (hit == null) return;
+            e.Handled = true;
+            ElementClicked?.Invoke(_elements[hit.Index].Line);
+        }
 
         /// <summary>Shows the picture of `document`; null result: nothing is drawn yet.</summary>
         public void SetRender(MarkupDocument? document, UiPreviewResult? result)

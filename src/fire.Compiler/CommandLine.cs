@@ -9,7 +9,7 @@ using System.Linq;
 namespace fire.Compiler
 {
     /// <summary>The kind of invocation on the command line.</summary>
-    public enum CommandKind { Run, Build, Native, Help }
+    public enum CommandKind { Run, Build, Native, Test, Help }
 
     /// <summary>Result of evaluating the command line (see <see cref="CommandLineParser.Parse"/>).</summary>
     public sealed class CommandLineOptions
@@ -38,6 +38,8 @@ namespace fire.Compiler
         public string? Engine { get; init; }
         /// <summary>`--toolchain`: the toolchain of a native build; null = the configuration's.</summary>
         public string? ToolchainName { get; init; }
+        /// <summary>`forge test --filter`: the tests that run.</summary>
+        public string? TestFilter { get; init; }
         /// <summary>`--config`: the native build configuration; null = the nearest fire.native.json next to the first file.</summary>
         public string? ConfigFile { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
@@ -73,7 +75,10 @@ namespace fire.Compiler
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
               fire.Compiler ui    <file.fxml> [-o <file>]
+              fire.Compiler biscuit <file.biscuit> [-o <file>]
+              fire.Compiler falstad <circuit.txt> [-o <file.biscuit>]
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
+              fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64]
 
             run     compiles the files into one program and runs it.
             build   turns them into a program: a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
@@ -90,7 +95,12 @@ namespace fire.Compiler
                     typeChecking does the same, #lax / #strict in a file decides for that file (docs/TYPES.md).
             -D name Defines the symbol "name" for #if (repeatable, also --define name or -Dname).
             -o      Name of the file produced by build or native.
+            test    runs the tests: the methods with [Test] (docs/TESTING.md), in the VM or with --engine native as a native program for this machine. Without a file: the solution or the
+                    project in the current folder (all projects of a solution, or -p <name>). The files in testing/ of a project belong to its tests; the top level of a program does not run.
+                    --filter A.B,C runs only these tests (Class.Method, or a class for all its tests; * for any text). Exit code 0 when every test passed, 1 otherwise.
             ui      writes the script generated from the markup of a user interface (docs/UI_MARKUP.md) - not needed to build: `#include "x.fxml"` does it on the fly.
+            biscuit writes the script generated from the schematic of a circuit (docs/CIRCUITS.md) - `#include "x.biscuit"` does it on the fly as well.
+            falstad converts a circuit of Paul Falstad's simulator (File > Export As Text) into a schematic (.biscuit); what the package circuits has not got is named.
 
             A project (`.fireproj`) or a solution (`.firesln`, docs/PROJECTS.md) instead of the files: run runs the project (of a solution: the startup project, or -p <name>), build builds it -
             a program like above (the settings of the project decide: engine, target, mode, output), a library as a package (`name-version.fpk`, in the folder of -o, the project's `output` or `bin`).
@@ -110,8 +120,9 @@ namespace fire.Compiler
                 case "run": command = CommandKind.Run; break;
                 case "build": command = CommandKind.Build; break;
                 case "native": command = CommandKind.Native; break;
+                case "test": command = CommandKind.Test; break;
                 default:
-                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build or native).");
+                    return Fail(CommandKind.Help, $"Unknown command '{args[0]}' (expected: run, build, native or test).");
             }
 
             var files = new List<string>();
@@ -119,7 +130,7 @@ namespace fire.Compiler
             int? floatWidth = null;
             TypeCheckMode? typeChecking = null;
             TargetProfile? target = null;
-            string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null;
+            string? targetName = null, engine = null, toolchainName = null, configFile = null, projectName = null, testFilter = null;
             bool keep = false;
             string? output = null;
             var defines = new List<string>();
@@ -147,21 +158,28 @@ namespace fire.Compiler
                 }
                 else if (TryOption(arg, "--engine", "--engine", out var engineInline))
                 {
-                    if (command != CommandKind.Build) return Fail(command, "--engine is only available with build.");
+                    if (command is not (CommandKind.Build or CommandKind.Test)) return Fail(command, "--engine is only available with build and test.");
                     string? value = engineInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (value == null || Unquote(value).ToLowerInvariant() is not ("vm" or "native")) return Fail(command, "--engine must be followed by vm or native.");
                     engine = Unquote(value).ToLowerInvariant();
                 }
                 else if (TryOption(arg, "--toolchain", "--toolchain", out var toolchainInline))
                 {
-                    if (command != CommandKind.Build) return Fail(command, "--toolchain is only available with build.");
+                    if (command is not (CommandKind.Build or CommandKind.Test)) return Fail(command, "--toolchain is only available with build and test.");
                     string? value = toolchainInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--toolchain must be followed by the toolchain name.");
                     toolchainName = Unquote(value);
                 }
+                else if (TryOption(arg, "--filter", "--filter", out var filterInline))
+                {
+                    if (command != CommandKind.Test) return Fail(command, "--filter is only available with test.");
+                    string? value = filterInline ?? (i + 1 < args.Count ? args[++i] : null);
+                    if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--filter must be followed by the tests (Class.Method or Class, separated by commas).");
+                    testFilter = Unquote(value);
+                }
                 else if (TryOption(arg, "--config", "--config", out var configInline))
                 {
-                    if (command is not (CommandKind.Native or CommandKind.Build)) return Fail(command, "--config is only available with build and native.");
+                    if (command is not (CommandKind.Native or CommandKind.Build or CommandKind.Test)) return Fail(command, "--config is only available with build, native and test.");
                     string? value = configInline ?? (i + 1 < args.Count ? args[++i] : null);
                     if (string.IsNullOrWhiteSpace(value)) return Fail(command, "--config must be followed by the file name.");
                     configFile = Unquote(value);
@@ -216,7 +234,7 @@ namespace fire.Compiler
                 }
             }
 
-            if (files.Count == 0)
+            if (files.Count == 0 && command != CommandKind.Test)
                 return Fail(command, "No source file was specified.");
 
             return new CommandLineOptions
@@ -230,6 +248,7 @@ namespace fire.Compiler
                 Target = target,
                 TargetName = targetName,
                 Engine = engine,
+                TestFilter = testFilter,
                 ToolchainName = toolchainName,
                 ConfigFile = configFile,
                 KeepSources = keep,
@@ -313,6 +332,7 @@ namespace fire.Compiler
             var collector = new DiagnosticCollector { OnReport = d => { if (d.IsWarning) stderr.WriteLine(d.ToLogLine()); } };
             using var collecting = collector.Begin();
 
+            if (options.Command == CommandKind.Test) return Test(options, stdout, stderr);
             if (options.Files.Count == 1 && IsProjectFile(options.Files[0])) return RunProject(options, stdout, stderr);
 
             var sources = new List<string>();
@@ -412,6 +432,91 @@ namespace fire.Compiler
                 return ExitScriptError;
             }
             return ExitOk;
+        }
+
+        /// <summary>`test` (docs/TESTING.md): the tests of files, of a project or of every project of a solution.</summary>
+        private static int Test(CommandLineOptions options, TextWriter stdout, TextWriter stderr)
+        {
+            var files = options.Files.ToList();
+            if (files.Count == 0)
+            {
+                // nothing named: the solution in this folder, else the project
+                string here = Directory.GetCurrentDirectory();
+                var found = Directory.GetFiles(here, "*" + fire.Projects.FireSolution.Extension);
+                if (found.Length == 0) found = Directory.GetFiles(here, "*" + fire.Projects.FireProject.Extension);
+                if (found.Length != 1) { stderr.WriteLine(found.Length == 0 ? "No file was named and there is no solution or project in this folder." : "There are several solutions or projects in this folder: name one."); return ExitUsage; }
+                files.Add(found[0]);
+            }
+            foreach (var f in files)
+                if (!File.Exists(f)) { stderr.WriteLine($"File not found: {f}"); return ExitUsage; }
+
+            bool live = stdout == Console.Out && !Console.IsOutputRedirected;
+            var runner = new TestRunner(stdout, live) { Filter = options.TestFilter != null ? fire.Compiler.TestFilter.Parse(options.TestFilter) : null };
+            fire.Native.NativeConfig? config = null;
+            string engine = options.Engine ?? "vm";
+            if (engine == "native")
+            {
+                try { config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(files[0]); }
+                catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+            }
+
+            var names = files.Select(Path.GetFileName).ToList();   // a problem names the file, without its folder
+            TestRun Run(string title, IReadOnlyList<string> sources, fire.Projects.BuildPlan? plan) => engine == "native"
+                ? runner.RunNative(title, sources, config!, options.ToolchainName, options.Mode, options.FloatWidth, options.Defines, plan, plan == null ? names : null)
+                : runner.RunInVm(title, sources, options.Mode, options.FloatWidth, options.Defines, plan, plan == null ? names : null);
+
+            var runs = new List<TestRun>();
+            bool compileFailed = false;
+            void Guarded(string title, Func<TestRun> run)
+            {
+                try { runs.Add(run()); }
+                catch (Exception ex) when (IsCompileError(ex))
+                {
+                    stderr.WriteLine($"{title}: {DescribeErrors(ex)}");
+                    compileFailed = true;
+                }
+                catch (fire.Native.NativeNotSupportedException ex) { stderr.WriteLine($"{title}: error {ErrorCatalog.NativeUnsupported}: Not supported by the native backend yet: " + ex.Message); compileFailed = true; }
+                catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); compileFailed = true; }
+            }
+
+            if (files.Count == 1 && IsProjectFile(files[0]))
+            {
+                fire.Projects.Workspace workspace;
+                List<fire.Projects.LoadedProject> projects;
+                try
+                {
+                    workspace = fire.Projects.Workspace.Open(files[0]);
+                    projects = options.ProjectName != null ? new() { ProjectBuilder.SelectProject(workspace, options.ProjectName) } : workspace.Projects.ToList();
+                }
+                catch (fire.Projects.ProjectException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
+                foreach (var project in projects)
+                {
+                    fire.Projects.BuildPlan plan;
+                    try
+                    {
+                        plan = fire.Projects.BuildPlan.Create(workspace, project, tests: true);
+                        if (!plan.IsValid) throw new fire.Projects.ProjectException(string.Join(Environment.NewLine, plan.Errors));
+                    }
+                    catch (fire.Projects.ProjectException ex) { stderr.WriteLine($"{project.Name}: {ex.Message}"); compileFailed = true; continue; }
+                    Guarded(project.Name, () => Run(project.Name, plan.SourceTexts, plan));
+                }
+            }
+            else
+            {
+                var sources = files.Select(File.ReadAllText).ToList();
+                string title = string.Join(", ", files.Select(Path.GetFileName));
+                Guarded(title, () => Run(title, sources, null));
+            }
+
+            foreach (var run in runs)
+            {
+                if (runs.Count > 1 && run.Results.Count == 0 && run.Problems.Count == 0) continue;   // a project of the solution without tests
+                TestRunner.WriteSummary(run, stdout);
+                stdout.WriteLine();
+            }
+            if (runs.Count > 1)
+                stdout.WriteLine($"All: {runs.Sum(r => r.Results.Count)} tests, {runs.Sum(r => r.Passed)} passed, {runs.Sum(r => r.Failed)} failed, {runs.Sum(r => r.Errors)} errors");
+            return !compileFailed && runs.All(r => r.Ok) ? ExitOk : ExitScriptError;
         }
 
         private static bool IsProjectFile(string path) =>

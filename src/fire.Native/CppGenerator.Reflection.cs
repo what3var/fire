@@ -68,7 +68,7 @@ namespace fire.Native
             foreach (var rc in _program.Program.Classes.Values.ToList())
             {
                 RegisterClass(rc.Name);
-                foreach (var ctor in rc.Constructors.Values)
+                foreach (var ctor in rc.AllConstructors)
                 {
                     GetFunc(ctor, FuncKind.Ctor);
                     // `Reflect.New` with fewer arguments evaluates the default values: their functions have to exist before the code is written
@@ -137,6 +137,49 @@ namespace fire.Native
                 sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", items.Select(CStr))}}};");
                 return name;
             }
+            // the attributes of a member: a function that builds [[name, values, texts], ...] (the values the compiler knew, see AttributeMeta.ArgsJson)
+            string Attributes(IReadOnlyList<AttributeMeta> attributes)
+            {
+                if (attributes.Count == 0) return "nullptr";
+                string name = $"rf_attrs{listIndex++}";
+                var body = new StringBuilder();
+                int temp = 0;
+                string Json(System.Text.Json.Nodes.JsonNode? node)
+                {
+                    if (node is not System.Text.Json.Nodes.JsonObject o) return "Undef()";
+                    if (o["i"] is { } i) return $"Int({i.GetValue<long>()}LL)";
+                    if (o["f"] is { } f) return $"Float({DoubleLiteral(f.GetValue<double>(), false)})";
+                    if (o["s"] is { } s) return $"strFromUtf8({CStr(s.GetValue<string>())}, list)";
+                    if (o["b"] is { } b) return b.GetValue<bool>() ? "Bool(true)" : "Bool(false)";
+                    if (o["a"] is System.Text.Json.Nodes.JsonArray a)
+                    {
+                        string arr = $"t{temp++}";
+                        body.AppendLine($"    Arr* {arr} = allocArr({a.Count}, list);");
+                        for (int k = 0; k < a.Count; k++) { string item = Json(a[k]); body.AppendLine($"    {{ Value x = {item}; {arr}->items()[{k}] = x; retain(x); }}"); }
+                        return $"ArrV({arr})";
+                    }
+                    return "Undef()";
+                }
+                body.AppendLine($"    Arr* all = allocArr({attributes.Count}, list);");
+                for (int i = 0; i < attributes.Count; i++)
+                {
+                    var at = attributes[i];
+                    var values = System.Text.Json.Nodes.JsonNode.Parse(at.ArgsJson) as System.Text.Json.Nodes.JsonArray ?? new System.Text.Json.Nodes.JsonArray();
+                    string entry = $"t{temp++}", vals = $"t{temp++}";
+                    body.AppendLine($"    Arr* {entry} = allocArr(3, list);");
+                    body.AppendLine($"    {{ Value x = strFromUtf8({CStr(at.Name)}, list); {entry}->items()[0] = x; retain(x); }}");
+                    body.AppendLine($"    Arr* {vals} = allocArr({values.Count}, list);");
+                    for (int k = 0; k < values.Count; k++) { string item = Json(values[k]); body.AppendLine($"    {{ Value x = {item}; {vals}->items()[{k}] = x; retain(x); }}"); }
+                    body.AppendLine($"    {entry}->items()[1] = ArrV({vals});");
+                    body.AppendLine($"    {entry}->items()[2] = strArrayOf({Strings(at.ArgTexts)}, {at.ArgTexts.Count}, list);");
+                    body.AppendLine($"    all->items()[{i}] = ArrV({entry});");
+                }
+                body.AppendLine("    return ArrV(all);");
+                sb.AppendLine($"static Value {name}(OwnList* list) {{");
+                sb.Append(body);
+                sb.AppendLine("}");
+                return name;
+            }
             var classRows = new List<string>();
             foreach (var rc in classes)
             {
@@ -147,7 +190,8 @@ namespace fire.Native
                     var m = e.Member;
                     string pnames = Strings(m.ParamNames), ptypes = Strings(m.ParamTypes);
                     int flags = (m.IsStatic ? 1 : 0) | (m.IsReadonly ? 2 : 0) | (m.CanRead ? 4 : 0) | (m.CanWrite ? 8 : 0);
-                    memberRows.Add($"{{{CStr(m.Name)}, {CStr(m.Kind)}, {CStr(m.TypeName)}, {CStr(m.Access)}, {flags}, {CStr(m.Unit)}, {CStr(e.DeclaredIn.Name)}, {pnames}, {ptypes}, {m.ParamNames.Count}}}");
+                    string attrs = Attributes(m.Attributes);
+                    memberRows.Add($"{{{CStr(m.Name)}, {CStr(m.Kind)}, {CStr(m.TypeName)}, {CStr(m.Access)}, {flags}, {CStr(m.Unit)}, {CStr(e.DeclaredIn.Name)}, {pnames}, {ptypes}, {m.ParamNames.Count}, {attrs}}}");
                 }
                 string membersName = "nullptr";
                 if (memberRows.Count > 0)
@@ -216,7 +260,7 @@ namespace fire.Native
     Arr* all = allocArr(c->nMembers, list);
     for (uint32_t i = 0; i < c->nMembers; i++) {
         const RfMember& m = c->members[i];
-        Arr* d = allocArr(12, list);
+        Arr* d = allocArr(13, list);
         const char* texts[] = {m.name, m.kind, m.type, m.access};
         for (int k = 0; k < 4; k++) { Value s = strFromUtf8(texts[k], list); d->items()[k] = s; retain(s); }
         d->items()[4] = Bool((m.flags & 1) != 0); d->items()[5] = Bool((m.flags & 2) != 0);
@@ -225,6 +269,7 @@ namespace fire.Native
         Value dec = strFromUtf8(m.declared, list); d->items()[9] = dec; retain(dec);
         d->items()[10] = strArrayOf(m.pnames, m.pcount, list);
         d->items()[11] = strArrayOf(m.ptypes, m.pcount, list);
+        d->items()[12] = m.attrs ? m.attrs(list) : ArrV(allocArr(0, list));
         all->items()[i] = ArrV(d);
     }
     return ArrV(all);
@@ -340,7 +385,7 @@ namespace fire.Native
             {
                 if (!_classes.TryGetValue(rc.Name, out var info)) continue;
                 var byArgc = new List<string>();
-                foreach (var ctor in rc.Constructors.Values)
+                foreach (var ctor in rc.AllConstructors)
                 {
                     int required = ctor.ParamCount;
                     while (required > 0 && required - 1 < ctor.ParamDefaults.Count && ctor.ParamDefaults[required - 1] != null) required--;
@@ -394,7 +439,7 @@ namespace fire.Native
             foreach (var cls in _classList)
             {
                 if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) cases.AppendLine($"        case {cls.Id}: return o->fields()[{index}];");
-                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
+                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}");
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{cases}        default: return Undef();\n    }}\n}}");
             sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{");
@@ -418,7 +463,7 @@ namespace fire.Native
                 var rows = new StringBuilder();
                 foreach (var name in names.OrderBy(n => n, StringComparer.Ordinal))
                 {
-                    if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
+                    if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || getter.IsStatic || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
                     string id = $"{cls.Id}_{Mangle(name)}";
                     sb.AppendLine($"static const char* const rfc_{id}[] = {{{string.Concat(sources.Select(src => CStr(src) + ", "))}nullptr}};");
                     sb.AppendLine($"static Value rfg_{id}(Value v, OwnList* list) {{ Value r = {getterFunc.Name}(v); adopt(r, list); return r; }}");

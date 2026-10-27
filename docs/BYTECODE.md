@@ -1248,7 +1248,7 @@ vermerkt statt umgesetzt):
 
 ## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
 
-> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `native/bridges/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
+> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `packages/io/native/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
 
 `src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und docs/PACKAGE_NATIVES.md): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
@@ -1545,11 +1545,11 @@ Framebuffer-Koordinaten um (`SDL.GetWindowSize`) und startet die Texteingabe. `W
 
 **Warum Abfrage statt Callback.** `Session.CallLambda` -> `FireRuntime.CallCallback` kopiert für JEDES Ereignis alle globalen Objekte (`ObjectCopier.Take`, außerdem wird dabei auf deren Baum
 Thread-Sharing aktiviert); ein Objekt mit Lambda-Feld oder mit einem Verweis auf ein fremdes Objekt wirft dabei `TakingViolationException` (der Callback schlägt fehl, SPEC 8.1.4 beschreibt das so). Ein Widget-Baum
-mit `onClick`-Lambdas wäre davon betroffen, deshalb holt `UI.Root.Tick` die Ereignisse per Warteschlange im Hauptprogramm ab.
+mit `OnClick`-Lambdas wäre davon betroffen, deshalb holt `UI.Root.Tick` die Ereignisse per Warteschlange im Hauptprogramm ab.
 
 **UI.** `src/fire.UI.Bridge` (`UiBridge.PreludeSource`, `namespace UI`, siehe `docs/UI.md`); `NativeImports.Ui = "ui"`, `ImportedPreludes.WithDependencies("ui") = graphics + windows + reflection + ui` (Styles und Trigger setzen Eigenschaften per `Reflect`; Linker, Editor-Diagnose und
 `CreateProjectDirectiveRegistry` tragen alle Schlüssel ein), `PackagePlan` kennt `ui` ohne eigene DLL. Innerhalb eines Namespace sind statische Klassen nur vollqualifiziert erreichbar (`UI.Color.Rgb`), Felder
-brauchen einen Typ (`Element hoverElement`), ein Lambda-Feld ruft man über eine lokale Variable (`var callback = this.onClick`, `callback()`), nicht als `this.onClick()`. Der Quelltext liegt in `src/fire.UI.Bridge/ui/*.fire` (eingebettet, nach Dateinamen geordnet: Kern, Style/Vorlagen, Elemente und Layout, Steuerelemente, Bildlauf, Listen, Baum, Eingaben, Menüs, Formen, Root).
+brauchen einen Typ (`Element hoverElement`), ein Lambda-Feld ruft man über eine lokale Variable (`var callback = this.OnClick`, `callback()`), nicht als `this.OnClick()`. Der Quelltext liegt in `src/fire.UI.Bridge/ui/*.fire` (eingebettet, nach Dateinamen geordnet: Kern, Style/Vorlagen, Elemente und Layout, Steuerelemente, Bildlauf, Listen, Baum, Eingaben, Menüs, Formen, Root).
 Ein Lambda als Feld oder Parameter heißt `var`; ein Objekt, das ein Konstruktor- oder Methodenargument ist, gehört der Funktion und stirbt mit ihr, wenn sie es nicht mit `TakeTo` übernimmt (`UI.M.Own` tut das für Werte, die auch einfach sein können).
 Der Renderer hat ein Beschneidungsrechteck (`SetClip/ResetClip`, `Surface.Clip*`), das Listen und der ScrollViewer über `Root.PushClip/PopClip` nutzen. Die Entwurfsansicht des Markup-Editors rendert über `fire.Compiler.UiPreview` mit einem Fenster, das nichts anzeigt
 (`RuntimeSession.Build(..., windowRenderer:)`). Tests: Suite-Block "UI-Bibliothek".

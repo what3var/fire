@@ -1,0 +1,1127 @@
+#import "ui"
+
+// ui.docking (docs/DOCKING.md): toolstrips (movable bars with buttons, labels, separators, text fields, combo boxes and split buttons; what does not fit goes into an
+// overflow menu), the panels at the edges of a window that hold them in rows, a status bar, and a dock manager for tool windows (DockManager, see 30_dock.fire).
+namespace UI.Docking {
+    // Where an item of a ToolStrip goes when the strip is too short: AsNeeded (into the overflow menu when it does not fit), Never (always stays in the strip),
+    // Always (only in the overflow menu).
+    enum Overflow { AsNeeded = 0, Never = 1, Always = 2 }
+
+    // Drawing helpers of the package.
+    class Paint {
+        // A symbol in the square (x, y, size): a picture scaled to fit, or a geometry scaled to fit and filled (closed figures) or drawn (open ones) with `brush`.
+        static undefined Symbol(UI.Root root, UI.Geometry icon, Framebuffer image, int size, int x, int y, Brush brush) {
+            if (image != undefined) {
+                var sw = image.Width()
+                var sh = image.Height()
+                if (sw > 0 && sh > 0) {
+                    var dw = size
+                    var dh = sh * size / sw
+                    if (dh > size) {
+                        dh = size
+                        dw = sw * size / sh
+                    }
+                    root.renderer.BlitScaled(image, 0, 0, sw, sh, x + (size - dw) / 2, y + (size - dh) / 2, UI.M.Max(1, dw), UI.M.Max(1, dh), 2)
+                }
+                return
+            }
+            if (icon == undefined) { return }
+            var box = UI.M.Max(icon.Width(), icon.Height()) + 1
+            var scale = size * 1.0 / box
+            var pen = new Pen(__GRPHBshGetColor(brush.id), UI.M.Max(1, size / 8))
+            for (var i = 0; i < icon.figures.count; i = i + 1) {
+                var f = icon.figures[i]
+                if (f.Count() < 2) { continue }
+                var pts = new float[f.points.count]
+                for (var k = 0; k < f.points.count; k = k + 2) {
+                    pts[k] = x + f.points[k] * scale
+                    pts[k + 1] = y + f.points[k + 1] * scale
+                }
+                if (f.closed && f.Count() >= 3) { root.renderer.FillPolygon(pts, brush) }
+                else { root.renderer.DrawPath(pts, pen, f.closed) }
+            }
+        }
+
+        // A small check mark centred at (cx, cy).
+        static undefined Check(UI.Root root, int cx, int cy, Brush brush) {
+            var tick = new Pen(__GRPHBshGetColor(brush.id), 2)
+            root.renderer.DrawLine(cx - 4, cy, cx - 1, cy + 3, tick)
+            root.renderer.DrawLine(cx - 1, cy + 3, cx + 4, cy - 4, tick)
+        }
+
+        // A small arrow pointing down (or right with `right`) centred at (cx, cy).
+        static undefined Arrow(UI.Root root, int cx, int cy, bool right, Brush brush) {
+            if (right) { root.renderer.FillTriangle(cx - 2, cy - 4, cx - 2, cy + 4, cx + 2, cy, brush) }
+            else { root.renderer.FillTriangle(cx - 4, cy - 2, cx + 4, cy - 2, cx, cy + 2, brush) }
+        }
+
+        // The cross of a close button centred at (cx, cy).
+        static undefined Cross(UI.Root root, int cx, int cy, Brush brush) {
+            var pen = new Pen(__GRPHBshGetColor(brush.id), 1)
+            root.renderer.DrawLine(cx - 3, cy - 3, cx + 3, cy + 3, pen)
+            root.renderer.DrawLine(cx - 3, cy + 3, cx + 3, cy - 3, pen)
+        }
+    }
+
+    // A button of a toolstrip: text and/or symbol (`icon` a UI.Geometry such as UI.Icons.Folder(), or `image` a Framebuffer), flat until the pointer is over it.
+    // `checkable`: a click toggles `isChecked` (shown pressed). `showText = false` shows only the symbol (the text is then the name in the overflow menu).
+    class ToolStripButton : UI.Element {
+        string Text
+        UI.Geometry Icon
+        Framebuffer Image
+        int IconSize = 16
+        lambda OnClick
+        bool clicked = false
+        bool Checkable = false
+        bool IsChecked = false
+        bool showText = true
+        int overflow = UI.Docking.Overflow.AsNeeded
+        bool spring = false
+        // set by the strip: the item is a row of the overflow menu right now
+        bool inOverflow = false
+
+        construct(string text = "", any onClick = undefined) : base(0, 0, -1, -1) {
+            this.Text = text
+            this.OnClick = onClick
+        }
+
+        string StyleKey() { return "ToolStripButton" }
+
+        bool HasSymbol() { return this.Icon != undefined || this.Image != undefined }
+
+        bool ShowsText() { return this.Text != "" && (this.showText || !this.HasSymbol() || this.inOverflow) }
+
+        // the width of symbol, gap and text
+        int ContentWidth(UI.Root root) {
+            var w = 0
+            if (this.HasSymbol()) { w = this.IconSize }
+            if (this.Text != "" && (this.showText || !this.HasSymbol())) {
+                if (w > 0) { w = w + 6 }
+                w = w + this.TextWidth(root, this.Text)
+            }
+            return w
+        }
+
+        // the room on the right that is not the button itself (the arrow of a split button)
+        int ExtraWidth() { return 0 }
+
+        // the width as a row of the overflow menu: a column for the symbol, the text, the extra part
+        int RowWidth(UI.Root root) {
+            var w = this.IconSize + 16 + this.ExtraWidth()
+            if (this.Text != "") { w = w + 6 + this.TextWidth(root, this.Text) }
+            return w
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            this.cw = this.ContentWidth(root) + 10 + this.ExtraWidth()
+            var symbol = 0
+            if (this.HasSymbol()) { symbol = this.IconSize }
+            this.ch = UI.M.Max(this.TextHeight(root), symbol) + 8
+        }
+
+        bool TakeClicked() {
+            var was = this.clicked
+            this.clicked = false
+            return was
+        }
+
+        undefined Click() {
+            if (this.Checkable) { this.IsChecked = !this.IsChecked }
+            this.clicked = true
+            UI.Docking.ToolStrip.ItemDone(this)
+            var callback = this.OnClick
+            if (callback != undefined) { callback() }
+        }
+
+        // The background of the button part (w pixels wide).
+        undefined DrawFace(UI.Root root, int ax, int ay, int w) {
+            if (!this.Enabled) { return }
+            var theme = root.theme
+            var h = this.actualHeight
+            if (this.Pressed && this.Hover) { root.renderer.FillRect(ax, ay, w, h, theme.facePressed) }
+            else if (this.Hover || this.IsChecked) { root.renderer.FillRect(ax, ay, w, h, theme.faceHover) }
+            if (this.IsChecked || (this.Hover && !this.inOverflow)) { root.renderer.DrawRect(ax, ay, w, h, theme.borderFocus) }
+        }
+
+        Brush TextBrush(UI.Root root) {
+            if (!this.Enabled) { return root.theme.textDisabled }
+            if (this.Foreground != undefined) { return this.Foreground }
+            return root.theme.text
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            this.DrawFace(root, ax, ay, this.actualWidth - this.ExtraWidth())
+            this.DrawContent(root, ax, ay)
+        }
+
+        undefined DrawContent(UI.Root root, int ax, int ay) {
+            var color = this.TextBrush(root)
+            var room = this.actualWidth - this.ExtraWidth()
+            var x = ax + (room - this.ContentWidth(root)) / 2
+            if (this.inOverflow) { x = ax + 5 }
+            var sy = ay + (this.actualHeight - this.IconSize) / 2
+            if (this.HasSymbol()) { UI.Docking.Paint.Symbol(root, this.Icon, this.Image, this.IconSize, x, sy, color) }
+            else if (this.inOverflow && this.IsChecked) { UI.Docking.Paint.Check(root, x + this.IconSize / 2, ay + this.actualHeight / 2, color) }
+            if (this.HasSymbol() || this.inOverflow) { x = x + this.IconSize + 6 }
+            if (this.ShowsText()) { this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.Text, color) }
+        }
+
+        undefined MouseDown(UI.Root root, int button, int px, int py) {
+            if (button == 1) { this.Pressed = true }
+        }
+
+        undefined MouseUp(UI.Root root, int button, int px, int py) {
+            var was = this.Pressed
+            this.Pressed = false
+            if (was && button == 1 && this.Contains(px, py)) { this.Click() }
+        }
+    }
+
+    // A button with an arrow on the right: the button runs `onClick`, the arrow opens a menu of MenuItem rows (`AddItem("Text", func () => { ... })`).
+    class ToolStripSplitButton : UI.Docking.ToolStripButton {
+        List items
+        bool arrowHot = false
+        UI.MenuPopup menu
+
+        construct(string text = "", any onClick = undefined) : base(text, onClick) {
+            this.items = new List()
+        }
+
+        string StyleKey() { return "ToolStripSplitButton" }
+
+        // Appends a menu row; it belongs to the button.
+        UI.MenuItem Add(UI.MenuItem item) {
+            item.TakeTo(this)
+            this.items.Add(item)
+            return item
+        }
+
+        UI.MenuItem AddItem(string header, any onClick = undefined) {
+            var item = new UI.MenuItem(header, onClick)
+            item.TakeTo(this)
+            this.items.Add(item)
+            return item
+        }
+
+        int ExtraWidth() { return 14 }
+
+        bool MenuOpen() {
+            var root = this.host
+            return this.menu != undefined && root != undefined && root.IsPopup(this.menu)
+        }
+
+        bool OverArrow(int px, int py) { return px >= this.ax + this.actualWidth - this.ExtraWidth() }
+
+        // Opens the menu below the button (to its right in a vertical strip or in the overflow menu).
+        undefined OpenMenu(UI.Root root) {
+            if (this.MenuOpen()) {
+                root.ClosePopup(this.menu)
+                this.menu = undefined
+                return
+            }
+            if (this.items.count == 0) { return }
+            any strip = this.parent
+            var below = !this.inOverflow && (strip == undefined || !(strip is of UI.Docking.ToolStrip) || strip.Horizontal)
+            if (below) { this.menu = root.ShowMenu(this.items, this.ax, this.ay + this.actualHeight, this) }
+            else { this.menu = root.ShowMenu(this.items, this.ax + this.actualWidth, this.ay, this) }
+            this.Invalidate()
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            if (this.menu != undefined && !root.IsPopup(this.menu)) {
+                this.menu = undefined
+                this.Invalidate()
+            }
+        }
+
+        undefined Hover(UI.Root root, int px, int py) {
+            var hot = this.OverArrow(px, py)
+            if (hot != this.arrowHot) {
+                this.arrowHot = hot
+                this.Invalidate()
+            }
+        }
+
+        undefined MouseDown(UI.Root root, int button, int px, int py) {
+            if (button == 1 && this.OverArrow(px, py)) {
+                this.OpenMenu(root)
+                return
+            }
+            base.MouseDown(root, button, px, py)
+        }
+
+        undefined MouseUp(UI.Root root, int button, int px, int py) {
+            var was = this.Pressed
+            this.Pressed = false
+            if (was && button == 1 && this.Contains(px, py) && !this.OverArrow(px, py)) { this.Click() }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            var extra = this.ExtraWidth()
+            var bx = ax + this.actualWidth - extra
+            var open = this.MenuOpen()
+            if (this.Enabled && (open || this.Hover)) {
+                var face = theme.faceHover
+                if (open) { face = theme.facePressed }
+                root.renderer.FillRect(bx, ay, extra, this.actualHeight, face)
+                if (this.Hover && !this.inOverflow) { root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.borderFocus) }
+            }
+            this.DrawFace(root, ax, ay, this.actualWidth - extra)
+            this.DrawContent(root, ax, ay)
+            if ((this.Hover || open) && !this.inOverflow) { root.renderer.DrawLine(bx, ay + 1, bx, ay + this.actualHeight - 2, theme.borderFocus) }
+            UI.Docking.Paint.Arrow(root, bx + extra / 2, ay + this.actualHeight / 2, this.inOverflow, this.TextBrush(root))
+        }
+    }
+
+    // A text in a toolstrip or the status bar. `spring = true` makes it take all the room that is left (the strip shares it between its spring items).
+    class ToolStripLabel : UI.Label {
+        int overflow = UI.Docking.Overflow.AsNeeded
+        bool spring = false
+        bool inOverflow = false
+
+        construct(string text = "") : base(text, 0, 0) { }
+
+        string StyleKey() { return "ToolStripLabel" }
+
+        int RowWidth(UI.Root root) { return this.TextWidth(root, this.Text) + 38 }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            this.cw = this.TextWidth(root, this.Text) + 10
+            this.ch = this.TextHeight(root) + 8
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var c = this.Color
+            if (c == undefined) { c = this.Foreground }
+            if (c == undefined) { c = root.theme.text }
+            if (!this.Enabled) { c = root.theme.textDisabled }
+            var x = ax + 5
+            if (this.inOverflow) { x = ax + 27 }
+            root.PushClip(ax, ay, this.actualWidth, this.actualHeight)
+            this.DrawString(root, x, ay + (this.actualHeight - this.TextHeight(root)) / 2, this.Text, c)
+            root.PopClip()
+        }
+    }
+
+    // A line between groups of items: across a horizontal strip, along a vertical one (and in the overflow menu).
+    class ToolStripSeparator : UI.Element {
+        int overflow = UI.Docking.Overflow.AsNeeded
+        bool spring = false
+        bool inOverflow = false
+
+        construct() : base(0, 0, -1, -1) { }
+
+        string StyleKey() { return "ToolStripSeparator" }
+
+        int RowWidth(UI.Root root) { return 40 }
+
+        // Is the line vertical (in a horizontal strip)?
+        bool Upright() {
+            any strip = this.parent
+            return !this.inOverflow && strip != undefined && strip is of UI.Docking.ToolStrip && strip.Horizontal
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            this.cw = 7
+            this.ch = 7
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var pen = this.Pen
+            if (pen == undefined) { pen = root.theme.border }
+            if (this.Upright()) { root.renderer.DrawLine(ax + 3, ay + 3, ax + 3, ay + this.actualHeight - 4, pen) }
+            else { root.renderer.DrawLine(ax + 3, ay + 3, ax + this.actualWidth - 4, ay + 3, pen) }
+        }
+    }
+
+    // A text field in a toolstrip (`width` pixels wide).
+    class ToolStripTextBox : UI.TextBox {
+        int overflow = UI.Docking.Overflow.AsNeeded
+        bool spring = false
+
+        construct(string text = "", int width = 100) : base(text, 0, 0, width, 22) { }
+
+        string StyleKey() { return "ToolStripTextBox" }
+    }
+
+    // A combo box in a toolstrip (`width` pixels wide); the same as UI.ComboBox.
+    class ToolStripComboBox : UI.ComboBox {
+        int overflow = UI.Docking.Overflow.AsNeeded
+        bool spring = false
+
+        construct(int width = 120) : base(0, 0, width, 22) { }
+
+        string StyleKey() { return "ToolStripComboBox" }
+    }
+
+    // A progress bar for toolstrips and the status bar: `value` of `maximum`.
+    class ToolStripProgressBar : UI.Element {
+        int value = 0
+        int maximum = 100
+        int overflow = UI.Docking.Overflow.AsNeeded
+        bool spring = false
+
+        construct(int width = 100) : base(0, 0, width, 14) { }
+
+        string StyleKey() { return "ToolStripProgressBar" }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            var r = root.renderer
+            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, theme.inputBack)
+            var inner = this.actualWidth - 2
+            var part = 0
+            if (this.maximum > 0) { part = inner * UI.M.Clamp(this.value, 0, this.maximum) / this.maximum }
+            var brush = this.Foreground
+            if (brush == undefined) { brush = theme.accent }
+            if (part > 0) { r.FillRect(ax + 1, ay + 1, part, this.actualHeight - 2, brush) }
+            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
+        }
+    }
+
+    // The list of the items of a strip that did not fit (a floating element below the » button of the strip).
+    class ToolStripOverflow : UI.Element {
+        UI.Docking.ToolStrip strip
+
+        construct() : base(0, 0, -1, -1) { }
+
+        string StyleKey() { return "ToolStripOverflow" }
+
+        int RowWidth(UI.Root root, any item) {
+            if (Reflect.Has(item, "inOverflow")) { return item.RowWidth(root) }
+            return item.dw + 8
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            var w = 120
+            var h = 4
+            if (this.strip != undefined) {
+                var items = this.strip.overflowItems
+                for (var i = 0; i < items.count; i = i + 1) {
+                    var item = items[i]
+                    item.Measure(root, -1, -1)
+                    w = UI.M.Max(w, this.RowWidth(root, item))
+                    h = h + item.dh
+                }
+            }
+            this.cw = w
+            this.ch = h
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            if (this.strip == undefined) { return }
+            var items = this.strip.overflowItems
+            var y = 2
+            for (var i = 0; i < items.count; i = i + 1) {
+                var item = items[i]
+                item.Arrange(root, 2, y, w - 4, item.dh)
+                y = y + item.dh
+            }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            var theme = root.theme
+            root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, theme.menuBack)
+            root.renderer.DrawRect(ax, ay, this.actualWidth, this.actualHeight, theme.border)
+            if (this.strip == undefined) { return }
+            var items = this.strip.overflowItems
+            for (var i = 0; i < items.count; i = i + 1) {
+                var item = items[i]
+                if (item.Visible) { item.Draw(root, ax + item.rx, ay + item.ry) }
+            }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            if (this.strip != undefined) {
+                var items = this.strip.overflowItems
+                var i = items.count - 1
+                while (i >= 0) {
+                    var hit = items[i].HitTest(px, py)
+                    if (hit != undefined) { return hit }
+                    i = i - 1
+                }
+            }
+            return this
+        }
+
+        // a click on the » button of the strip only closes the list (instead of opening it again right away)
+        bool PopupOutside(UI.Root root, int px, int py) {
+            var consumed = this.strip != undefined && this.strip.OverOverflow(px, py)
+            root.ClosePopup(this)
+            return consumed
+        }
+    }
+
+    // A bar of items (ToolStripButton, ToolStripLabel, ToolStripSeparator, ToolStripTextBox, ToolStripComboBox, ToolStripSplitButton, ToolStripProgressBar or any
+    // element). In a DockManager it can be dragged by its grip to another place, another row or edge, or out of the panels (then it floats); what does not fit goes
+    // into the menu of the » button at its end (`canOverflow`, the `overflow` of an item). `text` is its title while it floats.
+    class ToolStrip : UI.Panel {
+        bool Horizontal = true
+        /// <summary>false (default): the items are centred across the strip at their own size; true: they fill it.</summary>
+        bool stretchItems = false
+        string Text = ""
+        bool showGrip = true
+        bool canOverflow = true
+        // the row in its panel and the desired position in it (pixels from the start of the row)
+        int row = 0
+        int offset = 0
+        // the gap between two items
+        int Spacing = 1
+        UI.Docking.DockManager manager
+        bool floating = false
+        List shown
+        List overflowItems
+        UI.Docking.ToolStripOverflow overflowPopup
+        bool overflowHot = false
+        bool dragging = false
+
+        construct(string text = "") : base(0, 0, -1, -1) {
+            this.Text = text
+            this.shown = new List()
+            this.overflowItems = new List()
+            this.overflowPopup = new UI.Docking.ToolStripOverflow()
+            this.overflowPopup.strip = this
+        }
+
+        string StyleKey() { return "ToolStrip" }
+
+        // ---- adding items ----
+
+        UI.Docking.ToolStripButton AddButton(string text, any onClick = undefined, UI.Geometry icon = undefined) {
+            var b = new UI.Docking.ToolStripButton(text, onClick)
+            // a symbol made in the call (UI.Icons.Folder()) is kept by the button, one of the caller stays theirs
+            if (icon != undefined) { try icon.TakeTo(b) }
+            b.Icon = icon
+            this.Add(b)
+            return b
+        }
+
+        UI.Docking.ToolStripLabel AddLabel(string text, bool spring = false) {
+            var l = new UI.Docking.ToolStripLabel(text)
+            l.spring = spring
+            this.Add(l)
+            return l
+        }
+
+        UI.Docking.ToolStripSeparator AddSeparator() {
+            var s = new UI.Docking.ToolStripSeparator()
+            this.Add(s)
+            return s
+        }
+
+        UI.Docking.ToolStripTextBox AddTextBox(string text = "", int width = 100) {
+            var t = new UI.Docking.ToolStripTextBox(text, width)
+            this.Add(t)
+            return t
+        }
+
+        UI.Docking.ToolStripComboBox AddComboBox(int width = 120) {
+            var c = new UI.Docking.ToolStripComboBox(width)
+            this.Add(c)
+            return c
+        }
+
+        UI.Docking.ToolStripSplitButton AddSplitButton(string text, any onClick = undefined, UI.Geometry icon = undefined) {
+            var b = new UI.Docking.ToolStripSplitButton(text, onClick)
+            if (icon != undefined) { try icon.TakeTo(b) }
+            b.Icon = icon
+            this.Add(b)
+            return b
+        }
+
+        UI.Docking.ToolStripProgressBar AddProgressBar(int width = 100) {
+            var p = new UI.Docking.ToolStripProgressBar(width)
+            this.Add(p)
+            return p
+        }
+
+        // ---- layout ----
+
+        static int ModeOf(any item) {
+            if (Reflect.Has(item, "overflow")) { return item.overflow }
+            return UI.Docking.Overflow.AsNeeded
+        }
+
+        static bool SpringOf(any item) { return Reflect.Has(item, "spring") && item.spring }
+
+        static undefined Flag(any item, bool inOverflow) {
+            if (Reflect.Has(item, "inOverflow") && item.inOverflow != inOverflow) { item.inOverflow = inOverflow }
+        }
+
+        // An item has done its work (a click): the overflow menu of its strip closes.
+        static undefined ItemDone(UI.Element item) {
+            any strip = item.parent
+            if (strip != undefined && strip is of UI.Docking.ToolStrip) { strip.CloseOverflow() }
+        }
+
+        int GripSize() {
+            if (this.showGrip && !this.floating) { return 10 }
+            return 0
+        }
+
+        int OverflowSize() { return 13 }
+
+        int Along(UI.Element e) {
+            if (this.Horizontal) { return e.dw }
+            return e.dh
+        }
+
+        int Across(UI.Element e) {
+            if (this.Horizontal) { return e.dh }
+            return e.dw
+        }
+
+        bool CanOverflowNow() { return this.canOverflow && !this.floating }
+
+        // The shortest length the strip can have: grip, » button and the items that never overflow.
+        int MinLength() {
+            var length = this.GripSize() + 4
+            if (this.CanOverflowNow()) { length = length + this.OverflowSize() }
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var c = this.children[i]
+                if (c.Visible && (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Never || !this.CanOverflowNow())) { length = length + this.Along(c) + this.Spacing }
+            }
+            return length
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            var along = this.GripSize() + 4
+            var across = 16
+            var always = false
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var c = this.children[i]
+                c.Measure(root, -1, -1)
+                if (!c.Visible) { continue }
+                across = UI.M.Max(across, this.Across(c))
+                if (UI.Docking.ToolStrip.ModeOf(c) == UI.Docking.Overflow.Always && this.CanOverflowNow()) {
+                    always = true
+                    continue
+                }
+                along = along + this.Along(c) + this.Spacing
+            }
+            if (always) { along = along + this.OverflowSize() }
+            across = across + 4
+            if (this.Horizontal) {
+                this.cw = along
+                this.ch = across
+            } else {
+                this.cw = across
+                this.ch = along
+            }
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            var length = w
+            var across = h
+            if (!this.Horizontal) {
+                length = h
+                across = w
+            }
+            var start = this.GripSize() + 2
+            var avail = length - start - 2
+            // (the lists of the strip are reused: they only point to its items)
+            var shown = this.shown
+            var spill = this.overflowItems
+            shown.Clear()
+            spill.Clear()
+            // does everything fit?
+            var total = 0
+            var always = false
+            var fixedLength = 0
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var c = this.children[i]
+                if (!c.Visible) { continue }
+                var mode = UI.Docking.ToolStrip.ModeOf(c)
+                if (mode == UI.Docking.Overflow.Always) {
+                    always = true
+                    continue
+                }
+                total = total + this.Along(c) + this.Spacing
+                if (mode == UI.Docking.Overflow.Never) { fixedLength = fixedLength + this.Along(c) + this.Spacing }
+            }
+            var overflow = this.CanOverflowNow() && (always || total > avail)
+            var room = avail
+            if (overflow) { room = avail - this.OverflowSize() }
+            var used = fixedLength
+            var full = false
+            for (var i = 0; i < this.children.count; i = i + 1) {
+                var c = this.children[i]
+                if (!c.Visible) { continue }
+                var mode = UI.Docking.ToolStrip.ModeOf(c)
+                var keep = true
+                if (mode == UI.Docking.Overflow.Always) { keep = !this.CanOverflowNow() }
+                else if (mode == UI.Docking.Overflow.AsNeeded && overflow) {
+                    if (full || used + this.Along(c) + this.Spacing > room) {
+                        keep = false
+                        full = true
+                    } else { used = used + this.Along(c) + this.Spacing }
+                }
+                if (keep) { shown.Add(c) } else { spill.Add(c) }
+                UI.Docking.ToolStrip.Flag(c, !keep)
+            }
+            // the room that is left goes to the spring items
+            var usedShown = 0
+            var springs = 0
+            for (var i = 0; i < shown.count; i = i + 1) {
+                usedShown = usedShown + this.Along(shown[i]) + this.Spacing
+                if (UI.Docking.ToolStrip.SpringOf(shown[i])) { springs = springs + 1 }
+            }
+            var extra = UI.M.Max(0, room - usedShown)
+            var pos = start
+            var given = 0
+            for (var i = 0; i < shown.count; i = i + 1) {
+                var c = shown[i]
+                var len = this.Along(c)
+                if (springs > 0 && UI.Docking.ToolStrip.SpringOf(c)) {
+                    var share = extra / springs
+                    given = given + 1
+                    if (given == springs) { share = extra - share * (springs - 1) }
+                    len = len + share
+                }
+                // items sit in the middle across the strip (their own height in a horizontal strip, width in a vertical one), unless they say otherwise or
+                // the strip stretches them
+                var room2 = across - 4
+                var off = 2
+                var size = room2
+                if (!this.stretchItems && !(c is of UI.Docking.ToolStripSeparator)) {
+                    if (this.Horizontal && c.VerticalAlign == UI.VAlign.Stretch) { size = UI.M.Min(room2, c.dh) }
+                    if (!this.Horizontal && c.HorizontalAlign == UI.HAlign.Stretch) { size = UI.M.Min(room2, c.dw) }
+                    off = 2 + (room2 - size) / 2
+                }
+                if (this.Horizontal) { c.Arrange(root, pos, off, len, size) }
+                else { c.Arrange(root, off, pos, size, len) }
+                pos = pos + len + this.Spacing
+            }
+        }
+
+        bool HasOverflow() { return this.overflowItems.count > 0 }
+
+        bool OverflowOpen() {
+            var root = this.host
+            return root != undefined && root.IsPopup(this.overflowPopup)
+        }
+
+        // the grip moves the strip
+        int CursorAt(UI.Root root, int px, int py) {
+            if (this.OverGrip(px, py)) { return UI.Cursor.SizeAll }
+            return this.cursor
+        }
+
+        bool OverGrip(int px, int py) {
+            var grip = this.GripSize()
+            if (grip == 0) { return false }
+            if (this.Horizontal) { return px < this.ax + grip }
+            return py < this.ay + grip
+        }
+
+        bool OverOverflow(int px, int py) {
+            if (!this.HasOverflow() || !this.Contains(px, py)) { return false }
+            if (this.Horizontal) { return px >= this.ax + this.actualWidth - this.OverflowSize() - 1 }
+            return py >= this.ay + this.actualHeight - this.OverflowSize() - 1
+        }
+
+        // Opens (or closes) the list of the items that did not fit.
+        undefined ToggleOverflow(UI.Root root) {
+            if (this.OverflowOpen()) {
+                this.CloseOverflow()
+                return
+            }
+            if (!this.HasOverflow()) { return }
+            if (this.Horizontal) { root.ShowPopup(this.overflowPopup, this.ax + this.actualWidth - this.OverflowSize() - 1, this.ay + this.actualHeight, false, this) }
+            else { root.ShowPopup(this.overflowPopup, this.ax + this.actualWidth, this.ay + this.actualHeight - this.OverflowSize() - 1, false, this) }
+            this.Invalidate()
+        }
+
+        undefined CloseOverflow() {
+            var root = this.host
+            if (root != undefined && root.IsPopup(this.overflowPopup)) {
+                root.ClosePopup(this.overflowPopup)
+                this.Invalidate()
+            }
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            if (!this.HasOverflow() && this.OverflowOpen()) { this.CloseOverflow() }
+        }
+
+        Brush BackBrush(UI.Root root) {
+            if (this.Background != undefined) { return this.Background }
+            return root.theme.panel
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                var theme = root.theme
+                var r = root.renderer
+                r.FillRect(ax, ay, this.actualWidth, this.actualHeight, this.BackBrush(root))
+                // the grip: two rows of dots
+                var grip = this.GripSize()
+                if (grip > 0) {
+                    if (this.Horizontal) {
+                        for (var y = ay + 4; y < ay + this.actualHeight - 4; y = y + 4) {
+                            r.FillRect(ax + 3, y, 2, 2, theme.textDisabled)
+                            r.FillRect(ax + 6, y + 2, 2, 2, theme.textDisabled)
+                        }
+                    } else {
+                        for (var x = ax + 4; x < ax + this.actualWidth - 4; x = x + 4) {
+                            r.FillRect(x, ay + 3, 2, 2, theme.textDisabled)
+                            r.FillRect(x + 2, ay + 6, 2, 2, theme.textDisabled)
+                        }
+                    }
+                }
+                if (this.HasOverflow()) {
+                    var size = this.OverflowSize()
+                    var bx = ax + this.actualWidth - size - 1
+                    var by = ay + 1
+                    var bw = size
+                    var bh = this.actualHeight - 2
+                    if (!this.Horizontal) {
+                        bx = ax + 1
+                        by = ay + this.actualHeight - size - 1
+                        bw = this.actualWidth - 2
+                        bh = size
+                    }
+                    if (this.OverflowOpen()) { r.FillRect(bx, by, bw, bh, theme.facePressed) }
+                    else if (this.overflowHot) { r.FillRect(bx, by, bw, bh, theme.faceHover) }
+                    var cx = bx + bw / 2
+                    var cy = by + bh / 2
+                    r.DrawLine(cx - 3, cy - 3, cx + 3, cy - 3, theme.border)
+                    UI.Docking.Paint.Arrow(root, cx, cy + 1, false, theme.text)
+                }
+            }
+            for (var i = 0; i < this.shown.count; i = i + 1) {
+                var c = this.shown[i]
+                if (c.Visible) { c.Draw(root, ax + c.rx, ay + c.ry) }
+            }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            var i = this.shown.count - 1
+            while (i >= 0) {
+                var hit = this.shown[i].HitTest(px, py)
+                if (hit != undefined) { return hit }
+                i = i - 1
+            }
+            return this
+        }
+
+        undefined Collect(List list) {
+            if (!this.Visible || !this.Enabled) { return }
+            for (var i = 0; i < this.shown.count; i = i + 1) { this.shown[i].Collect(list) }
+        }
+
+        undefined Hover(UI.Root root, int px, int py) {
+            var hot = this.OverOverflow(px, py)
+            if (hot != this.overflowHot) {
+                this.overflowHot = hot
+                this.Invalidate()
+            }
+        }
+
+        undefined MouseDown(UI.Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.OverOverflow(px, py)) {
+                this.ToggleOverflow(root)
+                return
+            }
+            if (this.OverGrip(px, py) && this.manager != undefined) {
+                this.dragging = true
+                this.manager.PressStrip(root, this, px, py)
+            }
+        }
+
+        undefined MouseMove(UI.Root root, int px, int py) {
+            if (this.dragging && this.manager != undefined) { this.manager.DragMove(root, px, py) }
+        }
+
+        undefined MouseUp(UI.Root root, int button, int px, int py) {
+            if (this.dragging) {
+                this.dragging = false
+                if (this.manager != undefined) { this.manager.DragEnd(root, px, py) }
+            }
+        }
+    }
+
+    // The status bar at the bottom of a window: a strip without grip and overflow menu; a label with `spring` fills the room
+    // (`bar.AddLabel("Ready", true)`).
+    class StatusBar : UI.Docking.ToolStrip {
+        construct() : base("") {
+            this.showGrip = false
+            this.canOverflow = false
+        }
+
+        string StyleKey() { return "StatusBar" }
+
+        Brush BackBrush(UI.Root root) {
+            if (this.Background != undefined) { return this.Background }
+            return root.theme.back
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            base.Draw(root, ax, ay)
+            if (root.Needs(ax, ay, this.actualWidth, 1)) { root.renderer.DrawLine(ax, ay, ax + this.actualWidth - 1, ay, root.theme.border) }
+        }
+    }
+
+    // The strips at one edge of a DockManager (`side` a UI.Dock), in rows (columns at the left and right edge); in a row each strip sits at its `offset` as far as
+    // there is room, otherwise they are pushed together and finally shortened (their items go into the overflow menu).
+    class ToolStripPanel : UI.Element {
+        int side
+        List strips
+        UI.Docking.DockManager manager
+
+        construct(int side = UI.Dock.Top) : base(0, 0, -1, -1) {
+            this.side = side
+            this.strips = new List()
+        }
+
+        string StyleKey() { return "ToolStripPanel" }
+
+        bool Horizontal() { return this.side == UI.Dock.Top || this.side == UI.Dock.Bottom }
+
+        // Adds the strip in row `row` (-1: a new row at the end) at `offset` (-1: after the strips already in the row); it belongs to the panel.
+        UI.Docking.ToolStrip Add(UI.Docking.ToolStrip strip, int row = 0, int offset = -1) {
+            if (row < 0) { row = this.RowCount() }
+            if (offset < 0) { offset = this.RowEnd(row) }
+            strip.TakeTo(this)
+            strip.parent = this
+            strip.Horizontal = this.Horizontal()
+            strip.floating = false
+            strip.manager = this.manager
+            strip.row = row
+            strip.offset = offset
+            this.strips.Add(strip)
+            this.Invalidate()
+            return strip
+        }
+
+        // Takes the strip out of the panel (it is not destroyed).
+        undefined Remove(UI.Docking.ToolStrip strip) {
+            var index = this.strips.IndexOf(strip)
+            if (index < 0) { return }
+            this.strips.RemoveAt(index)
+            strip.parent = undefined
+            strip.CloseOverflow()
+            this.Compact()
+            this.Invalidate()
+        }
+
+        int RowCount() {
+            var n = 0
+            for (var i = 0; i < this.strips.count; i = i + 1) { n = UI.M.Max(n, this.strips[i].row + 1) }
+            return n
+        }
+
+        // Where the strips of a row end now (desired positions and measured lengths).
+        int RowEnd(int row) {
+            var end = 0
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var s = this.strips[i]
+                if (s.row == row) { end = UI.M.Max(end, s.offset + this.Along(s)) }
+            }
+            return end
+        }
+
+        int Along(UI.Element e) {
+            if (this.Horizontal()) { return e.dw }
+            return e.dh
+        }
+
+        int Across(UI.Element e) {
+            if (this.Horizontal()) { return e.dh }
+            return e.dw
+        }
+
+        // Rows without strips disappear: the rows are numbered 0, 1, ... again.
+        undefined Compact() {
+            var max = this.RowCount()
+            var next = 0
+            for (var r = 0; r < max; r = r + 1) {
+                var found = false
+                for (var i = 0; i < this.strips.count; i = i + 1) {
+                    var s = this.strips[i]
+                    if (s.row == r) {
+                        s.row = -1 - next
+                        found = true
+                    }
+                }
+                if (found) { next = next + 1 }
+            }
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var s = this.strips[i]
+                if (s.row < 0) { s.row = -1 - s.row }
+            }
+        }
+
+        // Makes room for a new row before `row` (the rows from there on move one further).
+        undefined InsertRow(int row) {
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var s = this.strips[i]
+                if (s.row >= row) { s.row = s.row + 1 }
+            }
+        }
+
+        // The strips of a row, by their position.
+        List RowStrips(int row) {
+            var list = new List()
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var s = this.strips[i]
+                if (s.row != row || !s.Visible) { continue }
+                var at = list.count
+                while (at > 0 && list[at - 1].offset > s.offset) { at = at - 1 }
+                list.Insert(at, s)
+            }
+            return list
+        }
+
+        int RowThickness(int row) {
+            var t = 0
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var s = this.strips[i]
+                if (s.row == row && s.Visible) { t = UI.M.Max(t, this.Across(s)) }
+            }
+            return t
+        }
+
+        // The row at `pos` pixels across the panel (from its start): -1 before the first row, RowCount() after the last.
+        int RowAt(int pos) {
+            if (pos < 0) { return -1 }
+            var at = 0
+            var rows = this.RowCount()
+            for (var r = 0; r < rows; r = r + 1) {
+                var t = this.RowThickness(r)
+                if (pos < at + t) { return r }
+                at = at + t
+            }
+            return rows
+        }
+
+        undefined MeasureCore(UI.Root root, int aw, int ah) {
+            this.Compact()
+            var rows = this.RowCount()
+            var thick = 0
+            var longest = 0
+            for (var i = 0; i < this.strips.count; i = i + 1) { this.strips[i].Measure(root, -1, -1) }
+            for (var r = 0; r < rows; r = r + 1) {
+                thick = thick + this.RowThickness(r)
+                var row = this.RowStrips(r)
+                var length = 0
+                for (var k = 0; k < row.count; k = k + 1) { length = length + this.Along(row[k]) }
+                longest = UI.M.Max(longest, length)
+            }
+            if (this.Horizontal()) {
+                this.cw = longest
+                if (aw >= 0) { this.cw = aw }
+                this.ch = thick
+            } else {
+                this.cw = thick
+                this.ch = longest
+                if (ah >= 0) { this.ch = ah }
+            }
+        }
+
+        undefined ArrangeCore(UI.Root root, int w, int h) {
+            var length = w
+            if (!this.Horizontal()) { length = h }
+            var rows = this.RowCount()
+            var pos = 0
+            for (var r = 0; r < rows; r = r + 1) {
+                var t = this.RowThickness(r)
+                var row = this.RowStrips(r)
+                var n = row.count
+                if (n == 0) { continue }
+                var xs = new int[n]
+                var lens = new int[n]
+                var end = 0
+                var sum = 0
+                for (var i = 0; i < n; i = i + 1) {
+                    lens[i] = this.Along(row[i])
+                    xs[i] = UI.M.Max(row[i].offset, end)
+                    end = xs[i] + lens[i]
+                    sum = sum + lens[i]
+                }
+                // push back from the end of the row
+                var limit = length
+                for (var i = n - 1; i >= 0; i = i - 1) {
+                    if (xs[i] + lens[i] > limit) { xs[i] = limit - lens[i] }
+                    limit = xs[i]
+                }
+                if (xs[0] < 0) {
+                    // too little room: one after the other from the start, the last ones shortened
+                    var excess = sum - length
+                    for (var i = n - 1; i >= 0 && excess > 0; i = i - 1) {
+                        var cut = UI.M.Min(excess, UI.M.Max(0, lens[i] - row[i].MinLength()))
+                        lens[i] = lens[i] - cut
+                        excess = excess - cut
+                    }
+                    var x = 0
+                    for (var i = 0; i < n; i = i + 1) {
+                        xs[i] = x
+                        x = x + lens[i]
+                    }
+                }
+                for (var i = 0; i < n; i = i + 1) {
+                    if (this.Horizontal()) { row[i].Arrange(root, xs[i], pos, lens[i], t) }
+                    else { row[i].Arrange(root, pos, xs[i], t, lens[i]) }
+                }
+                pos = pos + t
+            }
+        }
+
+        undefined Poll(UI.Root root) {
+            base.Poll(root)
+            for (var i = 0; i < this.strips.count; i = i + 1) { this.strips[i].Poll(root) }
+        }
+
+        undefined Draw(UI.Root root, int ax, int ay) {
+            this.ax = ax
+            this.ay = ay
+            if (root.Needs(ax, ay, this.actualWidth, this.actualHeight)) {
+                var back = this.Background
+                if (back == undefined) { back = root.theme.back }
+                root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+            }
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var s = this.strips[i]
+                if (s.Visible) { s.Draw(root, ax + s.rx, ay + s.ry) }
+            }
+        }
+
+        UI.Element HitTest(int px, int py) {
+            if (!this.Visible || !this.Contains(px, py)) { return undefined }
+            var i = this.strips.count - 1
+            while (i >= 0) {
+                var hit = this.strips[i].HitTest(px, py)
+                if (hit != undefined) { return hit }
+                i = i - 1
+            }
+            return this
+        }
+
+        undefined Collect(List list) {
+            for (var i = 0; i < this.strips.count; i = i + 1) { this.strips[i].Collect(list) }
+        }
+
+        UI.Element FindName(string name) {
+            if (this.Name == name) { return this }
+            for (var i = 0; i < this.strips.count; i = i + 1) {
+                var found = this.strips[i].FindName(name)
+                if (found != undefined) { return found }
+            }
+            return undefined
+        }
+    }
+}

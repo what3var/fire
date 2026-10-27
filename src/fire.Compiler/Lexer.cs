@@ -319,7 +319,7 @@ namespace fire.Compiler
         }
 
         private static bool IsUnitSuffixChar(char c) =>
-            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == 'µ';
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == 'µ' || c == 'μ';
 
         // -----------------------------------------------------------
         // Identifier / Keywords
@@ -586,7 +586,9 @@ namespace fire.Compiler
                 case '%':
                     if (Match('=')) return Tok(TokenType.PercentAssign, "%=", line, col, newlineBefore);
                     return Tok(TokenType.Percent, "%", line, col, newlineBefore);
-                case '.': return Tok(TokenType.Dot, ".", line, col, newlineBefore);
+                case '.':
+                    if (Match('.')) return Tok(TokenType.DotDot, "..", line, col, newlineBefore);   // `1..5`: a range
+                    return Tok(TokenType.Dot, ".", line, col, newlineBefore);
                 case '~': return Tok(TokenType.Tilde, "~", line, col, newlineBefore);
                 case ',': return Tok(TokenType.Comma, ",", line, col, newlineBefore);
                 case ';': return Tok(TokenType.Semicolon, ";", line, col, newlineBefore);

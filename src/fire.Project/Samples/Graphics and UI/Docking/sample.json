@@ -1,0 +1,6 @@
+{
+  "title": "Docking",
+  "description": "Tool windows to dock, tab and float, movable toolstrips with an overflow menu, and a status bar with the ui.docking library.",
+  "open": [ "main.fire" ],
+  "order": 62
+}

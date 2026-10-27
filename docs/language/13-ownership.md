@@ -110,6 +110,42 @@ print(h.held.n)                     // kept - the holder owns it now
 
 Without `take`, `temp` would still belong to the block and die at its end; `try` would not move it, because `Keep` is not its owner.
 
+What a method gets with `take` belongs to that call - like a local of it. If the method does not keep it (`try i.TakeTo(this)`) or hand it on with `take`
+again, it dies when the method ends, even when a field or a list still points to it:
+
+```fire
+class Item {
+    string n
+    construct(string n) { this.n = n }
+}
+class Shelf {
+    List items
+    construct() { this.items = new List() }
+    undefined Put(Item i) { this.items.Add(take i) }     // hand it on: the list owns it
+    undefined Look(Item i) { this.items.Add(i) }         // only a reference: it dies with the call
+}
+var shelf = new Shelf()
+shelf.Put(new Item("kept"))
+shelf.Look(new Item("lost"))
+print(shelf.items[0].n)                 // kept
+try {
+    print(shelf.items[1].n)
+} catch (DestroyedException e) {
+    print("lost: destroyed")
+}
+```
+
+In Debug mode (the default in spark, `forge run -m debug`) the VM warns about this when it happens - at the end of the call, not only at the
+next use:
+
+```
+warning (line 14): an Item is destroyed at the end of the call it belonged to, but the List in the field 'items' of a Shelf still points to it
+(it was given only a reference: pass the object on with `take`, e.g. `list.Add(take item)`, or let a longer-living owner take it).
+```
+
+It watches the objects that a field or an array is given while they belong to a call (or a block), and reports each place once. Release and
+Performance mode and native programs do not check.
+
 `List<T>.Add` keeps objects the same way (`list.Add(new Item("x"))` works). A last argument of the enum `Takes` decides what travels along:
 `Takes.This` (only the object), `Takes.Children` (also what it points to directly), `Takes.Locals` (everything reachable that belongs to the current
 call), `Takes.All` (everything reachable).

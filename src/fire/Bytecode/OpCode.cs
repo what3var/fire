@@ -214,6 +214,7 @@ namespace fire.Bytecode
         // parameter of `Class` taken from `this` (`new Box<T>()` inside a generic class); the object keeps them (ObjectInstance.TypeArgs).
         // With `forCall` 1 they are those of the next call of a generic method (`Box.Of(5)`), kept in the scope of the call (Scope.TypeArgs); `$k@` is
         // the k-th type parameter of the method that runs.
+        // With `forCall` 2 they are those a lambda takes along (the next MakeLambda/MakeLambdaCapturing; LambdaValue.TypeArgs), its body names them `$i@`.
         SetTypeArgs,         // u16 textIdx, u8 forCall
         // The first instruction of a generic method: the scope of the call takes the type arguments its SetTypeArgs gave (none: unknown).
         TakeCallTypeArgs,
@@ -222,6 +223,10 @@ namespace fire.Bytecode
         // demand), GuardTopType for a class, an interface or a type parameter (DeclaredType).
         GuardTop,            // u8 kind tag, u16 whatIdx
         GuardTopType,        // u16 specIdx, u16 whatIdx
+        // The overload the next call (CallMethod, CallStaticMethod, CallBaseMethod, NewObject/NewObjectOwned) takes when its arguments meet what the type
+        // checker assumed of them (Bytecode.OverloadHint text): the call does not score the candidates then. Only in front of calls of methods or
+        // constructors overloaded by type, before their SetTypeArgs/CopyArgs.
+        OverloadHint,        // u16 hintIdx
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

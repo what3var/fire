@@ -84,7 +84,7 @@ namespace fire.Editor
                 {
                     var plan = CreatePlan(project);
                     string self = Path.GetFullPath(script.FilePath);
-                    var others = plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => f.Text).ToList();
+                    var others = plan.Sources.Where(f => !ProjectFiles.PathComparer.Equals(Path.GetFullPath(f.Path), self)).Select(f => (f.Path, f.Text)).ToList();
                     return LiveDiagnostics.AnalyzeInProject(source, others, script.BaseDirectory, plan);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { /* the files cannot be read right now: the file alone */ }
@@ -163,6 +163,7 @@ namespace fire.Editor
             fire.Package.Manager.PackageStore.Default.ClearOverlay();   // the natives of the projects are put back by the next build or analysis
             // what belongs to which project (and the libraries) may have changed: check the open scripts again
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
+            ScheduleTestDiscovery();
         }
 
         /// <summary>The explorer and the status bar follow the workspace and the active document.</summary>
@@ -304,6 +305,7 @@ namespace fire.Editor
             mnuAddNewProject.IsEnabled = mnuAddExistingProject.IsEnabled = _workspace.Solution != null;
             mnuSetStartup.IsEnabled = has && _workspace.Solution != null && project!.Project.Type == OutputType.Exe;
             mnuPackLibrary.IsEnabled = has && project!.Project.Type == OutputType.Library;
+            mnuInstallLibrary.IsEnabled = mnuPackLibrary.IsEnabled;
         }
 
         // the entries of the menu Project > Add New carry the kind in their Tag
@@ -312,6 +314,77 @@ namespace fire.Editor
         private async void AddReference_Click(object? sender, RoutedEventArgs e) => await AddReference(CommandProject());
         private void SetStartup_Click(object? sender, RoutedEventArgs e) { if (CommandProject() is { } p) _workspace.SetStartup(p); }
         private async void PackLibrary_Click(object? sender, RoutedEventArgs e) => await PackLibrary(CommandProject());
+        private async void InstallLibrary_Click(object? sender, RoutedEventArgs e) => await InstallLibrary(CommandProject());
+
+        /// <summary>The solution of the standard libraries (Source/Packages.firesln next to the program): edit a library, then Install it.</summary>
+        private async void OpenStandardSources_Click(object? sender, RoutedEventArgs e)
+        {
+            string solution = Path.Combine(fire.Compiler.StandardSources.DefaultFolder, fire.Compiler.StandardSources.SolutionFile);
+            if (!File.Exists(solution)) { await Dialogs.Message(this, $"There is no '{solution}'.", "Standard Libraries"); return; }
+            OpenWorkspace(solution);
+        }
+
+        private async void InstallPackageFile_Click(object? sender, RoutedEventArgs e)
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+            {
+                Title = "Install a package file",
+                AllowMultiple = false,
+                FileTypeFilter = new[] { new Avalonia.Platform.Storage.FilePickerFileType("Package files") { Patterns = new[] { "*.fpk" } }, Avalonia.Platform.Storage.FilePickerFileTypes.All },
+            });
+            if (files.Count == 0 || files[0].TryGetLocalPath() is not { } file) return;
+            await InstallPackageFile(file, "Install Package");
+        }
+
+        /// <summary>Installs a package file into the store of this machine; a package of the same name and version that is installed already is replaced only when the user says so.</summary>
+        private async Task<bool> InstallPackageFile(string file, string title)
+        {
+            fire.Package.Manager.PackageManifest manifest;
+            try { manifest = fire.Package.Manager.Fpk.ReadManifest(file); }
+            catch (fire.Package.Manager.PackageException ex) { await Dialogs.Message(this, ex.Message, title); return false; }
+            var store = fire.Package.Manager.PackageStore.Default;
+            if (store.Find(manifest.Name) is { } installed && installed.Version == manifest.Version
+                && await Dialogs.Ask(this, $"{manifest.Name} {manifest.Version} is installed already.\n\nReplace it with this package?", title,
+                    ("Replace", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.No)) != Dialogs.Answer.Yes)
+                return false;
+            string? error = null;
+            await Task.Run(() =>
+            {
+                try { store.ClearOverlay(); store.Install(file); }
+                catch (Exception ex) when (ex is fire.Package.Manager.PackageException or IOException or UnauthorizedAccessException) { error = ex.Message; }
+            });
+            if (error != null) { UpdateStatus("Installing failed."); await Dialogs.Message(this, error, title); return false; }
+            UpdateStatus($"Installed {manifest.Name} {manifest.Version}.");
+            return true;
+        }
+
+        /// <summary>"Install": packs the library (its version as it is set, without its tests) and installs the package - the quick way after changing a library, e.g. a standard library
+        /// of Source/Packages.firesln.</summary>
+        private async Task InstallLibrary(LoadedProject? project)
+        {
+            const string title = "Install Library";
+            if (project == null) return;
+            if (project.Project.Type != OutputType.Library) { await Dialogs.Message(this, $"'{project.Name}' is a program: only a library is installed.", title); return; }
+            var plan = CreatePlan(project);
+            string work = Path.Combine(Path.GetTempPath(), "fire-install-" + Guid.NewGuid().ToString("N"));
+            UpdateStatus($"Packing {project.Name}...");
+            string? error = null, fpk = null;
+            await Task.Run(() =>
+            {
+                try { fpk = ProjectBuilder.PackLibrary(plan, work); }
+                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException or fire.Package.Manager.PackageException || CommandLineRunner.IsCompileErrorForEditor(ex)) { error = CompileErrors.Describe(ex); }
+            });
+            try
+            {
+                if (error != null || fpk == null) { UpdateStatus("Packing failed."); await Dialogs.Message(this, error ?? "The library could not be packed.", title); return; }
+                if (await InstallPackageFile(fpk, title))
+                    await Dialogs.Message(this, $"{project.Name} {ProjectBuilder.PackageVersion(plan.Settings.Version)} is installed: programs write #import \"{project.Project.ImportName}\".", title);
+            }
+            finally
+            {
+                try { Directory.Delete(work, true); } catch (IOException) { }
+            }
+        }
         private void ReloadProject_Click(object? sender, RoutedEventArgs e) { CommandProject()?.Refresh(); _workspace.Refresh(); }
         private async void ProjectProperties_Click(object? sender, RoutedEventArgs e) => await ShowProjectProperties(CommandProject());
 
@@ -339,12 +412,16 @@ namespace fire.Editor
                     UpdateStatus($"{template.Title} {dialog.Name} added to {project.Name}.");
                     return;
                 }
-                if (template.Files.Count != 1) { await Dialogs.Message(this, $"'{template.Title}' makes several files: open or create a project first, and add it there.", title); return; }
-                string name = values.Expand(template.Files[0]);
-                string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, template.Files[0].Replace('/', Path.DirectorySeparatorChar))));
-                string ext = Path.GetExtension(name).ToLowerInvariant();
-                var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
-                CreateDocument(kind, text, null, untitledName: name);
+                // without a project: one unsaved document per file of the template (an FXML window: its code-behind, then the markup in front)
+                var opens = template.Open.Select(o => values.Expand(o)).ToHashSet(StringComparer.Ordinal);
+                foreach (var rel in template.Files.OrderBy(f => opens.Contains(values.Expand(f)) ? 1 : 0))
+                {
+                    string name = values.Expand(rel);
+                    string text = values.Expand(File.ReadAllText(Path.Combine(template.Directory, rel.Replace('/', Path.DirectorySeparatorChar))));
+                    string ext = Path.GetExtension(name).ToLowerInvariant();
+                    var kind = ext switch { ".fire" or ".script" or ".fi" or ".fic" => DocumentKind.Script, ".fxml" => DocumentKind.UiMarkup, ".biscuit" => DocumentKind.Circuit, ".md" or ".markdown" => DocumentKind.Markdown, _ => DocumentKind.Text };
+                    CreateDocument(kind, text, null, untitledName: Path.GetFileName(name));
+                }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, title); }
         }
@@ -400,7 +477,7 @@ namespace fire.Editor
         private async Task AddExistingFile(LoadedProject? project)
         {
             if (project == null) return;
-            foreach (var file in await PickFiles("Add Existing File", ScriptFiles, UiMarkupFiles))
+            foreach (var file in await PickFiles("Add Existing File", ScriptFiles, UiMarkupFiles, CircuitFiles))
             {
                 try { _workspace.AddFile(project, file); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ProjectException) { await Dialogs.Message(this, ex.Message, "Add Existing File"); }
@@ -513,6 +590,7 @@ namespace fire.Editor
                 case "add-reference": await AddReference(project); break;
                 case "set-startup": if (project != null) _workspace.SetStartup(project); break;
                 case "pack": await PackLibrary(project); break;
+                case "install-library": await InstallLibrary(project); break;
                 case "refresh": project?.Refresh(); _workspace.Refresh(); break;
                 case "properties": await ShowProjectProperties(project); break;
                 case "solution-properties": await ShowProjectProperties(_workspace.Projects.FirstOrDefault(), solutionTab: true); break;

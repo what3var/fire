@@ -1,0 +1,12 @@
+{
+  "biscuit": 1,
+  "timeStep": "10us",
+  "elements": [
+    {"type": "Source", "name": "V1", "from": [0, 16], "to": [0, 0], "voltage": "5V"},
+    {"type": "Resistor", "name": "R1", "from": [0, 0], "to": [16, 0], "resistance": "1k"},
+    {"type": "Capacitor", "name": "C1", "from": [16, 0], "to": [16, 16], "capacitance": "1uF"},
+    {"type": "Wire", "from": [0, 16], "to": [16, 16]},
+    {"type": "Ground", "from": [0, 16], "to": [0, 20]},
+    {"type": "Scope", "from": [24, 0], "to": [56, 16], "probe": "C1"}
+  ]
+}

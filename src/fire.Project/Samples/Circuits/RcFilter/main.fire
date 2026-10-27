@@ -1,0 +1,27 @@
+#import "circuits"
+// A circuit drawn in the circuit editor (RcFilter.biscuit) is compiled into the class RcFilter: a Circuits.Circuit with a field for every
+// named element (R1, C1) and a port for every input and output (In, Out). Open RcFilter.biscuit to see and change the drawing.
+
+// the filter on its own: a circuit of its own with a 5 V step at its input
+var top = new Circuits.Circuit("top")
+var filter = new RcFilter()
+top.Add(filter)
+var supply = new Circuits.VoltageSource(5V)
+top.Add(supply)
+supply.A.Connect(filter.In)
+supply.B.Connect(top.Ground)
+
+// the capacitor charges with tau = R * C = 1 ms: 63 % after 1 ms, 99 % after 5 ms
+print("tau = 1 ms")
+for (int ms = 1; ms <= 5; ms++) {
+    top.Run(1ms)
+    print("  after " + ms + " ms: " + Math.Round(filter.Out.Voltage / 1V * 100) / 100 + " V")
+}
+
+// change a part of the drawn circuit from the program: ten times the resistance, ten times slower
+filter.R1.Resistance = 10kOhm
+supply.Level = 0V
+for (int ms = 1; ms <= 5; ms++) {
+    top.Run(1ms)
+    print("  R1 = 10k, discharging, after " + ms + " ms: " + Math.Round(filter.Out.Voltage / 1V * 100) / 100 + " V")
+}

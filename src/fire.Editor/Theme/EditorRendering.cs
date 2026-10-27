@@ -34,9 +34,19 @@ namespace fire.Editor
                 int end = Math.Min(spanEnd, lineEnd);
                 if (start >= end) continue;
 
-                var brush = BrushFor(span.Category);
+                var brush = span.Category == HighlightCategory.Colorized ? BrushOf(span.Rgb) : BrushFor(span.Category);
                 ChangeLinePart(start, end, el => el.TextRunProperties.SetForegroundBrush(brush));
             }
+        }
+
+        private static readonly Dictionary<int, IBrush> Colors = new();
+
+        /// <summary>The brush of a color 0xRRGGBB (made once per color).</summary>
+        internal static IBrush BrushOf(int rgb)
+        {
+            if (!Colors.TryGetValue(rgb, out var brush))
+                Colors[rgb] = brush = new SolidColorBrush(Color.FromRgb((byte)(rgb >> 16), (byte)(rgb >> 8), (byte)rgb));
+            return brush;
         }
 
         internal static IBrush BrushFor(HighlightCategory category) => category switch

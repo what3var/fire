@@ -1,0 +1,308 @@
+{
+  "format": 1,
+  "name": "fire-circuits",
+  "type": "library",
+  "import": "circuits",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'circuits' of fire: circuit simulation after Falstad - parts, nested circuits, sources, scope, multimeter and FFT; a C++ kernel runs the compiled circuits."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_circuits.hpp"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__CirNew",
+        "arguments": 3,
+        "cpp": "circuits::New"
+      },
+      {
+        "name": "__CirFree",
+        "arguments": 1,
+        "cpp": "circuits::Free"
+      },
+      {
+        "name": "__CirConductance",
+        "arguments": 4,
+        "cpp": "circuits::Conductance"
+      },
+      {
+        "name": "__CirVoltageBranch",
+        "arguments": 4,
+        "cpp": "circuits::VoltageBranch"
+      },
+      {
+        "name": "__CirAddReactive",
+        "arguments": 7,
+        "cpp": "circuits::AddReactive"
+      },
+      {
+        "name": "__CirAddSource",
+        "arguments": 9,
+        "cpp": "circuits::AddSource"
+      },
+      {
+        "name": "__CirSetSource",
+        "arguments": 6,
+        "cpp": "circuits::SetSource"
+      },
+      {
+        "name": "__CirCompile",
+        "arguments": 2,
+        "cpp": "circuits::Compile"
+      },
+      {
+        "name": "__CirBegin",
+        "arguments": 1,
+        "cpp": "circuits::Begin"
+      },
+      {
+        "name": "__CirRhsAdd",
+        "arguments": 3,
+        "cpp": "circuits::RhsAdd"
+      },
+      {
+        "name": "__CirRhsSet",
+        "arguments": 3,
+        "cpp": "circuits::RhsSet"
+      },
+      {
+        "name": "__CirFinish",
+        "arguments": 1,
+        "cpp": "circuits::Finish"
+      },
+      {
+        "name": "__CirRun",
+        "arguments": 2,
+        "cpp": "circuits::Run"
+      },
+      {
+        "name": "__CirTime",
+        "arguments": 1,
+        "cpp": "circuits::Time"
+      },
+      {
+        "name": "__CirNode",
+        "arguments": 2,
+        "cpp": "circuits::Node"
+      },
+      {
+        "name": "__CirSetNode",
+        "arguments": 3,
+        "cpp": "circuits::SetNode"
+      },
+      {
+        "name": "__CirUnknown",
+        "arguments": 2,
+        "cpp": "circuits::Unknown"
+      },
+      {
+        "name": "__CirState",
+        "arguments": 4,
+        "cpp": "circuits::State"
+      },
+      {
+        "name": "__CirSourceValue",
+        "arguments": 2,
+        "cpp": "circuits::SourceValue"
+      },
+      {
+        "name": "__CirAddProbe",
+        "arguments": 7,
+        "cpp": "circuits::AddProbe"
+      },
+      {
+        "name": "__CirInfo",
+        "arguments": 2,
+        "cpp": "circuits::Info"
+      },
+      {
+        "name": "__CirRecNew",
+        "arguments": 1,
+        "cpp": "circuits::RecNew"
+      },
+      {
+        "name": "__CirRecFree",
+        "arguments": 1,
+        "cpp": "circuits::RecFree"
+      },
+      {
+        "name": "__CirRecChannel",
+        "arguments": 1,
+        "cpp": "circuits::RecChannel"
+      },
+      {
+        "name": "__CirRecPut",
+        "arguments": 3,
+        "cpp": "circuits::RecPut"
+      },
+      {
+        "name": "__CirRecTime",
+        "arguments": 2,
+        "cpp": "circuits::RecTime"
+      },
+      {
+        "name": "__CirRecCount",
+        "arguments": 1,
+        "cpp": "circuits::RecCount"
+      },
+      {
+        "name": "__CirRecClear",
+        "arguments": 1,
+        "cpp": "circuits::RecClear"
+      },
+      {
+        "name": "__CirRecLast",
+        "arguments": 2,
+        "cpp": "circuits::RecLast"
+      },
+      {
+        "name": "__CirLastError",
+        "arguments": 0,
+        "cpp": "circuits::LastError",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirRecSamples",
+        "arguments": 2,
+        "cpp": "circuits::RecSamples",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirRecTrace",
+        "arguments": 7,
+        "cpp": "circuits::RecTrace",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirTraceRange",
+        "arguments": 2,
+        "cpp": "circuits::TraceRange",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirTracePoints",
+        "arguments": 6,
+        "cpp": "circuits::TracePoints",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirRecPairs",
+        "arguments": 4,
+        "cpp": "circuits::RecPairs",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirRecSpectrum",
+        "arguments": 4,
+        "cpp": "circuits::RecSpectrum",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirAddNonlinear",
+        "arguments": 9,
+        "cpp": "circuits::AddNonlinear"
+      },
+      {
+        "name": "__CirNlState",
+        "arguments": 3,
+        "cpp": "circuits::NlState"
+      },
+      {
+        "name": "__CirAddLine",
+        "arguments": 7,
+        "cpp": "circuits::AddLine"
+      },
+      {
+        "name": "__CirEntry",
+        "arguments": 4,
+        "cpp": "circuits::Entry"
+      },
+      {
+        "name": "__CirNlSet",
+        "arguments": 4,
+        "cpp": "circuits::NlSet"
+      },
+      {
+        "name": "__CirAddGate",
+        "arguments": 8,
+        "cpp": "circuits::AddGate"
+      },
+      {
+        "name": "__CirAddChip",
+        "arguments": 11,
+        "cpp": "circuits::AddChip"
+      },
+      {
+        "name": "__CirChipGet",
+        "arguments": 4,
+        "cpp": "circuits::ChipGet"
+      },
+      {
+        "name": "__CirChipSet",
+        "arguments": 5,
+        "cpp": "circuits::ChipSet"
+      },
+      {
+        "name": "__CirGateState",
+        "arguments": 2,
+        "cpp": "circuits::GateState"
+      },
+      {
+        "name": "__CirAddTube",
+        "arguments": 7,
+        "cpp": "circuits::AddTube"
+      },
+      {
+        "name": "__CirAddFormula",
+        "arguments": 7,
+        "cpp": "circuits::AddFormula"
+      },
+      {
+        "name": "__CirCheckFormula",
+        "arguments": 3,
+        "cpp": "circuits::CheckFormula",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirEvalFormula",
+        "arguments": 4,
+        "cpp": "circuits::EvalFormula"
+      },
+      {
+        "name": "__CirSetCaps",
+        "arguments": 8,
+        "cpp": "circuits::SetCaps"
+      },
+      {
+        "name": "__CirProcess",
+        "arguments": 13,
+        "cpp": "circuits::Process"
+      },
+      {
+        "name": "__CirAddCoupled",
+        "arguments": 12,
+        "cpp": "circuits::AddCoupled"
+      },
+      {
+        "name": "__CirGateExtra",
+        "arguments": 4,
+        "cpp": "circuits::GateExtra"
+      }
+    ],
+    "reset": "circuits::reset"
+  }
+}

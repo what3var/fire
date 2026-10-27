@@ -42,6 +42,12 @@ namespace fire.Bytecode
         /// (`c => c.radius`, `p => p.address.city`), the names from outside to inside - otherwise null. Basis of the lambda type `selector`.</summary>
         public string[]? SelectorPath { get; set; }
 
+        /// <summary>Per parameter of a method or constructor: its type for overloading by type (see Overloads; "" untyped). Null: all untyped (a lambda).</summary>
+        public string?[]? ParamTypes { get; set; }
+
+        /// <summary>The number of type parameters of a generic method (`T Pick&lt;T&gt;(...)`), 0 otherwise.</summary>
+        public int TypeParamCount { get; set; }
+
         private NativeForwarder? _forwarder;
         private bool _forwarderChecked;
 

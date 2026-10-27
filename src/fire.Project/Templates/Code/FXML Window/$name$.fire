@@ -1,0 +1,12 @@
+// $class$: the code-behind of $name$.fxml. The markup defines the class $class$Base (the window, its elements and the empty handlers);
+// this class derives from it and fills in what the window does.
+//
+//     var window = new $class$()
+//     window.Show()      // shows the window and goes on (or window.Run(): runs until it is closed)
+
+class $class$ : $class$Base {
+    // OnClick="Ok" in the markup
+    undefined Ok(any sender) {
+        print("OK")
+    }
+}

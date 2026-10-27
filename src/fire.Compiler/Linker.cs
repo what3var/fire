@@ -234,6 +234,22 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>The key of an import the compiler knows itself (`graphics`, `windows`, `ui`, `linq`, `reflection`), else null.</summary>
+        /// <summary>The key of an import whose natives are part of the virtual machine (its fire code is a standard package); null for any other.</summary>
+        public static string? BuiltInKey(string importName) => importName.ToLowerInvariant() switch
+        {
+            "graphics" => NativeImports.Graphics, "windows" => NativeImports.Windows, "ui" => NativeImports.Ui, "linq" => NativeImports.Linq, "reflection" => NativeImports.Reflection,
+            _ => null,
+        };
+
+        /// <summary>A statement at the top level that only declares (runs nothing): a class, interface, enum, function, namespace, extension or a directive.</summary>
+        private static bool IsDeclaration(Ast.Stmt stmt) =>
+            stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective;
+
+        /// <summary>`forge test` (docs/TESTING.md): makes the source of the test driver from the parsed program and the index of its first own source. While it is set (on this thread), the
+        /// statements at the top level of the program's files are left out and the driver is the last source.</summary>
+        [ThreadStatic] public static Func<IReadOnlyList<Ast.Stmt>, int, string>? TestDriver;
+
         /// <summary>A library has no entry point: declarations only (classes, interfaces, enums, functions, namespaces, extensions), nothing that runs at the top level.</summary>
         private void CheckLibraryHasNoEntryPoint(IReadOnlyList<Ast.Stmt> program, int firstUserSource)
         {
@@ -242,7 +258,7 @@ namespace fire.Compiler
             foreach (var stmt in program)
             {
                 if (stmt.Source < firstUserSource || stmt.Source >= firstUserSource + userCount) continue;
-                if (stmt is Ast.ClassDecl or Ast.InterfaceDecl or Ast.EnumDecl or Ast.ExternDecl or Ast.ClassExtensionDecl or Ast.NamespaceDecl or Ast.MethodDecl or Ast.NoOpStmt or Ast.NoShadowDirective or Ast.NoSyncDirective or Ast.TypeCheckDirective or Ast.TimeoutDirective) continue;
+                if (IsDeclaration(stmt)) continue;
                 var file = Plan.Sources[stmt.Source - firstUserSource];
                 errors.Add($"{Path.GetFileName(file.Path)}:{stmt.Line}: a library has no entry point - this statement would run at the top level (put it in a function or a class).");
                 if (errors.Count >= 20) break;
@@ -279,11 +295,17 @@ namespace fire.Compiler
             var projectImports = new List<string>();   // libraries of the project that a source imports
             ProjectNativeOverlay.Register(Plan);   // the C++ natives of the project and its libraries are found like those of installed packages
             if (ProjectNativeOverlay.OwnKey(Plan) is { } ownNativeKey) nativeImports.Add(ownNativeKey);
+            // a library is its own import: `#import "name"` of its own name (in its tests, say) means the project's files - and a standard library of an import the compiler knows
+            // (`graphics`, `reflection`, ...) has the natives of the virtual machine, without the installed prelude
+            string? ownImport = Plan?.Type == fire.Projects.OutputType.Library ? Plan.Project.Project.ImportName : null;
+            var ownBuiltIn = new HashSet<string>();
+            if (ownImport != null && BuiltInKey(ownImport) is { } ownKey) { ownBuiltIn.Add(ownKey); nativeImports.Add(ownKey); }
             registry.Register("import", 1, (ctx, args, line) =>
             {
                 if (args[0].Kind == ValueKind.String)
                 {
                     string importName = args[0].AsString();
+                    if (ownImport != null && string.Equals(importName, ownImport, StringComparison.OrdinalIgnoreCase)) return null;
                     if (ProjectLibraries.TryImport(Plan, importName, projectImports, nativeImports)) return null;   // a library of the project: its files come with it
                     foreach (var key in ImportedPreludes.WithDependencies(ImportedPreludes.ParseImportName(importName))) nativeImports.Add(key);
                     return null;
@@ -413,7 +435,7 @@ namespace fire.Compiler
             // shifts the start of the user code by one source.
             firstUserSource += ImportedPreludes.Insert(
                 nativeImports, natives, processedSources,
-                preludeSource => Preprocessor.Process(preludeSource, (BasePath ?? Directory.GetCurrentDirectory()), alreadyIncluded, registry));
+                (preludeSource, folder) => Preprocessor.Process(preludeSource, folder, alreadyIncluded, registry), ownBuiltIn);
 
             // the libraries of the project come before the code of the project, the ones that others need first
             if (libraryFiles.Count > 0)
@@ -428,8 +450,36 @@ namespace fire.Compiler
             // directly on itself (see Ast.TypeRef.Namespaces), set by the
             // parser when parsing each individual ProcessedSource.
             var program = Parser.ParseMultiple(processedSources);
+            int driverSources = 0;
+            if (TestDriver != null)
+            {
+                // `forge test`: the statements at the top level of the program's files do not run; a generated driver runs the tests instead
+                program.RemoveAll(stmt => stmt.Source >= firstUserSource && !IsDeclaration(stmt));
+                var driver = new ProcessedSource(TestDriver(program, firstUserSource), Array.Empty<string>(), "<tests>");
+                processedSources.Add(driver);
+                program.AddRange(Parser.ParseSource(driver, processedSources.Count - 1));
+                driverSources = 1;
+            }
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
             var resolveResult = Resolver.Resolve(program, natives.Names);
+            string? memberLogFile = Environment.GetEnvironmentVariable("FIRE_MEMBER_LOG");
+            if (memberLogFile != null)
+            {
+                // a refactoring tool: every member access whose receiver class is known, with the text of its line (TypeChecker.MemberLog)
+                TypeChecker.MemberLog = new();
+                try { TypeChecker.Check(program, resolveResult, TypeCheckMode.Lax, 0); }
+                catch (Exception) { }
+                var lines = new System.Text.StringBuilder();
+                foreach (var e in TypeChecker.MemberLog)
+                {
+                    if (e.Source < 0 || e.Source >= processedSources.Count) continue;
+                    var text = processedSources[e.Source].Source.Split('\n');
+                    if (e.Line < 1 || e.Line > text.Length) continue;
+                    lines.Append(e.Class).Append('\t').Append(e.Name).Append('\t').Append(e.Bare ? "1" : "0").Append('\t').Append(text[e.Line - 1].TrimEnd('\r')).Append('\n');
+                }
+                TypeChecker.MemberLog = null;
+                lock (typeof(Linker)) File.AppendAllText(memberLogFile, lines.ToString());
+            }
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
             var compiled = Compiler.Compile(program, resolveResult, natives);
             compiled.Resources = resources.Entries;   // the files of `new Resource("path")` travel with the program (a packed file, a native build)
@@ -447,7 +497,7 @@ namespace fire.Compiler
             var packageNatives = PackageImports.NativesOf(nativeImports);
             // a program that is packed carries the libraries of its packages: they are built now (a native build does not need them: it takes the C++ source)
             List<string>? packageLibraryFiles = !string.IsNullOrEmpty(outname) && Engine != "native" ? PackageImports.EnsureLibraries(nativeImports) : null;
-            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count, libraryFiles.Select(l => l.Path).ToList(), sources.Count) };
+            var linkedProgram = new LinkedProgram(compiled, nativeImports, firstUserSource, executionModeOverride ?? assemblyInfo.ExecutionMode) { NativeNames = natives.Names.ToList(), FloatWidth = floatWidth, PackageNatives = packageNatives.Names, PackageNativeLibraries = packageNatives.Libraries, PackageLibraryFiles = packageLibraryFiles, GuiSubsystem = assemblyInfo.Subsystem == Utilities.SubsystemType.GUI, VersionInfo = Engine == "native" ? assemblyInfo.ToVersionInfo() : null, IconPath = assemblyInfo.IconPath, SourceFiles = SourceFilesOf(processedSources.Count - driverSources, libraryFiles.Select(l => l.Path).ToList(), sources.Count).Concat(new string?[driverSources]).ToList() };
 
             if (!string.IsNullOrEmpty(outname))
             {

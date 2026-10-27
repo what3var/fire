@@ -44,5 +44,12 @@ namespace fire.Terminal
         /// a finger. false: only the touch events (the UI library switches this off and evaluates the fingers itself). May be set before the window is opened;
         /// a renderer without a touchscreen ignores it.</summary>
         bool TouchMouse { get => true; set { } }
+
+        /// <summary>Brings the open window to a new size in pixels of the screen (Window.SetSize); a renderer without a window ignores it.</summary>
+        void SetSize(int width, int height) { }
+
+        /// <summary>The mouse pointer over the window: a system cursor in the numbering of SDL (0 arrow, 1 text, 2 wait, 3 crosshair, 4 progress,
+        /// 5 NW-SE, 6 NE-SW, 7 W-E, 8 N-S, 9 move, 10 not allowed, 11 hand); a renderer without a pointer ignores it.</summary>
+        void SetCursor(int cursor) { }
     }
 }

@@ -1,0 +1,566 @@
+namespace IO {
+    enum SeekOrigin { Begin, Current, End }
+
+    class IOException : Exception {
+        string message
+        int code
+
+        construct(string message, int code = 9) {
+            this.message = message
+            this.code = code
+        }
+    }
+
+    class FileNotFoundException : IOException {
+        construct(string message) : base(message, 3) { }
+    }
+
+    class DirectoryNotFoundException : IOException {
+        construct(string message) : base(message, 4) { }
+    }
+
+    // Either the operating system (5) OR the host's policy (6) denies access.
+    class PermissionException : IOException {
+        construct(string message, int code = 5) : base(message, code) { }
+    }
+
+    class FileExistsException : IOException {
+        construct(string message) : base(message, 7) { }
+    }
+
+    class StreamClosedException : IOException {
+        construct(string message) : base(message, 2) { }
+    }
+
+    class IOErrors {
+        // Throws the exception matching the last error of a native IO function.
+        static undefined Throw() {
+            var code = __IOLastError()
+            var message = __IOLastErrorMessage()
+            if (code == 2) { throw new StreamClosedException(message) }
+            if (code == 3) { throw new FileNotFoundException(message) }
+            if (code == 4) { throw new DirectoryNotFoundException(message) }
+            if (code == 5 || code == 6) { throw new PermissionException(message, code) }
+            if (code == 7) { throw new FileExistsException(message) }
+            throw new IOException(message, code)
+        }
+
+        // Returns a valid handle, throws the error on -1.
+        static int Handle(int handle) {
+            if (handle < 0) { Throw() }
+            return handle
+        }
+    }
+
+    interface IStream {
+        int Read(byte buffer[], int offset, int count)
+        int Write(byte buffer[], int offset, int count)
+        undefined Flush()
+        undefined Close()
+    }
+
+    // Base class for own streams: override Read/Write (and whatever else is
+    // supported), the rest builds on that.
+    class Stream : IStream {
+        bool CanRead { get { return false } }
+        bool CanWrite { get { return false } }
+        bool CanSeek { get { return false } }
+
+        int Position {
+            get { throw new IOException("This stream has no position.", 8) }
+            set { throw new IOException("This stream does not support seeking.", 8) }
+        }
+
+        int Length {
+            get { throw new IOException("This stream does not know its length.", 8) }
+            set { throw new IOException("The length of this stream cannot be changed.", 8) }
+        }
+
+        int Read(byte buffer[], int offset, int count) {
+            throw new IOException("This stream is not readable.", 8)
+        }
+
+        int Write(byte buffer[], int offset, int count) {
+            throw new IOException("This stream is not writable.", 8)
+        }
+
+        int Seek(int offset, int origin = IO.SeekOrigin.Begin) {
+            throw new IOException("This stream does not support seeking.", 8)
+        }
+
+        undefined Flush() { }
+        undefined Close() { }
+
+        int Read(byte buffer[]) { return this.Read(buffer, 0, buffer.length) }
+        int Write(byte buffer[]) { return this.Write(buffer, 0, buffer.length) }
+
+        // A byte (0..255), or -1 at the end of the stream.
+        int ReadByte() {
+            var one = new byte[1]
+            var n = this.Read(one, 0, 1)
+            if (n <= 0) { return -1 }
+            return one[0]
+        }
+
+        undefined WriteByte(int value) {
+            var one = new byte[1]
+            one[0] = value
+            this.Write(one, 0, 1)
+        }
+
+        // Up to `count` bytes as a new buffer (shorter if the stream ends earlier).
+        byte[] ReadBytes(int count) {
+            var data = new byte[count]
+            var total = 0
+            while (total < count) {
+                var n = this.Read(data, total, count - total)
+                if (n <= 0) { break }
+                total = total + n
+            }
+            if (total == count) { return data }
+            var shorter = new byte[total]
+            for (var i = 0; i < total; i++) { shorter[i] = data[i] }
+            return shorter
+        }
+
+        // Everything up to the end of the stream as a new buffer.
+        byte[] ReadAll() {
+            var all = new MemoryStream()
+            this.CopyTo(all)
+            var result = all.ToBuffer()
+            all.Close()
+            return result
+        }
+
+        // Copies everything up to the end of this stream into `target`.
+        undefined CopyTo(IO.Stream target, int bufferSize = 4096) {
+            var chunk = new byte[bufferSize]
+            while (true) {
+                var n = this.Read(chunk, 0, bufferSize)
+                if (n <= 0) { break }
+                target.Write(chunk, 0, n)
+            }
+        }
+    }
+
+    // Common base of FileStream and MemoryStream: behind them lies
+    // a native handle. destruct() closes it when the owner ends.
+    class NativeStream : Stream {
+        int handle
+        bool closed
+
+        construct(int handle) {
+            this.handle = handle
+            this.closed = false
+        }
+
+        // The subclasses first pass -1 and then open in their own
+        // constructor body: if opening fails (e.g. file not found),
+        // this object is nevertheless fully built - its destruct()
+        // then finds handle == -1 and closes nothing. (If a
+        // constructor fails already BEFORE the one of the base class ran, the fields
+        // only have the default value `false` - that cannot be relied on.)
+        destruct() { try { this.Close() } catch (IO.IOException e) { } }
+
+        bool IsClosed { get { return this.closed } }
+
+        bool CanRead { get { return !this.closed && __IOCanRead(this.handle) } }
+        bool CanWrite { get { return !this.closed && __IOCanWrite(this.handle) } }
+        bool CanSeek { get { return !this.closed && __IOCanSeek(this.handle) } }
+
+        // Throws if the stream is already closed.
+        undefined Check() {
+            if (this.closed) { throw new StreamClosedException("The stream is closed.") }
+        }
+
+        // Closes the handle; a further Close() has no effect.
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            if (this.handle >= 0) { __IOClose(this.handle) }
+        }
+
+        int Position {
+            get {
+                this.Check()
+                var p = __IOPosition(this.handle)
+                if (p < 0) { IO.IOErrors.Throw() }
+                return p
+            }
+            set {
+                this.Check()
+                if (__IOSeek(this.handle, value, IO.SeekOrigin.Begin) < 0) { IO.IOErrors.Throw() }
+            }
+        }
+
+        int Length {
+            get {
+                this.Check()
+                var n = __IOLength(this.handle)
+                if (n < 0) { IO.IOErrors.Throw() }
+                return n
+            }
+            set {
+                this.Check()
+                if (!__IOSetLength(this.handle, value)) { IO.IOErrors.Throw() }
+            }
+        }
+
+        // New position (from the start), `origin`: IO.SeekOrigin.
+        int Seek(int offset, int origin = IO.SeekOrigin.Begin) {
+            this.Check()
+            var p = __IOSeek(this.handle, offset, origin)
+            if (p < 0) { IO.IOErrors.Throw() }
+            return p
+        }
+
+        int Read(byte buffer[], int offset, int count) {
+            this.Check()
+            var n = __IORead(this.handle, buffer, offset, count)
+            if (n < 0) { IO.IOErrors.Throw() }
+            return n
+        }
+
+        int Write(byte buffer[], int offset, int count) {
+            this.Check()
+            var n = __IOWrite(this.handle, buffer, offset, count)
+            if (n < 0) { IO.IOErrors.Throw() }
+            return n
+        }
+
+        int ReadByte() {
+            this.Check()
+            var b = __IOReadByte(this.handle)
+            if (b == -1) { IO.IOErrors.Throw() }
+            if (b == -2) { return -1 }
+            return b
+        }
+
+        undefined WriteByte(int value) {
+            this.Check()
+            if (__IOWriteByte(this.handle, value) < 0) { IO.IOErrors.Throw() }
+        }
+
+        byte[] ReadAll() {
+            this.Check()
+            var all = __IOReadRest(this.handle)
+            if (all == undefined) { IO.IOErrors.Throw() }
+            return all
+        }
+
+        undefined Flush() {
+            this.Check()
+            if (!__IOFlush(this.handle)) { IO.IOErrors.Throw() }
+        }
+    }
+
+    // A stream in memory (grows on writing). With a
+    // buffer: starts with a COPY of its content, position 0.
+    class MemoryStream : NativeStream {
+        construct() : base(-1) {
+            this.handle = IO.IOErrors.Handle(__IOMemNew())
+        }
+
+        construct(byte buffer[]) : base(-1) {
+            this.handle = IO.IOErrors.Handle(__IOMemFromBuffer(buffer))
+        }
+
+        // The entire content (regardless of position) as a new buffer.
+        byte[] ToBuffer() {
+            this.Check()
+            var all = __IOMemToBuffer(this.handle)
+            if (all == undefined) { IO.IOErrors.Throw() }
+            return all
+        }
+    }
+
+    // UTF-8 <-> buffer. (`string.ToBytes()` is ASCII only.)
+    class Utf8 {
+        // The text as UTF-8 (without byte-order mark) in a new buffer.
+        static byte[] GetBytes(string text) { return __IOUtf8Encode(text) }
+
+        // A byte-order mark at the start is removed, invalid sequences
+        // become U+FFFD. Without count: up to the end of the buffer.
+        static string GetString(byte buffer[], int offset = 0, int count = -1) {
+            if (count == -1) { count = buffer.length - offset }
+            var text = __IOUtf8Decode(buffer, offset, count)
+            if (text == undefined) { IO.IOErrors.Throw() }
+            return text
+        }
+    }
+
+    // Reads UTF-8 text line by line from a stream: `new IO.TextReader(stream)` reads from an
+    // existing stream and CLOSES it too, unless leaveOpen is true. A file: IO.File.OpenText(path)
+    // (`#import "filesystem"`). Lines end with "\n" or "\r\n" (the "\r" does not belong to the line).
+    //
+    //     var reader = IO.File.OpenText("notes.txt")
+    //     foreach (line in reader) { print(line) }
+    //
+    // ReadLine() returns undefined at the end of the stream.
+    class TextReader {
+        IO.Stream source
+        bool ownsSource
+        byte chunk[]
+        int pos
+        int len
+        bool eof
+        bool closed
+        IO.MemoryStream pending
+
+        construct(any source, bool leaveOpen = false) {
+            // Occupy all fields first: if opening below fails (file not
+            // found), destruct() cleans up an otherwise half-built object.
+            this.source = undefined
+            this.ownsSource = false
+            this.closed = false
+            this.eof = false
+            this.pos = 0
+            this.len = 0
+            this.chunk = new byte[4096]
+            this.pending = new IO.MemoryStream()
+            if (source is of string) {
+                throw new IOException("A TextReader reads from a stream - for a file use IO.File.OpenText(path) (#import \"filesystem\").", 1)
+            }
+            this.source = source
+            this.ownsSource = !leaveOpen
+            try source.TakeTo(this)   // (a stream that is only the result of a call passed on - `new IO.TextReader(IO.File.Open(...))` - belongs to the reader; one that belongs to somebody else stays)
+        }
+
+        destruct() { try { this.Close() } catch (IO.IOException e) { } }
+
+        bool IsClosed { get { return this.closed } }
+
+        // true if no further character comes (reads ahead for that if necessary).
+        bool EndOfStream {
+            get {
+                this.Check()
+                return !this.Fill() && this.pending.Length == 0
+            }
+        }
+
+        undefined Check() {
+            if (this.closed) { throw new StreamClosedException("The reader is closed.") }
+        }
+
+        // Ensures that chunk[pos..len) contains data; false at the end of the stream.
+        bool Fill() {
+            if (this.pos < this.len) { return true }
+            if (this.eof) { return false }
+            var n = this.source.Read(this.chunk, 0, 4096)
+            if (n <= 0) {
+                this.eof = true
+                this.pos = 0
+                this.len = 0
+                return false
+            }
+            this.pos = 0
+            this.len = n
+            return true
+        }
+
+        // The collected bytes as a line (without a trailing "\r"), empty the collector.
+        string TakeLine() {
+            var bytes = this.pending.ToBuffer()
+            this.pending.Length = 0
+            var count = bytes.length
+            if (count > 0 && bytes[count - 1] == 13) { count = count - 1 }
+            return IO.Utf8.GetString(bytes, 0, count)
+        }
+
+        // The next line, or undefined at the end.
+        string ReadLine() {
+            this.Check()
+            while (this.Fill()) {
+                var nl = __IOBufferIndexOf(this.chunk, this.pos, this.len - this.pos, 10)
+                if (nl >= 0) {
+                    if (this.pending.Length == 0) {
+                        // Whole line in the buffer - decode directly.
+                        var count = nl - this.pos
+                        if (count > 0 && this.chunk[nl - 1] == 13) { count = count - 1 }
+                        var text = IO.Utf8.GetString(this.chunk, this.pos, count)
+                        this.pos = nl + 1
+                        return text
+                    }
+                    this.pending.Write(this.chunk, this.pos, nl - this.pos)
+                    this.pos = nl + 1
+                    return this.TakeLine()
+                }
+                this.pending.Write(this.chunk, this.pos, this.len - this.pos)
+                this.pos = this.len
+            }
+            if (this.pending.Length == 0) { return undefined }
+            return this.TakeLine()
+        }
+
+        // The entire rest as one string.
+        string ReadAll() {
+            this.Check()
+            while (this.Fill()) {
+                this.pending.Write(this.chunk, this.pos, this.len - this.pos)
+                this.pos = this.len
+            }
+            var bytes = this.pending.ToBuffer()
+            this.pending.Length = 0
+            return IO.Utf8.GetString(bytes)
+        }
+
+        // All remaining lines as a List.
+        List ReadLines() {
+            var lines = new List()
+            var line = this.ReadLine()
+            while (line != undefined) {
+                lines.Add(line)
+                line = this.ReadLine()
+            }
+            return lines
+        }
+
+        // `foreach (line in reader)` reads line by line.
+        IO.LineEnumerator GetEnumerator() { return new IO.LineEnumerator(this) }
+
+        undefined Close() {
+            if (this.closed == undefined || this.closed) { return }
+            this.closed = true
+            if (this.ownsSource) { this.source.Close() }
+            if (this.pending != undefined) { this.pending.Close() }
+        }
+    }
+
+    class LineEnumerator {
+        IO.TextReader reader
+        string line
+
+        construct(IO.TextReader reader) {
+            this.reader = reader
+            this.line = undefined
+        }
+
+        bool MoveNext() {
+            this.line = this.reader.ReadLine()
+            return this.line != undefined
+        }
+
+        string GetCurrent() { return this.line }
+    }
+
+    // Writes UTF-8 text (without byte-order mark) to a stream: `new IO.TextWriter(stream[, leaveOpen])`
+    // writes to an existing stream and CLOSES it too, unless leaveOpen is true. A file:
+    // IO.File.CreateText(path) / IO.File.AppendText(path) (`#import "filesystem"`). Lines end with "\n".
+    class TextWriter {
+        IO.Stream target
+        bool ownsTarget
+        bool closed
+
+        construct(any dest, bool flag = false) {
+            // Occupy all fields first (see TextReader).
+            this.target = undefined
+            this.ownsTarget = false
+            this.closed = false
+            if (dest is of string) {
+                throw new IOException("A TextWriter writes to a stream - for a file use IO.File.CreateText(path) or IO.File.AppendText(path) (#import \"filesystem\").", 1)
+            }
+            this.target = dest
+            this.ownsTarget = !flag
+            try dest.TakeTo(this)   // (see TextReader)
+        }
+
+        destruct() { try { this.Close() } catch (IO.IOException e) { } }
+
+        bool IsClosed { get { return this.closed } }
+
+        undefined Check() {
+            if (this.closed) { throw new StreamClosedException("The writer is closed.") }
+        }
+
+        // Writes the value as text (numbers etc. are converted).
+        undefined Write(any value) {
+            this.Check()
+            this.target.Write(IO.Utf8.GetBytes("" + value))
+        }
+
+        // Like Write, additionally appends a line break.
+        undefined WriteLine(any value = "") {
+            this.Check()
+            this.target.Write(IO.Utf8.GetBytes("" + value + "\n"))
+        }
+
+        undefined Flush() {
+            this.Check()
+            this.target.Flush()
+        }
+
+        undefined Close() {
+            if (this.closed == undefined || this.closed) { return }
+            this.closed = true
+            if (this.target == undefined) { return }
+            this.target.Flush()
+            if (this.ownsTarget) { this.target.Close() }
+        }
+    }
+
+    // Standard input/output/error as a stream (In() readable only, Out()/Err()
+    // writable only). Where they lead is decided by the host (console, in the
+    // editor the output window). Close() changes nothing - the streams belong
+    // to the host and stay open.
+    class StdStream : NativeStream {
+        construct(int kind) : base(-1) {
+            this.handle = IO.IOErrors.Handle(__IOStdHandle(kind))
+        }
+
+        undefined Close() { }
+    }
+
+    // Convenient access to standard input/output/error:
+    //
+    //     IO.Stdio.WriteLine("Hello")
+    //     var name = IO.Stdio.ReadLine()          // undefined at the end of the input
+    //     var out = new IO.TextWriter(IO.Stdio.Out(), true)
+    //
+    // Output always goes out as UTF-8. ReadLine/ReadAll read buffered - do not mix with
+    // raw reads on In(). An incomplete output line
+    // appears when the line break comes in the editor or Flush() is
+    // called.
+    class Stdio {
+        static IO.StdStream In() { return new IO.StdStream(0) }
+        static IO.StdStream Out() { return new IO.StdStream(1) }
+        static IO.StdStream Err() { return new IO.StdStream(2) }
+
+        // Writes the value as text to standard output.
+        static undefined Write(any value) {
+            if (!__IOStdWrite(1, "" + value)) { IO.IOErrors.Throw() }
+        }
+
+        static undefined WriteLine(any value = "") {
+            if (!__IOStdWrite(1, "" + value + "\n")) { IO.IOErrors.Throw() }
+        }
+
+        // The same to standard error.
+        static undefined ErrorWrite(any value) {
+            if (!__IOStdWrite(2, "" + value)) { IO.IOErrors.Throw() }
+        }
+
+        static undefined ErrorLine(any value = "") {
+            if (!__IOStdWrite(2, "" + value + "\n")) { IO.IOErrors.Throw() }
+        }
+
+        // Outputs buffered output (also an incomplete line).
+        static undefined Flush() {
+            __IOStdFlush(1)
+            __IOStdFlush(2)
+        }
+
+        // The next line of standard input, or undefined at the end.
+        static string ReadLine() {
+            var line = __IOStdReadLine()
+            if (line == undefined && __IOLastError() != 0) { IO.IOErrors.Throw() }
+            return line
+        }
+
+        // Everything still coming on standard input, as one string.
+        static string ReadAll() {
+            var text = __IOStdReadAll()
+            if (text == undefined) { IO.IOErrors.Throw() }
+            return text
+        }
+    }
+}
