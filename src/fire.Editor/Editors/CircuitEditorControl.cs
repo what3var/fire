@@ -525,6 +525,7 @@ namespace fire.Editor
                         _positions.Clear();
                         foreach (var item in p.Skip(3)) { var f = item.Split('|'); if (f.Length >= 5) _positions.Add(f); }
                         if (_selectedIndex < 0) ShowProperties(new List<string>());
+                        PortsChanged?.Invoke();   // the dialog shows the class, namespace and time step too
                     }
                     break;
                 }
