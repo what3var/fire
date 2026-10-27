@@ -3,7 +3,7 @@
         xmlns:dock="using:Dock.Avalonia.Controls"
         xmlns:local="using:fire.Editor"
         x:Class="fire.Editor.MainWindow"
-        Title="spark" Width="1300" Height="820" Icon="/Assets/Logo-64.png"
+        Title="" Width="1300" Height="820" Icon="/Assets/Logo-64.png"
         DragDrop.AllowDrop="True"
 		TransparencyLevelHint="AcrylicBlur"
         Background="#1B181E"
@@ -27,9 +27,15 @@
         <Style Selector="Menu">
             <Setter Property="Background" Value="Transparent"/>
         </Style>
-        <Style Selector="Menu > MenuItem /template/ Border#PART_LayoutRoot">
-            <Setter Property="Background" Value="Transparent"/>
-        </Style>
+		<Style Selector="Menu > MenuItem /template/ Border#PART_LayoutRoot">
+			<Setter Property="Background" Value="Transparent"/>
+			<Setter Property="Margin" Value="0"/>
+			<Setter Property="Padding" Value="0"/>
+			<Setter Property="MinHeight" Value="0"/>
+		</Style>
+		<Style Selector="Menu > MenuItem">
+			<Setter Property="Height" Value="24"/>
+		</Style>
         <Style Selector="Menu > MenuItem:pointerover /template/ Border#PART_LayoutRoot">
             <Setter Property="Background" Value="#33FFFFFF"/>
         </Style>
@@ -39,10 +45,21 @@
     </Window.Styles>
 	<Grid>
 		<Grid.RowDefinitions>
-			<RowDefinition Height="32"/>
+			<RowDefinition Height="auto"/>
 			<RowDefinition Height="*"/>
 		</Grid.RowDefinitions>
 		<ExperimentalAcrylicBorder IsHitTestVisible="False" Grid.Row="0" Material="{StaticResource BarAcrylic}"/>
+		<StackPanel Grid.Row="0" Orientation="Horizontal">
+			<Image Width="20"
+			    Height="20"
+				   Margin="8,6,8,4"
+			    Source="/Assets/Logo-64.png"/>
+			<TextBlock x:Name="txtTitle"
+					   VerticalAlignment="Center"
+					   FontSize="12"
+					   Text="spark"/>
+		</StackPanel>
+	
 	<DockPanel Grid.Row="1" x:Name="DockArea">
 		<Panel DockPanel.Dock="Top">
 			<ExperimentalAcrylicBorder IsHitTestVisible="False" Material="{StaticResource BarAcrylic}"/>
