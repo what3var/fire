@@ -397,6 +397,7 @@ drops the older half then and goes on - the scopes of a schematic roll with 8192
 | `Last(name)`, `Count`, `Clear()` | the last sample, the number of samples, start again |
 | `Trace(name, columns, span = 0, trigger = 0, level = 0, times = "")` | a channel over `columns` columns of a screen, computed natively: the last samples, or `span` seconds - from the latest crossing of `level` (`trigger` 1 rising, 2 falling); `times` multiplies another channel in (power); `[first column with data, values...]` |
 | `Pairs(x, y, count = 2000)` | the last pairs of two channels for an XY display: `[x0, y0, x1, y1, ...]` |
+| `Stats(name, times = "")` | measurements of a channel over what the scope holds, computed natively: `[count, min, max, average, rms, frequency in Hz (0: none found), duration in s]`; average and rms over whole periods (between the first and the last rising crossing of the middle, with a hysteresis of a tenth of peak to peak) |
 | `Spectrum(name, size = 512, fmax = 20kHz)` | the spectrum of a channel, computed natively: `size` samples taken at the rate `2 * fmax` (fmax 0: the rate of the simulation), mean removed, Hann window; `[bin width in Hz, amplitude of bin 1, ..., of bin size/2]` |
 
 **`Multimeter`**: `Multimeter.Volts(a, b = undefined)` (between two ports), `Multimeter.Amps(part)`, `Multimeter.Rms(samples)`.
@@ -623,7 +624,8 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   CurrentConveyor, Ota, Optocoupler, the logic chips TFlipFlop, Latch, RingCounter, Multiplexer, Demultiplexer, HalfAdder, FullAdder, SipoShift, PisoShift,
   Adc, Dac, SevenSegmentDecoder, SevenSegment, Monostable, PhaseComparator, Vco (always in Falstad's chip layout; `bits`, `spacing` and the options of the
   chip) and TriState (`flip`: the control on the other side); sources and rails also have the waveforms triangle,
-  sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element or one of its pins - `R1.2` counted from 1, or the name of a port of its part: `Q1.B` -, `quantity`
+  sawtooth and noise, LogicOutput, Probe (`measure` voltage - the value now -, max, min, peakToPeak, average, rms or frequency, from what it recorded),
+  Scope (`probe` = the name of an element or one of its pins - `R1.2` counted from 1, or the name of a port of its part: `Q1.B` -, `quantity`
   voltage/current/power (v * i), `timePerDiv` (the time base: 10 divisions across; 0 = one step per pixel), `trigger` free/rising/falling through `triggerLevel`,
   `display` time, xy (the current of the element over its voltage, its characteristic curve) or spectrum - an FFT analyzer: the last `fftSize` samples (128 .. 4096, default 512) taken at twice `maxFrequency` (default 20kHz; 0: at the rate of the simulation, the axis automatically), Hann window, in dB, computed natively; `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
@@ -725,6 +727,11 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 
 The view draws at the full resolution of the screen (a UI.Root with `Scaling` above 1): lines and text are sharp, not stretched. Changes that keep the connections
 (moving a scope, a text, or a group as a whole) do not compile the circuit again - the simulation and the scopes go on.
+
+**Info box.** While exactly one element is selected, a box at the top right shows its values, like the one at the bottom right of Falstad's simulator: its kind
+and name, its properties with a unit, the voltage across it, the current through it and the power (a part with more pins: the voltage of each pin). For a scope
+(also as FFT analyzer or XY) and a probe it shows what was recorded: max, min, peak to peak, average, rms, frequency and period, the time it covers - and for a
+spectrum the strongest line and the width of a bin. `InfoLines(element)` gives the lines.
 
 `OnChange` (or `TakeChanged()`) reports every change - `view.Schematic.ToText()` is the file to save.
 

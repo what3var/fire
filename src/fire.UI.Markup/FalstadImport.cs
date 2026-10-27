@@ -471,7 +471,14 @@ namespace fire.UI.Markup
                     return e;
                 }
                 case "M": { var e = new Element { Type = "LogicOutput" }; double th = Num(6, 2.5, "th"); if (th != 2.5) e.Set("threshold", Format(th)); return e; }
-                case "p": return new Element { Type = "Probe" };
+                case "p":
+                {
+                    // what the probe shows (Falstad's meter: 0 voltage, 1 rms, 2 max, 3 min, 4 peak to peak, 6 frequency)
+                    var e = new Element { Type = "Probe" };
+                    string measure = (int)Num(6, 0, "me") switch { 1 => "rms", 2 => "max", 3 => "min", 4 => "peakToPeak", 6 => "frequency", _ => "" };
+                    if (measure != "") e.Set("measure", measure);
+                    return e;
+                }
                 case "207":
                 {
                     var e = new Element { Type = "Label" };

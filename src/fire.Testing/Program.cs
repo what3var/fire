@@ -19360,6 +19360,28 @@ else
             print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().count + " " + outer.Parts().count)
             try { new Circuits.Resistor(3V) } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Circuits: Scope.Stats - Min/Max/Mittelwert/RMS ueber ganze Perioden und Frequenz (Sinus mit Offset, Leistung als Produkt zweier Kanaele)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var ac = new Circuits.Circuit()
+            var sin = ac.Add(new Circuits.SineSource(4V, 250Hz))
+            var dc = ac.Add(new Circuits.VoltageSource(1V))
+            var rl = ac.Add(new Circuits.Resistor(100))
+            dc.B.Connect(ac.Ground)
+            dc.A.Connect(sin.B)
+            sin.A.Connect(rl.A)
+            rl.B.Connect(ac.Ground)
+            ac.TimeStep = 10us
+            var s = new Circuits.Scope(ac, 8192, true)
+            s.Voltage("v", rl.A)
+            s.Current("i", rl)
+            print(s.Stats("v")[0])
+            ac.Run(30ms)
+            var st = s.Stats("v")
+            print(H.R(st[1]) + " " + H.R(st[2]) + " " + H.R(st[3]) + " " + H.R(st[4]) + " " + Math.Round(st[5]) + " " + (st[0] == s.Count))
+            var p = s.Stats("i", "v")
+            print(H.R(p[2] * 1000) + " " + Math.Round(p[5]))
+            """),
         ("Circuits: kompilierter Plan - eigene Bauteile in fire (nur Stamp / StampStep+Commit), FunctionSource, Scope auf eigenes Bauteil, Schalter und Pegel mitten im Lauf, PlanInfo", """
             #import "circuits"
             class H {

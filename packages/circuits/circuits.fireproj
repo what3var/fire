@@ -204,6 +204,13 @@
         "returnsReference": true
       },
       {
+        "name": "__CirRecStats",
+        "arguments": 3,
+        "cpp": "circuits::RecStats",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
         "name": "__CirRecSpectrum",
         "arguments": 4,
         "cpp": "circuits::RecSpectrum",

@@ -2283,6 +2283,60 @@ inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list
     return ArrV(out);
 }
 
+/// Measurements of a channel (times channel x when x >= 0: the power v * i) over what the recorder holds, like the info of a scope in Falstad's simulator:
+/// [count, min, max, average, rms, frequency (0: none found), duration in seconds]. Average and rms over whole periods when there are two rising crossings
+/// of the middle (with a hysteresis of a tenth of peak to peak), otherwise over all samples.
+inline Value RecStats(Value h, Value chY, Value chX, OwnList* list) {
+    Recorder* r = recorder(h);
+    Arr* out = allocArr(7, list);
+    Value* o = out->items();
+    for (int i = 0; i < 7; i++) o[i] = Float(0);
+    if (!r || chY.i < 0 || (size_t)chY.i >= r->channels.size()) return ArrV(out);
+    const std::vector<double>& y = r->channels[(size_t)chY.i];
+    const std::vector<double>* x = chX.i >= 0 && (size_t)chX.i < r->channels.size() ? &r->channels[(size_t)chX.i] : nullptr;
+    size_t n = std::min(y.size(), r->times.size());
+    if (x) n = std::min(n, x->size());
+    if (n == 0) return ArrV(out);
+    auto at = [&](size_t i) { return x ? y[i] * (*x)[i] : y[i]; };
+    double lo = at(0), hi = lo;
+    for (size_t i = 1; i < n; i++) { double v = at(i); lo = std::min(lo, v); hi = std::max(hi, v); }
+    // rising crossings of the middle (linear between the samples), with hysteresis against noise
+    double mid = (lo + hi) / 2, band = (hi - lo) / 10;
+    std::vector<double> rises;
+    size_t firstI = 0, lastI = 0;
+    if (hi - lo > 1e-12) {
+        bool below = at(0) < mid;
+        for (size_t i = 1; i < n; i++) {
+            double v = at(i);
+            if (v < mid - band) below = true;
+            else if (below && v >= mid) {
+                double p = at(i - 1), f = v != p ? (mid - p) / (v - p) : 0;
+                rises.push_back(r->times[i - 1] + f * (r->times[i] - r->times[i - 1]));
+                if (rises.size() == 1) firstI = i;
+                lastI = i;
+                below = false;
+            }
+        }
+    }
+    size_t a = 0, b = n;
+    double freq = 0;
+    if (rises.size() >= 2 && rises.back() > rises.front()) {
+        freq = (double)(rises.size() - 1) / (rises.back() - rises.front());
+        a = firstI; b = lastI;
+    }
+    double sum = 0, sq = 0;
+    for (size_t i = a; i < b; i++) { double v = at(i); sum += v; sq += v * v; }
+    double cnt = (double)(b - a);
+    o[0] = Float((Real)n);
+    o[1] = Float((Real)lo);
+    o[2] = Float((Real)hi);
+    o[3] = Float((Real)(sum / cnt));
+    o[4] = Float((Real)std::sqrt(sq / cnt));
+    o[5] = Float((Real)freq);
+    o[6] = Float((Real)(r->times[n - 1] - r->times[0]));
+    return ArrV(out);
+}
+
 /// The spectrum of a channel for an FFT analyzer: the last `size` samples (a power of two, 16 .. 8192), taken at the rate 2 * fmax (so the bins reach up to
 /// fmax; fmax <= 0 or a coarser simulation: the rate of the simulation), the mean taken away, a Hann window, then the FFT. Result: [bin width in Hz,
 /// amplitude of bin 1, ..., amplitude of bin size/2] (amplitudes of a sine as its peak value); empty if there are too few samples.

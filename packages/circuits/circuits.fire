@@ -4427,6 +4427,14 @@ namespace Circuits {
         /// simulation), Hann window. Result: [bin width in Hz, amplitude of bin 1, ..., of bin size/2]; empty while there are too few samples.</summary>
         float[] Spectrum(string name, int size = 512, float fmax : any = 20000.0) { return __CirRecSpectrum(this.recorder, this.ChannelOf(name), size, Circuits.Units.Hertz(fmax)) }
 
+        /// <summary>Measurements of a channel over what the scope holds (with `times` another channel, multiplied in: the power): [count, min, max, average,
+        /// rms, frequency in Hz (0: no period found), duration in seconds]. Average and rms over whole periods when there are two.</summary>
+        float[] Stats(string name, string times = "") {
+            var x = -1
+            if (times != "") { x = this.ChannelOf(times) }
+            return __CirRecStats(this.recorder, this.ChannelOf(name), x)
+        }
+
         /// <summary>The last sample of a channel.</summary>
         float Last(string name) { return __CirRecLast(this.recorder, this.ChannelOf(name)) }
 

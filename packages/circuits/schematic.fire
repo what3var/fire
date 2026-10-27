@@ -203,7 +203,7 @@ namespace Circuits {
             l.Add("Devices|SpiShiftIn|supply:V=5")
             l.Add("Display|LogicOutput|threshold:V=2.5")
             l.Add("Display|SevenSegment|point:bool=false;supply:V=5;spacing:int=4")
-            l.Add("Display|Probe|")
+            l.Add("Display|Probe|measure:choice:voltage/max/min/peakToPeak/average/rms/frequency=voltage")
             l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current/power=voltage;display:choice:time/spectrum/xy=time;timePerDiv:s=0;trigger:choice:free/rising/falling=free;triggerLevel:=0;range:=0;maxFrequency:Hz=20k;fftSize:choice:128/256/512/1024/2048/4096=512")
             l.Add("Display|Label|text:text=A")
             l.Add("Display|Pin|port:text=in")
@@ -1555,6 +1555,11 @@ namespace Circuits {
                 }
             }
             // how a scope shows what it records: only the picture changes (the recording goes on)
+            if (e.type == "Probe" && key == "measure") {
+                e.dirty = false
+                this.version = this.version + 1
+                return
+            }
             if (e.type == "Scope" && (key == "range" || key == "maxFrequency" || key == "fftSize" || key == "timePerDiv" || key == "trigger" || key == "triggerLevel")) {
                 e.dirty = false
                 this.version = this.version + 1
@@ -1585,7 +1590,7 @@ namespace Circuits {
                 foreach (v in e.values) {
                     string text = v
                     if (text != "" && Circuits.Symbols.Number(text) == undefined && text != "true" && text != "false" && e.type != "Formula" && e.type != "Label"
-                        && e.type != "Text" && e.type != "Pin" && e.type != "Scope" && e.keys[e.values.IndexOf(v)] != "model" && e.keys[e.values.IndexOf(v)] != "color"
+                        && e.type != "Text" && e.type != "Pin" && e.type != "Scope" && e.type != "Probe" && e.keys[e.values.IndexOf(v)] != "model" && e.keys[e.values.IndexOf(v)] != "color"
                         && e.keys[e.values.IndexOf(v)] != "waveform") {
                         e.dirty = true
                         found = true
@@ -1635,13 +1640,13 @@ namespace Circuits {
                 }
                 this.JoinRelays()
                 foreach (e in this.elements) {
-                    if (e.type != "Scope") { continue }
+                    if (e.type != "Scope" && e.type != "Probe") { continue }
                     // a scope is made again when it changed, when the connections changed or when a part was made again (the port it reads may be one of it)
                     if (e.dirty || e.scope == undefined || nets || remade.count > 0) {
                         this.Drop(e)
                         e.error = ""
                         e.dirty = false
-                        this.MakeScope(e)
+                        if (e.type == "Probe") { this.MakeProbeScope(e) } else { this.MakeScope(e) }
                     }
                 }
                 this.reconnect = false
@@ -1860,6 +1865,15 @@ namespace Circuits {
                 if (p.name == name) { return p }
             }
             return this.circuit.AddPort(name)
+        }
+
+        // a probe records the voltage between its ends (for its maximum, rms, frequency, ...)
+        undefined MakeProbeScope(Circuits.Element e) {
+            if (e.nets.count < 2 || e.nets[0] == undefined || e.nets[1] == undefined) { return }
+            var scope = new Circuits.Scope(this.circuit.Top(), 8192, true)
+            scope.Voltage("y", e.nets[0], e.nets[1])
+            scope.TakeTo(e)
+            e.scope = scope
         }
 
         // a scope for a Scope element: the voltage at the pins of the element named by "probe", or the current through its part

@@ -57,6 +57,9 @@ namespace UI {
         string status = ""
 
         List selection
+        // the info box: the element it was made for and the properties with a unit of its kind ("resistance", "Ω", ...)
+        string infoType = ""
+        List infoProps
         // what the mouse does: 0 nothing, 1 move the selection, 2 select with a rectangle, 3 place a new element, 4 draw a wire, 5 pan, 6 stretch one end, 7 hold a momentary switch
         int mode = 0
         string placeType = ""
@@ -1025,6 +1028,200 @@ namespace UI {
                 if (share >= 99) { this.textBrush.Color = UI.Color.Rgb(120, 200, 120) } else { this.textBrush.Color = UI.Color.Rgb(230, 180, 80) }
                 this.DrawString(root, ax + w - this.TextWidth(root, rt) - this.Dp(6), ay + this.Dp(6) + this.TextHeight(root), rt, this.textBrush)
             }
+            var infoTop = ay + this.Dp(10) + this.TextHeight(root)
+            if (this.realTime) { infoTop = infoTop + this.Dp(2) + this.TextHeight(root) }
+            if (this.selection.count == 1) { this.DrawInfo(root, this.selection[0], ax + w - this.Dp(6), infoTop) }
+        }
+
+        // ---- the info box (top right, like the one at the bottom right of Falstad's simulator) ----
+
+        // the box for the selected element, its right edge at `right`
+        undefined DrawInfo(Root root, Circuits.Element e, int right, int top) {
+            var lines = this.InfoLines(e)
+            if (lines.count == 0) { return }
+            var lh = this.TextHeight(root) + this.Dp(1)
+            var bw = 0
+            foreach (l in lines) { bw = UI.M.Max(bw, this.TextWidth(root, l)) }
+            var pad = this.Dp(6)
+            var x0 = right - bw - 2 * pad
+            var bh = lines.count * lh + 2 * pad
+            this.brush.Color = UI.Color.Rgb(22, 26, 32)
+            root.renderer.FillRect(x0, top, bw + 2 * pad, bh, this.brush)
+            this.thin.Color = UI.Color.Rgb(70, 80, 95)
+            root.renderer.DrawRect(x0, top, bw + 2 * pad, bh, this.thin)
+            var y = top + pad
+            var first = true
+            foreach (l in lines) {
+                if (first) { this.textBrush.Color = UI.Color.Rgb(230, 230, 230) } else { this.textBrush.Color = UI.Color.Rgb(175, 190, 205) }
+                this.DrawString(root, x0 + pad, y, l, this.textBrush)
+                y = y + lh
+                first = false
+            }
+        }
+
+        // a value with its unit for the eye ("4.7mA"), "-" for none
+        static string Show(float v, string unit) { return UI.CircuitView.Short(v) + unit }
+
+        /// <summary>The lines of the info box for an element: its kind and name, its values with a unit, the voltage, current and power - for a scope or a
+        /// probe what it measured (max, min, peak to peak, average, rms, frequency, period; the strongest line of a spectrum).</summary>
+        List InfoLines(Circuits.Element e) {
+            var lines = new List()
+            var t = e.type
+            if (t == "Wire" || t == "Text" || t == "Label" || t == "Ground") { return lines }
+            var head = t
+            if (e.name != "") { head = head + " " + e.name }
+            lines.Add(head)
+            if (e.error != "") {
+                lines.Add("! " + e.error)
+                return lines
+            }
+            if (t == "Scope") {
+                this.ScopeInfo(e, lines)
+                return lines
+            }
+            if (t == "Probe") {
+                var v = e.PinVoltage(0) - e.PinVoltage(1)
+                lines.Add("V = " + UI.CircuitView.Show(v, "V"))
+                if (e.scope != undefined) { this.StatLines(e.scope.Stats("y"), "V", lines) }
+                return lines
+            }
+            // the values of the kind that have a unit
+            if (this.infoType != t) {
+                this.infoType = t
+                this.infoProps = new List()
+                var entry = Circuits.Symbols.Entry(t)
+                var parts = entry.Split("|")
+                if (parts.length > 2 && parts[2] != "") {
+                    foreach (prop in parts[2].Split(";")) {
+                        string ps = prop
+                        var colon = ps.IndexOf(":")
+                        var eq = ps.IndexOf("=")
+                        if (colon < 0 || eq < colon) { continue }
+                        var kind = ps.Substring(colon + 1, eq - colon - 1)
+                        if (kind == "bool" || kind == "int" || kind == "text" || kind == "" || kind.StartsWith("choice") || kind.StartsWith("model")) { continue }
+                        this.infoProps.Add(ps.Substring(0, colon))
+                        if (kind == "Ohm") { kind = "Ω" }
+                        this.infoProps.Add(kind)
+                    }
+                }
+            }
+            for (int i = 0; i + 1 < this.infoProps.count; i = i + 2) {
+                lines.Add(this.infoProps[i] + " = " + this.Pretty(e, this.infoProps[i], this.infoProps[i + 1]))
+            }
+            var pins = e.pins.count / 2
+            if (pins == 2) {
+                var vd = e.PinVoltage(0) - e.PinVoltage(1)
+                // a source runs from its first point (-) to its second (+)
+                if (t == "Source" || t == "AudioInput") { vd = -vd }
+                lines.Add("Vd = " + UI.CircuitView.Show(vd, "V"))
+                if (e.part != undefined) {
+                    var cur = this.CurrentOf(e)
+                    if (cur != 0.0 || t == "Resistor" || t == "Capacitor" || t == "Inductor") {
+                        lines.Add("I = " + UI.CircuitView.Show(Math.Abs(cur), "A"))
+                        lines.Add("P = " + UI.CircuitView.Show(Math.Abs(vd * cur), "W"))
+                    }
+                }
+            } else if (pins == 1) {
+                lines.Add("V = " + UI.CircuitView.Show(e.PinVoltage(0), "V"))
+            } else if (pins > 2) {
+                var n = UI.M.Min(pins, 8)
+                for (int k = 0; k < n; k++) {
+                    var label = "V" + (k + 1)
+                    if (k < e.nets.count && e.nets[k] != undefined) {
+                        var p = e.nets[k]
+                        if (p.name != "" && e.part != undefined) { label = "V(" + p.name + ")" }
+                    }
+                    lines.Add(label + " = " + UI.CircuitView.Show(e.PinVoltage(k), "V"))
+                }
+            }
+            return lines
+        }
+
+        // what a scope measured: over time (and XY) the statistics, as a spectrum the strongest line as well
+        undefined ScopeInfo(Circuits.Element e, List lines) {
+            var quantity = e.Get("quantity")
+            var unit = "V"
+            var label = "V(" + e.Get("probe") + ")"
+            if (quantity == "current") {
+                unit = "A"
+                label = "I(" + e.Get("probe") + ")"
+            } else if (quantity == "power") {
+                unit = "W"
+                label = "P(" + e.Get("probe") + ")"
+            }
+            lines.Add(label + "  (" + e.Get("display") + ")")
+            var scope = e.scope
+            if (scope == undefined || scope.Count == 0) {
+                lines.Add("no samples yet")
+                return
+            }
+            var other = ""
+            if (quantity == "power") { other = "x" }
+            var stats = scope.Stats("y", other)
+            lines.Add("now = " + UI.CircuitView.Show(scope.Last("y") * this.PowerFactor(scope, quantity), unit))
+            this.StatLines(stats, unit, lines)
+            if (e.Get("display") == "spectrum") {
+                var size = 512
+                var sizeText = Circuits.Symbols.Number(e.Get("fftSize"))
+                if (sizeText != undefined && sizeText >= 16.0) { size = Math.Round(sizeText)!int }
+                var fmax = 0.0
+                var fmaxText = Circuits.Symbols.Number(e.Get("maxFrequency"))
+                if (fmaxText != undefined && fmaxText > 0.0) { fmax = fmaxText }
+                var mags = scope.Spectrum("y", size, fmax)
+                if (mags.length >= 9) {
+                    var peak = 0.0
+                    var peakBin = 1
+                    for (int k = 1; k < mags.length; k++) {
+                        if (mags[k] > peak) {
+                            peak = mags[k]
+                            peakBin = k
+                        }
+                    }
+                    lines.Add("peak = " + UI.CircuitView.Show(peakBin * mags[0], "Hz") + "  " + UI.CircuitView.Show(peak, unit))
+                    lines.Add("bin = " + UI.CircuitView.Show(mags[0], "Hz") + "  (" + size + " points)")
+                }
+            }
+            if (e.Get("display") == "xy" && quantity == "voltage") {
+                lines.Add("I: " + UI.CircuitView.Show(scope.Last("x"), "A") + " now")
+            }
+        }
+
+        // the last sample of the power is y * x
+        float PowerFactor(Circuits.Scope scope, string quantity) {
+            if (quantity == "power") { return scope.Last("x") }
+            return 1.0
+        }
+
+        // the lines of Scope.Stats: [count, min, max, average, rms, frequency, duration]
+        undefined StatLines(float stats[], string unit, List lines) {
+            if (stats[0] < 1.0) { return }
+            lines.Add("max = " + UI.CircuitView.Show(stats[2], unit) + "   min = " + UI.CircuitView.Show(stats[1], unit))
+            lines.Add("p-p = " + UI.CircuitView.Show(stats[2] - stats[1], unit))
+            lines.Add("avg = " + UI.CircuitView.Show(stats[3], unit) + "   rms = " + UI.CircuitView.Show(stats[4], unit))
+            if (stats[5] > 0.0) {
+                lines.Add("f = " + UI.CircuitView.Show(stats[5], "Hz") + "   T = " + UI.CircuitView.Show(1.0 / stats[5], "s"))
+            } else {
+                lines.Add("f = -")
+            }
+            lines.Add("over " + UI.CircuitView.Show(stats[6], "s"))
+        }
+
+        // the text of a probe: what its "measure" asks for, from what it recorded (the voltage now while there is nothing yet)
+        string ProbeText(Circuits.Element e, float v) {
+            var measure = e.Get("measure")
+            if (measure == "" || measure == "voltage" || e.scope == undefined) { return UI.CircuitView.Show(v, "V") }
+            var st = e.scope.Stats("y")
+            if (st[0] < 1.0) { return UI.CircuitView.Show(v, "V") }
+            if (measure == "max") { return UI.CircuitView.Show(st[2], "V") + " max" }
+            if (measure == "min") { return UI.CircuitView.Show(st[1], "V") + " min" }
+            if (measure == "peakToPeak") { return UI.CircuitView.Show(st[2] - st[1], "V") + " p-p" }
+            if (measure == "average") { return UI.CircuitView.Show(st[3], "V") + " avg" }
+            if (measure == "rms") { return UI.CircuitView.Show(st[4], "V") + " rms" }
+            if (measure == "frequency") {
+                if (st[5] <= 0.0) { return "- Hz" }
+                return UI.CircuitView.Show(st[5], "Hz")
+            }
+            return UI.CircuitView.Show(v, "V")
         }
 
         // While the view draws, text is measured and drawn at the size of the screen (the renderer is at scale 1 then).
@@ -1426,7 +1623,7 @@ namespace UI {
                 this.thin.Color = gray
                 root.renderer.DrawLine(this.PX(0.0, 0.0), this.PY(0.0, 0.0), this.PX(L, 0.0), this.PY(L, 0.0), this.thin)
                 this.Box(root, m, 0.0, 1.0, white)
-                this.Label(root, m, -1.2, UI.CircuitView.Short(v0 - v1) + "V", white)
+                this.Label(root, m, -1.2, this.ProbeText(e, v0 - v1), white)
             } else if (t == "Label") {
                 this.Dot(root, 0.0, 0.0, 0.3, c0)
                 this.Text(root, 0.0, -1.5, e.Get("text"), UI.Color.Rgb(230, 200, 90))
