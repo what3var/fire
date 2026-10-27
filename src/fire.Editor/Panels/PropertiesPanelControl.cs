@@ -343,10 +343,26 @@ namespace fire.Editor
                         Minimum = entry.Minimum, Maximum = entry.Maximum, Value = v, Margin = new Thickness(6, 0), MinHeight = 0, VerticalAlignment = VerticalAlignment.Center,
                         SmallChange = (entry.Maximum - entry.Minimum) / 100, LargeChange = (entry.Maximum - entry.Minimum) / 10,
                     };
-                    // while the thumb is dragged, the values the document reports back do not move it
+                    // as small as the row: the Fluent theme sizes its slider for a form (32 high, wide margins)
+                    slider.Resources["SliderHorizontalHeight"] = RowHeight - 4;
+                    slider.Resources["SliderHorizontalThumbHeight"] = 12.0;
+                    slider.Resources["SliderHorizontalThumbWidth"] = 12.0;
+                    slider.Resources["SliderPreContentMargin"] = new GridLength(0);
+                    slider.Resources["SliderPostContentMargin"] = new GridLength(0);
+                    slider.Height = RowHeight - 4;
+                    // while the thumb is dragged the value goes to the document only when it is let go (the circuit is not flooded with the values in between),
+                    // and the values the document reports back do not move it; keys and the wheel commit at once
+                    string Text(double x) => Math.Round(x, 4).ToString(System.Globalization.CultureInfo.InvariantCulture);
                     slider.AddHandler(InputElement.PointerPressedEvent, (_, _) => slider.Tag = "drag", Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
-                    slider.AddHandler(InputElement.PointerReleasedEvent, (_, _) => slider.Tag = null, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
-                    slider.ValueChanged += (_, e) => Commit(slider, entry.Name, Math.Round(e.NewValue, 4).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    void Release()
+                    {
+                        if (slider.Tag == null) return;
+                        slider.Tag = null;
+                        Commit(slider, entry.Name, Text(slider.Value));
+                    }
+                    slider.AddHandler(InputElement.PointerReleasedEvent, (_, _) => Release(), Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                    slider.AddHandler(InputElement.PointerCaptureLostEvent, (_, _) => Release(), Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                    slider.ValueChanged += (_, e) => { if (slider.Tag == null) Commit(slider, entry.Name, Text(e.NewValue)); };
                     return slider;
                 }
                 case PropertyEditKind.Momentary:

@@ -680,12 +680,14 @@ units, models of the library, choices) are edited in the tool window **Propertie
 window the UI markup editor uses - a table like the property grid of .NET: names and values with lines between the cells, categories that fold, sorted by
 category or by name, a column border to drag and a description of the selected row; double click or Enter on an element puts the focus into its first field.
 With nothing selected the window shows the **circuit** itself: the class and namespace of the generated class, the **time step** of the simulation, and under
-**Positions** a control for everything that is operated while the circuit runs - a slider for each potentiometer (one for a `group`), an on/off box for
+**Positions** a control for everything that is operated while the circuit runs - a slider for each potentiometer (one for a `group`; dragged, it sets the
+position when it is let go, keys and the wheel at once), an on/off box for
 switches and logic inputs, a button for push buttons (closed while it is held), a list for selector switches. **Circuit...** in the tool bar opens the same
 settings as a dialog, with the **inputs and outputs** of the circuit: a row per port with its color (a palette or any `#RRGGBB`), its name, input or output, the
 pin it is bound to (a list of the pins of the schematic, or typed: `R1.2`, `Q1.B`) and what is wrong with it; **Add input** / **Add output** make a new one
-with the next free name and color. Right-clicking a pin of a named element offers **Make Pin an Input/Output of the Circuit** (or removes the port bound
-there). The drawing marks every bound pin with a dot in the color of its port and its name (`> In1` for an input, `Out1 >` for an output).
+with the next free name and color; the dialog follows every change at once (its rows are bound to a model that the schematic's reports update). Right-clicking
+any pin (also of a wire or a ground) offers **Make Pin an Input/Output of the Circuit** - an element without a name gets one first (R1, W2, ...) - or removes the
+port bound there. The drawing marks every bound pin with a dot in the color of its port and its name (`> In1` for an input, `Out1 >` for an output).
 
 **Samples** next to it loads one of the example circuits of the editor (our own, embedded in `fire.UI.Markup`, `CircuitSamples.All`): an RC
 low-pass, an LC tank, a bridge rectifier, a Zener regulator, a transistor switch, an inverting amplifier, a Schmitt trigger oscillator, a 555 blinker, a

@@ -1375,6 +1375,25 @@ namespace Circuits {
             return undefined
         }
 
+        /// <summary>A free name for an element of this kind: its letter and the first free number (R1, C2, Q1, W3, GND1, ...).</summary>
+        string FreeName(string type) {
+            var stem = type
+            if (type == "Resistor" || type == "Potentiometer") { stem = "R" }
+            else if (type == "Capacitor") { stem = "C" }
+            else if (type == "Inductor") { stem = "L" }
+            else if (type == "Diode" || type == "Zener" || type == "Led") { stem = "D" }
+            else if (type == "Transistor" || type == "Mosfet" || type == "Jfet" || type == "Darlington") { stem = "Q" }
+            else if (type == "Source" || type == "Rail") { stem = "V" }
+            else if (type == "CurrentSource") { stem = "I" }
+            else if (type == "Wire") { stem = "W" }
+            else if (type == "Ground") { stem = "GND" }
+            else if (type == "Switch" || type == "Switch2") { stem = "S" }
+            else if (type == "OpAmp" || type == "Comparator") { stem = "U" }
+            var k = 1
+            while (this.Find(stem + k) != undefined || this.PortDefinition(stem + k) != undefined) { k = k + 1 }
+            return stem + k
+        }
+
         /// <summary>The pins elements can be bound to: "name.N" for every pin of every element with a name (Wires, Texts, Scopes and the like have none).</summary>
         List PinNames() {
             var names = new List()
