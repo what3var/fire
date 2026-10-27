@@ -415,6 +415,51 @@ namespace UI {
             return lines
         }
 
+        /// <summary>The inputs and outputs of the circuit: each line "index|name|direction|pin|color|error" (direction input/output, pin "R1.2", color "#RRGGBB",
+        /// error what is wrong with it - "" if nothing).</summary>
+        List PortLines() {
+            var lines = new List()
+            var defs = this.Schematic.PortDefinitions()
+            for (int i = 0; i < defs.count; i++) {
+                Circuits.PortDefinition d = defs[i]
+                lines.Add(i + "|" + d.name + "|" + d.direction + "|" + d.pin + "|" + d.color + "|" + d.error)
+            }
+            return lines
+        }
+
+        /// <summary>The pins an input or output can be bound to ("R1.1", "R1.2", ...).</summary>
+        List PinNames() { return this.Schematic.PinNames() }
+
+        /// <summary>Adds an input ("input") or output ("output") with the next free name and color (with undo); bound to `pin` if it is given.</summary>
+        undefined AddPort(string direction, string pin = "") {
+            if (this.readOnly) { return }
+            this.Remember()
+            this.Schematic.AddPortDefinition("", direction, pin)
+            this.Changed()
+        }
+
+        /// <summary>Changes the input or output number `index` (with undo): "name", "direction", "pin" or "color".</summary>
+        undefined SetPort(int index, string key, string value) {
+            var defs = this.Schematic.PortDefinitions()
+            if (this.readOnly || index < 0 || index >= defs.count) { return }
+            Circuits.PortDefinition d = defs[index]
+            var old = ""
+            if (key == "name") { old = d.name } else if (key == "direction") { old = d.direction } else if (key == "pin") { old = d.pin } else if (key == "color") { old = d.color }
+            if (old == value) { return }
+            this.Remember()
+            this.Schematic.SetPortDefinition(index, key, value)
+            this.Changed()
+        }
+
+        /// <summary>Removes the input or output number `index` (with undo).</summary>
+        undefined RemovePort(int index) {
+            var defs = this.Schematic.PortDefinitions()
+            if (this.readOnly || index < 0 || index >= defs.count) { return }
+            this.Remember()
+            this.Schematic.RemovePortDefinition(index)
+            this.Changed()
+        }
+
         /// <summary>Renames an element (with undo).</summary>
         undefined RenameElement(Circuits.Element e, string name) {
             if (e.name == name) { return }
@@ -708,6 +753,7 @@ namespace UI {
                 }
             }
             this.DrawDots(root)
+            this.DrawPortMarks(root)
             // the selection
             foreach (e in this.selection) { this.DrawSelection(root, e) }
             if (this.ghost != undefined) {
@@ -766,6 +812,43 @@ namespace UI {
             var digits = Math.Floor(Math.Log(a) / Math.Log(10.0))
             var unit = 10.0 ^ (digits - 2.0)
             return Circuits.Schematic.Format(Math.Round(v / unit) * unit)
+        }
+
+        /// <summary>The color of "#RRGGBB" (or "RRGGBB", "0xRRGGBB"); gray if it is none.</summary>
+        static any HexColor(string text) {
+            var t = text.Trim()
+            if (t.StartsWith("#")) { t = t.Substring(1) }
+            else if (t.StartsWith("0x") || t.StartsWith("0X")) { t = t.Substring(2) }
+            if (t.Length != 6) { return UI.Color.Rgb(160, 160, 160) }
+            var v = 0
+            for (int i = 0; i < 6; i++) {
+                var d = "0123456789abcdef".IndexOf(t.Substring(i, 1).ToLower())
+                if (d < 0) { return UI.Color.Rgb(160, 160, 160) }
+                v = v * 16 + d
+            }
+            return UI.Color.Rgb((v >> 16) & 255, (v >> 8) & 255, v & 255)
+        }
+
+        // the inputs and outputs of the circuit: the pin each is bound to in its color, with its name (an arrow into the pin for an input, out of it for an output)
+        undefined DrawPortMarks(Root root) {
+            var s = this.Schematic
+            foreach (d in s.PortDefinitions()) {
+                if (d.slot < 0) { continue }
+                var e = s.Find(d.element)
+                if (e == undefined || d.slot * 2 + 1 >= e.pins.count) { continue }
+                var px = this.SX(e.pins[d.slot * 2])
+                var py = this.SY(e.pins[d.slot * 2 + 1])
+                var r = UI.M.Max(3, this.Dp(Math.Round(this.scale * 0.45)!int))
+                // (a color belongs to what it is given to: one for each)
+                this.brush.Color = UI.CircuitView.HexColor(d.color)
+                root.renderer.FillCircle(px, py, r, this.brush)
+                this.thin.Color = UI.CircuitView.HexColor(d.color)
+                root.renderer.DrawCircle(px, py, r + this.Dp(2), this.thin)
+                var label = d.name
+                if (d.direction == "output") { label = d.name + " >" } else { label = "> " + d.name }
+                this.textBrush.Color = UI.CircuitView.HexColor(d.color)
+                this.DrawString(root, px + r + this.Dp(3), py - r - this.TextHeight(root), label, this.textBrush)
+            }
         }
 
         undefined DrawGrid(Root root) {
@@ -2899,6 +2982,15 @@ namespace UI {
                 if (label == "") { label = pinOf.type }
                 this.contextItems.Add(new UI.CircuitMenuItem("Attach Scope to Pin " + (this.contextPin + 1) + " of " + label, this, "pinscope time"))
                 this.contextItems.Add(new UI.CircuitMenuItem("Attach FFT Analyzer to Pin " + (this.contextPin + 1), this, "pinscope spectrum"))
+                // an input or output of the circuit on this pin (a pin is named by its element: elements without a name have none)
+                if (pinOf.name != "") {
+                    var bound = this.Schematic.PortAtPin(pinOf, this.contextPin)
+                    if (bound != undefined) { this.contextItems.Add(new UI.CircuitMenuItem("Remove " + bound.direction + " '" + bound.name + "'", this, "unbind")) }
+                    else {
+                        this.contextItems.Add(new UI.CircuitMenuItem("Make Pin an Input of the Circuit", this, "bind input"))
+                        this.contextItems.Add(new UI.CircuitMenuItem("Make Pin an Output of the Circuit", this, "bind output"))
+                    }
+                }
                 root.ShowMenu(this.contextItems, px, py, this)
                 return
             }
@@ -2996,6 +3088,15 @@ namespace UI {
             var a = p[0]
             if (a == "scope") { this.AttachScope(e, p[1], p[2]) }
             else if (a == "pinscope") { this.AttachScope(e, "voltage", p[1], this.contextPin) }
+            else if (a == "bind") {
+                if (e != undefined && e.name != "") { this.AddPort(p[1], e.name + "." + (this.contextPin + 1)) }
+            }
+            else if (a == "unbind") {
+                if (e != undefined) {
+                    var bound = this.Schematic.PortAtPin(e, this.contextPin)
+                    if (bound != undefined) { this.RemovePort(this.Schematic.PortDefinitions().IndexOf(bound)) }
+                }
+            }
             else if (a == "display") {
                 if (e != undefined) { this.SetProperty(e, "display", p[1]) }
             }

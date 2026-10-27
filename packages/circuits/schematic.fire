@@ -1250,9 +1250,40 @@ namespace Circuits {
 
     /// <summary>A circuit as a drawing: elements on a grid (circuit.Schematic(), or a `.biscuit` file). Every change is applied at once: the parts of changed
     /// elements are made again, and when something moved, all ports are connected again from the drawing.</summary>
+    /// <summary>An input or output of a circuit: a port of the circuit (seen from outside) bound to a pin of an element ("R1.2", counted from 1, or the name of
+    /// the port of its part: "Q1.B"). Its color marks the pin in the drawing and the member in the source.</summary>
+    class PortDefinition {
+        string name
+        /// <summary>"input" or "output".</summary>
+        string direction = "input"
+        string pin = ""
+        /// <summary>"#RRGGBB".</summary>
+        string color = ""
+        /// <summary>What is wrong with it ("" if nothing): set when the schematic connects.</summary>
+        string error = ""
+        /// <summary>The element and the pin (from 0) it is bound to, set when the schematic connects ("", -1 if none).</summary>
+        string element = ""
+        int slot = -1
+
+        construct(string name, string direction, string pin, string color) {
+            this.name = name
+            this.direction = direction
+            this.pin = pin
+            this.color = color
+        }
+
+        string Name { get { return this.name } }
+        string Direction { get { return this.direction } }
+        string Pin { get { return this.pin } }
+        string Color { get { return this.color } }
+        string Error { get { return this.error } }
+    }
+
     class Schematic {
         Circuits.Circuit circuit
         List elements
+        // the inputs and outputs of the circuit (PortDefinition)
+        List portDefs
         string className = ""
         string namespaceName = ""
         // counts the changes (an editor saves when it moved on)
@@ -1266,6 +1297,111 @@ namespace Circuits {
         construct(Circuits.Circuit circuit) {
             this.circuit = circuit
             this.elements = new List()
+            this.portDefs = new List()
+        }
+
+        /// <summary>The inputs and outputs of the circuit (PortDefinition), in their order.</summary>
+        List PortDefinitions() { return this.portDefs }
+
+        /// <summary>The color of the n-th port when it gets none: red, violet, orange, blue, green, magenta, ochre, cyan.</summary>
+        static string PortColor(int n) {
+            var colors = ["#E03030", "#9040E0", "#E08020", "#3070E0", "#20A050", "#D030A0", "#B09010", "#10A0B0"]
+            return colors[n % 8]
+        }
+
+        /// <summary>Adds an input or output; without a name it gets "In1"/"Out1"..., without a color the next one of PortColor. Returns it.</summary>
+        Circuits.PortDefinition AddPortDefinition(string name = "", string direction = "input", string pin = "", string color = "") {
+            var n = name
+            if (n == "") {
+                var stem = "In"
+                if (direction == "output") { stem = "Out" }
+                var k = 1
+                while (this.PortDefinition(stem + k) != undefined || this.Find(stem + k) != undefined) { k = k + 1 }
+                n = stem + k
+            }
+            // without a color: the first of PortColor no other port has
+            var c = color
+            if (c == "") {
+                var k = 0
+                while (k < 8) {
+                    var used = false
+                    foreach (other in this.portDefs) {
+                        if (other.color.ToLower() == Circuits.Schematic.PortColor(k).ToLower()) { used = true }
+                    }
+                    if (!used) { break }
+                    k = k + 1
+                }
+                c = Circuits.Schematic.PortColor(k)
+            }
+            var d = new Circuits.PortDefinition(n, direction, pin, c)
+            this.portDefs.Add(take d)
+            this.Changed(true)
+            return this.portDefs[this.portDefs.count - 1]
+        }
+
+        /// <summary>The input or output of this name (undefined if there is none).</summary>
+        Circuits.PortDefinition PortDefinition(string name) {
+            foreach (d in this.portDefs) {
+                if (d.name == name) { return d }
+            }
+            return undefined
+        }
+
+        /// <summary>Changes the input or output number `index`: "name", "direction" (input/output), "pin" ("R1.2") or "color" ("#RRGGBB").</summary>
+        undefined SetPortDefinition(int index, string key, string value) {
+            if (index < 0 || index >= this.portDefs.count) { return }
+            Circuits.PortDefinition d = this.portDefs[index]
+            if (key == "name") { d.name = value }
+            else if (key == "direction") { d.direction = value }
+            else if (key == "pin") { d.pin = value }
+            else if (key == "color") { d.color = value }
+            else { return }
+            this.Changed(key == "name" || key == "pin")
+        }
+
+        /// <summary>Removes the input or output number `index`.</summary>
+        undefined RemovePortDefinition(int index) {
+            if (index < 0 || index >= this.portDefs.count) { return }
+            this.portDefs.RemoveAt(index)
+            this.Changed(true)
+        }
+
+        /// <summary>The input or output bound to pin `slot` (from 0) of the element (undefined if none).</summary>
+        Circuits.PortDefinition PortAtPin(Circuits.Element e, int slot) {
+            if (e.name == "") { return undefined }
+            foreach (d in this.portDefs) {
+                if (d.slot == slot && d.element == e.name) { return d }
+            }
+            return undefined
+        }
+
+        /// <summary>The pins elements can be bound to: "name.N" for every pin of every element with a name (Wires, Texts, Scopes and the like have none).</summary>
+        List PinNames() {
+            var names = new List()
+            foreach (e in this.elements) {
+                if (e.name == "" || e.type == "Wire" || e.type == "Scope" || e.type == "Text") { continue }
+                for (int i = 0; i < e.pins.count / 2; i++) { names.Add(e.name + "." + (i + 1)) }
+            }
+            return names
+        }
+
+        /// <summary>The pin (from 0) of the element that "which" names: a number counted from 1 or the name of the port of its part; -1 if none.</summary>
+        static int PinIndex(Circuits.Element target, string which) {
+            var count = target.pins.count / 2
+            var number = which.TryToInt()
+            if (number != undefined) {
+                if (number >= 1 && number <= count) { return number - 1 }
+                return -1
+            }
+            for (int k = 0; k < target.pinPorts.count; k++) {
+                Port p = target.pinPorts[k]
+                if (p != undefined && p.name.ToLower() == which.ToLower()) { return k }
+            }
+            for (int k = 0; k < target.nets.count; k++) {
+                Port p = target.nets[k]
+                if (p != undefined && p.name.ToLower() == which.ToLower()) { return k }
+            }
+            return -1
         }
 
         List Elements() { return this.elements }
@@ -1377,6 +1513,12 @@ namespace Circuits {
         /// <summary>Renames an element.</summary>
         undefined Rename(Circuits.Element e, string name) {
             if (e.name == name) { return }
+            // the inputs and outputs bound to its pins follow
+            if (e.name != "") {
+                foreach (d in this.portDefs) {
+                    if (d.pin.StartsWith(e.name + ".")) { d.pin = name + d.pin.Substring(e.name.Length) }
+                }
+            }
             e.name = name
             e.dirty = true
             this.Changed(true)
@@ -1559,6 +1701,63 @@ namespace Circuits {
             foreach (e in this.elements) {
                 foreach (p in e.groundPorts) { p.Connect(c.ground) }
             }
+            // the inputs and outputs: a port of the circuit on the node of the pin each is bound to
+            foreach (d in this.portDefs) {
+                d.error = ""
+                d.element = ""
+                d.slot = -1
+                if (!Circuits.Schematic.IsName(d.name)) {
+                    d.error = "'" + d.name + "' is no name."
+                    continue
+                }
+                var clash = 0
+                foreach (other in this.portDefs) {
+                    if (other.name == d.name) { clash = clash + 1 }
+                }
+                if (clash > 1) {
+                    d.error = "Two ports are named '" + d.name + "'."
+                    continue
+                }
+                if (this.Find(d.name) != undefined) {
+                    d.error = "An element is named '" + d.name + "' too."
+                    continue
+                }
+                if (d.pin == "") {
+                    d.error = "It is bound to no pin."
+                    continue
+                }
+                var dot = d.pin.LastIndexOf(".")
+                Circuits.Element target = undefined
+                if (dot > 0) { target = this.Find(d.pin.Substring(0, dot)) }
+                if (target == undefined) {
+                    d.error = "There is no element '" + d.pin + "' (a pin is written 'R1.2')."
+                    if (dot > 0) { d.error = "There is no element '" + d.pin.Substring(0, dot) + "'." }
+                    continue
+                }
+                var slot = Circuits.Schematic.PinIndex(target, d.pin.Substring(dot + 1))
+                if (slot < 0) {
+                    d.error = "'" + target.name + "' has no pin '" + d.pin.Substring(dot + 1) + "'."
+                    continue
+                }
+                var at = 0
+                foreach (e in this.elements) {
+                    if (e == target) { break }
+                    at = at + e.pins.count / 2
+                }
+                at = at + slot
+                d.element = target.name
+                d.slot = slot
+                Port port = undefined
+                foreach (p in c.ports) {
+                    if (p.name == d.name) { port = p }
+                }
+                if (port == undefined) { port = c.AddPort(d.name) }
+                var r = Circuits.Schematic.Root(parent, at)
+                if (first[r] == undefined) {
+                    first[r] = port
+                    if (grounded[r]) { port.Connect(c.ground) }
+                } else { port.Connect(first[r]) }
+            }
             // a port on the node of every pin (to read voltages)
             var index = 0
             foreach (e in this.elements) {
@@ -1678,6 +1877,17 @@ namespace Circuits {
             e.scope = scope
         }
 
+        /// <summary>True if the text is a name of fire (a letter or '_', then letters, digits and '_').</summary>
+        static bool IsName(string s) {
+            if (s.Length == 0) { return false }
+            for (int i = 0; i < s.Length; i++) {
+                var c = s.CharAt(i)
+                var letter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+                if (!letter && (i == 0 || c < '0' || c > '9')) { return false }
+            }
+            return true
+        }
+
         static int Root(any parent, int i) {
             var r = i
             while (parent[r] != r) { r = parent[r] }
@@ -1727,6 +1937,15 @@ namespace Circuits {
                 }
                 text = text + "}"
             }
+            if (this.portDefs.count > 0) {
+                text = text + ",\n  \"ports\": ["
+                for (int i = 0; i < this.portDefs.count; i++) {
+                    Circuits.PortDefinition d = this.portDefs[i]
+                    if (i > 0) { text = text + "," }
+                    text = text + "\n    {\"name\": " + Circuits.Schematic.Quote(d.name) + ", \"direction\": " + Circuits.Schematic.Quote(d.direction) + ", \"pin\": " + Circuits.Schematic.Quote(d.pin) + ", \"color\": " + Circuits.Schematic.Quote(d.color) + "}"
+                }
+                text = text + "\n  ]"
+            }
             text = text + ",\n  \"elements\": ["
             for (int i = 0; i < this.elements.count; i++) {
                 if (i > 0) { text = text + "," }
@@ -1767,6 +1986,29 @@ namespace Circuits {
             try {
                 foreach (e in this.elements) { this.Drop(e) }
                 this.elements.Clear()
+                this.portDefs.Clear()
+                var ports = o.Get("ports")
+                if (ports != undefined) {
+                    for (int i = 0; i < ports.length; i++) {
+                        if (!(ports[i] is of JsonObject)) { throw new ArgumentException("Port " + i + " is not an object.") }
+                        JsonObject pdo = ports[i]!JsonObject
+                        var pname = pdo.Get("name")
+                        var pdir = pdo.Get("direction")
+                        var ppin = pdo.Get("pin")
+                        var pcol = pdo.Get("color")
+                        var dname = ""
+                        if (pname != undefined) { dname = "" + pname }
+                        var ddir = "input"
+                        if (pdir != undefined) { ddir = "" + pdir }
+                        if (ddir != "input" && ddir != "output") { throw new ArgumentException("Port " + i + ": the direction is 'input' or 'output'.") }
+                        var dpin = ""
+                        if (ppin != undefined) { dpin = "" + ppin }
+                        var dcol = Circuits.Schematic.PortColor(i)
+                        if (pcol != undefined) { dcol = "" + pcol }
+                        var d = new Circuits.PortDefinition(dname, ddir, dpin, dcol)
+                        this.portDefs.Add(take d)
+                    }
+                }
                 var cls = o.Get("class")
                 if (cls != undefined) { this.className = "" + cls }
                 var ns = o.Get("namespace")

@@ -284,6 +284,18 @@ class CalcTests {
 
 The arguments are ordinary expressions; they are evaluated when a tool uses them (the test runner: when the test runs).
 
+The editor reads one attribute itself: `[Colorize 0x6010C0]` before a field, property or method shows its name in that color - in the declaration and
+wherever it is used as a member. The program does not change; a circuit drawn in spark marks its inputs and outputs so, in the colors of the schematic:
+
+```fire
+class Mixer {
+    [Colorize 0xE03030]
+    float Left = 0.0
+    [Colorize "#3070E0"]
+    float Right = 0.0
+}
+```
+
 Fields and properties can have attributes too. `#import "json"` reads two of them (docs/JSON.md):
 
 ```fire

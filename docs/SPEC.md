@@ -1069,7 +1069,9 @@ that are constants (numbers, strings, `bool`, arrays of constants, ranges of `in
 Attributes stand before methods, fields (`[NonSerialized] int secret`; before a declaration of several fields they belong to all of them) and properties - nowhere
 else. Reflection lists them for every member. A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
-and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored.
+and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
+editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
+schematic marks its ports so (docs/CIRCUITS.md).
 
 The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusive, descending when `b < a`; the unit of `a` stays on every element. In
 `[Parameters]` a range runs a test once per element.

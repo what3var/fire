@@ -601,6 +601,38 @@ amp.Parameter("gain", 4)        // a value "gain*1k" follows
 
 The fields are set again whenever the schematic makes its parts anew (`OnBuilt()`, which a derived class can override too). `fire.Compiler biscuit Amp.biscuit` shows the script.
 
+### Inputs and outputs
+
+`"ports"` lists the **inputs and outputs** of the circuit: each a port of the circuit, seen from outside, bound to a pin of an element - `R1.2` is the second
+pin of R1 (counted from 1), `Q1.B` the port named B of its part:
+
+```json
+"ports": [
+  {"name": "In", "direction": "input", "pin": "R1.1", "color": "#E03030"},
+  {"name": "Out", "direction": "output", "pin": "C1.2", "color": "#9040E0"}
+]
+```
+
+The schematic puts a port of that name on the node of the pin (`AddPort`, as a Pin element does), so the generated class can be a part of another circuit:
+it gets a member `Circuits.Port In` per port, marked `[Colorize 0xE03030]` - the editor shows `amp.In` in the color of the port (SPEC 5.12).
+
+```fire
+var amp = new Amp()
+var top = new Circuits.Circuit("top")
+top.Add(amp)
+var v = new Circuits.VoltageSource(1V)
+top.Add(v)
+v.A.Connect(amp.In)
+v.B.Connect(top.Ground)
+top.Run(1ms)
+print(amp.Out.Voltage)
+```
+
+A port that names no element or pin, a name used twice or by an element is reported (`PortDefinition.Error`; the generator refuses a name of an element
+or of a member of `Circuits.Circuit`). Renaming an element moves the bindings along. In fire: `s.PortDefinitions()` (`Name`, `Direction`, `Pin`, `Color`,
+`Error`), `s.AddPortDefinition(name, direction, pin, color)` (an empty name or color: the next free one, `In1`/`Out1`, red, violet, orange, blue, green, ...),
+`s.SetPortDefinition(index, key, value)`, `s.RemovePortDefinition(index)`, `s.PinNames()`.
+
 ## The circuit view (`#import "circuits.ui"`)
 
 `UI.CircuitView` is a control of the UI library (docs/UI.md) that shows a circuit as a live schematic, like Falstad's simulator: wires and leads coloured by their voltage
@@ -630,7 +662,7 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 | rotate, flip, copy, delete | R, F, Ctrl+D, Del (or `RotateSelection()`, ...) |
 | undo, redo | Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z (`Undo()`, `Redo()`) |
 | properties | double click or Enter: the view's own editor, or `OnEdit` of the program |
-| the circuit | `SetCircuitProperty("class" / "namespace" / "timeStep", text)` and `CircuitProperty(key)` (with undo); `Positions()` lists what can be operated while it runs (potentiometers - a group once -, switches, push buttons, selector switches, logic inputs) and `Operate(index, value)` operates it; `Ports()` lists the Pin elements and the parts bound to devices |
+| the circuit | `SetCircuitProperty("class" / "namespace" / "timeStep", text)` and `CircuitProperty(key)` (with undo); `Positions()` lists what can be operated while it runs (potentiometers - a group once -, switches, push buttons, selector switches, logic inputs) and `Operate(index, value)` operates it; `Ports()` lists the Pin elements and the parts bound to devices; `PortLines()` the inputs and outputs (`index|name|direction|pin|color|error`), `AddPort(direction, pin)`, `SetPort(index, key, value)`, `RemovePort(index)` change them with undo |
 | zoom, pan | the wheel zooms at the pointer, the middle or right button pans; `FitToView()` |
 | context menu | a right click without dragging: on an element Attach Scope (voltage, current, power), an XY scope, Attach FFT Analyzer; on a pin a scope for that pin; properties, rotate, flip, duplicate, delete; on a scope time, spectrum or XY; on empty space run, reset, select all, fit, grid, values, current. `AttachScope(element, quantity, display)` does the same from a program |
 
@@ -650,7 +682,10 @@ category or by name, a column border to drag and a description of the selected r
 With nothing selected the window shows the **circuit** itself: the class and namespace of the generated class, the **time step** of the simulation, and under
 **Positions** a control for everything that is operated while the circuit runs - a slider for each potentiometer (one for a `group`), an on/off box for
 switches and logic inputs, a button for push buttons (closed while it is held), a list for selector switches. **Circuit...** in the tool bar opens the same
-settings as a dialog, with the **ports** of the circuit (its Pin elements) and the parts bound to devices (GPIO line, I2C address, SPI), all editable.
+settings as a dialog, with the **inputs and outputs** of the circuit: a row per port with its color (a palette or any `#RRGGBB`), its name, input or output, the
+pin it is bound to (a list of the pins of the schematic, or typed: `R1.2`, `Q1.B`) and what is wrong with it; **Add input** / **Add output** make a new one
+with the next free name and color. Right-clicking a pin of a named element offers **Make Pin an Input/Output of the Circuit** (or removes the port bound
+there). The drawing marks every bound pin with a dot in the color of its port and its name (`> In1` for an input, `Out1 >` for an output).
 
 **Samples** next to it loads one of the example circuits of the editor (our own, embedded in `fire.UI.Markup`, `CircuitSamples.All`): an RC
 low-pass, an LC tank, a bridge rectifier, a Zener regulator, a transistor switch, an inverting amplifier, a Schmitt trigger oscillator, a 555 blinker, a

@@ -19,6 +19,8 @@
     <Compile Include="..\fire.Editor\Markdown\LanguageHelp.cs" Link="Editor\LanguageHelp.cs" />
     <Compile Include="..\fire.Editor\Language\DocComments.cs" Link="Editor\DocComments.cs" />
     <Compile Include="..\fire.Editor\Language\LiveDiagnostics.cs" Link="Editor\LiveDiagnostics.cs" />
+    <Compile Include="..\fire.Editor\Language\SyntaxHighlighter.cs" Link="Editor\SyntaxHighlighter.cs" />
+    <Compile Include="..\fire.Editor\Language\ColorizeAttributes.cs" Link="Editor\ColorizeAttributes.cs" />
   </ItemGroup>
 
   <ItemGroup>

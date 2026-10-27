@@ -194,8 +194,9 @@ namespace fire.Editor
         // the circuit itself as the view reported it (@circuit): class, namespace, time step and the parts that can be operated (index|kind|name|value|range)
         private string[] _circuit = { "", "", "10us" };
         private readonly List<string[]> _positions = new();
-        // the ports and the device bindings (@ports): index|type|name|key|value
+        // the inputs and outputs of the circuit (@ports): index|name|direction|pin|color|error; the pins they can be bound to (@pins)
         private readonly List<string[]> _ports = new();
+        private readonly List<string> _pins = new();
         public event Action? PortsChanged;
         // the selected element as the view reported it
         private int _selectedIndex = -1;
@@ -325,9 +326,12 @@ namespace fire.Editor
                     return text
                 }
 
+                // the inputs and outputs of the circuit (index|name|direction|pin|color|error), then the pins they can be bound to
                 static string Ports(UI.CircuitView view) {
                     var text = "@ports"
-                    foreach (line in view.Ports()) { text = text + "\t" + line }
+                    foreach (line in view.PortLines()) { text = text + "\t" + line }
+                    text = text + "\n@pins"
+                    foreach (pin in view.PinNames()) { text = text + "\t" + pin }
                     return text
                 }
 
@@ -369,6 +373,9 @@ namespace fire.Editor
                         print(SparkHost.Circuit(view))
                     }
                     else if (c == "operate") { view.Operate(p[1].ToInt(), p[2]) }
+                    else if (c == "addport") { view.AddPort(p[1]) }
+                    else if (c == "setport") { view.SetPort(p[1].ToInt(), p[2], command.Substring(p[0].Length + p[1].Length + p[2].Length + 3)) }
+                    else if (c == "removeport") { view.RemovePort(p[1].ToInt()) }
                     else if (c == "rename") {
                         var e = SparkHost.At(view, p[1])
                         if (e != undefined) { view.RenameElement(e, p[2]) }
@@ -523,7 +530,11 @@ namespace fire.Editor
                 }
                 case "@ports":
                     _ports.Clear();
-                    foreach (var item in rest.Split('\t', StringSplitOptions.RemoveEmptyEntries)) { var f = item.Split('|'); if (f.Length >= 5) _ports.Add(f); }
+                    foreach (var item in rest.Split('\t', StringSplitOptions.RemoveEmptyEntries)) { var f = item.Split('|'); if (f.Length >= 6) _ports.Add(f); }
+                    break;
+                case "@pins":
+                    _pins.Clear();
+                    _pins.AddRange(rest.Split('\t', StringSplitOptions.RemoveEmptyEntries));
                     PortsChanged?.Invoke();
                     break;
                 case "@circuiterror":
@@ -734,8 +745,9 @@ namespace fire.Editor
         {
             var owner = Dialogs.WindowOf(this);
             if (owner == null) return;
-            var dialog = new CircuitDialog(_circuit, _ports, (key, value) => Send($"circuit\t{key}\t{value}"), (index, key, value) => Send(key == "name" ? $"rename\t{index}\t{value}" : $"set\t{index}\t{key}\t{value}"));
-            void Update() => dialog.Refresh(_circuit, _ports);
+            var dialog = new CircuitDialog(_circuit, _ports, _pins, (key, value) => Send($"circuit\t{key}\t{value}"),
+                (index, key, value) => Send($"setport\t{index}\t{key}\t{value}"), direction => Send($"addport\t{direction}"), index => Send($"removeport\t{index}"));
+            void Update() => dialog.Refresh(_circuit, _ports, _pins);
             PortsChanged += Update;
             try { await dialog.ShowDialog(owner); }
             finally { PortsChanged -= Update; }
