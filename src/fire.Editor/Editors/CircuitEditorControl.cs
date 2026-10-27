@@ -226,7 +226,7 @@ namespace fire.Editor
             ToolTip.SetTip(_speed, "Time steps of the circuit per picture (the speed of the simulation)");
             _speed.SelectionChanged += (_, _) => { if (_speed.SelectedItem is string s) Send("steps\t" + s.Split(' ')[0]); };
 
-            var import = Tool("Import Falstad...", "A circuit of Paul Falstad's simulator (File > Export As Text) from a file or from the clipboard", () => { });
+            var import = Tool("Import Falstad...", "A circuit of Paul Falstad's simulator (its XML file, or the text of File > Export As Text) from a file or from the clipboard", () => { });
             var importMenu = new ContextMenu();
             var fromFile = new MenuItem { Header = "From file..." };
             fromFile.Click += async (_, _) => await ImportFromFile();
@@ -768,7 +768,7 @@ namespace fire.Editor
             {
                 Title = "Import a circuit of Falstad's simulator",
                 AllowMultiple = false,
-                FileTypeFilter = new[] { new FilePickerFileType("Falstad circuit") { Patterns = new[] { "*.txt", "*.circuitjs.txt", "*" } } },
+                FileTypeFilter = new[] { new FilePickerFileType("Falstad circuit") { Patterns = new[] { "*.txt", "*.xml", "*.circuitjs.txt", "*" } } },
             });
             if (files.Count == 0) return;
             string? path = files[0].TryGetLocalPath();
@@ -781,14 +781,14 @@ namespace fire.Editor
             var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
             if (clipboard == null) return;
             string? text = await clipboard.TryGetTextAsync();
-            if (string.IsNullOrWhiteSpace(text)) { await Dialogs.Message(Dialogs.WindowOf(this), "The clipboard holds no text. In Falstad's simulator: File > Export As Text, then copy the text.", "Import"); return; }
+            if (string.IsNullOrWhiteSpace(text)) { await Dialogs.Message(Dialogs.WindowOf(this), "The clipboard holds no text. Copy the XML of a saved circuit of Falstad's simulator, or its File > Export As Text.", "Import"); return; }
             await Import(text);
         }
 
         private async Task Import(string falstad)
         {
             var result = FalstadImport.Convert(falstad);
-            if (result.Elements == 0) { await Dialogs.Message(Dialogs.WindowOf(this), "The text holds no circuit of Falstad's simulator.", "Import"); return; }
+            if (result.Elements == 0) { await Dialogs.Message(Dialogs.WindowOf(this), result.Warnings.Count > 0 ? "No circuit of Falstad's simulator: " + result.Warnings[0] : "The text holds no circuit of Falstad's simulator.", "Import"); return; }
             if (!await ConfirmReplace("Import")) return;
             Send("load\t" + result.Biscuit);
             Send("fit");

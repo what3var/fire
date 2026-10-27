@@ -657,7 +657,8 @@ low-pass, an LC tank, a bridge rectifier, a Zener regulator, a transistor switch
 counter with a 7-segment display and a full adder. When a circuit is already drawn, the editor asks before it replaces it (Undo brings it back) - the same
 for the import.
 
-**Import Falstad...** takes a circuit of Paul Falstad's simulator - File > Export As Text there, from a file or the clipboard - and keeps its drawing: the points are
+**Import Falstad...** takes a circuit of Paul Falstad's simulator - the XML file it saves now (`<cir ...>` with a tag per element), or the older text of File > Export As
+Text, from a file or the clipboard - and keeps its drawing: the points are
 divided by 8, wires, resistors, capacitors, inductors, sources and rails (DC, sine, square; triangle and the like as square), current sources, switches, diodes, Zeners,
 LEDs, transistors, MOSFETs, op amps, comparators, gates, potentiometers, transformers, JK flip-flops, Schmitt triggers, relays (the first pole), two-way and
 analog switches, lamps, fuses, memristors, spark gaps, LDRs, thermistors, transmission lines, sweeps, noise, triangle and sawtooth sources, rails with a slider,
@@ -665,8 +666,9 @@ relay coils and contacts, JFETs, Darlingtons, thyristors, triacs, diacs, unijunc
 sources whose expression is linear, D flip-flops, 555 timers and counters (in Falstad's chip layout, `layout` = falstad), T flip-flops, latches, ring counters, multiplexers,
 demultiplexers, adders, shift registers, ADCs, DACs, 7-segment decoders and displays, monostables, VCOs, phase comparators, tri-state buffers, logic inputs and outputs, probes,
 labels, texts and scopes become elements. What the package has not got (latches with enable pins, 14- and 16-segment displays, nonlinear controlled sources, saturation of a transformer, ...) is
-listed. Of the 373 example circuits in text form, 336 come over without leaving an element out.
-`fire.Compiler falstad circuit.txt -o circuit.biscuit` does the same on the command line.
+listed. Of the 373 example circuits in text form, 336 come over without leaving an element out. In the XML format the values come from the named attributes; pots
+linked there (`li`) get a common `group`, the scopes look at the first value of their plot.
+`forge falstad circuit.txt -o circuit.biscuit` (or `circuit.xml`) does the same on the command line.
 
 ## Coming next
 

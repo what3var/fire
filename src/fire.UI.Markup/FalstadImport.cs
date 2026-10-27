@@ -3,7 +3,7 @@ using System.Text;
 
 namespace fire.UI.Markup
 {
-    /// <summary>A circuit of Paul Falstad's simulator (the text of File > Export As Text, or of a `.txt` file) as a `.biscuit` schematic (docs/CIRCUITS.md). The grid of the
+    /// <summary>A circuit of Paul Falstad's simulator (the text of File > Export As Text, a `.txt` file, or the XML format of the newer simulator, `<cir>`) as a `.biscuit` schematic (docs/CIRCUITS.md). The grid of the
     /// schematic is 8 pixels of Falstad's, the elements keep their points, so the drawing stays the same. Elements the package `circuits` does not have are left out
     /// and named in <see cref="Result.Warnings"/>.</summary>
     public static class FalstadImport
@@ -38,17 +38,24 @@ namespace fire.UI.Markup
             var scopes = new List<(int Index, int Value)>();
             string timeStep = "";
             bool smallGrid = false;   // Falstad's grid: 16 pixels, 8 with flag 2 of the options
-            int lineNo = 0;
-            foreach (var raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+            var items = new List<(string Type, string[] T, IReadOnlyDictionary<string, string>? Xml, int LineNo, string Line)>();
+            if (text.TrimStart().StartsWith('<'))
             {
-                lineNo++;
-                var line = raw.Trim();
-                if (line.Length == 0) continue;
-                var t = line.Split(new[] { ' ', '+', '\t', '\f' }, StringSplitOptions.RemoveEmptyEntries);
-                if (t.Length == 0) continue;
-                string type = t[0];
-                try
+                // the XML format of the newer simulator (<cir> with an element per tag): read into the same items as the lines of text
+                if (!ReadXml(text, items, scopes, warnings, ref timeStep, ref smallGrid))
+                    return new Result { Biscuit = "", Warnings = warnings, Elements = 0 };
+            }
+            else
+            {
+                int no = 0;
+                foreach (var raw in text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
                 {
+                    no++;
+                    var line = raw.Trim();
+                    if (line.Length == 0) continue;
+                    var t = line.Split(new[] { ' ', '+', '\t', '\f' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (t.Length == 0) continue;
+                    string type = t[0];
                     if (type == "$")
                     {
                         if (t.Length > 2 && double.TryParse(t[2], NumberStyles.Float, CultureInfo.InvariantCulture, out double dt) && dt > 0) timeStep = Format(dt) + "s";
@@ -64,10 +71,17 @@ namespace fire.UI.Markup
                     // old files give the letters of the types as numbers ("82" is 'R')
                     if (int.TryParse(type, NumberStyles.None, CultureInfo.InvariantCulture, out int code) && code >= 65 && code < 127 && char.IsLetter((char)code))
                         type = ((char)code).ToString();
-                    if (t.Length < 6) { warnings.Add($"Line {lineNo}: '{line}' is no element."); continue; }
+                    if (t.Length < 6) { warnings.Add($"Line {no}: '{line}' is no element."); continue; }
+                    items.Add((type, t, null, no, line));
+                }
+            }
+            foreach (var (type, t, xml, lineNo, line) in items)
+            {
+                try
+                {
                     int x1 = Grid(t[1]), y1 = Grid(t[2]), x2 = Grid(t[3]), y2 = Grid(t[4]);
                     int flags = int.TryParse(t[5], out int f) ? f : 0;
-                    var e = Make(type, t, flags, warnings, lineNo);
+                    var e = type == "" ? null : Make(type, t, flags, warnings, lineNo, xml);
                     if (e != null)
                     {
                         e.X1 = x1; e.Y1 = y1; e.X2 = x2; e.Y2 = y2;
@@ -131,22 +145,83 @@ namespace fire.UI.Markup
             return new Result { Biscuit = sb.ToString(), Warnings = warnings, Elements = present.Count };
         }
 
-        private static Element? Make(string type, string[] t, int flags, List<string> warnings, int lineNo)
+        // the tags of the XML format (getXmlDumpType of circuitjs1: the letter of the type, a short name or the class without "Elm") and the types of the text format
+        static readonly Dictionary<string, string> XmlTypes = new()
         {
-            string Tok(int i) => i < t.Length ? t[i] : "";
-            double Num(int i, double fallback = 0) => i < t.Length && double.TryParse(t[i], NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : fallback;
+            ["w"] = "w", ["r"] = "r", ["c"] = "c", ["l"] = "l", ["v"] = "v", ["R"] = "R", ["g"] = "g", ["i"] = "i", ["s"] = "s", ["S"] = "S", ["d"] = "d", ["z"] = "z",
+            ["t"] = "t", ["f"] = "f", ["j"] = "j", ["a"] = "a", ["m"] = "m", ["p"] = "p", ["x"] = "x", ["T"] = "T", ["I"] = "I", ["L"] = "L", ["M"] = "M", ["O"] = "O",
+            ["And"] = "150", ["Nand"] = "151", ["Or"] = "152", ["Nor"] = "153", ["Xor"] = "154",
+            ["ADC"] = "167", ["DAC"] = "166", ["CC2"] = "179", ["CC2Neg"] = "179", ["CCCS"] = "215", ["CCVS"] = "214", ["VCCS"] = "213", ["VCVS"] = "212",
+            ["Comparator"] = "401", ["DFlipFlop"] = "155", ["JKFlipFlop"] = "156", ["TFlipFlop"] = "193", ["Diac"] = "203", ["Triac"] = "206", ["SCR"] = "177",
+            ["FullAdder"] = "196", ["HalfAdder"] = "195", ["Fuse"] = "404", ["LDR"] = "374", ["LED"] = "162", ["Lamp"] = "181", ["Latch"] = "168",
+            ["Monostable"] = "194", ["OTA"] = "402", ["Optocoupler"] = "407", ["PhaseComp"] = "161", ["PisoShift"] = "186", ["SipoShift"] = "189",
+            ["RelayCoil"] = "425", ["RelayContact"] = "426", ["RingCounter"] = "163", ["Schmitt"] = "182", ["InvertingSchmitt"] = "183",
+            ["SevenSegDecoder"] = "197", ["SparkGap"] = "187", ["ThermistorNTC"] = "350", ["Timer"] = "165", ["Triode"] = "173", ["TunnelDiode"] = "175",
+            ["Unijunction"] = "417", ["VCO"] = "158", ["VarRail"] = "172", ["Varactor"] = "176", ["as"] = "159", ["as2"] = "160", ["ctr"] = "164",
+            ["dar"] = "400", ["mux"] = "184", ["dmux"] = "185", ["ln"] = "207", ["pc"] = "209", ["pt"] = "174", ["rl"] = "178", ["ssd"] = "157",
+            ["sw"] = "170", ["tl"] = "171", ["ts"] = "180",
+        };
+
+        // tags of the XML format that are no elements (scopes are read; hints, adjustables, models and tests are left)
+        static readonly HashSet<string> XmlOther = new() { "o", "h", "adj", "dm", "rlm", "tm", "mm", "clm", "ccm", "test", "switchevent", "scopedata" };
+
+        private static bool ReadXml(string text, List<(string Type, string[] T, IReadOnlyDictionary<string, string>? Xml, int LineNo, string Line)> items,
+            List<(int Index, int Value)> scopes, List<string> warnings, ref string timeStep, ref bool smallGrid)
+        {
+            System.Xml.Linq.XDocument doc;
+            try { doc = System.Xml.Linq.XDocument.Parse(text, System.Xml.Linq.LoadOptions.SetLineInfo); }
+            catch (System.Xml.XmlException ex) { warnings.Add($"The XML could not be read: {ex.Message}"); return false; }
+            var root = doc.Root!;
+            if (root.Name.LocalName != "cir") { warnings.Add($"The XML is no circuit of Falstad's simulator (<cir>, not <{root.Name.LocalName}>)."); return false; }
+            string? Attr(System.Xml.Linq.XElement x, string name) => x.Attribute(name)?.Value;
+            if (double.TryParse(Attr(root, "ts"), NumberStyles.Float, CultureInfo.InvariantCulture, out double dt) && dt > 0) timeStep = Format(dt) + "s";
+            if (int.TryParse(Attr(root, "f"), out int options)) smallGrid = (options & 2) != 0;
+            foreach (var x in root.Elements())
+            {
+                string tag = x.Name.LocalName;
+                int lineNo = ((System.Xml.IXmlLineInfo)x).LineNumber;
+                if (tag == "o")
+                {
+                    // a scope: the element it looks at, the value of its first plot (0 voltage, 1 current)
+                    if (int.TryParse(Attr(x, "en"), out int index))
+                        scopes.Add((index, int.TryParse(x.Elements("p").FirstOrDefault() is { } plot ? Attr(plot, "v") : null, out int v) ? v : 0));
+                    continue;
+                }
+                if (XmlOther.Contains(tag) || Attr(x, "x") is not { } points) continue;
+                var p = points.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                string line = x.ToString(System.Xml.Linq.SaveOptions.DisableFormatting);
+                if (line.Length > 80) line = line[..77] + "...";
+                if (p.Length < 4) { warnings.Add($"Line {lineNo}: '{line}' has no points."); items.Add(("", new[] { "", "0", "0", "0", "0", "0" }, null, lineNo, line)); continue; }
+                var attrs = x.Attributes().ToDictionary(a => a.Name.LocalName, a => a.Value);
+                string[] t = { tag, p[0], p[1], p[2], p[3], Attr(x, "f") ?? "0" };
+                if (!XmlTypes.TryGetValue(tag, out var type))
+                {
+                    warnings.Add($"Line {lineNo}: the element <{tag}> is not in the package circuits and was left out.");
+                    type = "";
+                }
+                items.Add((type, t, attrs, lineNo, line));
+            }
+            return true;
+        }
+
+        private static Element? Make(string type, string[] t, int flags, List<string> warnings, int lineNo, IReadOnlyDictionary<string, string>? xml = null)
+        {
+            // a value: the token at its position in a line of text, the attribute of its name in the XML format
+            string Tok(int i, string attr = "") => xml != null ? (attr != "" && xml.TryGetValue(attr, out var a) ? a : "") : i < t.Length ? t[i] : "";
+            double Num(int i, double fallback = 0, string attr = "") => double.TryParse(Tok(i, attr), NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : fallback;
+            bool Has(int count, params string[] attrs) => xml != null ? attrs.All(xml.ContainsKey) : t.Length > count;
             switch (type)
             {
                 case "w": return new Element { Type = "Wire" };
-                case "r": { var e = new Element { Type = "Resistor" }; e.Set("resistance", Format(Num(6, 1000))); return e; }
-                case "c": { var e = new Element { Type = "Capacitor" }; e.Set("capacitance", Format(Num(6, 1e-5))); return e; }
-                case "l": { var e = new Element { Type = "Inductor" }; e.Set("inductance", Format(Num(6, 1))); return e; }
+                case "r": { var e = new Element { Type = "Resistor" }; e.Set("resistance", Format(Num(6, 1000, "r"))); return e; }
+                case "c": { var e = new Element { Type = "Capacitor" }; e.Set("capacitance", Format(Num(6, 1e-5, "c"))); return e; }
+                case "l": { var e = new Element { Type = "Inductor" }; e.Set("inductance", Format(Num(6, 1, "l"))); return e; }
                 case "v":
                 case "R":
                 {
                     var e = new Element { Type = type == "v" ? "Source" : "Rail" };
-                    int wf = (int)Num(6);
-                    double freq = Num(7, 40), max = Num(8, 5), bias = Num(9), phase = Num(10), duty = Num(11, 0.5);
+                    int wf = (int)Num(6, 0, "wf");
+                    double freq = Num(7, 40, "fr"), max = Num(8, 5, "maxv"), bias = Num(9, 0, "bias"), phase = Num(10, 0, "phaseShift"), duty = Num(11, 0.5, "dutyCycle");
                     if (wf == 0) e.Set("voltage", Format(max));
                     else if (wf == 1)
                     {
@@ -189,23 +264,23 @@ namespace fire.UI.Markup
                 case "425":
                 {
                     var e = new Element { Type = "RelayCoil" };
-                    e.Set("label", Unescape(Tok(6)));
-                    e.Set("inductance", Format(Num(7, 0.2)));
-                    e.Set("onCurrent", Format(Num(9, 0.02)));
-                    e.Set("coilResistance", Format(Num(10, 20)));
-                    e.Set("offCurrent", Format(Num(11, 0.015)));
-                    int mode = (int)Num(13);
+                    e.Set("label", Unescape(Tok(6, "lb")));
+                    e.Set("inductance", Format(Num(7, 0.2, "in")));
+                    e.Set("onCurrent", Format(Num(9, 0.02, "oc")));
+                    e.Set("coilResistance", Format(Num(10, 20, "cr")));
+                    e.Set("offCurrent", Format(Num(11, 0.015, "ofc")));
+                    int mode = (int)Num(13, 0, "tp");
                     string[] modes = { "normal", "onDelay", "offDelay", "latching", "set", "reset" };
                     if (mode > 0 && mode < modes.Length) e.Set("mode", modes[mode]);
-                    if (mode == 1 || mode == 2) e.Set("delay", Format(Num(12, 0.005)));
+                    if (mode == 1 || mode == 2) e.Set("delay", Format(Num(12, 0.005, "swt")));
                     return e;
                 }
                 case "426":
                 {
                     var e = new Element { Type = "RelayContact" };
-                    e.Set("label", Unescape(Tok(6)));
-                    e.Set("onResistance", Format(Num(7, 0.05)));
-                    e.Set("offResistance", Format(Num(8, 1e6)));
+                    e.Set("label", Unescape(Tok(6, "lb")));
+                    e.Set("onResistance", Format(Num(7, 0.05, "ron")));
+                    e.Set("offResistance", Format(Num(8, 1e6, "roff")));
                     if ((flags & 2) != 0) e.Set("normallyClosed", "true");
                     return e;
                 }
@@ -214,24 +289,24 @@ namespace fire.UI.Markup
                     // a rail of noise
                     var e = new Element { Type = "Rail" };
                     e.Set("waveform", "noise");
-                    e.Set("voltage", Format(Num(8, 5)));
-                    if (Num(9) != 0) e.Set("offset", Format(Num(9)));
+                    e.Set("voltage", Format(Num(8, 5, "maxv")));
+                    if (Num(9, 0, "bias") != 0) e.Set("offset", Format(Num(9, 0, "bias")));
                     return e;
                 }
                 case "172":
                 {
                     // a rail with a slider: the voltage it was set to
                     var e = new Element { Type = "Rail" };
-                    e.Set("voltage", Format(Num(7, 5)));
+                    e.Set("voltage", Format(Num(7, 5, "fr")));
                     return e;
                 }
                 case "170":
                 {
                     var e = new Element { Type = "Sweep" };
-                    e.Set("minFrequency", Format(Num(6, 20)));
-                    e.Set("maxFrequency", Format(Num(7, 4000)));
-                    e.Set("amplitude", Format(Num(8, 5)));
-                    e.Set("sweepTime", Format(Num(9, 0.1)));
+                    e.Set("minFrequency", Format(Num(6, 20, "mi")));
+                    e.Set("maxFrequency", Format(Num(7, 4000, "ma")));
+                    e.Set("amplitude", Format(Num(8, 5, "mv")));
+                    e.Set("sweepTime", Format(Num(9, 0.1, "sw")));
                     if ((flags & 1) != 0) e.Set("logarithmic", "true");
                     if ((flags & 2) == 0) e.Set("bidirectional", "false");
                     return e;
@@ -239,75 +314,75 @@ namespace fire.UI.Markup
                 case "S":
                 {
                     var e = new Element { Type = "Switch2" };
-                    int pos = (int)Num(6);
-                    int throws = (int)Num(9, 2);
+                    int pos = (int)Num(6, 0, "p");
+                    int throws = (int)Num(9, 2, "th");
                     if (pos != 0) e.Set("position", pos.ToString(CultureInfo.InvariantCulture));
                     if (throws != 2) e.Set("throws", throws.ToString(CultureInfo.InvariantCulture));
                     if ((flags & 1) != 0) e.Set("centerOff", "true");
-                    int link = (int)Num(8);
+                    int link = (int)Num(8, 0, "li");
                     if (link != 0) e.Set("link", link.ToString(CultureInfo.InvariantCulture));
-                    if (Tok(7) == "true") warnings.Add($"Line {lineNo}: a momentary two-way switch is imported as a normal one.");
+                    if (Tok(7, "mm") == "true") warnings.Add($"Line {lineNo}: a momentary two-way switch is imported as a normal one.");
                     return e;
                 }
                 case "181":
                 {
                     var e = new Element { Type = "Lamp" };
-                    e.Set("power", Format(Num(7, 100)));
-                    e.Set("voltage", Format(Num(8, 120)));
-                    e.Set("warmTime", Format(Num(9, 0.4)));
-                    e.Set("coolTime", Format(Num(10, 0.4)));
+                    e.Set("power", Format(Num(7, 100, "np")));
+                    e.Set("voltage", Format(Num(8, 120, "nv")));
+                    e.Set("warmTime", Format(Num(9, 0.4, "wa")));
+                    e.Set("coolTime", Format(Num(10, 0.4, "co")));
                     return e;
                 }
                 case "404":
                 {
                     var e = new Element { Type = "Fuse" };
-                    e.Set("resistance", Format(Num(6, 0.0613)));
-                    e.Set("i2t", Format(Num(7, 6.73)));
+                    e.Set("resistance", Format(Num(6, 0.0613, "re")));
+                    e.Set("i2t", Format(Num(7, 6.73, "i2")));
                     return e;
                 }
                 case "m":
                 {
                     var e = new Element { Type = "Memristor" };
-                    e.Set("onResistance", Format(Num(6, 100)));
-                    e.Set("offResistance", Format(Num(7, 16000)));
-                    e.Set("width", Format(Num(9, 1e-8)));
-                    e.Set("mobility", Format(Num(10, 1e-10)));
+                    e.Set("onResistance", Format(Num(6, 100, "ron")));
+                    e.Set("offResistance", Format(Num(7, 16000, "rof")));
+                    e.Set("width", Format(Num(9, 1e-8, "to")));
+                    e.Set("mobility", Format(Num(10, 1e-10, "mo")));
                     return e;
                 }
                 case "187":
                 {
                     var e = new Element { Type = "SparkGap" };
-                    e.Set("onResistance", Format(Num(6, 1000)));
-                    e.Set("offResistance", Format(Num(7, 1e9)));
-                    e.Set("breakdown", Format(Num(8, 1000)));
-                    e.Set("holdCurrent", Format(Num(9, 0.001)));
+                    e.Set("onResistance", Format(Num(6, 1000, "on")));
+                    e.Set("offResistance", Format(Num(7, 1e9, "of")));
+                    e.Set("breakdown", Format(Num(8, 1000, "br")));
+                    e.Set("holdCurrent", Format(Num(9, 0.001, "ho")));
                     return e;
                 }
                 case "374":
                 {
                     // Falstad's light: 0.1 + 10000 * position lux
                     var e = new Element { Type = "LightResistor" };
-                    e.Set("lux", Format(10000 * Num(6, 0.5) + 0.1));
+                    e.Set("lux", Format(10000 * Num(6, 0.5, "ps") + 0.1));
                     return e;
                 }
                 case "350":
                 {
                     // R25, R50 (the B value between them), the range of the slider and its position
                     var e = new Element { Type = "Thermistor" };
-                    double r25 = Num(6, 10000), r50 = Num(7, 3588), lo = Num(8, -40), hi = Num(9, 150), pos = Num(10, 0.34);
+                    double r25 = Num(6, 10000, "r25"), r50 = Num(7, 3588, "r50"), lo = Num(8, -40, "mnt"), hi = Num(9, 150, "mxt"), pos = Num(10, 0.34, "ps");
                     double beta = (Math.Log(r25) - Math.Log(r50)) / (1 / 298.15 - 1 / 323.15);
                     e.Set("resistance25", Format(r25));
                     e.Set("beta", Format(Math.Round(beta)));
                     e.Set("temperature", Format(Math.Round(pos * (hi - lo) + lo)));
                     return e;
                 }
-                case "209": { var e = new Element { Type = "Capacitor" }; e.Set("capacitance", Format(Num(6, 1e-5))); return e; }
+                case "209": { var e = new Element { Type = "Capacitor" }; e.Set("capacitance", Format(Num(6, 1e-5, "c"))); return e; }
                 case "171":
                 {
                     var e = new Element { Type = "TransmissionLine" };
-                    e.Set("delay", Format(Num(6, 1e-6)));
-                    e.Set("impedance", Format(Num(7, 75)));
-                    int w = Grid8((int)Num(8, 32));
+                    e.Set("delay", Format(Num(6, 1e-6, "de")));
+                    e.Set("impedance", Format(Num(7, 75, "im")));
+                    int w = Grid8((int)Num(8, 32, "wi"));
                     if (w != 4 && w > 0) e.Set("width", w.ToString(CultureInfo.InvariantCulture));
                     return e;
                 }
@@ -315,32 +390,32 @@ namespace fire.UI.Markup
                 case "160":
                 {
                     var e = new Element { Type = type == "159" ? "AnalogSwitch" : "AnalogSwitch2" };
-                    if (t.Length > 7)
+                    if (Has(7, "ron", "roff"))
                     {
-                        e.Set("onResistance", Format(Num(6, 20)));
-                        e.Set("offResistance", Format(Num(7, 1e10)));
+                        e.Set("onResistance", Format(Num(6, 20, "ron")));
+                        e.Set("offResistance", Format(Num(7, 1e10, "roff")));
                     }
-                    if (t.Length > 8) e.Set("threshold", Format(Num(8, 2.5)));
+                    if (Has(8, "th")) e.Set("threshold", Format(Num(8, 2.5, "th")));
                     if ((flags & 1) != 0) { if (type == "159") e.Set("inverting", "true"); else e.Set("swap", "true"); }
                     int flips = ((flags & 4) != 0 ? 1 : 0) + ((flags & 8) != 0 ? 1 : 0) + ((flags & 16) != 0 ? 1 : 0);
                     if (flips % 2 == 1) e.Set("flip", "true");
                     return e;
                 }
-                case "i": { var e = new Element { Type = "CurrentSource" }; e.Set("current", Format(Num(6, 0.01))); return e; }
+                case "i": { var e = new Element { Type = "CurrentSource" }; e.Set("current", Format(Num(6, 0.01, "cu"))); return e; }
                 case "g": return new Element { Type = "Ground" };
                 case "s":
                 {
                     var e = new Element { Type = "Switch" };
-                    string pos = Tok(6);
+                    string pos = Tok(6, "p");
                     bool closed = pos == "true" || pos == "0";
                     if (closed) e.Set("closed", "true");
-                    if (Tok(7) == "true") e.Set("momentary", "true");
+                    if (Tok(7, "mm") == "true") e.Set("momentary", "true");
                     return e;
                 }
                 case "d":
                 {
                     var e = new Element { Type = "Diode" };
-                    string model = (flags & 2) != 0 ? Tok(6) : "";
+                    string model = (flags & 2) != 0 ? Tok(6, "mo") : "";
                     e.Set("model", KnownDiode(model));
                     return e;
                 }
@@ -350,13 +425,13 @@ namespace fire.UI.Markup
                     var e = new Element { Type = "Led" };
                     // after the flags: (a model name with flag 2, a forward drop with flag 1), then R G B of the colour
                     int at = (flags & 3) != 0 ? 7 : 6;
-                    e.Set("color", LedColor(Num(at, 1), Num(at + 1, 0), Num(at + 2, 0)));
+                    e.Set("color", LedColor(Num(at, 1, "cr"), Num(at + 1, 0, "cg"), Num(at + 2, 0, "cb")));
                     return e;
                 }
                 case "t":
                 {
                     var e = new Element { Type = "Transistor" };
-                    e.Set("model", Tok(6) == "-1" ? "pnp" : "npn");
+                    e.Set("model", Tok(6, "pn") == "-1" ? "pnp" : "npn");
                     if ((flags & 1) != 0) e.Set("flip", "true");
                     return e;
                 }
@@ -380,7 +455,7 @@ namespace fire.UI.Markup
                 {
                     string gate = type switch { "150" => "And", "151" => "Nand", "152" => "Or", "153" => "Nor", _ => "Xor" };
                     var e = new Element { Type = gate };
-                    int inputs = (int)Num(6, 2);
+                    int inputs = (int)Num(6, 2, "in");
                     if (inputs != 2) e.Set("inputs", inputs.ToString(CultureInfo.InvariantCulture));
                     if ((flags & 1) != 0) warnings.Add($"Line {lineNo}: a small gate has its inputs closer together in Falstad's simulator; check its connections.");
                     return e;
@@ -389,45 +464,48 @@ namespace fire.UI.Markup
                 case "L":
                 {
                     var e = new Element { Type = "LogicInput" };
-                    string pos = Tok(6);
+                    string pos = Tok(6, "p");
                     if (pos == "1" || pos == "true") e.Set("high", "true");
-                    double hi = Num(8, 5);
+                    double hi = Num(8, 5, "hi");
                     if (hi != 5) e.Set("supply", Format(hi));
                     return e;
                 }
-                case "M": { var e = new Element { Type = "LogicOutput" }; double th = Num(6, 2.5); if (th != 2.5) e.Set("threshold", Format(th)); return e; }
+                case "M": { var e = new Element { Type = "LogicOutput" }; double th = Num(6, 2.5, "th"); if (th != 2.5) e.Set("threshold", Format(th)); return e; }
                 case "p": return new Element { Type = "Probe" };
                 case "207":
                 {
                     var e = new Element { Type = "Label" };
-                    e.Set("text", Unescape(string.Join(" ", t.Skip(6))));
+                    e.Set("text", xml != null ? Tok(6, "te") : Unescape(string.Join(" ", t.Skip(6))));
                     return e;
                 }
                 case "x":
                 {
                     var e = new Element { Type = "Text" };
-                    e.Set("text", Unescape(string.Join(" ", t.Skip(7))));
+                    e.Set("text", xml != null ? Tok(7, "te") : Unescape(string.Join(" ", t.Skip(7))));
                     return e;
                 }
                 case "174":
                 {
                     // the points stay: the second one says where the wiper is (as in the package)
                     var e = new Element { Type = "Potentiometer" };
-                    e.Set("resistance", Format(Num(6, 1000)));
-                    double pos = Num(7, 0.5);
+                    e.Set("resistance", Format(Num(6, 1000, "ma")));
+                    double pos = Num(7, 0.5, "po");
                     if (pos != 0.5) e.Set("position", Format(pos));
+                    // pots linked in the XML format turn together: a group of the package
+                    string link = xml != null ? Tok(0, "li") : "";
+                    if (link != "" && link != "0") e.Set("group", "link" + link);
                     return e;
                 }
                 case "T":
                 {
                     var e = new Element { Type = "Transformer" };
-                    e.Set("inductance", Format(Num(6, 4)));
-                    double ratio = Num(7, 1);
+                    e.Set("inductance", Format(Num(6, 4, "in")));
+                    double ratio = Num(7, 1, "ra");
                     if (ratio != 1) e.Set("ratio", Format(ratio));
-                    double k = Num(10, 0.999);
+                    double k = Num(10, 0.999, "co");
                     if (k != 0.999) e.Set("coupling", Format(k));
                     if ((flags & 4) != 0) e.Set("reverse", "true");
-                    if (Num(11) > 0) warnings.Add($"Line {lineNo}: the saturation of a transformer is not simulated.");
+                    if (Num(11, 0, "isat") > 0) warnings.Add($"Line {lineNo}: the saturation of a transformer is not simulated.");
                     // the width (Falstad keeps it in the second point) and the side of the secondary: the points are set after Make (see Fix)
                     int x1 = Pixels(t[1]), y1 = Pixels(t[2]), x2 = Pixels(t[3]), y2 = Pixels(t[4]);
                     bool vertical = (flags & 8) != 0;
@@ -452,7 +530,7 @@ namespace fire.UI.Markup
                     if ((flags & 2) != 0) e.Set("reset", "true");
                     if ((flags & 8) != 0) warnings.Add($"Line {lineNo}: the inverted reset of a JK flip-flop is imported as an active-high reset.");
                     if ((flags & (7 << 10)) != 0) warnings.Add($"Line {lineNo}: a flipped JK flip-flop is imported unflipped; check its connections.");
-                    if ((flags & (1 << 13)) != 0) { double hv = Num(6, 5); if (hv != 5) e.Set("supply", Format(hv)); }
+                    if ((flags & (1 << 13)) != 0) { double hv = Num(6, 5, "hv"); if (hv != 5) e.Set("supply", Format(hv)); }
                     if (!small) e.Set("spacing", "4");
                     e.Fix = (small ? 6 : 12, 0);   // (the width: the second point is set from the first)
                     return e;
@@ -462,9 +540,9 @@ namespace fire.UI.Markup
                 {
                     var e = new Element { Type = "SchmittTrigger" };
                     if (type == "183") e.Set("inverting", "true");
-                    if (t.Length > 9)
+                    if (Has(9, "lt", "ut", "lon"))
                     {
-                        double lo = Num(7, 1.66), hi = Num(8, 3.33), on = Num(9, 5), off = Num(10, 0);
+                        double lo = Num(7, 1.66, "lt"), hi = Num(8, 3.33, "ut"), on = Num(9, 5, "lon"), off = Num(10, 0, "loff");
                         if (lo != 1.66) e.Set("lower", Format(lo));
                         if (hi != 3.33) e.Set("upper", Format(hi));
                         if (on != 5) e.Set("supply", Format(on));
@@ -475,9 +553,9 @@ namespace fire.UI.Markup
                 case "178":
                 {
                     var e = new Element { Type = "Relay" };
-                    int poles = (int)Num(6, 1);
+                    int poles = (int)Num(6, 1, "po");
                     if (poles > 1) warnings.Add($"Line {lineNo}: a relay with {poles} poles is imported with its first pole only.");
-                    double l = Num(7, 0.2), ron = Num(9, 0.05), onI = Num(11, 0.02), coilR = Num(12, 20), offI = Num(13, onI);
+                    double l = Num(7, 0.2, "in"), ron = Num(9, 0.05, "ron"), onI = Num(11, 0.02, "on"), coilR = Num(12, 20, "coR"), offI = Num(13, onI, "of");
                     if (l != 0.2) e.Set("inductance", Format(l));
                     if (coilR != 20) e.Set("coilResistance", Format(coilR));
                     if (onI != 0.02) e.Set("onCurrent", Format(onI));
@@ -498,7 +576,7 @@ namespace fire.UI.Markup
                     var e = new Element { Type = "Jfet" };
                     if ((flags & 1) != 0) e.Set("pChannel", "true");
                     if ((flags & 8) != 0) e.Set("flip", "true");
-                    double vt = Num(6, -4), beta = Num(7, 0.00125);
+                    double vt = Num(6, -4, "vt"), beta = Num(7, 0.00125, "be");
                     if (vt != -4) e.Set("threshold", Format(vt));
                     if (beta != 0.00125) e.Set("beta", Format(beta));
                     return e;
@@ -506,14 +584,14 @@ namespace fire.UI.Markup
                 case "400":
                 {
                     var e = new Element { Type = "Darlington" };
-                    e.Set("model", Tok(t.Length - 1) == "-1" ? "pnp" : "npn");
+                    e.Set("model", Tok(t.Length - 1, "pnp") == "-1" ? "pnp" : "npn");
                     return e;
                 }
                 case "177":
                 {
                     var e = new Element { Type = "Thyristor" };
                     if ((flags & 1) == 0) e.Set("legacy", "true");
-                    double trig = Num(8, 0.01), hold = Num(9, 0.0082), gr = Num(10, 50);
+                    double trig = Num(8, 0.01, "tr"), hold = Num(9, 0.0082, "ho"), gr = Num(10, 50, "gr");
                     if (trig != 0.01) e.Set("triggerCurrent", Format(trig));
                     if (hold != 0.0082) e.Set("holdingCurrent", Format(hold));
                     if (gr != 50) e.Set("gateResistance", Format(gr));
@@ -522,7 +600,7 @@ namespace fire.UI.Markup
                 case "206":
                 {
                     var e = new Element { Type = "Triac" };
-                    double trig = Num(6, 0.01), hold = Num(7, 0.0082), gr = Num(8, 100);
+                    double trig = Num(6, 0.01, "ti"), hold = Num(7, 0.0082, "hi"), gr = Num(8, 100, "cr");
                     if (trig != 0.01) e.Set("triggerCurrent", Format(trig));
                     if (hold != 0.0082) e.Set("holdingCurrent", Format(hold));
                     if (gr != 100) e.Set("gateResistance", Format(gr));
@@ -531,17 +609,17 @@ namespace fire.UI.Markup
                 case "203":
                 {
                     var e = new Element { Type = "Diac" };
-                    e.Set("onResistance", Format(Num(6, 500)));
-                    e.Set("offResistance", Format(Num(7, 1e8)));
-                    e.Set("breakdown", Format(Num(8, 30)));
-                    e.Set("holdCurrent", Format(Num(9, 0.01)));
+                    e.Set("onResistance", Format(Num(6, 500, "ron")));
+                    e.Set("offResistance", Format(Num(7, 1e8, "roff")));
+                    e.Set("breakdown", Format(Num(8, 30, "bd")));
+                    e.Set("holdCurrent", Format(Num(9, 0.01, "hc")));
                     return e;
                 }
                 case "176":
                 {
                     // after the flags (and a forward drop with flag 1): the last voltage and the capacitance at 0 V
                     var e = new Element { Type = "Varactor" };
-                    double cap = t.Length >= 8 ? Num(t.Length - 1, 4e-12) : 4e-12;
+                    double cap = xml != null ? Num(0, 4e-12, "ba") : t.Length >= 8 ? Num(t.Length - 1, 4e-12) : 4e-12;
                     if (cap != 4e-12) e.Set("capacitance", Format(cap));
                     return e;
                 }
@@ -549,7 +627,7 @@ namespace fire.UI.Markup
                 case "173":
                 {
                     var e = new Element { Type = "Triode" };
-                    double mu = Num(6, 93), kg1 = Num(7, 680);
+                    double mu = Num(6, 93, "mu"), kg1 = Num(7, 680, "kg");
                     if (mu != 93) e.Set("mu", Format(mu));
                     if (kg1 != 680) e.Set("kg1", Format(kg1));
                     // the side of the plate: flag 2 follows the direction, flag 1 flips it (the points are set after Make, see Fix)
@@ -563,7 +641,7 @@ namespace fire.UI.Markup
                 case "179":
                 {
                     var e = new Element { Type = "CurrentConveyor" };
-                    double gain = Num(6, 1);
+                    double gain = Num(6, 1, "ga");
                     if (gain != 1) e.Set("gain", Format(gain));
                     ChipLayout(e, flags);
                     return e;
@@ -582,12 +660,12 @@ namespace fire.UI.Markup
                     int sizeX = 2;
                     if (kind == "Counter")
                     {
-                        int bits = (int)Num(6, 4);
+                        int bits = (int)Num(6, 4, "bi");
                         if (bits != 4) e.Set("bits", bits.ToString(CultureInfo.InvariantCulture));
                         next = 7;
                         if ((flags & 4) != 0) warnings.Add($"Line {lineNo}: an up/down counter is imported counting up.");
                     }
-                    if ((flags & (1 << 13)) != 0) { double hv = Num(next, 5); if (hv != 5) e.Set("supply", Format(hv)); }
+                    if ((flags & (1 << 13)) != 0) { double hv = Num(next, 5, "hv"); if (hv != 5) e.Set("supply", Format(hv)); }
                     if (kind == "DFlipFlop")
                     {
                         if ((flags & 4) != 0) warnings.Add($"Line {lineNo}: the set and reset of a D flip-flop are not simulated; check its connections.");
@@ -622,11 +700,11 @@ namespace fire.UI.Markup
                     if (hasBits)
                     {
                         int fallback = kind switch { "RingCounter" => 10, "SipoShift" or "PisoShift" => 8, "FullAdder" => 1, _ => 4 };
-                        bits = (int)Num(6, fallback);
+                        bits = (int)Num(6, fallback, "bi");
                         next = 7;
                         e.Set("bits", bits.ToString(CultureInfo.InvariantCulture));
                     }
-                    if ((flags & (1 << 13)) != 0) { double hv = Num(next, 5); next++; if (hv != 5) e.Set("supply", Format(hv)); }
+                    if ((flags & (1 << 13)) != 0) { double hv = Num(next, 5, "hv"); next++; if (hv != 5) e.Set("supply", Format(hv)); }
                     // the pins with a state: their values come next
                     next += kind switch { "TFlipFlop" => 1, "RingCounter" => bits, "Latch" => (flags & 2) != 0 ? bits : 0, _ => 0 };
                     int sizeX = 2;
@@ -655,7 +733,7 @@ namespace fire.UI.Markup
                         case "Multiplexer":
                         case "Demultiplexer":
                         {
-                            int sel = (int)Num(next, 2);
+                            int sel = (int)Num(next, 2, "se");
                             if (sel != 2) e.Set("selectBits", sel.ToString(CultureInfo.InvariantCulture));
                             sizeX = sel + 1;
                             if ((flags & 8) != 0)
@@ -678,7 +756,7 @@ namespace fire.UI.Markup
                             break;
                         case "SevenSegmentDecoder":
                             sizeX = 3;
-                            if (Num(next, 0) != 0)
+                            if (Num(next, 0, "sgt") != 0)
                             {
                                 warnings.Add($"Line {lineNo}: a 14 or 16 segment decoder is not in the package circuits and was left out.");
                                 return null;
@@ -687,14 +765,14 @@ namespace fire.UI.Markup
                             if ((flags & 4) != 0) e.Set("blankOnF", "true");
                             break;
                         case "Monostable":
-                            if (Tok(next) == "true") e.Set("retriggerable", "true");
-                            double delay = Num(next + 1, 0.01);
+                            if (Tok(next, "rt") == "true") e.Set("retriggerable", "true");
+                            double delay = Num(next + 1, 0.01, "dl");
                             if (delay != 0.01) e.Set("time", Format(delay));
                             if ((flags & 2) != 0) e.Set("invertTrigger", "true");
                             break;
                         case "SevenSegment":
                         {
-                            double segs = Num(next, 7), extra = Num(next + 1, 0), diodes = Num(next + 2, 0);
+                            double segs = Num(next, 7, "ba"), extra = Num(next + 1, 0, "ex"), diodes = Num(next + 2, 0, "di");
                             if (segs != 7 || diodes != 0 || extra > 1)
                             {
                                 warnings.Add($"Line {lineNo}: only the 7-segment display with logic inputs (and a point) is in the package circuits; this one was left out.");
@@ -712,7 +790,7 @@ namespace fire.UI.Markup
                 case "180":
                 {
                     var e = new Element { Type = "TriState" };
-                    double ron = Num(6, 0.1), roff = Num(7, 1e10), rground = Num(8, 0), hv = Num(9, 5);
+                    double ron = Num(6, 0.1, "ron"), roff = Num(7, 1e10, "roff"), rground = Num(8, 0, "rog"), hv = Num(9, 5, "hi");
                     if (ron != 0.1) e.Set("onResistance", Format(ron));
                     if (roff != 1e10) e.Set("offResistance", Format(roff));
                     if (rground != 0) e.Set("offGroundResistance", Format(rground));
@@ -729,7 +807,7 @@ namespace fire.UI.Markup
                         var parts = Tok(i).Split('_');
                         return parts.Length > 3 && double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double v) ? v : fallback;
                     }
-                    double neg = Rail(6, -9), pos = Rail(7, 9);
+                    double neg = xml != null ? Num(0, -9, "nv") : Rail(6, -9), pos = xml != null ? Num(0, 9, "pv") : Rail(7, 9);
                     if (pos != 9) e.Set("positive", Format(pos));
                     if (neg != -9) e.Set("negative", Format(neg));
                     return e;
@@ -751,8 +829,8 @@ namespace fire.UI.Markup
                 {
                     // Falstad's sources compute their output from an expression of their inputs; the package has the linear ones
                     string kind = type switch { "212" => "VCVS", "213" => "VCCS", "214" => "CCVS", _ => "CCCS" };
-                    int inputs = (int)Num(6, 2);
-                    string expr = Unescape(Tok(7));
+                    int inputs = (int)Num(6, 2, "ic");
+                    string expr = Unescape(Tok(7, "ex"));
                     double? gain = inputs == 2 ? LinearGain(expr, type is "212" or "213") : null;
                     if (gain is not { } g)
                     {

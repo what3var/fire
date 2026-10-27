@@ -99,6 +99,31 @@ static class CircuitEditorTests
             && falstad.Biscuit.Contains("\"type\": \"And\"") && falstad.Biscuit.Contains("\"type\": \"LogicInput\", \"from\": [70, 38], \"to\": [64, 38], \"high\": \"true\"")
             && falstad.Biscuit.Contains("\"type\": \"Label\", \"from\": [14, 6], \"to\": [14, 2], \"text\": \"VCC\"")
             && falstad.Biscuit.Contains("\"type\": \"Scope\"") && falstad.Biscuit.Contains("\"probe\": \"C1\""), falstad.Biscuit);
+        var falstadXml = FalstadImport.Convert("""
+            <cir f="1" ts="0.000005" ic="10.2" cb="50" pb="50" vr="5" mts="5e-11">
+              <R x="208 128 144 128" f="16" wf="6" fr="60" maxv="1"/>
+              <pt x="352 224 384 176" f="5" ma="20000" po="0.5" sl="Resistance" li="1"/>
+              <pt x="352 224 384 288" f="1" ma="20000" po="0.25" sl="Resistance" li="1"/>
+              <c x="528 224 448 224" f="0" c="2.0000000000000002e-7" iv="0.001" sr="0" vd="0.4"/>
+              <s x="240 48 352 48" f="0" p="0" mm="false"/>
+              <t x="400 208 464 208" f="0" pn="-1" vbe="-0.6" vbc="0.6" be="100" mo="default"/>
+              <And x="560 208 672 208" f="0" in="3" hi="5"/>
+              <Spooky x="0 0 16 0" f="0"/>
+              <v x="288 128 208 128" f="16" wf="1" fr="100" maxv="1.4142135623730951"/>
+              <o en="3" sp="64" f="x2" p="0"><p v="1" sc="0.625"/></o>
+            </cir>
+            """);
+        Check("Falstad XML: <cir>, Tags, benannte Attribute, verbundene Potis als Gruppe, unbekanntes Tag mit Warnung, Scope auf Strom",
+            falstadXml.Elements == 9 && falstadXml.Biscuit.Contains("\"timeStep\": \"5us\"")
+            && falstadXml.Biscuit.Contains("{\"type\": \"Rail\", \"from\": [26, 16], \"to\": [18, 16], \"waveform\": \"noise\", \"voltage\": \"1\"}")
+            && falstadXml.Biscuit.Contains("\"resistance\": \"20k\", \"group\": \"link1\"}") && falstadXml.Biscuit.Contains("\"position\": \"250m\", \"group\": \"link1\"}")
+            && falstadXml.Biscuit.Contains("\"capacitance\": \"200n\"")
+            && falstadXml.Biscuit.Contains("\"closed\": \"true\"") && falstadXml.Biscuit.Contains("\"model\": \"pnp\"") && falstadXml.Biscuit.Contains("\"inputs\": \"3\"")
+            && falstadXml.Biscuit.Contains("\"waveform\": \"sine\", \"voltage\": \"1.414214\", \"frequency\": \"100\"")
+            && falstadXml.Warnings.Count == 1 && falstadXml.Warnings[0].Contains("<Spooky>")
+            && falstadXml.Biscuit.Contains("\"probe\": \"C1\", \"quantity\": \"current\""), falstadXml.Biscuit + string.Join(" | ", falstadXml.Warnings));
+        var falstadBad = FalstadImport.Convert("<cir><r x=\"1 2\"");
+        Check("Falstad XML: kaputtes XML gibt eine Warnung statt einer Ausnahme", falstadBad.Elements == 0 && falstadBad.Warnings.Count == 1, string.Join(" | ", falstadBad.Warnings));
         var falstad5 = FalstadImport.Convert("""
             $ 1 0.000005 10.2 50 5 50 5e-11
             174 304 416 272 368 1 100000 0.5 Resistance
