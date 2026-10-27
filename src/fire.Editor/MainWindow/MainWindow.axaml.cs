@@ -167,6 +167,8 @@ namespace fire.Editor
         public MainWindow()
         {
             InitializeComponent();
+            // our caption buttons (see SparkDecorations in MainWindow.axaml): set explicitly, since the decorations do not see Window.Resources
+            WindowDecorationsTheme = (Avalonia.Styling.ControlTheme)Resources["SparkDecorations"]!;
 
             _factory = new SparkFactory(
                 new()
