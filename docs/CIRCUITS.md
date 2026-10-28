@@ -357,7 +357,10 @@ the comparators react one time step late and the discharge transistor has a resi
 
 ## Sound through a circuit
 
-`AudioInput(amplitude = 1V)` is the input of sound: a voltage source that `ProcessAudio` drives with the samples (full scale is `amplitude`).
+`AudioInput(amplitude = 1V, device = "", rate = 44100Hz)` is the input of sound: a voltage source that `ProcessAudio` drives with the samples (full scale is `amplitude`) -
+or, with a `device` ("default", "sim", a name of `Audio.Board.Inputs()`), what that sound device records. `AudioOutput(device = "default", fullScale = 1V, rate = 44100Hz)` is a
+loudspeaker: the voltage between its pins plays on the device (to the circuit it is 1 MOhm). Both open their device when the circuit is compiled and hand the sound over in the
+kernel (see "Sound devices" below); a device that cannot be opened leaves the circuit running without sound and says why in `DeviceError`.
 `circuit.ProcessAudio(sound, input, output, reference = undefined, outputScale = amplitude, oversample = 4)` sends an `Audio.Sound` of
 `#import "audio"` (or any object with Data, Offset, Frames, Channels and Rate) through the circuit and returns the samples at `output` - mono,
 16 bit, full scale at `outputScale`. The time step becomes 1 / (rate * oversample); the kernel does the whole sound in one call (a circuit with
@@ -701,7 +704,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
 
 - **Elements:** `Circuits.Symbols.Catalog()` lists them with their properties (`category|type|name:kind=default;...`):
   Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
-  a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
+  a rail is a source to ground with one pin), CurrentSource, AudioInput (`device`: records from a sound device), AudioOutput (`device`, `fullScale`: a loudspeaker), LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
   `inverting`), Counter, Timer555 (DFlipFlop, Counter and Timer555 also in Falstad's chip layout: `layout` = falstad puts their pins on all four sides as there,
   `spacing` 4 or 2; the 555 then takes its supply at the Vcc pin, `groundPin`), Potentiometer (`position`; potentiometers with the same `group` turn together, like a stereo potentiometer), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),

@@ -495,15 +495,125 @@ namespace Circuits {
         }
     }
 
-    /// <summary>The input of sound into a circuit: a voltage source that Circuit.ProcessAudio drives with the samples (a full-scale sample is `amplitude`).</summary>
+    /// <summary>The input of sound into a circuit: a voltage source that Circuit.ProcessAudio drives with the samples (a full-scale sample is `amplitude`) - or,
+    /// with a `Device` ("default", "sim", a name of Audio.Board.Inputs()), what that sound device records (the kernel fills it itself, docs/CIRCUITS.md).</summary>
     class AudioInput : VoltageSource {
         float amplitude
+        string device = ""
+        float rate = 44100
+        Circuits.SignalStream stream
+        string deviceError = ""
 
-        construct(float amplitude : any = 1) : base(0) { this.amplitude = Circuits.Units.Volts(amplitude) }
+        construct(float amplitude : any = 1, string device = "", float rate : any = 44100) : base(0) {
+            this.amplitude = Circuits.Units.Volts(amplitude)
+            this.device = device
+            this.rate = Circuits.Units.Hertz(rate)
+            this.stream = undefined
+        }
 
         float:any Amplitude {
             get { return this.amplitude * 1V }
             set { this.amplitude = Circuits.Units.Volts(value) }
+        }
+
+        /// <summary>The sound device it records from ("": none - the program drives it).</summary>
+        string Device {
+            get { return this.device }
+            set {
+                if (value == this.device) { return }
+                this.device = value
+                Circuits.Devices.Close(this)
+            }
+        }
+        /// <summary>Why the device could not be opened ("" when it works or there is none).</summary>
+        string DeviceError { get { return this.deviceError } }
+        /// <summary>The stream between the device and the source (undefined without a device).</summary>
+        Circuits.SignalStream Stream { get { return this.stream } }
+    }
+
+    /// <summary>A loudspeaker: the voltage between its pins plays on a sound device ("default", "sim", a name of Audio.Board.Devices()); a sample of `fullScale`
+    /// volts is full scale. To the circuit it is a resistance of 1 MOhm (a high impedance input). The kernel hands the sound over itself (docs/CIRCUITS.md).</summary>
+    class AudioOutput : Resistor {
+        string device
+        float fullScale
+        float rate
+        Circuits.SignalStream stream
+        string deviceError = ""
+
+        construct(string device = "default", float fullScale : any = 1, float rate : any = 44100) : base(1000000) {
+            this.device = device
+            this.fullScale = Circuits.Units.Volts(fullScale)
+            this.rate = Circuits.Units.Hertz(rate)
+            this.stream = undefined
+        }
+
+        /// <summary>The sound device it plays on ("": none).</summary>
+        string Device {
+            get { return this.device }
+            set {
+                if (value == this.device) { return }
+                this.device = value
+                Circuits.Devices.Close(this)
+            }
+        }
+        float:any FullScale {
+            get { return this.fullScale * 1V }
+            set {
+                this.fullScale = Circuits.Units.Volts(value)
+                Circuits.Devices.Close(this)
+            }
+        }
+        /// <summary>Why the device could not be opened ("" when it works or there is none).</summary>
+        string DeviceError { get { return this.deviceError } }
+        /// <summary>The stream between the circuit and the device (undefined without a device).</summary>
+        Circuits.SignalStream Stream { get { return this.stream } }
+    }
+
+    // the sound devices of AudioInput and AudioOutput: opened when the circuit is compiled (once; a failure is kept in DeviceError, the circuit runs without sound)
+    class Devices {
+        static undefined Close(Circuits.Part p) {
+            if (p is of Circuits.AudioInput) {
+                Circuits.AudioInput a = p!Circuits.AudioInput
+                if (a.stream != undefined) { delete a.stream }
+                a.stream = undefined
+                a.deviceError = ""
+            } else if (p is of Circuits.AudioOutput) {
+                Circuits.AudioOutput o = p!Circuits.AudioOutput
+                if (o.stream != undefined) { delete o.stream }
+                o.stream = undefined
+                o.deviceError = ""
+            }
+            var owner = p.owner
+            if (owner != undefined) { owner.Invalidate() }
+        }
+
+        // adds the taps and feeds of the parts with a device to the plan
+        static undefined Attach(Circuits.Solver s, List leaves) {
+            foreach (p in leaves) {
+                if (p is of Circuits.AudioInput) {
+                    Circuits.AudioInput a = p!Circuits.AudioInput
+                    if (a.device == "" || a.index < 0) { continue }
+                    if (a.stream == undefined && a.deviceError == "") {
+                        var st = new Circuits.SignalStream(a.rate, 0)
+                        try {
+                            st.RecordFrom(a.device, a.amplitude)
+                            a.stream = take st
+                        } catch (Exception e) { a.deviceError = e.message }
+                    }
+                    if (a.stream != undefined) { s.AddFeed(a.stream.handle, a.index) }
+                } else if (p is of Circuits.AudioOutput) {
+                    Circuits.AudioOutput o = p!Circuits.AudioOutput
+                    if (o.device == "") { continue }
+                    if (o.stream == undefined && o.deviceError == "") {
+                        var st = new Circuits.SignalStream(o.rate, 0)
+                        try {
+                            st.PlayTo(o.device, o.fullScale)
+                            o.stream = take st
+                        } catch (Exception e) { o.deviceError = e.message }
+                    }
+                    if (o.stream != undefined) { s.AddTap(o.stream.handle, o.A.Root().node, o.B.Root().node) }
+                }
+            }
         }
     }
 
@@ -3180,6 +3290,7 @@ namespace Circuits {
                 } else { this.recordInstruments.Add(inst) }
             }
             this.fireSteps = this.external.count > 0 || this.recordInstruments.count > 0
+            Circuits.Devices.Attach(s, leaves)
             foreach (b in this.streams) {
                 if (b.source != undefined) {
                     if (b.source.index >= 0) { s.AddFeed(b.stream.handle, b.source.index) }

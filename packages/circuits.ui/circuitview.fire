@@ -1460,7 +1460,13 @@ namespace UI {
                     this.Value(root, e, "current", "A", m, -1.8)
                 } else if (t == "AudioInput") {
                     this.Wave(root, m, 0.0, 0, white)
-                    this.Label(root, m, -1.8, "audio", gray)
+                    var mic = e.Get("device")
+                    if (mic == "") { mic = "audio" }
+                    if (e.part != undefined) {
+                        Circuits.AudioInput ai = e.part!Circuits.AudioInput
+                        if (ai.DeviceError != "") { mic = mic + ": no sound" }
+                    }
+                    this.Label(root, m, -1.8, mic, gray)
                 } else if (w == "sine") {
                     this.Wave(root, m, 0.0, 0, white)
                     this.Value(root, e, "frequency", "Hz", m, -1.8)
@@ -1617,6 +1623,25 @@ namespace UI {
                 this.DrawLine(root, e)
             } else if (t == "Lamp" || t == "Fuse" || t == "Crystal" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap") {
                 this.DrawTwoPin(root, e, L)
+            } else if (t == "AudioOutput") {
+                // a loudspeaker: a magnet and a cone on the line; the device below (or why it does not play)
+                this.Seg(root, 0.0, 0.0, m - 0.9, 0.0, c0)
+                this.Seg(root, m + 1.2, 0.0, L, 0.0, c1)
+                this.Seg(root, m - 0.9, -0.6, m - 0.1, -0.6, white)
+                this.Seg(root, m - 0.1, -0.6, m - 0.1, 0.6, white)
+                this.Seg(root, m - 0.1, 0.6, m - 0.9, 0.6, white)
+                this.Seg(root, m - 0.9, 0.6, m - 0.9, -0.6, white)
+                this.Seg(root, m - 0.1, -0.6, m + 1.2, -1.5, white)
+                this.Seg(root, m + 1.2, -1.5, m + 1.2, 1.5, white)
+                this.Seg(root, m + 1.2, 1.5, m - 0.1, 0.6, white)
+                var device = e.Get("device")
+                var note = device
+                if (device == "") { note = "no device" }
+                if (e.part != undefined) {
+                    Circuits.AudioOutput speaker = e.part!Circuits.AudioOutput
+                    if (speaker.DeviceError != "") { note = device + ": no sound" }
+                }
+                this.Label(root, m, 2.2, note, gray)
             } else if (t == "Sweep") {
                 this.Seg(root, 0.0, 0.0, L, 0.0, c0)
                 this.Dot(root, L, 0.0, 0.3, c0)
@@ -2854,7 +2879,7 @@ namespace UI {
             var t = e.type
             if (t == "Resistor" || t == "Capacitor" || t == "Inductor" || t == "Switch" || t == "Diode" || t == "Led" || t == "Zener" || t == "Formula" || t == "CurrentSource"
                 || t == "Lamp" || t == "Fuse" || t == "LightResistor" || t == "Thermistor" || t == "Memristor" || t == "SparkGap" || t == "RelayContact" || t == "RelayCoil"
-                || t == "Diac" || t == "Varactor" || t == "TunnelDiode") {
+                || t == "Diac" || t == "Varactor" || t == "TunnelDiode" || t == "AudioOutput") {
                 return p.CurrentRaw()
             }
             // a source runs from its first point (-) to its second (+); its current is the one it drives out of + (in at -, out at +)
@@ -3467,6 +3492,7 @@ namespace UI {
             else if (t == "Switch2" || t == "RelayContact") { prefix = "S" }
             else if (t == "RelayCoil") { prefix = "K" }
             else if (t == "Lamp") { prefix = "LA" }
+            else if (t == "AudioOutput") { prefix = "LS" }
             else if (t == "Fuse") { prefix = "F" }
             else if (t == "Crystal") { prefix = "Y" }
             else if (t == "LightResistor" || t == "Thermistor" || t == "Memristor") { prefix = "R" }

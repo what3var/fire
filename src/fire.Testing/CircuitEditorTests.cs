@@ -549,6 +549,45 @@ static class CircuitEditorTests
             print("every step " + c.RunsInThread)
             """), new[] { "thread True True True 1 True", "new value 2", "paused False True", "every step False" });
 
+        // ---- sound devices in the schematic: a microphone (AudioInput with a device) through a low pass to a loudspeaker (AudioOutput) ----
+        CheckLines("Schaltplan: AudioInput mit Geraet, Lautsprecher AudioOutput, unbekanntes Geraet, Geraet wechseln", Run("""
+            #import "circuits"
+            #import "audio"
+            var c = new Circuits.Circuit("pa")
+            var s = c.Schematic
+            s.Add("AudioInput", 0, 8, 0, 0, "amplitude=1V;device=sim", "mic")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+            s.Add("Capacitor", 8, 0, 8, 8, "capacitance=100n", "c1")
+            s.Add("AudioOutput", 16, 0, 16, 8, "device=sim;fullScale=1V", "spk")
+            s.Add("AudioOutput", 24, 0, 24, 8, "device=nothing here", "bad")
+            s.Add("Wire", 8, 0, 16, 0)
+            s.Add("Wire", 16, 0, 24, 0)
+            s.Add("Wire", 0, 8, 8, 8)
+            s.Add("Wire", 8, 8, 16, 8)
+            s.Add("Wire", 16, 8, 24, 8)
+            s.Add("Ground", 0, 8, 0, 12)
+            c.TimeStep = 12.5us
+            c.Run(12.5us)
+            Circuits.AudioOutput spk = s.Find("spk").part!Circuits.AudioOutput
+            Circuits.AudioInput mic = s.Find("mic").part!Circuits.AudioInput
+            Circuits.AudioOutput bad = s.Find("bad").part!Circuits.AudioOutput
+            print("streams " + (mic.Stream != undefined) + " " + (spk.Stream != undefined) + " " + (bad.Stream == undefined) + " " + (bad.DeviceError != ""))
+            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 44100)
+            mic.Stream.SimInput(tone.Data)
+            Circuits.SignalStream.Pump()
+            c.Run(60ms)
+            Circuits.SignalStream.Pump()
+            var played = spk.Stream.SimPlayed()
+            var peak = 0.0
+            foreach (v in played) { if (v > peak) { peak = v } }
+            print("played " + (played.length > 2000) + " peak " + Math.Round(peak * 100) / 100)
+            s.Find("spk").Set("device", "")
+            s.Apply()
+            c.Run(1ms)
+            spk = s.Find("spk").part!Circuits.AudioOutput
+            print("no device " + (spk.Stream == undefined) + " " + s.ToText().Contains("\"type\": \"AudioOutput\", \"name\": \"spk\""))
+            """), new[] { "streams True True True True", "played True peak 0.42", "no device True True" });
+
         // ---- the commands of the tool strips: rotate both ways, flip, copy and paste as JSON, find and replace ----
         CheckLines("CircuitView: Drehen links/rechts, Spiegeln, Kopieren/Einfuegen, Suchen/Ersetzen", Run("""
             #import "circuits.ui"

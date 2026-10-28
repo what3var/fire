@@ -136,7 +136,7 @@ namespace Circuits {
             l.Add("Sources|Rail|waveform:choice:dc/sine/square/triangle/sawtooth/noise=dc;voltage:V=5;frequency:Hz=1k;offset:V=0;phase:=0;duty:=0.5")
             l.Add("Sources|Sweep|amplitude:V=5;minFrequency:Hz=20;maxFrequency:Hz=4k;sweepTime:s=0.1;logarithmic:bool=false;bidirectional:bool=true")
             l.Add("Sources|CurrentSource|current:A=10m")
-            l.Add("Sources|AudioInput|amplitude:V=1")
+            l.Add("Sources|AudioInput|amplitude:V=1;device:text=")
             l.Add("Sources|LogicInput|high:bool=false;supply:V=5")
             l.Add("Semiconductors|Diode|model:model:D=1N4148")
             l.Add("Semiconductors|Zener|voltage:V=5.6")
@@ -203,6 +203,7 @@ namespace Circuits {
             l.Add("Devices|SpiShiftIn|supply:V=5")
             l.Add("Display|LogicOutput|threshold:V=2.5")
             l.Add("Display|SevenSegment|point:bool=false;supply:V=5;spacing:int=4")
+            l.Add("Display|AudioOutput|device:text=default;fullScale:V=1")
             l.Add("Display|Probe|measure:choice:voltage/max/min/peakToPeak/average/rms/frequency=voltage")
             l.Add("Display|Scope|probe:text=;quantity:choice:voltage/current/power=voltage;display:choice:time/spectrum/xy=time;timePerDiv:s=0;trigger:choice:free/rising/falling=free;triggerLevel:=0;range:=0;maxFrequency:Hz=20k;fftSize:choice:128/256/512/1024/2048/4096=512")
             l.Add("Display|Label|text:text=A")
@@ -1099,7 +1100,8 @@ namespace Circuits {
             }
             else if (t == "Source" || t == "Rail") { part = Circuits.Symbols.MakeSource(e, c) }
             else if (t == "CurrentSource") { part = new Circuits.CurrentSource(Circuits.Symbols.Value(e, "current", c)) }
-            else if (t == "AudioInput") { part = new Circuits.AudioInput(Circuits.Symbols.Value(e, "amplitude", c)) }
+            else if (t == "AudioInput") { part = new Circuits.AudioInput(Circuits.Symbols.Value(e, "amplitude", c), e.Get("device")) }
+            else if (t == "AudioOutput") { part = new Circuits.AudioOutput(e.Get("device"), Circuits.Symbols.Value(e, "fullScale", c)) }
             else if (t == "LogicInput") { part = new Circuits.LogicInput(e.Flag("high"), Circuits.Symbols.Value(e, "supply", c)) }
             else if (t == "Diode") { part = new Circuits.Diode(e.Get("model")) }
             else if (t == "Zener") { part = new Circuits.Zener(Circuits.Symbols.Value(e, "voltage", c)) }
