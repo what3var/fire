@@ -4,6 +4,9 @@
   "type": "library",
   "import": "usb",
   "standard": true,
+  "drivers": [
+    "UsbDriver"
+  ],
   "settings": {
     "version": "1.0.0",
     "author": "fire",

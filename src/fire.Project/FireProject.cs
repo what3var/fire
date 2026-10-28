@@ -87,6 +87,9 @@ namespace fire.Projects
         public ProjectNative? Native { get; set; }
         /// <summary>A standard library of fire (the projects of `Source/Packages.firesln`, docs/PACKAGES.md): its import may have a name of the compiler (`time`, `io`, ...).</summary>
         public bool Standard { get; set; }
+        /// <summary>A library with device drivers (docs/DEVICES.md): the classes of the device framework it offers (`UsbDriver`, `Gpio.MyDriver`), each made with
+        /// `new Class()`. The IDE loads the drivers of the installed packages and lists their devices in its device manager. null: none.</summary>
+        public List<string>? Drivers { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -129,7 +132,7 @@ namespace fire.Projects
             var copy = new FireProject
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
-                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard,
+                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -155,6 +158,7 @@ namespace fire.Projects
                 Settings = p.Settings.IsEmpty ? null : p.Settings;
                 Native = p.Native;
                 Standard = p.Standard ? true : null;
+                Drivers = p.Drivers is { Count: > 0 } ? p.Drivers : null;
             }
             public int Format { get; }
             public string Name { get; }
@@ -167,6 +171,7 @@ namespace fire.Projects
             public ProjectSettings? Settings { get; }
             public ProjectNative? Native { get; }
             public bool? Standard { get; }
+            public List<string>? Drivers { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`.</summary>

@@ -44,7 +44,7 @@ namespace fire.UI.Markup
         {
             ["Wire"] = "Circuits.Element", ["Ground"] = "Circuits.Ground", ["Resistor"] = "Circuits.Resistor", ["Capacitor"] = "Circuits.Capacitor",
             ["Inductor"] = "Circuits.Inductor", ["Switch"] = "Circuits.Switch", ["Source"] = "Circuits.VoltageSource", ["Rail"] = "Circuits.VoltageSource",
-            ["CurrentSource"] = "Circuits.CurrentSource", ["AudioInput"] = "Circuits.AudioInput", ["LogicInput"] = "Circuits.LogicInput",
+            ["CurrentSource"] = "Circuits.CurrentSource", ["AudioInput"] = "Circuits.AudioInput", ["AudioOutput"] = "Circuits.AudioOutput", ["LogicInput"] = "Circuits.LogicInput",
             ["Diode"] = "Circuits.Diode", ["Zener"] = "Circuits.Zener", ["Led"] = "Circuits.Led", ["Transistor"] = "Circuits.Transistor", ["Mosfet"] = "Circuits.Mosfet",
             ["Formula"] = "Circuits.Formula", ["Jfet"] = "Circuits.Jfet", ["Darlington"] = "Circuits.Darlington", ["Thyristor"] = "Circuits.Thyristor", ["Triac"] = "Circuits.Triac", ["Diac"] = "Circuits.Diac",
             ["Varactor"] = "Circuits.Varactor", ["TunnelDiode"] = "Circuits.TunnelDiode", ["Triode"] = "Circuits.Triode", ["Pentode"] = "Circuits.Pentode", ["VacuumDiode"] = "Circuits.VacuumDiode", ["VCVS"] = "Circuits.VCVS", ["VCCS"] = "Circuits.VCCS",

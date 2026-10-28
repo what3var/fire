@@ -112,6 +112,43 @@
         "cpp": "audio::SimData",
         "needsList": true,
         "returnsReference": true
+      },
+      {
+        "name": "__AudioInSupported",
+        "arguments": 0,
+        "cpp": "audio::InSupported"
+      },
+      {
+        "name": "__AudioInDevices",
+        "arguments": 0,
+        "cpp": "audio::InDevices",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__AudioInOpen",
+        "arguments": 3,
+        "cpp": "audio::InOpen"
+      },
+      {
+        "name": "__AudioInRead",
+        "arguments": 4,
+        "cpp": "audio::InRead"
+      },
+      {
+        "name": "__AudioInAvailable",
+        "arguments": 1,
+        "cpp": "audio::InAvailable"
+      },
+      {
+        "name": "__AudioInClose",
+        "arguments": 1,
+        "cpp": "audio::InClose"
+      },
+      {
+        "name": "__AudioSimFeed",
+        "arguments": 3,
+        "cpp": "audio::SimFeed"
       }
     ],
     "reset": "audio::reset"

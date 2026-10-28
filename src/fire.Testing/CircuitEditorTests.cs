@@ -368,7 +368,10 @@ static class CircuitEditorTests
             ui.MouseMove(P.X(0), P.X(16))
             ui.MouseUp(1, P.X(0), P.X(16))
             view.CancelPlace()
-            for (int i = 0; i < 5; i++) { ui.Update() }
+            for (int i = 0; i < 5; i++) {
+                Sleep(40)
+                ui.Update()
+            }
             var s = c.Schematic
             foreach (e in s.Elements()) { print(e.Type + " " + e.Name + " " + e.x1 + "," + e.y1 + " " + e.x2 + "," + e.y2) }
             Circuits.Led led = s.Find("D1").part!Circuits.Led
@@ -376,10 +379,16 @@ static class CircuitEditorTests
             ui.MouseDown(1, P.X(4), P.X(0))
             ui.MouseMove(P.X(4), P.X(4))
             ui.MouseUp(1, P.X(4), P.X(4))
-            for (int i = 0; i < 5; i++) { ui.Update() }
+            for (int i = 0; i < 5; i++) {
+                Sleep(40)
+                ui.Update()
+            }
             print("moved " + s.Find("R1").y1 + " led " + led.IsOn)
             ui.KeyDown(122, 64)
-            for (int i = 0; i < 5; i++) { ui.Update() }
+            for (int i = 0; i < 5; i++) {
+                Sleep(40)
+                ui.Update()
+            }
             led = s.Find("D1").part!Circuits.Led
             print("ctrl+z " + s.Find("R1").y1 + " led " + led.IsOn)
             view.Select(s.Find("R1"))
@@ -480,6 +489,8 @@ static class CircuitEditorTests
             c.RunRealTime(0.2s)
             var wall = Circuits.RealTimeClock.Now() - t0
             print("in time " + (c.Time / 1s <= wall + 0.001) + " " + (c.Time > 0s) + " " + c.RealTime)
+            // the coarser step is a matter of the program simulating itself (without the thread of the kernel)
+            c.Threaded = false
             c.MaxTimeStep = 40us
             for (int i = 0; i < 120; i++) {
                 Sleep(5)
@@ -489,6 +500,93 @@ static class CircuitEditorTests
             c.RealTime = false
             print("off " + (c.CurrentTimeStep / 1us) + " " + c.RealTimeShare)
             """), new[] { "in time True True True", "coarser 40 10 True True", "off 10 0" });
+
+        // ---- real time in the thread of the kernel: a part written in fire is serviced with the program, the thread keeps its last values ----
+        CheckLines("Echtzeit im Thread des Kerns: ein Teil in fire wird mit dem Programm bedient, der Thread rechnet mit seinen letzten Werten; EveryStep rechnet synchron", Run("""
+            #import "circuits"
+            class Pump : Circuits.Part {
+                int calls = 0
+                float amps = 0.001
+                construct() : base("pump") { this.AddPort("a") }
+                undefined StampStep(Circuits.Solver solver) {
+                    this.calls = this.calls + 1
+                    solver.CurrentInto(this.PortAt(0), this.amps)
+                }
+            }
+            var c = new Circuits.Circuit("rc")
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            r.B.Connect(c.Ground)
+            cap.B.Connect(c.Ground)
+            r.A.Connect(cap.A)
+            var p = c.Add(new Pump())
+            p.PortAt(0).Connect(r.A)
+            c.TimeStep = 10us
+            c.AdvanceRealTime()
+            var threaded = c.RunsInThread
+            var t0 = Circuits.RealTimeClock.Now()
+            while (Circuits.RealTimeClock.Now() - t0 < 0.15) {
+                Sleep(2)
+                c.AdvanceRealTime()
+            }
+            print("thread " + threaded + " " + c.RunsInThread + " " + (c.Time > 50ms) + " " + Math.Round(r.A.Raw() * 100.0) / 100.0 + " " + (p.calls > 5))
+            // the program sets a new value: the thread takes it at the next service
+            p.amps = 0.002
+            t0 = Circuits.RealTimeClock.Now()
+            while (Circuits.RealTimeClock.Now() - t0 < 0.1) {
+                Sleep(2)
+                c.AdvanceRealTime()
+            }
+            print("new value " + Math.Round(r.A.Raw() * 100.0) / 100.0)
+            // a pause stops the thread (RestartRealTime), Step simulates in the program
+            c.RestartRealTime()
+            var before = c.Time
+            Sleep(30)
+            print("paused " + c.RunsInThread + " " + (c.Time == before))
+            p.EveryStep = true
+            c.AdvanceRealTime()
+            c.AdvanceRealTime()
+            print("every step " + c.RunsInThread)
+            """), new[] { "thread True True True 1 True", "new value 2", "paused False True", "every step False" });
+
+        // ---- sound devices in the schematic: a microphone (AudioInput with a device) through a low pass to a loudspeaker (AudioOutput) ----
+        CheckLines("Schaltplan: AudioInput mit Geraet, Lautsprecher AudioOutput, unbekanntes Geraet, Geraet wechseln", Run("""
+            #import "circuits"
+            #import "audio"
+            var c = new Circuits.Circuit("pa")
+            var s = c.Schematic
+            s.Add("AudioInput", 0, 8, 0, 0, "amplitude=1V;device=sim", "mic")
+            s.Add("Resistor", 0, 0, 8, 0, "resistance=1k", "r1")
+            s.Add("Capacitor", 8, 0, 8, 8, "capacitance=100n", "c1")
+            s.Add("AudioOutput", 16, 0, 16, 8, "device=sim;fullScale=1V", "spk")
+            s.Add("AudioOutput", 24, 0, 24, 8, "device=nothing here", "bad")
+            s.Add("Wire", 8, 0, 16, 0)
+            s.Add("Wire", 16, 0, 24, 0)
+            s.Add("Wire", 0, 8, 8, 8)
+            s.Add("Wire", 8, 8, 16, 8)
+            s.Add("Wire", 16, 8, 24, 8)
+            s.Add("Ground", 0, 8, 0, 12)
+            c.TimeStep = 12.5us
+            c.Run(12.5us)
+            Circuits.AudioOutput spk = s.Find("spk").part!Circuits.AudioOutput
+            Circuits.AudioInput mic = s.Find("mic").part!Circuits.AudioInput
+            Circuits.AudioOutput bad = s.Find("bad").part!Circuits.AudioOutput
+            print("streams " + (mic.Stream != undefined) + " " + (spk.Stream != undefined) + " " + (bad.Stream == undefined) + " " + (bad.DeviceError != ""))
+            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 44100)
+            mic.Stream.SimInput(tone.Data)
+            Circuits.SignalStream.Pump()
+            c.Run(60ms)
+            Circuits.SignalStream.Pump()
+            var played = spk.Stream.SimPlayed()
+            var peak = 0.0
+            foreach (v in played) { if (v > peak) { peak = v } }
+            print("played " + (played.length > 2000) + " peak " + Math.Round(peak * 100) / 100)
+            s.Find("spk").Set("device", "")
+            s.Apply()
+            c.Run(1ms)
+            spk = s.Find("spk").part!Circuits.AudioOutput
+            print("no device " + (spk.Stream == undefined) + " " + s.ToText().Contains("\"type\": \"AudioOutput\", \"name\": \"spk\""))
+            """), new[] { "streams True True True True", "played True peak 0.42", "no device True True" });
 
         // ---- the commands of the tool strips: rotate both ways, flip, copy and paste as JSON, find and replace ----
         CheckLines("CircuitView: Drehen links/rechts, Spiegeln, Kopieren/Einfuegen, Suchen/Ersetzen", Run("""

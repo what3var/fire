@@ -75,6 +75,9 @@ struct Sim {
     int64_t played = 0;             // the bytes that were played (also those beyond the recording limit)
     std::vector<uint8_t> data;      // what was played (up to SimRecordLimit)
     std::vector<uint8_t> pending;   // what waits while the device is held
+    std::vector<uint8_t> input;     // what the simulated input records next (Feed)
+    size_t inputAt = 0;
+    int64_t recorded = 0;           // the bytes the simulated input handed over
 
     void play(const uint8_t* bytes, size_t n) {
         played += (int64_t)n;
@@ -110,12 +113,36 @@ struct OutputTable {
 };
 inline std::vector<Output*>& outputs() { static OutputTable table; return table.items; }
 
-/// The program has ended (the library for the VM stays loaded for the next one): closes the outputs and clears the simulated device.
+// ---- the inputs -------------------------------------------------------------------------------------------------------------------------
+struct Input {
+    bool isSim = false;
+    plat::audio::Input* in = nullptr;
+    int rate = 0;
+    int channels = 0;
+    int frameBytes = 0;
+};
+inline void release(Input* i) {
+    if (!i) return;
+    if (i->in) plat::audio::closeInput(i->in);
+    delete i;
+}
+struct InputTable {
+    std::vector<Input*> items{1, nullptr};
+    ~InputTable() { for (Input* i : items) release(i); }
+};
+inline std::vector<Input*>& inputs() { static InputTable table; return table.items; }
+
+/// The program has ended (the library for the VM stays loaded for the next one): closes the outputs and inputs and clears the simulated device.
 inline void reset() {
     std::vector<Output*>& all = outputs();
     for (size_t i = 1; i < all.size(); i++) {
         release(all[i]);
         all[i] = nullptr;
+    }
+    std::vector<Input*>& ins = inputs();
+    for (size_t i = 1; i < ins.size(); i++) {
+        release(ins[i]);
+        ins[i] = nullptr;
     }
     sim() = Sim();
 }
@@ -266,6 +293,97 @@ inline Value Close(Value h) {
     return Bool(true);
 }
 
+// ---- inputs -----------------------------------------------------------------------------------------------------------------------------
+/// 1 if this machine has a sound input (the simulated one is there anyway), else 0.
+inline Value InSupported() {
+    std::vector<std::string> hardware;
+    ok();
+    return Int(plat::audio::inputSupported() && plat::audio::inputDevices(hardware).ok() && !hardware.empty() ? 1 : 0);
+}
+
+/// The inputs: "sim" first, then those of the hardware.
+inline Value InDevices(OwnList* list) {
+    std::vector<std::string> names{"sim"};
+    std::vector<std::string> hardware;
+    plat::audio::Status st = plat::audio::inputDevices(hardware);
+    if (!st.ok()) { fail(st); return Undef(); }
+    for (const std::string& n : hardware) names.push_back(n);
+    ok();
+    Arr* a = allocArr((uint32_t)names.size(), list);
+    for (size_t i = 0; i < names.size(); i++) { a->items()[i] = str8(names[i], list); retain(a->items()[i]); }
+    return ArrV(a);
+}
+
+inline Value InOpen(Value name, Value rate, Value channels) {
+    std::string n = toUtf8(name);
+    if (rate.i < 1000 || rate.i > 192000) return Int(fail(InvalidArgument, "The rate must be between 1000 and 192000 Hz."));
+    if (channels.i < 1 || channels.i > 2) return Int(fail(InvalidArgument, "Mono (1) or stereo (2) channels."));
+    Input* i = new Input();
+    i->rate = (int)rate.i;
+    i->channels = (int)channels.i;
+    i->frameBytes = 2 * i->channels;
+    if (n == "sim") i->isSim = true;
+    else {
+        plat::audio::Status st = plat::audio::openInput(n, i->rate, i->channels, i->in);
+        if (!st.ok()) { delete i; return Int(fail(st)); }
+    }
+    inputs().push_back(i);
+    ok();
+    return Int((int64_t)inputs().size() - 1);
+}
+
+inline Input* findInput(Value h) {
+    int64_t i = h.i;
+    if (i > 0 && (size_t)i < inputs().size() && inputs()[(size_t)i]) return inputs()[(size_t)i];
+    fail(InvalidHandle, "Invalid or already closed input handle.");
+    return nullptr;
+}
+
+/// Takes up to `count` bytes (whole frames) of what the input recorded into the buffer from `offset`; the number of bytes (0: nothing yet), -1 on an error.
+inline Value InRead(Value h, Value buffer, Value offset, Value count) {
+    if (!leafAlive(buffer)) return destroyedError(buffer);
+    Input* i = findInput(h);
+    if (!i) return Int(-1);
+    if (!checkRange(buffer, offset.i, count.i)) return Int(-1);
+    int64_t want = count.i - count.i % i->frameBytes;
+    uint8_t* bytes = bufOf(buffer)->bytes() + offset.i;
+    int got = 0;
+    if (i->isSim) {
+        Sim& s = sim();
+        size_t left = s.input.size() - s.inputAt;
+        left -= left % (size_t)i->frameBytes;
+        size_t n = (size_t)want < left ? (size_t)want : left;
+        if (n > 0) std::memcpy(bytes, s.input.data() + s.inputAt, n);
+        s.inputAt += n;
+        if (s.inputAt == s.input.size()) { s.input.clear(); s.inputAt = 0; }
+        s.recorded += (int64_t)n;
+        got = (int)n;
+    } else {
+        plat::audio::Status st = plat::audio::read(i->in, bytes, (int)(want > 0x7FFFFFFF ? 0x7FFFFFFF : want), got);
+        if (!st.ok()) return Int(fail(st));
+    }
+    ok();
+    return Int(got);
+}
+
+/// The bytes recorded and not read yet; -1 on an error.
+inline Value InAvailable(Value h) {
+    Input* i = findInput(h);
+    if (!i) return Int(-1);
+    ok();
+    if (i->isSim) return Int((int64_t)(sim().input.size() - sim().inputAt));
+    return Int(plat::audio::available(i->in));
+}
+
+inline Value InClose(Value h) {
+    int64_t i = h.i;
+    if (i <= 0 || (size_t)i >= inputs().size() || !inputs()[(size_t)i]) { fail(InvalidHandle, "Invalid or already closed input handle."); return Bool(false); }
+    release(inputs()[(size_t)i]);
+    inputs()[(size_t)i] = nullptr;
+    ok();
+    return Bool(true);
+}
+
 // ---- generated waves --------------------------------------------------------------------------------------------------------------------
 /// Fills `frames` frames of the buffer (from `offset`, in the channels and the rate given) with a wave: kind 0 sine, 1 square, 2 triangle, 3 saw, 4 noise; `freq` the frequency in Hz (an integer
 /// or a float, at most half the rate); `volume` in percent. `phase` is where the wave continues (0 at the start; the result of the last call makes the next buffer join without a click; for noise it is the state
@@ -310,7 +428,7 @@ inline Value Wave(Value buffer, Value offset, Value frames, Value kind, Value fr
 }
 
 // ---- the simulated device from the outside ----------------------------------------------------------------------------------------------
-/// Forgets everything that was played; the device plays again (not held). Open outputs stay open.
+/// Forgets everything that was played and what the simulated input had; the device plays again (not held). Open outputs and inputs stay open.
 inline Value SimReset() {
     sim() = Sim();
     ok();
@@ -323,7 +441,17 @@ inline Value SimHold(Value hold) {
     ok();
     return Bool(true);
 }
-/// What the device knows: 0 the bytes played, 1 the rate of the last opened output, 2 its channels, 3 the bytes that wait (held).
+/// Gives the simulated input sound to record: `count` bytes (16 bit samples in the channels of the input that reads them) from `offset` of the buffer.
+inline Value SimFeed(Value buffer, Value offset, Value count) {
+    if (!leafAlive(buffer)) return destroyedError(buffer);
+    if (!checkRange(buffer, offset.i, count.i)) return Int(-1);
+    const uint8_t* bytes = bufOf(buffer)->bytes() + offset.i;
+    sim().input.insert(sim().input.end(), bytes, bytes + count.i);
+    ok();
+    return Int(count.i);
+}
+/// What the device knows: 0 the bytes played, 1 the rate of the last opened output, 2 its channels, 3 the bytes that wait (held), 4 the bytes the simulated
+/// input still has, 5 the bytes it handed over.
 inline Value SimInfo(Value what) {
     ok();
     switch (what.i) {
@@ -331,6 +459,8 @@ inline Value SimInfo(Value what) {
         case 1: return Int(sim().rate);
         case 2: return Int(sim().channels);
         case 3: return Int((int64_t)sim().pending.size());
+        case 4: return Int((int64_t)(sim().input.size() - sim().inputAt));
+        case 5: return Int(sim().recorded);
         default: fail(InvalidArgument, "Unknown information."); return Int(-1);
     }
 }

@@ -12142,6 +12142,81 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         Console.WriteLine(ok ? "OK: Paketprotokoll: fehlerhafte Zeilen werden mit FormatException abgelehnt" : "FEHLER: Paketprotokoll nimmt fehlerhafte Zeilen an");
     }
 
+    // Terminal: Hexdump (16 Bytes je Zeile + Zeichen), ASCII-Darstellung, Hex-Eingabe, Text mit Escapes, Bloecke je Richtung
+    {
+        var dump = fire.Device.Manager.DeviceManager.TerminalLog.HexDump(System.Text.Encoding.ASCII.GetBytes("Hello device!\r\n\0\u0001ABCDEFGHIJ"));
+        var dumpLines = dump.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        bool ok = dumpLines.Length == 2
+            && dumpLines[0] == "0000  48 65 6C 6C 6F 20 64 65  76 69 63 65 21 0D 0A 00  Hello device!..."
+            && dumpLines[1].StartsWith("0010  01 41 42 43 44 45 46 47  48 49 4A ") && dumpLines[1].EndsWith(" .ABCDEFGHIJ")
+            && dumpLines[1].Length == dumpLines[0].Length - 5;
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Terminal: Hexdump mit 16 Bytes je Zeile, Luecke nach 8, dann die Zeichen (Steuerzeichen als '.')" : "FEHLER: Terminal-Hexdump\n" + dump);
+
+        ok = fire.Device.Manager.DeviceManager.TerminalLog.Ascii(new byte[] { 72, 105, 13, 10, 1, 9, 0xE4, 13 }) == "Hi\n<01>\t\u00e4<0D>"
+            && fire.Device.Manager.DeviceManager.TerminalLog.TryParseHex("48 65,0x6c-6C 6f0a", out var hexBytes, out _) && hexBytes.SequenceEqual(new byte[] { 0x48, 0x65, 0x6C, 0x6C, 0x6F, 0x0A })
+            && !fire.Device.Manager.DeviceManager.TerminalLog.TryParseHex("4G", out _, out var hexError) && hexError.Length > 0
+            && fire.Device.Manager.DeviceManager.TerminalLog.TextToBytes("a\\tb\\x41", "\r\n").SequenceEqual(new byte[] { 97, 9, 98, 0x41, 13, 10 });
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Terminal: ASCII-Anzeige (CR vor LF faellt weg, Steuerzeichen als <NN>), Hex-Eingabe in mehreren Schreibweisen, Text mit \\t \\xNN und Zeilenende" : "FEHLER: Terminal-Umwandlungen");
+
+        var tlog = new fire.Device.Manager.DeviceManager.TerminalLog { Limit = 10 };
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, new byte[] { 1, 2 });
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, new byte[] { 3 });
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost, System.Text.Encoding.ASCII.GetBytes("ok\n"));
+        bool merged = tlog.Blocks.Count == 2 && tlog.Blocks[0].Data.Count == 3;
+        string text = tlog.Render(false, showSent: false);
+        tlog.Add(fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice, new byte[8]);
+        ok = merged && text == "<< ok\n" && tlog.Blocks.Count == 1 && tlog.Count == 8 && tlog.Blocks[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice;
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Terminal: Bytes einer Richtung bilden einen Block, 'Show sent' blendet Gesendetes aus, das Limit wirft die aeltesten Bloecke weg" : "FEHLER: Terminal-Bloecke: " + text);
+    }
+
+    // Treiber aus Paketen: Manifest-Feld drivers (Projekt -> Paket), der Treiber-Agent bringt usb:sim in einen DeviceManager, Senden und Echo kommen an
+    {
+        var proj = fire.Projects.FireProject.Parse("{\"name\": \"x\", \"type\": \"library\", \"drivers\": [\"A.MyDriver\"]}");
+        var again = fire.Projects.FireProject.Parse(proj.ToJson());
+        var manifest = fire.Package.Manager.PackageManifest.Parse("{\"name\": \"p\", \"version\": \"1.0.0\", \"imports\": [{\"name\": \"p\", \"drivers\": [\"PDriver\"]}]}");
+        bool ok = again.Drivers is { Count: 1 } && again.Drivers[0] == "A.MyDriver" && manifest.Imports[0].Drivers is { Count: 1 }
+            && !fire.Projects.FireProject.Parse("{\"name\": \"y\"}").ToJson().Contains("drivers");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Treiber im Paket: 'drivers' im Projekt und im Manifest (leer wird nicht geschrieben)" : "FEHLER: drivers im Projekt/Manifest");
+
+        var found = fire.Compiler.PackageDriverAgent.FindDrivers();
+        ok = found.Any(d => d.Class == "UsbDriver" && d.Import == "usb") && found.Any(d => d.Class == "GpioDriver");
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Treiber im Paket: die installierten Standardpakete melden ihre Treiber (usb, gpio, i2c, spi)" : "FEHLER: FindDrivers: " + string.Join(", ", found));
+
+        using var agent = new fire.Compiler.PackageDriverAgent();
+        ok = agent.Start(new[] { new fire.Compiler.PackageDriver("fire-usb", "usb", "UsbDriver"), new fire.Compiler.PackageDriver("x", "usb", "GibtEsNicht") });
+        var manager = new fire.Device.Manager.DeviceManager.DeviceManager();
+        var captured = new List<fire.Device.Manager.DeviceManager.PacketRecord>();
+        string detail = agent.EndedWith ?? "";
+        if (ok)
+        {
+            agent.Attach(manager);
+            manager.PacketCaptured += p => { lock (captured) captured.Add(p); };
+            manager.RefreshDevices(true);
+            var slot = manager.GetSlotByIdentifier("usb:sim");
+            ok = slot != null && slot.Device.Description == "simulated USB device (echo)" && !slot.Device.IsConnected && agent.StartErrors.Count == 1 && agent.StartErrors[0].Contains("GibtEsNicht");
+            if (ok)
+            {
+                slot!.Device.Connect();
+                ok = slot.Device.IsConnected && slot.Device.Write(System.Text.Encoding.ASCII.GetBytes("ping"));
+                for (int i = 0; i < 300 && ok; i++) { lock (captured) if (captured.Count >= 2) break; Thread.Sleep(10); }
+                lock (captured)
+                    ok = ok && captured.Count == 2 && captured[0].Direction == fire.Device.Manager.DeviceManager.PacketDirection.HostToDevice
+                        && captured[1].Direction == fire.Device.Manager.DeviceManager.PacketDirection.DeviceToHost && captured.All(c => System.Text.Encoding.ASCII.GetString(c.Data) == "ping");
+                slot.Device.Disconnect();
+                ok = ok && !slot.Device.IsConnected;
+            }
+            detail = string.Join(" | ", manager.GetSlots().Select(s => s.Identifier)) + " / " + string.Join(";", agent.StartErrors) + " / " + captured.Count;
+        }
+        if (!ok) devFailures++;
+        Console.WriteLine(ok ? "OK: Treiber im Paket: der Treiber-Agent bringt usb:sim in den DeviceManager (Beschreibung, Verbinden, Senden, Echo, Trennen); ein Treiber, den es nicht gibt, wird gemeldet" : "FEHLER: Treiber-Agent: " + detail);
+        manager.Shutdown();
+    }
+
     Console.WriteLine(devFailures == 0 ? "Alle Geraete-Pruefungen bestanden." : $"FEHLER: {devFailures} Geraete-Pruefung(en) fehlgeschlagen.");
 }
 
@@ -19360,6 +19435,28 @@ else
             print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().count + " " + outer.Parts().count)
             try { new Circuits.Resistor(3V) } catch (ArgumentException e) { print(e.message) }
             """),
+        ("Circuits: Scope.Stats - Min/Max/Mittelwert/RMS ueber ganze Perioden und Frequenz (Sinus mit Offset, Leistung als Produkt zweier Kanaele)", """
+            #import "circuits"
+            class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }
+            var ac = new Circuits.Circuit()
+            var sin = ac.Add(new Circuits.SineSource(4V, 250Hz))
+            var dc = ac.Add(new Circuits.VoltageSource(1V))
+            var rl = ac.Add(new Circuits.Resistor(100))
+            dc.B.Connect(ac.Ground)
+            dc.A.Connect(sin.B)
+            sin.A.Connect(rl.A)
+            rl.B.Connect(ac.Ground)
+            ac.TimeStep = 10us
+            var s = new Circuits.Scope(ac, 8192, true)
+            s.Voltage("v", rl.A)
+            s.Current("i", rl)
+            print(s.Stats("v")[0])
+            ac.Run(30ms)
+            var st = s.Stats("v")
+            print(H.R(st[1]) + " " + H.R(st[2]) + " " + H.R(st[3]) + " " + H.R(st[4]) + " " + Math.Round(st[5]) + " " + (st[0] == s.Count))
+            var p = s.Stats("i", "v")
+            print(H.R(p[2] * 1000) + " " + Math.Round(p[5]))
+            """),
         ("Circuits: kompilierter Plan - eigene Bauteile in fire (nur Stamp / StampStep+Commit), FunctionSource, Scope auf eigenes Bauteil, Schalter und Pegel mitten im Lauf, PlanInfo", """
             #import "circuits"
             class H {
@@ -19882,6 +19979,102 @@ else
             var wav = filtered.ToWav()
             var back = Audio.Sound.FromWav(wav)
             print("wav " + wav.length + " bytes, " + back.Rate + " Hz, " + back.Channels + " channel, " + back.Frames + " frames")
+            """),
+        ("Circuits: Streams und Tongeraete (Output/Input mit Volt und PCM, Audio.Input, PlayTo/RecordFrom mit \"sim\", synchron und im Thread)", """
+            #import "circuits"
+            #import "audio"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+                static float Peak(float values[]) {
+                    var p = 0.0
+                    for (int i = 0; i < values.length; i++) { if (Math.Abs(values[i]) > p) { p = Math.Abs(values[i]) } }
+                    return p
+                }
+            }
+            // a stream as output: an RC charging to 5 V, 10 samples per ms
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            v.A.Connect(r.A)
+            v.B.Connect(c.Ground)
+            r.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            c.TimeStep = 10us
+            var outS = c.Output(cap.A, undefined, 10kHz, 100)
+            c.Run(2ms)
+            var vals = outS.Read()
+            print("output " + vals.length + " samples, at 1 ms " + H.R(vals[9]) + " V, at 2 ms " + H.R(vals[19]) + " V, rate " + outS.Rate)
+            // a stream as input: volts drive a source; PCM in and out
+            var d = new Circuits.Circuit()
+            var src = d.Add(new Circuits.AudioInput(1V))
+            var load = d.Add(new Circuits.Resistor(1kOhm))
+            src.A.Connect(load.A)
+            src.B.Connect(d.Ground)
+            load.B.Connect(d.Ground)
+            d.TimeStep = 10us
+            var inS = d.Input(src, 10kHz, 100)
+            var probe = d.Output(load.A, undefined, 10kHz, 100)
+            print("took " + inS.Write([0.0, 1.0, 2.0, 3.0, 4.0]))
+            d.Run(1ms)
+            var seen = probe.Read()
+            print("input drives " + H.R(seen[1]) + " " + H.R(seen[2]) + " " + H.R(seen[3]) + " then holds " + H.R(seen[8]) + ", missing " + (inS.Missing > 0))
+            var pcm = new byte[4]
+            pcm[0] = 0; pcm[1] = 64; pcm[2] = 0; pcm[3] = 192
+            print("pcm frames " + inS.WritePcm(pcm, 0, 2, 1, 2V))
+            d.Run(1ms)
+            var back = new byte[40]
+            var n = probe.ReadPcm(back, 0, 20, 2V)
+            print("pcm back " + n + " frames, first " + (back[0] + (back[1] << 8)))
+            // Audio.Input on the simulated device: what was fed comes back
+            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 8000)
+            Audio.Sim.Reset()
+            Audio.Sim.FeedSound(tone)
+            var mic = new Audio.Input("sim", 8000, 1)
+            print("input available " + mic.Available + " inputs " + Audio.Board.Inputs()[0])
+            var rec = mic.Record(50)
+            var same = true
+            for (int i = 0; i < rec.Length; i++) { if (rec.Data[i] != tone.Data[i]) { same = false } }
+            print("recorded " + rec.Length + " bytes, same " + same + ", left " + Audio.Sim.InputWaiting() + ", handed over " + Audio.Sim.Recorded())
+            mic.Close()
+            // the fast way: the kernel records from and plays to "sim" itself (a low pass of 1.6 kHz on a tone of 1 kHz)
+            var e = new Circuits.Circuit()
+            var ein = e.Add(new Circuits.AudioInput(1V))
+            var er = e.Add(new Circuits.Resistor(1kOhm))
+            var ec = e.Add(new Circuits.Capacitor(100nF))
+            ein.A.Connect(er.A)
+            ein.B.Connect(e.Ground)
+            er.B.Connect(ec.A)
+            ec.B.Connect(e.Ground)
+            e.TimeStep = 12.5us
+            var fromDev = e.RecordFrom(ein, "sim", 1V, 8000Hz)
+            var toDev = e.PlayTo(ec.A, undefined, "sim", 1V, 8000Hz)
+            fromDev.SimInput(tone.Data)
+            print("playing " + toDev.Playing + " recording " + fromDev.Recording)
+            Circuits.SignalStream.Pump()
+            e.Run(50ms)
+            Circuits.SignalStream.Pump()
+            e.Run(20ms)
+            Circuits.SignalStream.Pump()
+            var played = toDev.SimPlayed()
+            print("played " + played.length + " (" + toDev.FramesPlayed + "), recorded " + fromDev.FramesRecorded + ", peak " + H.R(H.Peak(played)) + " V, missing " + fromDev.Missing)
+            try { toDev.PlayTo("no such device") } catch (Exception x) { print("unknown device: an exception") }
+            // in the thread of the kernel: the same, the samples go on by themselves
+            fromDev.SimInput(tone.Data)
+            e.Speed = 1
+            var rounds = 0
+            var total = 0
+            while (rounds < 40 && total < 100) {
+                e.AdvanceRealTime()
+                total = total + toDev.SimPlayed().length
+                Sleep(10)
+                rounds++
+            }
+            print("thread " + e.RunsInThread + ", plays on " + (total >= 100))
+            e.CloseStream(toDev)
+            e.CloseStream(fromDev)
+            e.RealTime = false
+            print("closed")
             """),
         ("Circuits: Schaltplan (Elemente im Raster, Netze aus Punkten und Draehten, Speichern und Laden, Verschieben trennt, Zahlen mit Praefix)", """
             #import "circuits"

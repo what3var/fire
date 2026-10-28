@@ -67,6 +67,9 @@ class Device : IDevice {
 
     string PortName() { return this.name }
 
+    /// <summary>A short text about the device for a device list (the IDE shows it next to the identifier): "" when there is nothing to add.</summary>
+    string Description() { return "" }
+
     /// <summary>Connected? (A device without a connection of its own - a GPIO port - always is.)</summary>
     bool IsConnected { get { return this.Connected() } }
     bool IsConnected() { return this.Connected() }

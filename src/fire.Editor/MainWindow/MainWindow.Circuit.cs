@@ -37,12 +37,9 @@ namespace fire.Editor
         private void InitCircuitUi()
         {
             _fillingSteps = true;
-            // first the real time (Tag 0), then the steps per picture
-            var realTime = new ComboBoxItem { Content = "Real time", Tag = 0 };
-            ToolTip.SetTip(realTime, "The simulation keeps pace with the clock (never faster); it takes a coarser time step when the computer cannot keep up. The view shows how much of real time it manages.");
-            cmbSimSteps.Items.Add(realTime);
-            foreach (int n in CircuitEditorControl.StepChoices)
-                cmbSimSteps.Items.Add(new ComboBoxItem { Content = (n >= 1000 ? (n / 1000).ToString(CultureInfo.InvariantCulture) + "k" : n.ToString(CultureInfo.InvariantCulture)) + " steps", Tag = n });
+            // the pace of real time: faster, real time, slow motion (Tag: simulated seconds per second)
+            foreach (double speed in CircuitEditorControl.SpeedChoices)
+                cmbSimSteps.Items.Add(new ComboBoxItem { Content = CircuitEditorControl.SpeedLabel(speed), Tag = speed });
             _fillingSteps = false;
             if (tbSimSamples.Menu is { } samples)
                 foreach (var sample in CircuitSamples.All)
@@ -88,15 +85,23 @@ namespace fire.Editor
                 var icon = circuit.Running ? _pauseIcon : _playIcon;
                 if (!ReferenceEquals(tbSimPause.IconSource, icon)) tbSimPause.IconSource = icon;
                 ToolTip.SetTip(tbSimPause, circuit.Running ? "Pause the simulation (Space in the view)" : "Run the simulation (Space in the view)");
-                int wanted = circuit.RealTime ? 0 : circuit.StepsPerFrame;
-                if (cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int shown } || shown != wanted) SelectSteps(wanted);
+                double wanted = circuit.Speed;
+                if (cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: double shown } || Math.Abs(shown - wanted) > wanted * 1e-6) SelectSpeed(wanted);
             }
         }
 
-        private void SelectSteps(int steps)
+        private void SelectSpeed(double speed)
         {
             _fillingSteps = true;
-            cmbSimSteps.SelectedItem = cmbSimSteps.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Tag is int n && n == steps);
+            var item = cmbSimSteps.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Tag is double d && Math.Abs(d - speed) <= speed * 1e-6);
+            if (item == null)
+            {
+                // a pace from the file that the list does not offer: it gets an entry of its own, in order
+                item = new ComboBoxItem { Content = CircuitEditorControl.SpeedLabel(speed), Tag = speed };
+                int at = cmbSimSteps.Items.OfType<ComboBoxItem>().TakeWhile(i => i.Tag is double d && d > speed).Count();
+                cmbSimSteps.Items.Insert(at, item);
+            }
+            cmbSimSteps.SelectedItem = item;
             _fillingSteps = false;
         }
 
@@ -167,13 +172,8 @@ namespace fire.Editor
 
         private void cmbSimSteps_SelectionChanged(object? sender, SelectionChangedEventArgs e)
         {
-            if (_fillingSteps || cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: int steps } || ActiveCircuit is not { } c) return;
-            if (steps == 0) c.RealTime = true;
-            else
-            {
-                c.RealTime = false;
-                c.StepsPerFrame = steps;
-            }
+            if (_fillingSteps || cmbSimSteps.SelectedItem is not ComboBoxItem { Tag: double speed } || ActiveCircuit is not { } c) return;
+            c.Speed = speed;
             c.FocusEditor();
         }
     }

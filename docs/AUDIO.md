@@ -1,15 +1,17 @@
 # Sound (`#import "audio"`, the package `fire-audio`)
 
-Sound output: play samples, generate tones, play WAV files. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/audio/native/fire_bridge_audio.hpp` over the platform layer `plat::audio`
+Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/audio/native/fire_bridge_audio.hpp` over the platform layer `plat::audio`
 (`native/platform/std/fire_audio_*.hpp`), so the same code runs in the virtual machine (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build. It needs `time`.
 
 ```
-program        #import "audio"        Audio.Output, Audio.Sound, Audio.Board, Audio.Sim          (fire, package fire-audio)
-bridge         fire_bridge_audio.hpp  handles, volume, waves, errors, the simulated device       (C++, shared by VM and native)
-platform       plat::audio            open / write / queued / stop / close                       (Linux: PulseAudio or ALSA, Windows: winmm, macOS: SDL2, ESP32: PWM, else: stub)
+program        #import "audio"        Audio.Output, Audio.Input, Audio.Sound, Audio.Board, Audio.Sim   (fire, package fire-audio)
+bridge         fire_bridge_audio.hpp  handles, volume, waves, errors, the simulated device             (C++, shared by VM and native)
+platform       plat::audio            open / write / queued / stop / close,                            (Linux: PulseAudio or ALSA, Windows: winmm, macOS: SDL2, ESP32: PWM, else: stub)
+                                      openInput / read / available / closeInput
 ```
 
-Music from tracker modules (`.mod`) is played by the package `fire-tracker` (docs/TRACKER.md) on top of this one.
+Music from tracker modules (`.mod`) is played by the package `fire-tracker` (docs/TRACKER.md) on top of this one. Sound through a simulated circuit - a guitar through a
+pedal, a microphone through a filter - goes with the package `circuits` (docs/CIRCUITS.md, "Streams" and "Sound devices").
 
 ## Quick start
 
@@ -71,6 +73,30 @@ Samples are **16 bit signed, little endian, interleaved** (a *frame* is one samp
 `Audio.UnsupportedException`); `Audio.Sound.Tone(frequency, milliseconds, wave, volume, rate = 22050)` generates one. `sound.Open(device)` opens an output with the rate and channels of the sound, and `output.Play(sound)` queues it
 (a sound whose rate or channels differ from the output's is an error - open the output with `sound.Open()`).
 
+## Recording
+
+`new Audio.Input(device = "default", rate = 44100, channels = 1)` records from the moment it is opened (16 bit samples like the output):
+
+* `Read(buffer, offset = 0, count = -1)` takes what was recorded (whole frames, up to `count` bytes) and returns the number of bytes - at once, 0 when nothing is there yet.
+  `Available` is the number of bytes waiting.
+* `Record(milliseconds, timeoutMs = -1)` waits until that much is recorded and returns it as an `Audio.Sound`.
+* `Close()` (or the destructor) ends the recording.
+
+Read a few times per second at least: what the system buffers is limited (a quarter of a second with PulseAudio, about a third with Windows' blocks, ALSA's own buffer) and what is
+not read in time is lost. `Audio.Board.Inputs()` lists the names ("sim" first; on Linux "default", "pulse", "pulse:<source>", "alsa", "alsa:<pcm>"; on Windows and macOS "default" and
+the names of the devices), `Audio.Board.InputAvailable()` says whether there is an input at all.
+
+```
+var mic = new Audio.Input("default", 22050)
+var take = mic.Record(2000)                        // two seconds
+var out = take.Open()
+out.Play(take)                                     // and back
+out.Drain()
+```
+
+The platform layers: ALSA in non-blocking mode (`snd_pcm_readi`, an overrun is recovered); PulseAudio's blocking read in a thread of the input that fills a ring (fragments of 10 ms);
+Windows: 16 blocks of 20 ms handed to `waveInAddBuffer`, read when the driver has filled them; SDL2: a capture device in queue mode (`SDL_DequeueAudio`); no input on the ESP32 yet.
+
 ## Errors
 
 `Audio.AudioException` with a `code` (1 invalid argument, 2 closed/invalid handle, 7 other) and its subclasses `NotFoundException` (3), `BusyException` (4: the device is used by somebody else), `PermissionException` (5),
@@ -80,10 +106,12 @@ Samples are **16 bit signed, little endian, interleaved** (a *frame* is one samp
 
 Every platform has the device `"sim"`: it records what is played. `Audio.Sim.Data()` is the bytes (a buffer; at most 16 MB are kept), `Played()` their number, `Rate()` and `Channels()` those of the output opened last. `Hold()`
 makes it slow: it takes only 4096 bytes and keeps them (`Waiting()`), as a device does that plays in real time - `Hold(false)` plays them. `Reset()` forgets everything. A program written against `"sim"` runs on the board
-with the real device name; the test suite uses it (VM and native build must agree).
+with the real device name; the test suite uses it (VM and native build must agree). It also records: `Audio.Sim.Feed(bytes, offset, count)` (or `FeedSound(sound)`) gives
+it sound, which an `Audio.Input("sim", ...)` then reads (in the channels of that input); `InputWaiting()` is what is left, `Recorded()` what was handed over.
 
 ## How the platform layers work
 
-`plat::audio` (`native/platform/std/fire_audio_none.hpp` describes the interface): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close`. The bridge keeps the handle table, applies
+`plat::audio` (`native/platform/std/fire_audio_none.hpp` describes the interface): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
+and for inputs `inputDevices`, `openInput`, `read` (takes what was recorded, never blocks), `available`, `closeInput`. The package `circuits` uses the same layer for its fast way to a device. The bridge keeps the handle table, applies
 the volume and generates the waves. SDL2 (macOS): `SDL_QueueAudio`, kept to half a second ahead, `SDL_GetQueuedAudioSize` for `queued`. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
 (all calls into PulseAudio are made by that thread, with a 200 ms buffer on the server and playback starting at once). Windows: blocks of 50 ms handed to `waveOutWrite`, free again when the driver sets the DONE flag.

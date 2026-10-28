@@ -62,6 +62,8 @@ struct Libs {
     int (*snd_pcm_state)(void*) = nullptr;
     int (*snd_pcm_nonblock)(void*, int) = nullptr;
     const char* (*snd_strerror)(int) = nullptr;
+    long (*snd_pcm_readi)(void*, void*, unsigned long) = nullptr;   // (capture; looked up, not required for output)
+    long (*snd_pcm_avail)(void*) = nullptr;
     void (*snd_lib_error_set_handler)(void (*)(const char*, int, const char*, int, const char*, ...)) = nullptr;
     // PulseAudio simple API
     void* (*pa_simple_new)(const char*, const char*, int, const char*, const char*, const PaSampleSpec*, const void*, const PaBufferAttr*, int*) = nullptr;
@@ -71,6 +73,7 @@ struct Libs {
     uint64_t (*pa_simple_get_latency)(void*, int*) = nullptr;
     void (*pa_simple_free)(void*) = nullptr;
     const char* (*pa_strerror)(int) = nullptr;
+    int (*pa_simple_read)(void*, void*, size_t, int*) = nullptr;     // (capture; looked up, not required for output)
 
     template <typename F> static bool bind(void* lib, const char* name, F& fn) { fn = reinterpret_cast<F>(dlsym(lib, name)); return fn != nullptr; }
 
@@ -87,7 +90,11 @@ struct Libs {
                            bind(alsa, "snd_pcm_start", snd_pcm_start) && bind(alsa, "snd_pcm_state", snd_pcm_state) && bind(alsa, "snd_pcm_nonblock", snd_pcm_nonblock) &&
                            bind(alsa, "snd_strerror", snd_strerror);
                 if (!all) { dlclose(alsa); alsa = nullptr; }
-                else if (bind(alsa, "snd_lib_error_set_handler", snd_lib_error_set_handler)) snd_lib_error_set_handler(quietHandler);   // (ALSA would print its complaints to stderr; we report the error ourselves)
+                else {
+                    bind(alsa, "snd_pcm_readi", snd_pcm_readi);
+                    bind(alsa, "snd_pcm_avail", snd_pcm_avail);
+                    if (bind(alsa, "snd_lib_error_set_handler", snd_lib_error_set_handler)) snd_lib_error_set_handler(quietHandler);   // (ALSA would print its complaints to stderr; we report the error ourselves)
+                }
             }
         }
         return alsa != nullptr;
@@ -102,6 +109,7 @@ struct Libs {
                            bind(pulse, "pa_simple_flush", pa_simple_flush) && bind(pulse, "pa_simple_get_latency", pa_simple_get_latency) && bind(pulse, "pa_simple_free", pa_simple_free);
                 if (!all) { dlclose(pulse); pulse = nullptr; }
                 else {
+                    bind(pulse, "pa_simple_read", pa_simple_read);
                     pulseCore = dlopen("libpulse.so.0", RTLD_LAZY | RTLD_LOCAL);
                     if (pulseCore) bind(pulseCore, "pa_strerror", pa_strerror);
                 }
@@ -356,6 +364,174 @@ inline void close(Output* o) {
         l.pa_simple_free(o->pa);
     }
     delete o;
+}
+
+
+// ---- sound input ----------------------------------------------------------------------------------------------------------------------
+// Capture: ALSA in non-blocking mode (`read` takes what the device has), or PulseAudio's simple API, whose blocking read runs in a thread of the input that fills a ring
+// (a quarter of a second; the oldest sound is given up when nobody reads). Names as for outputs: "default", "pulse" / "pulse:<source>", "alsa" / "alsa:<pcm>".
+struct Input {
+    int kind = 0;               // 1 ALSA, 2 PulseAudio
+    int frameBytes = 2;
+    int bytesPerSecond = 0;
+    void* pcm = nullptr;
+    void* pa = nullptr;
+    std::thread worker;
+    std::mutex mutex;
+    std::vector<uint8_t> ring;
+    size_t head = 0, size = 0;
+    bool quit = false;
+    std::string failure;
+};
+
+inline bool inputSupported() { return (libs().haveAlsa() && libs().snd_pcm_readi) || (libs().havePulse() && libs().pa_simple_read); }
+
+inline Status inputDevices(std::vector<std::string>& names) {
+    names.clear();
+    bool a = libs().haveAlsa() && libs().snd_pcm_readi, p = libs().havePulse() && libs().pa_simple_read;
+    if (a || p) names.push_back("default");
+    if (p) names.push_back("pulse");
+    if (a) names.push_back("alsa");
+    return success();
+}
+
+inline Status alsaOpenInput(const std::string& pcmName, int rate, int channels, Input*& in) {
+    Libs& l = libs();
+    if (!l.haveAlsa() || !l.snd_pcm_readi) return fail(E_Unsupported, "ALSA is not installed (libasound.so.2 was not found).");
+    void* pcm = nullptr;
+    int err = l.snd_pcm_open(&pcm, pcmName.c_str(), 1 /* SND_PCM_STREAM_CAPTURE */, 1 /* SND_PCM_NONBLOCK */);
+    if (err < 0) {
+        int code = (err == -2 || err == -19) ? E_NotFound : (err == -16) ? E_Busy : (err == -13 || err == -1) ? E_Permission : E_Other;
+        return fail(code, "ALSA '" + pcmName + "': " + l.snd_strerror(err));
+    }
+    err = l.snd_pcm_set_params(pcm, 2 /* SND_PCM_FORMAT_S16_LE */, 3 /* SND_PCM_ACCESS_RW_INTERLEAVED */, (unsigned)channels, (unsigned)rate, 1, 100000);
+    if (err < 0) {
+        l.snd_pcm_close(pcm);
+        return fail(err == -22 ? E_Unsupported : E_Other, "ALSA '" + pcmName + "' cannot record " + std::to_string(rate) + " Hz, " + std::to_string(channels) + " channel(s): " + l.snd_strerror(err));
+    }
+    l.snd_pcm_start(pcm);
+    Input* i = new Input();
+    i->kind = 1;
+    i->pcm = pcm;
+    i->frameBytes = 2 * channels;
+    i->bytesPerSecond = i->frameBytes * rate;
+    in = i;
+    return success();
+}
+
+inline void pulseInputThread(Input* in) {
+    Libs& l = libs();
+    size_t chunkBytes = (size_t)(in->bytesPerSecond / 100);   // 10 ms
+    chunkBytes -= chunkBytes % (size_t)in->frameBytes;
+    if (chunkBytes < (size_t)in->frameBytes) chunkBytes = (size_t)in->frameBytes;
+    std::vector<uint8_t> chunk(chunkBytes);
+    for (;;) {
+        {
+            std::lock_guard<std::mutex> lock(in->mutex);
+            if (in->quit) break;
+        }
+        int e = 0;
+        int r = l.pa_simple_read(in->pa, chunk.data(), chunkBytes, &e);
+        std::lock_guard<std::mutex> lock(in->mutex);
+        if (r < 0) { in->failure = "PulseAudio: " + l.paError(e); break; }
+        for (size_t k = 0; k < chunkBytes; k++) {
+            if (in->size == in->ring.size()) { in->head = (in->head + 1) % in->ring.size(); in->size--; }
+            in->ring[(in->head + in->size) % in->ring.size()] = chunk[k];
+            in->size++;
+        }
+    }
+}
+
+inline Status pulseOpenInput(const std::string& source, int rate, int channels, Input*& in) {
+    Libs& l = libs();
+    if (!l.havePulse() || !l.pa_simple_read) return fail(E_Unsupported, "PulseAudio is not installed (libpulse-simple.so.0 was not found).");
+    PaSampleSpec spec;
+    spec.format = 3;   // PA_SAMPLE_S16LE
+    spec.rate = (uint32_t)rate;
+    spec.channels = (uint8_t)channels;
+    // fragments of 10 ms: the sound comes in small pieces (the default would hand it over in large ones, late)
+    PaBufferAttr attr;
+    attr.maxlength = (uint32_t)-1;
+    attr.tlength = (uint32_t)-1;
+    attr.prebuf = (uint32_t)-1;
+    attr.minreq = (uint32_t)-1;
+    attr.fragsize = (uint32_t)(rate * channels * 2 / 100);
+    int e = 0;
+    void* pa = l.pa_simple_new(nullptr, "fire", 2 /* PA_STREAM_RECORD */, source.empty() ? nullptr : source.c_str(), "fire input", &spec, nullptr, &attr, &e);
+    if (!pa) return fail(e == 1 ? E_Permission : (e == 5 || e == 6) ? E_NotFound : E_Other, "PulseAudio: " + l.paError(e));
+    Input* i = new Input();
+    i->kind = 2;
+    i->pa = pa;
+    i->frameBytes = 2 * channels;
+    i->bytesPerSecond = i->frameBytes * rate;
+    i->ring.resize((size_t)(i->bytesPerSecond / 4) - (size_t)(i->bytesPerSecond / 4) % (size_t)i->frameBytes + (size_t)i->frameBytes);   // a quarter of a second
+    i->worker = std::thread(pulseInputThread, i);
+    in = i;
+    return success();
+}
+
+inline Status openInput(const std::string& name, int rate, int channels, Input*& in) {
+    in = nullptr;
+    if (name == "default") {
+        if (libs().havePulse() && libs().pa_simple_read) {
+            Status s = pulseOpenInput("", rate, channels, in);
+            if (s.ok()) return s;
+        }
+        return alsaOpenInput("default", rate, channels, in);
+    }
+    if (name == "pulse" || name.compare(0, 6, "pulse:") == 0) return pulseOpenInput(name == "pulse" ? "" : name.substr(6), rate, channels, in);
+    if (name == "alsa") return alsaOpenInput("default", rate, channels, in);
+    if (name.compare(0, 5, "alsa:") == 0) return alsaOpenInput(name.substr(5), rate, channels, in);
+    return fail(E_NotFound, "There is no sound input '" + name + "' (\"default\", \"pulse\", \"alsa\", \"alsa:<pcm>\", \"pulse:<source>\").");
+}
+
+inline Status read(Input* in, uint8_t* data, int bytes, int& got) {
+    got = 0;
+    Libs& l = libs();
+    if (in->kind == 1) {
+        long frames = bytes / in->frameBytes;
+        if (frames <= 0) return success();
+        long n = l.snd_pcm_readi(in->pcm, data, (unsigned long)frames);
+        if (n == -11 /* EAGAIN */) return success();
+        if (n < 0) {
+            int r = l.snd_pcm_recover(in->pcm, (int)n, 1);   // an overrun: the oldest sound is gone, capture goes on
+            if (r < 0) return fail(E_Other, std::string("ALSA: ") + l.snd_strerror(r));
+            l.snd_pcm_start(in->pcm);
+            return success();
+        }
+        got = (int)(n * in->frameBytes);
+        return success();
+    }
+    std::lock_guard<std::mutex> lock(in->mutex);
+    if (!in->failure.empty()) return fail(E_Other, in->failure);
+    size_t n = in->size < (size_t)bytes ? in->size : (size_t)bytes;
+    n -= n % (size_t)in->frameBytes;
+    for (size_t k = 0; k < n; k++) data[k] = in->ring[(in->head + k) % in->ring.size()];
+    in->head = (in->head + n) % in->ring.size();
+    in->size -= n;
+    got = (int)n;
+    return success();
+}
+
+inline int64_t available(Input* in) {
+    if (in->kind == 1) {
+        long frames = libs().snd_pcm_avail ? libs().snd_pcm_avail(in->pcm) : 0;
+        return frames > 0 ? (int64_t)frames * in->frameBytes : 0;
+    }
+    std::lock_guard<std::mutex> lock(in->mutex);
+    return (int64_t)in->size;
+}
+
+inline void closeInput(Input* in) {
+    if (!in) return;
+    Libs& l = libs();
+    if (in->kind == 1) l.snd_pcm_close(in->pcm);
+    else {
+        { std::lock_guard<std::mutex> lock(in->mutex); in->quit = true; }
+        if (in->worker.joinable()) in->worker.join();   // (its read returns within 10 ms)
+        l.pa_simple_free(in->pa);
+    }
+    delete in;
 }
 
 }  // namespace audio

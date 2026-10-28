@@ -170,6 +170,135 @@ inline void close(Output* o) {
     delete o;
 }
 
+
+// ---- sound input ----------------------------------------------------------------------------------------------------------------------
+// Capture with waveIn: blocks of 20 ms are handed to the driver, which fills them one after the other; `read` takes the filled ones (and the part of one that was not
+// taken before) and hands them back to the driver. When nobody reads, the driver stops at the end of the free blocks and the newest sound is lost.
+constexpr int kInBlocks = 16;
+
+struct InBlock {
+    WAVEHDR header;
+    std::vector<uint8_t> data;
+    bool submitted = false;
+};
+
+struct Input {
+    HWAVEIN handle = nullptr;
+    int frameBytes = 2;
+    int blockBytes = 0;
+    int bytesPerSecond = 0;
+    InBlock blocks[kInBlocks];
+    int next = 0;           // the block that is read next
+    DWORD taken = 0;        // the bytes of it already read
+};
+
+inline std::string inputName(UINT index) {
+    WAVEINCAPSA caps;
+    if (waveInGetDevCapsA(index, &caps, sizeof caps) != MMSYSERR_NOERROR) return "";
+    return caps.szPname;
+}
+
+inline bool inputSupported() { return waveInGetNumDevs() > 0; }
+
+inline Status inputDevices(std::vector<std::string>& names) {
+    names.clear();
+    UINT count = waveInGetNumDevs();
+    if (count == 0) return success();
+    names.push_back("default");
+    for (UINT i = 0; i < count; i++) {
+        std::string n = inputName(i);
+        if (!n.empty()) names.push_back(n);
+    }
+    return success();
+}
+
+inline bool submit(Input* in, InBlock& b) {
+    std::memset(&b.header, 0, sizeof b.header);
+    b.header.lpData = reinterpret_cast<LPSTR>(b.data.data());
+    b.header.dwBufferLength = (DWORD)b.data.size();
+    if (waveInPrepareHeader(in->handle, &b.header, sizeof(WAVEHDR)) != MMSYSERR_NOERROR) return false;
+    if (waveInAddBuffer(in->handle, &b.header, sizeof(WAVEHDR)) != MMSYSERR_NOERROR) { waveInUnprepareHeader(in->handle, &b.header, sizeof(WAVEHDR)); return false; }
+    b.submitted = true;
+    return true;
+}
+
+inline Status openInput(const std::string& name, int rate, int channels, Input*& in) {
+    in = nullptr;
+    UINT device = WAVE_MAPPER;
+    if (name != "default") {
+        UINT count = waveInGetNumDevs();
+        bool found = false;
+        for (UINT i = 0; i < count && !found; i++) if (inputName(i) == name) { device = i; found = true; }
+        if (!found && !name.empty() && name.find_first_not_of("0123456789") == std::string::npos && (UINT)std::stoi(name) < count) { device = (UINT)std::stoi(name); found = true; }
+        if (!found) return fail(E_NotFound, "There is no sound input '" + name + "' (\"default\" or one of the names that Audio.Board.Inputs() lists).");
+    }
+    WAVEFORMATEX format;
+    std::memset(&format, 0, sizeof format);
+    format.wFormatTag = WAVE_FORMAT_PCM;
+    format.nChannels = (WORD)channels;
+    format.nSamplesPerSec = (DWORD)rate;
+    format.wBitsPerSample = 16;
+    format.nBlockAlign = (WORD)(channels * 2);
+    format.nAvgBytesPerSec = (DWORD)(rate * channels * 2);
+    HWAVEIN handle = nullptr;
+    MMRESULT r = waveInOpen(&handle, device, &format, 0, 0, CALLBACK_NULL);
+    if (r != MMSYSERR_NOERROR) {
+        int code = (r == MMSYSERR_ALLOCATED) ? E_Busy : (r == MMSYSERR_BADDEVICEID || r == MMSYSERR_NODRIVER) ? E_NotFound : (r == WAVERR_BADFORMAT) ? E_Unsupported : E_Other;
+        return fail(code, "waveIn: error " + std::to_string((int)r));
+    }
+    Input* i = new Input();
+    i->handle = handle;
+    i->frameBytes = channels * 2;
+    i->bytesPerSecond = rate * channels * 2;
+    i->blockBytes = i->bytesPerSecond / 50;   // 20 ms
+    i->blockBytes -= i->blockBytes % i->frameBytes;
+    if (i->blockBytes < i->frameBytes) i->blockBytes = i->frameBytes;
+    for (InBlock& b : i->blocks) { b.data.resize((size_t)i->blockBytes); submit(i, b); }
+    waveInStart(handle);
+    in = i;
+    return success();
+}
+
+inline Status read(Input* in, uint8_t* data, int bytes, int& got) {
+    got = 0;
+    bytes -= bytes % in->frameBytes;
+    while (got < bytes) {
+        InBlock& b = in->blocks[in->next];
+        if (!b.submitted || (b.header.dwFlags & WHDR_DONE) == 0) break;   // not filled yet
+        DWORD have = b.header.dwBytesRecorded - in->taken;
+        DWORD n = have < (DWORD)(bytes - got) ? have : (DWORD)(bytes - got);
+        std::memcpy(data + got, b.data.data() + in->taken, n);
+        got += (int)n;
+        in->taken += n;
+        if (in->taken >= b.header.dwBytesRecorded) {
+            waveInUnprepareHeader(in->handle, &b.header, sizeof(WAVEHDR));
+            b.submitted = false;
+            submit(in, b);
+            in->taken = 0;
+            in->next = (in->next + 1) % kInBlocks;
+        }
+    }
+    return success();
+}
+
+inline int64_t available(Input* in) {
+    int64_t total = 0;
+    for (int k = 0; k < kInBlocks; k++) {
+        InBlock& b = in->blocks[(in->next + k) % kInBlocks];
+        if (!b.submitted || (b.header.dwFlags & WHDR_DONE) == 0) break;
+        total += (int64_t)b.header.dwBytesRecorded - (k == 0 ? in->taken : 0);
+    }
+    return total;
+}
+
+inline void closeInput(Input* in) {
+    if (!in) return;
+    waveInReset(in->handle);   // returns all blocks
+    for (InBlock& b : in->blocks) if (b.submitted) waveInUnprepareHeader(in->handle, &b.header, sizeof(WAVEHDR));
+    waveInClose(in->handle);
+    delete in;
+}
+
 }  // namespace audio
 }  // namespace plat
 }  // namespace fire

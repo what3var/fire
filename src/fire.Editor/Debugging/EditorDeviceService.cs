@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -95,7 +97,56 @@ namespace fire.Editor
             }
         }
 
+        // ---- the device drivers of the installed packages (manifest `drivers`): a fire program of their own, see PackageDriverAgent ----
+
+        private fire.Compiler.PackageDriverAgent? _agent;
+        private List<string> _agentDrivers = new();
+        private readonly SemaphoreSlim _agentGate = new(1, 1);
+
+        /// <summary>What happened when the package drivers were loaded last (for the status bar).</summary>
+        public string PackageDriverStatus { get; private set; } = "";
+
+        /// <summary>Starts the drivers of the installed packages (`reload`: ends the running ones first) and looks for their devices. Runs in the background.</summary>
+        public Task StartPackageDriversAsync(bool reload = false) => Task.Run(async () =>
+        {
+            await _agentGate.WaitAsync();
+            try
+            {
+                if (_agent != null && !reload) return;
+                StopAgent();
+                var drivers = fire.Compiler.PackageDriverAgent.FindDrivers();
+                if (drivers.Count == 0) { PackageDriverStatus = "No installed package has device drivers."; return; }
+                var agent = new fire.Compiler.PackageDriverAgent();
+                if (!agent.Start(drivers))
+                {
+                    PackageDriverStatus = "The device drivers of the packages could not be started: " + (agent.EndedWith ?? "no answer");
+                    agent.Dispose();
+                    return;
+                }
+                _agent = agent;
+                _agentDrivers = agent.DriverNames();
+                agent.Attach(Manager);
+                Manager.RefreshDevices(fastscan: true);
+                var errors = agent.StartErrors;
+                PackageDriverStatus = $"Device drivers of the packages: {string.Join(", ", _agentDrivers)}" + (errors.Count > 0 ? " - " + string.Join("; ", errors) : "");
+            }
+            catch (Exception ex) { PackageDriverStatus = "The device drivers of the packages failed: " + ex.Message; }
+            finally { _agentGate.Release(); }
+        });
+
+        private void StopAgent()
+        {
+            foreach (var name in _agentDrivers) Manager.RemoveDriver(name);
+            _agentDrivers = new();
+            _agent?.Dispose();
+            _agent = null;
+        }
+
         /// <summary>When the editor exits: disconnect and release devices (only the owner may tear down the shared manager).</summary>
-        public void Shutdown() => Manager.Shutdown();
+        public void Shutdown()
+        {
+            Manager.Shutdown();
+            try { _agent?.Dispose(); } catch (Exception) { }
+        }
     }
 }

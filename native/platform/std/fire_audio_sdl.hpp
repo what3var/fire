@@ -141,6 +141,85 @@ inline void close(Output* o) {
     delete o;
 }
 
+
+// ---- sound input ----------------------------------------------------------------------------------------------------------------------
+// Capture with SDL2's queue mode (SDL_DequeueAudio): SDL collects what the device records, `read` takes it.
+struct Input {
+    SDL_AudioDeviceID device = 0;
+    int frameBytes = 2;
+    int bytesPerSecond = 0;
+};
+
+inline bool inputSupported() {
+    std::string err = startSdl();
+    if (!err.empty()) return false;
+    bool any = SDL_GetNumAudioDevices(1) > 0;
+    stopSdl();
+    return any;
+}
+
+inline Status inputDevices(std::vector<std::string>& names) {
+    names.clear();
+    std::string err = startSdl();
+    if (!err.empty()) return success();
+    int count = SDL_GetNumAudioDevices(1);
+    if (count > 0) names.push_back("default");
+    for (int i = 0; i < count; i++) {
+        const char* n = SDL_GetAudioDeviceName(i, 1);
+        if (n && *n) names.push_back(n);
+    }
+    stopSdl();
+    return success();
+}
+
+inline Status openInput(const std::string& name, int rate, int channels, Input*& in) {
+    in = nullptr;
+    std::string err = startSdl();
+    if (!err.empty()) return fail(E_Unsupported, "SDL2 audio: " + err);
+    const char* wanted = nullptr;
+    if (name != "default") {
+        int count = SDL_GetNumAudioDevices(1);
+        for (int i = 0; i < count && !wanted; i++) {
+            const char* n = SDL_GetAudioDeviceName(i, 1);
+            if (n && name == n) wanted = n;
+        }
+        if (!wanted) { stopSdl(); return fail(E_NotFound, "There is no sound input '" + name + "' (\"default\" or one of the names that Audio.Board.Inputs() lists)."); }
+    }
+    SDL_AudioSpec want;
+    SDL_zero(want);
+    want.freq = rate;
+    want.format = AUDIO_S16LSB;
+    want.channels = (Uint8)channels;
+    want.samples = (Uint16)(rate <= 24000 ? 256 : 512);
+    want.callback = nullptr;   // queue mode
+    SDL_AudioSpec have;
+    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(wanted, 1, &want, &have, 0);
+    if (dev == 0) { std::string reason = SDL_GetError(); stopSdl(); return fail(E_Other, "SDL2 audio: " + reason); }
+    Input* i = new Input();
+    i->device = dev;
+    i->frameBytes = 2 * channels;
+    i->bytesPerSecond = rate * i->frameBytes;
+    SDL_PauseAudioDevice(dev, 0);
+    in = i;
+    return success();
+}
+
+inline Status read(Input* in, uint8_t* data, int bytes, int& got) {
+    int n = bytes - bytes % in->frameBytes;
+    got = n > 0 ? (int)SDL_DequeueAudio(in->device, data, (Uint32)n) : 0;
+    got -= got % in->frameBytes;
+    return success();
+}
+
+inline int64_t available(Input* in) { return (int64_t)SDL_GetQueuedAudioSize(in->device); }
+
+inline void closeInput(Input* in) {
+    if (!in) return;
+    SDL_CloseAudioDevice(in->device);
+    stopSdl();
+    delete in;
+}
+
 }  // namespace audio
 }  // namespace plat
 }  // namespace fire

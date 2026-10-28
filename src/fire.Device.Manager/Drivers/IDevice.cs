@@ -12,6 +12,9 @@ namespace fire.Device.Manager.Drivers
 
         string? PortName { get; }
 
+        /// <summary>A short text about the device for the device list (the product of a USB device); null: nothing to add.</summary>
+        string? Description => null;
+
         /// <summary>Received raw data. Called from the device's OWN thread. Several interested parties
         /// attach with `+=` (script bridge, packet tracking of the DeviceManager) - a direct `=`
         /// would displace the others.</summary>

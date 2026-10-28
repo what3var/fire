@@ -177,6 +177,18 @@ A **packed standalone program** (`fire.Compiler build`, the VM inside) carries t
 libraries of the built-in bridges (SDL, serial ports). A program is packed for the machine that packs it: pack on the system you want to run it on, or build natively
 (`--engine native`), which needs no libraries at all.
 
+### Tracing calls (measuring a native outside the VM)
+
+To measure or profile the C++ of a package without the virtual machine around it, the calls a program makes can be recorded and played back:
+
+* `FIRE_PKG_TRACE=<file>` writes a line per call of a package native - its name and its arguments (numbers exactly, text, arrays; of a byte buffer only the length) -
+  and `FIRE_PKG_TRACE_PREFIX=__Cir` limits it to the natives whose names start with that.
+* `FIRE_PKGBUILD_KEEP=1` keeps the folder in which a package library is built (the generated `wrapper.cpp`, the runtime, the ABI headers), so the library can be
+  built again by hand - with other flags, with `-g` for a profiler.
+
+A small program that loads the library (`fire_pkg_call`) and calls the recorded functions again is then enough to time them or run them under valgrind; the
+kernel of the circuits package was measured this way.
+
 ## 5. The C++ toolchain (for users)
 
 A native build and the natives of packages need a C++ compiler on the machine. fire looks for one in this order: the toolchain chosen for the machine (`Toolchain\toolchain.json` next to

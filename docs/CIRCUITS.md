@@ -83,6 +83,10 @@ such as the one of a UJT at its peak point, a tunnel diode, a diac) is done agai
 where one does not converge, down to 1/64, and doubled again after one that did. Scopes and recordings keep the time step of the circuit; a circuit
 with a transmission line keeps its steps (the line needs whole steps).
 
+Each step starts Newton's method from where the two steps before point to (the voltages extrapolated); after the first iteration the parts that are not
+linear are linearized again at the solution, and when their currents are those their old linearization predicted (within 1e-4 and 1 nA, the device check
+of SPICE) the step is done - while the voltages move smoothly (sound) most steps need one factorization instead of two. `PlanInfo(10)` counts them.
+
 | Part | Ports | |
 |---|---|---|
 | `Diode(model = "diode")` | `A` anode, `B` cathode | the Shockley equation with emission coefficient and breakdown |
@@ -255,7 +259,7 @@ details of a data sheet (no temperature).
 | `Time`, `Reset()` | the time of the simulation; back to time 0 (the parts take their initial state) |
 | `Parts()` | the parts and nested circuits |
 | `IsCompiled` | is there a plan for the circuit as it is now? |
-| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear, 7 Newton iterations, 8 steps that did not converge (also at 1/64), 9 steps done again in smaller steps |
+| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear, 7 Newton iterations, 8 steps that did not converge (also at 1/64), 9 steps done again in smaller steps, 10 steps that ended after one iteration |
 
 A nested circuit is a part: give it ports with `AddPort`, connect them inside, and connect them outside like the ports of any part. Stepping a nested circuit steps the
 outermost one.
@@ -353,7 +357,10 @@ the comparators react one time step late and the discharge transistor has a resi
 
 ## Sound through a circuit
 
-`AudioInput(amplitude = 1V)` is the input of sound: a voltage source that `ProcessAudio` drives with the samples (full scale is `amplitude`).
+`AudioInput(amplitude = 1V, device = "", rate = 44100Hz)` is the input of sound: a voltage source that `ProcessAudio` drives with the samples (full scale is `amplitude`) -
+or, with a `device` ("default", "sim", a name of `Audio.Board.Inputs()`), what that sound device records. `AudioOutput(device = "default", fullScale = 1V, rate = 44100Hz)` is a
+loudspeaker: the voltage between its pins plays on the device (to the circuit it is 1 MOhm). Both open their device when the circuit is compiled and hand the sound over in the
+kernel (see "Sound devices" below); a device that cannot be opened leaves the circuit running without sound and says why in `DeviceError`.
 `circuit.ProcessAudio(sound, input, output, reference = undefined, outputScale = amplitude, oversample = 4)` sends an `Audio.Sound` of
 `#import "audio"` (or any object with Data, Offset, Frames, Channels and Rate) through the circuit and returns the samples at `output` - mono,
 16 bit, full scale at `outputScale`. The time step becomes 1 / (rate * oversample); the kernel does the whole sound in one call (a circuit with
@@ -397,6 +404,7 @@ drops the older half then and goes on - the scopes of a schematic roll with 8192
 | `Last(name)`, `Count`, `Clear()` | the last sample, the number of samples, start again |
 | `Trace(name, columns, span = 0, trigger = 0, level = 0, times = "")` | a channel over `columns` columns of a screen, computed natively: the last samples, or `span` seconds - from the latest crossing of `level` (`trigger` 1 rising, 2 falling); `times` multiplies another channel in (power); `[first column with data, values...]` |
 | `Pairs(x, y, count = 2000)` | the last pairs of two channels for an XY display: `[x0, y0, x1, y1, ...]` |
+| `Stats(name, times = "")` | measurements of a channel over what the scope holds, computed natively: `[count, min, max, average, rms, frequency in Hz (0: none found), duration in s]`; average and rms over whole periods (between the first and the last rising crossing of the middle, with a hysteresis of a tenth of peak to peak) |
 | `Spectrum(name, size = 512, fmax = 20kHz)` | the spectrum of a channel, computed natively: `size` samples taken at the rate `2 * fmax` (fmax 0: the rate of the simulation), mean removed, Hann window; `[bin width in Hz, amplitude of bin 1, ..., of bin size/2]` |
 
 **`Multimeter`**: `Multimeter.Volts(a, b = undefined)` (between two ports), `Multimeter.Amps(part)`, `Multimeter.Rms(samples)`.
@@ -515,11 +523,13 @@ The schematic has them as elements too (the category Devices of the palette): `G
 
 ### Real time
 
-`circuit.RealTime = true` lets the simulation keep pace with the clock - never faster. `circuit.AdvanceRealTime(budget = 20ms)` simulates the time since its last
+`circuit.RealTime = true` lets the simulation keep pace with the clock - never faster than its `Speed`. `circuit.Speed` is the pace: simulated seconds per
+second of the clock, 1 (the default) for real time, 0.01 for a hundred times slower (slow motion, to watch a circuit of 1 kHz), 10 for ten times faster (as far
+as the computer keeps up); between 0.0001 and 1000. The `.biscuit` file keeps it (`"speed": "0.01"`, left out at 1). `circuit.AdvanceRealTime(budget = 20ms)` simulates the time since its last
 call (the first call starts the clock), using at most `budget` of computing time; `circuit.RunRealTime(duration)` does that for `duration` of the clock and
 returns. The circuit simulates with its own `TimeStep` as long as the computer keeps up. When it falls behind for a while, the step doubles (up to
 `MaxTimeStep`, by default 64 times `TimeStep`); with time to spare it halves again. `CurrentTimeStep` is the step it uses now, `RealTimeShare` how much of real
-time it manages (1 = all of it, 0.5 = half as fast as the clock). `TimeStep` and the saved file keep the step the circuit was given; `RealTime = false` goes back
+time it manages at the chosen speed (1 = all of it, 0.5 = half of it). `TimeStep` and the saved file keep the step the circuit was given; `RealTime = false` goes back
 to it. `RestartRealTime()` starts the clock anew after a pause, so the pause is not made up.
 
 ```fire
@@ -532,8 +542,89 @@ print(c.Time)                  // about 2 s, if the computer kept up
 print(c.RealTimeShare)         // 1.0 if it did
 ```
 
-A `UI.CircuitView` with `realTime = true` (in spark: **Real time** in the list of steps of the tool strip Simulation) simulates that way and draws at most 30
-times a second. The corner shows how much of real time it manages and the step it takes for that (`real time 100%  (step 10us)`; yellow below 99 %).
+A `UI.CircuitView` always simulates that way, at the speed of its circuit, and draws at most 30 times a second (in spark: the list of speeds in the tool
+strip Simulation - faster, **Real time**, slow motion down to 1/10000; the choice is saved with the circuit, with undo). The corner shows the speed, how much of
+it the simulation manages and the step it takes for that (`1/100 real time 100%  (step 10us)`; yellow below 99 %).
+
+### Real time in a thread of the kernel
+
+Where the platform has threads (the virtual machine, native programs for Linux, Windows and macOS), real time runs in a thread of the kernel: after the
+first `AdvanceRealTime` the circuit simulates on by itself, at its `Speed`, and the program only *services* it with each further `AdvanceRealTime` (the
+circuit view does that with every picture). So drawing, events and garbage collection of the program do not hold the simulation up - sound stays
+without gaps.
+
+Parts written in fire (`StampStep`, `Commit`) do not run in the thread. Each service calls them with the voltages of now; what `StampStep` adds to the
+circuit (`CurrentInto`, `BranchValue`) the thread keeps adding in every step until the next service - the simulation runs on with the last values until
+new ones come. A part with `EveryStep = true` must take part in every step (a `FunctionSource` does): the circuit then steps in fire as before - exact,
+but much slower. `Threaded = false` turns the thread off (AdvanceRealTime then simulates up to now itself, within its budget, with the coarser step
+when the computer cannot keep up); `RunsInThread` tells whether it runs. `Step`, `Run`, `ProcessSamples`, a change of the circuit and
+`RestartRealTime` (a pause) stop the thread; the next `AdvanceRealTime` starts it again where the circuit is. `RealTimeShare` is the share of the
+wanted time the thread manages; when it falls behind by more than a quarter of a second, the rest is given up.
+
+### Streams
+
+`circuit.Output(plus, minus = ground, rate = 44100Hz)` returns a `Circuits.SignalStream`: a ring of samples (volts) that the circuit fills with the
+voltage of `plus` against `minus` at every point k / rate of its grid - interpolated between the steps around it, also when a step was done again in
+smaller steps, and whether the program steps the circuit (`Run`) or the thread of the kernel runs it. `circuit.Input(source, rate = 44100Hz)` returns
+one that drives a voltage source (an `AudioInput`, or any voltage source of the package): the program writes samples, the source follows them,
+interpolated; when one is missing the last one holds (`Missing` counts them). Streams outlive changes of the circuit; `CloseStream` ends one.
+
+| | |
+|---|---|
+| `Write(float[] volts)`, `Read(max = -1)` | the raw samples (volts): as many as fit / up to `max` (all with -1) |
+| `WritePcm(data, offset, frames, channels = 1, fullScale = 1V)`, `ReadPcm(data, offset, maxFrames, fullScale = 1V)` | 16 bit sound (little endian; channels are mixed); a full-scale sample is `fullScale` volts |
+| `Count`, `Capacity`, `Rate`, `Lost`, `Missing`, `Clear()` | samples in it, the most it holds (default one second), samples per second, samples given up because nobody read them, samples missing for a source |
+
+```fire
+var input = c.Input(guitar, 48kHz)
+var output = c.Output(amp.Out, c.Ground, 48kHz)
+input.Write(samples)          // volts
+c.Run(0.1s)                   // or real time: the thread fills `output` on its own
+var volts = output.Read()     // 4800 samples
+```
+
+### Sound devices
+
+A stream can go to a sound device, or come from one, without the program in between - **the fast way**: the kernel hands the samples to the device itself (with the platform layer
+of the package `audio`, docs/AUDIO.md), also while the circuit runs in its thread.
+
+```fire
+c.PlayTo(amp.Out)                                  // the voltage of amp.Out on the default device: 1 V is full scale
+c.RecordFrom(guitar, "default", 0.5V)              // the microphone drives the source `guitar`: full scale is 0.5 V
+c.AdvanceRealTime()                                // (or the circuit view) - the circuit runs on in its thread
+```
+
+`circuit.PlayTo(plus, minus = ground, device = "default", fullScale = 1V, rate = 44100Hz)` and `circuit.RecordFrom(source, device = "default", fullScale = 1V, rate = 44100Hz)` make the
+stream and attach it; on a stream of `Output` or `Input` the same is `stream.PlayTo(device, fullScale = 1V, latency = 50ms)` and `stream.RecordFrom(device, fullScale, latency)`,
+`StopDevice()` ends it. The names are those of `Audio.Output` and `Audio.Input` ("default", "pulse", "alsa:<pcm>", ...); `"sim"` is a simulated device of the kernel: it keeps what it
+played (`stream.SimPlayed()`, volts) and records what the program gives it (`stream.SimInput(bytes)`, 16 bit mono). `Playing`, `Recording`, `FramesPlayed`, `FramesRecorded` tell
+how it goes. Louder samples than full scale are clipped; a stereo input is mixed to one.
+
+* **Latency.** An output starts when `latency` of sound is there and keeps about that much between the circuit and the speaker; more means fewer dropouts and later sound.
+* **The clock of the sound card.** At speed 1 in the thread of the kernel, the device leads the way: the thread runs the circuit a little faster or slower, so that the sound in
+  between stays at the latency (a sound card's clock is never quite that of the computer - without this an output would run dry, or overflow, after some minutes). At other speeds
+  the sound plays at the pace of the circuit (slow motion is heard in pieces).
+* **The program steps the circuit** (`Threaded = false`, parts that step with every step): `AdvanceRealTime` hands the sound over before and after it simulates; a program that
+  steps with `Run` calls `Circuits.SignalStream.Pump()` now and then.
+
+**The raw way** - when the program wants to see or change the sound - is a stream and the package `audio`: `Audio.Input.Read` gives bytes, `stream.WritePcm` puts them into
+the circuit; `stream.ReadPcm` takes what the circuit made, `Audio.Output.Offer` plays it.
+
+```fire
+var mic = new Audio.Input("default", 48000)
+var spk = new Audio.Output("default", 48000)
+var inS = c.Input(guitar, 48kHz)
+var outS = c.Output(amp.Out, c.Ground, 48kHz)
+var buf = new byte[4800]
+while (running) {
+    var n = mic.Read(buf)                          // what was recorded since
+    inS.WritePcm(buf, 0, n / 2, 1, 0.5V)
+    c.AdvanceRealTime()
+    var m = outS.ReadPcm(buf, 0, 2400, 1V)         // what the circuit made (and do anything with it)
+    spk.Write(buf, 0, m * 2)
+    Sleep(10)
+}
+```
 
 ### A circuit that runs alongside the program
 
@@ -613,7 +704,7 @@ print(s.ToText())                      // the schematic as the text of a .biscui
 
 - **Elements:** `Circuits.Symbols.Catalog()` lists them with their properties (`category|type|name:kind=default;...`):
   Wire, Ground, Resistor, Capacitor, Inductor, Switch (`closed`, `momentary`), Source and Rail (`waveform` dc/sine/square, `voltage`, `frequency`, `offset`, `phase`, `duty`;
-  a rail is a source to ground with one pin), CurrentSource, AudioInput, LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
+  a rail is a source to ground with one pin), CurrentSource, AudioInput (`device`: records from a sound device), AudioOutput (`device`, `fullScale`: a loudspeaker), LogicInput, Diode, Zener, Led, Transistor and Mosfet (`model`, `flip`), Formula, OpAmp, Comparator,
   And/Nand/Or/Nor/Xor/Xnor (`inputs`), Not, Buffer, DFlipFlop, SRLatch, JKFlipFlop (`falling`, `reset`, `spacing`), SchmittTrigger (`lower`, `upper`,
   `inverting`), Counter, Timer555 (DFlipFlop, Counter and Timer555 also in Falstad's chip layout: `layout` = falstad puts their pins on all four sides as there,
   `spacing` 4 or 2; the 555 then takes its supply at the Vcc pin, `groundPin`), Potentiometer (`position`; potentiometers with the same `group` turn together, like a stereo potentiometer), Transformer (`ratio`, `coupling`, `width`, `reverse`), Relay (`coil` both/start/end),
@@ -623,7 +714,8 @@ print(s.ToText())                      // the schematic as the text of a .biscui
   CurrentConveyor, Ota, Optocoupler, the logic chips TFlipFlop, Latch, RingCounter, Multiplexer, Demultiplexer, HalfAdder, FullAdder, SipoShift, PisoShift,
   Adc, Dac, SevenSegmentDecoder, SevenSegment, Monostable, PhaseComparator, Vco (always in Falstad's chip layout; `bits`, `spacing` and the options of the
   chip) and TriState (`flip`: the control on the other side); sources and rails also have the waveforms triangle,
-  sawtooth and noise, LogicOutput, Probe, Scope (`probe` = the name of an element or one of its pins - `R1.2` counted from 1, or the name of a port of its part: `Q1.B` -, `quantity`
+  sawtooth and noise, LogicOutput, Probe (`measure` voltage - the value now -, max, min, peakToPeak, average, rms or frequency, from what it recorded),
+  Scope (`probe` = the name of an element or one of its pins - `R1.2` counted from 1, or the name of a port of its part: `Q1.B` -, `quantity`
   voltage/current/power (v * i), `timePerDiv` (the time base: 10 divisions across; 0 = one step per pixel), `trigger` free/rising/falling through `triggerLevel`,
   `display` time, xy (the current of the element over its voltage, its characteristic curve) or spectrum - an FFT analyzer: the last `fftSize` samples (128 .. 4096, default 512) taken at twice `maxFrequency` (default 20kHz; 0: at the rate of the simulation, the axis automatically), Hann window, in dB, computed natively; `range`), Label (`text`), Pin (`port`: a port of the circuit, so a schematic can be a subcircuit), Text, and the parts at the simulated devices: GpioLine,
   I2cAdc, I2cDac, SpiShiftOut, SpiShiftIn (see [Parts at the simulated devices](#parts-at-the-simulated-devices)).
@@ -692,7 +784,7 @@ or of a member of `Circuits.Circuit`). Renaming an element moves the bindings al
 
 `UI.CircuitView` is a control of the UI library (docs/UI.md) that shows a circuit as a live schematic, like Falstad's simulator: wires and leads coloured by their voltage
 (green positive, red negative, grey 0 V; `voltageRange`), dots running with the current through the parts and the wires, LEDs that light up, logic outputs, probes,
-scopes drawn into the schematic. While `running` it simulates `stepsPerFrame` steps per cycle (Space pauses).
+scopes drawn into the schematic. While `running` it simulates in real time at the speed of the circuit (`Circuit.Speed`, see "Real time"; Space pauses).
 
 ```fire
 #import "circuits.ui"
@@ -725,6 +817,11 @@ A click toggles switches (a `momentary` one while it is held) and logic inputs -
 
 The view draws at the full resolution of the screen (a UI.Root with `Scaling` above 1): lines and text are sharp, not stretched. Changes that keep the connections
 (moving a scope, a text, or a group as a whole) do not compile the circuit again - the simulation and the scopes go on.
+
+**Info box.** While exactly one element is selected, a box at the top right shows its values, like the one at the bottom right of Falstad's simulator: its kind
+and name, its properties with a unit, the voltage across it, the current through it and the power (a part with more pins: the voltage of each pin). For a scope
+(also as FFT analyzer or XY) and a probe it shows what was recorded: max, min, peak to peak, average, rms, frequency and period, the time it covers - and for a
+spectrum the strongest line and the width of a bin. `InfoLines(element)` gives the lines.
 
 `OnChange` (or `TakeChanged()`) reports every change - `view.Schematic.ToText()` is the file to save.
 

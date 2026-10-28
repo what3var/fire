@@ -39,6 +39,12 @@ namespace fire.Runtime
         private static readonly object Lock = new();
         private static readonly Dictionary<string, (string File, Func<string, string?>? Locate)> Locations = new(StringComparer.Ordinal);
 
+        // For measuring natives outside the VM (docs/PACKAGE_NATIVES.md, "Tracing calls"): FIRE_PKG_TRACE names a file that gets a line per call of a native whose name
+        // starts with FIRE_PKG_TRACE_PREFIX (default: every native) - the name and the arguments - so that a small C++ program can replay them against the library.
+        private static readonly string? TracePath = Environment.GetEnvironmentVariable("FIRE_PKG_TRACE");
+        private static readonly string TracePrefix = Environment.GetEnvironmentVariable("FIRE_PKG_TRACE_PREFIX") ?? "";
+        private static StreamWriter? _trace;
+
         /// <summary>Registers the natives <paramref name="names"/> (in this order: calls address natives by index); <paramref name="libraryFiles"/> are the file names of the libraries they
         /// live in, <paramref name="locate"/> finds a library file on this machine (null: the packed program's payload provides it by name).</summary>
         public static void Register(NativeRegistry natives, IReadOnlyList<string>? names, IReadOnlyList<string>? libraryFiles, Func<string, string?>? locate)
@@ -123,13 +129,17 @@ namespace fire.Runtime
             if (fn.Arity != args.Length)
                 throw new InvalidOperationException($"The native function '{name}' takes {fn.Arity} argument(s), called with {args.Length}.");
 
-            var allocs = new List<IntPtr>();
-            var pins = new List<GCHandle>();
-            IntPtr argBlock = Marshal.AllocHGlobal(Math.Max(1, args.Length) * ValSize), result = Marshal.AllocHGlobal(ValSize), error = Marshal.AllocHGlobal(512);
+            if (TracePath != null && name.StartsWith(TracePrefix, StringComparison.Ordinal)) Trace(name, args);
+            // the blocks for the arguments, the result and the message stay with the thread (a call is a few hundred ns, not a few allocations); a native
+            // that calls back into the VM on the same thread gets blocks of its own (depth)
+            var blocks = CallBlocks.For(args.Length);
+            List<IntPtr>? allocs = null;
+            List<GCHandle>? pins = null;
+            IntPtr argBlock = blocks.Args, result = blocks.Result, error = blocks.Error;
             try
             {
                 Marshal.WriteByte(error, 0);
-                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, allocs, pins, name);
+                for (int i = 0; i < args.Length; i++) ToNative(args[i], argBlock + i * ValSize, ref allocs, ref pins, name);
                 int rc = lib.Call(fn.Index, argBlock, args.Length, result, error, 512);
                 if (rc == 2)
                 {
@@ -145,15 +155,76 @@ namespace fire.Runtime
             }
             finally
             {
-                foreach (var p in allocs) Marshal.FreeHGlobal(p);
-                foreach (var pin in pins) pin.Free();
-                Marshal.FreeHGlobal(argBlock);
-                Marshal.FreeHGlobal(result);
-                Marshal.FreeHGlobal(error);
+                if (allocs != null) foreach (var p in allocs) Marshal.FreeHGlobal(p);
+                if (pins != null) foreach (var pin in pins) pin.Free();
+                CallBlocks.Release();
             }
         }
 
-        private static void ToNative(Value v, IntPtr dest, List<IntPtr> allocs, List<GCHandle> pins, string function)
+        // The memory of the calls of a thread: per depth (a native may call back into the VM, which calls a native again) blocks for the arguments, the result
+        // and the message, grown when a call has more arguments. Never freed (a few hundred bytes per thread and depth).
+        private sealed class CallBlocks
+        {
+            public IntPtr Args, Result, Error;
+            public int Capacity;
+            [ThreadStatic] private static List<CallBlocks>? _stack;
+            [ThreadStatic] private static int _depth;
+
+            public static CallBlocks For(int argc)
+            {
+                var stack = _stack ??= new List<CallBlocks>();
+                if (_depth == stack.Count)
+                    stack.Add(new CallBlocks { Result = Marshal.AllocHGlobal(ValSize), Error = Marshal.AllocHGlobal(512) });
+                var b = stack[_depth++];
+                if (b.Capacity < Math.Max(1, argc))
+                {
+                    if (b.Args != IntPtr.Zero) Marshal.FreeHGlobal(b.Args);
+                    b.Capacity = Math.Max(8, argc);
+                    b.Args = Marshal.AllocHGlobal(b.Capacity * ValSize);
+                }
+                return b;
+            }
+
+            public static void Release() { if (_depth > 0) _depth--; }
+        }
+
+        // one line of the trace: the name and the arguments, tab separated - i:int f:float(bits, hex) b:bool c:char s:text(base64 of UTF-8) B:buffer(length; the bytes
+        // are not kept) a:count followed by the items in the next fields - u: undefined
+        private static void Trace(string name, Value[] args)
+        {
+            lock (Lock)
+            {
+                _trace ??= new StreamWriter(TracePath!, append: false) { AutoFlush = false };
+                var sb = new System.Text.StringBuilder(name);
+                foreach (var a in args) TraceValue(sb, a);
+                _trace.WriteLine(sb.ToString());
+                _trace.Flush();
+            }
+        }
+
+        private static void TraceValue(System.Text.StringBuilder sb, Value v)
+        {
+            sb.Append('\t');
+            switch (v.Kind)
+            {
+                case ValueKind.Int: sb.Append("i:").Append(v.AsInt()); break;
+                case ValueKind.Float: sb.Append("f:").Append(BitConverter.DoubleToInt64Bits(v.AsFloat()).ToString("x")); break;
+                case ValueKind.Bool: sb.Append("b:").Append(v.AsBool() ? 1 : 0); break;
+                case ValueKind.Char: sb.Append("c:").Append((int)v.AsChar()); break;
+                case ValueKind.String: sb.Append("s:").Append(Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(v.AsString()))); break;
+                case ValueKind.Buffer: sb.Append("B:").Append(v.AsBuffer().Length); break;
+                case ValueKind.Array:
+                {
+                    var arr = v.AsArray();
+                    sb.Append("a:").Append(arr.Length);
+                    for (int i = 0; i < arr.Length; i++) TraceValue(sb, arr.Items[i]);
+                    break;
+                }
+                default: sb.Append("u:"); break;
+            }
+        }
+
+        private static void ToNative(Value v, IntPtr dest, ref List<IntPtr>? allocs, ref List<GCHandle>? pins, string function)
         {
             var fv = new FireVal();
             switch (v.Kind)
@@ -167,7 +238,7 @@ namespace fire.Runtime
                 {
                     string s = v.AsString();
                     IntPtr p = Marshal.StringToHGlobalUni(s);
-                    allocs.Add(p);
+                    (allocs ??= new List<IntPtr>()).Add(p);
                     fv.Kind = KindString; fv.Length = s.Length; fv.Bits = p.ToInt64();
                     break;
                 }
@@ -175,8 +246,8 @@ namespace fire.Runtime
                 {
                     var arr = v.AsArray();
                     IntPtr items = Marshal.AllocHGlobal(Math.Max(1, arr.Length) * ValSize);
-                    allocs.Add(items);
-                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, allocs, pins, function);
+                    (allocs ??= new List<IntPtr>()).Add(items);
+                    for (int i = 0; i < arr.Length; i++) ToNative(arr.Items[i], items + i * ValSize, ref allocs, ref pins, function);
                     fv.Kind = KindArray; fv.Length = arr.Length; fv.Bits = items.ToInt64();
                     break;
                 }
@@ -185,19 +256,21 @@ namespace fire.Runtime
                     // by reference: pinned for the call, the native reads and writes the bytes in place
                     var buf = v.AsBuffer();
                     var pin = GCHandle.Alloc(buf.Bytes, GCHandleType.Pinned);
-                    pins.Add(pin);
+                    (pins ??= new List<GCHandle>()).Add(pin);
                     fv.Kind = KindBuffer; fv.Length = buf.Length; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
                     break;
                 }
                 default:
                     throw new InvalidOperationException($"An argument of the native function '{function}' is {v.Kind}: only numbers, bool, char, text, byte buffers and arrays of these can be passed to a package's native.");
             }
-            Marshal.StructureToPtr(fv, dest, false);
+            Marshal.WriteInt32(dest, fv.Kind);
+            Marshal.WriteInt32(dest, 4, fv.Length);
+            Marshal.WriteInt64(dest, 8, fv.Bits);
         }
 
         private static Value FromNative(IntPtr src)
         {
-            var fv = Marshal.PtrToStructure<FireVal>(src);
+            var fv = new FireVal { Kind = Marshal.ReadInt32(src), Length = Marshal.ReadInt32(src, 4), Bits = Marshal.ReadInt64(src, 8) };
             switch (fv.Kind)
             {
                 case KindUndefined: return Value.MakeUndefined();

@@ -226,6 +226,7 @@ namespace fire.Editor
             _devicesPanel.Attach(_devices);
             _devicesPanel.StatusMessage += UpdateStatus;
             _devicesPanel.OpenTraceRequested += OpenTrace;
+            _devicesPanel.OpenTerminalRequested += OpenTerminal;
             _devices.Manager.DevicesChanged += () => Dispatcher.UIThread.Post(RefreshDefaultDeviceCombo);
             _devices.Manager.DefaultChanged += () => Dispatcher.UIThread.Post(RefreshDefaultDeviceCombo);
             mnuLoopback.IsChecked = _devices.LoopbackEnabled;
@@ -965,6 +966,28 @@ namespace fire.Editor
         }
 
         /// <summary>Opens the packet trace of the device `identifier` in a tab (one that is already open is only brought to the front).</summary>
+        private readonly Dictionary<string, DeviceTerminalWindow> _terminals = new();
+
+        /// <summary>Opens the terminal of a device (or brings it to the front).</summary>
+        private void OpenTerminal(string identifier)
+        {
+            if (_terminals.TryGetValue(identifier, out var open)) { open.Activate(); return; }
+            var window = new DeviceTerminalWindow(_devices.Manager, identifier);
+            _terminals[identifier] = window;
+            window.Closed += (_, _) => _terminals.Remove(identifier);
+            window.Show(this);
+        }
+
+        /// <summary>The standard packages are installed (App, in the background): the device drivers of the packages start.</summary>
+        public void OnStandardPackagesReady()
+        {
+            _ = _devices.StartPackageDriversAsync().ContinueWith(_ => Dispatcher.UIThread.Post(() =>
+            {
+                if (_devices.PackageDriverStatus.Length > 0) UpdateStatus(_devices.PackageDriverStatus);
+                _devicesPanel.Refresh();
+            }));
+        }
+
         private void OpenTrace(string identifier)
         {
             var existing = _documents.FirstOrDefault(d => d.Trace is { } t && t.DeviceIdentifier == identifier);

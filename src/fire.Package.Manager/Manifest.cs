@@ -124,6 +124,8 @@ namespace fire.Package.Manager
         /// <summary>The files the prelude embeds with `new Resource("path")` (docs/RESOURCES.md): the key is the path as the prelude writes it (relative to the prelude's folder,
         /// with `/`), the value the file - in a forge file where it is now, in a package where it lies in the package (the prelude's folder + the key).</summary>
         public Dictionary<string, string>? Resources { get; set; }
+        /// <summary>The device drivers of the import (classes of the device framework, made with `new Class()`): the IDE loads them and lists their devices. null: none.</summary>
+        public List<string>? Drivers { get; set; }
     }
 
     /// <summary>C++ source for the native backend. The files are put into the generated file after the runtime, outside of any namespace: they include what they need
