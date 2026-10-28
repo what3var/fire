@@ -2829,7 +2829,9 @@ namespace Circuits {
                 top.Service()
                 return
             }
+            if (top.streams.count > 0) { __CirStreamPump() }
             top.clock.Advance(Circuits.Units.Seconds(budget))
+            if (top.streams.count > 0) { __CirStreamPump() }
         }
 
         /// <summary>The clock of real time starts anew: the time since the last AdvanceRealTime (a pause) is not made up. With the thread of the kernel, the
@@ -2878,6 +2880,22 @@ namespace Circuits {
             var st = b.stream
             top.streams.Add(take b)
             top.Invalidate()
+            return st
+        }
+
+        /// <summary>Plays the voltage of `plus` against `minus` (ground when left out) on a sound device - the fast way: an Output stream that the kernel hands
+        /// to the device itself (SignalStream.PlayTo). `fullScale`: the volts of full scale. The stream is returned (to stop it: CloseStream).</summary>
+        Circuits.SignalStream PlayTo(Port plus, Port minus = undefined, string device = "default", float fullScale : any = 1, float rate : any = 44100) {
+            var st = this.Output(plus, minus, rate, 0)
+            st.PlayTo(device, fullScale)
+            return st
+        }
+
+        /// <summary>Drives `source` (an AudioInput or any voltage source) with what a sound device records - the fast way: an Input stream that the kernel
+        /// fills itself (SignalStream.RecordFrom). A full-scale sample is `fullScale` volts.</summary>
+        Circuits.SignalStream RecordFrom(Circuits.VoltageSource source, string device = "default", float fullScale : any = 1, float rate : any = 44100) {
+            var st = this.Input(source, rate, 0)
+            st.RecordFrom(device, fullScale)
             return st
         }
 
@@ -4565,6 +4583,40 @@ namespace Circuits {
         }
         /// <summary>Empties the stream.</summary>
         undefined Clear() { __CirStreamClear(this.handle) }
+
+        // ---- sound devices (the fast way: the kernel hands the samples over itself) ----
+        /// <summary>Plays the stream (an Output of a circuit) to a sound device - "default", another name of the platform (as for Audio.Output) or "sim" (a
+        /// simulated device that keeps what it played, SimPlayed). The kernel hands the samples over itself, also while the circuit runs in its thread; at
+        /// speed 1 the clock of the sound card leads the way. A sample of `fullScale` volts is full scale (louder ones are clipped); `latency`: the sound
+        /// kept between the circuit and the device (more: fewer dropouts, later sound). The stream is not read by the program any more.</summary>
+        undefined PlayTo(string device = "default", float fullScale : any = 1, float latency : any = 0.05) {
+            if (__CirStreamPlay(this.handle, device, Circuits.Units.Volts(fullScale), Circuits.Units.Seconds(latency)) == 0) { throw new Exception(__CirLastError()) }
+        }
+        /// <summary>Records from a sound device (a microphone, a line in; "default", a name of the platform or "sim") into the stream (an Input of a circuit):
+        /// a full-scale sample is `fullScale` volts. Stereo is mixed to one.</summary>
+        undefined RecordFrom(string device = "default", float fullScale : any = 1, float latency : any = 0.05) {
+            if (__CirStreamRecord(this.handle, device, Circuits.Units.Volts(fullScale), Circuits.Units.Seconds(latency)) == 0) { throw new Exception(__CirLastError()) }
+        }
+        /// <summary>Closes the sound devices of the stream (PlayTo, RecordFrom).</summary>
+        undefined StopDevice() { __CirStreamDetach(this.handle, 3) }
+        /// <summary>Does the stream play to a sound device?</summary>
+        bool Playing { get { return __CirStreamDeviceInfo(this.handle, 3) == 1 } }
+        /// <summary>Does the stream record from a sound device?</summary>
+        bool Recording { get { return __CirStreamDeviceInfo(this.handle, 4) == 1 } }
+        /// <summary>The samples played to the device so far.</summary>
+        int FramesPlayed { get { return __CirStreamDeviceInfo(this.handle, 0) } }
+        /// <summary>The samples recorded from the device so far.</summary>
+        int FramesRecorded { get { return __CirStreamDeviceInfo(this.handle, 1) } }
+        /// <summary>What the simulated device "sim" played (volts) since the last call.</summary>
+        float[] SimPlayed() { return __CirStreamSimPlayed(this.handle) }
+        /// <summary>Sound for the simulated input "sim" to record: 16 bit mono samples, `count` bytes from `offset` (all without a count).</summary>
+        undefined SimInput(byte data[], int offset = 0, int count = -1) {
+            if (count < 0) { count = data.length - offset }
+            if (__CirStreamSimInput(this.handle, data, offset, count) < 0) { throw new ArgumentException(__CirLastError()) }
+        }
+        /// <summary>Hands sound between all streams and their devices now. The thread of the kernel and AdvanceRealTime do it themselves; a program that
+        /// steps a circuit with Step or Run calls this now and then.</summary>
+        static undefined Pump() { __CirStreamPump() }
     }
 
     // a stream bound to a circuit: an output between two ports, or an input that drives a source

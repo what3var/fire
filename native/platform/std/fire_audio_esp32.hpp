@@ -199,6 +199,18 @@ inline void close(Output* o) {
     delete o;
 }
 
+
+// ---- sound input ----------------------------------------------------------------------------------------------------------------------
+// The input side of the interface: an opened input captures 16 bit signed samples (little endian, interleaved) into its buffer; `read` takes what was captured (whole
+// frames) and returns at once, `available` says how much waits. A buffer that is not read in time loses its oldest sound.
+struct Input {};
+inline bool inputSupported() { return false; }
+inline Status inputDevices(std::vector<std::string>& names) { names.clear(); return success(); }
+inline Status openInput(const std::string&, int, int, Input*& in) { in = nullptr; return fail(E_NotFound, "This platform has no sound input (the simulated device \"sim\" works everywhere)."); }
+inline Status read(Input*, uint8_t*, int, int& got) { got = 0; return fail(E_Unsupported, "This platform has no sound input."); }
+inline int64_t available(Input*) { return 0; }
+inline void closeInput(Input*) {}
+
 }  // namespace audio
 }  // namespace plat
 }  // namespace fire

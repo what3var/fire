@@ -19980,6 +19980,102 @@ else
             var back = Audio.Sound.FromWav(wav)
             print("wav " + wav.length + " bytes, " + back.Rate + " Hz, " + back.Channels + " channel, " + back.Frames + " frames")
             """),
+        ("Circuits: Streams und Tongeraete (Output/Input mit Volt und PCM, Audio.Input, PlayTo/RecordFrom mit \"sim\", synchron und im Thread)", """
+            #import "circuits"
+            #import "audio"
+            class H {
+                static float R(float v) { return Math.Round(v * 1000) / 1000 }
+                static float Peak(float values[]) {
+                    var p = 0.0
+                    for (int i = 0; i < values.length; i++) { if (Math.Abs(values[i]) > p) { p = Math.Abs(values[i]) } }
+                    return p
+                }
+            }
+            // a stream as output: an RC charging to 5 V, 10 samples per ms
+            var c = new Circuits.Circuit()
+            var v = c.Add(new Circuits.VoltageSource(5V))
+            var r = c.Add(new Circuits.Resistor(1kOhm))
+            var cap = c.Add(new Circuits.Capacitor(1uF))
+            v.A.Connect(r.A)
+            v.B.Connect(c.Ground)
+            r.B.Connect(cap.A)
+            cap.B.Connect(c.Ground)
+            c.TimeStep = 10us
+            var outS = c.Output(cap.A, undefined, 10kHz, 100)
+            c.Run(2ms)
+            var vals = outS.Read()
+            print("output " + vals.length + " samples, at 1 ms " + H.R(vals[9]) + " V, at 2 ms " + H.R(vals[19]) + " V, rate " + outS.Rate)
+            // a stream as input: volts drive a source; PCM in and out
+            var d = new Circuits.Circuit()
+            var src = d.Add(new Circuits.AudioInput(1V))
+            var load = d.Add(new Circuits.Resistor(1kOhm))
+            src.A.Connect(load.A)
+            src.B.Connect(d.Ground)
+            load.B.Connect(d.Ground)
+            d.TimeStep = 10us
+            var inS = d.Input(src, 10kHz, 100)
+            var probe = d.Output(load.A, undefined, 10kHz, 100)
+            print("took " + inS.Write([0.0, 1.0, 2.0, 3.0, 4.0]))
+            d.Run(1ms)
+            var seen = probe.Read()
+            print("input drives " + H.R(seen[1]) + " " + H.R(seen[2]) + " " + H.R(seen[3]) + " then holds " + H.R(seen[8]) + ", missing " + (inS.Missing > 0))
+            var pcm = new byte[4]
+            pcm[0] = 0; pcm[1] = 64; pcm[2] = 0; pcm[3] = 192
+            print("pcm frames " + inS.WritePcm(pcm, 0, 2, 1, 2V))
+            d.Run(1ms)
+            var back = new byte[40]
+            var n = probe.ReadPcm(back, 0, 20, 2V)
+            print("pcm back " + n + " frames, first " + (back[0] + (back[1] << 8)))
+            // Audio.Input on the simulated device: what was fed comes back
+            var tone = Audio.Sound.Tone(1000, 50, 0, 50, 8000)
+            Audio.Sim.Reset()
+            Audio.Sim.FeedSound(tone)
+            var mic = new Audio.Input("sim", 8000, 1)
+            print("input available " + mic.Available + " inputs " + Audio.Board.Inputs()[0])
+            var rec = mic.Record(50)
+            var same = true
+            for (int i = 0; i < rec.Length; i++) { if (rec.Data[i] != tone.Data[i]) { same = false } }
+            print("recorded " + rec.Length + " bytes, same " + same + ", left " + Audio.Sim.InputWaiting() + ", handed over " + Audio.Sim.Recorded())
+            mic.Close()
+            // the fast way: the kernel records from and plays to "sim" itself (a low pass of 1.6 kHz on a tone of 1 kHz)
+            var e = new Circuits.Circuit()
+            var ein = e.Add(new Circuits.AudioInput(1V))
+            var er = e.Add(new Circuits.Resistor(1kOhm))
+            var ec = e.Add(new Circuits.Capacitor(100nF))
+            ein.A.Connect(er.A)
+            ein.B.Connect(e.Ground)
+            er.B.Connect(ec.A)
+            ec.B.Connect(e.Ground)
+            e.TimeStep = 12.5us
+            var fromDev = e.RecordFrom(ein, "sim", 1V, 8000Hz)
+            var toDev = e.PlayTo(ec.A, undefined, "sim", 1V, 8000Hz)
+            fromDev.SimInput(tone.Data)
+            print("playing " + toDev.Playing + " recording " + fromDev.Recording)
+            Circuits.SignalStream.Pump()
+            e.Run(50ms)
+            Circuits.SignalStream.Pump()
+            e.Run(20ms)
+            Circuits.SignalStream.Pump()
+            var played = toDev.SimPlayed()
+            print("played " + played.length + " (" + toDev.FramesPlayed + "), recorded " + fromDev.FramesRecorded + ", peak " + H.R(H.Peak(played)) + " V, missing " + fromDev.Missing)
+            try { toDev.PlayTo("no such device") } catch (Exception x) { print("unknown device: an exception") }
+            // in the thread of the kernel: the same, the samples go on by themselves
+            fromDev.SimInput(tone.Data)
+            e.Speed = 1
+            var rounds = 0
+            var total = 0
+            while (rounds < 40 && total < 100) {
+                e.AdvanceRealTime()
+                total = total + toDev.SimPlayed().length
+                Sleep(10)
+                rounds++
+            }
+            print("thread " + e.RunsInThread + ", plays on " + (total >= 100))
+            e.CloseStream(toDev)
+            e.CloseStream(fromDev)
+            e.RealTime = false
+            print("closed")
+            """),
         ("Circuits: Schaltplan (Elemente im Raster, Netze aus Punkten und Draehten, Speichern und Laden, Verschieben trennt, Zahlen mit Praefix)", """
             #import "circuits"
             class H { static float R(float v) { return Math.Round(v * 1000) / 1000 } }

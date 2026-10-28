@@ -33,6 +33,13 @@
 #include <thread>
 #endif
 
+// A stream can play to a sound device and record from one in the kernel itself (SignalStream::PlayTo / RecordFrom): on the hosted platforms, with the
+// devices of the platform package (plat::audio, as the package "audio"). Elsewhere only the simulated device "sim" is there.
+#if !defined(CIR_NO_AUDIO) && !defined(__EMSCRIPTEN__) && defined(FIRE_PLATFORM_AUDIO_HEADER) && (defined(FIRE_LIBRARY) || defined(FIRE_HAL_POSIX) || defined(FIRE_HAL_WINDOWS))
+#define CIR_AUDIO 1
+#include FIRE_PLATFORM_AUDIO_HEADER
+#endif
+
 namespace fire {
 namespace circuits {
 
@@ -1116,6 +1123,30 @@ struct Runner;
 /// voltage between two nodes into it at every point of its grid k / rate - interpolated between the steps around it, also when a step was done again in
 /// smaller steps; as an input (a feed) it drives a source, the voltage interpolated between the samples. It lives apart from a plan (like a recorder), so
 /// the stream goes on when the circuit is compiled again.
+struct StreamDevice {
+    bool sim = false;              // the simulated device: plays at once and keeps what it played, records what the program gave it (SimInput)
+#ifdef CIR_AUDIO
+    plat::audio::Output* out = nullptr;
+    plat::audio::Input* in = nullptr;
+#endif
+    int rate = 44100, channels = 1;
+    double fullScale = 1.0;        // the volts of a full-scale sample
+    double latency = 0.05;         // seconds of sound kept between the circuit and the device
+    bool primed = false;           // (an output starts when the latency is filled)
+    std::vector<uint8_t> pending;  // bytes the device did not take yet
+    int64_t frames = 0;            // frames played to / recorded from the device
+    std::vector<float> simData;    // what the simulated output played (up to 16 M samples)
+    std::vector<uint8_t> simInput; // what the simulated input records next
+    size_t simInputAt = 0;
+    void close() {
+#ifdef CIR_AUDIO
+        if (out) { plat::audio::close(out); out = nullptr; }
+        if (in) { plat::audio::closeInput(in); in = nullptr; }
+#endif
+    }
+    ~StreamDevice() { close(); }
+};
+
 struct SignalStream {
     std::vector<float> ring;
     size_t head = 0, count = 0;
@@ -1128,6 +1159,8 @@ struct SignalStream {
     // as a feed: the two samples around the time of the step (index of the first)
     int64_t feedIndex = -1;
     double feedA = 0, feedB = 0;
+    // a sound device the stream plays to (an output of the circuit) or records from (an input), or none
+    std::unique_ptr<StreamDevice> playTo, recordFrom;
     bool push(float v) {
         if (ring.empty()) return false;
         if (count == ring.size()) { head = (head + 1) % ring.size(); count--; overruns++; }
@@ -1227,6 +1260,113 @@ inline void reset() {
 inline SignalStream* stream(int64_t i) {
     Tables& t = tables();
     return i > 0 && (size_t)i < t.streams.size() ? t.streams[(size_t)i] : nullptr;
+}
+
+// ---- streams and sound devices ----
+/// Plays what a stream holds to its device: as much as the device takes now (16 bit samples; nothing waits).
+inline void pumpOut(SignalStream* st) {
+    StreamDevice& d = *st->playTo;
+    if (!d.primed) {
+        if ((double)st->count < d.latency * st->rate) return;
+        d.primed = true;
+    }
+    const double k = d.fullScale != 0 ? 32767.0 / d.fullScale : 32767.0;
+    for (int round = 0; round < 64; round++) {
+        if (d.pending.empty()) {
+            size_t n = std::min<size_t>(st->count, 1024);
+            if (n == 0) return;
+            d.pending.resize(n * 2 * (size_t)d.channels);
+            for (size_t i = 0; i < n; i++) {
+                float v = 0;
+                st->pop(v);
+                double y = v * k;
+                if (y > 32767) y = 32767; else if (y < -32768) y = -32768;
+                int s16 = (int)std::lround(y);
+                for (int c = 0; c < d.channels; c++) {
+                    d.pending[(i * (size_t)d.channels + (size_t)c) * 2] = (uint8_t)(s16 & 255);
+                    d.pending[(i * (size_t)d.channels + (size_t)c) * 2 + 1] = (uint8_t)((s16 >> 8) & 255);
+                }
+            }
+        }
+        int frameBytes = 2 * d.channels;
+        int taken = 0;
+        if (d.sim) {
+            taken = (int)d.pending.size();
+            for (size_t i = 0; i + 1 < d.pending.size() && d.simData.size() < ((size_t)16 << 20); i += (size_t)frameBytes)
+                d.simData.push_back((float)((int16_t)(uint16_t)(d.pending[i] | (d.pending[i + 1] << 8)) / k));
+        }
+#ifdef CIR_AUDIO
+        else if (d.out) {
+            plat::audio::Status status = plat::audio::write(d.out, d.pending.data(), (int)d.pending.size(), taken);
+            if (!status.ok()) taken = 0;
+        }
+#endif
+        if (taken <= 0) return;
+        d.frames += taken / frameBytes;
+        d.pending.erase(d.pending.begin(), d.pending.begin() + taken);
+        if (!d.pending.empty()) return;   // the device is full
+    }
+}
+
+/// Takes what the device recorded into a stream (mixed to one channel, a full-scale sample is fullScale volts).
+inline void pumpIn(SignalStream* st) {
+    StreamDevice& d = *st->recordFrom;
+    const int frameBytes = 2 * d.channels;
+    const double k = d.fullScale / 32768.0;
+    uint8_t buffer[4096];
+    for (int round = 0; round < 64; round++) {
+        // no more than fits into the stream (a device without a clock of its own, as ALSA's "null", would deliver without end)
+        size_t room = (st->ring.size() - st->count) * (size_t)frameBytes;
+        size_t want = std::min<size_t>(room, sizeof buffer - sizeof buffer % (size_t)frameBytes);
+        if (want == 0) return;
+        int got = 0;
+        if (d.sim) {
+            size_t left = d.simInput.size() - d.simInputAt;
+            got = (int)std::min<size_t>(left - left % (size_t)frameBytes, want);
+            if (got > 0) std::memcpy(buffer, d.simInput.data() + d.simInputAt, (size_t)got);
+            d.simInputAt += (size_t)got;
+            if (d.simInputAt == d.simInput.size()) { d.simInput.clear(); d.simInputAt = 0; }
+        }
+#ifdef CIR_AUDIO
+        else if (d.in) {
+            plat::audio::Status status = plat::audio::read(d.in, buffer, (int)want, got);
+            if (!status.ok()) got = 0;
+        }
+#endif
+        if (got <= 0) return;
+        for (int f = 0; f + frameBytes <= got; f += frameBytes) {
+            double sum = 0;
+            for (int c = 0; c < d.channels; c++) sum += (int16_t)(uint16_t)(buffer[f + 2 * c] | (buffer[f + 2 * c + 1] << 8));
+            st->push((float)(sum / d.channels * k));
+        }
+        d.frames += got / frameBytes;
+    }
+}
+
+inline void pumpStream(SignalStream* st) {
+    if (!st) return;
+    if (st->playTo) pumpOut(st);
+    if (st->recordFrom) pumpIn(st);
+}
+
+/// How far the streams of a plan that go to or come from a sound device (not the simulated one) are off the latency they keep, in seconds: above
+/// zero the circuit is behind the clock of the device (an output runs dry, an input fills up), below zero ahead. 0 without such a stream.
+inline double deviceLag(SignalStream* st, bool& any) {
+    if (!st) return 0;
+    double lag = 0;
+#ifdef CIR_AUDIO
+    if (st->playTo && st->playTo->out && st->playTo->primed) {
+        StreamDevice& d = *st->playTo;
+        double fill = ((double)plat::audio::queued(d.out) / (2.0 * d.channels) + (double)d.pending.size() / (2.0 * d.channels)) / d.rate + (double)st->count / st->rate;
+        lag += d.latency - fill;
+        any = true;
+    }
+    if (st->recordFrom && st->recordFrom->in) {
+        lag += (double)st->count / st->rate - st->recordFrom->latency;
+        any = true;
+    }
+#endif
+    return lag;
 }
 
 inline Plan* plan(Value h) {
@@ -2212,6 +2352,17 @@ inline void runnerLoop(Plan* p) {
                 r->anchorSim -= give;
                 target -= give;
             }
+            // the sound devices: what the circuit made since goes to them, what they recorded comes in; their clock leads the way at full speed (the
+            // clock of a sound card is not quite that of the computer: without this an output would run dry or overflow after a while)
+            bool devices = false;
+            double lag = 0;
+            for (const Tap& tp : p->taps) { SignalStream* st = stream(tp.stream); pumpStream(st); lag += deviceLag(st, devices); }
+            for (const Feed& fd : p->feeds) { SignalStream* st = stream(fd.stream); pumpStream(st); lag += deviceLag(st, devices); }
+            if (devices && std::fabs(r->speed - 1.0) < 1e-9) {
+                double nudge = std::max(-0.05, std::min(0.05, lag)) * 0.5 * std::min(0.1, wall - lastWall);
+                r->anchorSim += nudge;
+                target += nudge;
+            }
             int64_t need = (int64_t)std::floor((target - p->time) / p->dt + 1e-9);
             double t0 = wall;
             int64_t ran = 0;
@@ -2592,7 +2743,10 @@ inline Value StreamInfo(Value h, Value what) { KernelLock kl_;
 /// Empties a stream (and its position on the grid starts anew).
 inline Value StreamClear(Value h) { KernelLock kl_;
     SignalStream* st = stream(h.i);
-    if (st) { st->head = st->count = 0; st->nextIndex = -1; st->havePrev = false; st->feedIndex = -1; }
+    if (st) {
+        st->head = st->count = 0; st->nextIndex = -1; st->havePrev = false; st->feedIndex = -1;
+        if (st->playTo) { st->playTo->primed = false; st->playTo->pending.clear(); }
+    }
     return Undef();
 }
 
@@ -2610,6 +2764,122 @@ inline Value AddFeed(Value h, Value st, Value source) { KernelLock kl_;
     if (!p || !stream(st.i)) return Bool(false);
     p->feeds.push_back({(int)st.i, (int)source.i});
     return Bool(true);
+}
+
+/// Plays the stream (an output of the circuit) to a sound device: "default" (or another name of the platform, as for Audio.Output) or "sim"; a sample of
+/// `fullScale` volts is full scale; `latency` seconds of sound are kept ahead (at least 5 ms). The thread of the circuit (or Pump) hands the samples over.
+/// 1 if it plays, 0 with the reason in LastError.
+inline Value StreamPlay(Value h, Value device, Value fullScale, Value latency) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st) { lastError() = "The stream is closed."; return Int(0); }
+    std::string name = toUtf8(device);
+    std::unique_ptr<StreamDevice> d(new StreamDevice());
+    d->rate = (int)std::lround(st->rate);
+    d->fullScale = D(fullScale) > 0 ? D(fullScale) : 1.0;
+    d->latency = std::max(0.005, D(latency));
+    if (name == "sim") d->sim = true;
+    else {
+#ifdef CIR_AUDIO
+        if (d->rate < 1000 || d->rate > 192000) { lastError() = "A sound device takes rates between 1000 and 192000 Hz."; return Int(0); }
+        plat::audio::Status status = plat::audio::open(name, d->rate, 1, d->out);
+        if (!status.ok()) {
+            d->channels = 2;   // (some devices play only stereo)
+            plat::audio::Status second = plat::audio::open(name, d->rate, 2, d->out);
+            if (!second.ok()) { lastError() = status.message; return Int(0); }
+        }
+#else
+        lastError() = "There are no sound devices here (only \"sim\").";
+        return Int(0);
+#endif
+    }
+    st->playTo = std::move(d);
+    return Int(1);
+}
+
+/// Records from a sound device into the stream (an input of the circuit): as StreamPlay; the channels are mixed to one.
+inline Value StreamRecord(Value h, Value device, Value fullScale, Value latency) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st) { lastError() = "The stream is closed."; return Int(0); }
+    std::string name = toUtf8(device);
+    std::unique_ptr<StreamDevice> d(new StreamDevice());
+    d->rate = (int)std::lround(st->rate);
+    d->fullScale = D(fullScale) > 0 ? D(fullScale) : 1.0;
+    d->latency = std::max(0.005, D(latency));
+    if (name == "sim") d->sim = true;
+    else {
+#ifdef CIR_AUDIO
+        if (d->rate < 1000 || d->rate > 192000) { lastError() = "A sound device takes rates between 1000 and 192000 Hz."; return Int(0); }
+        plat::audio::Status status = plat::audio::openInput(name, d->rate, 1, d->in);
+        if (!status.ok()) {
+            d->channels = 2;
+            plat::audio::Status second = plat::audio::openInput(name, d->rate, 2, d->in);
+            if (!second.ok()) { lastError() = status.message; return Int(0); }
+        }
+#else
+        lastError() = "There are no sound devices here (only \"sim\").";
+        return Int(0);
+#endif
+    }
+    st->recordFrom = std::move(d);
+    return Int(1);
+}
+
+/// Closes the devices of a stream (what: 1 the output, 2 the input, 3 both).
+inline Value StreamDetach(Value h, Value what) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (st && (what.i & 1)) st->playTo.reset();
+    if (st && (what.i & 2)) st->recordFrom.reset();
+    return Undef();
+}
+
+/// Hands sound between the streams and their devices now (the thread of a circuit does it itself; a program that steps the circuit calls this).
+inline Value StreamPump() { KernelLock kl_;
+    for (SignalStream* st : tables().streams) pumpStream(st);
+    return Undef();
+}
+
+/// The device of a stream: 0 frames played, 1 frames recorded, 2 bytes queued in the output device, 3 plays (1/0), 4 records (1/0), 5 its channels.
+inline Value StreamDeviceInfo(Value h, Value what) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st) return Int(-1);
+    StreamDevice* o = st->playTo.get();
+    StreamDevice* i = st->recordFrom.get();
+    switch (what.i) {
+        case 0: return Int(o ? o->frames : 0);
+        case 1: return Int(i ? i->frames : 0);
+        case 2:
+#ifdef CIR_AUDIO
+            if (o && o->out) return Int(plat::audio::queued(o->out));
+#endif
+            return Int(0);
+        case 3: return Int(o ? 1 : 0);
+        case 4: return Int(i ? 1 : 0);
+        case 5: return Int(o ? o->channels : i ? i->channels : 0);
+        default: return Int(-1);
+    }
+}
+
+/// What the simulated output of a stream played (volts), and forgets it.
+inline Value StreamSimPlayed(Value h, OwnList* list) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    StreamDevice* d = st ? st->playTo.get() : nullptr;
+    size_t n = d && d->sim ? d->simData.size() : 0;
+    Arr* a = allocArr((uint32_t)n, list);
+    for (size_t i = 0; i < n; i++) a->items()[i] = Float((Real)d->simData[i]);
+    if (d) d->simData.clear();
+    return ArrV(a);
+}
+
+/// Gives the simulated input of a stream sound to record: `count` bytes of 16 bit samples (its channels: mono) from `offset` of a buffer.
+inline Value StreamSimInput(Value h, Value buf, Value offset, Value count) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    StreamDevice* d = st ? st->recordFrom.get() : nullptr;
+    if (!d || !d->sim) { lastError() = "The stream does not record from \"sim\"."; return Int(-1); }
+    if (!leafAlive(buf)) return destroyedError(buf);
+    if (offset.i < 0 || count.i < 0 || offset.i + count.i > (int64_t)bufOf(buf)->length) { lastError() = "offset/count are outside of the buffer."; return Int(-1); }
+    const uint8_t* src = bufOf(buf)->bytes() + offset.i;
+    d->simInput.insert(d->simInput.end(), src, src + count.i);
+    return Int(count.i);
 }
 
 // ---- recorders ----

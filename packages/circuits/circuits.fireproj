@@ -15,6 +15,17 @@
       "native/fire_bridge_circuits.hpp"
     ],
     "discover": false,
+    "linkLibraries": {
+      "posix": [
+        "dl"
+      ],
+      "windows": [
+        "winmm"
+      ],
+      "macos": [
+        "SDL2"
+      ]
+    },
     "functions": [
       {
         "name": "__CirNew",
@@ -385,6 +396,43 @@
         "name": "__CirAddFeed",
         "arguments": 3,
         "cpp": "circuits::AddFeed"
+      },
+      {
+        "name": "__CirStreamPlay",
+        "arguments": 4,
+        "cpp": "circuits::StreamPlay"
+      },
+      {
+        "name": "__CirStreamRecord",
+        "arguments": 4,
+        "cpp": "circuits::StreamRecord"
+      },
+      {
+        "name": "__CirStreamDetach",
+        "arguments": 2,
+        "cpp": "circuits::StreamDetach"
+      },
+      {
+        "name": "__CirStreamPump",
+        "arguments": 0,
+        "cpp": "circuits::StreamPump"
+      },
+      {
+        "name": "__CirStreamDeviceInfo",
+        "arguments": 2,
+        "cpp": "circuits::StreamDeviceInfo"
+      },
+      {
+        "name": "__CirStreamSimPlayed",
+        "arguments": 1,
+        "cpp": "circuits::StreamSimPlayed",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirStreamSimInput",
+        "arguments": 4,
+        "cpp": "circuits::StreamSimInput"
       }
     ],
     "reset": "circuits::reset"

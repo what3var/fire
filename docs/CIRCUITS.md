@@ -580,6 +580,49 @@ c.Run(0.1s)                   // or real time: the thread fills `output` on its 
 var volts = output.Read()     // 4800 samples
 ```
 
+### Sound devices
+
+A stream can go to a sound device, or come from one, without the program in between - **the fast way**: the kernel hands the samples to the device itself (with the platform layer
+of the package `audio`, docs/AUDIO.md), also while the circuit runs in its thread.
+
+```fire
+c.PlayTo(amp.Out)                                  // the voltage of amp.Out on the default device: 1 V is full scale
+c.RecordFrom(guitar, "default", 0.5V)              // the microphone drives the source `guitar`: full scale is 0.5 V
+c.AdvanceRealTime()                                // (or the circuit view) - the circuit runs on in its thread
+```
+
+`circuit.PlayTo(plus, minus = ground, device = "default", fullScale = 1V, rate = 44100Hz)` and `circuit.RecordFrom(source, device = "default", fullScale = 1V, rate = 44100Hz)` make the
+stream and attach it; on a stream of `Output` or `Input` the same is `stream.PlayTo(device, fullScale = 1V, latency = 50ms)` and `stream.RecordFrom(device, fullScale, latency)`,
+`StopDevice()` ends it. The names are those of `Audio.Output` and `Audio.Input` ("default", "pulse", "alsa:<pcm>", ...); `"sim"` is a simulated device of the kernel: it keeps what it
+played (`stream.SimPlayed()`, volts) and records what the program gives it (`stream.SimInput(bytes)`, 16 bit mono). `Playing`, `Recording`, `FramesPlayed`, `FramesRecorded` tell
+how it goes. Louder samples than full scale are clipped; a stereo input is mixed to one.
+
+* **Latency.** An output starts when `latency` of sound is there and keeps about that much between the circuit and the speaker; more means fewer dropouts and later sound.
+* **The clock of the sound card.** At speed 1 in the thread of the kernel, the device leads the way: the thread runs the circuit a little faster or slower, so that the sound in
+  between stays at the latency (a sound card's clock is never quite that of the computer - without this an output would run dry, or overflow, after some minutes). At other speeds
+  the sound plays at the pace of the circuit (slow motion is heard in pieces).
+* **The program steps the circuit** (`Threaded = false`, parts that step with every step): `AdvanceRealTime` hands the sound over before and after it simulates; a program that
+  steps with `Run` calls `Circuits.SignalStream.Pump()` now and then.
+
+**The raw way** - when the program wants to see or change the sound - is a stream and the package `audio`: `Audio.Input.Read` gives bytes, `stream.WritePcm` puts them into
+the circuit; `stream.ReadPcm` takes what the circuit made, `Audio.Output.Offer` plays it.
+
+```fire
+var mic = new Audio.Input("default", 48000)
+var spk = new Audio.Output("default", 48000)
+var inS = c.Input(guitar, 48kHz)
+var outS = c.Output(amp.Out, c.Ground, 48kHz)
+var buf = new byte[4800]
+while (running) {
+    var n = mic.Read(buf)                          // what was recorded since
+    inS.WritePcm(buf, 0, n / 2, 1, 0.5V)
+    c.AdvanceRealTime()
+    var m = outS.ReadPcm(buf, 0, 2400, 1V)         // what the circuit made (and do anything with it)
+    spk.Write(buf, 0, m * 2)
+    Sleep(10)
+}
+```
+
 ### A circuit that runs alongside the program
 
 `circuit.RunAlongside(speed = 1.0, maxLag = 0.1s)` lets the circuit run **in real time** next to the program: every time the program uses one of the simulated devices,

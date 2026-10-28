@@ -62,6 +62,18 @@ namespace Audio {
             for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
             return list
         }
+
+        // true if this machine has a sound input (a microphone, a line in; the input "sim" is always there).
+        static bool InputAvailable() { return __AudioInSupported() == 1 }
+
+        // The names of the inputs: "sim" first, then the real ones ("default", "pulse", "alsa" on Linux, "default" and the names of the devices on Windows and macOS).
+        static List Inputs() {
+            var all = __AudioInDevices()
+            if (all == undefined) { Audio.Errors.Throw() }
+            var list = new List()
+            for (var i = 0; i < all.length; i++) { list.Add(all[i]) }
+            return list
+        }
     }
 
     // A sound in memory: 16 bit samples (little endian, interleaved) in a buffer, from `Offset` on, `Length` bytes.
@@ -335,9 +347,88 @@ namespace Audio {
         }
     }
 
+    // One input: a device that records 16 bit samples (a microphone, a line in). It records from the moment it is opened; what is not read in time is lost
+    // (the newest or the oldest sound, depending on the system - read often, a few times per second at least).
+    class Input {
+        int handle
+        bool closed
+        string name
+        int rate
+        int channels
+
+        // `device`: "default", "pulse", "alsa", "sim", ... (Audio.Board.Inputs()); `rate` in Hz; `channels` 1 (mono) or 2 (stereo).
+        construct(string device = "default", int rate = 44100, int channels = 1) {
+            this.handle = -1
+            this.closed = false
+            this.name = device
+            this.rate = rate
+            this.channels = channels
+            this.handle = Audio.Errors.Handle(__AudioInOpen(device, rate, channels))
+        }
+
+        destruct() { try { this.Close() } catch (AudioException e) { } }
+
+        string Name { get { return this.name } }
+        int Rate { get { return this.rate } }
+        int Channels { get { return this.channels } }
+        bool IsClosed { get { return this.closed } }
+
+        // The bytes recorded and not read yet.
+        int Available {
+            get {
+                this.Check()
+                var n = __AudioInAvailable(this.handle)
+                if (n < 0) { Audio.Errors.Throw() }
+                return n
+            }
+        }
+
+        undefined Check() {
+            if (this.closed) { throw new AudioException("The input is closed.", 2) }
+        }
+
+        // Takes what was recorded into the buffer (whole frames, up to `count` bytes from `offset` on) and returns the number of bytes - without waiting (0: nothing yet).
+        int Read(byte buffer[], int offset = 0, int count = -1) {
+            this.Check()
+            if (count < 0) { count = buffer.length - offset }
+            var n = __AudioInRead(this.handle, buffer, offset, count)
+            if (n < 0) { Audio.Errors.Throw() }
+            return n
+        }
+
+        // Records for `milliseconds` and returns the sound (waits until it is there; `timeoutMs` gives up earlier, -1: twice the length and a second).
+        Audio.Sound Record(int milliseconds, int timeoutMs = -1) {
+            this.Check()
+            var frameBytes = this.channels * 2
+            var total = this.rate * milliseconds / 1000 * frameBytes
+            var data = new byte[total]
+            var have = 0
+            var waited = 0
+            if (timeoutMs < 0) { timeoutMs = milliseconds * 2 + 1000 }
+            while (have < total) {
+                var n = __AudioInRead(this.handle, data, have, total - have)
+                if (n < 0) { Audio.Errors.Throw() }
+                have = have + n
+                if (have < total) {
+                    if (waited >= timeoutMs) { throw new AudioException("The input delivered only " + have + " of " + total + " bytes in " + timeoutMs + " ms.", 7) }
+                    Sleep(5)
+                    waited = waited + 5
+                }
+            }
+            return new Sound(this.rate, this.channels, data)
+        }
+
+        // Closes the input.
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            if (this.handle >= 0) { __AudioInClose(this.handle) }
+        }
+    }
+
     // The simulated device "sim" from the outside: what was played to it (for tests, and to try a program without sound).
     class Sim {
-        // Forgets what was played; the device plays again (it is not held).
+        // Forgets what was played and what the input had; the device plays again (it is not held).
         static undefined Reset() { __AudioSimReset() }
 
         // Holds the device (true): it takes only 4096 bytes and keeps them, as a slow device does; releases it (false): what it kept is played.
@@ -352,5 +443,18 @@ namespace Audio {
         static int Waiting() { return __AudioSimInfo(3) }
         // The bytes that were played, as a buffer.
         static any Data() { return __AudioSimData() }
+
+        // Gives the simulated input sound to record (16 bit samples in the channels of the input that reads them): `count` bytes from `offset` (all without a count).
+        static undefined Feed(byte data[], int offset = 0, int count = -1) {
+            if (count < 0) { count = data.length - offset }
+            if (__AudioSimFeed(data, offset, count) < 0) { Audio.Errors.Throw() }
+        }
+
+        // Feeds a sound (its bytes) to the simulated input.
+        static undefined FeedSound(Audio.Sound sound) { Audio.Sim.Feed(sound.Data, sound.Offset, sound.Length) }
+
+        // The bytes the simulated input still has, and those it handed over.
+        static int InputWaiting() { return __AudioSimInfo(4) }
+        static int Recorded() { return __AudioSimInfo(5) }
     }
 }
