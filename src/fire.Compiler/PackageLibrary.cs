@@ -124,7 +124,9 @@ namespace fire.Compiler
             }
             finally
             {
-                try { Directory.Delete(work, true); } catch (IOException) { }
+                // FIRE_PKGBUILD_KEEP: the folder of the build stays (the generated wrapper, the runtime) - to build the natives into a program of one's own
+                if (Environment.GetEnvironmentVariable("FIRE_PKGBUILD_KEEP") is { Length: > 0 }) log?.Invoke("The build of the package stays in " + work);
+                else try { Directory.Delete(work, true); } catch (IOException) { }
             }
         }
 

@@ -2542,8 +2542,13 @@ namespace Circuits {
         float time = 0.0
         Circuits.Solver solver
         bool dirty = true
-        // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire)
+        // the parts that step in fire, and whether a step needs fire at all (parts, instruments or channels of scopes in fire); of them the parts with a
+        // StampStep or Commit of their own and the instruments that record in fire (after the first step only those are called)
         List external
+        List stepParts
+        List commitParts
+        List recordInstruments
+        bool pruneParts = false
         bool fireSteps = false
         // in a step in fire, and whether the circuit is compiled again after it (Part.InvalidateSoon)
         bool stepping = false
@@ -2566,6 +2571,9 @@ namespace Circuits {
             this.parts = new List()
             this.instruments = new List()
             this.external = new List()
+            this.stepParts = new List()
+            this.commitParts = new List()
+            this.recordInstruments = new List()
             this.paramNames = new List()
             this.paramValues = new List()
             this.bindings = new List()
@@ -2969,17 +2977,24 @@ namespace Circuits {
             s.TakeTo(this)
             s.time = this.time
             this.external.Clear()
+            this.stepParts.Clear()
+            this.commitParts.Clear()
+            this.recordInstruments.Clear()
             foreach (p in leaves) {
-                if (!p.Compile(s)) { this.external.Add(p) }
+                if (!p.Compile(s)) {
+                    this.external.Add(p)
+                    this.stepParts.Add(p)
+                    this.commitParts.Add(p)
+                }
             }
-            var fireInstruments = false
+            this.pruneParts = true
             foreach (inst in this.instruments) {
                 if (inst is of Scope) {
                     Scope scope = inst!Scope
-                    if (!scope.Compile(s)) { fireInstruments = true }
-                } else { fireInstruments = true }
+                    if (!scope.Compile(s)) { this.recordInstruments.Add(inst) }
+                } else { this.recordInstruments.Add(inst) }
             }
-            this.fireSteps = this.external.count > 0 || fireInstruments
+            this.fireSteps = this.external.count > 0 || this.recordInstruments.count > 0
             if (!s.Compile(this.time)) {
                 var message = s.Error()
                 delete s
@@ -3010,31 +3025,29 @@ namespace Circuits {
         // a step with parts or instruments in fire
         undefined FireStep() {
             var s = this.solver
-            s.time = s.Time()
+            s.time = this.time
             this.stepping = true
             try {
                 s.Begin()
-                foreach (p in this.external) { p.StampStep(s) }
+                foreach (p in this.stepParts) { p.StampStep(s) }
                 s.Finish()
-                foreach (p in this.external) { p.Commit(s) }
+                foreach (p in this.commitParts) { p.Commit(s) }
             } finally { this.stepping = false }
-            this.time = s.Time()
-            foreach (inst in this.instruments) { inst.Record(this) }
-            // parts whose StampStep and Commit are those of Part have nothing to do in a step
-            var i = 0
-            while (i < this.external.count) {
-                var p = this.external[i]
-                if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
-            }
-            if (this.external.count == 0) {
-                var fireInstruments = false
-                foreach (inst in this.instruments) {
-                    if (inst is of Scope) {
-                        Scope scope = inst!Scope
-                        if (scope.fireChannels > 0) { fireInstruments = true }
-                    } else { fireInstruments = true }
+            this.time = s.time
+            foreach (inst in this.recordInstruments) { inst.Record(this) }
+            if (this.pruneParts) {
+                // parts whose StampStep or Commit is that of Part have nothing to do in a step (Part's says so the first time): from now on only the others
+                this.pruneParts = false
+                this.stepParts.Clear()
+                this.commitParts.Clear()
+                var i = 0
+                while (i < this.external.count) {
+                    var p = this.external[i]
+                    if (p.stepsInFire) { this.stepParts.Add(p) }
+                    if (p.commitsInFire) { this.commitParts.Add(p) }
+                    if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
                 }
-                this.fireSteps = fireInstruments
+                if (this.external.count == 0) { this.fireSteps = this.recordInstruments.count > 0 }
             }
             if (this.rebuild) {
                 this.rebuild = false
@@ -3351,7 +3364,7 @@ namespace Circuits {
         bool Compile(float time) { return __CirCompile(this.handle, time) }
         string Error() { return __CirLastError() }
         undefined Begin() { __CirBegin(this.handle) }
-        undefined Finish() { __CirFinish(this.handle) }
+        undefined Finish() { this.time = __CirFinish(this.handle) }
         undefined Run(int steps) { __CirRun(this.handle, steps) }
         float Time() { return __CirTime(this.handle) }
         int Info(int what) { return __CirInfo(this.handle, what) }

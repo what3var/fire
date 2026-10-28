@@ -83,6 +83,10 @@ such as the one of a UJT at its peak point, a tunnel diode, a diac) is done agai
 where one does not converge, down to 1/64, and doubled again after one that did. Scopes and recordings keep the time step of the circuit; a circuit
 with a transmission line keeps its steps (the line needs whole steps).
 
+Each step starts Newton's method from where the two steps before point to (the voltages extrapolated); after the first iteration the parts that are not
+linear are linearized again at the solution, and when their currents are those their old linearization predicted (within 1e-4 and 1 nA, the device check
+of SPICE) the step is done - while the voltages move smoothly (sound) most steps need one factorization instead of two. `PlanInfo(10)` counts them.
+
 | Part | Ports | |
 |---|---|---|
 | `Diode(model = "diode")` | `A` anode, `B` cathode | the Shockley equation with emission coefficient and breakdown |
@@ -255,7 +259,7 @@ details of a data sheet (no temperature).
 | `Time`, `Reset()` | the time of the simulation; back to time 0 (the parts take their initial state) |
 | `Parts()` | the parts and nested circuits |
 | `IsCompiled` | is there a plan for the circuit as it is now? |
-| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear, 7 Newton iterations, 8 steps that did not converge (also at 1/64), 9 steps done again in smaller steps |
+| `PlanInfo(what)` | numbers of the plan: 0 unknowns, 1 entries of the factorized matrix, 2 update operations of a factorization, 3 capacitors and inductors, 4 sources, 5 parts that step in fire, 6 parts that are not linear, 7 Newton iterations, 8 steps that did not converge (also at 1/64), 9 steps done again in smaller steps, 10 steps that ended after one iteration |
 
 A nested circuit is a part: give it ports with `AddPort`, connect them inside, and connect them outside like the ports of any part. Stepping a nested circuit steps the
 outermost one.

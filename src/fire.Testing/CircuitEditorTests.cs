@@ -368,7 +368,10 @@ static class CircuitEditorTests
             ui.MouseMove(P.X(0), P.X(16))
             ui.MouseUp(1, P.X(0), P.X(16))
             view.CancelPlace()
-            for (int i = 0; i < 5; i++) { ui.Update() }
+            for (int i = 0; i < 5; i++) {
+                Sleep(40)
+                ui.Update()
+            }
             var s = c.Schematic
             foreach (e in s.Elements()) { print(e.Type + " " + e.Name + " " + e.x1 + "," + e.y1 + " " + e.x2 + "," + e.y2) }
             Circuits.Led led = s.Find("D1").part!Circuits.Led
@@ -376,10 +379,16 @@ static class CircuitEditorTests
             ui.MouseDown(1, P.X(4), P.X(0))
             ui.MouseMove(P.X(4), P.X(4))
             ui.MouseUp(1, P.X(4), P.X(4))
-            for (int i = 0; i < 5; i++) { ui.Update() }
+            for (int i = 0; i < 5; i++) {
+                Sleep(40)
+                ui.Update()
+            }
             print("moved " + s.Find("R1").y1 + " led " + led.IsOn)
             ui.KeyDown(122, 64)
-            for (int i = 0; i < 5; i++) { ui.Update() }
+            for (int i = 0; i < 5; i++) {
+                Sleep(40)
+                ui.Update()
+            }
             led = s.Find("D1").part!Circuits.Led
             print("ctrl+z " + s.Find("R1").y1 + " led " + led.IsOn)
             view.Select(s.Find("R1"))

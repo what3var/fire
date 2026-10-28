@@ -393,6 +393,8 @@ struct Nonlinear {
         double qPrev = 0, iPrev = 0;      // after the last step
         bool started = false;
         double v = 0, q = 0, c = 0;       // at the linearization of the last iteration
+        // the constants of the forward branch of the depletion charge (they depend on vj and m only), made at the first use
+        double f1 = 0, f2 = 1, f3 = 0, fm = -1, fvj = -1;
     } junction[3];
     int junctions = 0;
     double p[8];                  // diode: Is, n, breakdown voltage, current at the breakdown voltage; bipolar: Is, beta forward, beta reverse, -; MOSFET: threshold, beta (A/V^2), lambda, -;
@@ -426,20 +428,26 @@ inline double expl(double x, double& derivative) {
     return e;
 }
 
-/// The depletion charge of SPICE (cj0, vj, m, fc = 0.5) at the junction voltage v, and its capacitance.
-inline void depletion(double cj0, double vj, double m, double v, double& q, double& c) {
+/// The depletion charge of SPICE (cj0, vj, m, fc = 0.5) at the junction voltage v, and its capacitance. `j` keeps the constants of the forward branch.
+template <typename J> inline void depletion(J& j, double v, double& q, double& c) {
     const double fc = 0.5;
+    const double cj0 = j.cj0, vj = j.vj;
     if (cj0 == 0) { q = 0; c = 0; return; }
-    if (m >= 0.999) m = 0.999;
+    double m = j.m >= 0.999 ? 0.999 : j.m;
     if (v < fc * vj) {
-        double r = 1 - v / vj;
-        q = cj0 * vj * (1 - std::pow(r, 1 - m)) / (1 - m);
-        c = cj0 * std::pow(r, -m);
+        double r = 1 - v / vj, rm = std::pow(r, -m);   // r^(1-m) = r * r^-m: one pow for both
+        q = cj0 * vj * (1 - r * rm) / (1 - m);
+        c = cj0 * rm;
     } else {
-        double f1 = vj * (1 - std::pow(1 - fc, 1 - m)) / (1 - m), f2 = std::pow(1 - fc, 1 + m), f3 = 1 - fc * (1 + m);
+        if (j.fm != m || j.fvj != vj) {
+            j.f1 = vj * (1 - std::pow(1 - fc, 1 - m)) / (1 - m);
+            j.f2 = std::pow(1 - fc, 1 + m);
+            j.f3 = 1 - fc * (1 + m);
+            j.fm = m; j.fvj = vj;
+        }
         double v1 = fc * vj;
-        q = cj0 * (f1 + (f3 * (v - v1) + m / (2 * vj) * (v * v - v1 * v1)) / f2);
-        c = cj0 / f2 * (f3 + m * v / vj);
+        q = cj0 * (j.f1 + (j.f3 * (v - v1) + m / (2 * vj) * (v * v - v1 * v1)) / j.f2);
+        c = cj0 / j.f2 * (j.f3 + m * v / vj);
     }
 }
 
@@ -454,7 +462,7 @@ inline void stampCharges(Nonlinear& e, double dt) {
         auto& j = e.junction[k];
         double v = pol * (e.v0[j.a] - e.v0[j.b]);
         double q, c;
-        depletion(j.cj0, j.vj, j.m, v, q, c);
+        depletion(j, v, q, c);
         q += j.tt * j.id;
         c += j.tt * j.gd;
         if (!j.started) { j.qPrev = q; j.iPrev = 0; j.started = true; }
@@ -621,7 +629,8 @@ template <typename VF> inline void linearizeTube(Nonlinear& e, VF V) {
 /// Linearizes the part at the node voltages x (with limited junctions).
 inline void linearize(Nonlinear& e, const std::vector<double>& x) {
     auto V = [&](int t) { int n = e.node[t]; return n < 0 ? 0.0 : x[(size_t)n]; };
-    for (int a = 0; a < 4; a++) { e.i0[a] = 0; for (int b = 0; b < 4; b++) e.j[a][b] = 0; e.v0[a] = a < e.terminals ? V(a) : 0; }
+    const int nt = e.terminals;
+    for (int a = 0; a < nt; a++) { e.i0[a] = 0; for (int b = 0; b < nt; b++) e.j[a][b] = 0; e.v0[a] = V(a); }
     e.limited = false;
     auto check = [&e](double wanted, double used) { if (std::fabs(wanted - used) > 1e-9 + 1e-6 * std::fabs(wanted)) e.limited = true; };
     if (e.kind == NlDiode) {
@@ -1058,14 +1067,22 @@ struct Chip {
 };
 
 /// The state of a plan between two steps: what a step changes, so that a step that does not converge can be done again in smaller steps.
+/// What a step changes in a part that is not linear (the rest of it - kind, nodes, parameters, the formulas - stays): kept at the start of a step for a
+/// retry, small enough to copy every step.
+struct NlSaved {
+    double lim[2], cur[4], st[2];
+    double qPrev[3], iPrev[3];
+    bool started[3];
+};
+
 struct Snapshot {
     double time = 0;
-    std::vector<double> x;
+    std::vector<double> x, xPrev;
     std::vector<Reactive> capacitors, inductors;
     std::vector<Coupled> coupled;
     std::vector<Source> sources;
     std::vector<char> gates;      // per gate: state, clock, primed
-    std::vector<Nonlinear> nonlinear;
+    std::vector<NlSaved> nonlinear;
     std::vector<Chip> chips;
 };
 
@@ -1095,6 +1112,15 @@ struct Plan {
     // the triangles for solving: per row the entries left (L) and right (U) of the diagonal, as (column, index of m)
     std::vector<int> lStart, lCol, lIdx, uStart, uCol, uIdx, diag;
     std::vector<double> rhs, x, y;
+    // the solution of the step before (x is that of the last step): the first iteration of a step starts from x + (x - xPrev)
+    std::vector<double> xPrev;
+    // a step may end after one iteration when the parts confirm their linearization (linearizationHolds); how many did
+    bool oneIteration = true;
+    int64_t shortcuts = 0;
+    std::vector<double> limSave;
+    // the matrix of the parts that stay the same in the layout of m (rows in pivot order), made again when g or the order changes (gDirty)
+    std::vector<double> mLinear;
+    bool gDirty = true;
     std::vector<Reactive> capacitors, inductors;
     std::vector<Coupled> coupled;
     std::vector<TLine> lines;
@@ -1104,7 +1130,7 @@ struct Plan {
 
     int find(int i) { while (group[i] != i) { group[i] = group[group[i]]; i = group[i]; } return i; }
     void join(int i, int j) { int a = find(i + 1), b = find(j + 1); if (a != b) group[a] = b; }
-    void add(int r, int c, double v) { if (r >= 0 && c >= 0) { g[(size_t)r * size + c] += v; pattern[(size_t)r * size + c] = 1; } }
+    void add(int r, int c, double v) { if (r >= 0 && c >= 0) { g[(size_t)r * size + c] += v; pattern[(size_t)r * size + c] = 1; gDirty = true; } }
     void mark(int r, int c) { if (r >= 0 && c >= 0) pattern[(size_t)r * size + c] = 1; }
     void conductance(int i, int j, double v) {
         add(i, i, v); add(j, j, v); add(i, j, -v); add(j, i, -v);
@@ -1557,6 +1583,7 @@ inline bool order(Plan* p, std::vector<double> a) {
         }
     }
     p->perm = perm;
+    p->gDirty = true;
     p->rowOf.assign((size_t)n, 0);
     for (int i = 0; i < n; i++) p->rowOf[(size_t)perm[(size_t)i]] = i;
     std::vector<char> nz((size_t)n * n, 0);
@@ -1604,10 +1631,16 @@ inline bool order(Plan* p, std::vector<double> a) {
 inline void load(Plan* p) {
     const int n = p->size;
     double* m = p->m.data();
-    for (int idx : p->entries) {
-        int i = idx / n, c = idx % n;
-        m[idx] = p->g[(size_t)p->perm[(size_t)i] * n + c];
+    if (p->gDirty || p->mLinear.size() != p->m.size()) {
+        p->mLinear.assign(p->m.size(), 0.0);
+        for (int idx : p->entries) {
+            int i = idx / n, c = idx % n;
+            p->mLinear[(size_t)idx] = p->g[(size_t)p->perm[(size_t)i] * n + c];
+        }
+        p->gDirty = false;
     }
+    const double* lin = p->mLinear.data();
+    for (int idx : p->entries) m[idx] = lin[idx];
 }
 
 inline bool pivotsOk(Plan* p) {
@@ -1679,6 +1712,7 @@ inline Value Compile(Value h, Value time) {
         eliminate(p);
         if (!pivotsOk(p)) { lastError() = unsolvable; return Bool(false); }
     }
+    p->xPrev.clear();
     p->compiled = true;
     return Bool(true);
 }
@@ -1713,8 +1747,17 @@ inline void save(const Plan* p, Snapshot& s) {
     for (size_t i = 0; i < p->gates.size(); i++) {
         s.gates[i * 3] = p->gates[i].state; s.gates[i * 3 + 1] = p->gates[i].clock; s.gates[i * 3 + 2] = p->gates[i].primed;
     }
-    s.nonlinear = p->nonlinear;
-    s.chips = p->chips;
+    s.nonlinear.resize(p->nonlinear.size());
+    for (size_t i = 0; i < p->nonlinear.size(); i++) {
+        const Nonlinear& e = p->nonlinear[i];
+        NlSaved& v = s.nonlinear[i];
+        v.lim[0] = e.lim[0]; v.lim[1] = e.lim[1];
+        for (int k = 0; k < 4; k++) v.cur[k] = e.cur[k];
+        v.st[0] = e.st[0]; v.st[1] = e.st[1];
+        for (int k = 0; k < e.junctions; k++) { v.qPrev[k] = e.junction[k].qPrev; v.iPrev[k] = e.junction[k].iPrev; v.started[k] = e.junction[k].started; }
+    }
+    s.xPrev = p->xPrev;
+    if (!p->chips.empty()) s.chips = p->chips;
 }
 
 inline void restore(Plan* p, const Snapshot& s) {
@@ -1727,8 +1770,16 @@ inline void restore(Plan* p, const Snapshot& s) {
     for (size_t i = 0; i < p->gates.size(); i++) {
         p->gates[i].state = s.gates[i * 3] != 0; p->gates[i].clock = s.gates[i * 3 + 1] != 0; p->gates[i].primed = s.gates[i * 3 + 2] != 0;
     }
-    p->nonlinear = s.nonlinear;
-    p->chips = s.chips;
+    for (size_t i = 0; i < p->nonlinear.size() && i < s.nonlinear.size(); i++) {
+        Nonlinear& e = p->nonlinear[i];
+        const NlSaved& v = s.nonlinear[i];
+        e.lim[0] = v.lim[0]; e.lim[1] = v.lim[1];
+        for (int k = 0; k < 4; k++) e.cur[k] = v.cur[k];
+        e.st[0] = v.st[0]; e.st[1] = v.st[1];
+        for (int k = 0; k < e.junctions; k++) { e.junction[k].qPrev = v.qPrev[k]; e.junction[k].iPrev = v.iPrev[k]; e.junction[k].started = v.started[k]; }
+    }
+    p->xPrev = s.xPrev;
+    if (!p->chips.empty()) p->chips = s.chips;
 }
 
 /// Sets the time step to h for the steps of a retry: the conductances of the capacitors and inductors (made for `full`, as in stepStart) change with it.
@@ -1736,6 +1787,7 @@ inline void setDt(Plan* p, double h, double full) {
     if (p->dt == h) return;
     p->dt = h;
     p->g = p->gFull;
+    p->gDirty = true;
     double f = full / h;
     auto cond = [p](int i, int j, double v) { p->add(i, i, v); p->add(j, j, v); p->add(i, j, -v); p->add(j, i, -v); };
     for (size_t i = 0; i < p->capacitors.size(); i++) {
@@ -1813,6 +1865,36 @@ inline double probeValue(Plan* p, const Probe& pr) {
     }
 }
 
+/// After the first iteration of a step (it started from the predicted voltages): does the linearization still hold at the solution? Each part that is not
+/// linear is linearized again there; when its currents are those its old linearization predicted (within 1e-4 and 1 nA), the solution is that of the
+/// non-linear equations, and the second iteration - load, factorize, solve only to confirm it - is saved. The convergence check of SPICE on the currents
+/// of the devices. When it fails, the limits of the junctions are as before (the next iteration limits as it would have).
+inline bool linearizationHolds(Plan* p) {
+    bool holds = true;
+    double* saved = p->limSave.data();
+    for (size_t k = 0; k < p->nonlinear.size(); k++) {
+        Nonlinear& e = p->nonlinear[k];
+        saved[2 * k] = e.lim[0]; saved[2 * k + 1] = e.lim[1];
+        if (!holds) continue;
+        double want[4];
+        for (int a = 0; a < e.terminals; a++) {
+            double c = e.i0[a];
+            for (int b = 0; b < e.terminals; b++) c += e.j[a][b] * (p->node(e.node[b]) - e.v0[b]);
+            want[a] = c;
+        }
+        linearize(e, p->x);
+        if (e.junctions > 0) stampCharges(e, p->dt);
+        if (e.limited) { holds = false; continue; }
+        for (int a = 0; a < e.terminals; a++) {
+            double d = std::fabs(e.i0[a] - want[a]);
+            if (!(d <= 1e-9 + 1e-4 * std::max(std::fabs(e.i0[a]), std::fabs(want[a])))) { holds = false; break; }
+        }
+    }
+    if (!holds)
+        for (size_t k = 0; k < p->nonlinear.size(); k++) { p->nonlinear[k].lim[0] = saved[2 * k]; p->nonlinear[k].lim[1] = saved[2 * k + 1]; }
+    return holds;
+}
+
 /// Newton's method for a step with parts that are not linear: load, linearize, factorize, solve - until the node voltages stop moving.
 inline bool newton(Plan* p) {
     const int n = p->size;
@@ -1824,6 +1906,15 @@ inline bool newton(Plan* p) {
             stepState(e, p->node(e.node[0]) - p->node(e.node[1]), e.cur[0], p->dt, gate);
         }
     }
+    // the first iteration starts where the step before points to (x + (x - x before)): Newton's method needs fewer iterations while the voltages move
+    // (sound); not in the half steps of a retry (another time step) and not right after the plan was made or a node was set
+    bool predicted = !p->retrying && p->xPrev.size() == (size_t)n;
+    if (predicted) {
+        double* x = p->x.data();
+        double* xp = p->xPrev.data();
+        for (int i = 0; i < n; i++) { double now = x[i]; x[i] = now + (now - xp[i]); xp[i] = now; }
+    } else p->xPrev = p->x;
+    p->limSave.resize(p->nonlinear.size() * 2);
     bool converged = false;
     for (int it = 0; it < p->maxIterations && !converged; it++) {
         p->iterations++;
@@ -1844,6 +1935,12 @@ inline bool newton(Plan* p) {
         }
         p->xOld = p->x;
         solve(p);
+        // from a good prediction one iteration is often enough: the parts tell whether their linearization still holds
+        if (it == 0 && predicted && p->oneIteration) {
+            bool anyLimited = false;
+            for (const Nonlinear& e : p->nonlinear) if (e.limited) anyLimited = true;
+            if (!anyLimited && linearizationHolds(p)) { converged = true; p->shortcuts++; break; }
+        }
         converged = it > 0;
         for (const Nonlinear& e : p->nonlinear) if (e.limited) converged = false;
         for (int i = 0; i < n && converged; i++) {
@@ -1910,6 +2007,7 @@ inline void substeps(Plan* p) {
     }
     setDt(p, full, full);
     p->g = p->gFull;
+    p->gDirty = true;
     p->time = end;
     p->retrying = false;
 }
@@ -1948,7 +2046,8 @@ inline Value RhsSet(Value h, Value row, Value value) {
     if (p && row.i >= 0 && row.i < p->size) p->rhs[(size_t)row.i] = D(value);
     return Undef();
 }
-inline Value Finish(Value h) { Plan* p = plan(h); if (p && p->compiled) finish(p); return Undef(); }
+/// The end of a step (after Begin and what parts in fire added): solves it; returns the time after the step.
+inline Value Finish(Value h) { Plan* p = plan(h); if (p && p->compiled) finish(p); return Float(p ? (Real)p->time : (Real)0); }
 
 /// Sends sound through the plan: `frames` frames of 16 bit samples (little endian, `channels` interleaved; stereo is mixed to mono) from `inOffset` of the
 /// buffer `in` drive the source `source` (a sample of 1.0 is `amplitude` volts, linear in between), `oversample` steps per sample (the time step of the
@@ -2015,7 +2114,7 @@ inline Value Node(Value h, Value i) { Plan* p = plan(h); return Float(p && i.i <
 /// Sets an unknown before the first step (the node voltages of the plan before, when the circuit is compiled again).
 inline Value SetNode(Value h, Value i, Value v) {
     Plan* p = plan(h);
-    if (p && i.i >= 0 && i.i < p->size) p->x[(size_t)i.i] = D(v);
+    if (p && i.i >= 0 && i.i < p->size) { p->x[(size_t)i.i] = D(v); p->xPrev.clear(); }
     return Undef();
 }
 inline Value Unknown(Value h, Value k) { Plan* p = plan(h); return Float(p && k.i >= 0 && k.i < p->size ? (Real)p->x[(size_t)k.i] : (Real)0); }
@@ -2096,6 +2195,7 @@ inline Value Info(Value h, Value what) {
         case 7: return Int(p->iterations);
         case 8: return Int(p->unconverged);
         case 9: return Int(p->retried);
+        case 10: return Int(p->shortcuts);
         default: return Int(-1);
     }
 }
