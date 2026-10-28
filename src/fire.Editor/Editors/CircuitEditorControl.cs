@@ -183,8 +183,7 @@ namespace fire.Editor
         private readonly ScrollViewer _toolbox;
         private string _statusText = "";
         private bool _running = true;
-        private int _stepsPerFrame = 20;
-        private bool _realTime;
+        private double _speed = 1.0;
         private string _findText = "";
         private readonly List<ToggleButton> _placeButtons = new();
         private ToggleButton? _pointerButton;
@@ -250,23 +249,35 @@ namespace fire.Editor
             set { if (_running == value) return; _running = value; Send("run	" + (value ? "1" : "0")); StateChanged?.Invoke(); }
         }
 
-        /// <summary>The time steps of the circuit per picture: the speed of the simulation.</summary>
-        public int StepsPerFrame
+        /// <summary>The pace of the simulation, which always runs in real time: simulated seconds per second of the clock (1 real time, 0.01 a hundred times
+        /// slower). It belongs to the circuit (saved in the file, with undo); the simulation takes a coarser time step when the computer cannot keep up, and
+        /// the view shows how much of the pace it manages.</summary>
+        public double Speed
         {
-            get => _stepsPerFrame;
-            set { if (_stepsPerFrame == value || value < 1) return; _stepsPerFrame = value; Send("steps	" + value.ToString(CultureInfo.InvariantCulture)); StateChanged?.Invoke(); }
+            get => _speed;
+            set
+            {
+                if (Math.Abs(_speed - value) <= value * 1e-6 || value <= 0) return;
+                _speed = value;
+                Send("circuit\tspeed\t" + value.ToString("R", CultureInfo.InvariantCulture));
+                StateChanged?.Invoke();
+            }
         }
 
-        /// <summary>Real time instead of the steps per picture: the simulation keeps pace with the clock (never faster) and takes a coarser time step when the
-        /// computer cannot keep up; the view shows how much of real time it manages.</summary>
-        public bool RealTime
-        {
-            get => _realTime;
-            set { if (_realTime == value) return; _realTime = value; Send("realtime\t" + (value ? "1" : "0")); StateChanged?.Invoke(); }
-        }
+        /// <summary>The paces offered by the tool strip: faster than real time, real time, and slow motion down to 1/10000.</summary>
+        public static readonly double[] SpeedChoices = { 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0001 };
 
-        /// <summary>The steps per picture offered by the tool strip (up to 10k).</summary>
-        public static readonly int[] StepChoices = { 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000 };
+        /// <summary>A pace as the tool strip shows it: "Real time", "1/100", "10x".</summary>
+        public static string SpeedLabel(double speed)
+        {
+            if (Math.Abs(speed - 1) < 1e-9) return "Real time";
+            if (speed < 1)
+            {
+                double d = 1 / speed;
+                if (Math.Abs(d - Math.Round(d)) < 1e-3 * d) return "1/" + Math.Round(d).ToString(CultureInfo.InvariantCulture) + " speed";
+            }
+            return speed.ToString("0.###", CultureInfo.InvariantCulture) + "x speed";
+        }
 
         public void ResetSimulation() { Send("reset"); FocusEditor(); }
         public void RotateClockwise() { Send("rotate"); FocusEditor(); }
@@ -359,7 +370,7 @@ namespace fire.Editor
                 }
 
                 static string State(UI.CircuitView view) {
-                    return "@state\t" + view.running + "\t" + view.CanUndo + "\t" + view.CanRedo + "\t" + view.realTime
+                    return "@state\t" + view.running + "\t" + view.CanUndo + "\t" + view.CanRedo + "\t" + view.CircuitProperty("speed")
                 }
 
                 static Circuits.Element At(UI.CircuitView view, string index) {
@@ -394,8 +405,6 @@ namespace fire.Editor
                     else if (c == "fit") { view.FitToView() }
                     else if (c == "run") { view.running = p[1] == "1" }
                     else if (c == "reset") { circuit.Reset() }
-                    else if (c == "steps") { view.stepsPerFrame = p[1].ToInt() }
-                    else if (c == "realtime") { view.realTime = p[1] == "1" }
                     else if (c == "load") { view.LoadText(command.Substring(5)) }
                     else if (c == "select") { view.Select(SparkHost.At(view, p[1]), false) }
                     else if (c == "set") {
@@ -587,7 +596,7 @@ namespace fire.Editor
                         _running = p[0] == "True";
                         _canUndo = p[1] == "True";
                         _canRedo = p[2] == "True";
-                        if (p.Length >= 4) _realTime = p[3] == "True";
+                        if (p.Length >= 4 && double.TryParse(p[3], NumberStyles.Float, CultureInfo.InvariantCulture, out double speed) && speed > 0) _speed = speed;
                         StateChanged?.Invoke();
                     }
                     break;

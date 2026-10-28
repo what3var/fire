@@ -3,7 +3,7 @@
 
 // circuits.ui (docs/CIRCUITS.md, "CircuitView"): a circuit as a live schematic in the user interface. The view draws the elements of the schematic of a circuit
 // (Circuits.Schematic) on a grid, colours the wires by their voltage (green positive, red negative, grey 0 V) and lets dots run with the current, the way
-// Paul Falstad's simulator does. While `running`, it simulates `stepsPerFrame` steps per cycle. A click toggles switches and logic inputs; unless `readOnly`, the
+// Paul Falstad's simulator does. While `running`, it simulates in real time at the pace of the circuit (Circuit.Speed: slow motion or faster). A click toggles switches and logic inputs; unless `readOnly`, the
 // schematic can be edited right in the view: select, move, stretch, rotate, flip, delete, draw wires, place elements (BeginPlace, from a palette outside the view),
 // edit properties (double click), undo and redo.
 namespace UI {
@@ -14,11 +14,6 @@ namespace UI {
         bool readOnly = false
         /// <summary>Simulate while the view is shown.</summary>
         bool running = true
-        /// <summary>Time steps of the circuit per cycle of the interface.</summary>
-        int stepsPerFrame = 20
-        /// <summary>Real time instead of stepsPerFrame: the circuit keeps pace with the clock (Circuit.RealTime) and the view draws up to 30 times a second;
-        /// the corner shows how much of real time the simulation manages.</summary>
-        bool realTime = false
         float lastFrame = 0.0
         // cycles of the simulation since the last picture (the dots of the current move by that many)
         int pendingCycles = 0
@@ -526,7 +521,8 @@ namespace UI {
         }
 
         /// <summary>A property of the circuit itself (with undo): "class" and "namespace" of the class generated from the file, "timeStep" (the step of the
-        /// simulation, a number with an SI prefix and an optional "s": "10u", "1us"). False if the value is not valid.</summary>
+        /// simulation, a number with an SI prefix and an optional "s": "10u", "1us"), "speed" (the pace of real time: "1", "0.01", "1/100"). False if the
+        /// value is not valid.</summary>
         bool SetCircuitProperty(string key, string value) {
             var s = this.Schematic
             var v = value.Trim()
@@ -538,6 +534,15 @@ namespace UI {
                 if (s.namespaceName == v) { return true }
                 this.Remember()
                 s.namespaceName = v
+            } else if (key == "speed") {
+                // simulated seconds per second: a number ("0.01") or a fraction ("1/100")
+                var parsed = UI.CircuitView.ParseSpeed(v)
+                if (parsed == undefined) { return false }
+                float sp = parsed!float
+                if (sp < 0.0001 || sp > 1000.0) { return false }
+                if (Math.Abs(this.circuit.Speed - sp) <= sp * 0.000001) { return true }
+                this.Remember()
+                this.circuit.Speed = sp
             } else if (key == "timeStep") {
                 var text = v
                 if (text.EndsWith("s")) { text = text.Substring(0, text.Length - 1) }
@@ -558,7 +563,24 @@ namespace UI {
             if (key == "class") { return this.Schematic.className }
             if (key == "namespace") { return this.Schematic.namespaceName }
             if (key == "timeStep") { return Circuits.Schematic.Format(this.circuit.StepRaw()) + "s" }
+            if (key == "speed") { return Circuits.Schematic.Trim(this.circuit.Speed) }
             return ""
+        }
+
+        /// <summary>A pace as text: a number ("0.01", "10") or a fraction ("1/100"); undefined if it is neither.</summary>
+        static any ParseSpeed(string text) {
+            var t = text.Trim().Replace("x", "").Replace("×", "").Trim()
+            var slash = t.IndexOf("/")
+            if (slash > 0) {
+                var a = t.Substring(0, slash).Trim().TryToFloat()
+                var b = t.Substring(slash + 1).Trim().TryToFloat()
+                if (a == undefined || b == undefined) { return undefined }
+                float fa = a!float
+                float fb = b!float
+                if (fb == 0.0) { return undefined }
+                return fa / fb
+            }
+            return t.TryToFloat()
         }
 
         /// <summary>What can be operated while the circuit runs: potentiometers (a group once), switches, push buttons, selector switches and logic inputs.
@@ -758,32 +780,25 @@ namespace UI {
         undefined Poll(Root root) {
             base.Poll(root)
             var c = this.circuit
-            if (c.RealTime != this.realTime) { c.RealTime = this.realTime }
-            if (this.realTime && !this.running) { c.RestartRealTime() }
+            // the view always simulates in real time, at the pace of the circuit (Circuit.Speed); a pause is not made up afterwards
+            if (!this.running) { c.RestartRealTime() }
             if (this.running && this.actualWidth > 0) {
                 var now = Circuits.RealTimeClock.Now()
-                if (this.realTime) {
-                    // at most 30 pictures a second: between them the program has the time
-                    if (now - this.lastFrame < 1.0 / 30) { return }
-                }
+                // at most 30 pictures a second: between them the program has the time
+                if (now - this.lastFrame < 1.0 / 30) { return }
                 // (bookkeeping of the view, not a change of what it shows: written while "painting", so the root does not paint again for it)
                 root.painting = true
-                if (this.realTime) { this.lastFrame = now }
+                this.lastFrame = now
                 try {
-                    // in real time a little more than half of a picture's time for the simulation, the rest to draw
-                    if (this.realTime) { c.AdvanceRealTime(0.018) }
-                    else { for (int i = 0; i < this.stepsPerFrame; i++) { c.Step() } }
+                    // a little more than half of a picture's time for the simulation, the rest to draw
+                    c.AdvanceRealTime(0.018)
                 } catch (Exception ex) {
                     this.running = false
                     this.status = "Simulation stopped: " + ex.message
                 }
-                // the simulation steps every cycle, the picture follows at most 30 times a second (more is not seen, and drawing costs the most);
-                // the dots of the current move on by the cycles in between
                 this.pendingCycles = this.pendingCycles + 1
-                var draw = this.realTime || now - this.lastFrame >= 1.0 / 30 || this.status != ""
-                if (draw && !this.realTime) { this.lastFrame = now }
                 root.painting = false
-                if (draw) { this.Invalidate() }
+                this.Invalidate()
             }
         }
 
@@ -1021,15 +1036,12 @@ namespace UI {
             this.textBrush.Color = UI.Color.Rgb(150, 150, 150)
             var t = "t = " + UI.CircuitView.Short(this.circuit.TimeRaw()) + "s"
             this.DrawString(root, ax + w - this.TextWidth(root, t) - this.Dp(6), ay + this.Dp(4), t, this.textBrush)
-            if (this.realTime) {
-                // how much of real time the simulation manages, and the time step it takes for that
-                var share = Math.Round(this.circuit.RealTimeShare * 100)!int
-                var rt = "real time " + share + "%  (step " + UI.CircuitView.Short(this.circuit.CurrentTimeStep / 1s) + "s)"
-                if (share >= 99) { this.textBrush.Color = UI.Color.Rgb(120, 200, 120) } else { this.textBrush.Color = UI.Color.Rgb(230, 180, 80) }
-                this.DrawString(root, ax + w - this.TextWidth(root, rt) - this.Dp(6), ay + this.Dp(6) + this.TextHeight(root), rt, this.textBrush)
-            }
-            var infoTop = ay + this.Dp(10) + this.TextHeight(root)
-            if (this.realTime) { infoTop = infoTop + this.Dp(2) + this.TextHeight(root) }
+            // the pace, how much of it the simulation manages, and the time step it takes for that
+            var share = Math.Round(this.circuit.RealTimeShare * 100)!int
+            var rt = UI.CircuitView.SpeedText(this.circuit.Speed) + " " + share + "%  (step " + UI.CircuitView.Short(this.circuit.CurrentTimeStep / 1s) + "s)"
+            if (share >= 99 || !this.running) { this.textBrush.Color = UI.Color.Rgb(120, 200, 120) } else { this.textBrush.Color = UI.Color.Rgb(230, 180, 80) }
+            this.DrawString(root, ax + w - this.TextWidth(root, rt) - this.Dp(6), ay + this.Dp(6) + this.TextHeight(root), rt, this.textBrush)
+            var infoTop = ay + this.Dp(12) + 2 * this.TextHeight(root)
             if (this.selection.count == 1) { this.DrawInfo(root, this.selection[0], ax + w - this.Dp(6), infoTop) }
         }
 
@@ -1057,6 +1069,16 @@ namespace UI {
                 y = y + lh
                 first = false
             }
+        }
+
+        /// <summary>The pace of a circuit for the eye: "real time", "1/100 real time", "10x real time".</summary>
+        static string SpeedText(float speed) {
+            if (Math.Abs(speed - 1.0) < 0.000001) { return "real time" }
+            if (speed < 1.0) {
+                var d = 1.0 / speed
+                if (Math.Abs(d - Math.Round(d)) < 0.001 * d) { return "1/" + Math.Round(d)!int + " real time" }
+            }
+            return Circuits.Schematic.Trim(speed) + "x real time"
         }
 
         // a value with its unit for the eye ("4.7mA"), "-" for none

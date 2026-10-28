@@ -516,11 +516,13 @@ The schematic has them as elements too (the category Devices of the palette): `G
 
 ### Real time
 
-`circuit.RealTime = true` lets the simulation keep pace with the clock - never faster. `circuit.AdvanceRealTime(budget = 20ms)` simulates the time since its last
+`circuit.RealTime = true` lets the simulation keep pace with the clock - never faster than its `Speed`. `circuit.Speed` is the pace: simulated seconds per
+second of the clock, 1 (the default) for real time, 0.01 for a hundred times slower (slow motion, to watch a circuit of 1 kHz), 10 for ten times faster (as far
+as the computer keeps up); between 0.0001 and 1000. The `.biscuit` file keeps it (`"speed": "0.01"`, left out at 1). `circuit.AdvanceRealTime(budget = 20ms)` simulates the time since its last
 call (the first call starts the clock), using at most `budget` of computing time; `circuit.RunRealTime(duration)` does that for `duration` of the clock and
 returns. The circuit simulates with its own `TimeStep` as long as the computer keeps up. When it falls behind for a while, the step doubles (up to
 `MaxTimeStep`, by default 64 times `TimeStep`); with time to spare it halves again. `CurrentTimeStep` is the step it uses now, `RealTimeShare` how much of real
-time it manages (1 = all of it, 0.5 = half as fast as the clock). `TimeStep` and the saved file keep the step the circuit was given; `RealTime = false` goes back
+time it manages at the chosen speed (1 = all of it, 0.5 = half of it). `TimeStep` and the saved file keep the step the circuit was given; `RealTime = false` goes back
 to it. `RestartRealTime()` starts the clock anew after a pause, so the pause is not made up.
 
 ```fire
@@ -533,8 +535,9 @@ print(c.Time)                  // about 2 s, if the computer kept up
 print(c.RealTimeShare)         // 1.0 if it did
 ```
 
-A `UI.CircuitView` with `realTime = true` (in spark: **Real time** in the list of steps of the tool strip Simulation) simulates that way and draws at most 30
-times a second. The corner shows how much of real time it manages and the step it takes for that (`real time 100%  (step 10us)`; yellow below 99 %).
+A `UI.CircuitView` always simulates that way, at the speed of its circuit, and draws at most 30 times a second (in spark: the list of speeds in the tool
+strip Simulation - faster, **Real time**, slow motion down to 1/10000; the choice is saved with the circuit, with undo). The corner shows the speed, how much of
+it the simulation manages and the step it takes for that (`1/100 real time 100%  (step 10us)`; yellow below 99 %).
 
 ### A circuit that runs alongside the program
 
@@ -694,7 +697,7 @@ or of a member of `Circuits.Circuit`). Renaming an element moves the bindings al
 
 `UI.CircuitView` is a control of the UI library (docs/UI.md) that shows a circuit as a live schematic, like Falstad's simulator: wires and leads coloured by their voltage
 (green positive, red negative, grey 0 V; `voltageRange`), dots running with the current through the parts and the wires, LEDs that light up, logic outputs, probes,
-scopes drawn into the schematic. While `running` it simulates `stepsPerFrame` steps per cycle (Space pauses).
+scopes drawn into the schematic. While `running` it simulates in real time at the speed of the circuit (`Circuit.Speed`, see "Real time"; Space pauses).
 
 ```fire
 #import "circuits.ui"

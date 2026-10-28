@@ -1997,6 +1997,7 @@ namespace Circuits {
             if (this.className != "") { text = text + ",\n  \"class\": " + Circuits.Schematic.Quote(this.className) }
             if (this.namespaceName != "") { text = text + ",\n  \"namespace\": " + Circuits.Schematic.Quote(this.namespaceName) }
             text = text + ",\n  \"timeStep\": " + Circuits.Schematic.Quote(Circuits.Schematic.Format(c.StepRaw()) + "s")
+            if (c.speed != 1.0) { text = text + ",\n  \"speed\": " + Circuits.Schematic.Quote(Circuits.Schematic.Trim(c.speed)) }
             if (c.paramNames.count > 0) {
                 text = text + ",\n  \"parameters\": {"
                 for (int i = 0; i < c.paramNames.count; i++) {
@@ -2085,6 +2086,13 @@ namespace Circuits {
                 if (step != undefined) {
                     var dt = Circuits.Symbols.Number("" + step)
                     if (dt != undefined && dt > 0.0 && Math.Abs(this.circuit.StepRaw() - dt) > dt * 0.000001) { this.circuit.TimeStep = dt * 1s }
+                }
+                // the pace of real time (simulated seconds per second); a file without it runs in real time
+                var speed = o.Get("speed")
+                this.circuit.speed = 1.0
+                if (speed != undefined) {
+                    var sp = Circuits.Symbols.Number("" + speed)
+                    if (sp != undefined && sp >= 0.0001 && sp <= 1000.0) { this.circuit.speed = sp }
                 }
                 var prms = o.Get("parameters")
                 if (prms != undefined && prms is of JsonObject) {

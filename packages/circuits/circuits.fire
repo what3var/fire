@@ -2553,6 +2553,8 @@ namespace Circuits {
         Circuits.RealTimeClock clock = undefined
         float baseDt = 0.00001
         float maxDt = 0.0
+        // simulated seconds per second of the clock in real time (Speed)
+        float speed = 1.0
         // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
         List paramNames
         List paramValues
@@ -2737,6 +2739,16 @@ namespace Circuits {
                         top.Invalidate()
                     }
                 }
+            }
+        }
+
+        /// <summary>The pace of real time: simulated seconds per second of the clock - 1 (the default) is real time, 0.01 a hundred times slower (slow motion,
+        /// to watch a circuit of 1 kHz), 10 ten times faster (as far as the computer keeps up). Between 0.0001 and 1000.</summary>
+        float Speed {
+            get { return this.Top().speed }
+            set {
+                if (!(value >= 0.0001 && value <= 1000.0)) { throw new ArgumentException("The speed is between 0.0001 and 1000 (1: real time).") }
+                this.Top().speed = value
             }
         }
 
@@ -3196,9 +3208,9 @@ namespace Circuits {
             var wall = (now - this.lastTicks) / 10000000.0
             this.lastTicks = now
             if (wall <= 0.0) { return }
-            // after a long pause (the program was busy, a window was dragged) at most a quarter of a second is made up
-            var want = Math.Min(wall, 0.25)
+            // after a long pause (the program was busy, a window was dragged) at most a quarter of a second is made up; Speed scales the clock
             var c = this.circuit
+            var want = Math.Min(wall, 0.25) * c.speed
             var dt = c.dt
             this.owed = this.owed + want
             var needed = Math.Floor(this.owed / dt)!int

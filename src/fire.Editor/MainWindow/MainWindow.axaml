@@ -405,7 +405,7 @@
 						<local:ToolStripButton Click="SimReset_Click" ToolTip.Tip="Reset the simulation to time 0" IconSource="/Assets/icons/Circuit-Restart.png"/>
 						<Image Classes="dimmable" Source="/Assets/icons/Circuit-PlaySpeed.png" Width="16" Height="16" Margin="6,2,4,2" local:ToolStripPanel.KeepWithNext="True" ToolTip.Tip="The speed of the simulation"/>
 						<ComboBox local:ToolStrip.HorizontalOnly="True" x:Name="cmbSimSteps" Width="120" SelectionChanged="cmbSimSteps_SelectionChanged" MinHeight="26" Padding="8,2"
-								  ToolTip.Tip="Time steps of the circuit per picture: the speed of the simulation"/>
+								  ToolTip.Tip="The pace of the simulation, which runs in real time: real time, slow motion (1/10 ... 1/10000) or faster. Saved with the circuit."/>
 						<local:ToolStripButton Click="SimRotateLeft_Click" ToolTip.Tip="Rotate the selection counterclockwise (Shift+R)" IconSource="/Assets/icons/Circuit-RotateLeft.png"/>
 						<local:ToolStripButton Click="SimRotateRight_Click" ToolTip.Tip="Rotate the selection clockwise (R)" IconSource="/Assets/icons/Circuit-RotateRight.png"/>
 						<local:ToolStripButton Click="SimFlipHorizontal_Click" ToolTip.Tip="Flip the selection horizontally (left to right)" IconSource="/Assets/icons/Circuit-FlipHorizontal.png"/>
