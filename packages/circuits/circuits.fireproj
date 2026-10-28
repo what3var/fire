@@ -308,6 +308,83 @@
         "name": "__CirGateExtra",
         "arguments": 4,
         "cpp": "circuits::GateExtra"
+      },
+      {
+        "name": "__CirStartRunner",
+        "arguments": 2,
+        "cpp": "circuits::StartRunner"
+      },
+      {
+        "name": "__CirStopRunner",
+        "arguments": 1,
+        "cpp": "circuits::StopRunner"
+      },
+      {
+        "name": "__CirRunnerInfo",
+        "arguments": 2,
+        "cpp": "circuits::RunnerInfo"
+      },
+      {
+        "name": "__CirHoldBegin",
+        "arguments": 1,
+        "cpp": "circuits::HoldBegin"
+      },
+      {
+        "name": "__CirHoldEnd",
+        "arguments": 1,
+        "cpp": "circuits::HoldEnd"
+      },
+      {
+        "name": "__CirStreamNew",
+        "arguments": 2,
+        "cpp": "circuits::StreamNew"
+      },
+      {
+        "name": "__CirStreamFree",
+        "arguments": 1,
+        "cpp": "circuits::StreamFree"
+      },
+      {
+        "name": "__CirStreamWrite",
+        "arguments": 2,
+        "cpp": "circuits::StreamWrite"
+      },
+      {
+        "name": "__CirStreamRead",
+        "arguments": 2,
+        "cpp": "circuits::StreamRead",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__CirStreamWritePcm",
+        "arguments": 6,
+        "cpp": "circuits::StreamWritePcm"
+      },
+      {
+        "name": "__CirStreamReadPcm",
+        "arguments": 5,
+        "cpp": "circuits::StreamReadPcm"
+      },
+      {
+        "name": "__CirStreamInfo",
+        "arguments": 2,
+        "cpp": "circuits::StreamInfo"
+      },
+      {
+        "name": "__CirStreamClear",
+        "arguments": 1,
+        "cpp": "circuits::StreamClear"
+      },
+      {
+        "name": "__CirAddTap",
+        "arguments": 4,
+        "cpp": "circuits::AddTap"
+      },
+      {
+        "name": "__CirAddFeed",
+        "arguments": 3,
+        "cpp": "circuits::AddFeed"
       }
     ],
     "reset": "circuits::reset"

@@ -23,8 +23,32 @@
 #include <string>
 #include <vector>
 
+// The simulation in a thread of its own (Runner): on the hosted platforms (the library of the virtual machine, native programs for Linux, Windows, macOS).
+// Elsewhere (the browser, microcontrollers) the program steps the circuit itself, as before.
+#if !defined(CIR_NO_THREADS) && !defined(__EMSCRIPTEN__) && (defined(FIRE_LIBRARY) || defined(FIRE_HAL_POSIX) || defined(FIRE_HAL_WINDOWS))
+#define CIR_THREADS 1
+#include <atomic>
+#include <chrono>
+#include <mutex>
+#include <thread>
+#endif
+
 namespace fire {
 namespace circuits {
+
+#ifdef CIR_THREADS
+/// One lock for the kernel: every native takes it, and so does the thread of a running plan while it does a few steps - the program reads and changes
+/// plans and recordings only between those.
+inline std::mutex& kernelMutex() { static std::mutex m; return m; }
+struct KernelLock {
+    KernelLock() { kernelMutex().lock(); }
+    ~KernelLock() { kernelMutex().unlock(); }
+    KernelLock(const KernelLock&) = delete;
+    KernelLock& operator=(const KernelLock&) = delete;
+};
+#else
+struct KernelLock {};
+#endif
 
 inline std::string& lastError() { static thread_local std::string e; return e; }
 
@@ -1086,8 +1110,47 @@ struct Snapshot {
     std::vector<Chip> chips;
 };
 
+struct Runner;
+
+/// A stream of samples at a fixed rate between the circuit and the program (or a sound device): a ring of volts. As an output (a tap) the plan writes the
+/// voltage between two nodes into it at every point of its grid k / rate - interpolated between the steps around it, also when a step was done again in
+/// smaller steps; as an input (a feed) it drives a source, the voltage interpolated between the samples. It lives apart from a plan (like a recorder), so
+/// the stream goes on when the circuit is compiled again.
+struct SignalStream {
+    std::vector<float> ring;
+    size_t head = 0, count = 0;
+    double rate = 44100;
+    int64_t overruns = 0, underruns = 0;
+    // as a tap: the next sample index and the step before (time, voltage)
+    int64_t nextIndex = -1;
+    double prevT = 0, prevV = 0;
+    bool havePrev = false;
+    // as a feed: the two samples around the time of the step (index of the first)
+    int64_t feedIndex = -1;
+    double feedA = 0, feedB = 0;
+    bool push(float v) {
+        if (ring.empty()) return false;
+        if (count == ring.size()) { head = (head + 1) % ring.size(); count--; overruns++; }
+        ring[(head + count) % ring.size()] = v;
+        count++;
+        return true;
+    }
+    bool pop(float& v) {
+        if (count == 0) return false;
+        v = ring[head];
+        head = (head + 1) % ring.size();
+        count--;
+        return true;
+    }
+};
+
+struct Tap { int stream, a, b; };
+struct Feed { int stream, source; };
+
 struct Plan {
     int nodes = 0, size = 0;
+    // the thread that simulates the plan in real time (StartRunner), or none
+    Runner* runner = nullptr;
     double dt = 1e-5, time = 0;
     std::vector<double> g;            // the matrix of the parts that stay the same (size x size, row major)
     std::vector<char> pattern;        // the entries that can be other than zero (also where only the non-linear parts write)
@@ -1126,6 +1189,8 @@ struct Plan {
     std::vector<TLine> lines;
     std::vector<Source> sources;
     std::vector<Probe> probes;
+    std::vector<Tap> taps;
+    std::vector<Feed> feeds;
     bool compiled = false;
 
     int find(int i) { while (group[i] != i) { group[i] = group[group[i]]; i = group[i]; } return i; }
@@ -1142,15 +1207,26 @@ struct Plan {
 struct Tables {
     std::vector<Plan*> plans{nullptr};
     std::vector<Recorder*> recorders{nullptr};
-    ~Tables() { for (Plan* p : plans) delete p; for (Recorder* r : recorders) delete r; }
+    std::vector<SignalStream*> streams{nullptr};
+    ~Tables() { for (Plan* p : plans) delete p; for (Recorder* r : recorders) delete r; for (SignalStream* s : streams) delete s; }
 };
 inline Tables& tables() { static Tables t; return t; }
 
 /// The program has ended (the library of the VM stays loaded for the next one): drops the plans and recordings.
+inline void stopRunner(Plan* p);
+
 inline void reset() {
     Tables& t = tables();
+    for (size_t i = 1; i < t.plans.size(); i++) stopRunner(t.plans[i]);
+    KernelLock lock;
     for (size_t i = 1; i < t.plans.size(); i++) { delete t.plans[i]; t.plans[i] = nullptr; }
     for (size_t i = 1; i < t.recorders.size(); i++) { delete t.recorders[i]; t.recorders[i] = nullptr; }
+    for (size_t i = 1; i < t.streams.size(); i++) { delete t.streams[i]; t.streams[i] = nullptr; }
+}
+
+inline SignalStream* stream(int64_t i) {
+    Tables& t = tables();
+    return i > 0 && (size_t)i < t.streams.size() ? t.streams[(size_t)i] : nullptr;
 }
 
 inline Plan* plan(Value h) {
@@ -1166,7 +1242,7 @@ inline Recorder* recorder(Value h) {
 
 // ---- plans ----
 
-inline Value New(Value nodes, Value branches, Value dt) {
+inline Value New(Value nodes, Value branches, Value dt) { KernelLock kl_;
     if (nodes.i < 0 || branches.i < 0 || D(dt) <= 0) return Int(0);
     Plan* p = new Plan();
     p->nodes = (int)nodes.i;
@@ -1184,20 +1260,24 @@ inline Value New(Value nodes, Value branches, Value dt) {
 }
 
 inline Value Free(Value h) {
+    Plan* p;
+    { KernelLock lock; p = plan(h); }
+    stopRunner(p);   // (outside the lock: the thread finishes its steps under it)
+    KernelLock lock;
     int64_t i = h.i;
     Tables& t = tables();
     if (i > 0 && (size_t)i < t.plans.size()) { delete t.plans[(size_t)i]; t.plans[(size_t)i] = nullptr; }
     return Undef();
 }
 
-inline Value Conductance(Value h, Value i, Value j, Value v) {
+inline Value Conductance(Value h, Value i, Value j, Value v) { KernelLock kl_;
     Plan* p = plan(h);
     if (p) p->conductance((int)i.i, (int)j.i, D(v));
     return Undef();
 }
 
 /// The entries of a voltage source between the nodes plus and minus with the branch row k.
-inline Value VoltageBranch(Value h, Value k, Value plus, Value minus) {
+inline Value VoltageBranch(Value h, Value k, Value plus, Value minus) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Undef();
     int r = (int)k.i, i = (int)plus.i, j = (int)minus.i;
@@ -1207,7 +1287,7 @@ inline Value VoltageBranch(Value h, Value k, Value plus, Value minus) {
 }
 
 /// A capacitor (kind 0, value in farads, state: its voltage) or an inductor (kind 1, henries, state: its current); returns its index.
-inline Value AddReactive(Value h, Value kind, Value a, Value b, Value value, Value vPrev, Value iPrev) {
+inline Value AddReactive(Value h, Value kind, Value a, Value b, Value value, Value vPrev, Value iPrev) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     Reactive r{(int)a.i, (int)b.i, 0, D(vPrev), D(iPrev), 0};
@@ -1219,7 +1299,7 @@ inline Value AddReactive(Value h, Value kind, Value a, Value b, Value value, Val
 }
 
 /// Two coupled inductors (a transformer, see Coupled): l1, l2 in henries, k the coupling (below 1), with their state at the start; returns its index.
-inline Value AddCoupled(Value h, Value a1, Value b1, Value a2, Value b2, Value l1, Value l2, Value k, Value i1, Value i2, Value v1, Value v2) {
+inline Value AddCoupled(Value h, Value a1, Value b1, Value a2, Value b2, Value l1, Value l2, Value k, Value i1, Value i2, Value v1, Value v2) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     double L1 = D(l1), L2 = D(l2), kk = D(k);
@@ -1238,7 +1318,7 @@ inline Value AddCoupled(Value h, Value a1, Value b1, Value a2, Value b2, Value l
 }
 
 /// What a logic part has beyond AddGate: the lower threshold of a Schmitt trigger, the falling edge of a JK flip-flop.
-inline Value GateExtra(Value h, Value index, Value low, Value falling) {
+inline Value GateExtra(Value h, Value index, Value low, Value falling) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->gates.size()) return Bool(false);
     Gate& g = p->gates[(size_t)index.i];
@@ -1248,7 +1328,7 @@ inline Value GateExtra(Value h, Value index, Value low, Value falling) {
 }
 
 /// A source: branch >= 0 for a voltage source (its entries come with VoltageBranch), -1 for a current source from a through it to b; wave 0 DC, 1 sine, 2 square.
-inline Value AddSource(Value h, Value a, Value b, Value branch, Value wave, Value p0, Value p1, Value p2, Value p3) {
+inline Value AddSource(Value h, Value a, Value b, Value branch, Value wave, Value p0, Value p1, Value p2, Value p3) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     p->sources.push_back(Source{(int)a.i, (int)b.i, (int)branch.i, (int)wave.i, D(p0), D(p1), D(p2), D(p3)});
@@ -1256,7 +1336,7 @@ inline Value AddSource(Value h, Value a, Value b, Value branch, Value wave, Valu
 }
 
 /// New values for a source (Level, Amplitude, ...): no new plan needed.
-inline Value SetSource(Value h, Value index, Value p0, Value p1, Value p2, Value p3) {
+inline Value SetSource(Value h, Value index, Value p0, Value p1, Value p2, Value p3) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->sources.size()) return Bool(false);
     Source& s = p->sources[(size_t)index.i];
@@ -1265,7 +1345,7 @@ inline Value SetSource(Value h, Value index, Value p0, Value p1, Value p2, Value
 }
 
 /// A part that is not linear (NlKind) on the nodes n0, n1, n2 with its numbers; returns its index.
-inline Value AddNonlinear(Value h, Value kind, Value n0, Value n1, Value n2, Value p0, Value p1, Value p2, Value p3) {
+inline Value AddNonlinear(Value h, Value kind, Value n0, Value n1, Value n2, Value p0, Value p1, Value p2, Value p3) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     Nonlinear e{};
@@ -1294,7 +1374,7 @@ inline Value AddNonlinear(Value h, Value kind, Value n0, Value n1, Value n2, Val
 /// cathode - unused ones -2) with its parameters as text ("mu=100 ex=1.4 kg1=1060 ..."): k ex for a diode; mu ex kg1 kp kvb rgi for a triode; mu ex kg1
 /// kg2 kp kvb rgi for a pentode; and the capacitances between the electrodes (diode cpk; triode ccg cgp ccp; pentode cin cgp cout). Returns its index,
 /// -1 with LastError.
-inline Value AddTube(Value h, Value kind, Value n0, Value n1, Value n2, Value n3, Value parameters) {
+inline Value AddTube(Value h, Value kind, Value n0, Value n1, Value n2, Value n3, Value parameters) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     std::vector<std::pair<std::string, double>> params;
@@ -1343,7 +1423,7 @@ inline Value AddTube(Value h, Value kind, Value n0, Value n1, Value n2, Value n3
 }
 
 /// A logic part (GateKind) with its inputs (an array of nodes), its outputs, the high level, the threshold and the output resistance; returns its index.
-inline Value AddGate(Value h, Value kind, Value inputs, Value out, Value outNot, Value high, Value threshold, Value rout) {
+inline Value AddGate(Value h, Value kind, Value inputs, Value out, Value outNot, Value high, Value threshold, Value rout) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || inputs.kind != K_Array || D(rout) <= 0) return Int(-1);
     Gate gate;
@@ -1363,7 +1443,7 @@ inline Value AddGate(Value h, Value kind, Value inputs, Value out, Value outNot,
 
 /// A chip (see Chip): its kind, the nodes of its pins in Falstad's order and how each is used (0 input, 1 output of a level, 2 output of a current),
 /// the high level, the threshold of the inputs, the resistance of the outputs, bits, flags and four parameters; returns its index.
-inline Value AddChip(Value h, Value kind, Value nodes, Value modes, Value high, Value threshold, Value rout, Value bits, Value flags, Value p0, Value p1) {
+inline Value AddChip(Value h, Value kind, Value nodes, Value modes, Value high, Value threshold, Value rout, Value bits, Value flags, Value p0, Value p1) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || nodes.kind != K_Array || modes.kind != K_Array || D(rout) <= 0) return Int(-1);
     Arr* a = arrOf(nodes);
@@ -1390,7 +1470,7 @@ inline Value AddChip(Value h, Value kind, Value nodes, Value modes, Value high, 
 }
 
 /// Reads a chip: what 0 the logic value of pin k, 1 the state value k, 2 the number of state values, 3 the level (volts or amperes) pin k drives.
-inline Value ChipGet(Value h, Value index, Value what, Value k) {
+inline Value ChipGet(Value h, Value index, Value what, Value k) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->chips.size()) return Float(0);
     const Chip& c = p->chips[(size_t)index.i];
@@ -1408,7 +1488,7 @@ inline Value ChipGet(Value h, Value index, Value what, Value k) {
 
 /// Sets what ChipGet reads (0 the logic value of pin k, 1 the state value k, 4 the last clock, 5 the last load): the state a chip had before the circuit
 /// was compiled again.
-inline Value ChipSet(Value h, Value index, Value what, Value k, Value value) {
+inline Value ChipSet(Value h, Value index, Value what, Value k, Value value) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->chips.size()) return Bool(false);
     Chip& c = p->chips[(size_t)index.i];
@@ -1423,7 +1503,7 @@ inline Value ChipSet(Value h, Value index, Value what, Value k, Value value) {
 }
 
 /// The output of a logic part (true: high).
-inline Value GateState(Value h, Value index) {
+inline Value GateState(Value h, Value index) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->gates.size()) return Bool(false);
     return Bool(p->gates[(size_t)index.i].state);
@@ -1432,7 +1512,7 @@ inline Value GateState(Value h, Value index) {
 /// The capacitances of a part that is not linear: cjA for the diode, the base-emitter junction or gate-source; cjB for base-collector or gate-drain;
 /// vj and m of the depletion (m = 0: linear, the MOSFETs); tt the transit time of the diode or the forward one of the bipolar transistor, tr the
 /// reverse one (the diffusion charges; tr makes the storage time of a saturated transistor).
-inline Value SetCaps(Value h, Value index, Value cjA, Value cjB, Value vj, Value m, Value tt, Value tr) {
+inline Value SetCaps(Value h, Value index, Value cjA, Value cjB, Value vj, Value m, Value tt, Value tr) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size()) return Bool(false);
     Nonlinear& e = p->nonlinear[(size_t)index.i];
@@ -1451,7 +1531,7 @@ inline Value SetCaps(Value h, Value index, Value cjA, Value cjB, Value vj, Value
 
 /// A part given by formulas: the current into its first terminal as a function of V (two terminals: V = V(a) - V(b)), or the currents into the first and
 /// the second terminal as functions of V1 and V2 (three terminals: against the third); `parameters`: "name=value ...". Returns its index, -1 with LastError.
-inline Value AddFormula(Value h, Value n0, Value n1, Value n2, Value current1, Value current2, Value parameters) {
+inline Value AddFormula(Value h, Value n0, Value n1, Value n2, Value current1, Value current2, Value parameters) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     std::vector<std::pair<std::string, double>> params;
@@ -1485,7 +1565,7 @@ inline Value AddFormula(Value h, Value n0, Value n1, Value n2, Value current1, V
 }
 
 /// Checks a formula without a circuit: "" when it compiles, else the message.
-inline Value CheckFormula(Value text, Value parameters, Value threeTerminals, OwnList* list) {
+inline Value CheckFormula(Value text, Value parameters, Value threeTerminals, OwnList* list) { KernelLock kl_;
     std::vector<std::pair<std::string, double>> params;
     std::string error, t = toUtf8(text);
     if (parseParameters(toUtf8(parameters), params, error)) {
@@ -1501,7 +1581,7 @@ inline Value CheckFormula(Value text, Value parameters, Value threeTerminals, Ow
 }
 
 /// The value of a formula (two terminals: at V = v1; three: at V1, V2) - for tests and plots of a model.
-inline Value EvalFormula(Value text, Value parameters, Value v1, Value v2) {
+inline Value EvalFormula(Value text, Value parameters, Value v1, Value v2) { KernelLock kl_;
     std::vector<std::pair<std::string, double>> params;
     std::string error, t = toUtf8(text);
     if (!parseParameters(toUtf8(parameters), params, error)) return Float(0);
@@ -1513,7 +1593,7 @@ inline Value EvalFormula(Value text, Value parameters, Value v1, Value v2) {
 
 /// Sets the state of a part that follows a state (what 4 or 5: st[0], st[1]) - its state from the plan before, or a reset; what 6: the node it reads
 /// besides its terminals (aux).
-inline Value NlSet(Value h, Value index, Value what, Value value) {
+inline Value NlSet(Value h, Value index, Value what, Value value) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size() || what.i < 4 || what.i > 6) return Bool(false);
     Nonlinear& e = p->nonlinear[(size_t)index.i];
@@ -1522,7 +1602,7 @@ inline Value NlSet(Value h, Value index, Value what, Value value) {
 }
 
 /// Adds `value` to the entry (row, col) of the matrix of the parts that stay the same (-1: ground, nothing) - the controlled sources of fire use it.
-inline Value Entry(Value h, Value row, Value col, Value value) {
+inline Value Entry(Value h, Value row, Value col, Value value) { KernelLock kl_;
     Plan* p = plan(h);
     if (p && row.i < p->size && col.i < p->size) p->add((int)row.i, (int)col.i, D(value));
     return Undef();
@@ -1530,7 +1610,7 @@ inline Value Entry(Value h, Value row, Value col, Value value) {
 
 /// The currents into the terminals of a part that is not linear after the last step (what: terminal 0..2), the voltage of a diode (what 3), the state of
 /// a part that follows one (what 4 and 5).
-inline Value NlState(Value h, Value index, Value what) {
+inline Value NlState(Value h, Value index, Value what) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->nonlinear.size()) return Float(0);
     const Nonlinear& e = p->nonlinear[(size_t)index.i];
@@ -1675,7 +1755,7 @@ inline void stampNonlinear(Plan* p, std::vector<double>* dense) {
 
 /// Makes the plan: a tiny conductance for nodes without a path to ground, the order of the pivots, the list of operations, the factorization.
 /// True, or false with LastError when the circuit cannot be solved.
-inline Value Compile(Value h, Value time) {
+inline Value Compile(Value h, Value time) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) { lastError() = "Invalid plan."; return Bool(false); }
     p->time = D(time);
@@ -1827,6 +1907,29 @@ inline void begin(Plan* p) {
     for (TLine& l : p->lines) {
         l.j1 = l.h2[(size_t)l.ptr]; l.j2 = l.h1[(size_t)l.ptr];
         into(l.a1, l.j1); into(l.b1, -l.j1); into(l.a2, l.j2); into(l.b2, -l.j2);
+    }
+    // the sources fed by streams: the voltage at the end of the step, between the two samples around it (a missing sample: the last one holds)
+    for (const Feed& f : p->feeds) {
+        SignalStream* st = stream(f.stream);
+        if (!st || f.source < 0 || (size_t)f.source >= p->sources.size()) continue;
+        double at = t * st->rate;
+        if (st->feedIndex < 0) {
+            st->feedIndex = (int64_t)std::floor(at);
+            float v;
+            st->feedA = st->pop(v) ? v : st->feedA;
+            st->feedB = st->pop(v) ? v : st->feedA;
+        }
+        while ((double)(st->feedIndex + 1) <= at) {
+            st->feedIndex++;
+            st->feedA = st->feedB;
+            float v;
+            if (st->pop(v)) st->feedB = v; else st->underruns++;
+        }
+        double frac = at - (double)st->feedIndex;
+        if (frac < 0) frac = 0; else if (frac > 1) frac = 1;
+        Source& src = p->sources[(size_t)f.source];
+        src.wave = WDc;
+        src.p0 = st->feedA + (st->feedB - st->feedA) * frac;
     }
     for (Source& s : p->sources) {
         if (s.wave >= WNoise) s.advance(p->dt);
@@ -2032,29 +2135,156 @@ inline void finish(Plan* p) {
         }
         if (!full && (size_t)pr.channel < r->channels.size()) r->channels[(size_t)pr.channel].push_back(probeValue(p, pr));
     }
+    // the taps: a sample at every point k / rate of their grid that this step passed, between the voltages before and after it
+    for (const Tap& tp : p->taps) {
+        SignalStream* st = stream(tp.stream);
+        if (!st) continue;
+        double t1 = p->time, v1 = p->node(tp.a) - p->node(tp.b);
+        if (!st->havePrev || st->nextIndex < 0) {
+            st->nextIndex = (int64_t)std::ceil(t1 * st->rate - 1e-9);
+            st->prevT = t1; st->prevV = v1; st->havePrev = true;
+        }
+        while ((double)st->nextIndex / st->rate <= t1 + 1e-12) {
+            double tk = (double)st->nextIndex / st->rate;
+            double frac = t1 > st->prevT ? (tk - st->prevT) / (t1 - st->prevT) : 1.0;
+            if (frac < 0) frac = 0;
+            st->push((float)(st->prevV + (v1 - st->prevV) * frac));
+            st->nextIndex++;
+        }
+        st->prevT = t1; st->prevV = v1;
+    }
 }
 
-inline Value Begin(Value h) { Plan* p = plan(h); if (p && p->compiled) begin(p); return Undef(); }
-inline Value RhsAdd(Value h, Value row, Value amps) {
+// ---- the runner: a plan simulated in real time by a thread of its own ----
+//
+// The thread keeps the time of the plan at anchorSim + (clock - anchorWall) * speed: it does the steps that are due, a few at a time under the kernel lock,
+// and sleeps when it is ahead. The parts written in fire are not called by it: what they added to the right side the last time the program serviced the
+// circuit (HoldBegin ... HoldEnd) is added again in every step until the next service - the simulation runs on with the last values until new ones come.
+// After a pause, or when the computer cannot keep up, at most a quarter of a second of the clock is made up (Lost tells how much was given up).
+struct Runner {
+    double speed = 1.0;
+    double anchorWall = 0, anchorSim = 0;
+    std::vector<std::pair<int, double>> holdAdd, holdSet, capAdd, capSet;
+    bool capturing = false;
+    int64_t steps = 0;
+    double lost = 0;                       // simulated seconds given up (behind by more than a quarter of a second)
+    double share = 1.0, load = 0.0;        // the part of the wanted time it managed, the part of the clock it computed (over the last half second)
+    double windowWall = 0, windowWant = 0, windowDone = 0, windowBusy = 0;
+#ifdef CIR_THREADS
+    std::thread thread;
+    std::atomic<bool> quit{false};
+#endif
+};
+
+inline double wallSeconds() {
+#ifdef CIR_THREADS
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#else
+    return 0;
+#endif
+}
+
+/// One step with what the parts in fire added at their last service.
+inline void stepHeld(Plan* p) {
+    begin(p);
+    Runner* r = p->runner;
+    if (r) {
+        for (const auto& e : r->holdSet) p->rhs[(size_t)e.first] = e.second;
+        for (const auto& e : r->holdAdd) p->rhs[(size_t)e.first] += e.second;
+    }
+    finish(p);
+}
+
+#ifdef CIR_THREADS
+inline void runnerLoop(Plan* p) {
+    Runner* r = p->runner;
+    double lastWall = wallSeconds();
+    while (!r->quit.load(std::memory_order_relaxed)) {
+        double sleepFor = 0;
+        {
+            KernelLock lock;
+            double wall = wallSeconds();
+            double target = r->anchorSim + (wall - r->anchorWall) * r->speed;
+            double maxBehind = 0.25 * r->speed;
+            if (target - p->time > maxBehind) {
+                double give = target - p->time - maxBehind;
+                r->lost += give;
+                r->anchorSim -= give;
+                target -= give;
+            }
+            int64_t need = (int64_t)std::floor((target - p->time) / p->dt + 1e-9);
+            double t0 = wall;
+            int64_t ran = 0;
+            while (need > 0 && p->compiled) {
+                stepHeld(p);
+                need--; ran++;
+                if ((ran & 31) == 0 && wallSeconds() - t0 > 0.001) break;   // let the program in now and then
+            }
+            r->steps += ran;
+            double now = wallSeconds();
+            r->windowWant += (now - lastWall) * r->speed;
+            r->windowDone += (double)ran * p->dt;
+            r->windowBusy += now - t0;
+            if (now - r->windowWall >= 0.5) {
+                double span = now - r->windowWall;
+                r->share = r->windowWant > 0 ? std::min(1.0, r->windowDone / r->windowWant) : 1.0;
+                if (r->share > 0.995) r->share = 1.0;
+                r->load = span > 0 ? std::min(1.0, r->windowBusy / span) : 0.0;
+                r->windowWall = now; r->windowWant = r->windowDone = r->windowBusy = 0;
+            }
+            lastWall = now;
+            if (need <= 0) {
+                // ahead: until the next step is due, at most 2 ms (a change of the speed or the plan is seen soon)
+                double next = (p->time + p->dt - target) / r->speed;
+                sleepFor = std::min(0.002, std::max(0.0, next));
+            }
+        }
+        if (sleepFor > 0) std::this_thread::sleep_for(std::chrono::duration<double>(sleepFor));
+        else std::this_thread::yield();
+    }
+}
+#endif
+
+/// Stops the thread of a plan (not under the kernel lock: the thread needs it to finish its steps).
+inline void stopRunner(Plan* p) {
+    if (!p) return;
+    Runner* r;
+    { KernelLock lock; r = p->runner; }
+    if (!r) return;
+#ifdef CIR_THREADS
+    r->quit.store(true);
+    if (r->thread.joinable()) r->thread.join();
+#endif
+    KernelLock lock;
+    p->runner = nullptr;
+    delete r;
+}
+
+inline Value Begin(Value h) { KernelLock kl_; Plan* p = plan(h); if (p && p->compiled) begin(p); return Undef(); }
+inline Value RhsAdd(Value h, Value row, Value amps) { KernelLock kl_;
     Plan* p = plan(h);
-    if (p && row.i >= 0 && row.i < p->size) p->rhs[(size_t)row.i] += D(amps);
+    if (!p || row.i < 0 || row.i >= p->size) return Undef();
+    if (p->runner && p->runner->capturing) p->runner->capAdd.push_back({(int)row.i, D(amps)});
+    else p->rhs[(size_t)row.i] += D(amps);
     return Undef();
 }
 /// Sets the right side of a row (a branch of a voltage source written in fire).
-inline Value RhsSet(Value h, Value row, Value value) {
+inline Value RhsSet(Value h, Value row, Value value) { KernelLock kl_;
     Plan* p = plan(h);
-    if (p && row.i >= 0 && row.i < p->size) p->rhs[(size_t)row.i] = D(value);
+    if (!p || row.i < 0 || row.i >= p->size) return Undef();
+    if (p->runner && p->runner->capturing) p->runner->capSet.push_back({(int)row.i, D(value)});
+    else p->rhs[(size_t)row.i] = D(value);
     return Undef();
 }
 /// The end of a step (after Begin and what parts in fire added): solves it; returns the time after the step.
-inline Value Finish(Value h) { Plan* p = plan(h); if (p && p->compiled) finish(p); return Float(p ? (Real)p->time : (Real)0); }
+inline Value Finish(Value h) { KernelLock kl_; Plan* p = plan(h); if (p && p->compiled) finish(p); return Float(p ? (Real)p->time : (Real)0); }
 
 /// Sends sound through the plan: `frames` frames of 16 bit samples (little endian, `channels` interleaved; stereo is mixed to mono) from `inOffset` of the
 /// buffer `in` drive the source `source` (a sample of 1.0 is `amplitude` volts, linear in between), `oversample` steps per sample (the time step of the
 /// plan must be 1 / (rate * oversample)); after each sample the voltage between the nodes `out` and `ref`, divided by `scale`, goes as a 16 bit sample
 /// into the buffer `outBuf` from `outOffset` (clipped at full scale). Returns the number of samples clipped, -1 on an error.
 inline Value Process(Value h, Value source, Value in, Value inOffset, Value frames, Value channels, Value amplitude, Value oversample, Value out, Value ref,
-                     Value scale, Value outBuf, Value outOffset) {
+                     Value scale, Value outBuf, Value outOffset) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || !p->compiled || source.i < 0 || (size_t)source.i >= p->sources.size()) { lastError() = "The circuit is not compiled or the input is not in it."; return Int(-1); }
     if (!leafAlive(in) || !leafAlive(outBuf)) return destroyedError(in);
@@ -2102,26 +2332,26 @@ inline Value Process(Value h, Value source, Value in, Value inOffset, Value fram
 }
 
 /// `steps` time steps of a plan without parts written in fire.
-inline Value Run(Value h, Value steps) {
+inline Value Run(Value h, Value steps) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || !p->compiled) return Bool(false);
     for (int64_t i = 0; i < steps.i; i++) { begin(p); finish(p); }
     return Bool(true);
 }
 
-inline Value Time(Value h) { Plan* p = plan(h); return Float(p ? (Real)p->time : (Real)0); }
-inline Value Node(Value h, Value i) { Plan* p = plan(h); return Float(p && i.i < p->size ? (Real)p->node((int)i.i) : (Real)0); }
+inline Value Time(Value h) { KernelLock kl_; Plan* p = plan(h); return Float(p ? (Real)p->time : (Real)0); }
+inline Value Node(Value h, Value i) { KernelLock kl_; Plan* p = plan(h); return Float(p && i.i < p->size ? (Real)p->node((int)i.i) : (Real)0); }
 /// Sets an unknown before the first step (the node voltages of the plan before, when the circuit is compiled again).
-inline Value SetNode(Value h, Value i, Value v) {
+inline Value SetNode(Value h, Value i, Value v) { KernelLock kl_;
     Plan* p = plan(h);
     if (p && i.i >= 0 && i.i < p->size) { p->x[(size_t)i.i] = D(v); p->xPrev.clear(); }
     return Undef();
 }
-inline Value Unknown(Value h, Value k) { Plan* p = plan(h); return Float(p && k.i >= 0 && k.i < p->size ? (Real)p->x[(size_t)k.i] : (Real)0); }
+inline Value Unknown(Value h, Value k) { KernelLock kl_; Plan* p = plan(h); return Float(p && k.i >= 0 && k.i < p->size ? (Real)p->x[(size_t)k.i] : (Real)0); }
 
 /// The state of a capacitor (kind 0) or inductor (kind 1): what 0 its voltage, 1 its current; of a transformer (kind 2): what 0 and 1 voltage and current
 /// of the first winding, 2 and 3 of the second.
-inline Value State(Value h, Value kind, Value index, Value what) {
+inline Value State(Value h, Value kind, Value index, Value what) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Float(0);
     if (kind.i == 3) {
@@ -2142,7 +2372,7 @@ inline Value State(Value h, Value kind, Value index, Value what) {
 }
 
 /// A transmission line between the ends (a1, b1) and (a2, b2): impedance z (ohms), delay in seconds (at least one step). Returns its index.
-inline Value AddLine(Value h, Value a1, Value b1, Value a2, Value b2, Value z, Value delay) {
+inline Value AddLine(Value h, Value a1, Value b1, Value a2, Value b2, Value z, Value delay) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     if (D(z) <= 0) { lastError() = "A transmission line needs an impedance above zero."; return Int(-1); }
@@ -2160,21 +2390,21 @@ inline Value AddLine(Value h, Value a1, Value b1, Value a2, Value b2, Value z, V
 }
 
 /// The value of a source at the time of the plan.
-inline Value SourceValue(Value h, Value index) {
+inline Value SourceValue(Value h, Value index) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p || index.i < 0 || (size_t)index.i >= p->sources.size()) return Float(0);
     return Float((Real)p->sources[(size_t)index.i].value(p->time));
 }
 
 /// A probe of a scope: kind (ProbeKind), a, b, g; it records into channel `channel` of the recorder.
-inline Value AddProbe(Value h, Value rec, Value channel, Value kind, Value a, Value b, Value g) {
+inline Value AddProbe(Value h, Value rec, Value channel, Value kind, Value a, Value b, Value g) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Bool(false);
     p->probes.push_back(Probe{(int)rec.i, (int)channel.i, (int)kind.i, (int)a.i, (int)b.i, D(g)});
     return Bool(true);
 }
 
-inline Value LastError(OwnList* list) {
+inline Value LastError(OwnList* list) { KernelLock kl_;
     const std::string& e = lastError();
     Str* s = allocStr((uint32_t)e.size(), list);
     for (size_t i = 0; i < e.size(); i++) strChars(s)[i] = (char16_t)(uint8_t)e[i];
@@ -2182,7 +2412,7 @@ inline Value LastError(OwnList* list) {
 }
 
 /// Statistics of a plan for tests and the editor: 0 size, 1 entries of L and U, 2 update operations, 3 capacitors + inductors, 4 sources.
-inline Value Info(Value h, Value what) {
+inline Value Info(Value h, Value what) { KernelLock kl_;
     Plan* p = plan(h);
     if (!p) return Int(-1);
     switch (what.i) {
@@ -2200,29 +2430,211 @@ inline Value Info(Value h, Value what) {
     }
 }
 
+/// Starts the thread that simulates the plan in real time at `speed` (simulated seconds per second), from the time it has now - or, when it runs, gives it
+/// the speed and starts its clock anew. False where there are no threads (the program steps the plan itself).
+inline Value StartRunner(Value h, Value speed) { KernelLock kl_;
+#ifdef CIR_THREADS
+    Plan* p = plan(h);
+    if (!p || !p->compiled || D(speed) <= 0) return Bool(false);
+    bool fresh = p->runner == nullptr;
+    if (fresh) p->runner = new Runner();
+    Runner* r = p->runner;
+    r->speed = D(speed);
+    r->anchorWall = wallSeconds();
+    r->anchorSim = p->time;
+    r->windowWall = r->anchorWall;
+    r->windowWant = r->windowDone = r->windowBusy = 0;
+    if (fresh) r->thread = std::thread(runnerLoop, p);
+    return Bool(true);
+#else
+    (void)h; (void)speed;
+    return Bool(false);
+#endif
+}
+
+/// Stops the thread of the plan (the plan stays where it is).
+inline Value StopRunner(Value h) {
+    Plan* p;
+    { KernelLock lock; p = plan(h); }
+    stopRunner(p);
+    return Undef();
+}
+
+/// The thread of a plan: 0 runs (1/0), 1 the share of the wanted time it manages, 2 steps done, 3 the share of the clock it computes, 4 simulated seconds
+/// given up because it fell behind by more than a quarter of a second.
+inline Value RunnerInfo(Value h, Value what) { KernelLock kl_;
+    Plan* p = plan(h);
+    Runner* r = p ? p->runner : nullptr;
+    switch (what.i) {
+        case 0: return Int(r ? 1 : 0);
+        case 1: return Float((Real)(r ? r->share : 0.0));
+        case 2: return Int(r ? r->steps : 0);
+        case 3: return Float((Real)(r ? r->load : 0.0));
+        case 4: return Float((Real)(r ? r->lost : 0.0));
+        default: return Int(-1);
+    }
+}
+
+/// The parts written in fire are serviced: what they add to the right side from here (RhsAdd, RhsSet) ...
+inline Value HoldBegin(Value h) { KernelLock kl_;
+    Plan* p = plan(h);
+    if (p && p->runner) { p->runner->capturing = true; p->runner->capAdd.clear(); p->runner->capSet.clear(); }
+    return Undef();
+}
+
+/// ... until here is what the thread adds in every step from now on.
+inline Value HoldEnd(Value h) { KernelLock kl_;
+    Plan* p = plan(h);
+    if (p && p->runner) {
+        Runner* r = p->runner;
+        r->capturing = false;
+        r->holdAdd.swap(r->capAdd);
+        r->holdSet.swap(r->capSet);
+    }
+    return Undef();
+}
+
+// ---- signal streams ----
+
+/// A new stream of `capacity` samples at `rate` per second; its handle.
+inline Value StreamNew(Value rate, Value capacity) { KernelLock kl_;
+    if (D(rate) <= 0 || capacity.i < 1) return Int(0);
+    SignalStream* st = new SignalStream();
+    st->rate = D(rate);
+    st->ring.assign((size_t)capacity.i, 0.0f);
+    Tables& t = tables();
+    t.streams.push_back(st);
+    return Int((int64_t)t.streams.size() - 1);
+}
+
+inline Value StreamFree(Value h) { KernelLock kl_;
+    Tables& t = tables();
+    if (h.i > 0 && (size_t)h.i < t.streams.size()) { delete t.streams[(size_t)h.i]; t.streams[(size_t)h.i] = nullptr; }
+    return Undef();
+}
+
+/// Writes volts into a stream (an input of the circuit): as many as fit; how many were taken.
+inline Value StreamWrite(Value h, Value values) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st || values.kind != K_Array) return Int(0);
+    Arr* a = arrOf(values);
+    int64_t n = 0;
+    for (uint32_t i = 0; i < a->length && st->count < st->ring.size(); i++, n++) st->push((float)D(a->items()[i]));
+    return Int(n);
+}
+
+/// Takes up to `max` samples (volts) out of a stream (an output of the circuit).
+inline Value StreamRead(Value h, Value max, OwnList* list) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    size_t n = st ? std::min(st->count, (size_t)std::max<int64_t>(0, max.i)) : 0;
+    Arr* a = allocArr((uint32_t)n, list);
+    for (size_t i = 0; i < n; i++) { float v = 0; st->pop(v); a->items()[i] = Float((Real)v); }
+    return ArrV(a);
+}
+
+/// Writes 16 bit samples (little endian, `channels` interleaved and mixed to one) from `offset` of a buffer into a stream: a full-scale sample is
+/// `fullScale` volts. How many frames were taken (as many as fit).
+inline Value StreamWritePcm(Value h, Value buf, Value offset, Value frames, Value channels, Value fullScale) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st) return Int(0);
+    if (!leafAlive(buf)) return destroyedError(buf);
+    int ch = (int)std::max<int64_t>(1, channels.i);
+    int64_t n = frames.i;
+    if (offset.i < 0 || n < 0 || offset.i + n * ch * 2 > (int64_t)bufOf(buf)->length) { lastError() = "The frames do not fit into the buffer."; return Int(-1); }
+    const uint8_t* src = bufOf(buf)->bytes() + offset.i;
+    double k = D(fullScale) / 32768.0;
+    int64_t done = 0;
+    for (; done < n && st->count < st->ring.size(); done++) {
+        double sum = 0;
+        for (int c = 0; c < ch; c++) { const uint8_t* b = src + (done * ch + c) * 2; sum += (int16_t)(uint16_t)(b[0] | (b[1] << 8)); }
+        st->push((float)(sum / ch * k));
+    }
+    return Int(done);
+}
+
+/// Takes up to `maxFrames` samples out of a stream as 16 bit mono samples into a buffer from `offset` (full scale at `fullScale` volts, clipped there);
+/// how many frames were written.
+inline Value StreamReadPcm(Value h, Value buf, Value offset, Value maxFrames, Value fullScale) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st) return Int(0);
+    if (!leafAlive(buf)) return destroyedError(buf);
+    int64_t room = ((int64_t)bufOf(buf)->length - offset.i) / 2;
+    int64_t n = std::min<int64_t>({maxFrames.i, room, (int64_t)st->count});
+    if (offset.i < 0 || n < 0) return Int(0);
+    uint8_t* dst = bufOf(buf)->bytes() + offset.i;
+    double k = D(fullScale) != 0 ? 32767.0 / D(fullScale) : 32767.0;
+    for (int64_t i = 0; i < n; i++) {
+        float v = 0;
+        st->pop(v);
+        double y = v * k;
+        if (y > 32767) y = 32767; else if (y < -32768) y = -32768;
+        int s16 = (int)std::lround(y);
+        dst[i * 2] = (uint8_t)(s16 & 255);
+        dst[i * 2 + 1] = (uint8_t)((s16 >> 8) & 255);
+    }
+    return Int(n);
+}
+
+/// A stream: 0 samples in it, 1 capacity, 2 samples lost because it was full, 3 samples missing when a source needed one, 4 rate.
+inline Value StreamInfo(Value h, Value what) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (!st) return Int(-1);
+    switch (what.i) {
+        case 0: return Int((int64_t)st->count);
+        case 1: return Int((int64_t)st->ring.size());
+        case 2: return Int(st->overruns);
+        case 3: return Int(st->underruns);
+        case 4: return Float((Real)st->rate);
+        default: return Int(-1);
+    }
+}
+
+/// Empties a stream (and its position on the grid starts anew).
+inline Value StreamClear(Value h) { KernelLock kl_;
+    SignalStream* st = stream(h.i);
+    if (st) { st->head = st->count = 0; st->nextIndex = -1; st->havePrev = false; st->feedIndex = -1; }
+    return Undef();
+}
+
+/// The plan writes the voltage between the nodes a and b (-1: ground) into the stream at the points of its grid.
+inline Value AddTap(Value h, Value st, Value a, Value b) { KernelLock kl_;
+    Plan* p = plan(h);
+    if (!p || !stream(st.i)) return Bool(false);
+    p->taps.push_back({(int)st.i, (int)a.i, (int)b.i});
+    return Bool(true);
+}
+
+/// The stream drives the source `source` of the plan (its voltage, interpolated between the samples).
+inline Value AddFeed(Value h, Value st, Value source) { KernelLock kl_;
+    Plan* p = plan(h);
+    if (!p || !stream(st.i)) return Bool(false);
+    p->feeds.push_back({(int)st.i, (int)source.i});
+    return Bool(true);
+}
+
 // ---- recorders ----
 
-inline Value RecNew(Value capacity) {
+inline Value RecNew(Value capacity) { KernelLock kl_;
     Recorder* r = new Recorder();
     r->rolling = capacity.i < 0;
     r->capacity = capacity.i > 0 ? capacity.i : capacity.i < -1 ? -capacity.i : 100000;
     tables().recorders.push_back(r);
     return Int((int64_t)tables().recorders.size() - 1);
 }
-inline Value RecFree(Value h) {
+inline Value RecFree(Value h) { KernelLock kl_;
     int64_t i = h.i;
     Tables& t = tables();
     if (i > 0 && (size_t)i < t.recorders.size()) { delete t.recorders[(size_t)i]; t.recorders[(size_t)i] = nullptr; }
     return Undef();
 }
-inline Value RecChannel(Value h) {
+inline Value RecChannel(Value h) { KernelLock kl_;
     Recorder* r = recorder(h);
     if (!r) return Int(-1);
     r->channels.emplace_back();
     return Int((int64_t)r->channels.size() - 1);
 }
 /// A sample that the fire side records (a channel of a part written in fire), and the time of a step that only such channels record.
-inline Value RecPut(Value h, Value channel, Value v) {
+inline Value RecPut(Value h, Value channel, Value v) { KernelLock kl_;
     Recorder* r = recorder(h);
     if (r && channel.i >= 0 && (size_t)channel.i < r->channels.size()) {
         std::vector<double>& c = r->channels[(size_t)channel.i];
@@ -2230,24 +2642,24 @@ inline Value RecPut(Value h, Value channel, Value v) {
     }
     return Undef();
 }
-inline Value RecTime(Value h, Value t) {
+inline Value RecTime(Value h, Value t) { KernelLock kl_;
     Recorder* r = recorder(h);
     if (r && r->room()) r->times.push_back(D(t));
     return Undef();
 }
-inline Value RecCount(Value h) { Recorder* r = recorder(h); return Int(r ? (int64_t)r->times.size() : 0); }
-inline Value RecClear(Value h) {
+inline Value RecCount(Value h) { KernelLock kl_; Recorder* r = recorder(h); return Int(r ? (int64_t)r->times.size() : 0); }
+inline Value RecClear(Value h) { KernelLock kl_;
     Recorder* r = recorder(h);
     if (r) { r->times.clear(); for (auto& c : r->channels) c.clear(); }
     return Undef();
 }
-inline Value RecLast(Value h, Value channel) {
+inline Value RecLast(Value h, Value channel) { KernelLock kl_;
     Recorder* r = recorder(h);
     if (!r || channel.i < 0 || (size_t)channel.i >= r->channels.size() || r->channels[(size_t)channel.i].empty()) return Float(0);
     return Float((Real)r->channels[(size_t)channel.i].back());
 }
 /// The samples of a channel (-1: the times) as a float array.
-inline Value RecSamples(Value h, Value channel, OwnList* list) {
+inline Value RecSamples(Value h, Value channel, OwnList* list) { KernelLock kl_;
     Recorder* r = recorder(h);
     const std::vector<double>* src = nullptr;
     static const std::vector<double> none;
@@ -2263,7 +2675,7 @@ inline Value RecSamples(Value h, Value channel, OwnList* list) {
 /// The trace of a scope over `columns` columns of the screen. Channel y (times channel x when x >= 0: the power v * i). `span` <= 0: the last `columns` samples, one
 /// per column; else a window of `span` seconds - with a trigger (1 rising, 2 falling through `level`) it starts at the latest crossing that leaves room for the
 /// whole window, without one (or when there is no crossing) it ends now. Result: [first column with data, value of column 0, ..., of column columns-1].
-inline Value RecTrace(Value h, Value chY, Value chX, Value spanV, Value columnsV, Value triggerV, Value levelV, OwnList* list) {
+inline Value RecTrace(Value h, Value chY, Value chX, Value spanV, Value columnsV, Value triggerV, Value levelV, OwnList* list) { KernelLock kl_;
     Recorder* r = recorder(h);
     int64_t columns = std::max<int64_t>(1, std::min<int64_t>(16384, columnsV.i));
     Arr* out = allocArr((uint32_t)(columns + 1), list);
@@ -2327,7 +2739,7 @@ inline Value RecTrace(Value h, Value chY, Value chX, Value spanV, Value columnsV
 /// The last pairs of two channels for an XY display: [x0, y0, x1, y1, ...] of at most `count` samples (the newest last).
 /// The scale of a trace of RecTrace: [lo, hi] - with `range` > 0 -range .. range, otherwise -m .. m with m the largest |value| from the first column with data
 /// (at least ±1 for a flat trace).
-inline Value TraceRange(Value traceV, Value rangeV, OwnList* list) {
+inline Value TraceRange(Value traceV, Value rangeV, OwnList* list) { KernelLock kl_;
     Arr* trace = arrOf(traceV);
     int64_t columns = trace->length > 0 ? (int64_t)trace->length - 1 : 0;
     int64_t first = trace->length > 0 ? std::max<int64_t>(0, std::min<int64_t>(columns, (int64_t)D(trace->items()[0]))) : 0;
@@ -2351,7 +2763,7 @@ inline Value TraceRange(Value traceV, Value rangeV, OwnList* list) {
 
 /// A trace of RecTrace as the points of a path [x, y, x, y, ...] in a box at (x0, y0) of height h scaled to lo .. hi: column c at x0 + 1 + c, 0 in the
 /// middle - what the view did in a loop of the script per column, in one call.
-inline Value TracePoints(Value traceV, Value x0V, Value y0V, Value hV, Value loV, Value hiV, OwnList* list) {
+inline Value TracePoints(Value traceV, Value x0V, Value y0V, Value hV, Value loV, Value hiV, OwnList* list) { KernelLock kl_;
     Arr* trace = arrOf(traceV);
     int64_t columns = trace->length > 0 ? (int64_t)trace->length - 1 : 0;
     int64_t first = trace->length > 0 ? std::max<int64_t>(0, std::min<int64_t>(columns, (int64_t)D(trace->items()[0]))) : 0;
@@ -2368,7 +2780,7 @@ inline Value TracePoints(Value traceV, Value x0V, Value y0V, Value hV, Value loV
     return ArrV(out);
 }
 
-inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list) {
+inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list) { KernelLock kl_;
     Recorder* r = recorder(h);
     if (!r || chX.i < 0 || chY.i < 0 || (size_t)chX.i >= r->channels.size() || (size_t)chY.i >= r->channels.size()) return ArrV(allocArr(0, list));
     const std::vector<double>& xs = r->channels[(size_t)chX.i];
@@ -2386,7 +2798,7 @@ inline Value RecPairs(Value h, Value chX, Value chY, Value countV, OwnList* list
 /// Measurements of a channel (times channel x when x >= 0: the power v * i) over what the recorder holds, like the info of a scope in Falstad's simulator:
 /// [count, min, max, average, rms, frequency (0: none found), duration in seconds]. Average and rms over whole periods when there are two rising crossings
 /// of the middle (with a hysteresis of a tenth of peak to peak), otherwise over all samples.
-inline Value RecStats(Value h, Value chY, Value chX, OwnList* list) {
+inline Value RecStats(Value h, Value chY, Value chX, OwnList* list) { KernelLock kl_;
     Recorder* r = recorder(h);
     Arr* out = allocArr(7, list);
     Value* o = out->items();
@@ -2440,7 +2852,7 @@ inline Value RecStats(Value h, Value chY, Value chX, OwnList* list) {
 /// The spectrum of a channel for an FFT analyzer: the last `size` samples (a power of two, 16 .. 8192), taken at the rate 2 * fmax (so the bins reach up to
 /// fmax; fmax <= 0 or a coarser simulation: the rate of the simulation), the mean taken away, a Hann window, then the FFT. Result: [bin width in Hz,
 /// amplitude of bin 1, ..., amplitude of bin size/2] (amplitudes of a sine as its peak value); empty if there are too few samples.
-inline Value RecSpectrum(Value h, Value channel, Value sizeV, Value fmaxV, OwnList* list) {
+inline Value RecSpectrum(Value h, Value channel, Value sizeV, Value fmaxV, OwnList* list) { KernelLock kl_;
     Recorder* r = recorder(h);
     const std::vector<double>* src = nullptr;
     if (r && channel.i >= 0 && (size_t)channel.i < r->channels.size()) src = &r->channels[(size_t)channel.i];

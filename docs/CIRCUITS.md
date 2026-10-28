@@ -543,6 +543,43 @@ A `UI.CircuitView` always simulates that way, at the speed of its circuit, and d
 strip Simulation - faster, **Real time**, slow motion down to 1/10000; the choice is saved with the circuit, with undo). The corner shows the speed, how much of
 it the simulation manages and the step it takes for that (`1/100 real time 100%  (step 10us)`; yellow below 99 %).
 
+### Real time in a thread of the kernel
+
+Where the platform has threads (the virtual machine, native programs for Linux, Windows and macOS), real time runs in a thread of the kernel: after the
+first `AdvanceRealTime` the circuit simulates on by itself, at its `Speed`, and the program only *services* it with each further `AdvanceRealTime` (the
+circuit view does that with every picture). So drawing, events and garbage collection of the program do not hold the simulation up - sound stays
+without gaps.
+
+Parts written in fire (`StampStep`, `Commit`) do not run in the thread. Each service calls them with the voltages of now; what `StampStep` adds to the
+circuit (`CurrentInto`, `BranchValue`) the thread keeps adding in every step until the next service - the simulation runs on with the last values until
+new ones come. A part with `EveryStep = true` must take part in every step (a `FunctionSource` does): the circuit then steps in fire as before - exact,
+but much slower. `Threaded = false` turns the thread off (AdvanceRealTime then simulates up to now itself, within its budget, with the coarser step
+when the computer cannot keep up); `RunsInThread` tells whether it runs. `Step`, `Run`, `ProcessSamples`, a change of the circuit and
+`RestartRealTime` (a pause) stop the thread; the next `AdvanceRealTime` starts it again where the circuit is. `RealTimeShare` is the share of the
+wanted time the thread manages; when it falls behind by more than a quarter of a second, the rest is given up.
+
+### Streams
+
+`circuit.Output(plus, minus = ground, rate = 44100Hz)` returns a `Circuits.SignalStream`: a ring of samples (volts) that the circuit fills with the
+voltage of `plus` against `minus` at every point k / rate of its grid - interpolated between the steps around it, also when a step was done again in
+smaller steps, and whether the program steps the circuit (`Run`) or the thread of the kernel runs it. `circuit.Input(source, rate = 44100Hz)` returns
+one that drives a voltage source (an `AudioInput`, or any voltage source of the package): the program writes samples, the source follows them,
+interpolated; when one is missing the last one holds (`Missing` counts them). Streams outlive changes of the circuit; `CloseStream` ends one.
+
+| | |
+|---|---|
+| `Write(float[] volts)`, `Read(max = -1)` | the raw samples (volts): as many as fit / up to `max` (all with -1) |
+| `WritePcm(data, offset, frames, channels = 1, fullScale = 1V)`, `ReadPcm(data, offset, maxFrames, fullScale = 1V)` | 16 bit sound (little endian; channels are mixed); a full-scale sample is `fullScale` volts |
+| `Count`, `Capacity`, `Rate`, `Lost`, `Missing`, `Clear()` | samples in it, the most it holds (default one second), samples per second, samples given up because nobody read them, samples missing for a source |
+
+```fire
+var input = c.Input(guitar, 48kHz)
+var output = c.Output(amp.Out, c.Ground, 48kHz)
+input.Write(samples)          // volts
+c.Run(0.1s)                   // or real time: the thread fills `output` on its own
+var volts = output.Read()     // 4800 samples
+```
+
 ### A circuit that runs alongside the program
 
 `circuit.RunAlongside(speed = 1.0, maxLag = 0.1s)` lets the circuit run **in real time** next to the program: every time the program uses one of the simulated devices,

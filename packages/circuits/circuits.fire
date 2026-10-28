@@ -140,7 +140,9 @@ namespace Circuits {
 
     /// <summary>A part of a circuit: it has ports and puts itself into the equations of the solver. The parts of the package are compiled into the plan of the
     /// circuit and stepped by its kernel. Derive from Part (or TwoTerminal) for parts of your own: Stamp for what stays the same while the circuit does not
-    /// change, StampStep for what changes from step to step, Commit to keep the state after a step - these run in fire every step.</summary>
+    /// change, StampStep for what changes from step to step, Commit to keep the state after a step - these run in fire every step (Step, Run). In real time
+    /// with the thread of the kernel they run each time the program services the circuit, and what StampStep adds holds until the next service (EveryStep
+    /// makes the circuit step in fire instead).</summary>
     class Part {
         string name
         List ports
@@ -148,6 +150,17 @@ namespace Circuits {
         // false once the methods of Part ran: the part has nothing to do in a step (the circuit stops calling them)
         bool stepsInFire = true
         bool commitsInFire = true
+        bool everyStep = false
+
+        /// <summary>The part must take part in every step (StampStep, Commit), also in real time: the circuit then does not run in the thread of the kernel
+        /// but steps in fire - exact, but much slower. False (the default): in real time it is serviced with the program, the thread keeps its last values.</summary>
+        bool EveryStep {
+            get { return this.everyStep }
+            set {
+                this.everyStep = value
+                if (this.owner != undefined) { this.owner.Invalidate() }
+            }
+        }
 
         construct(string name) {
             this.name = name
@@ -498,7 +511,11 @@ namespace Circuits {
     class FunctionSource : VoltageSource {
         any function
 
-        construct(any function) : base(0) { this.function = function }
+        construct(any function) : base(0) {
+            this.function = function
+            // its value comes from fire every step: in real time too (no thread of the kernel)
+            this.everyStep = true
+        }
 
         float Value(float t) {
             var f = this.function
@@ -2560,6 +2577,12 @@ namespace Circuits {
         float maxDt = 0.0
         // simulated seconds per second of the clock in real time (Speed)
         float speed = 1.0
+        // real time in a thread of the kernel (Threaded): whether it runs and at which speed it was started
+        bool threaded = true
+        bool runnerOn = false
+        float runnerSpeed = 0.0
+        // the streams of the circuit (Output, Input)
+        List streams
         // the parameters of the circuit (names and values in SI units) and the bindings that set the parts from them
         List paramNames
         List paramValues
@@ -2574,6 +2597,7 @@ namespace Circuits {
             this.stepParts = new List()
             this.commitParts = new List()
             this.recordInstruments = new List()
+            this.streams = new List()
             this.paramNames = new List()
             this.paramValues = new List()
             this.bindings = new List()
@@ -2741,6 +2765,7 @@ namespace Circuits {
                     top.baseDt = top.dt
                     top.clock = new Circuits.RealTimeClock(top, top.dt, top.MaxStepRaw())
                 } else {
+                    top.StopRunner()
                     top.clock = undefined
                     if (top.dt != top.baseDt) {
                         top.dt = top.baseDt
@@ -2787,7 +2812,9 @@ namespace Circuits {
         /// <summary>How much of real time the simulation manages: 1 = all of it (never more), 0.5 = half as fast as the clock; 0 when not in real time.</summary>
         float RealTimeShare {
             get {
-                var c = this.Top().clock
+                var top = this.Top()
+                if (top.runnerOn) { return top.solver.RunnerShare() }
+                var c = top.clock
                 if (c == undefined) { return 0.0 }
                 return c.share
             }
@@ -2798,13 +2825,150 @@ namespace Circuits {
         undefined AdvanceRealTime(float budget : any = 0.02) {
             var top = this.Top()
             if (top.clock == undefined) { top.RealTime = true }
+            if (top.threaded && top.EnsureRunner()) {
+                top.Service()
+                return
+            }
             top.clock.Advance(Circuits.Units.Seconds(budget))
         }
 
-        /// <summary>The clock of real time starts anew: the time since the last AdvanceRealTime (a pause) is not made up.</summary>
+        /// <summary>The clock of real time starts anew: the time since the last AdvanceRealTime (a pause) is not made up. With the thread of the kernel, the
+        /// simulation stops until the next AdvanceRealTime.</summary>
         undefined RestartRealTime() {
-            var c = this.Top().clock
+            var top = this.Top()
+            top.StopRunner()
+            var c = top.clock
             if (c != undefined) { c.Restart() }
+        }
+
+        /// <summary>Real time in a thread of the kernel (the default, where the platform has threads): the simulation runs on by itself between the calls of
+        /// AdvanceRealTime - the program (or the circuit view) only services it then: the parts written in fire see the voltages of now and set what they add
+        /// to the circuit, which the thread keeps adding until the next service (the simulation runs on with the last values until new ones come). False:
+        /// AdvanceRealTime simulates up to now itself, as much as its budget allows. Circuits with parts that must step with every step (EveryStep) always do
+        /// that.</summary>
+        bool Threaded {
+            get { return this.Top().threaded }
+            set {
+                var top = this.Top()
+                top.threaded = value
+                if (!value) { top.StopRunner() }
+            }
+        }
+
+        /// <summary>A stream with the voltage of `plus` against `minus` (ground when left out) at `rate` samples per second (docs/CIRCUITS.md, "Streams"): the
+        /// circuit writes a sample at every point of the grid of the stream, whether the program steps it or the thread of the kernel runs it; the program reads
+        /// them (Read, ReadPcm). `capacity`: samples it holds (0: one second); older ones are given up when nobody reads.</summary>
+        Circuits.SignalStream Output(Port plus, Port minus = undefined, float rate : any = 44100, int capacity = 0) {
+            var top = this.Top()
+            var b = new Circuits.StreamBinding(new Circuits.SignalStream(rate, capacity))
+            b.plus = plus
+            b.minus = minus
+            var st = b.stream
+            top.streams.Add(take b)
+            top.Invalidate()
+            return st
+        }
+
+        /// <summary>A stream that drives the voltage of `source` (an AudioInput or any voltage source of the package) at `rate` samples per second: the program
+        /// writes volts (Write) or sound (WritePcm), the source follows them, interpolated between the samples; when a sample is missing the last one holds.</summary>
+        Circuits.SignalStream Input(Circuits.VoltageSource source, float rate : any = 44100, int capacity = 0) {
+            var top = this.Top()
+            var b = new Circuits.StreamBinding(new Circuits.SignalStream(rate, capacity))
+            b.source = source
+            var st = b.stream
+            top.streams.Add(take b)
+            top.Invalidate()
+            return st
+        }
+
+        /// <summary>The circuit stops writing into (or reading from) a stream of Output or Input.</summary>
+        undefined CloseStream(Circuits.SignalStream stream) {
+            var top = this.Top()
+            for (int i = 0; i < top.streams.count; i++) {
+                Circuits.StreamBinding b = top.streams[i]!Circuits.StreamBinding
+                if (b.stream == stream) {
+                    top.streams.RemoveAt(i)
+                    top.Invalidate()
+                    return
+                }
+            }
+        }
+
+        /// <summary>Does the thread of the kernel simulate the circuit right now?</summary>
+        bool RunsInThread { get { return this.Top().runnerOn } }
+
+        // the thread of the kernel runs the plan (made again after a change) at the speed of the circuit; false where there is no thread or a part steps
+        // with every step
+        bool EnsureRunner() {
+            if (this.dirty || this.solver == undefined) {
+                this.StopRunner()
+                this.Build()
+            }
+            foreach (p in this.external) {
+                if (p.EveryStep) {
+                    this.StopRunner()
+                    return false
+                }
+            }
+            if (!this.runnerOn || this.runnerSpeed != this.speed) {
+                this.runnerOn = this.solver.StartRunner(this.speed)
+                this.runnerSpeed = this.speed
+                if (this.runnerOn) { this.ServiceParts() }
+            }
+            return this.runnerOn
+        }
+
+        // stops the thread of the kernel; the circuit keeps the time it reached
+        undefined StopRunner() {
+            if (!this.runnerOn) { return }
+            this.runnerOn = false
+            if (this.solver != undefined) {
+                this.solver.StopRunner()
+                this.time = this.solver.Time()
+            }
+        }
+
+        // a service while the thread runs: the time it reached, the parts and the instruments in fire
+        undefined Service() {
+            var s = this.solver
+            this.time = s.Time()
+            this.ServiceParts()
+            foreach (inst in this.recordInstruments) { inst.Record(this) }
+            if (this.rebuild) {
+                this.rebuild = false
+                this.Invalidate()
+            }
+        }
+
+        // the parts written in fire see the voltages of now; what they add from here is what the thread adds in every step until the next service
+        undefined ServiceParts() {
+            if (this.external.count == 0) { return }
+            var s = this.solver
+            s.time = this.time
+            this.stepping = true
+            try {
+                s.HoldBegin()
+                foreach (p in this.stepParts) { p.StampStep(s) }
+                s.HoldEnd()
+                foreach (p in this.commitParts) { p.Commit(s) }
+            } finally { this.stepping = false }
+            this.PruneParts()
+        }
+
+        // after the first step: parts whose StampStep or Commit is that of Part have nothing to do (Part's says so the first time) - only the others stay
+        undefined PruneParts() {
+            if (!this.pruneParts) { return }
+            this.pruneParts = false
+            this.stepParts.Clear()
+            this.commitParts.Clear()
+            var i = 0
+            while (i < this.external.count) {
+                var p = this.external[i]
+                if (p.stepsInFire) { this.stepParts.Add(p) }
+                if (p.commitsInFire) { this.commitParts.Add(p) }
+                if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
+            }
+            if (this.external.count == 0) { this.fireSteps = this.recordInstruments.count > 0 }
         }
 
         /// <summary>Runs in real time for `duration` (of the clock) and returns: what the circuit simulates in the meantime is as long as it manages (all of it
@@ -2813,12 +2977,14 @@ namespace Circuits {
             var top = this.Top()
             top.RealTime = true
             var end = Circuits.RealTimeClock.Now() + Circuits.Units.Seconds(duration)
-            top.clock.Restart()
+            top.RestartRealTime()
             top.clock.Advance(0.0)
             while (Circuits.RealTimeClock.Now() < end) {
                 Sleep(1)
-                top.clock.Advance(0.05)
+                top.AdvanceRealTime(0.05)
             }
+            // the thread stops where the time is up (the circuit is not run on behind the program's back)
+            top.StopRunner()
         }
 
         /// <summary>The time of the simulation.</summary>
@@ -2836,6 +3002,7 @@ namespace Circuits {
 
         // the outermost circuit: keeps the state of the parts and the voltages of the nodes, and drops the plan
         undefined Release() {
+            this.StopRunner()
             this.dirty = true
             var s = this.solver
             if (s == undefined) { return }
@@ -2995,6 +3162,15 @@ namespace Circuits {
                 } else { this.recordInstruments.Add(inst) }
             }
             this.fireSteps = this.external.count > 0 || this.recordInstruments.count > 0
+            foreach (b in this.streams) {
+                if (b.source != undefined) {
+                    if (b.source.index >= 0) { s.AddFeed(b.stream.handle, b.source.index) }
+                } else {
+                    var minus = -1
+                    if (b.minus != undefined) { minus = b.minus.Root().node }
+                    s.AddTap(b.stream.handle, b.plus.Root().node, minus)
+                }
+            }
             if (!s.Compile(this.time)) {
                 var message = s.Error()
                 delete s
@@ -3016,6 +3192,7 @@ namespace Circuits {
                 top.Step()
                 return
             }
+            this.StopRunner()
             if (this.dirty || this.solver == undefined) { this.Build() }
             if (this.fireSteps) { this.FireStep() } else { this.solver.Run(1) }
             // (a part may have asked for the circuit to be compiled again: then Release kept the time)
@@ -3035,20 +3212,7 @@ namespace Circuits {
             } finally { this.stepping = false }
             this.time = s.time
             foreach (inst in this.recordInstruments) { inst.Record(this) }
-            if (this.pruneParts) {
-                // parts whose StampStep or Commit is that of Part have nothing to do in a step (Part's says so the first time): from now on only the others
-                this.pruneParts = false
-                this.stepParts.Clear()
-                this.commitParts.Clear()
-                var i = 0
-                while (i < this.external.count) {
-                    var p = this.external[i]
-                    if (p.stepsInFire) { this.stepParts.Add(p) }
-                    if (p.commitsInFire) { this.commitParts.Add(p) }
-                    if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
-                }
-                if (this.external.count == 0) { this.fireSteps = this.recordInstruments.count > 0 }
-            }
+            this.PruneParts()
             if (this.rebuild) {
                 this.rebuild = false
                 this.Invalidate()
@@ -3062,6 +3226,7 @@ namespace Circuits {
                 top.Run(duration)
                 return
             }
+            this.StopRunner()
             var steps = Math.Round(Circuits.Units.Seconds(duration) / this.dt)!int
             var done = 0
             while (done < steps) {
@@ -3086,6 +3251,7 @@ namespace Circuits {
                               Circuits.Port reference = undefined, float outputScale : any = 0, int oversample = 4) {
             if (rate < 1000 || oversample < 1) { throw new ArgumentException("A rate of 1000 Hz or more and an oversample of 1 or more.") }
             var top = this.Top()
+            top.StopRunner()
             var dt = 1.0 / (rate * oversample)
             if (Math.Abs(top.dt - dt) > dt * 0.000001) { top.TimeStep = dt }
             var scale = Circuits.Units.Volts(outputScale)
@@ -3315,6 +3481,10 @@ namespace Circuits {
         undefined SetSource(int index, float p0, float p1, float p2, float p3) { __CirSetSource(this.handle, index, p0, p1, p2, p3) }
         float State(int kind, int index, int what) { return __CirState(this.handle, kind, index, what) }
         bool AddProbe(int recorder, int channel, int kind, int a, int b, float g) { return __CirAddProbe(this.handle, recorder, channel, kind, a, b, g) }
+        /// <summary>The voltage between the nodes a and b goes into a stream at the points of its grid.</summary>
+        bool AddTap(int stream, int a, int b) { return __CirAddTap(this.handle, stream, a, b) }
+        /// <summary>A stream drives the source with the index `source`.</summary>
+        bool AddFeed(int stream, int source) { return __CirAddFeed(this.handle, stream, source) }
         undefined SetNode(int node, float volts) { __CirSetNode(this.handle, node, volts) }
 
         int AddNonlinear(int kind, Port n0, Port n1, Port n2, float p0, float p1, float p2, float p3) {
@@ -3366,6 +3536,19 @@ namespace Circuits {
         undefined Begin() { __CirBegin(this.handle) }
         undefined Finish() { this.time = __CirFinish(this.handle) }
         undefined Run(int steps) { __CirRun(this.handle, steps) }
+        /// <summary>Starts the thread of the kernel that simulates the plan in real time at `speed` (or gives it the speed and starts its clock anew).
+        /// False where there are no threads.</summary>
+        bool StartRunner(float speed) { return __CirStartRunner(this.handle, speed) }
+        undefined StopRunner() { __CirStopRunner(this.handle) }
+        bool RunnerRuns() { return __CirRunnerInfo(this.handle, 0) == 1 }
+        /// <summary>The share of the wanted simulated time the thread manages (1: all of it).</summary>
+        float RunnerShare() { return __CirRunnerInfo(this.handle, 1) }
+        int RunnerSteps() { return __CirRunnerInfo(this.handle, 2) }
+        /// <summary>The share of the clock the thread computes (0..1).</summary>
+        float RunnerLoad() { return __CirRunnerInfo(this.handle, 3) }
+        /// <summary>From HoldBegin to HoldEnd: what the parts in fire add (CurrentInto, BranchValue) is what the thread adds in every step from then on.</summary>
+        undefined HoldBegin() { __CirHoldBegin(this.handle) }
+        undefined HoldEnd() { __CirHoldEnd(this.handle) }
         float Time() { return __CirTime(this.handle) }
         int Info(int what) { return __CirInfo(this.handle, what) }
     }
@@ -4328,6 +4511,75 @@ namespace Circuits {
         }
         bool Probe(Circuits.Solver solver, int recorder, int channel) { return solver.AddProbe(recorder, channel, 4, solver.Node(this.A), solver.Node(this.B), 1.0 / this.ResistanceRaw()) }
         float CurrentRaw() { return this.VoltageRaw() / this.ResistanceRaw() }
+    }
+
+    /// <summary>A stream of samples at a fixed rate between a circuit and the program: a ring of volts (docs/CIRCUITS.md, "Streams"). Circuit.Output fills it
+    /// with the voltage between two ports - a sample at every point k / Rate of its grid, also while the circuit runs in the thread of the kernel - and the
+    /// program takes them out (Read, ReadPcm); Circuit.Input lets it drive a source, and the program puts samples in (Write, WritePcm). The raw numbers
+    /// are volts; as 16 bit sound a full-scale sample is `fullScale` volts.</summary>
+    class SignalStream {
+        int handle
+        float rate
+
+        /// <summary>A stream of `rate` samples per second that holds `capacity` samples (0: one second).</summary>
+        construct(float rate : any = 44100, int capacity = 0) {
+            this.rate = Circuits.Units.Hertz(rate)
+            if (this.rate <= 0.0) { throw new ArgumentException("The rate of a stream must be more than 0.") }
+            var cap = capacity
+            if (cap <= 0) { cap = Math.Max(1, Math.Round(this.rate)!int) }
+            this.handle = __CirStreamNew(this.rate, cap)
+        }
+
+        destruct() { __CirStreamFree(this.handle) }
+
+        /// <summary>Samples per second.</summary>
+        float:Hz Rate { get { return this.rate * 1Hz } }
+        /// <summary>Samples in the stream now.</summary>
+        int Count { get { return __CirStreamInfo(this.handle, 0) } }
+        /// <summary>The most samples it holds.</summary>
+        int Capacity { get { return __CirStreamInfo(this.handle, 1) } }
+        /// <summary>Samples given up because the stream was full (an output nobody read in time).</summary>
+        int Lost { get { return __CirStreamInfo(this.handle, 2) } }
+        /// <summary>Samples a source needed that were not there yet (an input fed too late): the last one held.</summary>
+        int Missing { get { return __CirStreamInfo(this.handle, 3) } }
+
+        /// <summary>Puts volts into the stream (as many as fit); how many it took.</summary>
+        int Write(float values[]) { return __CirStreamWrite(this.handle, values) }
+        /// <summary>Takes up to `max` samples (volts) out of the stream; all there are with -1.</summary>
+        float[] Read(int max = -1) {
+            var n = max
+            if (n < 0) { n = this.Count }
+            return __CirStreamRead(this.handle, n)
+        }
+        /// <summary>Puts 16 bit samples (little endian, `channels` interleaved and mixed to one) from `offset` of `data` into the stream; a full-scale sample is
+        /// `fullScale` volts. How many frames it took.</summary>
+        int WritePcm(byte data[], int offset, int frames, int channels = 1, float fullScale : any = 1) {
+            var n = __CirStreamWritePcm(this.handle, data, offset, frames, channels, Circuits.Units.Volts(fullScale))
+            if (n < 0) { throw new ArgumentException(__CirLastError()) }
+            return n
+        }
+        /// <summary>Takes up to `maxFrames` samples as 16 bit mono samples into `data` from `offset` (full scale at `fullScale` volts, clipped there); how many
+        /// frames it wrote.</summary>
+        int ReadPcm(byte data[], int offset, int maxFrames, float fullScale : any = 1) {
+            return __CirStreamReadPcm(this.handle, data, offset, maxFrames, Circuits.Units.Volts(fullScale))
+        }
+        /// <summary>Empties the stream.</summary>
+        undefined Clear() { __CirStreamClear(this.handle) }
+    }
+
+    // a stream bound to a circuit: an output between two ports, or an input that drives a source
+    class StreamBinding {
+        Circuits.SignalStream stream
+        Port plus
+        Port minus
+        Circuits.VoltageSource source
+
+        construct(Circuits.SignalStream stream) {
+            this.stream = take stream
+            this.plus = undefined
+            this.minus = undefined
+            this.source = undefined
+        }
     }
 
     /// <summary>A virtual oscilloscope: channels (the voltage of a port, between two ports, or the current of a part) recorded every step of the circuit.
