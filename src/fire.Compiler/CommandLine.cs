@@ -364,7 +364,7 @@ namespace fire.Compiler
             if (engine == "native") return NativeBuild(options, config, sources, stdout, stderr);
             try
             {
-                new Linker { Defines = options.Defines, BasePath = BaseDirectory(options) }.CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
+                new Linker { Defines = options.Defines, BasePath = BaseDirectory(options), SourcePaths = SourceFiles(options) }.CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -393,7 +393,7 @@ namespace fire.Compiler
                 var target = config.ResolveTarget(options.TargetName);
                 var toolchain = config.ResolveToolchain(target, options.ToolchainName);
                 string output = options.OutputGiven ? options.OutputFile : NativeBuilder.DefaultOutput(target);
-                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, basePath: BaseDirectory(options), defines: options.Defines);
+                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options));
                 stdout.Write(result.Log);
                 if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
                 stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
@@ -410,7 +410,7 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = config.ResolveTarget(options.TargetName);
-                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines);
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options));
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
                 NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);
@@ -587,7 +587,10 @@ namespace fire.Compiler
             return linked.ExecutionMode.ToString().ToLowerInvariant();
         }
 
-        /// <summary>The folder an `#include` of the script files is relative to: the folder of the (first) file, as in the editor (docs/language/17-preprocessor.md).</summary>
+        /// <summary>The files of the program in the order of the sources: an `#include` is relative to the file that has it (docs/language/17-preprocessor.md).</summary>
+        private static IReadOnlyList<string?> SourceFiles(CommandLineOptions options) => options.Files.Select(f => (string?)Path.GetFullPath(f)).ToList();
+
+        /// <summary>The folder of the first file (where a source without a file of its own would look).</summary>
         private static string? BaseDirectory(CommandLineOptions options) =>
             options.Files.Count > 0 ? Path.GetDirectoryName(Path.GetFullPath(options.Files[0])) : null;
 
@@ -642,7 +645,7 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, basePath: BaseDirectory(options), defines: options.Defines);
+                }, floatWidth: options.FloatWidth, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options));
             }
             catch (Exception ex) when (IsCompileError(ex))
             {

@@ -1318,6 +1318,36 @@ catch (Exception ex) when (ex is ParseException or ResolverException or NotSuppo
 }
 
 Console.WriteLine();
+Console.WriteLine("=== #include: relativ zur Datei, die es enthaelt; jede Datei nur einmal (auch eine Datei des Programms) ===");
+{
+    // a/lib/l.fire includes helper.fire (next to it); b/y.fire includes ../a/lib/l.fire and ../a/x.fire, which is a file of the program itself and includes lib/l.fire too;
+    // forge runs from a third folder: every path is relative to the file that has the #include, nothing is inserted twice
+    string root = Path.Combine(Path.GetTempPath(), "fire-include-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "a", "lib"));
+    Directory.CreateDirectory(Path.Combine(root, "b"));
+    Directory.CreateDirectory(Path.Combine(root, "elsewhere"));
+    File.WriteAllText(Path.Combine(root, "a", "lib", "l.fire"), "#include \"helper.fire\"\nclass L { static string Name() { return \"L \" + H.Name() } }\n");
+    File.WriteAllText(Path.Combine(root, "a", "lib", "helper.fire"), "class H { static string Name() { return \"H\" } }\n");
+    File.WriteAllText(Path.Combine(root, "a", "x.fire"), "#include \"lib/l.fire\"\nclass X { static string Name() { return \"X\" } }\n");
+    File.WriteAllText(Path.Combine(root, "b", "y.fire"), "#include \"../a/lib/l.fire\"\n#include \"../a/x.fire\"\nprint(L.Name() + \" \" + X.Name())\n");
+    string oldDir = Directory.GetCurrentDirectory();
+    var oldOut = Console.Out;
+    var captured = new StringWriter();
+    var err = new StringWriter();
+    int code;
+    try
+    {
+        Directory.SetCurrentDirectory(Path.Combine(root, "elsewhere"));
+        Console.SetOut(captured);
+        code = fire.Compiler.CommandLineRunner.Run(new[] { "run", Path.Combine("..", "a", "x.fire"), Path.Combine("..", "b", "y.fire") }, captured, err);
+    }
+    finally { Console.SetOut(oldOut); Directory.SetCurrentDirectory(oldDir); }
+    bool includeOk = code == 0 && captured.ToString().Trim() == "L H X";
+    Console.WriteLine(includeOk ? "OK: #include relativ zur Datei (verschachtelt, aus einem anderen Ordner), jede Datei einmal" : $"FEHLER: #include relativ zur Datei: Exitcode {code}, Ausgabe '{captured}', Fehler '{err}'");
+    try { Directory.Delete(root, true); } catch (IOException) { }
+}
+
+Console.WriteLine();
 Console.WriteLine("=== Bytecode-Test: #extern \"libName\" (dynamisches Linking ohne Host-Registrierung) ===");
 
 string dynamicExternSample = """

@@ -32,7 +32,7 @@ namespace fire.Editor
             }
 
             var buildSettings = new AssemblyInfoDialog();
-            var model = Linker.ExtractAssemblyInfo(new[] { script.GetText() });
+            var model = Linker.ExtractAssemblyInfo(new[] { script.GetText() }, basePath: script.BaseDirectory);
             buildSettings.DataContext = model;
 
             if (await buildSettings.ShowDialog<bool?>(this) != true) return;
