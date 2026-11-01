@@ -6,7 +6,7 @@ tested is listed here. The order inside a group is the suggested order of work.
 [Back to the contents](README.md)
 
 The larger plan (native C, debugging of native builds, binary libraries, the libraries for writing ember, forge and spark in fire) is in
-[docs/ROADMAP.md](../ROADMAP.md).
+`docs/ROADMAP.md` of the repository.
 
 ## 1. Standard library
 

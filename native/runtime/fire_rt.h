@@ -150,6 +150,8 @@ FIRE_FN Value Bool(bool v) { Value r; r.kind = K_Bool; r.width = 0; r.reserved =
 FIRE_FN Value Char(uint32_t c) { Value r; r.kind = K_Char; r.width = 0; r.reserved = 0; r.unit = 0; r.i = c; return r; }
 FIRE_FN Value UndefU(uint32_t unit) { Value r; r.kind = K_Undefined; r.width = 0; r.reserved = 0; r.unit = unit; r.i = 0; return r; }
 FIRE_FN Value Undef(void) { return UndefU(0); }
+/* `undefined` as a constant initializer (a global or static of the generated program: C has no dynamic initialization) */
+#define FIRE_UNDEF_INIT {K_Undefined, 0, 0, 0, {0}}
 #define Int(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_IntU, fire_Int1, 0)(__VA_ARGS__))
 #define Float(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_FloatU, fire_Float1, 0)(__VA_ARGS__))
 

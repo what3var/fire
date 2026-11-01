@@ -120,7 +120,7 @@ namespace fire.Native
         }
 
         private static string StringList(string name, IReadOnlyList<string> items) =>
-            items.Count == 0 ? "nullptr" : name;
+            items.Count == 0 ? "NULL" : name;
 
         /// <summary>Tables, the functions behind the `__refl_*` natives and the hooks - written after the dispatchers.</summary>
         private string ReflectionCode()
@@ -132,7 +132,7 @@ namespace fire.Native
             int listIndex = 0;
             string Strings(IReadOnlyList<string> items)
             {
-                if (items.Count == 0) return "nullptr";
+                if (items.Count == 0) return "NULL";
                 string name = $"kRfS{listIndex++}";
                 sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", items.Select(CStr))}}};");
                 return name;
@@ -140,7 +140,7 @@ namespace fire.Native
             // the attributes of a member: a function that builds [[name, values, texts], ...] (the values the compiler knew, see AttributeMeta.ArgsJson)
             string Attributes(IReadOnlyList<AttributeMeta> attributes)
             {
-                if (attributes.Count == 0) return "nullptr";
+                if (attributes.Count == 0) return "NULL";
                 string name = $"rf_attrs{listIndex++}";
                 var body = new StringBuilder();
                 int temp = 0;
@@ -193,7 +193,7 @@ namespace fire.Native
                     string attrs = Attributes(m.Attributes);
                     memberRows.Add($"{{{CStr(m.Name)}, {CStr(m.Kind)}, {CStr(m.TypeName)}, {CStr(m.Access)}, {flags}, {CStr(m.Unit)}, {CStr(e.DeclaredIn.Name)}, {pnames}, {ptypes}, {m.ParamNames.Count}, {attrs}}}");
                 }
-                string membersName = "nullptr";
+                string membersName = "NULL";
                 if (memberRows.Count > 0)
                 {
                     membersName = $"kRfM{listIndex++}";
@@ -203,49 +203,49 @@ namespace fire.Native
                 if (rc.Meta != null)
                     foreach (var b in rc.Meta.BaseNames)
                         if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
-                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "nullptr")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}}}");
+                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}}}");
             }
             sb.AppendLine($"static const RfClass kRfClasses[] = {{{string.Join(",\n    ", classRows)}}};");
             sb.AppendLine($"static const uint32_t kRfClassCount = {classes.Count};");
-            sb.AppendLine("[[maybe_unused]] static const RfClass* rf_find(Value name) {");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_find(Value name) {");
             sb.AppendLine("    for (uint32_t i = 0; i < kRfClassCount; i++) if (strIs(name, kRfClasses[i].name)) return &kRfClasses[i];");
-            sb.AppendLine("    return nullptr;");
+            sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
-            sb.AppendLine("[[maybe_unused]] static const RfClass* rf_findC(const char* name) {");
-            sb.AppendLine("    for (uint32_t i = 0; i < kRfClassCount; i++) if (std::strcmp(name, kRfClasses[i].name) == 0) return &kRfClasses[i];");
-            sb.AppendLine("    return nullptr;");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_findC(const char* name) {");
+            sb.AppendLine("    for (uint32_t i = 0; i < kRfClassCount; i++) if (strcmp(name, kRfClasses[i].name) == 0) return &kRfClasses[i];");
+            sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
-            sb.AppendLine("[[maybe_unused]] static const RfClass* rf_classOf(uint32_t cls) { return rf_findC(className(cls)); }");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_classOf(uint32_t cls) { return rf_findC(className(cls)); }");
 
             // member lookup: 1 field, 2 property, 3 method (the closest, fields first like the VM), 0 nothing
-            sb.AppendLine(@"[[maybe_unused]] static int rf_kind(const RfClass* c, Value name) {
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static int rf_kind(const RfClass* c, Value name) {
     int best = 0;
     for (uint32_t i = 0; i < c->nMembers; i++) {
         const RfMember& m = c->members[i];
-        if (!strIs(name, m.name) || std::strcmp(m.kind, ""constructor"") == 0) continue;
-        int k = std::strcmp(m.kind, ""field"") == 0 ? ((m.flags & 1) ? 0 : 1) : std::strcmp(m.kind, ""property"") == 0 ? 2 : 3;
+        if (!strIs(name, m.name) || strcmp(m.kind, ""constructor"") == 0) continue;
+        int k = strcmp(m.kind, ""field"") == 0 ? ((m.flags & 1) ? 0 : 1) : strcmp(m.kind, ""property"") == 0 ? 2 : 3;
         if (k && (best == 0 || k < best)) best = k;
     }
     return best;
 }");
-            sb.AppendLine(@"[[maybe_unused]] static const RfMember* rf_member(const RfClass* c, Value name, const char* kind) {
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static const RfMember* rf_member(const RfClass* c, Value name, const char* kind) {
     for (uint32_t i = 0; i < c->nMembers; i++)
-        if (strIs(name, c->members[i].name) && std::strcmp(c->members[i].kind, kind) == 0) return &c->members[i];
-    return nullptr;
+        if (strIs(name, c->members[i].name) && strcmp(c->members[i].kind, kind) == 0) return &c->members[i];
+    return NULL;
 }");
-            sb.AppendLine("[[maybe_unused]] static bool rf_isSub(const char* name, const char* base) {");
-            sb.AppendLine("    for (const RfClass* c = rf_findC(name); c; c = c->base ? rf_findC(c->base) : nullptr) if (std::strcmp(c->name, base) == 0) return true;");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static bool rf_isSub(const char* name, const char* base) {");
+            sb.AppendLine("    for (const RfClass* c = rf_findC(name); c; c = c->base ? rf_findC(c->base) : NULL) if (strcmp(c->name, base) == 0) return true;");
             sb.AppendLine("    return false;");
             sb.AppendLine("}");
 
             // ---- the natives -----------------------------------------------------------------------------------------------
-            sb.AppendLine(@"[[maybe_unused]] static Value rf_class_name(Value x, OwnList* list) {
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static Value rf_class_name(Value x, OwnList* list) {
     if (x.kind == K_Class) return strFromUtf8(className(asObj(x)->cls), list);
     if (x.kind == K_String) if (const RfClass* c = rf_find(x)) return strFromUtf8(c->name, list);
     return Undef();
 }
-[[maybe_unused]] static Value rf_class_info(Value name, OwnList* list) {
-    const RfClass* c = name.kind == K_String ? rf_find(name) : nullptr;
+FIRE_MAYBE_UNUSED static Value rf_class_info(Value name, OwnList* list) {
+    const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return Undef();
     Arr* info = allocArr(4, list);
     Value v0 = strFromUtf8(c->name, list); info->items()[0] = v0; retain(v0);
@@ -254,8 +254,8 @@ namespace fire.Native
     Value v3 = strArrayOf(c->ifaces, c->nIfaces, list); info->items()[3] = v3;
     return ArrV(info);
 }
-[[maybe_unused]] static Value rf_members(Value name, OwnList* list) {
-    const RfClass* c = name.kind == K_String ? rf_find(name) : nullptr;
+FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
+    const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return Undef();
     Arr* all = allocArr(c->nMembers, list);
     for (uint32_t i = 0; i < c->nMembers; i++) {
@@ -274,21 +274,21 @@ namespace fire.Native
     }
     return ArrV(all);
 }
-[[maybe_unused]] static Value rf_classes(OwnList* list) {
+FIRE_MAYBE_UNUSED static Value rf_classes(OwnList* list) {
     Arr* names = allocArr(kRfClassCount, list);
     for (uint32_t i = 0; i < kRfClassCount; i++) { Value s = strFromUtf8(kRfClasses[i].name, list); names->items()[i] = s; retain(s); }
     return ArrV(names);
 }
-[[maybe_unused]] static Value rf_is_sub(Value name, Value base) {
+FIRE_MAYBE_UNUSED static Value rf_is_sub(Value name, Value base) {
     char a[200], b[200];
     strToUtf8(name, a, sizeof a); strToUtf8(base, b, sizeof b);
     return Bool(rf_isSub(a, b));
 }
-[[maybe_unused]] static Value rf_has(Value obj, Value name) {
+FIRE_MAYBE_UNUSED static Value rf_has(Value obj, Value name) {
     if (obj.kind != K_Class) return Bool(false);
     return Bool(rf_kind(rf_classOf(asObj(obj)->cls), name) != 0);
 }
-[[maybe_unused]] static Value rf_member_kind(Value obj, Value name, OwnList* list) {
+FIRE_MAYBE_UNUSED static Value rf_member_kind(Value obj, Value name, OwnList* list) {
     if (obj.kind != K_Class) return Undef();
     switch (rf_kind(rf_classOf(asObj(obj)->cls), name)) {
         case 1: return strFromUtf8(""field"", list);
@@ -297,10 +297,10 @@ namespace fire.Native
         default: return Undef();
     }
 }
-[[maybe_unused]] static Value rf_selector_path(Value l, OwnList* list) {
+FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     if (l.kind != K_Lambda) {
         char text[200];
-        std::snprintf(text, sizeof text, ""A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: %s."", kindName(l));
+        snprintf(text, sizeof text, ""A selector ('lambda member<...>' etc.) expects a lambda like `c => c.radius`, got: %s."", kindName(l));
         return rfFail(text);
     }
     Lam* lam = lamOf(l);
@@ -318,30 +318,30 @@ namespace fire.Native
                 get.AppendLine($"    if (strIs(name, {CStr(name)})) return gf_{Mangle(name)}(obj{tail(name, false)});");
                 set.AppendLine($"    if (strIs(name, {CStr(name)})) {{ sf_{Mangle(name)}(obj, value{tail(name, true)}); return Undef(); }}");
             }
-            sb.AppendLine($@"[[maybe_unused]] static Value rf_get(Value obj, Value name, OwnList* list, uint32_t caller) {{
+            sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_get(Value obj, Value name, OwnList* list, uint32_t caller) {{
     (void)list; (void)caller;
-    if (obj.kind != K_Class) {{ char t[120]; std::snprintf(t, sizeof t, ""Reflect.Get: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
+    if (obj.kind != K_Class) {{ char t[120]; snprintf(t, sizeof t, ""Reflect.Get: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
     const RfClass* c = rf_classOf(asObj(obj)->cls);
     int kind = rf_kind(c, name);
     const RfMember* getter = rf_member(c, name, ""property"");
-    if (kind != 1 && !(getter && (getter->flags & 4))) {{ char n[200], t[500]; strToUtf8(name, n, sizeof n); std::snprintf(t, sizeof t, ""'%s' has no readable member '%s'."", c->name, n); return rfFail(t); }}
+    if (kind != 1 && !(getter && (getter->flags & 4))) {{ char n[200], t[500]; strToUtf8(name, n, sizeof n); snprintf(t, sizeof t, ""'%s' has no readable member '%s'."", c->name, n); return rfFail(t); }}
 {get}    return rfFail(""This member cannot be read by name."");
 }}");
-            sb.AppendLine($@"[[maybe_unused]] static Value rf_set(Value obj, Value name, Value value, OwnList* list, uint32_t caller) {{
+            sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_set(Value obj, Value name, Value value, OwnList* list, uint32_t caller) {{
     (void)list; (void)caller;
-    if (obj.kind != K_Class) {{ char t[120]; std::snprintf(t, sizeof t, ""Reflect.Set: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
+    if (obj.kind != K_Class) {{ char t[120]; snprintf(t, sizeof t, ""Reflect.Set: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
     const RfClass* c = rf_classOf(asObj(obj)->cls);
     int kind = rf_kind(c, name);
     const RfMember* prop = rf_member(c, name, ""property"");
     if (kind != 1 && !(prop && (prop->flags & 8))) {{
         char n[200], t[500]; strToUtf8(name, n, sizeof n);
-        if (prop && (prop->flags & 4)) std::snprintf(t, sizeof t, ""The property '%s' of '%s' has no setter (only 'get')."", n, c->name);
-        else std::snprintf(t, sizeof t, ""'%s' has no writable member '%s'."", c->name, n);
+        if (prop && (prop->flags & 4)) snprintf(t, sizeof t, ""The property '%s' of '%s' has no setter (only 'get')."", n, c->name);
+        else snprintf(t, sizeof t, ""'%s' has no writable member '%s'."", c->name, n);
         return rfFail(t);
     }}
     if (const RfMember* field = rf_member(c, name, ""field"")) if (!(field->flags & 1) && (field->flags & 2)) {{
         char n[200], t[500]; strToUtf8(name, n, sizeof n);
-        std::snprintf(t, sizeof t, ""The field '%s' of '%s' is 'readonly' and cannot be assigned."", n, field->declared);
+        snprintf(t, sizeof t, ""The field '%s' of '%s' is 'readonly' and cannot be assigned."", n, field->declared);
         return rfFail(t);
     }}
 {set}    return rfFail(""This member cannot be written by name."");
@@ -364,18 +364,18 @@ namespace fire.Native
                 callSb.AppendLine($"    if (argc == {argc} && strIs(name, {CStr(name)})) {{");
                 callSb.AppendLine("        switch (asObj(obj)->cls) {");
                 if (inst.Count > 0) callSb.AppendLine("            " + string.Concat(inst.Select(i => $"case {i}: ")) + $"return call_{Mangle(name)}_{argc}(obj{items}{DispatchTail(name, argc, "list", "caller")});");
-                if (stat.Count > 0) callSb.AppendLine("            " + string.Concat(stat.Select(i => $"case {i}: ")) + $"{{ char t[300]; strToUtf8(name, t, sizeof t); char u[400]; std::snprintf(u, sizeof u, \"'%s' is a static method - Reflect.Call only calls instance methods.\", t); return rfFail(u); }}");
+                if (stat.Count > 0) callSb.AppendLine("            " + string.Concat(stat.Select(i => $"case {i}: ")) + $"{{ char t[300]; strToUtf8(name, t, sizeof t); char u[400]; snprintf(u, sizeof u, \"'%s' is a static method - Reflect.Call only calls instance methods.\", t); return rfFail(u); }}");
                 callSb.AppendLine("            default: break;");
                 callSb.AppendLine("        }");
                 callSb.AppendLine("    }");
             }
-            sb.AppendLine($@"[[maybe_unused]] static Value rf_call(Value obj, Value name, Value args, OwnList* list, uint32_t caller) {{
+            sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_call(Value obj, Value name, Value args, OwnList* list, uint32_t caller) {{
     (void)list; (void)caller;
-    if (obj.kind != K_Class) {{ char t[120]; std::snprintf(t, sizeof t, ""Reflect.Call: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
+    if (obj.kind != K_Class) {{ char t[120]; snprintf(t, sizeof t, ""Reflect.Call: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
-    const Value* items = args.kind == K_Array ? arrOf(args)->items() : nullptr; (void)items;
+    const Value* items = args.kind == K_Array ? arrOf(args)->items() : NULL; (void)items;
 {callSb}    char n[200], t[500]; strToUtf8(name, n, sizeof n);
-    std::snprintf(t, sizeof t, ""'%s' has no method '%s' with %d parameter(s)."", className(asObj(obj)->cls), n, argc);
+    snprintf(t, sizeof t, ""'%s' has no method '%s' with %d parameter(s)."", className(asObj(obj)->cls), n, argc);
     return rfFail(t);
 }}");
 
@@ -407,17 +407,17 @@ namespace fire.Native
                 foreach (var row in byArgc) newSb.AppendLine(row);
                 newSb.AppendLine("            default: break;");
                 newSb.AppendLine("        }");
-                newSb.AppendLine($"        {{ char t[300]; std::snprintf(t, sizeof t, \"'%s' has no constructor with %d parameter(s).\", {CStr(rc.Name)}, argc); return rfFail(t); }}");
+                newSb.AppendLine($"        {{ char t[300]; snprintf(t, sizeof t, \"'%s' has no constructor with %d parameter(s).\", {CStr(rc.Name)}, argc); return rfFail(t); }}");
                 newSb.AppendLine("    }");
             }
-            sb.AppendLine(@"[[maybe_unused]] static Value accessDeniedNew(const char* message) { return rfFail(message); }");
-            sb.AppendLine($@"[[maybe_unused]] static Value rf_new(Value cname, Value args, OwnList* list, uint32_t caller) {{
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static Value accessDeniedNew(const char* message) { return rfFail(message); }");
+            sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_new(Value cname, Value args, OwnList* list, uint32_t caller) {{
     (void)caller;
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
-    const Value* items = args.kind == K_Array ? arrOf(args)->items() : nullptr; (void)items;
+    const Value* items = args.kind == K_Array ? arrOf(args)->items() : NULL; (void)items;
 {newSb}    char n[200], t[500]; strToUtf8(cname, n, sizeof n);
-    if (!rf_find(cname)) std::snprintf(t, sizeof t, ""Unknown class '%s'."", n);
-    else std::snprintf(t, sizeof t, ""'%s' has no constructor with %d parameter(s)."", n, argc);
+    if (!rf_find(cname)) snprintf(t, sizeof t, ""Unknown class '%s'."", n);
+    else snprintf(t, sizeof t, ""'%s' has no constructor with %d parameter(s)."", n, argc);
     return rfFail(t);
 }}");
             if (_usesProbes) sb.Append(ProbeCode(fieldNames));
@@ -438,7 +438,7 @@ namespace fire.Native
             var cases = new StringBuilder();
             foreach (var cls in _classList)
             {
-                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) cases.AppendLine($"        case {cls.Id}: return o->fields()[{index}];");
+                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) cases.AppendLine($"        case {cls.Id}: return objFields(o)[{index}];");
                 else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}");
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{cases}        default: return Undef();\n    }}\n}}");
@@ -465,9 +465,9 @@ namespace fire.Native
                 {
                     if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || getter.IsStatic || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
                     string id = $"{cls.Id}_{Mangle(name)}";
-                    sb.AppendLine($"static const char* const rfc_{id}[] = {{{string.Concat(sources.Select(src => CStr(src) + ", "))}nullptr}};");
+                    sb.AppendLine($"static const char* const rfc_{id}[] = {{{string.Concat(sources.Select(src => CStr(src) + ", "))}NULL}};");
                     sb.AppendLine($"static Value rfg_{id}(Value v, OwnList* list) {{ Value r = {getterFunc.Name}(v); adopt(r, list); return r; }}");
-                    rows.AppendLine($"            if (std::strcmp(member, {CStr(name)}) == 0) {{ *getter = rfg_{id}; return rfc_{id}; }}");
+                    rows.AppendLine($"            if (strcmp(member, {CStr(name)}) == 0) {{ *getter = rfg_{id}; return rfc_{id}; }}");
                 }
                 if (rows.Length > 0) computedCases.Append($"        case {cls.Id}:\n{rows}            break;\n");
             }
@@ -478,22 +478,22 @@ namespace fire.Native
                 var names = new SortedSet<string>(cls.Rc.FieldIndex.Keys, StringComparer.Ordinal);
                 for (var c = cls.Rc; c != null; c = c.Base)
                     foreach (var key in c.Methods.Keys) names.Add(key.StartsWith("get_") || key.StartsWith("set_") ? key.Substring(4) : key);
-                if (names.Count > 0) memberCases.Append($"        case {cls.Id}: {{ static const char* const n[] = {{{string.Concat(names.Select(n => CStr(n) + ", "))}nullptr}}; for (const char* const* p = n; *p; p++) if (std::strcmp(*p, member) == 0) return true; return false; }}\n");
+                if (names.Count > 0) memberCases.Append($"        case {cls.Id}: {{ static const char* const n[] = {{{string.Concat(names.Select(n => CStr(n) + ", "))}NULL}}; for (const char* const* p = n; *p; p++) if (strcmp(*p, member) == 0) return true; return false; }}\n");
             }
-            sb.AppendLine($"[[maybe_unused]] static bool rf_probeHas(uint32_t cls, const char* member) {{\n    switch (cls) {{\n{memberCases}        default: return false;\n    }}\n}}");
-            sb.AppendLine($"[[maybe_unused]] static const char* const* rf_computed(uint32_t cls, const char* member, ProbeRawGet* getter) {{\n    (void)member; (void)getter;\n    switch (cls) {{\n{computedCases}        default: break;\n    }}\n    return nullptr;\n}}");
-            sb.AppendLine(@"[[maybe_unused]] static int64_t rf_probeAdd(Value target, const char* member, bool changing, Value handler, char* err, size_t cap) {
-    if (target.kind != K_Class) { std::snprintf(err, cap, ""'probe' expects an object, got: %s."", kindName(target)); return -1; }
-    if (handler.kind != K_Lambda) { std::snprintf(err, cap, ""The handler of a probe must be a lambda, got: %s."", kindName(handler)); return -1; }
-    if (lamOf(handler)->nparams > 4) { std::snprintf(err, cap, ""The handler of a probe may have at most 4 parameters (object, name, old, new), it has %u."", (unsigned)lamOf(handler)->nparams); return -1; }
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static bool rf_probeHas(uint32_t cls, const char* member) {{\n    switch (cls) {{\n{memberCases}        default: return false;\n    }}\n}}");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static const char* const* rf_computed(uint32_t cls, const char* member, ProbeRawGet* getter) {{\n    (void)member; (void)getter;\n    switch (cls) {{\n{computedCases}        default: break;\n    }}\n    return NULL;\n}}");
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static int64_t rf_probeAdd(Value target, const char* member, bool changing, Value handler, char* err, size_t cap) {
+    if (target.kind != K_Class) { snprintf(err, cap, ""'probe' expects an object, got: %s."", kindName(target)); return -1; }
+    if (handler.kind != K_Lambda) { snprintf(err, cap, ""The handler of a probe must be a lambda, got: %s."", kindName(handler)); return -1; }
+    if (lamOf(handler)->nparams > 4) { snprintf(err, cap, ""The handler of a probe may have at most 4 parameters (object, name, old, new), it has %u."", (unsigned)lamOf(handler)->nparams); return -1; }
     if (member) {
         const char* cname = className(asObj(target)->cls);
-        if (!rf_probeHas(asObj(target)->cls, member)) { std::snprintf(err, cap, ""'%s' has no member '%s' - no probe can be registered there."", cname, member); return -1; }
+        if (!rf_probeHas(asObj(target)->cls, member)) { snprintf(err, cap, ""'%s' has no member '%s' - no probe can be registered there."", cname, member); return -1; }
         // a computed property: the probe watches what its getter reads and compares the value
-        ProbeRawGet getter = nullptr;
+        ProbeRawGet getter = NULL;
         if (const char* const* deps = rf_computed(asObj(target)->cls, member, &getter)) {
-            if (changing) { std::snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
-            OwnList current = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr};
+            if (changing) { snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
+            OwnList current = {NULL, NULL, poolMark(), 0, NULL, NULL};
             Value now = getter(target, &current);
             if (FIRE_UNLIKELY(g_unwind.active)) { leave(&current); return -2; }   // the getter threw: its exception is already unwinding, no probe
             int64_t id = probeAddEntry(asObj(target), member, changing, handler, deps, getter, now);
@@ -503,40 +503,40 @@ namespace fire.Native
     }
     return probeAddEntry(asObj(target), member, changing, handler);
 }
-[[maybe_unused]] static bool rf_silenceCore(Value target, const char* member, char* err, size_t cap) {
-    if (target.kind != K_Class) { std::snprintf(err, cap, ""'silence' expects an object, got: %s."", kindName(target)); return false; }
+FIRE_MAYBE_UNUSED static bool rf_silenceCore(Value target, const char* member, char* err, size_t cap) {
+    if (target.kind != K_Class) { snprintf(err, cap, ""'silence' expects an object, got: %s."", kindName(target)); return false; }
     probeSilence(asObj(target), member);
     return true;
 }
-[[maybe_unused]] static bool rf_silenceValue(Value v, char* err, size_t cap) {
-    if (v.kind == K_Class) return rf_silenceCore(v, nullptr, err, cap);
+FIRE_MAYBE_UNUSED static bool rf_silenceValue(Value v, char* err, size_t cap) {
+    if (v.kind == K_Class) return rf_silenceCore(v, NULL, err, cap);
     if (v.kind == K_Int) { probeSilenceHandle(v.i); return true; }
-    std::snprintf(err, cap, ""'silence' expects a probe handle or an object, got: %s."", kindName(v));
+    snprintf(err, cap, ""'silence' expects a probe handle or an object, got: %s."", kindName(v));
     return false;
 }
-[[maybe_unused]] static Value rf_probe(Value obj, Value member, Value kind, Value handler, OwnList* list, uint32_t caller) {
+FIRE_MAYBE_UNUSED static Value rf_probe(Value obj, Value member, Value kind, Value handler, OwnList* list, uint32_t caller) {
     (void)list; (void)caller;
     char k[64];
     strToUtf8(kind, k, sizeof k);
-    if (std::strcmp(k, ""changed"") != 0 && std::strcmp(k, ""changing"") != 0) {
-        char t[200]; std::snprintf(t, sizeof t, ""The kind of a probe is \""changed\"" or \""changing\"", got: \""%s\""."", k); return rfFail(t);
+    if (strcmp(k, ""changed"") != 0 && strcmp(k, ""changing"") != 0) {
+        char t[200]; snprintf(t, sizeof t, ""The kind of a probe is \""changed\"" or \""changing\"", got: \""%s\""."", k); return rfFail(t);
     }
-    char m[200]; const char* mem = nullptr;
+    char m[200]; const char* mem = NULL;
     if (member.kind == K_String) { strToUtf8(member, m, sizeof m); mem = m; }
     char err[500];
-    int64_t id = rf_probeAdd(obj, mem, std::strcmp(k, ""changing"") == 0, handler, err, sizeof err);
+    int64_t id = rf_probeAdd(obj, mem, strcmp(k, ""changing"") == 0, handler, err, sizeof err);
     if (id == -2) return Undef();   // the getter's own exception unwinds
     if (id < 0) return rfFail(err);
     return Int(id);
 }
-[[maybe_unused]] static Value rf_silence(Value obj, Value member) {
-    char m[200]; const char* mem = nullptr;
+FIRE_MAYBE_UNUSED static Value rf_silence(Value obj, Value member) {
+    char m[200]; const char* mem = NULL;
     if (member.kind == K_String) { strToUtf8(member, m, sizeof m); mem = m; }
     char err[500];
     if (!rf_silenceCore(obj, mem, err, sizeof err)) return rfFail(err);
     return Undef();
 }
-[[maybe_unused]] static Value rf_silence_handle(Value handle) {
+FIRE_MAYBE_UNUSED static Value rf_silence_handle(Value handle) {
     char err[500];
     if (!rf_silenceValue(handle, err, sizeof err)) return rfFail(err);
     return Undef();

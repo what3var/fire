@@ -21,6 +21,9 @@ namespace fire.Native
         public static void WriteTo(string directory, string? platform = null)
         {
             Directory.CreateDirectory(directory);
+            WriteResource("fire_rt.h", directory);
+            WriteResource("fire_rt_cpp.hpp", directory);
+            WriteResource("fire_json.h", directory);
             WriteResource("fire_rt.hpp", directory);
             foreach (string name in Names().Where(n => n.StartsWith("abi/", StringComparison.Ordinal)))
                 WriteResource(name, directory);

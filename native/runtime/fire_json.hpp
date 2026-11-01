@@ -1,6 +1,6 @@
 // JSON (docs/JSON.md, `#import "json"`) for native programs: the same as fire.Standard.JsonMethods of the VM - the same text, the same errors.
-// The generator puts this file into the program when it calls `__JsonCall`; after it come the tables of the program's classes (kJson*) and the
-// functions declared at the top (jsonClassAt, ...). Errors are not C++ exceptions (a board's compiler may have them switched off): the first one is
+// The generator puts this file into the natives (C++) of a program that calls `__JsonCall`; the tables of the program's classes (kJson*) and the
+// functions that read them (jsonClassAt, ...) are in the program (C), see fire_json.h. Errors are not C++ exceptions (a board's compiler may have them switched off): the first one is
 // kept in the context and every step returns early once there is one.
 #include <cerrno>
 #include <deque>
@@ -9,22 +9,9 @@
 #include <utility>
 #include <vector>
 
+#include "fire_json.h"   // (the tables of the program and the functions that read them)
+
 namespace fire {
-
-/// A field as JSON sees it (JsonMethods.JsonField): the name in the JSON text, the slot in the object, the declared type (`int`, `Point`, `List<Point>`, `$0`, "" for
-/// an untyped one) and the unit it is declared with (0: none).
-struct JsonFieldInfo { const char* name; uint32_t slot; const char* type; uint32_t unit; };
-/// A class: its name (as the program knows it, `Box`1` for a generic one whose plain name is taken), the plain name, its fields, `flags` (1 actor, 2 has
-/// OnDeserialized(), 4 the List of the prelude, 8 JsonObject) and the number of its type parameters.
-struct JsonClassInfo { const char* name; const char* plain; uint32_t nfields; const JsonFieldInfo* fields; uint32_t njson; uint8_t flags; uint8_t ntparams; };
-/// The slots of the classes JSON fills itself (-1: not in the program).
-struct JsonSpecial { int32_t listCls, listItems, listCount; int32_t objCls, objKeys, objValues, objCount; };
-
-static const JsonClassInfo* jsonClassAt(uint32_t cls);
-static int32_t jsonClassNamed(const char* name);
-static const char* jsonTArgText(const TArg* t);
-static const TArg* jsonTArgFor(const std::string& text);
-static const JsonSpecial& jsonSpecial();
 
 enum { JSON_FLAG_ACTOR = 1, JSON_FLAG_HOOK = 2, JSON_FLAG_LIST = 4, JSON_FLAG_OBJECT = 8 };
 
@@ -171,7 +158,7 @@ inline bool jsonFromBase64(const std::u16string& s, std::vector<uint8_t>& out) {
 /// A float as JSON: the shortest text that reads back as the same number, always with a `.` or an exponent (JsonMethods.FormatFloat).
 inline void jsonFloat(std::u16string& out, double d) {
     char text[48];
-    int n = formatFloating<double>(d, text);
+    int n = formatFloating(d, false, text);
     text[n] = 0;
     jsonAppendAscii(out, text);
     if (!std::strchr(text, '.') && !std::strchr(text, 'E') && !std::strchr(text, 'e')) jsonAppendAscii(out, ".0");
@@ -245,7 +232,7 @@ struct JsonWriter {
                 const JsonClassInfo* c = jsonClassAt(o->cls);
                 if (!c) continue;
                 if (c->flags & JSON_FLAG_LIST) {
-                    const JsonSpecial& sp = jsonSpecial();
+                    const JsonSpecial& sp = *jsonSpecial();
                     Value items = o->fields()[sp.listItems], count = o->fields()[sp.listCount];
                     if (items.kind == K_Array && alive(items)) {
                         Arr* a = arrOf(items);
@@ -398,7 +385,7 @@ struct JsonWriter {
     void writeObject(Obj* o, const std::string& type, const void* container, uint8_t containerKind, bool isRoot) {
         const JsonClassInfo* c = jsonClassAt(o->cls);
         if (!c) { jsonAppendAscii(out, "null"); return; }
-        if ((c->flags & JSON_FLAG_ACTOR) || (o->flags & 8)) { ctx.fail(std::string("An actor ('") + c->name + "') cannot be written to JSON."); return; }
+        if ((c->flags & JSON_FLAG_ACTOR) || (o->h.flags & 8)) { ctx.fail(std::string("An actor ('") + c->name + "') cannot be written to JSON."); return; }
         auto idIt = ids.find(o);
         bool shared = idIt != ids.end();
         int id = shared ? idIt->second : 0;
@@ -409,7 +396,7 @@ struct JsonWriter {
         bool withType = typeNames && (isRoot || type.empty() || jsonPlain(type) != std::string(c->plain)
             || (typeArgs.empty() && o->targs && c->ntparams > 0));
         if (c->flags & JSON_FLAG_OBJECT) withType = false;
-        const JsonSpecial& sp = jsonSpecial();
+        const JsonSpecial& sp = *jsonSpecial();
 
         if (c->flags & JSON_FLAG_LIST) {
             Value items = o->fields()[sp.listItems], countV = o->fields()[sp.listCount];
@@ -660,7 +647,7 @@ struct JsonReader {
     static OwnList* ownerIn(Value container) {
         if (container.kind == K_Class) return &objAt(container)->owned;
         Arr* a = arrOf(container);
-        if (!a->parts) a->parts = newPartsList(a);
+        if (!a->parts) a->parts = newPartsList(&a->h);
         return a->parts;
     }
     static void store(Value container, uint32_t slot, Value v) {
@@ -805,12 +792,12 @@ struct JsonReader {
         if (args.empty()) return nullptr;
         std::vector<const TArg*> found;
         bool any = false;
-        for (const std::string& a : args) { const TArg* t = jsonTArgFor(a); found.push_back(t); any = any || t; }
+        for (const std::string& a : args) { const TArg* t = jsonTArgFor(a.c_str()); found.push_back(t); any = any || t; }
         return any ? internTArgsN(found.data(), (uint32_t)found.size()) : nullptr;
     }
 
     Value buildList(JsonNode* a, const std::string& type, OwnList* owner, const std::string& path, bool hasId, int64_t id) {
-        const JsonSpecial& sp = jsonSpecial();
+        const JsonSpecial& sp = *jsonSpecial();
         if (sp.listCls < 0) return fail(path + ": the class 'List' is not known.");
         const JsonClassInfo* c = jsonClassAt((uint32_t)sp.listCls);
         Value list = newObject((uint32_t)sp.listCls, c->nfields, owner);
@@ -932,7 +919,7 @@ struct JsonReader {
     }
 
     Value buildJsonObject(JsonNode* o, OwnList* owner, const std::string& path, bool hasId, int64_t id) {
-        const JsonSpecial& sp = jsonSpecial();
+        const JsonSpecial& sp = *jsonSpecial();
         if (sp.objCls < 0) return fail(path + ": an object without '$type' needs a class to read into (or the class JsonObject of `#import \"json\"`).");
         const JsonClassInfo* c = jsonClassAt((uint32_t)sp.objCls);
         Value obj = newObject((uint32_t)sp.objCls, c->nfields, owner);
@@ -997,3 +984,8 @@ inline Value jsonCall(int argc, Value op, Value a1, Value a2, const char* callTy
 }
 
 }  // namespace fire
+
+/* the entry for the program (C) */
+extern "C" fire::Value fire_jsonCall(int argc, fire::Value op, fire::Value a1, fire::Value a2, const char* callType, fire::OwnList* list) {
+    return fire::jsonCall(argc, op, a1, a2, callType, list);
+}

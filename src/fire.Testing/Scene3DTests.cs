@@ -190,8 +190,7 @@ static class Scene3DTests
         Console.WriteLine("--- VM ---\n" + vm);
         string work = Path.Combine(Path.GetTempPath(), "fire-scene3d-" + Guid.NewGuid().ToString("N"));
         fire.Native.NativeRuntimeFiles.WriteTo(work);
-        string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { Script }, null, null, VmExecutionMode.Release));
-        File.WriteAllText(Path.Combine(work, "case.cpp"), cpp);
+        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { Script }, null, null, VmExecutionMode.Release));
         string Tool(string tool, string arguments)
         {
             using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work })!;
@@ -200,7 +199,7 @@ static class Scene3DTests
             p.WaitForExit();
             return o + err.Result;
         }
-        string build = Tool("g++", $"-std=c++17 -pthread -O2 -Wall -Wextra \"{Path.Combine(work, "case.cpp")}\" -I\"{work}\" -o \"{Path.Combine(work, "case.bin")}\"");
+        string build = NativeTestBuild.Build(NativeTestBuild.In(work), "g++", generated, work, "case", "-pthread -O2 -Wall -Wextra", Path.Combine(work, "case.bin"), out _);
         if (build.Length > 0) Console.WriteLine("--- build ---\n" + build);
         string native = File.Exists(Path.Combine(work, "case.bin")) ? Tool(Path.Combine(work, "case.bin"), "") : "(no binary)";
         Console.WriteLine("--- C++ ---\n" + native);

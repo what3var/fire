@@ -66,7 +66,7 @@ namespace fire.Compiler
     public static class CommandLineParser
     {
         public const string DefaultOutputFile = "out.exe";
-        public const string DefaultNativeOutputFile = "out.cpp";
+        public const string DefaultNativeOutputFile = "out.c";
 
         public static string Usage =>
             """
@@ -84,7 +84,7 @@ namespace fire.Compiler
             build   turns them into a program: a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
                     fire.native.json - C++ built with the toolchain of the configuration for the target (-o is the program; for a toolchain that only writes files, a folder).
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
-            native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
+            native  translates the files into C (written next to fire_rt.h, the runtime it includes; default: out.c - and fire_natives.cpp with natives in C++)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
             -t      Target of a native build: windows, linux, macos, esp32, freertos, wasm (a page for the browser, needs Emscripten) or one that fire.native.json defines (default: this machine). The target decides the
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
@@ -409,12 +409,17 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = config.ResolveTarget(options.TargetName);
-                string cpp = NativeBuilder.Generate(sources, target, options.Mode, options.FloatWidth, defines: options.Defines);
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, defines: options.Defines);
+                string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
-                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path));
+                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);
+                string natives = program.Natives != null ? Path.Combine(Path.GetDirectoryName(full)!, NativeBuilder.NativesName) : "";
+                string extra = string.Join(" ", target.Native.CompileArgs);
                 stdout.WriteLine(target.IsEmbedded || target.Native.Entry.Kind == fire.Runtime.EntryKind.Function
-                    ? $"{full} ({cpp.Length} characters) for {target.Name} - add it, fire_rt.hpp and platform/{target.Native.Platform}/ to your project (the entry point is {target.Native.Entry.Name})"
-                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 {string.Join(" ", target.Native.CompileArgs)} \"{full}\" -o program");
+                    ? $"{full} ({cpp.Length} characters){(natives.Length > 0 ? " and " + natives : "")} for {target.Name} - add {(natives.Length > 0 ? "them" : "it")}, fire_rt.h and platform/{target.Native.Platform}/ to your project (the entry point is {target.Native.Entry.Name})"
+                    : natives.Length == 0
+                        ? $"{full} ({cpp.Length} characters) - compile with: cc -std=c11 -O2 {extra} \"{full}\" -o program -lm"
+                        : $"{full} ({cpp.Length} characters) and {natives} - compile with: cc -std=c11 -O2 {extra} -c \"{full}\" -o program.o && c++ -std=c++17 -O2 {extra} \"{natives}\" program.o -o program");
             }
             catch (fire.Native.NativeConfigException ex)
             {

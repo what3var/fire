@@ -1129,7 +1129,8 @@ unsafe {
 }
 """;
 
-try
+if (!OperatingSystem.IsWindows()) Console.WriteLine("(übersprungen: nur unter Windows)");
+else try
 {
     var natives = NativeRegistry.CreateDefault();
     var externs = ExternRegistry.CreateWinApiDemo();
@@ -7435,7 +7436,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         //    under a foreign name, so that it is not found via the normal search).
         if (OperatingSystem.IsLinux())
         {
-            var so = Directory.GetFiles(Path.Combine(baseDir, "runtimes", "linux-x64", "native"), "libSystem.IO.Ports.Native.so").FirstOrDefault();
+            var portsDir = Path.Combine(baseDir, "runtimes", "linux-x64", "native");
+            var so = Directory.Exists(portsDir) ? Directory.GetFiles(portsDir, "libSystem.IO.Ports.Native.so").FirstOrDefault() : null;
             if (so != null && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
             {
                 var loaderFile = Path.Combine(tmpDir, "loader.bin");
@@ -7616,7 +7618,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
                 "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
             SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(wasm) == "out.html", "wasm: die Standardausgabe ist out.html");
             string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
-            SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.hpp") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
+            SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.h\"") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
             string threadError = "";
             try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm); }
             catch (fire.Native.NativeNotSupportedException ex) { threadError = ex.Message; }
@@ -22464,11 +22466,11 @@ else
         var compiled = natCases.Select((c, index) => Task.Run(() =>
         {
             string expected = vmResults[index];
-            string cpp;
-            try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+            fire.Native.NativeSources generated;
+            try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
             catch (fire.Native.NativeNotSupportedException ex) { return (c.Name, expected, $"nicht uebersetzbar: {ex.Message}"); }
-            string cppFile = Path.Combine(workDir, $"case{index}.cpp"), exeFile = Path.Combine(workDir, $"case{index}.bin");
-            File.WriteAllText(cppFile, cpp);
+            string cpp = generated.Program;
+            string exeFile = Path.Combine(workDir, $"case{index}.bin");
 
             string RunTool(string tool, string arguments, out int exit)
             {
@@ -22486,9 +22488,9 @@ else
             string build;
             int buildExit;
             buildGate.Wait();
-            try { build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out buildExit); }
+            try { build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"case{index}", $"-pthread -O2 -Wall -Wextra {sanitize}", exeFile, out buildExit, linkFlags); }
             finally { buildGate.Release(); }
-            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
+            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C/C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
                 // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
@@ -22525,9 +22527,9 @@ else
                 string name = "Tls (SChannel, fuer Windows gebaut, unter Wine)";
                 try
                 {
-                    string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
-                    string cppFile = Path.Combine(workDir, "schannel.cpp"), exeFile = Path.Combine(workDir, "schannel.exe");
-                    File.WriteAllText(cppFile, cpp);
+                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
+                    string cpp = generated.Program;
+                    string exeFile = Path.Combine(workDir, "schannel.exe");
                     string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                     string Run(string tool, string arguments, out int exit)
                     {
@@ -22541,7 +22543,7 @@ else
                         exit = p.ExitCode;
                         return output + errTask.Result;
                     }
-                    string build = Run(mingw, $"-std=c++17 -O2 -Wall -Wextra -static \"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
+                    string build = NativeTestBuild.Build((tool, arguments) => (Run(tool, arguments, out int code), code), mingw, generated, workDir, "schannel", "-O2 -Wall -Wextra -static", exeFile, out int buildExit, linkFlags);
                     if (buildExit != 0 || build.Contains("warning:")) CheckNat(name, false, "MinGW: " + build);
                     else
                     {
@@ -22585,15 +22587,15 @@ else
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
-            espCpp.Contains("extern \"C\" void app_main(void)") && !espCpp.Contains("int main()") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
+            espCpp.Contains("\nvoid app_main(void)") && !espCpp.Contains("int main(") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
             && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 8192") && espCpp.Contains("#define FIRE_FLOAT32 1"));
         {
-            string espFile = Path.Combine(workDir, "esp.cpp");
+            string espFile = Path.Combine(workDir, "esp.c");
             File.WriteAllText(espFile, espCpp);
-            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-std=c++17 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
             string espBuild = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
             p.WaitForExit();
-            CheckNat("esp32: das erzeugte C++ uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
+            CheckNat("esp32: das erzeugte C uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
         }
         var cliEsp = CommandLineParser.Parse(new[] { "native", "a.script", "-t", "esp32" });
         CheckNat("Befehlszeile: -t esp32 / unbekanntes Ziel / -t ausserhalb von native",
@@ -22618,13 +22620,12 @@ else
                 var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
                 if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
                 var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Defines = defines } };
-                string cpp;
-                try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
+                fire.Native.NativeSources generated;
+                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
                 catch (fire.Native.NativeNotSupportedException ex) { return (c.Title, "", $"nicht uebersetzbar: {ex.Message}"); }
-                string file = Path.Combine(workDir, $"dev{index}.cpp"), exe = Path.Combine(workDir, $"dev{index}.bin");
-                File.WriteAllText(file, cpp);
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C++-Compiler: " + build);
+                string exe = Path.Combine(workDir, $"dev{index}.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"dev{index}", $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C/C++-Compiler: " + build);
                 string actual = RunProc(exe, "", workDir, out int runExit);
                 return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
             })).ToArray();
@@ -22759,14 +22760,15 @@ else
             var windowTarget = TargetProfile.Host;
             foreach (var wc in windowCases)
             {
-                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
-                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("fire_display.hpp"), "");
+                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
+                string cpp = generated.Program;
+                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && generated.Natives != null && generated.Natives.Contains("fire_display.hpp"), "");
                 if (sdlExit != 0) { Console.WriteLine("(SDL2 nicht verfuegbar: das Fenster wird nicht ausgefuehrt)"); continue; }
-                string file = Path.Combine(workDir, "window_" + Math.Abs(wc.Title.GetHashCode()) + ".cpp"), exe = file + ".bin";
-                File.WriteAllText(file, cpp);
-                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, file, workDir, exe);
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}{wc.Define}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C++-Compiler: " + build); continue; }
+                string name = "window_" + Math.Abs(wc.Title.GetHashCode()), exe = Path.Combine(workDir, name + ".bin");
+                File.WriteAllText(Path.Combine(workDir, name + ".c"), cpp);
+                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, Path.Combine(workDir, name + ".c"), workDir, exe);
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}{wc.Define}", exe, out int buildExit, " -lSDL2");
+                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C/C++-Compiler: " + build); continue; }
                 Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
                 string actual = RunProc(exe, "", workDir, out int runExit);
                 string expected = string.Concat(wc.Expected.Select(l => l + "\n"));
@@ -22781,11 +22783,10 @@ else
             if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
             else
             {
-                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
-                string file = Path.Combine(workDir, "uidraw.cpp"), exe = file + ".bin";
-                File.WriteAllText(file, cpp);
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C++-Compiler: " + build);
+                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
+                string exe = Path.Combine(workDir, "uidraw.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL2");
+                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C/C++-Compiler: " + build);
                 else
                 {
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
@@ -22804,12 +22805,12 @@ else
             var rtosTasks = rtosIndexes.Select(index => Task.Run(() =>
             {
                 string expected = vmResults[index];
-                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
-                string file = Path.Combine(workDir, $"rtos{index}.cpp"), exe = Path.Combine(workDir, $"rtos{index}.bin");
+                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string exe = Path.Combine(workDir, $"rtos{index}.bin");
                 // the board's startup code would call the entry point from a task; here main does
-                File.WriteAllText(file, cpp + "\nint main() { fire_start(); return 0; }\n");
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C++-Compiler: " + build);
+                generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"rtos{index}", $"-pthread -O2 -Wall -Wextra {sanitize}-I\"{Path.Combine(workDir, "sim")}\"", exe, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C/C++-Compiler: " + build);
                 string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
                 return (natCases[index].Name, expected, actual);
             })).ToArray();
@@ -22848,7 +22849,7 @@ else
             var roundTrip = fire.Native.NativeConfig.Parse(config.ToJson());
             CheckNat("Konfiguration: speichern und wieder lesen", roundTrip.ResolveTarget("board").Native.Defines.SequenceEqual(new[] { "BOARD_X=3", "FIRE_THREAD_PRIORITY=5" }) && roundTrip.Engine == "native");
             string boardCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, board), board);
-            int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.hpp\"", StringComparison.Ordinal);
+            int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.h\"", StringComparison.Ordinal);
             CheckNat("Konfiguration: Defines, Includes vor der Plattform und Einsprung stehen im C++", boardCpp.Contains("#define BOARD_X 3") && incAt > 0 && platAt > incAt
                 && boardCpp.Contains("void board_main(void) {") && !boardCpp.Contains("extern \"C\" void board_main") && boardCpp.IndexOf("#define BOARD_X 3", StringComparison.Ordinal) < incAt);
 
@@ -23065,14 +23066,17 @@ else
             }), Path.Combine(pkgDir, "out")).PackagePath;
             fire.Package.Manager.PackageStore.Default.Install(natFpk);
             string natScript = "#import \"pknat\"\nprint(PkgNat.Twice(21))\nvar s = PkgNat.Squares(4)\nprint(s.length)\nprint(s[3])";
-            string pkgCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
-            CheckNat("Paket: der C++-Quelltext des Natives steht im erzeugten C++", pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("= pk_squares("));
+            var pkgSources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
+            string pkgCpp = pkgSources.Natives ?? "";
+            CheckNat("Paket: der C++-Quelltext des Natives steht in den Natives (C++) des Programms, das Programm (C) ruft sie ueber eine C-Funktion",
+                pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("return pk_squares(a0, list); }")
+                && pkgSources.Program.Contains("Value fire_nat_1(Value a0, OwnList* list);   // pk_squares"), pkgSources.Program + pkgCpp);
             string? pkgCxx = FindCxx();
             if (pkgCxx != null)
             {
                 string run = Path.Combine(pkgDir, "run");
                 fire.Native.NativeRuntimeFiles.WriteTo(run);
-                File.WriteAllText(Path.Combine(run, "pkg.cpp"), pkgCpp);
+
                 string RunTool(string tool, string args, string? workDirectory = null)
                 {
                     using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, args) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDirectory ?? run })!;
@@ -23081,8 +23085,8 @@ else
                     p.WaitForExit();
                     return (p.ExitCode == 0 ? "" : $"[exit {p.ExitCode}] ") + output + err.Result;
                 }
-                string build = RunTool(pkgCxx, $"-std=c++17 -pthread -O1 -Wall -Wextra \"{Path.Combine(run, "pkg.cpp")}\" -I\"{run}\" -o \"{Path.Combine(run, "pkg.bin")}\"");
-                string result = build.Length == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C++-Compiler: " + build;
+                string build = NativeTestBuild.Build(NativeTestBuild.In(run), pkgCxx, pkgSources, run, "pkg", "-pthread -O1 -Wall -Wextra", Path.Combine(run, "pkg.bin"), out int pkgExit);
+                string result = pkgExit == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C/C++-Compiler: " + build;
                 CheckNat("Paket: das C++-Native laeuft im uebersetzten Programm (Zahlen, ein Array aus der Scope-Liste)", result == "42\n4\n9\n", result);
 
                 // the same natives in the virtual machine: built into a shared library with the C ABI, called through it (numbers, text, arrays, buffers cross; errors are reported)
@@ -23131,8 +23135,8 @@ else
                 }), Path.Combine(pkgDir, "out")).PackagePath;
                 fire.Package.Manager.PackageStore.Default.Install(whichFpk);
                 string whichScript = "#import \"pkwhich\"\nprint(PkWhich.Which())";
-                string cppLinux = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux);
-                string cppRtos = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string cppLinux = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux).Natives ?? "";
+                string cppRtos = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos).Natives ?? "";
                 string vmWhich;
                 try { vmWhich = vmOutput(whichScript); } catch (Exception ex) { vmWhich = ex.Message; }
                 CheckNat("Paket: platformSources - jedes Ziel bekommt seine Quellen (Linux: posix, FreeRTOS: freertos), die VM die der eigenen Plattform",
