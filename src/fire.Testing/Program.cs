@@ -12290,12 +12290,17 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     }
 
     {
-        // Without a breakpoint a program runs to the end in one go; a breakpoint in the FIRST line does not count at the start
+        // A breakpoint in the FIRST line stops at the start (like other debuggers: the prelude runs first, then the program enters line 1), nothing has run there yet;
+        // going on from there does not stop on the same line again, the program runs to the end
         VM.ResetTerminateForTests();
         var (session, lines) = BuildDbg("print(\"a\")\nprint(\"b\")\n", VmExecutionMode.Debug);
         var vm = session.VirtualMachine!;
-        bool stopped = vm.RunUntilBreakpoint(new HashSet<(int, int)> { (session.FirstUserSourceIndex, 1) }, () => false);
-        DbgCheck(!stopped && lines.SequenceEqual(new[] { "a", "b" }), "RunUntilBreakpoint: ein Haltepunkt auf der Startzeile haelt nicht sofort an, das Programm laeuft zu Ende");
+        var firstLine = new HashSet<(int, int)> { (session.FirstUserSourceIndex, 1) };
+        bool stopped = vm.RunUntilBreakpoint(firstLine, () => false);
+        bool atStart = stopped && vm.CurrentLine == 1 && lines.Count == 0;
+        bool again = vm.RunUntilBreakpoint(firstLine, () => false);
+        DbgCheck(atStart && !again && lines.SequenceEqual(new[] { "a", "b" }), "RunUntilBreakpoint: ein Haltepunkt auf der ersten Zeile haelt beim Start an (vor ihr), weiter laeuft das Programm zu Ende",
+            $"angehalten {stopped}, Zeile {vm.CurrentLine}, nochmal {again}, Ausgabe {string.Join("|", lines)}");
         VM.ResetTerminateForTests();
     }
 
