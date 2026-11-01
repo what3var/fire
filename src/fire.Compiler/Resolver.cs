@@ -350,6 +350,22 @@ namespace fire.Compiler
         /// value MUST be an int literal (real compile-time constant
         /// evaluation of arbitrary expressions does not exist in this language),
         /// otherwise auto-increment from the predecessor + 1 (0 for the first member).</summary>
+        /// <summary>The run-time type of an enum declaration (Values.EnumType): its members with their values - an int literal, or the one before + 1 (a faulty
+        /// member is reported by CollectEnums; here it just counts on).</summary>
+        public static fire.Values.EnumType EnumTypeOf(EnumDecl ed)
+        {
+            var members = new List<(string, long)>();
+            var seen = new HashSet<string>();
+            long next = 0;
+            foreach (var m in ed.Members)
+            {
+                long value = m.ValueExpr is LiteralExpr { Value.Kind: ValueKind.Int } lit ? lit.Value.AsInt() : next;
+                next = value + 1;
+                if (seen.Add(m.Name)) members.Add((m.Name, value));
+            }
+            return fire.Values.EnumType.Intern(ed.Name, ed.IsFlags, members);
+        }
+
         private void CollectEnums(IReadOnlyList<Stmt> statements)
         {
             foreach (var stmt in statements)
@@ -403,7 +419,7 @@ namespace fire.Compiler
                     members[m.Name] = value;
                     next = value + 1;
                 }
-                _enumTypes[ed.Name] = fire.Values.EnumType.Intern(ed.Name, ed.IsFlags, members.Select(kv => (kv.Key, kv.Value)).ToList());
+                _enumTypes[ed.Name] = EnumTypeOf(ed);
             }
         }
 

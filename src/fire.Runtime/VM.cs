@@ -3900,6 +3900,15 @@ namespace fire.Runtime
                     }
                     break;
                 }
+                case OpCode.ToEnum:
+                {
+                    var type = _constants[ReadU16()].Enum!;
+                    var v = Pop();
+                    if (v.Kind == ValueKind.Int && (!v.IsEnum || v.EnumId == type.Id)) Push(Value.MakeEnum(v.AsInt(), type));
+                    else if (v.Kind == ValueKind.Undefined) Push(v);
+                    else { Push(v); ThrowArgumentError($"Cannot convert a value of type '{(v.IsEnum ? v.Enum!.Name : v.Kind.ToString())}' to '{type.Name}'."); }
+                    break;
+                }
                 case OpCode.RebindLambda:
                 {
                     var onTarget = Pop();

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
 using fire.Lexing;
+using fire.Resolving;
 using fire.Values;
 
 namespace fire.Compiler
@@ -20,7 +21,7 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
@@ -51,12 +52,15 @@ namespace fire.Compiler
         public static StaticType ArrayOf(StaticType element) => new(StaticKind.Array, Element: element);
         /// <summary>An instance of a class or interface; `args` are its type arguments (null: the raw form, every type argument `any`).</summary>
         public static StaticType ClassOf(string name, IReadOnlyList<StaticType>? args = null) => new(StaticKind.Class, name, Args: args);
+        /// <summary>A value of the enum `name` (its full name): not an int (docs/language/10-enums-and-namespaces.md).</summary>
+        public static StaticType EnumOf(string name) => new(StaticKind.Enum, name);
         public static StaticType LambdaOf(int paramCount, StaticType? returns, IReadOnlyList<StaticType>? parameters = null) => new(StaticKind.Lambda, ParamCount: paramCount, Return: returns, Params: parameters);
         public bool IsDynamic => Kind == StaticKind.Dynamic;
         public override string ToString() => Kind switch
         {
             StaticKind.Class => GenericClassNames.PlainName(Class!) + (Args is { Count: > 0 } ? "<" + string.Join(", ", Args) + ">" : ""),
             StaticKind.Object => "class",
+            StaticKind.Enum => Class!,
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
             StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
@@ -112,6 +116,11 @@ namespace fire.Compiler
         private List<StaticType>? _collectedReturns;
         private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
+        /// <summary>What the resolver found for the names (`Color.Red`: a member of an enum, with its type).</summary>
+        private IReadOnlyDictionary<Expr, ResolvedRef> _refs = new Dictionary<Expr, ResolvedRef>();
+        /// <summary>The enums of the program: full name -> a flag enum.</summary>
+        private readonly Dictionary<string, bool> _enumNames = new(StringComparer.Ordinal);
+
         private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks,
             Dictionary<Expr, string[]> methodTypeArgs, Dictionary<Expr, (TypeRef Type, string What)> localGuards, Dictionary<Expr, string> overloadHints)
         {
@@ -132,6 +141,7 @@ namespace fire.Compiler
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
+            checker._refs = resolved.References;
             checker._scopes.Add(new Dictionary<string, StaticType>());
             foreach (var stmt in program)
             {
@@ -156,6 +166,7 @@ namespace fire.Compiler
             foreach (var stmt in statements)
             {
                 if (stmt is InterfaceDecl i) _interfaces[i.Name] = i;
+                else if (stmt is EnumDecl e) _enumNames[e.Name] = e.IsFlags;
                 else if (stmt is NamespaceDecl n) CollectInterfaces(n.Members);
             }
         }
@@ -258,6 +269,8 @@ namespace fire.Compiler
                 var view = value.Class == target.Class ? value : AsBase(value, target.Class!);
                 return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second);
             }
+            // an enum is not an int (and an int not an enum): `Color c = 5`, `int i = c` want a `!` (`5!Color`, `c!int`)
+            if (value.Kind == StaticKind.Enum || target.Kind == StaticKind.Enum) return value.Kind == target.Kind && value.Class == target.Class;
             return value.Kind == target.Kind;
         }
 
@@ -401,6 +414,7 @@ namespace fire.Compiler
             }
             string plain = PlainName(name);
             if (_classes.ContainsKey(plain) || _interfaces.ContainsKey(plain)) return StaticType.ClassOf(plain);
+            if (EnumNamed(name) is { } enumName) return StaticType.EnumOf(enumName);
             return TypeParamRef(name) is { } typeParam ? StaticType.Dynamic with { TypeParam = typeParam } : StaticType.Dynamic;
         }
 
@@ -1202,6 +1216,11 @@ namespace fire.Compiler
 
         private StaticType InferBinaryType(BinaryExpr b, StaticType left, StaticType right)
         {
+            // `|`, `&`, `#` of two values of the same flag enum: that enum; any other operation on an enum value works on its number (an int)
+            if (b.Op is BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor && left.Kind == StaticKind.Enum && left == right && _enumNames.GetValueOrDefault(left.Class!)) return left;
+            if (b.Op is BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq && (left.Kind == StaticKind.Enum || right.Kind == StaticKind.Enum)) return StaticType.Bool;
+            if (left.Kind == StaticKind.Enum) left = StaticType.Int;
+            if (right.Kind == StaticKind.Enum) right = StaticType.Int;
             switch (b.Op)
             {
                 case BinaryOp.And or BinaryOp.Or: return StaticType.Bool;
@@ -1270,8 +1289,18 @@ namespace fire.Compiler
         /// <summary>A tool for refactorings (FIRE_MEMBER_LOG): every member access whose receiver class is known (source, line, class, name, bare).</summary>
         public static List<(int Source, int Line, string Class, string Name, bool Bare)>? MemberLog;
 
+        /// <summary>The full name of the enum a type name means (its full name, or the name in the namespace of the class that is being checked), or null.</summary>
+        private string? EnumNamed(string name)
+        {
+            if (_enumNames.ContainsKey(name)) return name;
+            if (_class?.Name is { } cls && cls.LastIndexOf('.') is var dot and > 0 && _enumNames.ContainsKey(cls.Substring(0, dot) + "." + name)) return cls.Substring(0, dot) + "." + name;
+            return null;
+        }
+
         private StaticType InferMember(MemberExpr m)
         {
+            // `Color.Red`: a value of the enum
+            if (_refs.TryGetValue(m, out var resolvedRef) && resolvedRef is ResolvedRef.EnumMember { Type: { } enumType }) return StaticType.EnumOf(enumType.Name);
             var target = Infer(m.Target);
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));

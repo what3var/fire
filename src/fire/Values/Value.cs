@@ -301,7 +301,7 @@ namespace fire.Values
         /// trivial identity). Further type combinations follow with the evaluator.</summary>
         public Value CoerceType(ValueKind targetKind)
         {
-            if (Kind == targetKind) return this;
+            if (Kind == targetKind) return targetKind == ValueKind.Int ? WithoutEnum() : this;   // (`c!int`: the number of an enum value)
 
             switch (Kind, targetKind)
             {

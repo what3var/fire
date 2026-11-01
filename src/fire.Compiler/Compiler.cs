@@ -22,6 +22,8 @@ namespace fire.Compiler
     /// (the first included).</summary>
     public sealed class CompilerException : NotSupportedException
     {
+
+
         public int Line { get; }
 
         /// <summary>The message without the line.</summary>
@@ -71,6 +73,17 @@ namespace fire.Compiler
     /// </summary>
     public sealed class Compiler
     {
+        /// <summary>The run-time types of the enums of the program (Values.EnumType), by full name.</summary>
+        private readonly Dictionary<string, EnumType> _enumTypes = new(StringComparer.Ordinal);
+
+        /// <summary>The enum a type name means (its full name, or the name in the namespace of the class that is compiled), or null.</summary>
+        private EnumType? EnumTypeNamed(string name)
+        {
+            if (_enumTypes.TryGetValue(name, out var type)) return type;
+            foreach (var t in _enumTypes.Values) if (t.Matches(name)) return t;
+            return null;
+        }
+
         private readonly Chunk _chunk = new();
         private readonly IReadOnlyDictionary<Expr, ResolvedRef> _refs;
         private readonly NativeRegistry _natives;
@@ -460,7 +473,7 @@ namespace fire.Compiler
                 case "bool": case "char": case "string": return tr.BaseName;
                 case "any": case "class": return "";
             }
-            if (_refParams.EnumNames.Contains(tr.BaseName)) return "int";
+            if (_refParams.EnumNames.Contains(tr.BaseName)) return "";   // (an enum: the type checker sees to it; at run time `Color c` takes what it gets, like `any`)
             bool Known(string n) => _knownClassNames.Contains(n) || _refParams.InterfaceNames.Contains(n);
             string name = tr.TypeArgs is { Count: > 0 } args ? GenericClassNames.ResolveNewTarget(tr, args.Count, Known) : tr.ResolveBaseName(Known);
             if (Known(name)) return name;
@@ -764,6 +777,7 @@ namespace fire.Compiler
             var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
             _refParams.InterfaceNames.UnionWith(interfaceNames);
             _refParams.EnumNames.UnionWith(program.OfType<EnumDecl>().Select(e => e.Name));
+            foreach (var ed in program.OfType<EnumDecl>()) _enumTypes[ed.Name] = Resolver.EnumTypeOf(ed);
             var baseRefOf = new Dictionary<RuntimeClass, TypeRef>();
             foreach (var rc in classes.Values)
             {
@@ -2304,6 +2318,13 @@ namespace fire.Compiler
                     CompileExpr(relabel.Operand);
                     _chunk.EmitOp(OpCode.RelabelUnit);
                     _chunk.EmitU16(_chunk.AddUnit(fire.Values.Unit.Parse(relabel.TargetUnitName!)));
+                    break;
+
+                case TypeCoerceExpr { TargetClass: not null } toEnum when EnumTypeNamed(toEnum.TargetClass!.BaseName) is { } enumType:
+                    // `5!Color`: the number as a value of the enum
+                    CompileExpr(toEnum.Operand);
+                    _chunk.EmitOp(OpCode.ToEnum);
+                    _chunk.EmitU16(_chunk.AddConstant(Value.MakeEnum(0, enumType)));
                     break;
 
                 case TypeCoerceExpr { TargetClass: not null } cast:

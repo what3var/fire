@@ -227,6 +227,8 @@ namespace fire.Bytecode
         // checker assumed of them (Bytecode.OverloadHint text): the call does not score the candidates then. Only in front of calls of methods or
         // constructors overloaded by type, before their SetTypeArgs/CopyArgs.
         OverloadHint,        // u16 hintIdx
+        // `x!Color`: a whole number (or a value of the enum) becomes a value of the enum - the constant is a value of the enum (it brings the type).
+        ToEnum,              // u16 enumConstIdx      : pop v; push v as a value of the enum (an int, the same enum, undefined; else ArgumentException)
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the
