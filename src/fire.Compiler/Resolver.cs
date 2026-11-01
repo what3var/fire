@@ -1802,7 +1802,7 @@ namespace fire.Compiler
                     string? enumName = DottedName(me.Target);
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
-                        if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
+                        if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" or "Values" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
                         {
                             // `Color.Name(c)`, `Color.Parse("Red")`: the hidden helper class of the enum (see Parser.EnumHelperClass)
                             _refs[me] = new ResolvedRef.StaticMember(Parser.EnumHelperClassName(enumName));

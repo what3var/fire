@@ -712,6 +712,7 @@ namespace fire.Compiler
             var name = new System.Text.StringBuilder();
             var parse = new System.Text.StringBuilder();
             var defined = new System.Text.StringBuilder();
+            var values = new List<string>();
             var seen = new HashSet<long>();
             long next = 0;
             foreach (var m in ed.Members)
@@ -722,14 +723,17 @@ namespace fire.Compiler
                 {
                     name.Append($"if (v == {value}) {{ return \"{m.Name}\" }} ");
                     defined.Append($"if (v == {value}) {{ return true }} ");
+                    values.Add($"{ed.Name}.{m.Name}");
                 }
-                parse.Append($"if (s == \"{m.Name}\") {{ return {value} }} ");
+                parse.Append($"if (s == \"{m.Name}\") {{ return {ed.Name}.{m.Name} }} ");
             }
+            // (a value of the enum or a whole number: `v == 5` compares the number; Parse gives a value of the enum, Values() all members)
             string source =
                 $"class {EnumHelperClassName(ed.Name)} {{\n" +
-                $"    static string Name(int v) {{ {name}return \"\" + v }}\n" +
-                $"    static int Parse(string s) {{ {parse}throw new ArgumentException(\"'\" + s + \"' is not a member of '{ed.Name}'.\") }}\n" +
-                $"    static bool IsDefined(int v) {{ {defined}return false }}\n" +
+                $"    static string Name(any v) {{ {name}return \"\" + (v!int) }}\n" +
+                $"    static {ed.Name} Parse(string s) {{ {parse}throw new ArgumentException(\"'\" + s + \"' is not a member of '{ed.Name}'.\") }}\n" +
+                $"    static bool IsDefined(any v) {{ {defined}return false }}\n" +
+                $"    static {ed.Name}[] Values() {{ return [{string.Join(", ", values)}] }}\n" +
                 "}";
             var parser = new Parser(new Lexer(source).Tokenize()) { _sourceIndex = _sourceIndex, _fileName = _fileName };
             return parser.ParseProgram();
@@ -1752,6 +1756,10 @@ namespace fire.Compiler
         /// is an own, exclusive if condition, no jump into the next one),
         /// `break` is therefore a purely syntactic branch end (see
         /// ParseSwitchCaseBody), no real jump statement.</summary>
+        /// <summary>A `switch` without `case default`: the declaration of its subject (the first statement of what the switch becomes) -> the values of its `case x:`
+        /// (TypeChecker: a switch over an enum warns about the members it leaves out).</summary>
+        public static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Stmt, List<Expr>> Switches = new();
+
         private Stmt ParseSwitchStmt()
         {
             int line = Peek().Line;
@@ -1766,6 +1774,7 @@ namespace fire.Compiler
 
             var cases = new List<(Expr Condition, List<Stmt> Body)>();
             List<Stmt>? defaultBody = null;
+            var equalValues = new List<Expr>();   // (the values of `case x:` - an enum switch without default should name all members, TypeChecker)
 
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
@@ -1800,6 +1809,7 @@ namespace fire.Compiler
                         };
                     }
                     var valueExpr = ParseSwitchCaseValue();
+                    if (op == BinaryOp.Eq) equalValues.Add(valueExpr);
                     var test = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
                     condition = condition == null ? test : new BinaryExpr(line, BinaryOp.Or, condition, test);
                 } while (Match(TokenType.Comma));
@@ -1815,10 +1825,9 @@ namespace fire.Compiler
             for (int i = cases.Count - 1; i >= 0; i--)
                 chain = new IfStmt(_sourceIndex, line, cases[i].Condition, new Stmt.BlockStmt(_sourceIndex, line, cases[i].Body), chain);
 
-            var outerStatements = new List<Stmt>
-            {
-                new VarDeclStmt(_sourceIndex, line, tempName, null, Array.Empty<Expr?>(), subject),
-            };
+            var subjectDecl = new VarDeclStmt(_sourceIndex, line, tempName, null, Array.Empty<Expr?>(), subject);
+            if (defaultBody == null) Switches.AddOrUpdate(subjectDecl, equalValues);
+            var outerStatements = new List<Stmt> { subjectDecl };
             if (chain != null) outerStatements.Add(chain);
 
             return new Stmt.BlockStmt(_sourceIndex, line, outerStatements);

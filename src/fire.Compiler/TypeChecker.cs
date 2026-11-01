@@ -86,6 +86,7 @@ namespace fire.Compiler
         public const string UnitLossCode = "TC007";
         public const string UnknownMemberCode = "TC008";
         public const string AssignInConditionCode = "TC009";
+        public const string SwitchMissingCode = "TC010";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -177,7 +178,7 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
@@ -928,6 +929,7 @@ namespace fire.Compiler
         {
             var declared = Declared(v.Type, v.ArrayRanks.Count);
             var init = v.Initializer != null ? Infer(v.Initializer, declared) : StaticType.Dynamic;
+            if (init.Kind == StaticKind.Enum && Parser.Switches.TryGetValue(v, out var caseValues)) CheckSwitchOverEnum(init.Class!, caseValues, v.Line);
             if (declared is { } target)
             {
                 if (v.Initializer != null)
@@ -1288,6 +1290,20 @@ namespace fire.Compiler
         /// <summary>`a.Name`: a field or property of a class (also a static one, `Class.Name`), the length of an array or a string.</summary>
         /// <summary>A tool for refactorings (FIRE_MEMBER_LOG): every member access whose receiver class is known (source, line, class, name, bare).</summary>
         public static List<(int Source, int Line, string Class, string Name, bool Bare)>? MemberLog;
+
+        /// <summary>A `switch` over a value of an enum without `case default`: the members no `case` names (TC010, a warning also in strict mode - it may be meant).</summary>
+        private void CheckSwitchOverEnum(string enumName, List<Expr> caseValues, int line)
+        {
+            fire.Values.EnumType? type = null;
+            var covered = new HashSet<long>();
+            foreach (var value in caseValues)
+                if (_refs.TryGetValue(value, out var r) && r is ResolvedRef.EnumMember { Type: { } t } member && t.Name == enumName) { type = t; covered.Add(member.Value); }
+                else return;   // (a case that is no member of the enum: not checked)
+            if (type == null) return;
+            var missing = type.Members.Where(m => !covered.Contains(m.Value)).Select(m => m.Name).Distinct().ToList();
+            if (missing.Count > 0)
+                Report(SwitchMissingCode, $"The switch over '{enumName}' has no case for {string.Join(", ", missing)} (add the cases or a 'case default')", line);
+        }
 
         /// <summary>The full name of the enum a type name means (its full name, or the name in the namespace of the class that is being checked), or null.</summary>
         private string? EnumNamed(string name)
