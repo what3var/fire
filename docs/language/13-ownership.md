@@ -146,7 +146,8 @@ warning (line 14): an Item is destroyed at the end of the call it belonged to, b
 It watches the objects that a field or an array is given while they belong to a call (or a block), and reports each place once. Release and
 Performance mode and native programs do not check.
 
-`List<T>.Add` keeps objects the same way (`list.Add(new Item("x"))` works). A last argument of the enum `Takes` decides what travels along:
+`List<T>.Add` keeps objects the same way (`list.Add(new Item("x"))` works); a list, dictionary or set made with `Owns.Values` (or `Owns.Keys`,
+`Owns.All`) owns everything that comes in and destroys it when it falls out (see [Containers and ownership](07-arrays-and-lists.md#containers-and-ownership-owns)). A last argument of the enum `Takes` decides what travels along:
 `Takes.This` (only the object), `Takes.Children` (also what it points to directly), `Takes.Locals` (everything reachable that belongs to the current
 call), `Takes.All` (everything reachable).
 

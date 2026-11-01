@@ -89,12 +89,13 @@ print(c[0])         // 1
 
 | Member | Meaning |
 |---|---|
-| `new List<T>()`, `new List<T>([1, 2])` | an empty list, a list with the elements of an array |
+| `new List<T>()`, `new List<T>([1, 2])`, `new List<T>(Owns.Values)` | an empty list, a list with the elements of an array, a list that owns its elements (below) |
 | `count` | the number of elements |
 | `Add(value)` | appends at the end |
 | `list[i]`, `list[i] = value` | reads/writes an element |
 | `Insert(index, value)` | inserts; the elements behind move up |
 | `RemoveAt(index)` | removes the element at `index` |
+| `TakeAt(index)` | removes the element at `index` and gives it to the caller (with its ownership, if the list owned it) |
 | `Remove(value)` | removes the first equal element; `False` if there is none |
 | `IndexOf(value)` | position of the first equal element, `-1` if there is none |
 | `Clear()` | removes everything |
@@ -118,6 +119,93 @@ print(names[2])
 A list owns the objects that are handed over to `Add`: one made in the argument (`list.Add(new Item())`) or given with `take` (`list.Add(take item)`).
 An object that `Add` only gets a reference to (`list.Add(item)`) keeps its owner and dies with it (see [Ownership](13-ownership.md)). `List<int>` and `List<string>` are
 checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new List()` without a type argument takes everything.
+
+## Dictionaries and sets: `Dictionary<K, V>`, `HashSet<T>`
+
+`Dictionary<K, V>` maps keys to values, `HashSet<T>` holds each value once. Both keep the order in which the keys came in (`foreach`, `Keys`, `Values`).
+
+| `Dictionary<K, V>` | Meaning |
+|---|---|
+| `new Dictionary<K, V>()`, `new Dictionary<K, V>(Owns.Values)` | an empty dictionary; one that owns its values (below) |
+| `dict[key] = value` | adds the key or replaces its value |
+| `dict[key]` | the value; an `ArgumentException` if the key is not there |
+| `Add(key, value)` | adds a new key; an `ArgumentException` if it is there already |
+| `Get(key, fallback)` | the value, or `fallback` (default `undefined`) |
+| `TryGet(key, value)` | `True` and the value in the variable `value` (a `ref` parameter), or `False` |
+| `ContainsKey(key)`, `ContainsValue(value)` | whether it is there |
+| `Remove(key)` | removes key and value; `False` if the key is not there |
+| `Take(key)` | removes the key and gives its value to the caller |
+| `Keys`, `Values` | new lists of the keys / values |
+| `count`, `Clear()` | the number of entries; removes everything |
+| `foreach (pair in dict)` | `KeyValuePair`s with `Key` and `Value` |
+
+```fire
+var ages = new Dictionary<string, int>()
+ages["Ada"] = 36
+ages["Linus"] = 28
+ages.Add("Grace", 85)
+print(ages["Ada"])                  // 36
+print(ages.Get("Bob", -1))          // -1
+int age = 0
+if (ages.TryGet("Linus", age)) { print(age) }   // 28
+foreach (pair in ages) { print(pair.Key + ": " + pair.Value) }
+
+var seen = new HashSet<string>()
+print(seen.Add("x"))                // True
+print(seen.Add("x"))                // False - already there
+print(seen.Contains("x"))           // True
+```
+
+`HashSet<T>` has `Add` (`False` if an equal value is there), `Contains`, `Remove`, `Take`, `Clear`, `count` and `foreach`.
+
+**Equal keys** are those that `==` finds equal: strings by their text, numbers by their value (`1` and `1.0`, also `1km` and `1000m`), chars, bools,
+enum values; objects only themselves. A class whose objects should be equal by their content implements `IEquatable` - `bool Equals(any other)` and
+`int GetHashCode()`, where equal objects give the same hash:
+
+```fire
+class Point : IEquatable {
+    int x
+    int y
+    construct(int x, int y) { this.x = x; this.y = y }
+    bool Equals(any other) { return other is of Point && other.x == this.x && other.y == this.y }
+    int GetHashCode() { return this.x * 31 + this.y }
+}
+var names = new Dictionary<Point, string>()
+names[new Point(1, 2)] = "home"
+print(names[new Point(1, 2)])       // home
+```
+
+## Containers and ownership: `Owns`
+
+A list, a dictionary and a set are an owner like any object (see [Ownership](13-ownership.md)). The flag enum `Owns` in the constructor says what they
+own of what comes in:
+
+| `Owns` | The container owns |
+|---|---|
+| `Owns.Explicit` (default) | only what is handed over to it: an object made in the call (`dict.Add("a", new Node())`) or given with `take` (`dict.Add("a", take node)`) |
+| `Owns.Values` | every value (of a list or set: every element), whoever owned it before |
+| `Owns.Keys` | every key of a dictionary |
+| `Owns.All` | keys and values |
+
+What the container owns because of `Keys`, `Values` or `All` is **destroyed when it falls out**: `Remove`, overwriting (`dict[k] = other`,
+`list[i] = other`), `RemoveAt`, `Clear`. `Take` / `TakeAt` take a value out instead and give it to the caller, who owns it then:
+
+```fire
+class Node {
+    string n
+    construct(string n) { this.n = n }
+    destruct() { print("~" + this.n) }
+}
+var nodes = new Dictionary<string, Node>(Owns.Values)
+nodes["a"] = new Node("a")
+nodes["a"] = new Node("b")          // ~a - the old value is destroyed
+var kept = nodes.Take("a")          // out of the dictionary, it belongs to `kept`'s scope now
+nodes["c"] = new Node("c")
+nodes.Clear()                       // ~c
+print(kept.n)                       // b
+```
+
+With `Owns.Explicit` nothing is destroyed when it falls out: what the container owns stays alive until the container itself ends.
 
 ## Queries: `#import "linq"`
 

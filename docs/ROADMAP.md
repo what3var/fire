@@ -106,6 +106,10 @@ kein Parameter hat, oder ein doppelt gesetzter ist ein Fehler beim Übersetzen. 
     Überschreiben, `Clear`) - außer er wird vorher herausgenommen (`var n = take dict.Take(key)`).
   * Bei `List` und `HashSet` gelten `Owns.Values`/`Owns.All` für die Elemente.
 
+Stand: umgesetzt (VM und nativ), dokumentiert in [Arrays und Listen](language/07-arrays-and-lists.md#dictionaries-and-sets-dictionaryk-v-hashsett). Abweichungen
+vom Entwurf: Schlüssel mit eigener Gleichheit implementieren das Interface `IEquatable` (`Equals`, `GetHashCode`); die Anzahl heißt `count` wie bei
+`List`; die Tabellen behalten die Reihenfolge des Einfügens (`foreach` ist so in VM und nativ gleich). `List` hat `TakeAt(index)`.
+
 ## 4. Kommandozeilenargumente und Umgebungsvariablen
 
 * `Environment.Args` (string[] ohne den Programmnamen), `Environment.ProgramPath`, `Environment.Get(name)`/`Set`/`Variables`, `Environment.Exit(code)`

@@ -2531,11 +2531,40 @@ FIRE_FN bool unitSqrt(uint32_t u, uint32_t* out) {
 }
 /* `__MathCall(id, x[, y])` (fire.Standard.MathMethods): Sqrt (also of the unit), Round/Floor/Ceiling (the unit stays, an int stays), the angle and exponential
  * functions of a number without unit, Atan2 of two values of one dimension. */
+/* The hash of a key of Dictionary/HashSet (MathCall 15, MathMethods.KeyHash): numbers by their value in the base unit (an integral one like an int),
+ * strings by their text, chars and bools by their value, everything else by identity. The tables keep the order of insertion: a different value than the
+ * VM's changes nothing a program sees. */
+FIRE_FN uint64_t fire_mixHash(uint64_t h) { h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33; return h; }
+FIRE_FN int64_t keyHash(Value x) {
+    switch (x.kind) {
+        case K_Int: case K_Float: {
+            double v, b;
+            if (x.kind == K_Int && unitIsUnitless(x.unit)) return (int64_t)fire_mixHash((uint64_t)x.i);
+            v = x.kind == K_Int ? (double)x.i : (double)x.f;
+            b = v;
+            if (!unitIsUnitless(x.unit) && !unitToBase(v, x.unit, &b)) b = v;
+            if (b == floor(b) && fabs(b) < 9e15) return (int64_t)fire_mixHash((uint64_t)(int64_t)b);
+            { uint64_t bits; memcpy(&bits, &b, sizeof bits); return (int64_t)fire_mixHash(bits); }
+        }
+        case K_String: {
+            const Str* s = strOf(x);
+            uint64_t h = 1469598103934665603ULL;
+            uint32_t k;
+            for (k = 0; k < s->length; k++) { h ^= (uint64_t)s->data[k]; h *= 1099511628211ULL; }
+            return (int64_t)h;
+        }
+        case K_Undefined: return 0;
+        case K_Char: case K_Bool: return (int64_t)fire_mixHash((uint64_t)x.i ^ ((uint64_t)x.kind << 56));
+        default: return (int64_t)fire_mixHash((uint64_t)(uintptr_t)x.p);
+    }
+}
+
 FIRE_FN Value mathCall(int64_t method, Value x, Value y) {
     static const char* const names[] = {"", "Sqrt", "Round", "Floor", "Ceiling", "Sin", "Cos", "Tan", "Asin", "Acos", "Atan", "Atan2", "Log", "Log10", "Exp"};
     const char* name = method >= 1 && method <= 14 ? names[method] : "?";
     char text[200];
     double v;
+    if (method == 15) return Int(keyHash(x));
     if (x.kind != K_Int && x.kind != K_Float) {
         snprintf(text, sizeof text, "Math.%s expects a number, not a value of type '%s'.", name, kindName(x));
         return fireError("ArgumentException", text);

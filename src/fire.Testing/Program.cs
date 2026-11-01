@@ -19014,6 +19014,91 @@ else
             """),
     }).ToArray();
 
+    // Dictionary, HashSet and the ownership of containers (Owns, docs/language/07-arrays-and-lists.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Dictionary/HashSet: Index, Add, Get, TryGet, Remove, Keys, foreach in Einfuegereihenfolge, Wachsen, Einheiten und Zahlen als Schluessel", """
+            var d = new Dictionary<string, int>()
+            d["a"] = 1
+            d["b"] = 2
+            d.Add("c", 3)
+            d["a"] = 10
+            print(d["a"] + " " + d.count)
+            print(d.ContainsKey("b") + " " + d.ContainsKey("x"))
+            print(d.Get("x", -1))
+            int v = 0
+            print(d.TryGet("c", v) + " " + v)
+            foreach (p in d) { print(p.Key + "=" + p.Value) }
+            print(d.Remove("b") + " " + d.Remove("b") + " " + d.count)
+            foreach (k in d.Keys) { print(k) }
+            for (var i = 0; i < 100; i++) { d["k" + i] = i }
+            print(d.count + " " + d["k57"])
+            for (var i = 0; i < 100; i += 2) { d.Remove("k" + i) }
+            print(d.count + " " + d["k57"] + " " + d.ContainsKey("k56"))
+            try { d.Add("a", 5) } catch (ArgumentException e) { print(e.message) }
+            try { print(d["zz"]) } catch (ArgumentException e) { print(e.message) }
+            var u = new Dictionary<any, string>()
+            u[1km] = "dist"
+            print(u[1000m] + " " + u.ContainsKey(1) + " " + u.ContainsKey(1000m))
+            u[2] = "two"
+            print(u[2.0])
+            var s = new HashSet<string>()
+            print(s.Add("x") + " " + s.Add("y") + " " + s.Add("x") + " " + s.count)
+            foreach (x in s) { print(x) }
+            print(s.Contains("y") + " " + s.Remove("y") + " " + s.Contains("y"))
+            d.Clear()
+            print(d.count)
+            """),
+        ("Dictionary/HashSet/List mit Owns: Explicit behaelt nur Uebergebenes, Values zerstoert Herausfallendes, Take/TakeAt geben es heraus; IEquatable-Schluessel", """
+            class Node { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Pt : IEquatable { int x; int y
+              construct(int x, int y) { this.x = x; this.y = y }
+              bool Equals(any other) { return other is of Pt && other.x == this.x && other.y == this.y }
+              int GetHashCode() { return this.x * 31 + this.y } }
+            var keep = new Node("outside")
+            {
+                var plain = new Dictionary<string, Node>()
+                plain["ref"] = keep
+                plain.Add("given", new Node("given"))
+                print("plain " + plain.count)
+            }
+            print("after plain")
+            var owning = new Dictionary<string, Node>(Owns.Values)
+            owning["a"] = new Node("a")
+            owning["b"] = new Node("b")
+            owning["a"] = new Node("a2")
+            print("replaced")
+            owning.Remove("b")
+            print("removed")
+            var t = owning.Take("a")
+            print("took " + t.n + " " + owning.count)
+            owning["c"] = new Node("c")
+            owning.Clear()
+            print("cleared")
+            var pts = new Dictionary<Pt, string>()
+            pts[new Pt(1, 2)] = "p12"
+            print(pts[new Pt(1, 2)] + " " + pts.ContainsKey(new Pt(2, 1)))
+            var set = new HashSet<Node>(Owns.Values)
+            set.Add(new Node("s1"))
+            var s2 = new Node("s2")
+            set.Add(s2)
+            print(set.Contains(s2) + " " + set.count)
+            set.Remove(s2)
+            print("set removed")
+            var list = new List<Node>(Owns.Values)
+            list.Add(new Node("l1"))
+            list.Add(keep)
+            list.Add(new Node("l3"))
+            list.RemoveAt(0)
+            var back = list.TakeAt(1)
+            print("list " + list.count + " " + back.n)
+            list.Clear()
+            print("end")
+            """),
+    }).ToArray();
+
     // Differences that were aligned
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
