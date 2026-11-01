@@ -449,7 +449,7 @@ static class DockingTests
             ui.MouseUp(1, 300, 120)
             ui.Draw()
             print("floating " + output.isFloating + " " + dm.leftPanes.count + " at " + (po.parent.Left + 30 - 10) + "," + po.parent.Top)
-            """, new[] { "drag True drop Side side 2 preview 200,0 200x300", "right Right 1 0 0", "compass True drop Tab", "tab True 2 active Output right 0 spare 1", "after drop After explorer tabs 1",
+            """, new[] { "drag True drop Side side Right preview 200,0 200x300", "right Right 1 0 0", "compass True drop Tab", "tab True 2 active Output right 0 spare 1", "after drop After explorer tabs 1",
                 "after 3 2 Left", "floating True 2 at 220,114" });
 
         Check("Beispiel wie in docs/DOCKING.md: Symbole aus dem Aufruf und geteilte, alles zusammen gezeichnet", """

@@ -3107,6 +3107,11 @@ namespace fire.Compiler
             var colon = PeekAt(1);
             var after = PeekAt(2);
             if (after.Type is TokenType.Colon or TokenType.RParen or TokenType.Comma or TokenType.Eof) return false;
+            // `print(a: + b)`: no expression starts there - `a:` converts into the unit of the other operand
+            if (after.Type is TokenType.Plus or TokenType.Star or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe or TokenType.Hash
+                or TokenType.And or TokenType.Or or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq
+                or TokenType.Assign or TokenType.Question or TokenType.Dot or TokenType.DotDot or TokenType.Arrow or TokenType.Is
+                or TokenType.RBracket or TokenType.RBrace or TokenType.Semicolon) return false;
             bool adjacent = after.Line == colon.Line && after.Column == colon.Column + 1 && !after.NewlineBefore;
             return !(adjacent && (after.Type == TokenType.Identifier || IsCustomUnitWordAt(2)));
         }

@@ -89,7 +89,7 @@ print(Window.Line("item", bullet: "*"))                     // 0* item
 ```
 
 - Methods (also static ones, `base.` and extensions in the VM) and constructors take named arguments; lambdas, native and `extern` functions do not.
-- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument.
+- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument, and so is `x:` before an operator (`print(a: + b)`).
 - A name that the parameters do not have, and a parameter without argument and without default value, are compile errors (`TC011`) when the
   method is known when compiling (otherwise an `ArgumentException` at run time). A name given twice and a positional argument after a named one are
   syntax errors.
