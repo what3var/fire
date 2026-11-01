@@ -302,7 +302,7 @@ namespace fire.Standard
             return (start, end, negative);
         }
 
-        /// <summary>Digits of `radix` with `_` only between two digits; at least one digit. Must be identical to fire_rt.hpp: parseIntText.</summary>
+        /// <summary>Digits of `radix` with `_` only between two digits; at least one digit. Must be identical to fire_rt.h: parseIntText.</summary>
         public static bool ParseInt(string s, out long value)
         {
             value = 0;
@@ -326,7 +326,7 @@ namespace fire.Standard
             return true;
         }
 
-        /// <summary>Digits with `_` between them, an optional fraction (`2.5`, `.5`, `2.`) and exponent (`1e3`, `2.5E-2`). Must be identical to fire_rt.hpp: parseFloatText.</summary>
+        /// <summary>Digits with `_` between them, an optional fraction (`2.5`, `.5`, `2.`) and exponent (`1e3`, `2.5E-2`). Must be identical to fire_rt.h: parseFloatText.</summary>
         public static bool ParseFloat(string s, out double value)
         {
             value = 0;

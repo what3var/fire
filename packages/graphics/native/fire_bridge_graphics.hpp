@@ -2,7 +2,7 @@
 // drawing with brushes and pens) and the slicer. The fire side (Framebuffer, Renderer, Brush, Pen, Slicer, ToolPath - fire source) is the same as in the VM; this file is what its `__GRPH...` functions do.
 // The drawing itself is in graphics/ (a port of src/fire.Terminal that needs no operating system). A window that shows a framebuffer is the `windows` bridge.
 //
-// Included by the generated file (after fire_rt.hpp) when the program imports "graphics". Image files are read through the file system of the platform
+// Included by the natives of the program (fire_natives.cpp, after fire_rt_cpp.hpp) when the program imports "graphics". Image files are read through the file system of the platform
 // (FIRE_PLATFORM_FS_HEADER, restricted by FIRE_IO_POLICY like the IO bridge). Differences to the VM: an unknown or destroyed resource id ends the program
 // with an error (the VM throws a .NET exception); the renderer uses the 8x14 font.
 #pragma once

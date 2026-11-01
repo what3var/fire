@@ -13,7 +13,7 @@ Leitlinien:
 
 | Phase | Punkt | Hängt ab von | Warum an dieser Stelle |
 |---|---|---|---|
-| 0 | [Native-C-Port (Kern)](#0-native-c-port-kern) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
+| 0 | ~~[Native-C-Port (Kern)](#0-native-c-port-kern)~~ (umgesetzt) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
 | 1 | [Echte Enums](#1-echte-enums) | - | nur Compiler/Typprüfer, kann parallel zu 0 laufen |
 | 1 | [Dictionary / HashSet](#2-dictionary--hashset) | - | Prelude in fire, ein Hash-Native; parallel zu 0 möglich |
 | 2 | [Argumente und Umgebung](#3-kommandozeilenargumente-und-umgebungsvariablen) | 0 | klein; Voraussetzung für jede CLI (ember, forge) |
@@ -41,20 +41,22 @@ weiter als C++ gegen `fire_rt.h` (das als C++ in `extern "C"` + `namespace fire`
 
 ## 0. Native-C-Port (Kern)
 
-Stand: `native/runtime/fire_rt.h` (C11) und die C-Plattformschicht (`native/platform/*/fire_platform.h`, `std/fire_platform_*.h`) gibt es; der Generator
-benutzt sie noch nicht.
+Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_program.c`) gegen `fire_rt.h`; `fire_rt.hpp` ist entfernt.
 
-1. Der Generator (`src/fire.Native/CppGenerator*.cs`) erzeugt C gegen `fire_rt.h`: keine Lambdas/Templates/`std::` im erzeugten Code, explizites
-   begin/end statt RAII, `FIRE_RT_IMPLEMENTATION` in genau einer Einheit.
-2. `fire_json.hpp` und die Reflection-Tabellen (`CppGenerator.Reflection.cs`, `CppGenerator.Json.cs`) nach C.
-3. Package-Natives: das Programm ist C, die Natives der Packages bleiben C++ und werden als **eigene Übersetzungseinheit** gebaut und gelinkt
-   (Aufrufe über die C-Funktionen von `fire_rt.h`). Das ist zugleich der erste Schritt zu Phase 5.
-4. VM-Seite: `native/abi/fire_pkg_wrapper.hpp` gegen `fire_rt.h` (Modus `FIRE_LIBRARY`).
-5. Toolchain (`Toolchain.cs`, `NativeBuilder`): C-Compiler für das Programm, C++ nur, wenn Natives in C++ dabei sind; ESP-IDF/FreeRTOS/wasm-Ziele.
-6. `fire_rt.hpp` entfernen, wenn alle Konformitätstests nativ grün sind.
+1. ~~Der Generator erzeugt C gegen `fire_rt.h`~~ - Catch-Blöcke sind eigene Funktionen mit dem Frame ihrer Funktion, Sections und Aufruftiefe explizit,
+   `fire_init()` statt statischer Initialisierung (docs/NATIVE_BACKEND.md, "C statt C++").
+2. ~~JSON und Reflection nach C~~ - `fire_json.h` (die Engine in C), die Reflection-Tabellen ohne C++.
+3. ~~Package-Natives als eigene Übersetzungseinheit~~ - `fire_natives.cpp` mit `fire_rt_cpp.hpp`, Aufrufe über `fire_nat_N` (C-Linkage).
+4. ~~VM-Seite~~ - die Bibliotheken der Packages für die VM bauen gegen `fire_rt.h` (als C++, `FIRE_LIBRARY`).
+5. ~~Toolchain~~ - C-Compiler für das Programm (aus dem C++-Compiler abgeleitet, oder `cCompiler`/`cStd`), C++ nur mit Natives; ESP-IDF-Komponent mit
+   beiden Dateien; der FreeRTOS-Simulator ist C.
+6. ~~`fire_rt.hpp` entfernen~~.
 
-Fertig, wenn: alle Tests von `fire.Testing` für die native Engine grün sind, die Benchmarks nicht langsamer sind (`docs/NATIVE_BACKEND.md`, Messwerte) und
-ein ESP32-Build durchläuft.
+Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
+auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Offen: ein echter ESP32-Build (ESP-IDF), MSVC, macOS und Emscripten sind hier nicht installiert; die
+Benchmarks vorher/nachher.
+
+Danach (eigene Schritte): die C++-Natives der Packages nach und nach in C (dann fällt `fire_rt_cpp.hpp` weg und ein Programm mit Packages ist reines C).
 
 ## 1. Echte Enums
 

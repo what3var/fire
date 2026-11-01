@@ -66,7 +66,7 @@ namespace fire.Native
             /// <summary>The HoistValue instructions seen in pass 1: the scope they hoist into and the scopes they hoist from - the target needs a list
             /// only when one of the sources has one for something else (see HoistValue).</summary>
             public readonly List<(int Target, int[] Sources)> Hoists = new();
-            /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.hpp).</summary>
+            /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.h).</summary>
             public bool NeedsArgList;
             /// <summary>A generic method: it takes the type arguments of its call (TakeCallTypeArgs) into `ctargs`.</summary>
             public bool HasCallTArgs;
@@ -1028,7 +1028,7 @@ namespace fire.Native
             return Unit.Parse(demand.StartsWith("any ", StringComparison.Ordinal) ? demand.Substring(4) : demand);
         }
 
-        /// <summary>The C++ that converts `value` into the unit a declaration demands (fire_rt.hpp adaptUnit; a leading `#`: the declaration is a float).</summary>
+        /// <summary>The C that converts `value` into the unit a declaration demands (fire_rt.h adaptUnit; a leading `#`: the declaration is a float).</summary>
         private string AdaptUnitCall(string value, string demand)
         {
             bool toFloat = demand.StartsWith('#');

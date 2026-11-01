@@ -25,7 +25,7 @@ namespace fire.Standard
     /// <summary>
     /// The class `Math` of the prelude (always there): `Math.Sqrt(x)`, `Math.Abs(x)`, `Math.Min(a, b)`, ..., `Math.PI`. Functions that keep the number as it is
     /// (`Abs`, `Min`, `Max`, `Clamp`, `Sign`) are written in fire; the others go through ONE native function `__MathCall(id, x[, y])`, which the native backend
-    /// implements alike (fire_rt.hpp: mathCall).
+    /// implements alike (fire_rt.h: mathCall).
     ///
     /// Units: `Sqrt` takes the root of the unit too (`Math.Sqrt(9m * 1m)` is `3m`; a unit without a root - `m` - is an `ArgumentException`), `Round`/`Floor`/
     /// `Ceiling` keep it (`Math.Round(2.6m)` is `3m`), an int stays an int. The angle and exponential functions take a number without unit (radians) and give a

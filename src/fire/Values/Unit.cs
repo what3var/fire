@@ -336,7 +336,7 @@ namespace fire.Values
 
         /// <summary>The factor between two units without the rounding error of the scales: they are binary approximations of decimal numbers, so `0.3048 /
         /// 0.0254` is 12.000000000000002 and `0.001 / 0.01` 0.09999999999999999. A factor a few units in the last place away from a number with 12
-        /// significant digits is that number (12, 0.1); any other one (1/60, 1/0.0254) stays as it is. fire_rt.hpp unitNiceFactor does the same.</summary>
+        /// significant digits is that number (12, 0.1); any other one (1/60, 1/0.0254) stays as it is. fire_rt.h unitNiceFactor does the same.</summary>
         public static double NiceFactor(double factor)
         {
             double nice = double.Parse(factor.ToString("G12", System.Globalization.CultureInfo.InvariantCulture), System.Globalization.CultureInfo.InvariantCulture);

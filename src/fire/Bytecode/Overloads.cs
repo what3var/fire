@@ -20,7 +20,7 @@ namespace fire.Bytecode
     /// <item>"c:Name": a class (or a class derived from it), "i:Name": an interface</item>
     /// <item>"g:" + DeclaredType text: a type parameter (of the class or of the method; its `where` conditions and a known type argument apply)</item>
     /// </list>
-    /// The native backend (fire_rt.hpp) scores the same way.
+    /// The native backend (fire_rt.h) scores the same way.
     /// </summary>
     public static class Overloads
     {

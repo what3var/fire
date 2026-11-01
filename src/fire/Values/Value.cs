@@ -520,7 +520,7 @@ namespace fire.Values
 
         /// <summary>A product or quotient whose units cancel but leave a factor (`5cm / 1mm`, `1km * (1/1m)`): the factor goes into the number (50), the
         /// result has no unit. Two ints stay an int when the factor is a whole number or its inverse is one (`1s / 1ms` is 1000, `1ms / 1s` is 0 like
-        /// `1 / 1000`); otherwise the result is a float. The native runtime does the same (fire_rt.hpp, foldScale).</summary>
+        /// `1 / 1000`); otherwise the result is a float. The native runtime does the same (fire_rt.h, foldScale).</summary>
         private static Value FoldScale(Value a, Value b, double scale, bool divide)
         {
             scale = Values.Unit.NiceFactor(scale);

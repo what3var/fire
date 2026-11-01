@@ -338,7 +338,7 @@ einzigen Maschine, keine Garantie.
 ### Bridges: Time und `Sleep` - umgesetzt
 
 Die Natives einer `#import`-Bibliothek stehen in einem eigenen Header `packages/<name>/native/fire_bridge_<name>.hpp`, den die erzeugte Datei nur einbindet, wenn das Programm
-die Bibliothek importiert (`bridges/` liegt neben `fire_rt.hpp`; `NativeRuntimeFiles` schreibt sie mit). Sie benutzen die Runtime und die Plattformschicht (`plat::`), nie ein
+die Bibliothek importiert (`bridges/` liegt neben `fire_rt.h`; `NativeRuntimeFiles` schreibt sie mit). Sie benutzen die Runtime und die Plattformschicht (`plat::`), nie ein
 Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `DateTime.Now/UtcNow`, Kalenderrechnung, `ToString(format)` (die .NET-Zeitformate, Invariant Culture),
 `Parse`/`TryParse`, `TimeSpan`-Text. Was der Header von der Plattform braucht: `plat::unixMicros()` (Wanduhr) und für `Sleep` ohne Threads `plat::sleepMs`; die Zeitzone kommt aus
 `localtime_r` (mit `FIRE_NO_LOCALTIME` auf Boards ohne Zeitzonen: Ortszeit = UTC).
@@ -397,7 +397,7 @@ prüfen mit `ptrValid` (Versatz, zerstörtes Array, Grenzen: eine fangbare `Inde
 
 ### Plattformschicht
 
-Alles, was vom Betriebssystem oder Board abhängt, steht **in einem Ordner je Plattform**: `native/platform/<name>/fire_platform.hpp`. Die Runtime (`fire_rt.hpp`) benutzt
+Alles, was vom Betriebssystem oder Board abhängt, steht **in einem Ordner je Plattform**: `native/platform/<name>/fire_platform.h` (C, für die Runtime) und `fire_platform.hpp` (C++, `fire::plat` für die Natives). Die Runtime (`fire_rt.h`) benutzt
 nur diese Schnittstelle (`fire::plat`):
 
 | | |
@@ -635,7 +635,7 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 ## Natives von Packages in der VM (Shared Library, C-ABI)
 
 Die C++-Natives eines Packages (docs/PACKAGES.md, docs/PACKAGE_NATIVES.md) laufen in der VM nicht als Fehler-Stub, sondern über eine **Shared Library**: `PackageLibrary` (fire.Compiler) erzeugt einen
-Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.hpp` in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
+Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.h` (als C++, über `fire_rt_cpp.hpp`) in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
 Programm zu beenden; `runDestructors` ist leer) und den Quellen des Packages für die Plattform dieses Rechners (`platformSources`) mit dem Toolchain-Aufruf von `NativeBuilder.CompilerCommand(sharedLibrary: true)`.
 Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `PackageNativeBinding` (fire.Runtime) lädt sie
 (`NativeLibrary`, im gepackten Programm über den Payload wie SDL) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).
