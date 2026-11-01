@@ -17485,9 +17485,11 @@ else
             print("NIE ERREICHT")
             """),
         ("Threads: catch threads() faengt die Ausnahme eines Threads", """
+            var caught = 0
             catch threads()
             {
                 print("Main-Thread: catch threads() gefangen")
+                caught = 1
             }
             class MyError {
                 string message
@@ -17496,10 +17498,7 @@ else
             fire {
                 throw new MyError("boom aus echter Sprachsyntax")
             }
-            var i = 0
-            while (i < 2000000) {
-                i = i + 1
-            }
+            while (caught == 0) { sync globals }   // (until the handler ran: not a counting loop that a fast machine finishes first)
             print("Hauptprogramm fertig")
             """),
         ("Threads: taking: der Thread bekommt eine isolierte Kopie, die Zerstoerung ruft keinen Destruktor", """
@@ -17577,28 +17576,21 @@ else
             while (i < 3000000) { i = i + 1 }
             print("fertig")
             """),
+        // (the threads wait for each other with flags, not with counting loops: the order does not depend on how fast the machine or the generated code is)
         ("Threads: Thread startet Thread", """
-            class Item {
-                int n
-                construct(int n) { this.n = n }
-                destruct() { print("~I" + this.n) }
-            }
-            class Box {
-                string name
-                Item item
-                Item extra
-                construct(string name) { this.name = name }
-                destruct() { print("~B" + this.name) }
-            }
+            var innerDone = 0
+            var outerDone = 0
             fire {
                 print("outer")
-                fire { print("inner") }
-                var i = 0
-                while (i < 1000000) { i = i + 1 }
+                fire {
+                    print("inner")
+                    sync global { innerDone = 1 }
+                }
+                while (innerDone == 0) { sync globals }
                 print("outer end")
+                sync global { outerDone = 1 }
             }
-            var i = 0
-            while (i < 6000000) { i = i + 1 }
+            while (outerDone == 0) { sync globals }
             print("fertig")
             """),
         ("Threads: sync: die Kopie schreibt ins Original zurueck", """
