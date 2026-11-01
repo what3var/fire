@@ -14,15 +14,16 @@ Leitlinien:
 | Phase | Punkt | Hängt ab von | Warum an dieser Stelle |
 |---|---|---|---|
 | 0 | ~~[Native-C-Port (Kern)](#0-native-c-port-kern)~~ (umgesetzt) | - | Debugging, binäre Libraries und alle neuen Natives bauen auf der Runtime auf; sonst doppelt |
-| 1 | [Echte Enums](#1-echte-enums) | - | nur Compiler/Typprüfer, kann parallel zu 0 laufen |
-| 1 | [Dictionary / HashSet](#2-dictionary--hashset) | - | Prelude in fire, ein Hash-Native; parallel zu 0 möglich |
-| 2 | [Argumente und Umgebung](#3-kommandozeilenargumente-und-umgebungsvariablen) | 0 | klein; Voraussetzung für jede CLI (ember, forge) |
-| 2 | [Prozesse](#4-prozesse-starten-pipes-exitcodes) | 0 | forge ruft den C-Compiler, spark ruft forge und git |
-| 3 | [SHA-256](#5-sha-256) | 0 | ember prüft Downloads |
-| 3 | [Zip / Deflate](#6-zip--deflate) | 0, 5 (CRC/Hash-Infrastruktur) | `.fpk` ist ein Zip |
-| 4 | [Debugging nativer Builds](#7-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
-| 5 | [Binäre Libraries und dynamisches Laden](#8-binäre-libraries-und-dynamisches-laden) | 0, 7 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
-| 6 | [Clipboard, Drag & Drop](#9-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
+| 1 | [Echte Enums, Flag-Enums als Attribute](#1-echte-enums) | 0 | Compiler, Typprüfer, VM, Generator; `Owns` für die Container braucht sie |
+| 1 | [Benannte Argumente](#2-benannte-argumente) | - | `new Dictionary<K, V>(Owns.All)` liest sich besser mit Namen; allgemein nützlich |
+| 1 | [Dictionary / HashSet, `Owns`](#3-dictionary--hashset-besitz-mit-owns) | 1 (Enums) | Prelude in fire, ein Hash-Native |
+| 2 | [Argumente und Umgebung](#4-kommandozeilenargumente-und-umgebungsvariablen) | 0 | klein; Voraussetzung für jede CLI (ember, forge) |
+| 2 | [Prozesse](#5-prozesse-starten-pipes-exitcodes) | 0 | forge ruft den C-Compiler, spark ruft forge und git |
+| 3 | [SHA-256](#6-sha-256) | 0 | ember prüft Downloads |
+| 3 | [Zip / Deflate](#7-zip--deflate) | 0, 6 (CRC/Hash-Infrastruktur) | `.fpk` ist ein Zip |
+| 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
+| 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
+| 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
 
 Nach Phase 3 ist **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -60,31 +61,57 @@ Danach (eigene Schritte): die C++-Natives der Packages nach und nach in C (dann 
 
 ## 1. Echte Enums
 
-`Color c` als Typ, `c.ToString()` gibt den Namen, `Color c = 5` ist eine Warnung (language/roadmap.md 2.2, 3.2). Laufzeitwert bleibt eine Zahl mit
-Typkennung (VM und nativ), `switch` über Enums prüft auf fehlende Fälle (Warnung). Optional `[Flags]`.
+Ein Enum-Wert trägt zur Laufzeit seinen Enum-Typ (VM: der Wert ist ein `Int`, der statt einer Einheit seinen Typ hält; nativ: die Typ-Id in `Value.reserved`).
+Wie in C# ist ein Enum **kein `int`**:
 
-## 2. Dictionary / HashSet
+* `print(c)`, `c.ToString()` und `"" + c` zeigen den Namen (ein Wert ohne Mitglied: die Zahl); `Color c` ist ein deklarierter Typ, `c is of Color` geht,
+  `c is of int` ist `False`.
+* Umwandeln mit `!`: `c!int` gibt die Zahl, `5!Color` den Enum-Wert. `Color c = 5` und `int i = c` sind Warnungen des Typprüfers (lax) bzw. Fehler (strict).
+* Rechnen (`c + 1`) ergibt ein gewöhnliches `int`; Vergleiche (`==`, `<`) gehen mit Werten desselben Enums und mit Zahlen.
+* `switch` über ein Enum ohne `default` warnt bei fehlenden Mitgliedern.
+* Die Helfer `Color.Name(v)`, `Color.Parse(text)`, `Color.IsDefined(v)` bleiben; `Color.Values()` gibt alle Mitglieder.
 
-* `Dictionary<K, V>` (`Add`, `Get`/`this[k]`, `TryGet`, `ContainsKey`, `Remove`, `Keys`, `Values`, `Count`, `foreach` über Paare) und `HashSet<T>`
-  im Prelude.
+### Flag-Enums als Attribute
+
+`flag enum Test { a = 1, b = 2 }` deklariert ein Flag-Enum: seine Werte lassen sich verknüpfen (`Test.a | Test.b` ist wieder ein `Test`, `ToString()` zeigt
+`a, b`), `value.HasFlag(Test.a)` prüft ein Flag. Vor allem ist ein Flag-Enum ein **Attribut** - in der Schreibweise der bestehenden Attribute:
+
+```fire
+flag enum Test { a = 1, b = 2 }
+
+[Test a]
+[Test b]            // oder [Test a, b]: die Flags sammeln sich
+class Sensor { ... }
+```
+
+An Klassen (neu), Methoden, Feldern und Properties. Reflection prüft die Flags: `member.HasFlag(Test.a)`, `Reflect.TypeOf(obj).HasFlag(Test.a)`, der ganze Wert mit
+`member.Flags(Test)` (`Test` ohne gesetzte Flags, wenn das Attribut fehlt).
+
+## 2. Benannte Argumente
+
+`f(1, name: "x", ownsValues: true)` - für Methoden, Konstruktoren, Erweiterungen und Lambdas mit bekannter Signatur. Positionale Argumente zuerst, dann benannte in
+beliebiger Reihenfolge; ausgelassene Parameter nehmen ihren Standardwert (Standardwerte gibt es schon). Die Überladungswahl berücksichtigt die Namen; ein Name, den
+kein Parameter hat, oder ein doppelt gesetzter ist ein Fehler beim Übersetzen. VM und nativ; das Editor-Completion schlägt die Namen vor.
+
+## 3. Dictionary / HashSet, Besitz mit `Owns`
+
+* `Dictionary<K, V>` (`Add`, `Get`/`this[k]`, `TryGet`, `ContainsKey`, `Remove`, `Keys`, `Values`, `Count`, `foreach` über Paare) und `HashSet<T>` im Prelude.
 * Gleichheit und Hash: `string`, Zahlen (mit Einheit: nach Wert, wie `==`), `char`, `bool`, Enums; Objekte nach Identität, außer die Klasse hat
-  `bool Equals(other)` und `int GetHashCode()`.
-* Besitz: **keine implizite Übernahme**, wie bei `List`: der Container behält nur, was ihm mit `take` übergeben wird (`dict.Add(key, take item)`,
-  intern `try value.TakeTo(this)`); sonst hält er nur einen Verweis.
-* Besitzende Container auf Wunsch: Konstruktor-Optionen `ownsKeys` und `ownsValues` (`new Dictionary<string, Node>(ownsValues: true)`). Dann übernimmt
-  der Container jedes Objekt, das hineinkommt (`TakeTo(this)` ohne `try`), und zerstört es, wenn es herausfällt (`Remove`, Überschreiben, `Clear`) -
-  außer es wird vorher mit `take` herausgenommen (`var n = take dict.Take(key)`). `ownsValues` bekommt auch `List<T>` (`new List<Node>(ownsValues: true)`);
-  ohne die Option bleibt `List` wie heute.
-* Ein Native `__hash(value)` für die Geschwindigkeit; die Tabelle selbst in fire.
+  `bool Equals(other)` und `int GetHashCode()`. Ein Native für den Hash (VM und C-Runtime), die Tabelle in fire.
+* Besitz über ein Enum im Konstruktor: `new Dictionary<string, Node>(Owns.All)`, `new List<Node>(Owns.Values)`.
+  * `Owns.Explicit` (Standard, das bisherige Verhalten von `List`): der Container behält nur, was ihm mit `take` übergeben wird (`dict.Add(key, take node)`).
+  * `Owns.Keys`, `Owns.Values`, `Owns.All`: der Container übernimmt jeden Schlüssel bzw. Wert, der hineinkommt, und zerstört ihn, wenn er herausfällt (`Remove`,
+    Überschreiben, `Clear`) - außer er wird vorher herausgenommen (`var n = take dict.Take(key)`).
+  * Bei `List` und `HashSet` gelten `Owns.Values`/`Owns.All` für die Elemente.
 
-## 3. Kommandozeilenargumente und Umgebungsvariablen
+## 4. Kommandozeilenargumente und Umgebungsvariablen
 
 * `Environment.Args` (string[] ohne den Programmnamen), `Environment.ProgramPath`, `Environment.Get(name)`/`Set`/`Variables`, `Environment.Exit(code)`
   (heute `terminate(n)`), `Environment.NewLine`, `Environment.Platform`.
 * Nativ: `int main(int argc, char** argv)` im Generator, an die Runtime weitergereicht; auf Zielen ohne Prozess (ESP32) leere Argumente.
 * VM: `forge run x.fire -- a b c` und ein Feld für Argumente in den Run-Einstellungen von spark (und im Projekt: `settings.arguments`).
 
-## 4. Prozesse starten, Pipes, Exitcodes
+## 5. Prozesse starten, Pipes, Exitcodes
 
 * `Process.Start(file, args[], options)` mit `WorkingDirectory`, `Environment`, Umleitung von stdin/stdout/stderr (als `IO`-Streams), `WaitForExit()`
   (optional mit Timeout), `ExitCode`, `Kill()`, `Id`; `Process.Run(file, args)` als Kurzform, die die Ausgabe und den Exitcode liefert.
@@ -92,12 +119,12 @@ Typkennung (VM und nativ), `switch` über Enums prüft auf fehlende Fälle (Warn
 * POSIX: `posix_spawn` + `pipe`/`poll`; Windows: `CreateProcessW` + Pipes; kein Prozess auf Embedded-Zielen (`NotSupportedException`).
 * Ein Paket `process` (Import `"process"`), Natives in C.
 
-## 5. SHA-256
+## 6. SHA-256
 
 `Hash.Sha256(bytes | string | stream)` -> Bytes, `.ToHex()`; dazu `Crc32` (für Zip) und gleich `Sha1`/`Md5` für git und alte Formate.
 Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTLS/OpenSSL optional deren Implementierung. Paket `hash`.
 
-## 6. Zip / Deflate
+## 7. Zip / Deflate
 
 * `Compression.Deflate`/`Inflate` (Bytes und Streams), `GZip`.
 * `Zip.Archive`: lesen (Einträge, `Open(name)` als Stream, `ExtractTo(folder)`), schreiben (`Add(name, bytes|stream|file)`, `CreateFromDirectory`),
@@ -105,7 +132,7 @@ Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTL
 * Eigenes C (Inflate klein und robust gegen kaputte Archive, Deflate mit fester und dynamischer Huffman-Tabelle); keine externe Bibliothek, damit es
   überall gleich ist. Paket `compression`.
 
-## 7. Debugging nativer Builds (Variante B)
+## 8. Debugging nativer Builds (Variante B)
 
 Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso debuggt wie die VM - auf jedem Ziel, ohne gdb/lldb.
 
@@ -127,7 +154,7 @@ Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso deb
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
-## 8. Binäre Libraries und dynamisches Laden
+## 9. Binäre Libraries und dynamisches Laden
 
 Zwei Teile: **getrennte Übersetzung** (Code teilen, schneller bauen) und **dynamisches Laden** (Plugins, Treiber, Natives in einer VM in fire).
 
@@ -141,7 +168,7 @@ Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heut
 * Was heute "geschlossene Welt" ist, wird pro Modul: Klassen-IDs, Methoden-Verteiler, Ausnahme-Tabellen (`excMatches`), Reflection- und JSON-Tabellen,
   internierte Namen - Module **registrieren** sich beim Start in der Runtime, statt dass der Generator globale Konstanten vergibt. Devirtualisierung und
   Inlining nur innerhalb eines Moduls (oder mit `"static"` über eine Link-Zeit-Optimierung).
-* Debug-Tabellen (Phase 7) pro Modul.
+* Debug-Tabellen (Abschnitt 8) pro Modul.
 
 Dynamisches Laden:
 
@@ -151,7 +178,7 @@ Dynamisches Laden:
   (spark lädt so die Treiber installierter Packages).
 * Prüfung der Schnittstelle beim Laden (Hash), eine verständliche Fehlermeldung statt eines Absturzes.
 
-## 9. Clipboard, Drag & Drop
+## 10. Clipboard, Drag & Drop
 
 * `Clipboard.GetText`/`SetText`, `GetImage`/`SetImage` (`graphics.Image`), `GetFiles`; im `ui`: Kopieren/Einfügen in `TextBox` und eigenen Elementen.
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
