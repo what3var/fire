@@ -67,8 +67,12 @@ Typkennung (VM und nativ), `switch` über Enums prüft auf fehlende Fälle (Warn
   im Prelude.
 * Gleichheit und Hash: `string`, Zahlen (mit Einheit: nach Wert, wie `==`), `char`, `bool`, Enums; Objekte nach Identität, außer die Klasse hat
   `bool Equals(other)` und `int GetHashCode()`.
-* Besitz: anders als `List` **besitzt** das Dictionary seine Werte (Schlüssel sind meist Werte ohne Besitzer) - ein Compiler braucht besitzende Container.
-  Zu klären: ob `List` eine besitzende Variante bekommt (`OwningList<T>` oder ein Schalter).
+* Besitz: **keine implizite Übernahme**, wie bei `List`: der Container behält nur, was ihm mit `take` übergeben wird (`dict.Add(key, take item)`,
+  intern `try value.TakeTo(this)`); sonst hält er nur einen Verweis.
+* Besitzende Container auf Wunsch: Konstruktor-Optionen `ownsKeys` und `ownsValues` (`new Dictionary<string, Node>(ownsValues: true)`). Dann übernimmt
+  der Container jedes Objekt, das hineinkommt (`TakeTo(this)` ohne `try`), und zerstört es, wenn es herausfällt (`Remove`, Überschreiben, `Clear`) -
+  außer es wird vorher mit `take` herausgenommen (`var n = take dict.Take(key)`). `ownsValues` bekommt auch `List<T>` (`new List<Node>(ownsValues: true)`);
+  ohne die Option bleibt `List` wie heute.
 * Ein Native `__hash(value)` für die Geschwindigkeit; die Tabelle selbst in fire.
 
 ## 3. Kommandozeilenargumente und Umgebungsvariablen
