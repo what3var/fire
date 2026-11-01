@@ -1,4 +1,4 @@
-# Natives Backend (AOT): fire -> C++
+# Natives Backend (AOT): fire -> C
 
 Status: **experimentell**, Branch `aot`. Dieses Dokument beschreibt Ziel, Architektur, den aktuellen Stand und die Messwerte.
 
@@ -7,17 +7,18 @@ Status: **experimentell**, Branch `aot`. Dieses Dokument beschreibt Ziel, Archit
 fire-Programme sollen sich auf Wunsch zu **richtig schnellen, eigenständigen Binaries** übersetzen lassen - auf dem Desktop
 und auf einem ESP32 (FreeRTOS), wo die Sprache nur dann sinnvoll ist, wenn die Leistung stimmt.
 
-## Entscheidung: den Code direkt als C++ einbetten
+## Entscheidung: den Code direkt als C einbetten
 
-Der Bytecode wird **nicht** als Datenblock neben einem Interpreter ausgeliefert, sondern in **C++-Anweisungen übersetzt**, die der
-C++-Compiler zusammen mit der Runtime sieht und optimiert. Dafür sprechen:
+Der Bytecode wird **nicht** als Datenblock neben einem Interpreter ausgeliefert, sondern in **C-Anweisungen übersetzt**, die der
+C-Compiler zusammen mit der Runtime sieht und optimiert. (Bis zum Branch `native-c` war es C++; der erzeugte Code hat nichts von C++ gebraucht,
+C läuft mit jedem Compiler, auch denen der Mikrocontroller, und ist die Grenze, an der später getrennt übersetzte Bibliotheken zusammenkommen.) Dafür sprechen:
 
-* Der C++-Compiler erledigt die Typinferenz mit: `var i = 0` ist ein `Int(0)`, die Art des Werts steht zur Übersetzungszeit fest,
+* Der C-Compiler erledigt die Typinferenz mit: `var i = 0` ist ein `Int(0)`, die Art des Werts steht zur Übersetzungszeit fest,
   und der generische `Value`-Pfad (Art prüfen, Einheit prüfen, rechnen) faltet sich zu nacktem `int64`-Code zusammen.
   Das haben wir gemessen (siehe unten): schon die *generische* Übersetzung ist mehr als 20x schneller als die VM.
 * Kein Programmformat, kein Lader, kein Dispatch. Auf dem ESP32 liegt der Code als normaler Code im Flash (Firmware), nicht als
   Daten, die ein Interpreter erst lesen müsste.
-* Jede fire-Funktion (statische Methode, später auch Methode, Konstruktor, Lambda) wird eine C++-Funktion; kleine werden vom
+* Jede fire-Funktion (statische Methode, Methode, Konstruktor, Lambda) wird eine C-Funktion; kleine werden vom
   Compiler eingebettet, der Rest bleibt ein Aufruf - genau so, wie man es erwartet.
 
 Ein portables Binärformat braucht nur noch der **Interpreter** - und den braucht man nur, wenn Skripte auf dem Gerät *zur Laufzeit*
@@ -33,16 +34,40 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
                           v                                                      v
                   C#-VM (Editor, Debugger)                       fire.Native (CppGenerator)
                                                                                  |
-                                                                  erzeugtes C++ + native/runtime/fire_rt.hpp
+                                                      fire_program.c (C11) + native/runtime/fire_rt.h
+                                                      [fire_natives.cpp (C++) + fire_rt_cpp.hpp: Natives in C++]
                                                                                  |
-                                                                  clang/gcc/MSVC/xtensa-gcc -> Binary
+                                                                  gcc/clang/MSVC/xtensa-gcc -> Binary
 ```
 
-* `src/fire.Native` - der Generator (`CppGenerator`), liest `LinkedProgram` und schreibt eine `.cpp`-Datei. Die Runtime
-  (`fire_rt.hpp`) steckt als Ressource in der DLL und wird neben die `.cpp` geschrieben.
-* `native/runtime/fire_rt.hpp` - die C++-Runtime: `Value` (16 Byte), Arithmetik/Vergleiche mit schnellem Pfad und kaltem Fehlerpfad,
-  Ausgabeformat identisch zu `Value.ToString()`.
-* `fire.Compiler native <dateien> [-o out.cpp]` - Befehlszeile.
+* `src/fire.Native` - der Generator (`CppGenerator`), liest `LinkedProgram` und schreibt das Programm als C (`fire_program.c`). Die Runtime
+  (`fire_rt.h`) steckt als Ressource in der DLL und wird daneben geschrieben.
+* `native/runtime/fire_rt.h` - die Runtime in C11 (übersetzt auch als C++): `Value` (16 Byte), Arithmetik/Vergleiche mit schnellem Pfad und kaltem
+  Fehlerpfad, Ausgabeformat identisch zu `Value.ToString()`. Ihr globaler Zustand liegt in der Einheit, die `FIRE_RT_IMPLEMENTATION` definiert (das Programm,
+  oder die Bibliothek eines Packages für die VM).
+* **Natives in C++** (die Bridges von `graphics` und `windows`, die Natives der Packages): eine eigene Datei `fire_natives.cpp`, die
+  `native/runtime/fire_rt_cpp.hpp` einbindet - `fire_rt.h` als C++ (Funktionen in `namespace fire`, mit C-Linkage, also *eine* Runtime für beide Dateien), die
+  C++-Plattformschicht (`fire::plat`, `FIRE_PLATFORM_CPP_HEADER`) und die paar Überladungen mit Referenzen, mit denen die Natives geschrieben sind. Das Programm ruft
+  jeden Native über eine C-Funktion `fire_nat_N` auf, die der Generator am Ende von `fire_natives.cpp` schreibt (und im Programm deklariert). Ein Programm ohne
+  solche Natives (auch eines mit JSON) ist reines C.
+* **JSON** (`#import "json"`): `native/runtime/fire_json.h` - die Engine in C (Schreiben, Parser, Lesen; dieselben Texte und Fehler wie `JsonMethods` der VM; was sie
+  für sich braucht, kommt aus einer Arena des Aufrufs) und die Tabellen der Klassen des Programms, die der Generator dahinter schreibt (`kJsonClasses`, `jsonClassAt`, ...).
+* **Bauen** (`NativeBuilder.BuildCommands`): ohne Natives in C ein Aufruf des C-Compilers (`gcc -std=c11 ... -lm`); mit Natives wird das Programm zur Objektdatei
+  übersetzt und vom C++-Compiler zusammen mit `fire_natives.cpp` gelinkt. Der C-Compiler gehört zum C++-Compiler der Toolchain (`g++` -> `gcc`, `clang++` -> `clang`,
+  `em++` -> `emcc`, `x86_64-w64-mingw32-g++` -> `...-gcc`; MSVC: `cl /TC`), oder `toolchain.cCompiler`/`cStd`. Ein ESP-IDF-Komponent listet beide Dateien.
+* `fire.Compiler native <dateien> [-o out.c]` - Befehlszeile (schreibt mit Natives auch `fire_natives.cpp`).
+
+### C statt C++: was der Generator anders macht
+
+* **Catch-Blöcke** waren C++-Lambdas (`[&]`), die über der Wurfstelle laufen (damit `resume` dort weitermacht). In C ist jeder `try` mit Catch-Blöcken eine eigene
+  Funktion `C_<funktion>_<n>(void* ctx, uint32_t ci, Value e)`; die Funktion, zu der er gehört, hält ihre Variablen dann in einem **Frame** (`struct FR_<funktion>`:
+  Parameter, Stackplätze, Locals, Besitzlisten, Handler, die Stackplätze der Catch-Blöcke), `Handler.ctx` zeigt darauf. Der Code behält seine Namen: ein Makro je
+  Variable macht aus `s0` ein `(FR->s0)`, in der Funktion und in ihren Catch-Funktionen (danach `#undef`). Funktionen ohne Catch-Block bleiben, wie sie waren.
+* **Aufruftiefe** (`try x.Take...`): statt eines RAII-Zählers ein Wrapper, der zählt und `<funktion>_b` aufruft (die Trampoline für Spezialisierungen rufen `_b` direkt).
+* **Statische Initialisierung** (Einheitentabelle, Ressourcen, Hooks) läuft in `fire_init()` vor `fire_main()`; Globals beginnen mit `FIRE_UNDEF_INIT`.
+* Variadische Templates und `std::initializer_list` sind Compound Literals: `ownValueN(o, v, (OwnList* const[]){&OP, &O3}, 2)`, `internTArgsN(...)`. Die Tests
+  generischer Parameter bei der Überladungswahl sind kleine Funktionen `ovg_N(value, owner)` statt sofort aufgerufener Lambdas.
+* Kein `namespace`, kein `nullptr`, kein `std::`, keine Referenzen (`timeObjTicks(v, &ticks)`), `fire_char16` statt `char16_t`, `objFields(o)` statt `o->fields()`.
 
 ### Wie der Bytecode übersetzt wird
 

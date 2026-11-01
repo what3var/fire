@@ -7,7 +7,7 @@ using fire.Standard;
 namespace fire.Native
 {
     /// <summary>
-    /// JSON (`#import "json"`, docs/JSON.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.hpp
+    /// JSON (`#import "json"`, docs/JSON.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.h (C)
     /// (put into the generated file), and the generator writes the tables it reads - per class its fields as JSON sees them (JsonMethods.JsonFieldsOf),
     /// the slots of List and JsonObject, and the texts of the type arguments. Every class of the program is generated: `"$type"` can name any of them.
     /// </summary>
@@ -71,11 +71,12 @@ namespace fire.Native
             return Math.Min(count, 255);
         }
 
-        /// <summary>The runtime part (fire_json.hpp) and the tables of the program.</summary>
+        /// <summary>The engine (fire_json.h) and the tables of the program.</summary>
         private string JsonCode()
         {
             var sb = new StringBuilder();
-            // the tables of the program's classes and the functions that read them; the engine (fire_json.hpp) is in the natives (C++) of the program
+            // the engine (C, fire_json.h), then the tables of the program's classes and the functions that read them
+            sb.AppendLine("#define FIRE_JSON_IMPLEMENTATION 1");
             sb.AppendLine("#include \"fire_json.h\"");
             var rows = new List<string>();
             int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1;

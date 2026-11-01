@@ -19096,7 +19096,7 @@ else
             """),
     }).ToArray();
 
-    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.hpp) write and read the same text
+    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.h) write and read the same text
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler", """
@@ -22928,9 +22928,9 @@ else
             string projectOut = Path.Combine(dir, "project");
             var out2 = new StringWriter(); var err2 = new StringWriter();
             int code2 = CommandLineRunner.Run(new[] { "build", script, "-t", "esp32", "-o", projectOut }, out2, err2);
-            CheckNat("build: Ziel esp32 schreibt die Dateien eines ESP-IDF-Komponenten", code2 == 0 && File.Exists(Path.Combine(projectOut, "fire_program.cpp")) && File.Exists(Path.Combine(projectOut, "fire_rt.hpp"))
-                && File.Exists(Path.Combine(projectOut, "platform", "esp32", "fire_platform.hpp")) && File.Exists(Path.Combine(projectOut, "platform", "freertos", "fire_platform.hpp"))
-                && File.ReadAllText(Path.Combine(projectOut, "CMakeLists.txt")).Contains("idf_component_register") && File.ReadAllText(Path.Combine(projectOut, "fire_program.cpp")).Contains("void app_main(void)"), $"{code2}\n{out2}\n{err2}");
+            CheckNat("build: Ziel esp32 schreibt die Dateien eines ESP-IDF-Komponenten", code2 == 0 && File.Exists(Path.Combine(projectOut, "fire_program.c")) && File.Exists(Path.Combine(projectOut, "fire_rt.h"))
+                && File.Exists(Path.Combine(projectOut, "platform", "esp32", "fire_platform.h")) && File.Exists(Path.Combine(projectOut, "platform", "freertos", "fire_platform.h"))
+                && File.ReadAllText(Path.Combine(projectOut, "CMakeLists.txt")).Contains("idf_component_register") && File.ReadAllText(Path.Combine(projectOut, "fire_program.c")).Contains("void app_main(void)"), $"{code2}\n{out2}\n{err2}");
             var err3 = new StringWriter();
             int code3 = CommandLineRunner.Run(new[] { "build", script, "-t", "amiga", "-o", Path.Combine(dir, "x") }, new StringWriter(), err3);
             CheckNat("build: unbekanntes Ziel ist ein Fehler der Befehlszeile", code3 == CommandLineRunner.ExitUsage && err3.ToString().Contains("amiga"), err3.ToString());

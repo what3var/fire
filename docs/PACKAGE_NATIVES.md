@@ -5,7 +5,7 @@ protocol stack or a fast algorithm. You write the C++ **once**; the compiler use
 
 | engine | what happens to your C++ |
 |---|---|
-| native build (`fire.Compiler build --engine native`, any target: Linux, Windows, macOS, ESP32, FreeRTOS, ...) | the text of your source files is put into the generated C++ file; your functions are called directly |
+| native build (`fire.Compiler build --engine native`, any target: Linux, Windows, macOS, ESP32, FreeRTOS, ...) | the program is generated as C (`fire_program.c`); the text of your source files is put into its natives, a C++ file next to it (`fire_natives.cpp`), and the program calls each of your functions through a small C function that the generator writes there; both are linked into one program |
 | virtual machine (`fire.Compiler run`, the editor, a packed standalone program) | the compiler builds your sources into a **shared library** (`.dll`, `.so`, `.dylib`) for the machine, with a generated wrapper that exports a small C interface (`native/abi/fire_pkg_abi.h`); the VM loads it and calls it |
 
 So the C# VM never needs to know your functions: it only knows the C ABI, and the wrapper is generated for you.
@@ -21,8 +21,8 @@ sensorkit/
 
 ### The native (`sensorkit.hpp`)
 
-A native takes `Value`s and returns a `Value`. The file is put at the top level of the generated file after the runtime (`fire_rt.hpp`), so it includes what it needs itself
-and puts its functions into `namespace fire`:
+A native takes `Value`s and returns a `Value`. The file is put at the top level of the natives of the program (`fire_natives.cpp`) after the runtime (`fire_rt_cpp.hpp`: the
+runtime `fire_rt.h` compiled as C++, and the C++ platform layer), so it includes what it needs itself and puts its functions into `namespace fire`:
 
 ```cpp
 #include <cstdint>
@@ -101,7 +101,8 @@ class SensorKit {
 
 ## 2. The value API
 
-Everything is in `native/runtime/fire_rt.hpp` (the runtime that the generated file includes). The parts you need most:
+Everything is in `native/runtime/fire_rt.h` (the runtime in C, which compiles as C++ for the natives; `fire_rt_cpp.hpp` adds a few overloads with references). The
+parts you need most:
 
 | | |
 |---|---|

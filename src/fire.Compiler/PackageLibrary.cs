@@ -166,7 +166,7 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>The C++ of the wrapper: the runtime in library mode, the sources of the import for this machine, and the entry points of the ABI around its functions.</summary>
+        /// <summary>The C++ of the wrapper: the runtime in library mode (fire_rt.h as C++, fire_rt_cpp.hpp), the sources of the import for this machine, and the entry points of the ABI around its functions.</summary>
         public static string GenerateWrapper(InstalledImport import)
         {
             var native = import.Import.Native ?? throw new PackageException($"The import '{import.Name}' has no natives.");
@@ -179,7 +179,8 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_TARGET_{target.Name.ToUpperInvariant()} 1");
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
-            sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
+            sb.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{target.Native.Platform}/fire_net.hpp\"");
@@ -190,7 +191,8 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{target.Native.Platform}/fire_wifi.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{target.Native.Platform}/fire_audio.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_USB_HEADER \"platform/{target.Native.Platform}/fire_usb.hpp\"");
-            sb.AppendLine("#include \"fire_rt.hpp\"");
+            sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the library has a runtime of its own (its state lives here)");
+            sb.AppendLine("#include \"fire_rt_cpp.hpp\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
             {
                 sb.AppendLine($"// ---- {name}");

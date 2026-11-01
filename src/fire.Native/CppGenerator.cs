@@ -1122,15 +1122,6 @@ namespace fire.Native
                     nat.AppendLine($"// ---- end of {name}");
                     natSources = true;
                 }
-            if (_usesJson)
-            {
-                // the JSON engine (C++): it reads the tables of the program (fire_json.h)
-                string json = NativeRuntimeFiles.ReadText("runtime/fire_json.hpp") ?? throw new NativeNotSupportedException("the JSON runtime (fire_json.hpp) is missing");
-                nat.AppendLine("// ---- runtime/fire_json.hpp");
-                nat.AppendLine(json);
-                nat.AppendLine("// ---- end of runtime/fire_json.hpp");
-                natSources = true;
-            }
             if (natSources || _nativeThunks.Count > 0)
             {
                 // the thunks: C functions that call the C++ natives (the program declares them)

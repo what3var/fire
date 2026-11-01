@@ -89,6 +89,6 @@ The class of an object comes from `"$type"`, else from the declared type of the 
 
 ## Native builds
 
-The native backend (docs/NATIVE_BACKEND.md) has the same functions in its runtime (`fire_json.hpp`, put into the program when it uses JSON) and writes a table
+The native backend (docs/NATIVE_BACKEND.md) has the same functions in its runtime (`fire_json.h`, C, included by the program when it uses JSON) and writes a table
 of the program's classes for it: every class of the program is generated then, because `"$type"` can name any of them. It needs exceptions in the runtime (for
 `JsonException`), not C++ exceptions, so it also works on boards whose compiler has them switched off.
