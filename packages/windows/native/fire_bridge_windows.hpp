@@ -330,7 +330,7 @@ inline void pumpThread(void* arg) {
 /// The main program at a safe point: the cycles that the threads of the managers asked for (each runs the manager's Tick).
 inline void serveManagers() {
     static bool busy = false;
-    if (busy) { g_hostPending.store(1, std::memory_order_relaxed); return; }   // a cycle is running: the next safe point after it
+    if (busy) { fire_atomic_store(&g_hostPending, 1); return; }   // a cycle is running: the next safe point after it
     busy = true;
     for (Mgr* m : managers().list)
         if (m && m->started() && m->pending.load(std::memory_order_relaxed) && m->service.kind == K_Lambda) runCallback(m->service, 0, nullptr);
@@ -415,7 +415,7 @@ inline Value WinMgrStart(Value mgrId, Value service) {
     if (m->started()) return Bool(false);
     if (service.kind != K_Lambda) return Bool(false);
     static bool registered = false;
-    if (!registered) { registered = true; g_hostServices.push_back(serveManagers); }
+    if (!registered) { registered = true; hostAddService(serveManagers); }
     retain(service);
     m->service = service;
 #ifdef FIRE_WINDOW_COOP
