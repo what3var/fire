@@ -236,6 +236,23 @@ namespace fire.Native
         private bool _usesTryDepth;
         /// <summary>What runs before the program (fire_init): the tables of the runtime that C++ set with static initializers.</summary>
         private readonly StringBuilder _initCode = new();
+        /// <summary>The enums of the program in the order of their numbers (1-based in the generated table, `Value.reserved` of a value of the enum).</summary>
+        private readonly List<EnumType> _enumList = new();
+
+        /// <summary>The number of an enum in the generated table (1-based).</summary>
+        private int EnumIndex(EnumType type)
+        {
+            int at = _enumList.IndexOf(type);
+            if (at < 0) { _enumList.Add(type); at = _enumList.Count - 1; }
+            return at + 1;
+        }
+
+        /// <summary>The number of the enum a type name means (0: no enum of the program).</summary>
+        private int EnumIndexNamed(string typeName)
+        {
+            for (int i = 0; i < _enumList.Count; i++) if (_enumList[i].Matches(typeName)) return i + 1;
+            return 0;
+        }
         /// <summary>The factors between two units the program converts between at fixed places: one cache each (`kUF_from_to`, 0 until it is looked up).</summary>
         private readonly SortedSet<(int, int)> _unitFactorCaches = new();
         /// <summary>The functions that `catch threads`/`catch terminate` register (name -> body): the runtime calls them with the value.</summary>
@@ -686,7 +703,7 @@ namespace fire.Native
             if (c.IsUnit) return $"(({value}.kind == K_Int || {value}.kind == K_Float) && unitCompatible(unitOf({value}), {UnitId(c.Unit)}))";
             switch (c.Name)
             {
-                case "int": return $"{value}.kind == K_Int";
+                case "int": return $"({value}.kind == K_Int && {value}.reserved == 0)";
                 case "float": return $"{value}.kind == K_Float";
                 case "bool": return $"{value}.kind == K_Bool";
                 case "char": return $"{value}.kind == K_Char";
@@ -1295,6 +1312,7 @@ namespace fire.Native
             {
                 var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
                 sb.AppendLine($"FIRE_MAYBE_UNUSED static bool isof_{Mangle(typeName)}(Value v) {{");
+                if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
                 if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
                 sb.AppendLine("    if (v.kind != K_Class) return false;");
                 sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
@@ -1316,6 +1334,14 @@ namespace fire.Native
             var entry = _target.Native.Entry;
             string externC = "";   // (C: the name of the entry point is not mangled)
             // what C++ did with static initializers: the tables of the runtime (units, resources, hooks), before anything runs
+            // the enums of the program: their names and members (the text of a value, `is of`)
+            if (_enumList.Count > 0)
+            {
+                for (int i = 0; i < _enumList.Count; i++)
+                    sb.AppendLine($"static const FireEnumMember kEnumM{i}[] = {{{string.Join(", ", _enumList[i].Members.Select(m => $"{{{CString(m.Name)}, {(m.Value == long.MinValue ? "INT64_MIN" : m.Value.ToString(CultureInfo.InvariantCulture) + "LL")}}}").DefaultIfEmpty("{\"\", 0}"))}}};");
+                sb.AppendLine($"static const FireEnum kEnums[] = {{{string.Join(", ", _enumList.Select((e, i) => $"{{{CString(e.Name)}, {(e.IsFlags ? 1 : 0)}, kEnumM{i}, {e.Members.Count}}}"))}}};");
+                _initCode.AppendLine($"    g_enums = kEnums; g_enumCount = {_enumList.Count};");
+            }
             sb.AppendLine("static void fire_init(void) {");
             if (_usesThreads) sb.AppendLine("    fire_threadsInit();   // the locks of the threads, before anything else");
             sb.Append(_initCode);
@@ -1468,11 +1494,13 @@ namespace fire.Native
             switch ((name, argc))
             {
                 case ("ToBytes", 0): yield return ("K_String", "strToBytes(self, list)"); break;
-                case ("ToUnicode", 1): yield return ("K_String", "strToUnicode(self, a0, list)"); yield return ("K_Char", "charToUnicode(self, a0, list)"); yield return ("K_Buffer", "bufToUnicode(self, a0, list)"); break;
-                case ("ToUnicode", 0): yield return ("K_Buffer", "bufToUnicode(self, Int(2), list)"); break;
+                case ("ToUnicode", 1): yield return ("K_String", "strToUnicode(self, a0, list)"); yield return ("K_Char", "charToUnicode(self, a0, list)"); yield return ("K_Buffer", "retainedV(bufToUnicode(self, a0, list))"); break;
+                case ("ToUnicode", 0): yield return ("K_Buffer", "retainedV(bufToUnicode(self, Int(2), list))"); break;
                 case ("ToByte", 0): yield return ("K_Char", "charToByte(self)"); break;
                 case ("ToChar", 0): yield return ("K_Int", "byteToChar(self)"); break;
-                case ("ToString", 0): yield return ("K_Buffer", "bufToString(self, list)"); break;
+                // (a string made in the pool goes to the caller with a count of its own: retainedV; an enum value gives its name)
+                case ("ToString", 0): yield return ("K_Buffer", "retainedV(bufToString(self, list))"); yield return ("K_Int", "retainedV(toStringValue(self, list))"); break;
+                case ("HasFlag", 1): yield return ("K_Int", "enumHasFlag(self, a0)"); break;
                 case ("ToUnicodeChar", 0): yield return ("K_Buffer", "bufToUnicodeChar(self, Int(2))"); break;
                 case ("ToUnicodeChar", 1): yield return ("K_Buffer", "bufToUnicodeChar(self, a0)"); break;
                 case ("ToLittleEndian", 0): yield return ("K_Buffer", "bufToEndian(self, true, list)"); break;
@@ -3112,7 +3140,8 @@ namespace fire.Native
                     {
                         "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
                     };
-                    string test = castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"isof_{Mangle(castName)}({S(d - 1)})";
+                    string test = castTest == "K_Int" ? $"{S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0"
+                        : castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"isof_{Mangle(castName)}({S(d - 1)})";
                     if (castTest.Length == 0) _isOfTypes.Add(castName);
                     E($"if (FIRE_UNLIKELY({S(d - 1)}.kind != K_Undefined && !({test}))) castFailed({S(d - 1)}, {CString(castName)});");
                     Check();
@@ -3138,6 +3167,14 @@ namespace fire.Native
                     Need(2); E($"{S(d - 1)} = coerceType({S(d - 1)}, {S(d - 2)}.kind);"); return Next();
                 case OpCode.IsInUnit:
                     Need(1); E($"{S(d - 1)} = Bool(unitCompatible(unitOf({S(d - 1)}), {UnitId(chunk.Units[ins.A[0]])}));"); SetR(d - 1, false); return Next();
+                case OpCode.ToEnum:
+                {
+                    // `x!Color`: the number as a value of the enum
+                    Need(1);
+                    E($"{S(d - 1)} = toEnum({S(d - 1)}, {EnumIndex(chunk.Constants[ins.A[0]].Enum!)});");
+                    Check();
+                    SetR(d - 1, false); return Next();
+                }
                 case OpCode.IsOfType:
                 {
                     Need(1);
@@ -3146,7 +3183,8 @@ namespace fire.Native
                     {
                         "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
                     };
-                    if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
+                    if (test == "K_Int") E($"{S(d - 1)} = Bool({S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0);");   // (an enum is not an int)
+                    else if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
                     else { _isOfTypes.Add(typeName); E($"{S(d - 1)} = Bool(isof_{Mangle(typeName)}({S(d - 1)}));"); }
                     SetR(d - 1, false); return Next();
                 }
@@ -4515,6 +4553,7 @@ namespace fire.Native
                 {
                     long i = v.AsInt();
                     string lit = i == long.MinValue ? "INT64_MIN" : i.ToString(CultureInfo.InvariantCulture) + "LL";
+                    if (v.Enum is { } enumType) return $"EnumV({lit}, {EnumIndex(enumType)})";   // (a value of an enum carries its type)
                     int unit = UnitId(v.Unit);
                     return unit == 0 ? $"Int({lit})" : $"Int({lit}, {unit})";
                 }

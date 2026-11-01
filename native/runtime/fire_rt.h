@@ -154,6 +154,17 @@ FIRE_FN Value Bool(bool v) { Value r; r.kind = K_Bool; r.width = 0; r.reserved =
 FIRE_FN Value Char(uint32_t c) { Value r; r.kind = K_Char; r.width = 0; r.reserved = 0; r.unit = 0; r.i = c; return r; }
 FIRE_FN Value UndefU(uint32_t unit) { Value r; r.kind = K_Undefined; r.width = 0; r.reserved = 0; r.unit = unit; r.i = 0; return r; }
 FIRE_FN Value Undef(void) { return UndefU(0); }
+
+/* ---- Enums (docs/language/10-enums-and-namespaces.md): a value of an enum is an Int that carries the number of its enum (1-based) in `reserved`; the generated
+ * program sets the table (fire_init). Every operation on whole numbers works on it as before (and gives a plain int: Int() clears `reserved`). */
+typedef struct FireEnumMember { const char* name; int64_t value; } FireEnumMember;
+typedef struct FireEnum { const char* name; uint8_t flags; const FireEnumMember* members; uint32_t count; } FireEnum;
+extern const FireEnum* g_enums;
+extern uint32_t g_enumCount;
+/* A value of the enum `index` (1-based, the generated table). */
+FIRE_FN Value EnumV(int64_t v, uint16_t index) { Value r; r.kind = K_Int; r.width = 0; r.reserved = index; r.unit = 0; r.i = v; return r; }
+/* The enum of a value (null: none). */
+FIRE_FN const FireEnum* enumOf(Value v) { return v.kind == K_Int && v.reserved != 0 && v.reserved <= g_enumCount ? &g_enums[v.reserved - 1] : NULL; }
 /* `undefined` as a constant initializer (a global or static of the generated program: C has no dynamic initialization) */
 #define FIRE_UNDEF_INIT {K_Undefined, 0, 0, 0, {0}}
 #define Int(...) FIRE_EXPAND(FIRE_PICK2(__VA_ARGS__, fire_IntU, fire_Int1, 0)(__VA_ARGS__))
@@ -1148,7 +1159,7 @@ FIRE_FN const char* coerceKindName(uint8_t kind) {
 /* `value!type` - int and float into each other, `undefined` into a number (Value.CoerceType); anything else is an ArgumentException. */
 FIRE_FN Value coerceType(Value v, uint8_t target) {
     char text[96];
-    if (v.kind == target) return v;
+    if (v.kind == target) { if (target == K_Int) v.reserved = 0; return v; }   /* (`c!int`: the number of an enum value) */
     if (v.kind == K_Int && target == K_Float) return Float((Real)v.i, v.unit);
     if (v.kind == K_Float && target == K_Int) return Int((int64_t)nearbyint((double)v.f), v.unit);
     if (v.kind == K_Undefined && target == K_Int) return Int(0, v.unit);
@@ -1198,6 +1209,7 @@ FIRE_FN Value lnot(Value v) {
     FIRE_FN Value NAME(Value a, Value b) {                                                     \
         if (FIRE_UNLIKELY(a.kind != K_Int || b.kind != K_Int)) return intOpFailed(SYM, a, b);   \
         if (FIRE_UNLIKELY(!unitEq(a.unit, b.unit))) { unitConflict(a.unit, b.unit); return Undef(); } \
+        if (FIRE_UNLIKELY(a.reserved != 0) && a.reserved == b.reserved && enumOf(a) && enumOf(a)->flags) return EnumV(a.i OP b.i, a.reserved); \
         return Int(a.i OP b.i, a.unit);                                                        \
     }
 FIRE_BITOP(bitAnd, &, "&")
@@ -1214,6 +1226,7 @@ FIRE_FN Value shr(Value a, Value b) {
 }
 FIRE_FN Value bitNot(Value v) {
     if (FIRE_UNLIKELY(v.kind != K_Int)) return intOpFailed("~", v, v);
+    if (FIRE_UNLIKELY(v.reserved != 0) && enumOf(v) && enumOf(v)->flags) return EnumV(~v.i, v.reserved);   /* (the complement of a flag value is one too) */
     return Int(~v.i, v.unit);
 }
 
@@ -1514,6 +1527,10 @@ FIRE_FN void transferOut(Value v, OwnList* list) {
 
 /* The caller takes over what came back from a call: an object, array or buffer without an owner, or a string/lambda that the callee retained for the trip (that
  * count now belongs to the scope's pool). */
+/* A value with one more count: what a call gives its caller (the caller's `adopt` hands that count to the pool) - for a built-in method that made a string
+ * in the pool. */
+FIRE_FN Value retainedV(Value v) { retain(v); return v; }
+
 FIRE_FN void adopt(Value v, OwnList* list) {
     Owned* o = ownedOf(v);
     if (o) {
@@ -1815,6 +1832,31 @@ FIRE_FN void setPiece(Piece* out, const char* ascii) {
     out->p = out->buf;
 }
 
+/* The text of a value of an enum (Values.EnumType.Format): the name of its member; for a flag enum the names of the flags it combines ("a, b"); otherwise the
+ * number. Returns the length (at most `cap - 1`; a long list of flags is cut). */
+FIRE_FN size_t enumFormat(Value v, char* out, size_t cap) {
+    const FireEnum* e = enumOf(v);
+    uint32_t i;
+    size_t n = 0;
+    int64_t rest = v.i;
+    if (e) {
+        for (i = 0; i < e->count; i++) if (e->members[i].value == v.i) return (size_t)snprintf(out, cap, "%s", e->members[i].name) < cap ? strlen(out) : cap - 1;
+        if (e->flags && v.i != 0) {
+            out[0] = 0;
+            for (i = 0; i < e->count; i++) {
+                int64_t f = e->members[i].value;
+                if (f == 0 || (f & (f - 1)) != 0 || (v.i & f) != f) continue;
+                n += (size_t)snprintf(out + n, n < cap ? cap - n : 0, "%s%s", n ? ", " : "", e->members[i].name);
+                if (n >= cap) n = cap - 1;
+                rest &= ~f;
+            }
+            if (rest == 0 && n > 0) return n;
+        }
+    }
+    n = (size_t)snprintf(out, cap, "%lld", (long long)v.i);
+    return n < cap ? n : cap - 1;
+}
+
 FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
     char tmp[64];
     switch (v.kind) {
@@ -1822,7 +1864,9 @@ FIRE_FN void pieceOf(Value v, Piece* out, OwnList* list) {
         case K_Char: out->buf[0] = (fire_char16)v.i; out->p = out->buf; out->n = 1; return;
         case K_Bool: setPiece(out, v.i ? "True" : "False"); return;
         case K_Int: {
-            int n = snprintf(tmp, sizeof tmp, "%lld", (long long)v.i);
+            int n;
+            if (FIRE_UNLIKELY(v.reserved != 0) && enumOf(v)) { char text[64]; n = (int)enumFormat(v, text, sizeof text); out->n = widenAscii(text, (uint32_t)n, out->buf); break; }
+            n = snprintf(tmp, sizeof tmp, "%lld", (long long)v.i);
             out->n = widenAscii(tmp, (uint32_t)n, out->buf);
             break;
         }
@@ -2545,6 +2589,21 @@ FIRE_FN void castFailed(Value v, const char* typeName) {
     snprintf(text, sizeof text, "Cannot convert a value of type '%s' to '%s'.", v.kind == K_Class ? className(asObj(v)->cls) : kindName(v), typeName);
     fireError("ArgumentException", text);
 }
+
+/* `x!Color` (OpCode.ToEnum): a whole number or a value of the same enum becomes a value of the enum `index`; `undefined` stays; anything else is an
+ * ArgumentException (the text of the VM). */
+FIRE_FN Value toEnum(Value v, uint16_t index) {
+    if (v.kind == K_Int && (v.reserved == 0 || v.reserved == index)) return EnumV(v.i, index);
+    if (v.kind != K_Undefined) {
+        char text[200];
+        const FireEnum* own = enumOf(v);
+        snprintf(text, sizeof text, "Cannot convert a value of type '%s' to '%s'.", own ? own->name : kindName(v), index <= g_enumCount ? g_enums[index - 1].name : "?");
+        fireError("ArgumentException", text);
+    }
+    return v;
+}
+/* `value.HasFlag(flag)`: all bits of `flag` are set in `value` (a flag of 0 is always set). */
+FIRE_FN Value enumHasFlag(Value v, Value flag) { return Bool(v.kind == K_Int && flag.kind == K_Int && (v.i & flag.i) == flag.i); }
 
 /* A parameter or field declared with a class was given something else (DeclaredType.Mismatch of the VM): an ArgumentException. */
 FIRE_COLD FIRE_FN void guardClassFailed(Value v, const char* cls, const char* what) {
@@ -5056,6 +5115,8 @@ SlotTable g_slots;
 #endif
 bool g_domainOn = false;
 const ResEntry* g_resources = NULL;
+const FireEnum* g_enums = NULL;
+uint32_t g_enumCount = 0;
 int g_resourceCount = 0;
 fire_TArgsEntry* g_targsHead = NULL;
 #ifdef FIRE_REFLECTION
