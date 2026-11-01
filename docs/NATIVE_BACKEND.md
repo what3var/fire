@@ -60,8 +60,9 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 ### C statt C++: was der Generator anders macht
 
 * **Catch-Blöcke** waren C++-Lambdas (`[&]`), die über der Wurfstelle laufen (damit `resume` dort weitermacht). In C ist jeder `try` mit Catch-Blöcken eine eigene
-  Funktion `C_<funktion>_<n>(void* ctx, uint32_t ci, Value e)`; die Funktion, zu der er gehört, hält ihre Variablen dann in einem **Frame** (`struct FR_<funktion>`:
-  Parameter, Stackplätze, Locals, Besitzlisten, Handler, die Stackplätze der Catch-Blöcke), `Handler.ctx` zeigt darauf. Der Code behält seine Namen: ein Makro je
+  Funktion `C_<funktion>_<n>(void* ctx, uint32_t ci, Value e)`; die Funktion, zu der er gehört, hält die Variablen, die ihre Catch-Blöcke benutzen, in einem
+  **Frame** (`struct FR_<funktion>`: die Handler, die Stackplätze der Catch-Blöcke und von Parametern, Stackplätzen, Locals und Besitzlisten nur die, die im Code der
+  Catch-Funktionen vorkommen), `Handler.ctx` zeigt darauf. Alles andere bleibt eine gewöhnliche Variable, die der C-Compiler in einem Register halten kann. Der Code behält seine Namen: ein Makro je
   Variable macht aus `s0` ein `(FR->s0)`, in der Funktion und in ihren Catch-Funktionen (danach `#undef`). Funktionen ohne Catch-Block bleiben, wie sie waren.
 * **Aufruftiefe** (`try x.Take...`): statt eines RAII-Zählers ein Wrapper, der zählt und `<funktion>_b` aufruft (die Trampoline für Spezialisierungen rufen `_b` direkt).
 * **Statische Initialisierung** (Einheitentabelle, Ressourcen, Hooks) läuft in `fire_init()` vor `fire_main()`; Globals beginnen mit `FIRE_UNDEF_INIT`.
@@ -196,6 +197,10 @@ Bekannte Abweichungen zur VM:
 * Eine Ausnahme, die ein Destruktor wirft, wird beim Abrollen ignoriert.
 
 ## Messwerte
+
+**C gegen C++** (Branch `native-c`, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` sind als C 4-16 % schneller
+als der C++-Code davor (fib 3,6 statt 4,3 ms, method 3,3 statt 3,9 ms, list 5,2 statt 6,1 ms, die anderen 4-13 %), die Ausgaben gleich. 2 Millionen Aufrufe einer
+Funktion mit `try`/`catch`: 12,9 ms (C++: 15,2 ms) - mit allen Variablen im Frame waren es 34,7 ms, daher hält der Frame nur, was die Catch-Blöcke benutzen.
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 

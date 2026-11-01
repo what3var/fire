@@ -2416,7 +2416,7 @@ namespace fire.Native
                 foreach (var m in members.Where(m => m.Init != null)) sb.AppendLine($"    {m.Name} = {m.Init};");
                 // the variables of the function that no catch block uses (parameters stay the parameters)
                 foreach (var m in plain.Where(m => !f.ParamNames.Contains(m.Name)))
-                    sb.AppendLine(m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};");
+                    sb.AppendLine((m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};") + (m.Decl.StartsWith("Value ", StringComparison.Ordinal) ? $" (void){m.Name};" : ""));
             }
             sb.Append(pre);
             sb.Append(decl);
