@@ -176,6 +176,8 @@ namespace fire.Compiler
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<string, ExternDecl> _externs = new();
         private readonly Dictionary<string, Dictionary<string, long>> _enums = new();
+        /// <summary>The run-time type of each enum (its values carry it, see Values.EnumType).</summary>
+        private readonly Dictionary<string, fire.Values.EnumType> _enumTypes = new();
         private readonly HashSet<string> _nativeNames;
         private readonly HashSet<string> _tryableNativeNames;
         private readonly ResolverScope _globalScope = new(parent: null, isGlobal: true);
@@ -401,6 +403,7 @@ namespace fire.Compiler
                     members[m.Name] = value;
                     next = value + 1;
                 }
+                _enumTypes[ed.Name] = fire.Values.EnumType.Intern(ed.Name, ed.IsFlags, members.Select(kv => (kv.Key, kv.Value)).ToList());
             }
         }
 
@@ -845,6 +848,10 @@ namespace fire.Compiler
             return false;
         }
 
+        /// <summary>Whether a type name means an enum: its full name, or the name in the namespace of the current class.</summary>
+        private bool IsEnumTypeName(string name) =>
+            _enums.ContainsKey(name) || (NamespaceOf(_currentClass?.Name) is { Length: > 0 } ns && _enums.ContainsKey(ns + "." + name));   // (`#using` qualified the name already in the parser)
+
         private void ValidateTypeName(TypeRef tr, int line)
         {
             // 'var' + only a unit (SPEC "Unit declarations") - no
@@ -862,6 +869,7 @@ namespace fire.Compiler
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
+            if (IsEnumTypeName(tr.BaseName)) return;   // (an enum is a type: `Color c`, `is of Color`)
             CheckAmbiguous(tr, line, n => IsKnownClassName(n) || _interfaces.ContainsKey(n), NamespaceOf(_currentClass?.Name));
             if (!IsKnownClassName(ResolveTypeRef(tr)) && !_interfaces.ContainsKey(ResolveBaseRef(tr)))
                 throw new ResolverException($"Unknown type '{tr.BaseName}'", line);
@@ -1786,7 +1794,7 @@ namespace fire.Compiler
                         }
                         if (!enumMembers.TryGetValue(me.Name, out long enumValue))
                             throw new ResolverException($"'{enumName}' has no member '{me.Name}'", me.Line);
-                        _refs[me] = new ResolvedRef.EnumMember(enumValue);
+                        _refs[me] = new ResolvedRef.EnumMember(enumValue, _enumTypes.GetValueOrDefault(enumName));
                         break;
                     }
                     // 'ClassName.Member' (SPEC "Static members") - as

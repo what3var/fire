@@ -2451,7 +2451,8 @@ namespace fire.Compiler
                     // after all no variable of this name at all).
                     if (_refs.TryGetValue(me, out var memberRef) && memberRef is ResolvedRef.EnumMember em)
                     {
-                        EmitLoadConst(Value.MakeInt(em.Value));
+                        // a value of the enum: it carries its type (it shows its name, `is of Color`, see Values.EnumType)
+                        EmitLoadConst(em.Type != null ? Value.MakeEnum(em.Value, em.Type) : Value.MakeInt(em.Value));
                         break;
                     }
                     // 'ClassName.Member' (SPEC "Static members") - no

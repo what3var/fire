@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using MemoryPack;
 
@@ -50,6 +51,16 @@ namespace fire.Values
                     writer.WriteValue(value.AsInt());
                     writer.WriteValue((byte)value.Width);
                     writer.WriteValue(value.Unit);
+                    // an enum value carries its type: the declaration (name, flag, members), interned again when it is read
+                    if (value.Enum is { } enumType)
+                    {
+                        writer.WriteValue(true);
+                        writer.WriteValue(enumType.Name);
+                        writer.WriteValue(enumType.IsFlags);
+                        writer.WriteValue(enumType.Members.Count);
+                        foreach (var (name, v) in enumType.Members) { writer.WriteValue(name); writer.WriteValue(v); }
+                    }
+                    else writer.WriteValue(false);
                     break;
                 case ValueKind.Float:
                     writer.WriteValue(value.AsFloat());
@@ -86,7 +97,16 @@ namespace fire.Values
                     long i = reader.ReadValue<long>();
                     var width = (NumericWidth)reader.ReadValue<byte>();
                     var unit = reader.ReadValue<Unit?>();
-                    value = Value.MakeInt(i, unit, width);
+                    if (reader.ReadValue<bool>())
+                    {
+                        string name = reader.ReadValue<string>() ?? "";
+                        bool flags = reader.ReadValue<bool>();
+                        int count = reader.ReadValue<int>();
+                        var members = new List<(string, long)>(count);
+                        for (int k = 0; k < count; k++) members.Add((reader.ReadValue<string>() ?? "", reader.ReadValue<long>()));
+                        value = Value.MakeEnum(i, EnumType.Intern(name, flags, members));
+                    }
+                    else value = Value.MakeInt(i, unit, width);
                     break;
                 }
                 case ValueKind.Float:

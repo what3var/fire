@@ -1,6 +1,6 @@
 namespace fire.Values
 {
-    public enum ValueKind
+    public enum ValueKind : byte
     {
         Bool,
         Int,

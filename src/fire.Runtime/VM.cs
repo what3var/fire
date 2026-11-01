@@ -5281,13 +5281,14 @@ namespace fire.Runtime
             switch (typeName)
             {
                 case "bool": return v.Kind == ValueKind.Bool;
-                case "int": return v.Kind == ValueKind.Int;
+                case "int": return v.Kind == ValueKind.Int && !v.IsEnum;   // (an enum is not an int, like in C#)
                 case "float": return v.Kind == ValueKind.Float;
                 case "char": return v.Kind == ValueKind.Char;
                 case "string": return v.Kind == ValueKind.String;
                 case "undefined": return v.Kind == ValueKind.Undefined;
                 case "class": return v.Kind == ValueKind.Class;
             }
+            if (v.IsEnum) return v.Enum!.Matches(typeName);
             // Arrays and buffers are enumerable (GetEnumerator, foreach): they fulfil the interface IEnumerable of the prelude
             if (v.Kind is ValueKind.Array or ValueKind.Buffer && typeName == "IEnumerable") return true;
             if (v.Kind != ValueKind.Class) return false;
@@ -5932,6 +5933,12 @@ namespace fire.Runtime
                     return false;
 
                 case ValueKind.Int:
+                    if (target.IsEnum)
+                    {
+                        // a value of an enum: its name, and for a flag enum whether a flag is set
+                        if (methodName == "ToString" && args.Length == 0) { result = Value.MakeString(target.ToString()); return true; }
+                        if (methodName == "HasFlag" && args.Length == 1) { result = Value.MakeBool(Value.HasFlag(target, args[0])); return true; }
+                    }
                     if (methodName == "ToChar" && args.Length == 0)
                     {
                         result = Value.MakeChar((char)(byte)target.AsInt());

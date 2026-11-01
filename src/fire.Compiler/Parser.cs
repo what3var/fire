@@ -849,6 +849,8 @@ namespace fire.Compiler
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
+            // `flag enum Name { ... }`: `flag` is a word only in front of `enum` (no keyword)
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "flag" && PeekAt(1).Type == TokenType.Enum) { Advance(); return ParseEnumDecl(isFlags: true); }
             if (Check(TokenType.Class)) return ParseClassDecl();
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
@@ -2456,7 +2458,7 @@ namespace fire.Compiler
         /// (auto-increment, validation "must be an int literal") only happens
         /// in the resolver, which needs all members in declaration order
         /// for that.</summary>
-        private Stmt ParseEnumDecl()
+        private Stmt ParseEnumDecl(bool isFlags = false)
         {
             int line = Peek().Line;
             Expect(TokenType.Enum, "Expected 'enum'");
@@ -2477,7 +2479,7 @@ namespace fire.Compiler
             }
 
             Expect(TokenType.RBrace, "Expected '}' after the enum members");
-            var decl = new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
+            var decl = new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members, isFlags);
             _enumDecls.Add(decl);
             return decl;
         }

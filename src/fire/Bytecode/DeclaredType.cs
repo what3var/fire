@@ -179,7 +179,7 @@ namespace fire.Bytecode
                 return value.Kind is ValueKind.Int or ValueKind.Float && (value.Unit ?? Unit.Unitless).IsCompatibleWith(condition.Unit!);
             switch (condition.Name)
             {
-                case "int": return value.Kind == ValueKind.Int;
+                case "int": return value.Kind == ValueKind.Int && !value.IsEnum;
                 case "float": return value.Kind == ValueKind.Float;
                 case "bool": return value.Kind == ValueKind.Bool;
                 case "char": return value.Kind == ValueKind.Char;
@@ -188,6 +188,7 @@ namespace fire.Bytecode
             }
             // arrays, buffers and strings are enumerable (foreach): they fulfil IEnumerable of the prelude
             if (GenericClassNames.PlainName(condition.Name) == "IEnumerable" && value.Kind is ValueKind.Array or ValueKind.Buffer or ValueKind.String) return true;
+            if (value.IsEnum) return value.Enum!.Matches(condition.Name);
             if (value.Kind != ValueKind.Class || value.AsObjectRef() is not ObjectInstance obj) return false;
             for (var rc = obj.RtClass; rc != null; rc = rc.Base)
                 if (rc.Name == condition.Name || rc.Interfaces.Contains(condition.Name)) return true;
