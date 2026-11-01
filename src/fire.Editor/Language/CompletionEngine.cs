@@ -281,7 +281,8 @@ namespace fire.Editor
         };
 
         private static bool IsListable(MemberInfo m) =>
-            m.Kind != MemberKind.Constructor && !m.Name.StartsWith("operator", StringComparison.Ordinal);
+            m.Kind != MemberKind.Constructor && !m.Name.StartsWith("operator", StringComparison.Ordinal)
+            && !m.Name.StartsWith("__", StringComparison.Ordinal);   // (internals of the prelude: `__NextEntry` of the hash tables)
 
         /// <summary>Suggestions after `expression.` - the type of the expression is
         /// derived (see ScriptSymbolIndex.ResolveReceiver) and then ONLY

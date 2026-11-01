@@ -241,15 +241,15 @@ namespace fire.Standard
                 }
 
                 T GetCurrent() {
-                    return this.list.items[this.index]
+                    return this.list[this.index]
                 }
             }
 
             // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
             class List<T> : IEnumerable<T> {
-                any items
+                private any items
                 private int count
-                Owns owns = Owns.Explicit
+                private Owns owns = Owns.Explicit
 
                 /// The number of elements.
                 int Count { get { return this.count } }
@@ -409,15 +409,15 @@ namespace fire.Standard
             // per bucket the first entry of its chain (`buckets`, `next`: index + 1, 0 for none). The keys are compared with `==` (strings by text, numbers by
             // value - `1km` is `1000m`), an IEquatable key with Equals/GetHashCode.
             class __HashTable {
-                any keys
-                any vals
-                any hashes
-                any next
-                any live
-                any buckets
+                protected any keys
+                protected any vals
+                private any hashes
+                private any next
+                protected any live
+                private any buckets
                 private int count
-                int used
-                Owns owns
+                protected int used
+                protected Owns owns
 
                 /// The number of entries.
                 int Count { get { return this.count } }
@@ -560,12 +560,15 @@ namespace fire.Standard
                     this.count = 0
                 }
 
-                // the next live entry after `index` (this.used if there is none)
-                int NextLive(int index) {
+                // for the enumerators: the next live entry after `index` (-1 if there is none), its key and its value
+                int __NextEntry(int index) {
                     var i = index + 1
                     while (i < this.used && !this.live[i]) { i = i + 1 }
-                    return i
+                    if (i < this.used) { return i }
+                    return -1
                 }
+                any __KeyAt(int index) { return this.keys[index] }
+                any __ValueAt(int index) { return this.vals[index] }
             }
 
             /// An entry of a Dictionary: `foreach (pair in dict) { print(pair.Key + " " + pair.Value) }`.
@@ -586,11 +589,13 @@ namespace fire.Standard
                     this.index = -1
                 }
                 bool MoveNext() {
-                    this.index = this.table.NextLive(this.index)
-                    return this.index < this.table.used
+                    var at = this.table.__NextEntry(this.index)
+                    if (at < 0) { return false }
+                    this.index = at
+                    return true
                 }
                 KeyValuePair<K, V> GetCurrent() {
-                    return new KeyValuePair<K, V>(this.table.keys[this.index], this.table.vals[this.index])
+                    return new KeyValuePair<K, V>(this.table.__KeyAt(this.index), this.table.__ValueAt(this.index))
                 }
             }
 
@@ -602,11 +607,13 @@ namespace fire.Standard
                     this.index = -1
                 }
                 bool MoveNext() {
-                    this.index = this.table.NextLive(this.index)
-                    return this.index < this.table.used
+                    var at = this.table.__NextEntry(this.index)
+                    if (at < 0) { return false }
+                    this.index = at
+                    return true
                 }
                 T GetCurrent() {
-                    return this.table.keys[this.index]
+                    return this.table.__KeyAt(this.index)
                 }
             }
 

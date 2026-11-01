@@ -15773,7 +15773,7 @@ else
                 int id
                 int legs = 4
                 static int count = 0
-                construct(int id) { this.id = id; Animal.Count = Animal.Count + 1 }
+                construct(int id) { this.id = id; Animal.count = Animal.count + 1 }
                 destruct() { print(0 - this.id) }
                 Speak() { print(this.id) }
                 int Legs() { return this.legs }
@@ -15801,7 +15801,7 @@ else
             }
             var m = Maker.Make(9)
             m.Speak()
-            print(Animal.Count)
+            print(Animal.count)
             """),
         ("Objekte: virtuelle Methoden und gleiche Feldnamen in verschiedenen Klassen", """
             class Shape {
@@ -16866,7 +16866,7 @@ else
                 }
                 string Secret { set { this.label = "secret " + value } }
                 static int count = 0
-                static int Count { get { return Circle.Count } set { Circle.Count = value * 10 } }
+                static int Count { get { return Circle.count } set { Circle.count = value * 10 } }
             }
             class Ring : Circle {
                 float hole = 1.0

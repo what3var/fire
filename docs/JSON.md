@@ -52,7 +52,7 @@ print(copy.friend.friend == copy)   // True: the cycle is back
 | `Json.Deserialize<T>(text)` | reads the text into a value of type `T` (`Json.Deserialize<Person>(text)`, `Json.Deserialize<List<Point>>(text)`) |
 | `Json.Deserialize(text, typeName)` | the same with the type given by its name (`"Person"`, `"Box<int>"`) |
 | `Json.Parse(text)` | JSON without classes: objects become `JsonObject`s, arrays arrays, the rest numbers, strings, `bool` and `undefined` (`null`) |
-| `JsonObject` | `Get(key)`, `Set(key, value)`, `Has(key)`, `Remove(key)`, `Keys()`, `Count()` - members in the order of the text |
+| `JsonObject` | `Get(key)`, `Set(key, value)`, `Has(key)`, `Remove(key)`, `Keys()`, `Count` - members in the order of the text |
 | `JsonException` | a text that cannot be read (with line and column: `Expected ',' or ']' in an array (line 1, column 6).`) or a value that does not fit its type (`$.age: expected a whole number, found 1.5.`) |
 
 `new JsonOptions(true)` is the indented form.
