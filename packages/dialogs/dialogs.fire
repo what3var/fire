@@ -18,10 +18,10 @@ namespace Dialogs {
         Window window
         UI.Root root
         UI.DockPanel body
-        int result = Dialogs.DialogResult.None
+        Dialogs.DialogResult result = Dialogs.DialogResult.None
         bool done = false
         // what Escape and closing the window give
-        int cancelResult = Dialogs.DialogResult.Cancel
+        Dialogs.DialogResult cancelResult = Dialogs.DialogResult.Cancel
 
         construct(string title, int width, int height) {
             this.framebuffer = new Framebuffer(width, height)
@@ -43,7 +43,7 @@ namespace Dialogs {
         }
 
         // Shows the window modal (Window.Show(true)) until the dialog is closed; its result. Closing the window with its frame cancels.
-        int Run() {
+        Dialogs.DialogResult Run() {
             this.window.Show(true)
             if (!this.done) {
                 this.result = this.cancelResult
@@ -52,7 +52,7 @@ namespace Dialogs {
             return this.result
         }
 
-        undefined Close(int result) {
+        undefined Close(Dialogs.DialogResult result) {
             this.result = result
             this.done = true
             this.window.Close()
@@ -62,9 +62,9 @@ namespace Dialogs {
     // A button that closes its dialog with a result.
     class DialogButton : UI.Button {
         Dialogs.DialogWindow dialog
-        int result
+        Dialogs.DialogResult result
 
-        construct(string text, Dialogs.DialogWindow dialog, int result) : base(text, 0, 0, 96, 28) {
+        construct(string text, Dialogs.DialogWindow dialog, Dialogs.DialogResult result) : base(text, 0, 0, 96, 28) {
             this.dialog = dialog
             this.result = result
             this.OnClick = func () on this => { this.dialog.Close(this.result) }
@@ -73,7 +73,7 @@ namespace Dialogs {
 
     // A message with buttons: MessageBox.Show("Text", "Caption", Dialogs.MessageBoxButtons.YesNo) gives the DialogResult of the button (Escape: Cancel, No or OK).
     class MessageBox {
-        static int Show(string text, string caption = "", int buttons = Dialogs.MessageBoxButtons.OK) {
+        static Dialogs.DialogResult Show(string text, string caption = "", Dialogs.MessageBoxButtons buttons = Dialogs.MessageBoxButtons.OK) {
             var lines = text.Replace("\r", "").Split("\n")
             var longest = 0
             for (var i = 0; i < lines.length; i++) { if (lines[i].length > longest) { longest = lines[i].length } }
@@ -200,7 +200,7 @@ namespace Dialogs {
         string defaultTitle = "Open"
 
         // Shows the dialog; Dialogs.DialogResult.OK when a file was chosen (then in FileName), else Cancel.
-        int ShowDialog() {
+        Dialogs.DialogResult ShowDialog() {
             this.ParseFilter()
             this.dialog = new Dialogs.DialogWindow(this.Title == "" ? this.defaultTitle : this.Title, 760, 480)
             this.Build()
@@ -578,7 +578,7 @@ namespace Dialogs {
             this.defaultTitle = "Select Folder"
         }
 
-        int ShowDialog() {
+        Dialogs.DialogResult ShowDialog() {
             if (this.Title == "" && this.Description != "") { this.Title = this.Description }
             if (this.InitialDirectory == "" && this.SelectedPath != "") { this.InitialDirectory = this.SelectedPath }
             var result = base.ShowDialog()

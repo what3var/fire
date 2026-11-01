@@ -75,7 +75,7 @@ namespace UI.Docking {
         bool Checkable = false
         bool IsChecked = false
         bool showText = true
-        int overflow = UI.Docking.Overflow.AsNeeded
+        UI.Docking.Overflow overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
         // set by the strip: the item is a row of the overflow menu right now
         bool inOverflow = false
@@ -279,7 +279,7 @@ namespace UI.Docking {
 
     // A text in a toolstrip or the status bar. `spring = true` makes it take all the room that is left (the strip shares it between its spring items).
     class ToolStripLabel : UI.Label {
-        int overflow = UI.Docking.Overflow.AsNeeded
+        UI.Docking.Overflow overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
         bool inOverflow = false
 
@@ -310,7 +310,7 @@ namespace UI.Docking {
 
     // A line between groups of items: across a horizontal strip, along a vertical one (and in the overflow menu).
     class ToolStripSeparator : UI.Element {
-        int overflow = UI.Docking.Overflow.AsNeeded
+        UI.Docking.Overflow overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
         bool inOverflow = false
 
@@ -342,7 +342,7 @@ namespace UI.Docking {
 
     // A text field in a toolstrip (`width` pixels wide).
     class ToolStripTextBox : UI.TextBox {
-        int overflow = UI.Docking.Overflow.AsNeeded
+        UI.Docking.Overflow overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
 
         construct(string text = "", int width = 100) : base(text, 0, 0, width, 22) { }
@@ -352,7 +352,7 @@ namespace UI.Docking {
 
     // A combo box in a toolstrip (`width` pixels wide); the same as UI.ComboBox.
     class ToolStripComboBox : UI.ComboBox {
-        int overflow = UI.Docking.Overflow.AsNeeded
+        UI.Docking.Overflow overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
 
         construct(int width = 120) : base(0, 0, width, 22) { }
@@ -364,7 +364,7 @@ namespace UI.Docking {
     class ToolStripProgressBar : UI.Element {
         int value = 0
         int maximum = 100
-        int overflow = UI.Docking.Overflow.AsNeeded
+        UI.Docking.Overflow overflow = UI.Docking.Overflow.AsNeeded
         bool spring = false
 
         construct(int width = 100) : base(0, 0, width, 14) { }
@@ -546,7 +546,7 @@ namespace UI.Docking {
 
         // ---- layout ----
 
-        static int ModeOf(any item) {
+        static UI.Docking.Overflow ModeOf(any item) {
             if (Reflect.Has(item, "overflow")) { return item.overflow }
             return UI.Docking.Overflow.AsNeeded
         }
@@ -711,7 +711,7 @@ namespace UI.Docking {
         }
 
         // the grip moves the strip
-        int CursorAt(UI.Root root, int px, int py) {
+        UI.Cursor CursorAt(UI.Root root, int px, int py) {
             if (this.OverGrip(px, py)) { return UI.Cursor.SizeAll }
             return this.cursor
         }
@@ -879,11 +879,11 @@ namespace UI.Docking {
     // The strips at one edge of a DockManager (`side` a UI.Dock), in rows (columns at the left and right edge); in a row each strip sits at its `offset` as far as
     // there is room, otherwise they are pushed together and finally shortened (their items go into the overflow menu).
     class ToolStripPanel : UI.Element {
-        int side
+        UI.Dock side
         List strips
         UI.Docking.DockManager manager
 
-        construct(int side = UI.Dock.Top) : base(0, 0, -1, -1) {
+        construct(UI.Dock side = UI.Dock.Top) : base(0, 0, -1, -1) {
             this.side = side
             this.strips = new List()
         }

@@ -1536,8 +1536,8 @@ print(Status.Paused)
 print(Status.Done)
 
 var c = Color.Green
-if (c is of int) {
-    print("Color.Green ist (wie erwartet) ein int")
+if (c is of Color && !(c is of int)) {
+    print("Color.Green ist (wie erwartet) ein Color, kein int")
 }
 """;
 
@@ -1548,7 +1548,7 @@ try
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
-    Console.WriteLine("Ausgabe (erwartet: 0/1/2/10/11/20/21/\"Color.Green ist (wie erwartet) ein int\"):");
+    Console.WriteLine("Ausgabe (erwartet: Red/Green/Blue/Active/Inactive/Paused/Done/\"Color.Green ist (wie erwartet) ein Color, kein int\"):");
     var vmGlobalScope = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
@@ -18882,6 +18882,129 @@ else
             var kept = F.Pass(F.Make())
             print("kept " + kept.n)
             print("end")
+            """),
+    }).ToArray();
+
+    // Real enums (not an int), flag enums and flag enums as attributes (docs/language/10-enums-and-namespaces.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Enums: eigener Typ mit Namen, Umwandeln mit !, Helfer, Flag-Enums", """
+            enum Color { Red, Green = 5, Blue }
+            flag enum Test { a = 1, b = 2, c = 4 }
+            var c = Color.Blue
+            print(c)
+            print("Farbe: " + c)
+            print(c is of Color)
+            print(c is of int)
+            print(c + 1)
+            print(c == Color.Blue)
+            print(c == 6)
+            print(c.ToString())
+            print(5!Color)
+            print(Color.Blue!int)
+            print(7!Color)
+            print(Color.Parse("Green"))
+            print(Color.IsDefined(Color.Red))
+            print(Color.IsDefined(1))
+            print(Color.Name(42))
+            foreach (x in Color.Values()) { print(x) }
+            print(Color.Values().Length)
+            switch (c) {
+                case Color.Red:
+                    print("rot")
+                case Color.Blue:
+                    print("blau")
+                case default:
+                    print("anders")
+            }
+            var t = Test.a | Test.c
+            print(t)
+            print(t is of Test)
+            print(t.HasFlag(Test.c))
+            print(t.HasFlag(Test.b))
+            print(t & Test.a)
+            print(t # Test.a)
+            print(~Test.a)
+            print(Test.a | 8)
+            class Box { Color color = Color.Green; Color Get() { return this.color } }
+            print(new Box().Get())
+            """),
+        ("Enums: Flag-Enums als Attribute an Klassen, Feldern, Methoden; Reflection mit HasFlag/Flags", """
+            #import "reflection"
+            flag enum Test { a = 1, b = 2, c = 4 }
+            [Test a]
+            [Test c]
+            class Sensor {
+                [Test b]
+                int value
+                [Test a, b]
+                int Level { get { return 1 } }
+                [Retry 3]
+                undefined Read() { }
+                construct() { }
+            }
+            class Plain { construct() { } }
+            var t = Type.Of(new Sensor())
+            print(t.HasFlag(Test.a))
+            print(t.HasFlag(Test.b))
+            print(t.Flags(Test.a))
+            print(t.Flags("Test"))
+            print(t.Attributes.count)
+            var m = t.Find("value")
+            print(m.HasFlag(Test.b))
+            print(m.Flags(Test.a))
+            print(t.Find("Level").Flags(Test.a))
+            print(t.Find("Read").HasFlag(Test.a))
+            print(t.Find("Read").FindAttribute("Retry").Args[0])
+            print(Type.Of(new Plain()).HasFlag(Test.a))
+            print(Type.Of(new Plain()).Flags(Test.a)!int)
+            """),
+    }).ToArray();
+
+    // Named arguments (docs/language/08-classes.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Benannte Argumente: Methoden, statisch, Konstruktoren, base, Standardwerte in der Mitte, Reihenfolge der Auswertung", """
+            class Log { static string Seen = ""
+              static int Note(int v) { Log.Seen = Log.Seen + v; return v } }
+            class Shape {
+                string name
+                construct(string name, int width = 10, int height = 20, bool filled = false) {
+                    this.name = name + " " + width + "x" + height + (filled ? " filled" : "")
+                }
+                string Describe(string prefix = "<", string suffix = ">", int times = 1) { return prefix + this.name + suffix + times }
+                static int Area(int w, int h = 2, int scale = 1) { return w * h * scale }
+                int Scaled(int factor = 1, int offset = this.width()) { return factor * 100 + offset }
+                int width() { return 7 }
+            }
+            class Square : Shape {
+                construct(int side) : base("square", side, side) { }
+                string Describe(string prefix = "[", string suffix = "]", int times = 2) { return "sq " + base.Describe(suffix: suffix, prefix: prefix) }
+            }
+            print(new Shape("a").name)
+            print(new Shape("b", height: 5).name)
+            print(new Shape("c", filled: true, width: 3).name)
+            print(new Shape(name: "d").name)
+            var s = new Shape("e", 1, 2)
+            print(s.Describe(suffix: "!"))
+            print(s.Describe(times: 3, prefix: "("))
+            print(s.Describe("{", times: 4))
+            print(Shape.Area(3, scale: 10))
+            print(Shape.Area(h: 4, w: 5))
+            print(s.Scaled(offset: 1))
+            print(s.Scaled(factor: 2))
+            Shape q = new Square(4)
+            print(q.Describe(suffix: ")"))
+            any dyn = new Square(5)
+            print(dyn.Describe(times: 9, prefix: "#"))
+            print(Shape.Area(scale: Log.Note(3), w: Log.Note(1), h: Log.Note(2)))
+            print(Log.Seen)
+            class Holder { Shape kept
+              construct() { this.kept = new Shape("held", height: 1) } }
+            print(new Holder().kept.name)
+            try { dyn.Describe(nope: 1) } catch (ArgumentException e) { print("err " + e.message) }
+            print("abcdef".Substring(count: 2, start: 1))
+            try { print('a'.ToUnicode(x: 1)) } catch (ArgumentException e) { print("err " + e.message) }
             """),
     }).ToArray();
 

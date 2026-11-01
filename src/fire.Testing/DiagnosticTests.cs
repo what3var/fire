@@ -148,6 +148,19 @@ static class DiagnosticTests
             Check("Describe nennt den Text zu einem Code", ErrorCatalog.Describe("E1003") == "Unterminated string literal" && ErrorCatalog.Describe("E1004") == "String literals must not span multiple lines" && ErrorCatalog.Describe("W1") == null);
         }
 
+        // ---- named arguments: the syntax (docs/language/08-classes.md) ----
+        {
+            const string decl = "class C { static int F(int a, int b = 2) { return a * 10 + b } }\n";
+            var (twice, _) = Compile(decl + "print(C.F(a: 1, a: 2))");
+            Check("Benannte Argumente: ein doppelter Name ist ein Syntaxfehler", twice.Count == 1 && twice[0].Message.Contains("named twice") && twice[0].Line == 2, string.Join("\n", twice.Select(d => d.ToLogLine())));
+            var (order, _) = Compile(decl + "print(C.F(b: 1, 2))");
+            Check("Benannte Argumente: ein positionales Argument nach einem benannten ist ein Syntaxfehler", order.Count == 1 && order[0].Message.Contains("positional argument cannot follow"), string.Join("\n", order.Select(d => d.ToLogLine())));
+            var (units, unitsOut) = Compile("var a = 2km\nclass U { static string S(any v) { return \"\" + v } }\nprint(U.S(a:m))\nprint(U.S(v: a))");
+            Check("Benannte Argumente: `a:m` ohne Leerzeichen bleibt die Umrechnung in eine Einheit", units.Count == 0 && unitsOut == "2000m\n2km", string.Join("\n", units.Select(d => d.ToLogLine())) + unitsOut);
+            var (lambda, _) = Compile("var f = (int x) => x\nprint(f(x: 1))");
+            Check("Benannte Argumente: beim Aufruf eines Lambdas nicht moeglich", lambda.Count >= 1 && lambda.Any(d => d.Message.Contains("not possible for a lambda")), string.Join("\n", lambda.Select(d => d.ToLogLine())));
+        }
+
         // ---- a member of a class that is not there is found when the program is compiled ----
         {
             var (misspelled, _) = Compile("#import \"time\"\nvar t = DateTime.Nowx");
@@ -155,7 +168,7 @@ static class DiagnosticTests
             var (instance, _) = Compile("class Box {\n int size\n Grow() { return 1 }\n}\nvar x = Box.Grow()");
             Check("ClassName.Member: ein Instanzmitglied braucht ein Objekt (E4057)", instance.Count == 1 && instance[0].Code == "E4057", string.Join("\n", instance.Select(d => d.ToLogLine())));
             var (fine, fineOut) = Compile("class Base { static int Count = 3\n static Twice(int x) { return x * 2 } }\nclass Derived : Base { }\nenum Kind { A, B }\nprint(Derived.Count + \" \" + Base.Twice(4) + \" \" + Kind.B)");
-            Check("ClassName.Member: statische Felder, Methoden (auch geerbte) und Enum-Werte bleiben erlaubt", fine.Count == 0 && fineOut == "3 8 1", string.Join("\n", fine.Select(d => d.ToLogLine())) + fineOut);
+            Check("ClassName.Member: statische Felder, Methoden (auch geerbte) und Enum-Werte bleiben erlaubt", fine.Count == 0 && fineOut == "3 8 B", string.Join("\n", fine.Select(d => d.ToLogLine())) + fineOut);
             var (clock, clockOut) = Compile("#import \"time\"\nprint((DateTime.Now.Year > 2000) + \" \" + DateTime.UtcNow.Kind + \" \" + DateTime.Now.Kind + \" \" + (DateTime.Today.Hour == 0))");
             Check("DateTime.Now, UtcNow und Today sind Eigenschaften (wie in .NET)", clock.Count == 0 && clockOut == "True utc local True", string.Join("\n", clock.Select(d => d.ToLogLine())) + clockOut);
         }

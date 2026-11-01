@@ -96,8 +96,9 @@ namespace fire.Ast
     /// a non-generic instantiation. Each argument is the plain
     /// name (class/interface/primitive type OR, for an `is in` check,
     /// a unit name) - evaluated/checked only at runtime (VM.
-    /// CheckTypeArgConstraints), since the language is dynamically typed.</summary>
-    public sealed record NewExpr(int Line, TypeRef ClassRef, IReadOnlyList<Expr> Args, IReadOnlyList<string>? TypeArgs = null) : Expr(Line);
+    /// CheckTypeArgConstraints), since the language is dynamically typed.
+    /// ArgNames: the names of named arguments, like CallExpr.ArgNames.</summary>
+    public sealed record NewExpr(int Line, TypeRef ClassRef, IReadOnlyList<Expr> Args, IReadOnlyList<string>? TypeArgs = null, IReadOnlyList<string?>? ArgNames = null) : Expr(Line);
 
     /// <summary>`new Type[sizeExpr]` or `new Type[sizeExpr][sizeExpr]...` -
     /// array allocation, possibly multi-dimensional ("jagged", SPEC 8.4: several
@@ -178,8 +179,9 @@ namespace fire.Ast
     // ---------------------------------------------------------------
     // Postfix: Aufruf / Member / Index / Zuweisung
     // ---------------------------------------------------------------
-    /// <summary>TypeArgs: type arguments written at the call of a generic method (`Pick<string>(a, b)`) - only generic overloads are meant then; null without.</summary>
-    public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null) : Expr(Line);
+    /// <summary>TypeArgs: type arguments written at the call of a generic method (`Pick<string>(a, b)`) - only generic overloads are meant then; null without.
+    /// ArgNames: the names of named arguments (`f(1, size: 2)`: [null, "size"]) - null when no argument is named; the named ones follow the positional ones.</summary>
+    public sealed record CallExpr(int Line, Expr Callee, IReadOnlyList<Expr> Args, IReadOnlyList<TypeRef>? TypeArgs = null, IReadOnlyList<string?>? ArgNames = null) : Expr(Line);
     public sealed record MemberExpr(int Line, Expr Target, string Name) : Expr(Line);
     public sealed record IndexExpr(int Line, Expr Target, Expr Index) : Expr(Line);
     public sealed record AssignExpr(int Line, Expr Target, Expr Value) : Expr(Line);

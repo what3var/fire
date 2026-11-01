@@ -2,7 +2,7 @@
 
 ## Enums
 
-An `enum` gives names to whole numbers:
+An `enum` is a type of its own with named values:
 
 ```fire
 enum Color { Red, Green, Blue }
@@ -12,8 +12,8 @@ enum Status {
     Paused = 20,
     Done            // 21
 }
-print(Color.Green)      // 1
-print(Status.Done)      // 21
+print(Color.Green)      // Green
+print(Status.Done)      // Done
 
 var c = Color.Blue
 if (c == Color.Blue) { print("blue") }
@@ -22,27 +22,99 @@ switch (c) {
         print("red")
     case Color.Blue:
         print("is blue")
+    case default:
+        print("something else")
 }
 ```
 
 - Without a value the first member is `0` and every following one is one more than the one before. An explicit value is an integer literal.
-- A member is written with the enum name: `Color.Red`. The compiler replaces it by its number.
-- An enum value **is an `int`**: it can be compared, calculated with and stored in `int` variables; `Color.Red is of int` is `True`. There is no type
-  `Color` at run time, and `print` shows the number, not the name.
-- Names and numbers: `Color.Name(value)` gives the name of a member (the number as text if no member has it), `Color.Parse("Red")` the value of a
-  name (an `ArgumentException` for an unknown one), `Color.IsDefined(value)` whether a member has the value:
+- A member is written with the enum name: `Color.Red`. The members are separated by commas and may stand on several lines.
+- An enum value is **not an `int`** (like in C#): `Color.Red is of Color` is `True`, `Color.Red is of int` is `False`, and `print` and string
+  concatenation show the name (`"Farbe: " + c` gives `Farbe: Blue`). A value without a member shows its number.
+- `Color` can be used as a type everywhere: `Color c = Color.Red`, parameters, fields, return values. The type checker warns (`TC001`) when an `int` is
+  assigned to a `Color` or a `Color` to an `int`.
+- Converting: `n!Color` makes an enum value of a number, `c!int` the number of an enum value. Comparing with a number (`c == 5`) and calculating
+  (`c + 1`, a plain `int`) still work with the number.
+- `c.ToString()` gives the name as a string.
+
+### Helpers
+
+Every enum has the static helpers `Name`, `Parse`, `IsDefined` and `Values`:
 
 ```fire
 enum Color { Red, Green = 5, Blue }
-print(Color.Name(Color.Blue))   // Blue
-print(Color.Name(42))           // 42
-print(Color.Parse("Green"))     // 5
-print(Color.IsDefined(1))       // False
+print(Color.Name(Color.Blue))       // Blue
+print(Color.Name(42))               // 42
+print(Color.Parse("Green"))         // Green (the member, not the number)
+print(Color.IsDefined(Color.Red))   // True
+print(Color.IsDefined(1))           // False
+foreach (x in Color.Values()) { print(x) }   // Red Green Blue
 try { Color.Parse("Pink") } catch (ArgumentException e) { print(e.message) }
 ```
 
-  (A member called `Name`, `Parse` or `IsDefined` hides the helper of the same name.)
-- The members are separated by commas and may stand on several lines.
+- `Name(v)` gives the name of a member (the number as text if no member has the value), `Parse(text)` the member with that name (an
+  `ArgumentException` for an unknown one), `IsDefined(v)` whether a member has the value, `Values()` an array of all members in the order of the
+  declaration.
+- A member called `Name`, `Parse`, `IsDefined` or `Values` hides the helper of the same name.
+
+### `switch` over an enum
+
+A `switch` over an enum value without `case default` that does not name every member gets the warning `TC010` (also in strict mode - a forgotten
+member is a hint, not an error):
+
+```fire
+switch (c) {            // warning TC010: The switch over 'Color' has no case for Green ...
+    case Color.Red:
+        print("red")
+    case Color.Blue:
+        print("blue")
+}
+```
+
+### Flag enums
+
+A `flag enum` holds values that are combined bit by bit. Its members are usually powers of two:
+
+```fire
+flag enum Access { None = 0, Read = 1, Write = 2, Execute = 4 }
+var a = Access.Read | Access.Write
+print(a)                            // Read, Write
+print(a.HasFlag(Access.Write))      // True
+print(a.HasFlag(Access.Execute))    // False
+print(a & Access.Read)              // Read
+```
+
+- `|`, `&`, `#` (exclusive or) and `~` of two values of the same flag enum give a value of that enum again; `print` shows the names of the flags it combines
+  (`Read, Write`) or the number if a bit has no member.
+- `value.HasFlag(flag)` is `True` when all bits of `flag` are set in `value`.
+- A plain `enum` combined with `|` gives an `int`.
+
+### Flag enums as attributes
+
+A flag enum is also an [attribute](08-classes.md#attributes): `[Access Read]` or `[Access Read, Write]` before a class, a method, a field or a property
+marks it with these flags. Several attributes of the same enum are combined. Reflection reads them:
+
+```fire
+#import "reflection"
+flag enum Test { a = 1, b = 2, c = 4 }
+
+[Test a]
+[Test c]
+class Sensor {
+    [Test b]
+    int value
+}
+
+var t = Type.Of(new Sensor())
+print(t.HasFlag(Test.a))                // True
+print(t.Flags(Test.a))                  // a, c
+print(t.Find("value").HasFlag(Test.b))  // True
+```
+
+- `HasFlag(flag)` on a `Type` or a `Member` says whether the flag is set; `Flags(e)` gives all flags of that enum together (`e` is a member of the enum,
+  `Flags(Test.a)`; with its name as a string, `Flags("Test")`, the result is the number) - `0` if there is no such attribute.
+- A name that is not a member of the enum is a compile error.
+- See [Probes and reflection](16-probes-and-reflection.md).
 
 ## Namespaces
 
@@ -98,4 +170,5 @@ print(Geo.Shape.Describe())         // static members and enum values keep the f
 1. Write an `enum Weekday` and a method that returns `True` for Saturday and Sunday.
 2. Give the members of an `enum HttpStatus` the values `200`, `404` and `500` and print a text for each with `switch`.
 3. Put two classes `Vector` and `Matrix` into a `namespace Math2D` and use them from top-level code - once with full names, once with `#using`.
-4. Why does `print(Color.Red)` print `0` and not `Red`? Write a method `string ColorName(int c)` that returns the name.
+4. Write a `flag enum Permission` with `Read`, `Write` and `Delete` and a method that prints for a combined value whether it may delete.
+5. Mark two classes with a flag-enum attribute and print with reflection which of them has a certain flag.

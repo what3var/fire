@@ -2810,10 +2810,71 @@ namespace fire.Native
             long ArgMask()
             {
                 int at = f.IndexOf[ins.Addr];
+                if (at > 0 && f.Decoded[at - 1].Op == OpCode.ArgNames) at--;
                 if (at == 0 || f.Decoded[at - 1].Op != OpCode.CopyArgs) return 0;
                 long mask = (long)f.Decoded[at - 1].A[0] | ((long)f.Decoded[at - 1].A[1] << 16) | ((long)f.Decoded[at - 1].A[2] << 32) | ((long)f.Decoded[at - 1].A[3] << 48);
                 return mask;
             }
+            // `f(1, size: 2)`: the names of the last arguments (OpCode.ArgNames right in front of the call), null without.
+            string[]? NamesBefore()
+            {
+                int at = f.IndexOf[ins.Addr];
+                return at > 0 && f.Decoded[at - 1] is { Op: OpCode.ArgNames } named ? Str(named.A[0]).Split('|') : null;
+            }
+            // A call with named arguments of a callee that is known (docs/language/08-classes.md): every parameter gets its argument - the positional
+            // ones in order, a named one by its name - or its default value (`Pre` evaluates those). Null when the names do not fit the callee.
+            (string Pre, string Args)? NamedCallArgs(FunctionProto proto, int first, int argc, string[] names, long mask, string self)
+            {
+                if (proto.ParamNames is not { } paramNames) return null;
+                int positional = argc - names.Length;
+                if (positional > proto.ParamCount) return null;
+                var argOf = Enumerable.Repeat(-1, proto.ParamCount).ToArray();
+                for (int i = 0; i < positional; i++) argOf[i] = i;
+                for (int k = 0; k < names.Length; k++)
+                {
+                    int at = Array.IndexOf(paramNames, names[k]);
+                    if (at < 0 || argOf[at] >= 0) return null;
+                    argOf[at] = positional + k;
+                }
+                var pre = new StringBuilder();
+                var args = new StringBuilder();
+                for (int p = 0; p < proto.ParamCount; p++)
+                {
+                    int j = argOf[p];
+                    if (j >= 0)
+                    {
+                        args.Append(", ").Append((mask >> (4 * j) & 15) == 3 && (proto.RefMask >> p & 1) == 0 ? $"ptrRead({S(first + j)})" : S(first + j));
+                        continue;
+                    }
+                    var defaultProto = p < proto.ParamDefaults.Count ? proto.ParamDefaults[p] : null;
+                    if (defaultProto == null) return null;
+                    pre.Append($"Value dv{p} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), &{OwnerList()}); ");
+                    args.Append($", dv{p}");
+                }
+                return (pre.ToString(), args.ToString());
+            }
+            // The ArgumentException of VM.FillNamedArgs when the names do not fit the callee.
+            static string NamedMismatch(FunctionProto proto, int argc, string[] names)
+            {
+                var paramNames = proto.ParamNames ?? Array.Empty<string>();
+                int positional = argc - names.Length;
+                if (positional > proto.ParamCount) return $"Wrong number of arguments: expected {proto.ParamCount}, got {argc}.";
+                var given = new bool[proto.ParamCount];
+                for (int i = 0; i < positional; i++) given[i] = true;
+                foreach (var name in names)
+                {
+                    int at = Array.IndexOf(paramNames, name);
+                    if (at < 0) return $"There is no parameter '{name}'.";
+                    if (given[at]) return $"The parameter '{name}' is given twice.";
+                    given[at] = true;
+                }
+                for (int i = 0; i < proto.ParamCount; i++)
+                    if (!given[i] && (i >= proto.ParamDefaults.Count || proto.ParamDefaults[i] == null)) return $"The parameter '{paramNames[i]}' has no value (and no default value).";
+                return "Named arguments do not fit.";
+            }
+            (string Pre, string Args) NamedCallArgsOrFail(FunctionProto proto, int first, int argc, string[] names, long mask, string self, string what) =>
+                NamedCallArgs(proto, first, argc, names, mask, self)
+                ?? throw new NativeNotSupportedException($"the named arguments {string.Join(", ", names)} do not fit {what}");
             // The arguments for a callee that is known: an address goes to a `ref` parameter, the others get the value.
             string CallArgs(int first, int count, long mask, uint calleeRefs) => string.Concat(Enumerable.Range(0, count).Select(i =>
                 ", " + ((mask >> (4 * i) & 15) == 3 && (calleeRefs >> i & 1) == 0 ? $"ptrRead({S(first + i)})" : S(first + i))));
@@ -3464,8 +3525,10 @@ namespace fire.Native
                     Need(argc);
                     string cls = Str(ins.A[0]), method = Str(ins.A[1]);
                     var rc = FindClass(cls);
+                    var staticNames = NamesBefore();
                     if (rc.IsTypeOverloaded(method, argc))
                     {
+                        if (staticNames != null) throw new NativeNotSupportedException($"named arguments for {cls}.{method}, which is overloaded by type");
                         if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                         return OverloadedCall(rc, method, argc, FuncKind.Static, d - argc, "Undef()", "Static method");
                     }
@@ -3475,13 +3538,18 @@ namespace fire.Native
                     if (rc.FindMethodWithAccess(method, argc) is { } staticFound)
                         AccessCheck(staticFound.DeclaringClass!, staticFound.Access, $"Static method '{method}' of '{staticFound.DeclaringClass!.Name}' is {DescribeAccess(staticFound.Access)} and cannot be called from here.");
                     var target = GetFunc(proto, FuncKind.Static);
-                    var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
+                    var (callee, specCondition) = staticNames != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                     if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
                     string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
+                    var (dpre, dargs) = staticNames != null ? ("", "") : DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
                     string staticArgs = (CallArgs(d - argc, argc, mask, proto.RefMask) + dargs).TrimStart(',', ' ');
+                    if (staticNames != null)
+                    {
+                        (dpre, staticArgs) = NamedCallArgsOrFail(proto, d - argc, argc, staticNames, mask, "Undef()", $"{cls}.{method}");
+                        staticArgs = staticArgs.TrimStart(',', ' ');
+                    }
                     string staticCall = specCondition != null ? $"{specTest}{staticArgs}) : {target.Name}({staticArgs})" : $"{callee.Name}({staticArgs})";
                     E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {staticCall};{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
@@ -3580,6 +3648,8 @@ namespace fire.Native
                     bool owned = ins.Op == OpCode.NewObjectOwned;
                     Need(argc + (owned ? 1 : 0));
                     var cls = RegisterClass(Str(ins.A[0]));
+                    var newNames = NamesBefore();
+                    if (newNames != null && cls.Rc.IsConstructorTypeOverloaded(argc)) throw new NativeNotSupportedException($"named arguments for the constructors of {cls.Rc.Name}, which are overloaded by type");
                     if (cls.Rc.IsConstructorTypeOverloaded(argc)) return OverloadedCall(cls.Rc, "new", argc, FuncKind.Ctor, d - argc - (owned ? 1 : 0), "", "", owned, cls);
                     var ctor = cls.Rc.FindConstructor(argc);
                     if (ctor == null)
@@ -3597,10 +3667,11 @@ namespace fire.Native
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(ctor, argc, "o", "&" + OwnerList());
+                    var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
+                    string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs}); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -3645,6 +3716,41 @@ namespace fire.Native
                     Need(argc + 1);
                     string method = Str(ins.A[0]);
                     int slot = d - argc - 1;
+                    if (NamesBefore() is { } methodNames)
+                    {
+                        // named arguments: per class of the receiver its method with the arguments in the order of its parameters (no dispatcher - its
+                        // arguments are positional); a class whose method does not have these parameters, and any other receiver, is an ArgumentException
+                        var classes = (ObjSlot(slot) ? InstancesOf(ObjClass(Ty(slot))) : _classList).ToList();
+                        long nmask = ArgMask();
+                        ArgsBefore(d - argc, argc, nmask);
+                        var line = new StringBuilder($"if ({S(slot)}.kind == K_Class && leafAlive({S(slot)})) {{ switch (objAt({S(slot)})->cls) {{ ");
+                        foreach (var c in classes)
+                        {
+                            if (c.Rc.IsTypeOverloaded(method, argc) || c.Rc.FindMethodWithAccess(method, argc).Proto is not { IsStatic: false } proto) continue;
+                            if (NamedCallArgs(proto, d - argc, argc, methodNames, nmask, S(slot)) is not { } fitting) continue;
+                            var (npre, nargs) = fitting;
+                            line.Append($"case {c.Id}: {{ {npre}{ClearCallTArgs(proto)}{S(slot)} = {GetFunc(proto, FuncKind.Method).Name}({S(slot)}{nargs}); break; }} ");
+                        }
+                        var anyProto = classes.Select(c => c.Rc.FindMethodWithAccess(method, argc).Proto).FirstOrDefault(p => p is { IsStatic: false });
+                        string noFit = CString(anyProto != null ? NamedMismatch(anyProto, argc, methodNames) : $"Named arguments do not fit '{method}'.");
+                        string notObject = CString($"Named arguments are not possible for the built-in method '{method}'.");
+                        line.Append($"default: {S(slot)} = fireError(\"ArgumentException\", {noFit}); break; }} }} else if ({S(slot)}.kind == K_Class) {S(slot)} = destroyedError({S(slot)}); else ");
+                        // a base-type extension (`class extends string`): its method by the kind of the receiver
+                        foreach (var (kindCpp, extProto, extRc) in ExtensionMethods(method, argc))
+                        {
+                            if (extRc.IsTypeOverloaded(method, argc)) continue;
+                            string fits = NamedCallArgs(extProto, d - argc, argc, methodNames, nmask, S(slot)) is { } extArgs
+                                ? $"{{ {extArgs.Pre}{S(slot)} = {GetFunc(extProto, FuncKind.Method).Name}({S(slot)}{extArgs.Args}); }}"
+                                : $"{S(slot)} = fireError(\"ArgumentException\", {CString(NamedMismatch(extProto, argc, methodNames))});";
+                            line.Append($"if ({S(slot)}.kind == {kindCpp}) {fits} else ");
+                        }
+                        line.Append($"{S(slot)} = fireError(\"ArgumentException\", {notObject});");
+                        E(line.ToString());
+                        ArgsAfter(argc, nmask, S(slot));
+                        Check();
+                        AdoptResult(slot);
+                        d = slot + 1; return Next();
+                    }
                     if (OwnMethodId(method, argc) is { } ownMethodId && !AnyClassHasMethod(method, argc))
                     {
                         string owner = OwnerList();
@@ -3755,6 +3861,8 @@ namespace fire.Native
                     Need(argc); RequireSelf();
                     var rc = FindClass(Str(ins.A[0]));
                     string method = Str(ins.A[1]);
+                    var baseNames = NamesBefore();
+                    if (baseNames != null && rc.IsTypeOverloaded(method, argc)) throw new NativeNotSupportedException($"named arguments for base.{method}, which is overloaded by type");
                     if (rc.IsTypeOverloaded(method, argc)) return OverloadedCall(rc, method, argc, FuncKind.Method, d - argc, "self", "Method");
                     var proto = rc.FindMethodWithAccess(method, argc).Proto ?? throw new NativeNotSupportedException($"{rc.Name}.{method} with {argc} argument(s) not found");
                     if (rc.FindMethodWithAccess(method, argc) is { Proto: not null } baseFound)
@@ -3762,8 +3870,9 @@ namespace fire.Native
                     var target = GetFunc(proto, FuncKind.Method);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(proto, argc, "self", DefaultsList(proto, argc));
-                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, mask, proto.RefMask)}{dargs});{(dpre.Length > 0 ? " }" : "")}");
+                    var (dpre, dargs) = baseNames != null ? NamedCallArgsOrFail(proto, d - argc, argc, baseNames, mask, "self", "base." + method) : DefaultArgs(proto, argc, "self", DefaultsList(proto, argc));
+                    string baseArgs = baseNames != null ? "" : CallArgs(d - argc, argc, mask, proto.RefMask);
+                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}(self{baseArgs}{dargs});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
                     AdoptResult(d - argc, ReturnType(target));
@@ -3890,6 +3999,9 @@ namespace fire.Native
                 }
                 case OpCode.OverloadHint:
                     // (read by the call it stands in front of: OverloadHintBefore)
+                    return Next();
+                case OpCode.ArgNames:
+                    // (read by the call it stands in front of: NamesBefore)
                     return Next();
                 case OpCode.TakeCallTypeArgs:
                     // (a specialised copy knows its type arguments; the caller set them for the generic method all the same)

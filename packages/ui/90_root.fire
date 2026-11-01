@@ -933,11 +933,11 @@ namespace UI {
             this.UpdateCursor(px, py)
         }
 
-        // the cursor the window shows now (-1: not set yet)
-        int shownCursor = -1
+        // the cursor the window shows now (Inherit: not set yet)
+        UI.Cursor shownCursor = UI.Cursor.Inherit
 
         /// <summary>The mouse pointer at (px, py): the element that holds the mouse, else the one below it, asks itself and the elements around it (CursorAt).</summary>
-        int CursorFor(int px, int py) {
+        UI.Cursor CursorFor(int px, int py) {
             Element e = this.pressedElement
             if (e == undefined) { e = this.Hit(px, py) }
             while (e != undefined) {
@@ -952,7 +952,7 @@ namespace UI {
             var c = this.CursorFor(px, py)
             if (c == this.shownCursor) { return }
             this.shownCursor = c
-            if (this.window != undefined) { this.window.Cursor = c }
+            if (this.window != undefined) { this.window.Cursor = c!int }
         }
 
         undefined KeyDown(int key, int mod) {

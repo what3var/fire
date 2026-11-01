@@ -17,7 +17,7 @@ namespace UI.Docking {
         lambda onClose
         UI.Docking.DockManager manager
         // where it was last, for Show() after Hide()/Close()
-        int lastSide = UI.Dock.Left
+        UI.Dock lastSide = UI.Dock.Left
         // its pane's place along the edge
         int lastIndex = -1
         bool wasFloating = false
@@ -75,10 +75,10 @@ namespace UI.Docking {
             }
         }
         // the edge it is docked at (a UI.Dock), -1 when it floats or is hidden
-        int side {
+        UI.Dock side {
             get {
                 var pane = this.Pane()
-                if (pane == undefined || pane.floating) { return -1 }
+                if (pane == undefined || pane.floating) { return (-1)!UI.Dock }
                 return pane.side
             }
         }
@@ -104,7 +104,7 @@ namespace UI.Docking {
         }
 
         // Docks the window at an edge (UI.Dock.Left, Top, Right, Bottom) in a pane of its own.
-        undefined DockTo(int side) {
+        undefined DockTo(UI.Dock side) {
             if (this.manager != undefined) { this.manager.DockTool(this, side) }
         }
 
@@ -171,12 +171,12 @@ namespace UI.Docking {
     class DockPane : UI.Element {
         List windows
         int active = 0
-        int side = UI.Dock.Left
+        UI.Dock side = UI.Dock.Left
         bool floating = false
         // the share of the edge's length (relative to the other panes there)
         int weight = 100
         // where the pane was docked before it floated (double click on the caption docks it there again)
-        int lastSide = UI.Dock.Left
+        UI.Dock lastSide = UI.Dock.Left
         UI.Docking.DockManager manager
         // the part pressed with the mouse: 0 nothing, 1 caption, 2 tab, 3 close button, 4 float button
         int pressedPart = 0
@@ -646,7 +646,7 @@ namespace UI.Docking {
 
         // The edges of a pane frame under the screen position (see resizing).
         // the edges of a floating window resize it
-        int CursorAt(UI.Root root, int px, int py) {
+        UI.Cursor CursorAt(UI.Root root, int px, int py) {
             var edges = this.resizing
             if (edges == 0) { edges = this.EdgesAt(px, py) }
             var left = edges % 2 == 1
@@ -804,7 +804,7 @@ namespace UI.Docking {
         int dragTab = -1
         UI.Docking.ToolStrip dragStrip
         UI.Docking.FloatWindow dragFloat
-        int dragSide = -1
+        UI.Dock dragSide = (-1)!UI.Dock   // (-1: none)
         int dragIndex = -1
         int startSize = 0
         int startA = 0
@@ -812,8 +812,8 @@ namespace UI.Docking {
         int startLenA = 0
         int startLenB = 0
         // what releasing the dragged pane would do (see FindTarget), the guide under the pointer and the shaded area
-        int dropKind = 0
-        int dropSide = -1
+        UI.Docking.Drop dropKind = UI.Docking.Drop.None
+        UI.Dock dropSide = (-1)!UI.Dock   // (-1: none)
         UI.Docking.DockPane dropPane
         UI.Docking.DockPane compassPane
         int hotGuide = -1
@@ -891,7 +891,7 @@ namespace UI.Docking {
             return bar
         }
 
-        UI.Docking.ToolStripPanel PanelOf(int side) {
+        UI.Docking.ToolStripPanel PanelOf(UI.Dock side) {
             if (side == UI.Dock.Top) { return this.topStrips }
             if (side == UI.Dock.Bottom) { return this.bottomStrips }
             if (side == UI.Dock.Left) { return this.leftStrips }
@@ -899,7 +899,7 @@ namespace UI.Docking {
         }
 
         // Docks the strip at an edge (row: -1 a new row; offset -1: after the strips of the row).
-        UI.Docking.ToolStrip AddToolStrip(UI.Docking.ToolStrip strip, int side = UI.Dock.Top, int row = 0, int offset = -1) {
+        UI.Docking.ToolStrip AddToolStrip(UI.Docking.ToolStrip strip, UI.Dock side = UI.Dock.Top, int row = 0, int offset = -1) {
             this.UnplaceStrip(strip)
             strip.manager = this
             this.PanelOf(side).Add(strip, row, offset)
@@ -943,7 +943,7 @@ namespace UI.Docking {
         // All strips: docked and floating.
         List ToolStrips() {
             var list = new List()
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panel = this.PanelOf(side)
                 for (var i = 0; i < panel.strips.count; i = i + 1) { list.Add(panel.strips[i]) }
             }
@@ -956,14 +956,14 @@ namespace UI.Docking {
 
         // ---- tool windows ----
 
-        List PanesOf(int side) {
+        List PanesOf(UI.Dock side) {
             if (side == UI.Dock.Top) { return this.topPanes }
             if (side == UI.Dock.Bottom) { return this.bottomPanes }
             if (side == UI.Dock.Left) { return this.leftPanes }
             return this.rightPanes
         }
 
-        int SizeOf(int side) {
+        int SizeOf(UI.Dock side) {
             if (side == UI.Dock.Top) { return this.topSize }
             if (side == UI.Dock.Bottom) { return this.bottomSize }
             if (side == UI.Dock.Left) { return this.leftSize }
@@ -971,7 +971,7 @@ namespace UI.Docking {
         }
 
         // The width (left, right) or height (top, bottom) of an edge's panes.
-        undefined SetSideSize(int side, int size) {
+        undefined SetSideSize(UI.Dock side, int size) {
             size = UI.M.Max(30, size)
             if (side == UI.Dock.Top) { this.topSize = size }
             else if (side == UI.Dock.Bottom) { this.bottomSize = size }
@@ -1047,7 +1047,7 @@ namespace UI.Docking {
             if (this.sparePanes.IndexOf(pane) < 0) { this.sparePanes.Add(pane) }
         }
 
-        undefined DockPaneAt(UI.Docking.DockPane pane, int side, int index = -1) {
+        undefined DockPaneAt(UI.Docking.DockPane pane, UI.Dock side, int index = -1) {
             pane.side = side
             pane.floating = false
             pane.parent = this
@@ -1109,7 +1109,7 @@ namespace UI.Docking {
         }
 
         // Docks the window at an edge in a pane of its own (at the end of the edge).
-        UI.Docking.ToolWindow Add(UI.Docking.ToolWindow window, int side = UI.Dock.Left) {
+        UI.Docking.ToolWindow Add(UI.Docking.ToolWindow window, UI.Dock side = UI.Dock.Left) {
             this.DockTool(window, side)
             return window
         }
@@ -1135,7 +1135,7 @@ namespace UI.Docking {
             return window
         }
 
-        undefined DockTool(UI.Docking.ToolWindow window, int side) {
+        undefined DockTool(UI.Docking.ToolWindow window, UI.Dock side) {
             this.Adopt(window)
             this.Detach(window)
             var pane = this.NewPane()
@@ -1217,7 +1217,7 @@ namespace UI.Docking {
         // All tool windows: docked, floating and hidden.
         List ToolWindows() {
             var list = new List()
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.count; i = i + 1) {
                     var p = panes[i]
@@ -1263,7 +1263,7 @@ namespace UI.Docking {
             this.ch = h
         }
 
-        undefined SetRect(int side, int x, int y, int w, int h) {
+        undefined SetRect(UI.Dock side, int x, int y, int w, int h) {
             var i = side * 4
             this.sideRects[i] = x
             this.sideRects[i + 1] = y
@@ -1354,7 +1354,7 @@ namespace UI.Docking {
             this.centerY = cy
             this.centerW = UI.M.Max(0, cw)
             this.centerH = UI.M.Max(0, ch)
-            for (var side = 0; side < 4; side = side + 1) { this.LayoutSide(root, side) }
+            foreach (side in UI.Dock.Values()) { this.LayoutSide(root, side) }
             var c = this.content
             if (c != undefined) {
                 c.Measure(root, this.centerW, this.centerH)
@@ -1371,7 +1371,7 @@ namespace UI.Docking {
         }
 
         // Arranges the panes of an edge one after the other (below one another at the left and right edge), sharing the length by their weight.
-        undefined LayoutSide(UI.Root root, int side) {
+        undefined LayoutSide(UI.Root root, UI.Dock side) {
             var panes = this.PanesOf(side)
             var n = panes.count
             if (n == 0) { return }
@@ -1410,7 +1410,7 @@ namespace UI.Docking {
             this.leftStrips.Poll(root)
             this.rightStrips.Poll(root)
             if (this.statusBar != undefined) { this.statusBar.Poll(root) }
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.count; i = i + 1) { panes[i].Poll(root) }
             }
@@ -1426,7 +1426,7 @@ namespace UI.Docking {
             this.DrawChild(root, this.leftStrips)
             this.DrawChild(root, this.rightStrips)
             if (this.statusBar != undefined) { this.DrawChild(root, this.statusBar) }
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.count; i = i + 1) { this.DrawChild(root, panes[i]) }
             }
@@ -1458,7 +1458,7 @@ namespace UI.Docking {
                 var hs = this.statusBar.HitTest(px, py)
                 if (hs != undefined) { return hs }
             }
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var hp = this.PanelOf(side).HitTest(px, py)
                 if (hp != undefined) { return hp }
                 var panes = this.PanesOf(side)
@@ -1478,7 +1478,7 @@ namespace UI.Docking {
             if (!this.Visible || !this.Enabled) { return }
             this.topStrips.Collect(list)
             this.leftStrips.Collect(list)
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.count; i = i + 1) { panes[i].Collect(list) }
             }
@@ -1493,7 +1493,7 @@ namespace UI.Docking {
             if (this.Name == name) { return this }
             UI.Element found = undefined
             if (this.content != undefined) { found = this.content.FindName(name) }
-            for (var side = 0; side < 4 && found == undefined; side = side + 1) { found = this.PanelOf(side).FindName(name) }
+            foreach (side in UI.Dock.Values()) { if (found == undefined) { found = this.PanelOf(side).FindName(name) } }
             if (found == undefined && this.statusBar != undefined) { found = this.statusBar.FindName(name) }
             var all = this.ToolWindows()
             for (var i = 0; i < all.count && found == undefined; i = i + 1) { found = all[i].FindName(name) }
@@ -1505,7 +1505,7 @@ namespace UI.Docking {
 
         // The splitter at the position relative to the manager: sets dragKind (3 edge, 4 between panes), dragSide and dragIndex; false if there is none.
         // over a splitter (or while one is dragged): the arrows of its direction
-        int CursorAt(UI.Root root, int px, int py) {
+        UI.Cursor CursorAt(UI.Root root, int px, int py) {
             var kind = this.dragKind
             var side = this.dragSide
             var index = this.dragIndex
@@ -1536,7 +1536,7 @@ namespace UI.Docking {
 
         bool SplitterAt(int x, int y) {
             var s = this.splitter
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 if (panes.count == 0) { continue }
                 var i0 = side * 4
@@ -1631,7 +1631,7 @@ namespace UI.Docking {
             this.dragStrip = undefined
             this.dragFloat = undefined
             this.dragTab = -1
-            this.dragSide = -1
+            this.dragSide = (-1)!UI.Dock
             this.dragIndex = -1
             this.dropKind = UI.Docking.Drop.None
             this.dropPane = undefined
@@ -1721,7 +1721,7 @@ namespace UI.Docking {
 
         // The docked pane at the position relative to the manager.
         UI.Docking.DockPane DockedPaneAt(int x, int y) {
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
                 for (var i = 0; i < panes.count; i = i + 1) {
                     var p = panes[i]
@@ -1801,7 +1801,7 @@ namespace UI.Docking {
                     return
                 }
             }
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 if (!this.OverGuide(side, x, y)) { continue }
                 this.hotGuide = side
                 this.dropKind = UI.Docking.Drop.Side
@@ -1867,7 +1867,7 @@ namespace UI.Docking {
         UI.Docking.ToolStripPanel PanelZoneAt(int x, int y, UI.Docking.ToolStrip strip) {
             any current = strip.parent
             if (current != undefined && current is of UI.Docking.ToolStripPanel && this.InZone(current, x, y, 26)) { return current }
-            for (var side = 0; side < 4; side = side + 1) {
+            foreach (side in UI.Dock.Values()) {
                 var panel = this.PanelOf(side)
                 if (panel != current && this.InZone(panel, x, y, 14)) { return panel }
             }
@@ -1980,17 +1980,17 @@ namespace UI.Docking {
                 r.AlphaBlending = blending
                 r.DrawRect(this.ax + this.previewX, this.ay + this.previewY, this.previewW, this.previewH, new Pen(color, 2))
             }
-            for (var side = 0; side < 4; side = side + 1) { this.DrawGuide(root, side, side) }
+            foreach (side in UI.Dock.Values()) { this.DrawGuide(root, side!int, side!int) }
             var p = this.compassPane
             if (p != undefined) {
                 var vertical = p.side == UI.Dock.Left || p.side == UI.Dock.Right
                 this.DrawGuide(root, 4, 4)
                 if (vertical) {
-                    this.DrawGuide(root, 5, UI.Dock.Top)
-                    this.DrawGuide(root, 6, UI.Dock.Bottom)
+                    this.DrawGuide(root, 5, UI.Dock.Top!int)
+                    this.DrawGuide(root, 6, UI.Dock.Bottom!int)
                 } else {
-                    this.DrawGuide(root, 5, UI.Dock.Left)
-                    this.DrawGuide(root, 6, UI.Dock.Right)
+                    this.DrawGuide(root, 5, UI.Dock.Left!int)
+                    this.DrawGuide(root, 6, UI.Dock.Right!int)
                 }
             }
         }

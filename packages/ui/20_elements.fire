@@ -19,10 +19,10 @@ namespace UI {
         int MaxWidth = -1
         int MaxHeight = -1
         Thickness Margin
-        int HorizontalAlign = UI.HAlign.Stretch
-        int VerticalAlign = UI.VAlign.Stretch
+        UI.HAlign HorizontalAlign = UI.HAlign.Stretch
+        UI.VAlign VerticalAlign = UI.VAlign.Stretch
         // Attached properties of the containers: DockPanel (Dock), Grid (GridRow, GridColumn, GridRowSpan, GridColumnSpan)
-        int Dock = UI.Dock.Left
+        UI.Dock Dock = UI.Dock.Left
         int GridRow = 0
         int GridColumn = 0
         int GridRowSpan = 1
@@ -30,7 +30,7 @@ namespace UI {
         bool Visible = true
         bool Enabled = true
         // the mouse pointer over the element (UI.Cursor; -1: that of the element around it)
-        int cursor = -1
+        UI.Cursor cursor = UI.Cursor.Inherit
         bool Hover = false
         bool Pressed = false
         bool Focused = false
@@ -418,15 +418,15 @@ namespace UI {
         // The mouse wheel: dy > 0 means up. Returns true if the element consumed it (otherwise the root asks the container).
         bool MouseWheel(Root root, int dx, int dy) { return false }
 
-        /// <summary>The mouse pointer over the element (UI.Cursor.Arrow, IBeam, Hand, SizeWE, ...; -1: that of the element around it).</summary>
-        int Cursor {
+        /// <summary>The mouse pointer over the element (UI.Cursor.Arrow, IBeam, Hand, SizeWE, ...; Inherit: that of the element around it).</summary>
+        UI.Cursor Cursor {
             get { return this.cursor }
             set { this.cursor = value }
         }
 
         /// <summary>The mouse pointer at (px, py) over the element (or while it holds the mouse): Cursor; an element whose parts want different ones (a
-        /// splitter, a grip) overrides it. -1: the element around it decides.</summary>
-        int CursorAt(Root root, int px, int py) { return this.cursor }
+        /// splitter, a grip) overrides it. Inherit: the element around it decides.</summary>
+        UI.Cursor CursorAt(Root root, int px, int py) { return this.cursor }
 
         // For a floating element: a click outside. It closes (and consumes the click if it hit its owner `owner`).
         bool PopupOutside(Root root, int px, int py) {
@@ -676,7 +676,7 @@ namespace UI {
         }
 
         // A child with the side it lies on: `dock.AddDocked(element, UI.Dock.Top)`.
-        undefined AddDocked(Element child, int side) {
+        undefined AddDocked(Element child, UI.Dock side) {
             child.Dock = side
             this.Add(child)
         }

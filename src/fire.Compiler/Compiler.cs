@@ -74,7 +74,7 @@ namespace fire.Compiler
     public sealed class Compiler
     {
         /// <summary>The run-time types of the enums of the program (Values.EnumType), by full name.</summary>
-        private readonly Dictionary<string, EnumType> _enumTypes = new(StringComparer.Ordinal);
+        private Dictionary<string, EnumType> _enumTypes = new(StringComparer.Ordinal);   // (shared with the compilers of the methods, lambdas and default values)
 
         /// <summary>The enum a type name means (its full name, or the name in the namespace of the class that is compiled), or null.</summary>
         private EnumType? EnumTypeNamed(string name)
@@ -1040,7 +1040,7 @@ namespace fire.Compiler
             for (int i = 0; i < parms.Count; i++)
             {
                 if (parms[i].DefaultValue == null) continue;
-                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
+                var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
                 inner.CompileExpr(parms[i].DefaultValue!);
                 inner._chunk.EmitOp(OpCode.Return);
                 defaults[i] = new FunctionProto(inner._chunk, 0, AccessModifier.Private);
@@ -1063,7 +1063,7 @@ namespace fire.Compiler
 
         private FunctionProto CompileFieldInitProto(RuntimeClass rc, TypeRef? type, Expr? initializer, bool isStatic = false, int line = 0)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             inner._chunk.OwnerClass = rc;
             if (initializer != null)
             {
@@ -1261,7 +1261,7 @@ namespace fire.Compiler
         /// collide with the shadow slots.</summary>
         private void CompileFireStmt(FireStmt fs)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -1311,7 +1311,7 @@ namespace fire.Compiler
         /// HandleDeliveredThreadException), not here at this place.</summary>
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -1333,7 +1333,7 @@ namespace fire.Compiler
         /// no "kind" of terminate) and with the other register opcode.</summary>
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
-            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -1350,7 +1350,7 @@ namespace fire.Compiler
         private FunctionProto CompileMethodProto(RuntimeClass? rc, IReadOnlyList<LambdaParam> parms, Stmt.BlockStmt body, AccessModifier access, bool isStatic = false, string? returnUnit = null,
             IReadOnlyList<TypeParam>? typeParams = null)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             inner._methodTypeParams = typeParams;
             inner._chunk.OwnerClass = rc;
             inner._returnUnit = returnUnit;
@@ -1369,7 +1369,7 @@ namespace fire.Compiler
             inner._chunk.EmitOp(OpCode.Return);
             return new FunctionProto(inner._chunk, parms.Count, access, CompileParamDefaults(rc, parms), isStatic)
             {
-                RefMask = RefMaskOf(parms), ParamTypes = inner.OverloadTypesOf(parms, rc), TypeParamCount = typeParams?.Count ?? 0,
+                RefMask = RefMaskOf(parms), ParamTypes = inner.OverloadTypesOf(parms, rc), TypeParamCount = typeParams?.Count ?? 0, ParamNames = parms.Select(p => p.Name).ToArray(),
             };
         }
 
@@ -1414,7 +1414,7 @@ namespace fire.Compiler
         /// uniformly through the same mechanism.</summary>
         private FunctionProto CompileConstructorProto(RuntimeClass rc, ConstructorDecl? ctor, AccessModifier access)
         {
-            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, rc, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             inner._chunk.OwnerClass = rc;
             // the base call and the field initialisers belong to the line of `construct` (of the class, when it declares none): a debugger shows that, not line 0
             int headerLine = ctor?.Line ?? rc.Decl?.Line ?? 0;
@@ -1477,6 +1477,7 @@ namespace fire.Compiler
             return new FunctionProto(inner._chunk, ctor?.Params.Count ?? 0, access, paramDefaults)
             {
                 RefMask = ctor != null ? RefMaskOf(ctor.Params) : 0, ParamTypes = ctor != null ? inner.OverloadTypesOf(ctor.Params, rc) : null,
+                ParamNames = ctor?.Params.Select(p => p.Name).ToArray() ?? Array.Empty<string>(),
             };
         }
 
@@ -2248,6 +2249,7 @@ namespace fire.Compiler
         private void EmitOverloadHint(Expr call)
         {
             if (s_overloadHints == null || NoOverloadHints || !s_overloadHints.TryGetValue(call, out var hint)) return;
+            if (call is CallExpr { ArgNames: not null } or NewExpr { ArgNames: not null }) return;   // (the hint assumes the arguments in the order of the parameters)
             _chunk.EmitOp(OpCode.OverloadHint);
             _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(hint)));
         }
@@ -2428,6 +2430,7 @@ namespace fire.Compiler
                     ulong newCopyMask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                     EmitTypeArgs(ne);
                     EmitCopyArgsPrefix(newCopyMask);
+                    EmitArgNames(ne.ArgNames);
                     _chunk.EmitOp(OpCode.NewObject);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                     _chunk.EmitByte((byte)ne.Args.Count);
@@ -2632,7 +2635,7 @@ namespace fire.Compiler
 
         private void CompileLambda(LambdaExpr lambda)
         {
-            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams);
+            var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             inner._chunk.OwnerClass = _enclosingClass;
             // in generic code the lambda takes the type parameters it uses along (it has no `this` and no call of its own to take them from)
             inner._methodTypeParams = _methodTypeParams;
@@ -2654,7 +2657,10 @@ namespace fire.Compiler
             inner.EmitLoadConst(Value.MakeUndefined());
             inner._chunk.EmitOp(OpCode.Return);
 
-            var proto = new FunctionProto(inner._chunk, lambda.Params.Count, AccessModifier.Public, CompileParamDefaults(_enclosingClass, lambda.Params));
+            var proto = new FunctionProto(inner._chunk, lambda.Params.Count, AccessModifier.Public, CompileParamDefaults(_enclosingClass, lambda.Params))
+            {
+                ParamNames = lambda.Params.Select(p => p.Name).ToArray(),
+            };
             if (Reflection) proto.SelectorPath = TrySelectorPath(lambda);
             int protoIdx = _chunk.AddFunctionProto(proto);
 
@@ -2812,6 +2818,7 @@ namespace fire.Compiler
                 ulong mask = CompileArgs(ne.Args, scopeCreating: true, _refParams.ForConstructor(ResolveNewClassName(ne), ne.Args.Count));
                 EmitTypeArgs(ne);
                 EmitCopyArgsPrefix(mask);
+                EmitArgNames(ne.ArgNames);
                 _chunk.EmitOp(OpCode.NewObjectOwned);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(ResolveNewClassName(ne))));
                 _chunk.EmitByte((byte)ne.Args.Count);
@@ -2834,12 +2841,28 @@ namespace fire.Compiler
             return false;
         }
 
+        /// <summary>`f(1, size: 2)`: the names of the named arguments for the call that follows (OpCode.ArgNames; nothing without).</summary>
+        private void EmitArgNames(IReadOnlyList<string?>? names)
+        {
+            if (names == null) return;
+            var named = names.Where(n => n != null).ToList();
+            if (named.Count == 0) return;
+            _chunk.EmitOp(OpCode.ArgNames);
+            _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(string.Join("|", named))));
+        }
+
+        private static void RejectArgNames(CallExpr call, string what)
+        {
+            if (call.ArgNames != null) throw new CompilerException($"Named arguments are not possible for {what}.", call.Line);
+        }
+
         private void CompileCall(CallExpr call)
         {
             if (call.Callee is IdentifierExpr calleeId && _refs.TryGetValue(calleeId, out var resolved))
             {
                 if (resolved is ResolvedRef.Native nativeRef)
                 {
+                    RejectArgNames(call, "a native function");
                     foreach (var arg in call.Args) CompileExpr(arg);
                     _chunk.EmitOp(OpCode.CallNative);
                     _chunk.EmitU16(_natives.IndexOf(nativeRef.Name));
@@ -2849,6 +2872,7 @@ namespace fire.Compiler
 
                 if (resolved is ResolvedRef.Extern ext)
                 {
+                    RejectArgNames(call, "an extern function");
                     // Unlike with an unknown identifier this is here
                     // NO compile error - 'extern' only declares the
                     // signature, the actual implementation is only linked by the
@@ -2871,6 +2895,7 @@ namespace fire.Compiler
                     ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count));
                     EmitCallTypeArgs(call);
                     EmitCopyArgsPrefix(callCopyMask);
+                    EmitArgNames(call.ArgNames);
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(callSm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
@@ -2882,6 +2907,7 @@ namespace fire.Compiler
                 {
                     CompileExpr(calleeId);
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    RejectArgNames(call, "a lambda");
                     _chunk.EmitOp(OpCode.Call);
                     _chunk.EmitByte((byte)call.Args.Count);
                     return;
@@ -2898,6 +2924,7 @@ namespace fire.Compiler
                     ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(calleeId.Name, call.Args.Count));
                     EmitCallTypeArgs(call);
                     EmitCopyArgsPrefix(callCopyMask);
+                    EmitArgNames(call.ArgNames);
                     _chunk.EmitOp(OpCode.CallMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(calleeId.Name)));
                     _chunk.EmitByte((byte)call.Args.Count);
@@ -2909,6 +2936,7 @@ namespace fire.Compiler
             {
                 if (me.Name == "resume")
                 {
+                    RejectArgNames(call, "'resume'");
                     // 'resume' is a reserved method name (like GetIndex/
                     // SetIndex/GetEnumerator) - no real method call,
                     // but jumps back directly to the frozen throw site via an opcode of its own
@@ -2940,6 +2968,7 @@ namespace fire.Compiler
                     ulong memberCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
                     EmitCallTypeArgs(call);
                     EmitCopyArgsPrefix(memberCopyMask);
+                    EmitArgNames(call.ArgNames);
                     _chunk.EmitOp(OpCode.CallStaticMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(sm.ClassName)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -2965,6 +2994,7 @@ namespace fire.Compiler
 
                     EmitCopyArgsPrefix(staticCopyMask);
 
+                    EmitArgNames(call.ArgNames);
                     _chunk.EmitOp(OpCode.CallBaseMethod);
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(_enclosingClass.Base.Name)));
                     _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
@@ -2977,6 +3007,7 @@ namespace fire.Compiler
                     // `this.OnClick()`: read the field, call the lambda in it
                     CompileExpr(me);
                     EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+                    RejectArgNames(call, "a lambda");
                     _chunk.EmitOp(OpCode.Call);
                     _chunk.EmitByte((byte)call.Args.Count);
                     return;
@@ -2986,6 +3017,7 @@ namespace fire.Compiler
                 ulong callCopyMask = CompileArgs(call.Args, scopeCreating: true, _refParams.ForMethod(me.Name, call.Args.Count));
                 EmitCallTypeArgs(call);
                 EmitCopyArgsPrefix(callCopyMask);
+                EmitArgNames(call.ArgNames);
                 _chunk.EmitOp(OpCode.CallMethod);
                 _chunk.EmitU16(_chunk.AddConstant(Value.MakeString(me.Name)));
                 _chunk.EmitByte((byte)call.Args.Count);
@@ -2994,6 +3026,7 @@ namespace fire.Compiler
 
             CompileExpr(call.Callee);
             EmitCopyArgsPrefix(CompileArgs(call.Args, scopeCreating: true));
+            RejectArgNames(call, "a lambda");
             _chunk.EmitOp(OpCode.Call);
             _chunk.EmitByte((byte)call.Args.Count);
         }

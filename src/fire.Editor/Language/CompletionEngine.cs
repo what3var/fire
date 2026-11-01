@@ -112,7 +112,63 @@ namespace fire.Editor
             if (IsAfterNew(source, start))
                 return GetClassNameSuggestions(offset, index, idPrefix);
 
-            return GetIdentifierSuggestions(offset, index, idPrefix);
+            var suggestions = GetIdentifierSuggestions(offset, index, idPrefix);
+            AddNamedArgumentSuggestions(suggestions, source, start, index, idPrefix);
+            return suggestions;
+        }
+
+        /// <summary>At the start of an argument (`f(1, |` or `new Box(|`): the parameters of the called method or constructor as `name: ` (named
+        /// arguments, docs/language/08-classes.md), the ones already named left out.</summary>
+        private static void AddNamedArgumentSuggestions(List<CompletionItem> results, string source, int beforeWord, ScriptSymbolIndex index, string prefix)
+        {
+            int k = beforeWord;
+            while (k >= 0 && source[k] is ' ' or '\t') k--;
+            if (k < 0 || source[k] is not ('(' or ',')) return;
+            // the opening parenthesis of this argument list (nested parentheses, brackets and braces skipped; strings roughly)
+            int depth = 0;
+            int open = -1;
+            for (int j = k; j >= 0 && j > k - 4000; j--)
+            {
+                char ch = source[j];
+                if (ch is ')' or ']' or '}') depth++;
+                else if (ch is '(' or '[' or '{')
+                {
+                    if (depth == 0) { if (ch == '(') open = j; break; }
+                    depth--;
+                }
+            }
+            if (open < 0) return;
+            string args = source.Substring(open + 1, Math.Max(0, beforeWord + 1 - (open + 1)));
+            var given = System.Text.RegularExpressions.Regex.Matches(args, @"(?:^|,)\s*([A-Za-z_][A-Za-z0-9_]*):\s").Select(m => m.Groups[1].Value).ToHashSet();
+            int nameEnd = open - 1;
+            while (nameEnd >= 0 && source[nameEnd] is ' ' or '\t') nameEnd--;
+            int nameStart = nameEnd;
+            while (nameStart >= 0 && (char.IsLetterOrDigit(source[nameStart]) || source[nameStart] is '_' or '.')) nameStart--;
+            string callee = source.Substring(nameStart + 1, nameEnd - nameStart);
+            if (callee.Length == 0) return;
+            IEnumerable<MemberInfo> members;
+            if (IsAfterNew(source, nameStart))
+            {
+                if (index.TryFindClass(callee, open) is not { } cls) return;
+                members = index.MembersOfWithDepth(cls).Where(x => x.Depth == 0 && x.Member.Kind == MemberKind.Constructor).Select(x => x.Member);
+            }
+            else
+            {
+                int dot = callee.LastIndexOf('.');
+                string method = dot >= 0 ? callee.Substring(dot + 1) : callee;
+                string? cls = null;
+                if (dot >= 0)
+                {
+                    var receiver = index.ResolveReceiver(nameStart + 1 + dot);
+                    if (receiver.Kind is TypeKind.Instance or TypeKind.Static) cls = receiver.Name;
+                }
+                else cls = index.EnclosingClassAt(open);
+                if (cls == null) return;
+                members = index.MembersOfWithDepth(cls).Where(x => x.Member.Kind == MemberKind.Method && x.Member.Name == method).Select(x => x.Member);
+            }
+            foreach (var name in members.SelectMany(m => m.ParamNames).Distinct())
+                if (!given.Contains(name) && MatchesPrefix(name, prefix))
+                    results.Add(new CompletionItem(name + ": ", CompletionKind.Parameter, CompareKeywords(prefix, name, 0.4f), "named argument"));
         }
 
         // The text BEFORE the cursor in a '#using' line (group 1: what has already been typed

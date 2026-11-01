@@ -2484,7 +2484,12 @@ namespace fire.Compiler
                     string memberName = Expect(TokenType.Identifier, "Expected an enum member name").Lexeme;
                     Expr? valueExpr = null;
                     if (Match(TokenType.Assign))
+                    {
                         valueExpr = ParseExpression();
+                        // `Inherit = -1`: a negative literal is a literal too
+                        if (valueExpr is UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value.Kind: ValueKind.Int } negated })
+                            valueExpr = new LiteralExpr(negated.Line, Value.MakeInt(-negated.Value.AsInt()));
+                    }
                     members.Add(new EnumMember(memberName, valueExpr));
                 } while (Match(TokenType.Comma));
             }
@@ -3090,14 +3095,43 @@ namespace fire.Compiler
             return parms;
         }
 
-        private List<Expr> ParseArgList()
+        private List<Expr> ParseArgList() => ParseArgList(out var names, allowNames: false);
+
+        /// <summary>`(a, b, size: 3, name: "x")`: the arguments, and in `names` the names of the named ones (null for a positional one; `names` is null when
+        /// none is named). Named arguments follow the positional ones, each name once (docs/language/08-classes.md).</summary>
+        /// <summary>`size: 3` at the start of an argument: a name, ':' and a value. `x:m`, `x:` and `x::m` (directly after the colon a unit, or nothing) stay
+        /// unit conversions (docs/language/05-units.md) - a named argument has a space after the colon or a value that is not a word.</summary>
+        private bool IsNamedArgumentStart()
+        {
+            if (!Check(TokenType.Identifier) || PeekAt(1).Type != TokenType.Colon || PeekAt(1).Line != Peek().Line) return false;
+            var colon = PeekAt(1);
+            var after = PeekAt(2);
+            if (after.Type is TokenType.Colon or TokenType.RParen or TokenType.Comma or TokenType.Eof) return false;
+            bool adjacent = after.Line == colon.Line && after.Column == colon.Column + 1 && !after.NewlineBefore;
+            return !(adjacent && (after.Type == TokenType.Identifier || IsCustomUnitWordAt(2)));
+        }
+
+        private List<Expr> ParseArgList(out List<string?>? names, bool allowNames = true)
         {
             Expect(TokenType.LParen, "Expected '('");
             var args = new List<Expr>();
+            names = null;
             if (!Check(TokenType.RParen))
             {
                 do
                 {
+                    if (IsNamedArgumentStart())
+                    {
+                        var nameTok = Advance();
+                        if (!allowNames) throw Error("Named arguments are not possible here", nameTok);
+                        Advance();   // ':'
+                        names ??= Enumerable.Repeat<string?>(null, args.Count).ToList();
+                        if (names.Contains(nameTok.Lexeme)) throw Error($"The argument '{nameTok.Lexeme}' is named twice", nameTok);
+                        names.Add(nameTok.Lexeme);
+                        args.Add(ParseExpression());
+                        continue;
+                    }
+                    if (names != null) throw Error("A positional argument cannot follow a named one", Peek());
                     args.Add(ParseExpression());
                 } while (Match(TokenType.Comma));
             }
@@ -3489,8 +3523,8 @@ namespace fire.Compiler
                 else if (Check(TokenType.LParen))
                 {
                     int line = Peek().Line;
-                    var args = ParseArgList();
-                    expr = new CallExpr(line, expr, args);
+                    var args = ParseArgList(out var argNames);
+                    expr = new CallExpr(line, expr, args, ArgNames: argNames);
                 }
                 else if (Check(TokenType.Lt) && expr is IdentifierExpr or MemberExpr && TypeArgListEnd(0) is var typeArgsEnd and > 0
                          && PeekAt(typeArgsEnd).Type == TokenType.LParen && PeekAt(typeArgsEnd).Line == Peek().Line)
@@ -3498,8 +3532,8 @@ namespace fire.Compiler
                     // `Pick<string>(a, b)`: the type arguments of a generic method, written at the call
                     int line = Peek().Line;
                     var typeArgs = ParseTypeArgRefs();
-                    var args = ParseArgList();
-                    expr = new CallExpr(line, expr, args, typeArgs);
+                    var args = ParseArgList(out var argNames);
+                    expr = new CallExpr(line, expr, args, typeArgs, argNames);
                 }
                 else if (Check(TokenType.LBracket))
                 {
@@ -3776,8 +3810,8 @@ namespace fire.Compiler
                     // '<name, name>' grammar as with the declaration).
                     var typeArgRefs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
                     var typeArgs = typeArgRefs?.Select(TypeArgName).ToList() ?? new List<string>();
-                    var args = ParseArgList();
-                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces(), TypeArgCount: typeArgs.Count, TypeArgs: typeArgRefs), args, typeArgs);
+                    var args = ParseArgList(out var argNames);
+                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces(), TypeArgCount: typeArgs.Count, TypeArgs: typeArgRefs), args, typeArgs, argNames);
                 }
 
                 case TokenType.Throw:

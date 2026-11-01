@@ -2211,7 +2211,11 @@ namespace fire.Runtime
             }
         }
 
-        private void StoreSite(int site, SiteCache entry) => _chunk.EnsureSiteCaches()[site] = entry;
+        private void StoreSite(int site, SiteCache entry)
+        {
+            if (entry.Proto != null && _pendingArgNames != null) return;   // (a call with named arguments takes the slow route: FillNamedArgs)
+            _chunk.EnsureSiteCaches()[site] = entry;
+        }
 
         private SiteCache? LookupSite(int site) => _chunk.SiteCaches?[site];
 
@@ -2993,6 +2997,7 @@ namespace fire.Runtime
                     return;
                 }
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                RejectArgNames("the built-in method '" + methodName + "'");
                 if (TryCallBuiltinMethod(target, methodName, args, out Value builtinResult))
                 {
                     AdoptFresh(builtinResult);
@@ -3015,6 +3020,7 @@ namespace fire.Runtime
             if (obj.Mailbox != null)
             {
                 if (copyMask != 0) ApplyCopyMaskToArgs(args, copyMask);
+                RejectArgNames("a method of an actor");
                 obj.Mailbox.Enqueue(new ActorMessage(methodName, args));
                 Push(Value.MakeUndefined());
                 return;
@@ -4308,6 +4314,13 @@ namespace fire.Runtime
                     _pendingHint = parsed[hintIdx] ??= OverloadHint.Of(_constants[hintIdx].AsString());
                     break;
                 }
+                case OpCode.ArgNames:
+                {
+                    string text = _constants[ReadU16()].AsString();
+                    if (!_argNameLists.TryGetValue(text, out var names)) _argNameLists[text] = names = text.Split('|');
+                    _pendingArgNames = names;
+                    break;
+                }
                 case OpCode.TakeCallTypeArgs: _currentScope.TypeArgs = _pendingCallTypeArgs; _pendingCallTypeArgs = null; break;
                 case OpCode.GuardTop: OpGuardTop(); break;
                 case OpCode.GuardTopType: OpGuardTopType(); break;
@@ -5510,6 +5523,7 @@ namespace fire.Runtime
 
         private Value? CallMethodNested(ObjectInstance obj, string methodName, Value[] args)
         {
+            _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var rc = ResolveClass(obj.ClassName);
             var (proto, declaringRcNested, accessNested) = FindOverload(rc, methodName, args, obj);
             if (proto == null)
@@ -5560,6 +5574,7 @@ namespace fire.Runtime
         /// instance properties).</summary>
         private Value? CallStaticMethodNested(RuntimeClass rc, string methodName, Value[] args)
         {
+            _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var (proto, declaringRcNested, accessNested) = FindOverload(rc, methodName, args, null);
             if (proto == null)
                 throw new InvalidOperationException(
@@ -5608,6 +5623,7 @@ namespace fire.Runtime
         /// to recursively build yet ANOTHER exception for it.</summary>
         private ObjectInstance ConstructNested(RuntimeClass rc, Value[] args)
         {
+            _pendingArgNames = null;   // (a call the VM makes itself has no named arguments - the names of a call that threw stay unused)
             var ctorProto = FindConstructorFor(rc, args)
                 ?? throw new ScriptErrorException("ArgumentException", DescribeConstructorNotFound(rc, args.Length));
             var instance = new ObjectInstance(rc.Name, _currentScope, rc);
@@ -6373,6 +6389,11 @@ namespace fire.Runtime
         /// sense at this point (e.g. free-standing lambdas without an `on` binding).</summary>
         private Value[] FillDefaultArgs(FunctionProto proto, Value[] suppliedArgs, object? thisForDefaults)
         {
+            if (_pendingArgNames is { } names)
+            {
+                _pendingArgNames = null;
+                return FillNamedArgs(proto, suppliedArgs, names, thisForDefaults);
+            }
             if (suppliedArgs.Length == proto.ParamCount) return suppliedArgs;
 
             var result = new Value[proto.ParamCount];
@@ -6384,6 +6405,48 @@ namespace fire.Runtime
                     throw new InvalidOperationException(
                         $"Internal error: parameter {i} of the call target has no default value " +
                         "(CheckArity should have caught this).");
+                result[i] = EvaluateDefaultNested(defaultProto, thisForDefaults);
+            }
+            return result;
+        }
+
+        /// <summary>The names of the last arguments of the next call (OpCode.ArgNames), taken by FillDefaultArgs.</summary>
+        private string[]? _pendingArgNames;
+
+        /// <summary>A call that does not reach a method of a class (a built-in method, an actor's message): named arguments are an error there.</summary>
+        private void RejectArgNames(string what)
+        {
+            if (_pendingArgNames == null) return;
+            _pendingArgNames = null;
+            throw new ScriptErrorException("ArgumentException", $"Named arguments are not possible for {what}.");
+        }
+        private readonly Dictionary<string, string[]> _argNameLists = new();
+
+        /// <summary>A call with named arguments (`f(1, size: 2)`, docs/language/08-classes.md): the positional arguments first, each named one at the
+        /// parameter of its name, every other parameter its default value.</summary>
+        private Value[] FillNamedArgs(FunctionProto proto, Value[] suppliedArgs, string[] names, object? thisForDefaults)
+        {
+            var paramNames = proto.ParamNames
+                ?? throw new ScriptErrorException("ArgumentException", "Named arguments need a method whose parameters have names.");
+            int positional = suppliedArgs.Length - names.Length;
+            var result = new Value[proto.ParamCount];
+            var given = new bool[proto.ParamCount];
+            if (positional > proto.ParamCount)
+                throw new ScriptErrorException("ArgumentException", $"Wrong number of arguments: expected {proto.ParamCount}, got {suppliedArgs.Length}.");
+            for (int i = 0; i < positional; i++) { result[i] = suppliedArgs[i]; given[i] = true; }
+            for (int k = 0; k < names.Length; k++)
+            {
+                int at = Array.IndexOf(paramNames, names[k]);
+                if (at < 0) throw new ScriptErrorException("ArgumentException", $"There is no parameter '{names[k]}'.");
+                if (given[at]) throw new ScriptErrorException("ArgumentException", $"The parameter '{names[k]}' is given twice.");
+                result[at] = suppliedArgs[positional + k];
+                given[at] = true;
+            }
+            for (int i = 0; i < proto.ParamCount; i++)
+            {
+                if (given[i]) continue;
+                var defaultProto = i < proto.ParamDefaults.Count ? proto.ParamDefaults[i] : null;
+                if (defaultProto == null) throw new ScriptErrorException("ArgumentException", $"The parameter '{paramNames[i]}' has no value (and no default value).");
                 result[i] = EvaluateDefaultNested(defaultProto, thisForDefaults);
             }
             return result;

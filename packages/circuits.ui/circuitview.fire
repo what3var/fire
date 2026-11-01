@@ -3338,7 +3338,7 @@ namespace UI {
         }
 
         // the pointer: a cross while placing or over a pin (a wire starts there), a hand over a switch, arrows over what can be moved
-        int CursorAt(Root root, int px, int py) {
+        UI.Cursor CursorAt(Root root, int px, int py) {
             if (this.cursor >= 0) { return this.cursor }
             if (this.placeType != "") { return UI.Cursor.Cross }
             // pressed: moving (1), placing or drawing a wire (3, 4), stretching (6), the rectangle (2), panning (5), a switch held (7)

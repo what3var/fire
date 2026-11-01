@@ -16,6 +16,7 @@ namespace fire.Runtime
         /// null if it was redirected there (no result).</summary>
         private Value? CallLambdaNested(LambdaValue lambda, Value[] args)
         {
+            _pendingArgNames = null;
             CheckArity(lambda.Proto, args.Length);
             args = FillDefaultArgs(lambda.Proto, args, lambda.OnTarget);
 

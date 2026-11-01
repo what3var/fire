@@ -45,6 +45,9 @@ namespace fire.Bytecode
         /// <summary>Per parameter of a method or constructor: its type for overloading by type (see Overloads; "" untyped). Null: all untyped (a lambda).</summary>
         public string?[]? ParamTypes { get; set; }
 
+        /// <summary>The names of the parameters (for named arguments, `f(size: 2)`); null when unknown.</summary>
+        public string[]? ParamNames { get; set; }
+
         /// <summary>The number of type parameters of a generic method (`T Pick&lt;T&gt;(...)`), 0 otherwise.</summary>
         public int TypeParamCount { get; set; }
 

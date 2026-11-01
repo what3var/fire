@@ -84,8 +84,10 @@ flag enum Test { a = 1, b = 2 }
 class Sensor { ... }
 ```
 
-An Klassen (neu), Methoden, Feldern und Properties. Reflection prüft die Flags: `member.HasFlag(Test.a)`, `Reflect.TypeOf(obj).HasFlag(Test.a)`, der ganze Wert mit
-`member.Flags(Test)` (`Test` ohne gesetzte Flags, wenn das Attribut fehlt).
+An Klassen (neu), Methoden, Feldern und Properties. Reflection prüft die Flags: `member.HasFlag(Test.a)`, `Type.Of(obj).HasFlag(Test.a)`, der ganze Wert mit
+`member.Flags(Test.a)` oder `member.Flags("Test")` (das Enum über ein Mitglied - das Ergebnis ist ein Wert des Enums - oder über seinen Namen - dann eine Zahl; `0`, wenn das Attribut fehlt).
+
+Stand: umgesetzt (VM und nativ), dokumentiert in [Enums](language/10-enums-and-namespaces.md).
 
 ## 2. Benannte Argumente
 

@@ -111,8 +111,8 @@ namespace UI {
         Element content
         Scroller vbar
         Scroller hbar
-        int VerticalScrollMode = UI.ScrollMode.Auto
-        int HorizontalScrollMode = UI.ScrollMode.Disabled
+        UI.ScrollMode VerticalScrollMode = UI.ScrollMode.Auto
+        UI.ScrollMode HorizontalScrollMode = UI.ScrollMode.Disabled
         // at the last layout: visible bars and size of the section
         bool showV = false
         bool showH = false

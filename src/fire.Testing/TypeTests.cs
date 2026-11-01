@@ -412,6 +412,16 @@ static class TypeTests
                 """) == "|Return value of 'F' is an int, not String.");
         }
 
+        // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors
+        {
+            string decl = "class C { static int F(int a, string b = \"x\", int c = 3) { return a + c }\n construct(int size, bool open = false) { } }\n";
+            Check("Benannte Argumente: der Typ wird am Parameter des Namens geprueft", Run(decl + "print(C.F(1, c: \"no\"))") is var named && named.StartsWith("TC002"), named);
+            Check("Benannte Argumente: passende Namen ohne Befund", Run(decl + "print(C.F(c: 10, a: 1))\nvar o = new C(open: true, size: 2)\nprint(1)") == "|11\n1");
+            Check("Benannte Argumente: ein unbekannter Name ist ein Fehler (TC011)", Run(decl + "print(C.F(1, d: 2))") is var unknown && unknown.Contains("ERROR TC011"), unknown);
+            Check("Benannte Argumente: ein Pflichtparameter ohne Wert ist ein Fehler (TC011)", Run(decl + "print(C.F(c: 2))") is var missing && missing.Contains("ERROR TC011"), missing);
+            Check("Benannte Argumente: auch beim Konstruktor (TC011)", Run(decl + "var o = new C(open: true)") is var ctor && ctor.Contains("ERROR TC011"), ctor);
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {
