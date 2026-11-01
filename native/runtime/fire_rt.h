@@ -71,10 +71,14 @@
 
 /* Thread-local storage of the compiler (only with fire threads; FIRE_TLS_STRUCT platforms keep the state on the task instead). */
 #if defined(FIRE_THREADS) && !defined(FIRE_TLS_STRUCT)
-#if defined(__cplusplus)
-#define FIRE_TLS thread_local
+#if defined(__GNUC__) || defined(__clang__)
+/* (also in C++: `thread_local` would reach the variables of the program - C, `_Thread_local` - through a wrapper of C++ that can hand out a null pointer;
+ * `__thread` is the same storage as in C) */
+#define FIRE_TLS __thread
 #elif defined(_MSC_VER)
 #define FIRE_TLS __declspec(thread)
+#elif defined(__cplusplus)
+#define FIRE_TLS thread_local
 #else
 #define FIRE_TLS _Thread_local
 #endif
