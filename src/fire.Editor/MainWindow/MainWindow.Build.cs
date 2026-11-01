@@ -322,9 +322,9 @@ namespace fire.Editor
             else if (project != null)
             {
                 // a project builds into its folder, without asking: bin/<target>-<mode>/ (a toolchain that only writes files: that folder)
-                string folder = ProjectOutputFolder(project, target.Name);
+                string folder = ProjectOutput.Folder(project.Directory, target.Name, RunModeName);
                 Directory.CreateDirectory(folder);
-                output = toolchain.EffectiveKind == "files" ? folder : Path.Combine(folder, ProgramFileName(project.Name, target.Name == "wasm" ? ".html" : target.Name == "windows" ? ".exe" : ""));
+                output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, RunModeName, target.Name == "windows");
             }
             else if (toolchain.EffectiveKind == "files")
             {
@@ -363,25 +363,8 @@ namespace fire.Editor
             await Dialogs.Message(this, result.Log, "Build Native");
         }
 
-        /// <summary>Where a project is built when its settings name no `output`: `bin/<target>-<mode>/` below the project folder - the target of a native build
-        /// (`linux`, `windows`, `esp32`, ...) or `vm` for a program that carries the virtual machine, the mode of the run (`dbg`, `rel`, `perf`).</summary>
-        private string ProjectOutputFolder(LoadedProject project, string target) =>
-            Path.Combine(project.Directory, "bin", $"{target}-{ModeTag(_session.ExecutionMode)}");
-
-        /// <summary>The short name of a mode in the folder of a build.</summary>
-        private static string ModeTag(fire.Runtime.VmExecutionMode mode) => mode switch
-        {
-            fire.Runtime.VmExecutionMode.Debug => "dbg",
-            fire.Runtime.VmExecutionMode.Performance => "perf",
-            _ => "rel",
-        };
-
-        /// <summary>The file of a project's program: the name of the project (characters a file name cannot have become `_`) with the extension of the target.</summary>
-        private static string ProgramFileName(string projectName, string extension)
-        {
-            foreach (char c in Path.GetInvalidFileNameChars()) projectName = projectName.Replace(c, '_');
-            return projectName + extension;
-        }
+        /// <summary>The name of the mode of the run (`debug`, `release`, `performance`).</summary>
+        private string RunModeName => _session.ExecutionMode.ToString().ToLowerInvariant();
 
         private async void Build_Click(object? sender, RoutedEventArgs e)
         {
@@ -403,7 +386,7 @@ namespace fire.Editor
             if (project != null && ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Output is { } configured)
                 output = Path.GetFullPath(configured, _workspace.Solution?.Directory ?? project.Directory);
             // a project builds into its folder, without asking: bin/vm-<mode>/ (the program carries the virtual machine); a single file asks where to
-            else if (project != null) output = Path.Combine(ProjectOutputFolder(project, "vm"), ProgramFileName(project.Name, windows ? ".exe" : ""));
+            else if (project != null) output = ProjectOutput.ProgramPath(project.Directory, project.Name, ProjectOutput.VmTarget, RunModeName, windows);
             output ??= await PickSavePath("Build standalone", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
             if (output == null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);

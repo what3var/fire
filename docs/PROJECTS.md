@@ -74,7 +74,7 @@ The editor keeps asking *which project does the active document belong to?* (`Wo
 
 The status bar and the title say what will be built (`App (project)` or `file.fire (single file)`).
 
-**Where a build goes.** *Build* (a program that carries the virtual machine) and *Build Native* of a **project** do not ask: the program lands in the project folder
+**Where a build goes.** *Build* (a program that carries the virtual machine) and *Build Native* of a **project** do not ask (in spark; `forge build` does the same): the program lands in the project folder
 under `bin/<target>-<mode>/` - `<target>` is the target of the native build (`linux`, `windows`, `macos`, `esp32`, `wasm`, ...) or `vm` for a program with the virtual
 machine, `<mode>` the mode of the run (`dbg`, `rel`, `perf`); the program has the name of the project (`App/bin/linux-rel/App`, `App/bin/vm-dbg/App.exe`). A toolchain
 that only writes files (ESP-IDF) writes them into that folder. The setting `output` of the project goes before it. A **single file** (no project) asks where to put
@@ -121,7 +121,7 @@ has).
 fire.Compiler run   App/App.fireproj            # a project
 fire.Compiler run   All.firesln                 # a solution: the startup project
 fire.Compiler run   All.firesln -p Tool         # a project of the solution by name
-fire.Compiler build All.firesln                 # a program: bin/App (or the "output" setting, or -o), the engine of the settings
+fire.Compiler build All.firesln                 # a program: App/bin/<target>-<mode>/App (vm-rel, linux-dbg, ...; or the "output" setting, or -o), the engine of the settings
 fire.Compiler build Core/Core.fireproj          # a library: bin/Core-1.2.0.fpk (-o names the folder)
 ```
 
