@@ -2449,6 +2449,7 @@ typedef struct RfClass {
     const char* name; const char* base; uint8_t isActor;
     const char* const* ifaces; uint32_t nIfaces;
     const RfMember* members; uint32_t nMembers;
+    Value (*attrs)(OwnList* list);    /* the attributes before the class (generated), null: none */
 } RfClass;
 
 /* Is the string equal to this UTF-8 text? */

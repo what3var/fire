@@ -3356,6 +3356,8 @@ namespace fire.Native
                             "__refl_probe" when argc == 4 => $"rf_probe({S(first)}, {S(first + 1)}, {S(first + 2)}, {S(first + 3)}, {list}, {callerArg})",
                             "__refl_silence" when argc == 2 => $"rf_silence({S(first)}, {S(first + 1)})",
                             "__refl_silence_handle" when argc == 1 => $"rf_silence_handle({S(first)})",
+                            "__refl_enum_name" when argc == 1 => $"rf_enum_name({S(first)}, {list})",
+                            "__refl_enum_of" when argc == 2 => $"rf_enum_of({S(first)}, {S(first + 1)})",
                             _ => throw new NativeNotSupportedException($"native function '{native}' with {argc} argument(s) (called in {fn})"),
                         };
                         E($"{S(first)} = {call};");

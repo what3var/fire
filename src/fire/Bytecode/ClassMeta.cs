@@ -54,5 +54,8 @@ namespace fire.Bytecode
 
         /// <summary>All names from `class X : A, B` (base class and interfaces) as written.</summary>
         public List<string> BaseNames { get; set; } = new();
+
+        /// <summary>The attributes before the class (`[Name ...]`), in the order of the source.</summary>
+        public List<AttributeMeta> Attributes { get; set; } = new();
     }
 }

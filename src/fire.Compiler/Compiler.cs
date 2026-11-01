@@ -689,14 +689,46 @@ namespace fire.Compiler
         }
 
         /// <summary>The attributes of a member for the runtime (names, argument texts and the values the compiler knows), null for none.</summary>
-        private static List<AttributeMeta>? AttributeMetas(IReadOnlyList<AttributeDecl>? attributes) =>
+        private List<AttributeMeta>? AttributeMetas(IReadOnlyList<AttributeDecl>? attributes) =>
             attributes is not { Count: > 0 } ? null
-            : attributes.Select(a => new AttributeMeta { Name = a.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = new System.Text.Json.Nodes.JsonArray(a.Args.Select(ConstantJson).ToArray()).ToJsonString() }).ToList();
+            : attributes.Select(a => FlagAttribute(a) ?? new AttributeMeta { Name = a.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = new System.Text.Json.Nodes.JsonArray(a.Args.Select(ConstantJson).ToArray()).ToJsonString() }).ToList();
+
+        /// <summary>An attribute that names a flag enum (`[Test a, b]`, docs/language/10-enums-and-namespaces.md): its name becomes the full name of the enum and its
+        /// arguments - names of flags, also `Test.a` - one value (`a | b`), which reflection reads (`member.HasFlag(Test.a)`); null for any other attribute.
+        /// A name that is no flag of the enum is an error.</summary>
+        private AttributeMeta? FlagAttribute(AttributeDecl a)
+        {
+            if (EnumTypeNamed(a.Name) is not { IsFlags: true } type) return null;
+            long value = 0;
+            for (int i = 0; i < a.Args.Count; i++)
+            {
+                string? flag = a.Args[i] switch
+                {
+                    IdentifierExpr id => id.Name,
+                    MemberExpr { Target: IdentifierExpr or MemberExpr } me when type.Matches(DottedText(me.Target) ?? "") => me.Name,
+                    _ => null,
+                };
+                var member = type.Members.FirstOrDefault(m => m.Name == flag);
+                if (flag == null || member.Name == null)
+                    throw new CompilerException($"'{a.ArgTexts[i]}' is not a flag of '{type.Name}' (attribute '[{a.Name} ...]')", a.Line);
+                value |= member.Value;
+            }
+            return new AttributeMeta { Name = type.Name, ArgTexts = a.ArgTexts.ToList(), ArgsJson = $"[{{\"i\":{value}}}]" };
+        }
+
+        /// <summary>`A.B.C` as text (null for anything else).</summary>
+        private static string? DottedText(Expr e) => e switch
+        {
+            IdentifierExpr id => id.Name,
+            MemberExpr me when DottedText(me.Target) is { } left => left + "." + me.Name,
+            _ => null,
+        };
 
         /// <summary>The reflection metadata of a class: what the runtime otherwise does not keep (type names, parameter names, `readonly`, property form).</summary>
-        private static ClassMeta BuildClassMeta(ClassDecl cd)
+        private ClassMeta BuildClassMeta(ClassDecl cd)
         {
             var meta = new ClassMeta();
+            meta.Attributes = AttributeMetas(cd.Attributes) ?? new();
             if (cd.BaseRefs != null)
                 foreach (var b in cd.BaseRefs) meta.BaseNames.Add(b.BaseName);
 
@@ -751,6 +783,8 @@ namespace fire.Compiler
 
         private Dictionary<string, RuntimeClass> CompileClasses(IReadOnlyList<Stmt> program)
         {
+            // the run-time types of the enums first: the attributes of the classes may name a flag enum
+            foreach (var ed in program.OfType<EnumDecl>()) _enumTypes[ed.Name] = Resolver.EnumTypeOf(ed);
             var classes = new Dictionary<string, RuntimeClass>();
             foreach (var stmt in program)
                 if (stmt is ClassDecl cd)
@@ -777,7 +811,6 @@ namespace fire.Compiler
             var interfaceNames = new HashSet<string>(program.OfType<InterfaceDecl>().Select(i => i.Name));
             _refParams.InterfaceNames.UnionWith(interfaceNames);
             _refParams.EnumNames.UnionWith(program.OfType<EnumDecl>().Select(e => e.Name));
-            foreach (var ed in program.OfType<EnumDecl>()) _enumTypes[ed.Name] = Resolver.EnumTypeOf(ed);
             var baseRefOf = new Dictionary<RuntimeClass, TypeRef>();
             foreach (var rc in classes.Values)
             {

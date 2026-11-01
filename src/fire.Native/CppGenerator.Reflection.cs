@@ -38,7 +38,7 @@ namespace fire.Native
         private static readonly string[] ReflectionNatives =
         {
             "__refl_class_name", "__refl_class_info", "__refl_members", "__refl_classes", "__refl_is_sub", "__refl_get", "__refl_set", "__refl_call", "__refl_new",
-            "__refl_has", "__refl_selector_path", "__refl_member_kind", "__refl_probe", "__refl_silence", "__refl_silence_handle",
+            "__refl_has", "__refl_selector_path", "__refl_member_kind", "__refl_probe", "__refl_silence", "__refl_silence_handle", "__refl_enum_name", "__refl_enum_of",
         };
 
         private HashSet<string>? _reflectionMethodNames;
@@ -203,7 +203,8 @@ namespace fire.Native
                 if (rc.Meta != null)
                     foreach (var b in rc.Meta.BaseNames)
                         if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
-                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}}}");
+                string classAttrs = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());
+                classRows.Add($"{{{CStr(rc.Name)}, {(rc.Base != null ? CStr(rc.Base.Name) : "NULL")}, {(rc.IsActor ? 1 : 0)}, {Strings(interfaces)}, {interfaces.Count}, {membersName}, {memberRows.Count}, {classAttrs}}}");
             }
             sb.AppendLine($"static const RfClass kRfClasses[] = {{{string.Join(",\n    ", classRows)}}};");
             sb.AppendLine($"static const uint32_t kRfClassCount = {classes.Count};");
@@ -247,13 +248,17 @@ namespace fire.Native
 FIRE_MAYBE_UNUSED static Value rf_class_info(Value name, OwnList* list) {
     const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return Undef();
-    Arr* info = allocArr(4, list);
+    Arr* info = allocArr(5, list);
     Value v0 = strFromUtf8(c->name, list); arrItems(info)[0] = v0; retain(v0);
     if (c->base) { Value v1 = strFromUtf8(c->base, list); arrItems(info)[1] = v1; retain(v1); }
     arrItems(info)[2] = Bool(c->isActor != 0);
     Value v3 = strArrayOf(c->ifaces, c->nIfaces, list); arrItems(info)[3] = v3;
+    arrItems(info)[4] = c->attrs ? c->attrs(list) : ArrV(allocArr(0, list));   /* (the attributes before the class) */
     return ArrV(info);
 }
+/* the enum of a value (its full name, undefined for anything else), and a number as a value of the enum of another value */
+FIRE_MAYBE_UNUSED static Value rf_enum_name(Value v, OwnList* list) { const FireEnum* e = enumOf(v); return e ? strFromUtf8(e->name, list) : Undef(); }
+FIRE_MAYBE_UNUSED static Value rf_enum_of(Value v, Value n) { return enumOf(v) && n.kind == K_Int ? EnumV(n.i, v.reserved) : n; }
 FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
     const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return Undef();

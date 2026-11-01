@@ -856,6 +856,8 @@ namespace fire.Compiler
             // `flag enum Name { ... }`: `flag` is a word only in front of `enum` (no keyword)
             if (Check(TokenType.Identifier) && Peek().Lexeme == "flag" && PeekAt(1).Type == TokenType.Enum) { Advance(); return ParseEnumDecl(isFlags: true); }
             if (Check(TokenType.Class)) return ParseClassDecl();
+            // `[Name ...]` lines before a class or an actor: its attributes (otherwise `[` starts an array as before)
+            if (Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.Identifier && AttributesBeforeClass() is { } classAttributes) return classAttributes;
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
@@ -2675,6 +2677,22 @@ namespace fire.Compiler
                 }
             }
             return result;
+        }
+
+        /// <summary>The attributes before a class or an actor and the class itself (null, nothing read: the brackets are no attributes of a class).</summary>
+        private Stmt? AttributesBeforeClass()
+        {
+            int start = _pos;
+            List<AttributeDecl> attributes;
+            try { attributes = ParseAttributes(); }
+            catch (ParseException) { _pos = start; return null; }
+            if (attributes.Count == 0 || !(Check(TokenType.Class) || Check(TokenType.Actor)))
+            {
+                _pos = start;
+                return null;
+            }
+            var decl = (ClassDecl)(Check(TokenType.Class) ? ParseClassDecl() : ParseActorDecl());
+            return decl with { Attributes = attributes };
         }
 
         /// <summary>`[Test "title"]`, `[Parameters 1..3, "x"]`: the attributes before a class member (each in its own brackets).</summary>
