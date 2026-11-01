@@ -170,7 +170,7 @@ static class DiagnosticTests
                 File.WriteAllText(warnFile, "print(\"hi\")\nwarn 42: \"check this\"\nprint(\"there\")\n");
                 var outW = new StringWriter(); var errW = new StringWriter();
                 int code = CommandLineRunner.Run(new[] { "run", warnFile }, outW, errW);
-                Check("Befehlszeile: eine Warnung steht auf stderr (mit Code und Zeile), das Programm laeuft und endet mit 0", code == 0 && errW.ToString().Contains("warning W42: check this (line 2)") && !outW.ToString().Contains("W42"), errW.ToString());
+                Check("Befehlszeile: eine Warnung steht auf stderr (mit Datei, Zeile und Code), das Programm laeuft und endet mit 0", code == 0 && errW.ToString().Contains("w.fire(2): warning W42: check this") && !outW.ToString().Contains("W42"), errW.ToString());   // (the file of the warning and its line)
                 string errFile = Path.Combine(dir, "e.fire");
                 File.WriteAllText(errFile, "print(nothing)\n");
                 var outE = new StringWriter(); var errE = new StringWriter();
