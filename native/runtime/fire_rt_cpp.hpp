@@ -26,5 +26,7 @@ namespace fire {
 // ---- the functions of fire_rt.h that give a result through a pointer, as the C++ runtime had them (a reference)
 inline bool timeObjTicks(Value v, int64_t& ticks) { return timeObjTicks(v, &ticks); }
 inline bool unitOfTime(uint32_t unit, double& factor) { return unitOfTime(unit, &factor); }
+inline bool timeTicksOf(Value a, int64_t& ticks) { return timeTicksOf(a, &ticks); }
+inline bool fitsTArg(Value& v, const TArg* ta) { return fitsTArg(&v, ta); }
 
 }  // namespace fire

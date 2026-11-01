@@ -155,7 +155,7 @@ namespace fire.Native
                     {
                         string arr = $"t{temp++}";
                         body.AppendLine($"    Arr* {arr} = allocArr({a.Count}, list);");
-                        for (int k = 0; k < a.Count; k++) { string item = Json(a[k]); body.AppendLine($"    {{ Value x = {item}; {arr}->items()[{k}] = x; retain(x); }}"); }
+                        for (int k = 0; k < a.Count; k++) { string item = Json(a[k]); body.AppendLine($"    {{ Value x = {item}; arrItems({arr})[{k}] = x; retain(x); }}"); }
                         return $"ArrV({arr})";
                     }
                     return "Undef()";
@@ -167,12 +167,12 @@ namespace fire.Native
                     var values = System.Text.Json.Nodes.JsonNode.Parse(at.ArgsJson) as System.Text.Json.Nodes.JsonArray ?? new System.Text.Json.Nodes.JsonArray();
                     string entry = $"t{temp++}", vals = $"t{temp++}";
                     body.AppendLine($"    Arr* {entry} = allocArr(3, list);");
-                    body.AppendLine($"    {{ Value x = strFromUtf8({CStr(at.Name)}, list); {entry}->items()[0] = x; retain(x); }}");
+                    body.AppendLine($"    {{ Value x = strFromUtf8({CStr(at.Name)}, list); arrItems({entry})[0] = x; retain(x); }}");
                     body.AppendLine($"    Arr* {vals} = allocArr({values.Count}, list);");
-                    for (int k = 0; k < values.Count; k++) { string item = Json(values[k]); body.AppendLine($"    {{ Value x = {item}; {vals}->items()[{k}] = x; retain(x); }}"); }
-                    body.AppendLine($"    {entry}->items()[1] = ArrV({vals});");
-                    body.AppendLine($"    {entry}->items()[2] = strArrayOf({Strings(at.ArgTexts)}, {at.ArgTexts.Count}, list);");
-                    body.AppendLine($"    all->items()[{i}] = ArrV({entry});");
+                    for (int k = 0; k < values.Count; k++) { string item = Json(values[k]); body.AppendLine($"    {{ Value x = {item}; arrItems({vals})[{k}] = x; retain(x); }}"); }
+                    body.AppendLine($"    arrItems({entry})[1] = ArrV({vals});");
+                    body.AppendLine($"    arrItems({entry})[2] = strArrayOf({Strings(at.ArgTexts)}, {at.ArgTexts.Count}, list);");
+                    body.AppendLine($"    arrItems(all)[{i}] = ArrV({entry});");
                 }
                 body.AppendLine("    return ArrV(all);");
                 sb.AppendLine($"static Value {name}(OwnList* list) {{");
@@ -221,7 +221,7 @@ namespace fire.Native
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static int rf_kind(const RfClass* c, Value name) {
     int best = 0;
     for (uint32_t i = 0; i < c->nMembers; i++) {
-        const RfMember& m = c->members[i];
+        const RfMember m = c->members[i];
         if (!strIs(name, m.name) || strcmp(m.kind, ""constructor"") == 0) continue;
         int k = strcmp(m.kind, ""field"") == 0 ? ((m.flags & 1) ? 0 : 1) : strcmp(m.kind, ""property"") == 0 ? 2 : 3;
         if (k && (best == 0 || k < best)) best = k;
@@ -241,17 +241,17 @@ namespace fire.Native
             // ---- the natives -----------------------------------------------------------------------------------------------
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static Value rf_class_name(Value x, OwnList* list) {
     if (x.kind == K_Class) return strFromUtf8(className(asObj(x)->cls), list);
-    if (x.kind == K_String) if (const RfClass* c = rf_find(x)) return strFromUtf8(c->name, list);
+    if (x.kind == K_String) { const RfClass* c = rf_find(x); if (c) return strFromUtf8(c->name, list); }
     return Undef();
 }
 FIRE_MAYBE_UNUSED static Value rf_class_info(Value name, OwnList* list) {
     const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return Undef();
     Arr* info = allocArr(4, list);
-    Value v0 = strFromUtf8(c->name, list); info->items()[0] = v0; retain(v0);
-    if (c->base) { Value v1 = strFromUtf8(c->base, list); info->items()[1] = v1; retain(v1); }
-    info->items()[2] = Bool(c->isActor != 0);
-    Value v3 = strArrayOf(c->ifaces, c->nIfaces, list); info->items()[3] = v3;
+    Value v0 = strFromUtf8(c->name, list); arrItems(info)[0] = v0; retain(v0);
+    if (c->base) { Value v1 = strFromUtf8(c->base, list); arrItems(info)[1] = v1; retain(v1); }
+    arrItems(info)[2] = Bool(c->isActor != 0);
+    Value v3 = strArrayOf(c->ifaces, c->nIfaces, list); arrItems(info)[3] = v3;
     return ArrV(info);
 }
 FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
@@ -259,24 +259,24 @@ FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
     if (!c) return Undef();
     Arr* all = allocArr(c->nMembers, list);
     for (uint32_t i = 0; i < c->nMembers; i++) {
-        const RfMember& m = c->members[i];
+        const RfMember m = c->members[i];
         Arr* d = allocArr(13, list);
         const char* texts[] = {m.name, m.kind, m.type, m.access};
-        for (int k = 0; k < 4; k++) { Value s = strFromUtf8(texts[k], list); d->items()[k] = s; retain(s); }
-        d->items()[4] = Bool((m.flags & 1) != 0); d->items()[5] = Bool((m.flags & 2) != 0);
-        d->items()[6] = Bool((m.flags & 4) != 0); d->items()[7] = Bool((m.flags & 8) != 0);
-        Value u = strFromUtf8(m.unit, list); d->items()[8] = u; retain(u);
-        Value dec = strFromUtf8(m.declared, list); d->items()[9] = dec; retain(dec);
-        d->items()[10] = strArrayOf(m.pnames, m.pcount, list);
-        d->items()[11] = strArrayOf(m.ptypes, m.pcount, list);
-        d->items()[12] = m.attrs ? m.attrs(list) : ArrV(allocArr(0, list));
-        all->items()[i] = ArrV(d);
+        for (int k = 0; k < 4; k++) { Value s = strFromUtf8(texts[k], list); arrItems(d)[k] = s; retain(s); }
+        arrItems(d)[4] = Bool((m.flags & 1) != 0); arrItems(d)[5] = Bool((m.flags & 2) != 0);
+        arrItems(d)[6] = Bool((m.flags & 4) != 0); arrItems(d)[7] = Bool((m.flags & 8) != 0);
+        Value u = strFromUtf8(m.unit, list); arrItems(d)[8] = u; retain(u);
+        Value dec = strFromUtf8(m.declared, list); arrItems(d)[9] = dec; retain(dec);
+        arrItems(d)[10] = strArrayOf(m.pnames, m.pcount, list);
+        arrItems(d)[11] = strArrayOf(m.ptypes, m.pcount, list);
+        arrItems(d)[12] = m.attrs ? m.attrs(list) : ArrV(allocArr(0, list));
+        arrItems(all)[i] = ArrV(d);
     }
     return ArrV(all);
 }
 FIRE_MAYBE_UNUSED static Value rf_classes(OwnList* list) {
     Arr* names = allocArr(kRfClassCount, list);
-    for (uint32_t i = 0; i < kRfClassCount; i++) { Value s = strFromUtf8(kRfClasses[i].name, list); names->items()[i] = s; retain(s); }
+    for (uint32_t i = 0; i < kRfClassCount; i++) { Value s = strFromUtf8(kRfClasses[i].name, list); arrItems(names)[i] = s; retain(s); }
     return ArrV(names);
 }
 FIRE_MAYBE_UNUSED static Value rf_is_sub(Value name, Value base) {
@@ -339,11 +339,11 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         else snprintf(t, sizeof t, ""'%s' has no writable member '%s'."", c->name, n);
         return rfFail(t);
     }}
-    if (const RfMember* field = rf_member(c, name, ""field"")) if (!(field->flags & 1) && (field->flags & 2)) {{
+    {{ const RfMember* field = rf_member(c, name, ""field""); if (field && !(field->flags & 1) && (field->flags & 2)) {{
         char n[200], t[500]; strToUtf8(name, n, sizeof n);
         snprintf(t, sizeof t, ""The field '%s' of '%s' is 'readonly' and cannot be assigned."", n, field->declared);
         return rfFail(t);
-    }}
+    }} }}
 {set}    return rfFail(""This member cannot be written by name."");
 }}");
 
@@ -373,7 +373,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
     (void)list; (void)caller;
     if (obj.kind != K_Class) {{ char t[120]; snprintf(t, sizeof t, ""Reflect.Call: expects an object, got: %s."", kindName(obj)); return rfFail(t); }}
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
-    const Value* items = args.kind == K_Array ? arrOf(args)->items() : NULL; (void)items;
+    const Value* items = args.kind == K_Array ? arrItems(arrOf(args)) : NULL; (void)items;
 {callSb}    char n[200], t[500]; strToUtf8(name, n, sizeof n);
     snprintf(t, sizeof t, ""'%s' has no method '%s' with %d parameter(s)."", className(asObj(obj)->cls), n, argc);
     return rfFail(t);
@@ -414,7 +414,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             sb.AppendLine($@"FIRE_MAYBE_UNUSED static Value rf_new(Value cname, Value args, OwnList* list, uint32_t caller) {{
     (void)caller;
     int argc = args.kind == K_Array ? (int)arrOf(args)->length : 0;
-    const Value* items = args.kind == K_Array ? arrOf(args)->items() : NULL; (void)items;
+    const Value* items = args.kind == K_Array ? arrItems(arrOf(args)) : NULL; (void)items;
 {newSb}    char n[200], t[500]; strToUtf8(cname, n, sizeof n);
     if (!rf_find(cname)) snprintf(t, sizeof t, ""Unknown class '%s'."", n);
     else snprintf(t, sizeof t, ""'%s' has no constructor with %d parameter(s)."", n, argc);
@@ -443,7 +443,7 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             }
             sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{cases}        default: return Undef();\n    }}\n}}");
             sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{");
-            sb.AppendLine($"    if (FIRE_UNLIKELY(asObj(v)->flags & 2)) {{ probedSet(v, {CStr(name)}, x, sfa_{m}, gfp_{m}, {(caller ? "caller" : "0xFFFFFFFFu")}); return; }}");
+            sb.AppendLine($"    if (FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {{ probedSet(v, {CStr(name)}, x, sfa_{m}, gfp_{m}, {(caller ? "caller" : "0xFFFFFFFFu")}); return; }}");
             sb.AppendLine($"    sfo_{m}(v, x{callArgs});");
             sb.AppendLine("}");
             return sb.ToString();
@@ -491,12 +491,13 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         if (!rf_probeHas(asObj(target)->cls, member)) { snprintf(err, cap, ""'%s' has no member '%s' - no probe can be registered there."", cname, member); return -1; }
         // a computed property: the probe watches what its getter reads and compares the value
         ProbeRawGet getter = NULL;
-        if (const char* const* deps = rf_computed(asObj(target)->cls, member, &getter)) {
+        const char* const* deps = rf_computed(asObj(target)->cls, member, &getter);
+        if (deps) {
             if (changing) { snprintf(err, cap, ""'%s' of '%s' is a computed property (a getter without a setter): it can only be probed with 'changed'."", member, cname); return -1; }
             OwnList current = {NULL, NULL, poolMark(), 0, NULL, NULL};
             Value now = getter(target, &current);
             if (FIRE_UNLIKELY(g_unwind.active)) { leave(&current); return -2; }   // the getter threw: its exception is already unwinding, no probe
-            int64_t id = probeAddEntry(asObj(target), member, changing, handler, deps, getter, now);
+            int64_t id = probeAddEntryFull(asObj(target), member, changing, handler, deps, getter, now);
             leave(&current);
             return id;
         }
