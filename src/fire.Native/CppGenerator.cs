@@ -93,11 +93,13 @@ namespace fire.Native
             public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
             public string Signature => SignatureOf(Name, "");
             /// <summary>The C signature with the function's name `name` and `suffix` after the names of its parameters (a function with a frame copies them in).</summary>
-            public string SignatureOf(string name, string suffix)
+            public string SignatureOf(string name, string suffix) => SignatureOf(name, _ => suffix);
+            /// <summary>The C signature with `suffixOf(parameter)` after the name of each parameter.</summary>
+            public string SignatureOf(string name, System.Func<string, string> suffixOf)
             {
                 if (Kind == FuncKind.Main) return $"static void {(name == Name ? "fire_main" : name)}(void)";
                 if (Kind == FuncKind.FireBody) return $"static void {name}(const Value* args)";   // (`args` is read at the start only: never part of a frame)
-                var ps = ParamNames.Select(n => $"Value {n}{suffix}").ToList();
+                var ps = ParamNames.Select(n => $"Value {n}{suffixOf(n)}").ToList();
                 return $"{(HasCallTArgs ? "FIRE_MAYBE_UNUSED " : "")}static Value {name}(" + (ps.Count == 0 ? "void" : string.Join(", ", ps)) + ")";
             }
             /// <summary>The names of the parameters (without the thread body's `args`).</summary>
@@ -2299,7 +2301,6 @@ namespace fire.Native
             void Var(string type, string varName, string? init) => members.Add(($"{type} {varName}", varName, init));
             // the function proper is `name_b` when a wrapper counts the call depth (`try x.Take...`)
             string defName = _usesTryDepth && f.Kind != FuncKind.Main ? f.Name + "_b" : f.Name;
-            string defSignature = f.SignatureOf(defName, framed ? "_in" : "");
             if (framed)
             {
                 foreach (var p in f.ParamNames) Var("Value", p, p + "_in");
@@ -2369,6 +2370,38 @@ namespace fire.Native
                 sb.AppendLine($"static const HandlerInfo HI_{name}_{region.Template} = {{{region.Catches.Count}, HT_{name}_{region.Template}, {(region.HasFinally ? 1 : 0)}}};");
             }
             string frame = $"FR_{f.Name}";
+            // the catch blocks: one function each, with the frame of the function as its context
+            var catchCode = new StringBuilder();
+            foreach (var region in catchRegions)
+            {
+                catchCode.AppendLine($"static void {CatchName(f, region)}(void* ctx_, uint32_t ci, Value e)");
+                catchCode.AppendLine("{");
+                catchCode.AppendLine($"    {frame}* FR = ({frame}*)ctx_;");
+                catchCode.AppendLine("    switch (ci) {");
+                string catchVar = $"B{region.CatchScopeId}_0";
+                for (int i = 0; i < region.Catches.Count; i++)
+                {
+                    string init = (locals.Contains(catchVar) ? $"{catchVar} = e; " : "(void)e; ") + (f.NeedsList.Contains(region.CatchScopeId) ? $"{ListName(region.CatchScopeId)}.mark = poolMark(); " + (_usesTakeUpwards ? $"{ListName(region.CatchScopeId)}.parent = &{ListName(region.Reg.Scopes[^1].Id)}; " : "") : "");
+                    catchCode.AppendLine($"    case {i}: {{ {init}goto L{region.Catches[i].Addr}; }}");
+                }
+                catchCode.AppendLine("    default: break;");
+                catchCode.AppendLine("    }");
+                catchCode.Append(region.Out.Code);
+                catchCode.Append(region.Out.Tail);
+                catchCode.AppendLine("    fatal(\"control flow fell off the end of a catch block\");");
+                catchCode.AppendLine("}");
+            }
+            // Only what the catch blocks use lives in the frame (and the handlers, which the frame gives to the runtime); everything else stays a plain
+            // variable of the function, which the C compiler can keep in a register.
+            var plain = new List<(string Decl, string Name, string? Init)>();
+            if (framed)
+            {
+                var used = new HashSet<string>(System.Text.RegularExpressions.Regex.Matches(catchCode.ToString(), @"\b[A-Za-z_][A-Za-z0-9_]*\b").Select(m => m.Value), StringComparer.Ordinal);
+                plain = members.Where(m => !used.Contains(m.Name) && !m.Decl.StartsWith("Handler ", StringComparison.Ordinal)).ToList();
+                members = members.Except(plain).ToList();
+            }
+            var inFrame = new HashSet<string>(members.Select(m => m.Name), StringComparer.Ordinal);
+            string defSignature = f.SignatureOf(defName, p => framed && inFrame.Contains(p) ? "_in" : "");
             if (framed)
             {
                 sb.AppendLine($"typedef struct {frame} {{ {string.Join(" ", members.Select(m => m.Decl + ";"))} }} {frame};");
@@ -2381,6 +2414,9 @@ namespace fire.Native
             {
                 sb.AppendLine($"    {frame} FRv; {frame}* FR = &FRv;");
                 foreach (var m in members.Where(m => m.Init != null)) sb.AppendLine($"    {m.Name} = {m.Init};");
+                // the variables of the function that no catch block uses (parameters stay the parameters)
+                foreach (var m in plain.Where(m => !f.ParamNames.Contains(m.Name)))
+                    sb.AppendLine(m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};");
             }
             sb.Append(pre);
             sb.Append(decl);
@@ -2389,27 +2425,7 @@ namespace fire.Native
             sb.Append(f.Root.Tail);
             if (!f.IsTop) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
             sb.AppendLine("}");
-            // the catch blocks: one function each, with the frame of the function as its context
-            foreach (var region in catchRegions)
-            {
-                int t = region.Template;
-                sb.AppendLine($"static void {CatchName(f, region)}(void* ctx_, uint32_t ci, Value e)");
-                sb.AppendLine("{");
-                sb.AppendLine($"    {frame}* FR = ({frame}*)ctx_;");
-                sb.AppendLine("    switch (ci) {");
-                string catchVar = $"B{region.CatchScopeId}_0";
-                for (int i = 0; i < region.Catches.Count; i++)
-                {
-                    string init = (locals.Contains(catchVar) ? $"{catchVar} = e; " : "(void)e; ") + (f.NeedsList.Contains(region.CatchScopeId) ? $"{ListName(region.CatchScopeId)}.mark = poolMark(); " + (_usesTakeUpwards ? $"{ListName(region.CatchScopeId)}.parent = &{ListName(region.Reg.Scopes[^1].Id)}; " : "") : "");
-                    sb.AppendLine($"    case {i}: {{ {init}goto L{region.Catches[i].Addr}; }}");
-                }
-                sb.AppendLine("    default: break;");
-                sb.AppendLine("    }");
-                sb.Append(region.Out.Code);
-                sb.Append(region.Out.Tail);
-                sb.AppendLine("    fatal(\"control flow fell off the end of a catch block\");");
-                sb.AppendLine("}");
-            }
+            sb.Append(catchCode);
             if (framed) foreach (var m in members) sb.AppendLine($"#undef {m.Name}");
             // `try x.Take...`: every function counts the call depth (the callee knows which argument list is its own)
             if (defName != f.Name)
