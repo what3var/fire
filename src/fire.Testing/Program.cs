@@ -5281,6 +5281,12 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     }
 
     CheckCompletion("typisierte Variable", classes + "Dog d = new Dog(\"a\")\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
+    // named arguments: at the start of an argument the parameters of the callee as `name: ` (those already named left out)
+    const string namedDecl = "class W { static int F(int size, bool open = false) { return size }\n construct(int width, int height = 1) { } }\n";
+    CheckCompletion("benannte Argumente: statische Methode", classes + namedDecl + "W.F(1, |", "size: ,open: ");
+    CheckCompletion("benannte Argumente: schon benannte fehlen", classes + namedDecl + "W.F(open: true, |", "size: ", "open: ");
+    CheckCompletion("benannte Argumente: Konstruktor", classes + namedDecl + "var w = new W(|", "width: ,height: ");
+    CheckCompletion("benannte Argumente: nicht ausserhalb einer Argumentliste", classes + namedDecl + "var x = |", "", "size: ,width: ");
     CheckCompletion("typisierte Variable ohne Initialisierer", classes + "Dog d\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
     // 'var x : unit' only fixes a unit, the type comes from the initialiser.
     CheckCompletion("var mit Einheit", classes + "var d : mm = new Dog(\"a\")\nd.|", "Bark,Wag", "Curl");
