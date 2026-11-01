@@ -197,7 +197,7 @@ namespace UI {
 
         undefined ClearStyle() {
             if (this.styleStates == undefined) { return }
-            for (var i = 0; i < this.styleStates.count; i = i + 1) {
+            for (var i = 0; i < this.styleStates.Count; i = i + 1) {
                 var state = this.styleStates[i]
                 if (state.active) { state.Deactivate() }
                 delete state
@@ -213,11 +213,11 @@ namespace UI {
             tree.parent = this
             this.templateRoot = tree
             this.templateParts = new List()
-            for (var i = 0; i < this.Template.bindings.count; i = i + 1) {
+            for (var i = 0; i < this.Template.bindings.Count; i = i + 1) {
                 this.templateParts.Add(tree.FindName(this.Template.bindings[i].part))
             }
             this.templateStates = new List()
-            for (var j = 0; j < this.Template.triggers.count; j = j + 1) {
+            for (var j = 0; j < this.Template.triggers.Count; j = j + 1) {
                 var state = new TriggerState(this.Template.triggers[j])
                 state.TakeTo(this)
                 this.templateStates.Add(state)
@@ -265,10 +265,10 @@ namespace UI {
             }
             if (this.Template != undefined && this.templateRoot == undefined) { this.BuildTemplate() }
             if (this.bindings != undefined) {
-                for (var b = 0; b < this.bindings.count; b = b + 1) { this.bindings[b].Sync() }
+                for (var b = 0; b < this.bindings.Count; b = b + 1) { this.bindings[b].Sync() }
             }
             if (this.templateRoot != undefined) {
-                for (var i = 0; i < this.Template.bindings.count; i = i + 1) {
+                for (var i = 0; i < this.Template.bindings.Count; i = i + 1) {
                     var part = this.templateParts[i]
                     if (part == undefined) { continue }
                     var binding = this.Template.bindings[i]
@@ -276,10 +276,10 @@ namespace UI {
                     var value = Reflect.Get(this, binding.ownerProperty)
                     if (Reflect.Get(part, binding.partProperty) != value) { Reflect.Set(part, binding.partProperty, value) }
                 }
-                for (var k = 0; k < this.templateStates.count; k = k + 1) { this.templateStates[k].Update(this) }
+                for (var k = 0; k < this.templateStates.Count; k = k + 1) { this.templateStates[k].Update(this) }
             }
             if (this.styleStates != undefined) {
-                for (var j = 0; j < this.styleStates.count; j = j + 1) { this.styleStates[j].Update(this) }
+                for (var j = 0; j < this.styleStates.Count; j = j + 1) { this.styleStates[j].Update(this) }
             }
         }
 
@@ -478,7 +478,7 @@ namespace UI {
 
         // Takes the child out of the panel (it is not destroyed, but still belongs to the panel).
         undefined Remove(Element child) {
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 if (this.children[i] == child) {
                     this.children.RemoveAt(i)
                     child.parent = undefined
@@ -490,7 +490,7 @@ namespace UI {
 
         // Destroy all children.
         undefined Clear() {
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 child.parent = undefined
                 delete child
@@ -501,14 +501,14 @@ namespace UI {
 
         undefined Poll(Root root) {
             base.Poll(root)
-            for (var i = 0; i < this.children.count; i = i + 1) { this.children[i].Poll(root) }
+            for (var i = 0; i < this.children.Count; i = i + 1) { this.children[i].Poll(root) }
         }
 
         // Canvas arrangement: every child wants to be as big as it is; the size of the panel is that of the children, as far as it has no fixed one.
         undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 0
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 child.Measure(root, -1, -1)
                 if (!child.Visible) { continue }
@@ -520,7 +520,7 @@ namespace UI {
         }
 
         undefined ArrangeCore(Root root, int w, int h) {
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 child.Arrange(root, child.Left, child.Top, child.dw, child.dh)
             }
@@ -544,7 +544,7 @@ namespace UI {
         }
 
         undefined DrawChildren(Root root, int ax, int ay) {
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 if (child.Visible) { child.Draw(root, ax + child.rx, ay + child.ry) }
             }
@@ -553,7 +553,7 @@ namespace UI {
         UI.Element HitTest(int px, int py) {
             if (!this.Visible) { return undefined }
             if (!this.Contains(px, py)) { return undefined }
-            var i = this.children.count - 1
+            var i = this.children.Count - 1
             while (i >= 0) {
                 var hit = this.children[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
@@ -564,7 +564,7 @@ namespace UI {
 
         undefined Collect(List list) {
             if (!this.Visible || !this.Enabled) { return }
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 this.children[i].Collect(list)
             }
         }
@@ -573,7 +573,7 @@ namespace UI {
 
         UI.Element FindName(string name) {
             if (this.Name == name) { return this }
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var found = this.children[i].FindName(name)
                 if (found != undefined) { return found }
             }
@@ -616,7 +616,7 @@ namespace UI {
             var along = 0
             var across = 0
             var count = 0
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 if (this.Horizontal) { child.Measure(root, -1, ih) } else { child.Measure(root, iw, -1) }
                 if (!child.Visible) { continue }
@@ -643,7 +643,7 @@ namespace UI {
             var pos = this.Padding
             var iw = w - this.Padding * 2
             var ih = h - this.Padding * 2
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 if (!child.Visible) { continue }
                 if (this.Horizontal) {
@@ -688,7 +688,7 @@ namespace UI {
             var maxW = 0
             var maxH = 0
             var last = this.LastVisible()
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 if (!child.Visible) { continue }
                 var availW = -1
@@ -714,7 +714,7 @@ namespace UI {
 
         int LastVisible() {
             var last = -1
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 if (this.children[i].Visible) { last = i }
             }
             return last
@@ -726,7 +726,7 @@ namespace UI {
             var right = w
             var bottom = h
             var last = this.LastVisible()
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 if (!child.Visible) { continue }
                 var fills = this.LastChildFill && i == last
@@ -769,7 +769,7 @@ namespace UI {
             var longest = 0
             var limit = aw
             if (this.Vertical) { limit = ah }
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 child.Measure(root, this.ItemWidth, this.ItemHeight)
                 if (!child.Visible) { continue }
@@ -811,7 +811,7 @@ namespace UI {
             var offset = 0
             // a row is only arranged when it is full (its thickness is not known beforehand)
             var start = 0
-            for (var i = 0; i < this.children.count; i = i + 1) {
+            for (var i = 0; i < this.children.Count; i = i + 1) {
                 var child = this.children[i]
                 if (!child.Visible) { continue }
                 var along = child.dw
@@ -834,7 +834,7 @@ namespace UI {
                 lineLen = lineLen + along
                 lineThick = UI.M.Max(lineThick, thick)
             }
-            this.ArrangeLine(root, start, this.children.count, offset, lineThick)
+            this.ArrangeLine(root, start, this.children.Count, offset, lineThick)
         }
 
         // The children first..last-1 lie in a row (column) that begins at `offset` and is `thick` thick.
@@ -936,35 +936,35 @@ namespace UI {
 
         // The tracks (without specification: one star track) whose sizes are not yet fixed.
         List Tracks(List list) {
-            if (list.count == 0) { list.Add(new Track(2, 1)) }
+            if (list.Count == 0) { list.Add(new Track(2, 1)) }
             return list
         }
 
         // The sum of the sizes of the tracks start..start+span-1
         int SpanSize(List list, int start, int span) {
             var total = 0
-            for (var i = start; i < start + span && i < list.count; i = i + 1) { total = total + list[i].size }
+            for (var i = start; i < start + span && i < list.Count; i = i + 1) { total = total + list[i].size }
             return total
         }
 
         // The track `index` (clamped to the bounds of the grid)
         int Fit(List list, int index) {
             if (index < 0) { return 0 }
-            if (index >= list.count) { return list.count - 1 }
+            if (index >= list.Count) { return list.Count - 1 }
             return index
         }
 
         // Distributes `avail` (or, for -1, as much as the content wants) to the star tracks.
         undefined ResolveStars(List list, int avail, int used) {
             var weights = 0
-            for (var i = 0; i < list.count; i = i + 1) {
+            for (var i = 0; i < list.Count; i = i + 1) {
                 if (list[i].mode == 2) { weights = weights + list[i].value }
             }
             if (weights == 0 || avail < 0) { return }
             var rest = UI.M.Max(0, avail - used)
             var given = 0
             var seen = 0
-            for (var i = 0; i < list.count; i = i + 1) {
+            for (var i = 0; i < list.Count; i = i + 1) {
                 var t = list[i]
                 if (t.mode != 2) { continue }
                 seen = seen + t.value
@@ -981,7 +981,7 @@ namespace UI {
             this.ResolveAxis(root, rows, cols, ah, false)
             this.ResolveAxis(root, cols, rows, aw, true)
             // measure every child with the final size of its cell (also those that did not determine a track)
-            for (var c = 0; c < this.children.count; c = c + 1) {
+            for (var c = 0; c < this.children.Count; c = c + 1) {
                 var child = this.children[c]
                 if (!child.Visible) {
                     child.Measure(root, 0, 0)
@@ -995,8 +995,8 @@ namespace UI {
             }
             var w = 0
             var h = 0
-            for (var i = 0; i < rows.count; i = i + 1) { h = h + rows[i].size }
-            for (var i = 0; i < cols.count; i = i + 1) { w = w + cols[i].size }
+            for (var i = 0; i < rows.Count; i = i + 1) { h = h + rows[i].size }
+            for (var i = 0; i < cols.Count; i = i + 1) { w = w + cols[i].size }
             this.cw = w
             this.ch = h
         }
@@ -1005,7 +1005,7 @@ namespace UI {
         // along: the tracks of this axis, other: those of the other axis; avail: the space in this axis; isColumn: along are the columns.
         undefined ResolveAxis(Root root, any along, any other, int avail, bool isColumn) {
             var used = 0
-            for (var i = 0; i < along.count; i = i + 1) {
+            for (var i = 0; i < along.Count; i = i + 1) {
                 var t = along[i]
                 t.size = 0
                 if (t.mode == 1) { t.size = UI.M.Clamp(t.value, t.min, t.max) }
@@ -1013,7 +1013,7 @@ namespace UI {
             // Auto tracks (and, if the space is unbounded, stars) depend on the content of the children that occupy exactly one track
             var starsByContent = avail < 0
             for (var pass = 0; pass < 2; pass = pass + 1) {
-                for (var c = 0; c < this.children.count; c = c + 1) {
+                for (var c = 0; c < this.children.Count; c = c + 1) {
                     var child = this.children[c]
                     if (!child.Visible) { continue }
                     var begin = 0
@@ -1028,7 +1028,7 @@ namespace UI {
                     if (span < 1) { span = 1 }
                     var contentTracks = 0
                     var hasStar = false
-                    for (var k = begin; k < begin + span && k < along.count; k = k + 1) {
+                    for (var k = begin; k < begin + span && k < along.Count; k = k + 1) {
                         if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) { contentTracks = contentTracks + 1 }
                         if (along[k].mode == 2 && !starsByContent) { hasStar = true }
                     }
@@ -1049,12 +1049,12 @@ namespace UI {
                     if (isColumn) { want = child.dw }
                     // what is already fixed (fixed tracks in the range) does not have to be carried by the content any more
                     var have = 0
-                    for (var k = begin; k < begin + span && k < along.count; k = k + 1) { have = have + along[k].size }
+                    for (var k = begin; k < begin + span && k < along.Count; k = k + 1) { have = have + along[k].size }
                     var missing = want - have
                     if (missing > 0) {
                         var each = missing / contentTracks
                         var extra = missing - each * contentTracks
-                        for (var k = begin; k < begin + span && k < along.count; k = k + 1) {
+                        for (var k = begin; k < begin + span && k < along.Count; k = k + 1) {
                             if (along[k].mode == 0 || (along[k].mode == 2 && starsByContent)) {
                                 along[k].size = along[k].size + each
                                 if (extra > 0) {
@@ -1066,7 +1066,7 @@ namespace UI {
                     }
                 }
             }
-            for (var i = 0; i < along.count; i = i + 1) {
+            for (var i = 0; i < along.Count; i = i + 1) {
                 var t = along[i]
                 if (t.mode == 0) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
                 if (t.mode == 2 && starsByContent) { t.size = UI.M.Clamp(t.size, t.min, t.max) }
@@ -1088,7 +1088,7 @@ namespace UI {
             }
             if (span < 1) { span = 1 }
             var total = 0
-            for (var k = begin; k < begin + span && k < other.count; k = k + 1) {
+            for (var k = begin; k < begin + span && k < other.Count; k = k + 1) {
                 if (other[k].mode == 1) { total = total + other[k].size } else { return -1 }
             }
             return total
@@ -1100,7 +1100,7 @@ namespace UI {
             // with the final size: redistribute the stars
             this.Restar(rows, h)
             this.Restar(cols, w)
-            for (var c = 0; c < this.children.count; c = c + 1) {
+            for (var c = 0; c < this.children.Count; c = c + 1) {
                 var child = this.children[c]
                 if (!child.Visible) { continue }
                 var r = this.Fit(rows, child.GridRow)
@@ -1121,7 +1121,7 @@ namespace UI {
         undefined Restar(List list, int avail) {
             var used = 0
             var stars = 0
-            for (var i = 0; i < list.count; i = i + 1) {
+            for (var i = 0; i < list.Count; i = i + 1) {
                 if (list[i].mode == 2) { stars = stars + 1 } else { used = used + list[i].size }
             }
             if (stars > 0) { this.ResolveStars(list, avail, used) }

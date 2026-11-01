@@ -313,11 +313,11 @@ namespace Dialogs {
                     this.filterPatterns.Add(parts[i + 1])
                 }
             }
-            if (this.filterNames.count == 0) {
+            if (this.filterNames.Count == 0) {
                 this.filterNames.Add("All files (*.*)")
                 this.filterPatterns.Add("*")
             }
-            this.filterAt = UI.M.Clamp(this.FilterIndex - 1, 0, this.filterNames.count - 1)
+            this.filterAt = UI.M.Clamp(this.FilterIndex - 1, 0, this.filterNames.Count - 1)
         }
 
         // The user's folder: the home directory, else the current one.
@@ -433,7 +433,7 @@ namespace Dialogs {
             if (text.Contains("*") || text.Contains("?")) {
                 this.filterNames.Add(text)
                 this.filterPatterns.Add(text)
-                this.filterAt = this.filterNames.count - 1
+                this.filterAt = this.filterNames.Count - 1
                 this.typeButton.Text = text
                 this.nameBox.SetText("")
                 this.Navigate(this.current)
@@ -475,7 +475,7 @@ namespace Dialogs {
         // The file types as a menu below the type button.
         undefined ChooseType() {
             var items = new List()
-            for (var i = 0; i < this.filterNames.count; i++) {
+            for (var i = 0; i < this.filterNames.Count; i++) {
                 items.Add(new Dialogs.TypeItem(this, i))
             }
             var b = this.typeButton

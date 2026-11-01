@@ -34,14 +34,14 @@ namespace UI {
 
         any selectedItem {
             get {
-                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.count) { return undefined }
+                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
                 return this.items[this.SelectedIndex]
             }
             set { this.Select(this.items.IndexOf(value)) }
         }
 
         undefined Select(int index) {
-            if (index >= this.items.count) { index = this.items.count - 1 }
+            if (index >= this.items.Count) { index = this.items.Count - 1 }
             if (index < -1) { index = -1 }
             if (index == this.SelectedIndex) { return }
             this.SelectedIndex = index
@@ -70,7 +70,7 @@ namespace UI {
             var w = 0
             var h = 0
             var oh = this.OptionHeight(root)
-            for (var i = 0; i < this.items.count; i = i + 1) {
+            for (var i = 0; i < this.items.Count; i = i + 1) {
                 var ow = this.OptionWidth(root, i)
                 if (this.Horizontal) {
                     w = w + ow
@@ -101,7 +101,7 @@ namespace UI {
         }
 
         int OptionAt(Root root, int px, int py) {
-            for (var i = 0; i < this.items.count; i = i + 1) {
+            for (var i = 0; i < this.items.Count; i = i + 1) {
                 var r = this.OptionRect(root, i)
                 var inside = r.Contains(px, py)
                 delete r
@@ -118,7 +118,7 @@ namespace UI {
             if (this.Foreground != undefined) { text = this.Foreground }
             if (!this.Enabled) { text = theme.textDisabled }
             if (this.Header != "") { this.DrawString(root, ax, ay, this.Header, text) }
-            for (var i = 0; i < this.items.count; i = i + 1) {
+            for (var i = 0; i < this.items.Count; i = i + 1) {
                 var box = this.OptionRect(root, i)
                 var cy = box.y + box.h / 2
                 var back = theme.inputBack
@@ -149,7 +149,7 @@ namespace UI {
 
         // The arrow keys change the option - at the first and last the group releases them (the focus moves on)
         bool WantsKey(int key) {
-            var last = this.items.count - 1
+            var last = this.items.Count - 1
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { return this.SelectedIndex < last }
             if (key == UI.Keys.Up() || key == UI.Keys.Left()) { return this.SelectedIndex > 0 }
             return false
@@ -159,10 +159,10 @@ namespace UI {
             var step = 0
             if (key == UI.Keys.Down() || key == UI.Keys.Right()) { step = 1 }
             else if (key == UI.Keys.Up() || key == UI.Keys.Left()) { step = -1 }
-            if (step == 0 || this.items.count == 0) { return }
+            if (step == 0 || this.items.Count == 0) { return }
             var index = this.SelectedIndex + step
             if (this.SelectedIndex < 0) { index = 0 }
-            this.Select(UI.M.Clamp(index, 0, this.items.count - 1))
+            this.Select(UI.M.Clamp(index, 0, this.items.Count - 1))
         }
     }
 
@@ -217,11 +217,11 @@ namespace UI {
             var make = this.provider
             if (make != undefined) {
                 var list = make(this.Text)
-                for (var i = 0; i < list.count && i < this.MaxSuggestions; i = i + 1) { found.Add(list[i]) }
+                for (var i = 0; i < list.Count && i < this.MaxSuggestions; i = i + 1) { found.Add(list[i]) }
                 return found
             }
             var needle = this.Text.ToLower()
-            for (var i = 0; i < this.suggestions.count && found.count < this.MaxSuggestions; i = i + 1) {
+            for (var i = 0; i < this.suggestions.Count && found.Count < this.MaxSuggestions; i = i + 1) {
                 var item = this.suggestions[i]
                 if (this.TextOf(item).ToLower().Contains(needle)) { found.Add(item) }
             }
@@ -237,14 +237,14 @@ namespace UI {
                 return
             }
             var found = this.Matches()
-            if (found.count == 0) {
+            if (found.Count == 0) {
                 this.CloseList()
                 return
             }
             this.popupList.DisplayMember = this.DisplayMember
             this.popupList.SetItems(found)
             this.popupList.Width = this.actualWidth
-            this.popupList.Height = found.count * this.popupList.RowHeight(root) + 2
+            this.popupList.Height = found.Count * this.popupList.RowHeight(root) + 2
             if (!root.IsPopup(this.popupList)) { root.ShowPopup(this.popupList, this.ax, this.ay + this.actualHeight, false, this) }
             else {
                 this.popupList.Left = this.ax
@@ -297,7 +297,7 @@ namespace UI {
             if (this.ListOpen()) {
                 var list = this.popupList
                 if (key == UI.Keys.Down()) {
-                    list.Select(UI.M.Min(list.count - 1, list.SelectedIndex + 1))
+                    list.Select(UI.M.Min(list.Count - 1, list.SelectedIndex + 1))
                     list.TakeChanged()
                     return
                 }
@@ -379,7 +379,7 @@ namespace UI {
 
         bool Focusable() { return true }
 
-        int count { get { return this.items.count } }
+        int Count { get { return this.items.Count } }
 
         // Appends an element; an object belongs to the box from now on (numbers and text belong to nobody).
         any Add(any item) {
@@ -427,7 +427,7 @@ namespace UI {
 
         any selectedItem {
             get {
-                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.count) { return undefined }
+                if (this.SelectedIndex < 0 || this.SelectedIndex >= this.items.Count) { return undefined }
                 return this.items[this.SelectedIndex]
             }
             set { this.Select(this.items.IndexOf(value)) }
@@ -444,7 +444,7 @@ namespace UI {
 
         // Selects the element (-1: none) and reports the change.
         undefined Select(int index) {
-            if (index >= this.items.count) { index = this.items.count - 1 }
+            if (index >= this.items.Count) { index = this.items.Count - 1 }
             if (index < -1) { index = -1 }
             if (index == this.SelectedIndex) { return }
             this.SelectedIndex = index
@@ -457,7 +457,7 @@ namespace UI {
 
         // Selects the first element whose text is `text`; false if there is none.
         bool SelectText(string text) {
-            for (var i = 0; i < this.items.count; i = i + 1) {
+            for (var i = 0; i < this.items.Count; i = i + 1) {
                 if (this.ItemText(this.items[i]) == text) {
                     this.Select(i)
                     return true
@@ -480,12 +480,12 @@ namespace UI {
         // Opens the list below the box (above it if there is no room below).
         undefined OpenDropDown() {
             var root = this.host
-            if (root == undefined || this.IsDropDownOpen() || this.items.count == 0) { return }
+            if (root == undefined || this.IsDropDownOpen() || this.items.Count == 0) { return }
             var list = this.popupList
             list.combo = this
             list.DisplayMember = this.DisplayMember
             list.SetItems(this.items, false)
-            var rows = UI.M.Min(this.items.count, UI.M.Max(1, this.MaxDropDownItems))
+            var rows = UI.M.Min(this.items.Count, UI.M.Max(1, this.MaxDropDownItems))
             list.Width = this.actualWidth
             list.Height = rows * list.RowHeight(root) + 2
             list.Select(this.SelectedIndex)
@@ -511,7 +511,7 @@ namespace UI {
 
         undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
-            for (var i = 0; i < this.items.count; i = i + 1) { w = UI.M.Max(w, this.TextWidth(root, this.ItemText(this.items[i]))) }
+            for (var i = 0; i < this.items.Count; i = i + 1) { w = UI.M.Max(w, this.TextWidth(root, this.ItemText(this.items[i]))) }
             this.cw = w + 30
             this.ch = this.TextHeight(root) + 10
         }
@@ -568,7 +568,7 @@ namespace UI {
         }
 
         bool WantsKey(int key) {
-            if (key == UI.Keys.Down() || key == UI.Keys.Up()) { return this.IsDropDownOpen() || this.items.count > 0 }
+            if (key == UI.Keys.Down() || key == UI.Keys.Up()) { return this.IsDropDownOpen() || this.items.Count > 0 }
             return false
         }
 
@@ -581,7 +581,7 @@ namespace UI {
                 if (key == UI.Keys.Escape() || (alt && key == UI.Keys.Up()) || key == UI.Keys.F4()) {
                     this.CloseDropDown()
                 } else if (key == UI.Keys.Down()) {
-                    list.Select(UI.M.Min(list.count - 1, list.SelectedIndex + 1))
+                    list.Select(UI.M.Min(list.Count - 1, list.SelectedIndex + 1))
                     list.EnsureVisible(root, list.SelectedIndex)
                 } else if (key == UI.Keys.Up()) {
                     list.Select(UI.M.Max(0, list.SelectedIndex - 1))
@@ -597,11 +597,11 @@ namespace UI {
                 this.OpenDropDown()
                 return
             }
-            if (this.items.count == 0) { return }
-            if (key == UI.Keys.Down()) { this.Select(UI.M.Min(this.items.count - 1, this.SelectedIndex + 1)) }
+            if (this.items.Count == 0) { return }
+            if (key == UI.Keys.Down()) { this.Select(UI.M.Min(this.items.Count - 1, this.SelectedIndex + 1)) }
             else if (key == UI.Keys.Up()) { this.Select(UI.M.Max(0, this.SelectedIndex - 1)) }
             else if (key == UI.Keys.Home()) { this.Select(0) }
-            else if (key == UI.Keys.End()) { this.Select(this.items.count - 1) }
+            else if (key == UI.Keys.End()) { this.Select(this.items.Count - 1) }
         }
     }
 

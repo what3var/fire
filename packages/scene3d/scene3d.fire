@@ -503,7 +503,7 @@ class Object {
     // ---- triangles of an empty object (coordinates in meters, counter clockwise seen from outside) ----
     undefined AddTriangle(float x1 : any m, float y1 : any m, float z1 : any m, float x2 : any m, float y2 : any m, float z2 : any m, float x3 : any m, float y3 : any m, float z3 : any m) {
         if (this.posList == undefined) { throw new Scene3DException("Only an empty object takes triangles.") }
-        var n = this.posList.count / 3
+        var n = this.posList.Count / 3
         this.posList.Add(S3D.Length(x1))
         this.posList.Add(S3D.Length(y1))
         this.posList.Add(S3D.Length(z1))
@@ -530,12 +530,12 @@ class Object {
         if (!this.dirty) { return }
         this.dirty = false
         if (this.mesh > 0) { __S3DMeshFree(this.mesh) }
-        var p = new float[this.posList.count]
-        for (var i = 0; i < this.posList.count; i++) { p[i] = this.posList[i] }
-        var t = new float[this.uvList.count]
-        for (var i = 0; i < this.uvList.count; i++) { t[i] = this.uvList[i] }
-        var ix = new int[this.idxList.count]
-        for (var i = 0; i < this.idxList.count; i++) { ix[i] = this.idxList[i] }
+        var p = new float[this.posList.Count]
+        for (var i = 0; i < this.posList.Count; i++) { p[i] = this.posList[i] }
+        var t = new float[this.uvList.Count]
+        for (var i = 0; i < this.uvList.Count; i++) { t[i] = this.uvList[i] }
+        var ix = new int[this.idxList.Count]
+        for (var i = 0; i < this.idxList.Count; i++) { ix[i] = this.idxList[i] }
         var h = __S3DMeshNew(p, t, ix)
         if (h == 0) { throw new Scene3DException("The triangles do not make a mesh.") }
         this.UseMesh(h)
@@ -746,7 +746,7 @@ class Scene {
             throw new Scene3DException("A scene takes objects, cameras, lights and textures.")
         }
         if (key != "") {
-            for (var i = 0; i < this.keyNames.count; i++) {
+            for (var i = 0; i < this.keyNames.Count; i++) {
                 if (this.keyNames[i] == key) { throw new Scene3DException("The key '" + key + "' is used already.") }
             }
         }
@@ -770,7 +770,7 @@ class Scene {
 
     // The item with the key (undefined if there is none).
     any Get(string key) {
-        for (var i = 0; i < this.keyNames.count; i++) {
+        for (var i = 0; i < this.keyNames.Count; i++) {
             if (this.keyNames[i] == key) { return this.keyItems[i] }
         }
         return undefined
@@ -782,7 +782,7 @@ class Scene {
         else if (item is of Camera) { this.RemoveFrom(this.Cameras, item); item.scene = undefined }
         else if (item is of Light) { this.RemoveFrom(this.Lights, item) }
         else if (item is of Texture) { this.RemoveFrom(this.Textures, item) }
-        for (var i = 0; i < this.keyItems.count; i++) {
+        for (var i = 0; i < this.keyItems.Count; i++) {
             if (this.keyItems[i] == item) {
                 this.keyItems.RemoveAt(i)
                 this.keyNames.RemoveAt(i)
@@ -792,7 +792,7 @@ class Scene {
     }
 
     undefined RemoveFrom(List list, any item) {
-        for (var i = 0; i < list.count; i++) {
+        for (var i = 0; i < list.Count; i++) {
             if (list[i] == item) {
                 list.RemoveAt(i)
                 return
@@ -803,12 +803,12 @@ class Scene {
     // The numbers the renderer takes for the lights (the ambient light of the scene first; lights that are off are left out).
     float[] LightParameters() {
         var active = 0
-        for (var i = 0; i < this.Lights.count; i++) { if (this.Lights[i].Enabled) { active++ } }
+        for (var i = 0; i < this.Lights.Count; i++) { if (this.Lights[i].Enabled) { active++ } }
         var all = new float[(active + 1) * 14]
         var first = [0.0, S3D.Red(this.AmbientColor), S3D.Green(this.AmbientColor), S3D.Blue(this.AmbientColor), this.AmbientIntensity, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 16777215.0]
         for (var k = 0; k < 14; k++) { all[k] = first[k] }
         var n = 1
-        for (var i = 0; i < this.Lights.count; i++) {
+        for (var i = 0; i < this.Lights.Count; i++) {
             if (!this.Lights[i].Enabled) { continue }
             var p = this.Lights[i].Parameters()
             for (var k = 0; k < 14; k++) { all[n * 14 + k] = p[k] }

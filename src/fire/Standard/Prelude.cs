@@ -248,8 +248,11 @@ namespace fire.Standard
             // `List<int>`: a list whose elements are `int`s (for the type checker - at runtime every list holds any value); `List` alone is a list of `any`
             class List<T> : IEnumerable<T> {
                 any items
-                int count
+                private int count
                 Owns owns = Owns.Explicit
+
+                /// The number of elements.
+                int Count { get { return this.count } }
 
                 construct() {
                     this.items = new class[8]
@@ -412,9 +415,12 @@ namespace fire.Standard
                 any next
                 any live
                 any buckets
-                int count
+                private int count
                 int used
                 Owns owns
+
+                /// The number of entries.
+                int Count { get { return this.count } }
 
                 construct(Owns owns) {
                     this.owns = owns
@@ -605,7 +611,7 @@ namespace fire.Standard
             }
 
             /// Values by key (`Dictionary<string, int>`): `dict[key] = value`, `dict[key]`, Add, Get, TryGet, ContainsKey, Remove, Take, Keys, Values,
-            /// `count`; `foreach` gives KeyValuePairs in the order the keys came in. `new Dictionary<string, Node>(Owns.Values)` owns its values (see Owns).
+            /// `Count`; `foreach` gives KeyValuePairs in the order the keys came in. `new Dictionary<string, Node>(Owns.Values)` owns its values (see Owns).
             class Dictionary<K, V> : __HashTable, IEnumerable<KeyValuePair<K, V>> {
                 construct(Owns owns = Owns.Explicit) : base(owns) { }
 
@@ -726,7 +732,7 @@ namespace fire.Standard
                 }
             }
 
-            /// A set of values, each once (`HashSet<string>`): Add, Contains, Remove, Take, Clear, `count`; `foreach` in the order they came in.
+            /// A set of values, each once (`HashSet<string>`): Add, Contains, Remove, Take, Clear, `Count`; `foreach` in the order they came in.
             /// `new HashSet<Node>(Owns.Values)` owns its elements (see Owns).
             class HashSet<T> : __HashTable, IEnumerable<T> {
                 construct(Owns owns = Owns.Explicit) : base(owns) { }

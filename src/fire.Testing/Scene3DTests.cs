@@ -44,7 +44,7 @@ static class Scene3DTests
         print("sizes " + box.Width + " " + ball.Width + " " + (ball.Height / 1cm) + " " + floor.Depth)
         print("pos " + box.X + " " + box.Y + " " + ball.X)
         print("rot " + box.RotationY + " " + (box.RotationY is in deg))
-        print("counts " + scene.Objects.count + " " + scene.Lights.count + " " + scene.Cameras.count + " " + scene.Textures.count)
+        print("counts " + scene.Objects.Count + " " + scene.Lights.Count + " " + scene.Cameras.Count + " " + scene.Textures.Count)
         print("keys " + (scene.Get("ball") == ball) + " " + (scene.Get("nothing") == undefined))
         print("triangles " + box.Triangles + " " + floor.Triangles)
 
@@ -87,7 +87,7 @@ static class Scene3DTests
         cam.Render()
         print("anchored " + H.Sum(frame))
         scene.Remove(ball)
-        print("removed " + scene.Objects.count + " " + (scene.Get("ball") == undefined))
+        print("removed " + scene.Objects.Count + " " + (scene.Get("ball") == undefined))
 
         // an object from triangles and from an OBJ text
         var tri = new Object()

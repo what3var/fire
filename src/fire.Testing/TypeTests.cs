@@ -166,7 +166,7 @@ static class TypeTests
             }
             foreach (f in new Bag()) { bool fb = f }
             IEnumerable<int> e = xs
-            print(xs.count)
+            print(xs.Count)
             """) == "TC002 TC001 TC001 TC001 TC001 TC002 TC001 TC001|Parameter 'value' is a T (int), not String.\nParameter 'item' is a T (int), not String.\n1");
         Check("Generics: falsche Anzahl Typargumente (E4061), Typargumente an einer nicht generischen Klasse (E4045)",
             Run("List<int, int> a = new List()") == "|ERROR E4061" && Run("class A { }\nA<int> a = new A()") == "|ERROR E4045");

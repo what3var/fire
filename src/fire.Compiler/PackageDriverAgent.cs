@@ -176,7 +176,7 @@ namespace fire.Compiler
                 // reads the devices the host connected; true if something came
                 static bool Poll() {
                     var any = false
-                    for (int i = 0; i < DriverAgent.listening.count; i++) {
+                    for (int i = 0; i < DriverAgent.listening.Count; i++) {
                         try {
                             var d = DeviceManager.Get(DriverAgent.listening[i])
                             if (!d.Connected()) { continue }

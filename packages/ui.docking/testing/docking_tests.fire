@@ -17,7 +17,7 @@ class PanelTests {
         panel.InsertRow(0)
         Testing.Assert.AreEqual(1, a.row)
         panel.Remove(a)
-        Testing.Assert.AreEqual(2, panel.strips.count)
+        Testing.Assert.AreEqual(2, panel.strips.Count)
         Testing.Assert.AreEqual(0, b.row)
     }
 
@@ -56,7 +56,7 @@ class ItemTests {
         var split = new UI.Docking.ToolStripSplitButton("Run")
         split.AddItem("Debug")
         split.AddItem("Release")
-        Testing.Assert.AreEqual(2, split.items.count)
+        Testing.Assert.AreEqual(2, split.items.Count)
     }
 }
 
@@ -67,38 +67,38 @@ class ManagerTests {
         var a = dm.Add(new UI.Docking.ToolWindow("A", new UI.Panel()), UI.Dock.Left)
         var b = dm.AddTabbed(new UI.Docking.ToolWindow("B", new UI.Panel()), a)
         var c = dm.Add(new UI.Docking.ToolWindow("C", new UI.Panel()), UI.Dock.Right)
-        Testing.Assert.AreEqual(1, dm.leftPanes.count)
-        Testing.Assert.AreEqual(2, a.Pane().windows.count)
+        Testing.Assert.AreEqual(1, dm.leftPanes.Count)
+        Testing.Assert.AreEqual(2, a.Pane().windows.Count)
         Testing.Assert.AreEqual(UI.Dock.Right, c.side)
         b.Close()
         Testing.Assert.IsTrue(b.isHidden)
-        Testing.Assert.AreEqual(1, dm.hidden.count)
+        Testing.Assert.AreEqual(1, dm.hidden.Count)
         b.Show()
         Testing.Assert.IsTrue(b.Pane() == a.Pane())
         c.Float(10, 20)
         Testing.Assert.IsTrue(c.isFloating)
-        Testing.Assert.AreEqual(0, dm.rightPanes.count)
-        Testing.Assert.AreEqual(3, dm.ToolWindows().count)
+        Testing.Assert.AreEqual(0, dm.rightPanes.Count)
+        Testing.Assert.AreEqual(3, dm.ToolWindows().Count)
         c.Hide()
         c.Show()
         Testing.Assert.IsTrue(c.isFloating)
         c.DockTo(UI.Dock.Bottom)
         Testing.Assert.AreEqual(UI.Dock.Bottom, c.side)
-        Testing.Assert.AreEqual(0, dm.floats.count)
+        Testing.Assert.AreEqual(0, dm.floats.Count)
     }
 
     [Test]
     undefined StripsMoveBetweenEdges() {
         var dm = new UI.Docking.DockManager()
         var s = dm.AddToolStrip(new UI.Docking.ToolStrip("S"))
-        Testing.Assert.AreEqual(1, dm.topStrips.strips.count)
+        Testing.Assert.AreEqual(1, dm.topStrips.strips.Count)
         dm.FloatToolStrip(s, 30, 40)
         Testing.Assert.IsTrue(s.floating)
-        Testing.Assert.AreEqual(0, dm.topStrips.strips.count)
+        Testing.Assert.AreEqual(0, dm.topStrips.strips.Count)
         dm.AddToolStrip(s, UI.Dock.Right)
         Testing.Assert.IsFalse(s.floating)
         Testing.Assert.IsFalse(s.Horizontal)
-        Testing.Assert.AreEqual(0, dm.floats.count)
-        Testing.Assert.AreEqual(1, dm.ToolStrips().count)
+        Testing.Assert.AreEqual(0, dm.floats.Count)
+        Testing.Assert.AreEqual(1, dm.ToolStrips().Count)
     }
 }

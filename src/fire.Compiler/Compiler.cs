@@ -987,7 +987,13 @@ namespace fire.Compiler
                             // likewise they share the ONE IsStatic (SPEC knows
                             // no mixed static/non-static accessors).
                             if (pd.Getter != null)
-                                rc.AddMethod("get_" + pd.Name, CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand));
+                            {
+                                var getterProto = CompileMethodProto(rc, Array.Empty<LambdaParam>(), pd.Getter, pd.Access, pd.IsStatic, pd.Type?.UnitDemand);
+                                // `int Count { get { return this.count } }`: the VM reads the field directly (FunctionProto.FieldGetterOf)
+                                if (!pd.IsStatic && pd.Type?.UnitDemand == null && pd.Getter.Statements is [ReturnStmt { Value: MemberExpr { Target: ThisExpr, Name: var backing } }])
+                                    getterProto.FieldGetterOf = backing;
+                                rc.AddMethod("get_" + pd.Name, getterProto);
+                            }
                             if (pd.Setter != null)
                             {
                                 var setterParams = new[] { new LambdaParam("value", pd.Type, Array.Empty<Expr?>()) };

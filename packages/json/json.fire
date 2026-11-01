@@ -35,7 +35,7 @@ class JsonOptions {
 class JsonObject {
     any keys
     any values
-    int count
+    private int count
 
     construct() {
         this.keys = new string[4]

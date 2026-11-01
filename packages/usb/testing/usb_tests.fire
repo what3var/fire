@@ -6,10 +6,10 @@ class UsbTests {
     [Test "The simulated device is listed first"]
     undefined Listing() {
         var devices = Usb.Bus.Devices()
-        Testing.Assert.IsTrue(devices.count >= 1)
+        Testing.Assert.IsTrue(devices.Count >= 1)
         Testing.Assert.AreEqual("sim", devices[0].Id)
         Testing.Assert.AreEqual(0x1209, devices[0].VendorId)
-        Testing.Assert.AreEqual(1, Usb.Bus.Find(0x1209, 0x0001).count)
+        Testing.Assert.AreEqual(1, Usb.Bus.Find(0x1209, 0x0001).Count)
         Testing.Assert.AreEqual("1209", Usb.Format.Hex(0x1209))
     }
 
@@ -18,7 +18,7 @@ class UsbTests {
         Usb.Sim.Clear()
         var dev = new Usb.Device(0x1209, 0x0001)
         var eps = dev.Endpoints()
-        Testing.Assert.AreEqual(3, eps.count)
+        Testing.Assert.AreEqual(3, eps.Count)
         Testing.Assert.AreEqual(0x81, eps[1].Address)
         Testing.Assert.IsTrue(eps[1].IsIn)
         var data = new byte[3]

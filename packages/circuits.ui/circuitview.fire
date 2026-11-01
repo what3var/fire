@@ -162,7 +162,7 @@ namespace UI {
         /// <summary>The selected element (the first one; undefined if none).</summary>
         Circuits.Element SelectedElement {
             get {
-                if (this.selection.count == 0) { return undefined }
+                if (this.selection.Count == 0) { return undefined }
                 return this.selection[0]
             }
         }
@@ -202,7 +202,7 @@ namespace UI {
         // before every change: the schematic as it was (for Undo)
         undefined Remember() {
             this.undo.Add(this.Schematic.ToText())
-            if (this.undo.count > 100) { this.undo.RemoveAt(0) }
+            if (this.undo.Count > 100) { this.undo.RemoveAt(0) }
             this.redo.Clear()
         }
 
@@ -214,14 +214,14 @@ namespace UI {
             this.Invalidate()
         }
 
-        bool CanUndo { get { return this.undo.count > 0 } }
-        bool CanRedo { get { return this.redo.count > 0 } }
+        bool CanUndo { get { return this.undo.Count > 0 } }
+        bool CanRedo { get { return this.redo.Count > 0 } }
 
         undefined Undo() {
-            if (this.undo.count == 0 || this.readOnly) { return }
+            if (this.undo.Count == 0 || this.readOnly) { return }
             this.redo.Add(this.Schematic.ToText())
-            string text = this.undo[this.undo.count - 1]
-            this.undo.RemoveAt(this.undo.count - 1)
+            string text = this.undo[this.undo.Count - 1]
+            this.undo.RemoveAt(this.undo.Count - 1)
             this.selection.Clear()
             this.Schematic.Load(text)
             this.SelectionChanged()
@@ -229,10 +229,10 @@ namespace UI {
         }
 
         undefined Redo() {
-            if (this.redo.count == 0 || this.readOnly) { return }
+            if (this.redo.Count == 0 || this.readOnly) { return }
             this.undo.Add(this.Schematic.ToText())
-            string text = this.redo[this.redo.count - 1]
-            this.redo.RemoveAt(this.redo.count - 1)
+            string text = this.redo[this.redo.Count - 1]
+            this.redo.RemoveAt(this.redo.Count - 1)
             this.selection.Clear()
             this.Schematic.Load(text)
             this.SelectionChanged()
@@ -241,7 +241,7 @@ namespace UI {
 
         /// <summary>Removes the selected elements.</summary>
         undefined DeleteSelection() {
-            if (this.readOnly || this.selection.count == 0) { return }
+            if (this.readOnly || this.selection.Count == 0) { return }
             this.Remember()
             var s = this.Schematic
             foreach (e in this.selection) { s.Remove(e) }
@@ -255,7 +255,7 @@ namespace UI {
             Circuits.Element first = this.selection[0]
             c[0] = first.x1
             c[1] = first.y1
-            if (this.selection.count > 1) {
+            if (this.selection.Count > 1) {
                 var minX = 1000000
                 var minY = 1000000
                 var maxX = -1000000
@@ -274,7 +274,7 @@ namespace UI {
         /// <summary>Turns the selected elements by 90 degrees - clockwise, or counterclockwise with `ccw` - around the first point of a single element, else
         /// around the middle of all (chips keep their orientation).</summary>
         undefined RotateSelection(bool ccw = false) {
-            if (this.readOnly || this.selection.count == 0) { return }
+            if (this.readOnly || this.selection.Count == 0) { return }
             this.Remember()
             var c = [0, 0]
             this.SelectionCenter(c)
@@ -291,7 +291,7 @@ namespace UI {
 
         /// <summary>Mirrors the selected elements: those with a "flip" property change it, the others swap their two points.</summary>
         undefined FlipSelection() {
-            if (this.readOnly || this.selection.count == 0) { return }
+            if (this.readOnly || this.selection.Count == 0) { return }
             this.Remember()
             var s = this.Schematic
             foreach (e in this.selection) {
@@ -305,11 +305,11 @@ namespace UI {
         /// <summary>Mirrors the selection left to right (`horizontal`) or top to bottom around its middle: the points are mirrored, an element with a "flip"
         /// property changes it as well (its side follows the mirror); a chip moves to the mirrored place and keeps its orientation.</summary>
         undefined MirrorSelection(bool horizontal) {
-            if (this.readOnly || this.selection.count == 0) { return }
+            if (this.readOnly || this.selection.Count == 0) { return }
             this.Remember()
             var c = [0, 0]
             this.SelectionCenter(c)
-            if (this.selection.count == 1) {
+            if (this.selection.Count == 1) {
                 Circuits.Element only = this.selection[0]
                 c[0] = this.Snap((only.x1 + only.x2) / 2)
                 c[1] = this.Snap((only.y1 + only.y2) / 2)
@@ -340,9 +340,9 @@ namespace UI {
 
         /// <summary>The selected elements as text for the clipboard: a JSON list of elements as in a `.biscuit` file ("" when nothing is selected).</summary>
         string SelectionText() {
-            if (this.selection.count == 0) { return "" }
+            if (this.selection.Count == 0) { return "" }
             var text = "["
-            for (int i = 0; i < this.selection.count; i++) {
+            for (int i = 0; i < this.selection.Count; i++) {
                 Circuits.Element e = this.selection[i]
                 if (i > 0) { text = text + ", " }
                 text = text + e.ToJson()
@@ -410,10 +410,10 @@ namespace UI {
             var t = text.ToLower()
             if (t == "") { return false }
             var els = this.Schematic.Elements()
-            var n = els.count
+            var n = els.Count
             if (n == 0) { return false }
             var start = -1
-            if (this.selection.count > 0) { start = els.IndexOf(this.selection[0]) }
+            if (this.selection.Count > 0) { start = els.IndexOf(this.selection[0]) }
             for (int k = 1; k <= n; k++) {
                 var i = 0
                 if (backwards) {
@@ -450,7 +450,7 @@ namespace UI {
                 if (selectionOnly && this.selection.IndexOf(e) < 0) { continue }
                 if (UI.CircuitView.Matches(e, find.ToLower()) && (e.name.Contains(find) || UI.CircuitView.ValueContains(e, find))) { list.Add(e) }
             }
-            if (list.count == 0) { return 0 }
+            if (list.Count == 0) { return 0 }
             this.Remember()
             var changed = 0
             foreach (e in list) {
@@ -462,7 +462,7 @@ namespace UI {
                         any = true
                     }
                 }
-                for (int i = 0; i < e.keys.count; i++) {
+                for (int i = 0; i < e.keys.Count; i++) {
                     string value = e.values[i]
                     if (value.Contains(find)) {
                         s.Set(e, e.keys[i], value.Replace(find, replace))
@@ -494,13 +494,13 @@ namespace UI {
 
         /// <summary>Copies the selected elements next to themselves (the copies are selected).</summary>
         undefined DuplicateSelection() {
-            if (this.readOnly || this.selection.count == 0) { return }
+            if (this.readOnly || this.selection.Count == 0) { return }
             this.Remember()
             var s = this.Schematic
             var copies = new List()
             foreach (e in this.selection) {
                 var props = ""
-                for (int i = 0; i < e.keys.count; i++) {
+                for (int i = 0; i < e.keys.Count; i++) {
                     if (i > 0) { props = props + ";" }
                     props = props + e.keys[i] + "=" + e.values[i]
                 }
@@ -589,7 +589,7 @@ namespace UI {
             var lines = new List()
             var groups = new List()
             var els = this.Schematic.Elements()
-            for (int i = 0; i < els.count; i++) {
+            for (int i = 0; i < els.Count; i++) {
                 Circuits.Element e = els[i]
                 var t = e.type
                 if (t == "Potentiometer") {
@@ -617,7 +617,7 @@ namespace UI {
         /// input on or off ("true"/"false"), a push button held ("true") or let go, a selector switch to a throw. Not part of the undo history.</summary>
         undefined Operate(int index, string value) {
             var els = this.Schematic.Elements()
-            if (index < 0 || index >= els.count) { return }
+            if (index < 0 || index >= els.Count) { return }
             Circuits.Element e = els[index]
             var key = ""
             if (e.type == "Potentiometer") { key = "position" }
@@ -634,7 +634,7 @@ namespace UI {
         List Ports() {
             var lines = new List()
             var els = this.Schematic.Elements()
-            for (int i = 0; i < els.count; i++) {
+            for (int i = 0; i < els.Count; i++) {
                 Circuits.Element e = els[i]
                 var t = e.type
                 var key = ""
@@ -655,7 +655,7 @@ namespace UI {
         List PortLines() {
             var lines = new List()
             var defs = this.Schematic.PortDefinitions()
-            for (int i = 0; i < defs.count; i++) {
+            for (int i = 0; i < defs.Count; i++) {
                 Circuits.PortDefinition d = defs[i]
                 lines.Add(i + "|" + d.name + "|" + d.direction + "|" + d.pin + "|" + d.color + "|" + d.error)
             }
@@ -676,7 +676,7 @@ namespace UI {
         /// <summary>Changes the input or output number `index` (with undo): "name", "direction", "pin" or "color".</summary>
         undefined SetPort(int index, string key, string value) {
             var defs = this.Schematic.PortDefinitions()
-            if (this.readOnly || index < 0 || index >= defs.count) { return }
+            if (this.readOnly || index < 0 || index >= defs.Count) { return }
             Circuits.PortDefinition d = defs[index]
             var old = ""
             if (key == "name") { old = d.name } else if (key == "direction") { old = d.direction } else if (key == "pin") { old = d.pin } else if (key == "color") { old = d.color }
@@ -689,7 +689,7 @@ namespace UI {
         /// <summary>Makes pin `slot` (from 0) of the element an input ("input") or output ("output") of the circuit, in one step of undo: an element without a name
         /// gets one first (R1, W2, ...), since a pin is named by its element.</summary>
         undefined BindPin(Circuits.Element e, int slot, string direction) {
-            if (this.readOnly || e == undefined || slot < 0 || slot >= e.pins.count / 2) { return }
+            if (this.readOnly || e == undefined || slot < 0 || slot >= e.pins.Count / 2) { return }
             this.Remember()
             var s = this.Schematic
             if (e.name == "") { s.Rename(e, s.FreeName(e.type)) }
@@ -701,7 +701,7 @@ namespace UI {
         /// <summary>Removes the input or output number `index` (with undo).</summary>
         undefined RemovePort(int index) {
             var defs = this.Schematic.PortDefinitions()
-            if (this.readOnly || index < 0 || index >= defs.count) { return }
+            if (this.readOnly || index < 0 || index >= defs.Count) { return }
             this.Remember()
             this.Schematic.RemovePortDefinition(index)
             this.Changed()
@@ -727,7 +727,7 @@ namespace UI {
         /// <summary>Zooms and pans so that the whole schematic fits into the view.</summary>
         undefined FitToView() {
             var els = this.Schematic.Elements()
-            if (els.count == 0 || this.actualWidth <= 0) { return }
+            if (els.Count == 0 || this.actualWidth <= 0) { return }
             var minX = 1000000
             var minY = 1000000
             var maxX = -1000000
@@ -1042,7 +1042,7 @@ namespace UI {
             if (share >= 99 || !this.running) { this.textBrush.Color = UI.Color.Rgb(120, 200, 120) } else { this.textBrush.Color = UI.Color.Rgb(230, 180, 80) }
             this.DrawString(root, ax + w - this.TextWidth(root, rt) - this.Dp(6), ay + this.Dp(6) + this.TextHeight(root), rt, this.textBrush)
             var infoTop = ay + this.Dp(12) + 2 * this.TextHeight(root)
-            if (this.selection.count == 1) { this.DrawInfo(root, this.selection[0], ax + w - this.Dp(6), infoTop) }
+            if (this.selection.Count == 1) { this.DrawInfo(root, this.selection[0], ax + w - this.Dp(6), infoTop) }
         }
 
         // ---- the info box (top right, like the one at the bottom right of Falstad's simulator) ----
@@ -1050,13 +1050,13 @@ namespace UI {
         // the box for the selected element, its right edge at `right`
         undefined DrawInfo(Root root, Circuits.Element e, int right, int top) {
             var lines = this.InfoLines(e)
-            if (lines.count == 0) { return }
+            if (lines.Count == 0) { return }
             var lh = this.TextHeight(root) + this.Dp(1)
             var bw = 0
             foreach (l in lines) { bw = UI.M.Max(bw, this.TextWidth(root, l)) }
             var pad = this.Dp(6)
             var x0 = right - bw - 2 * pad
-            var bh = lines.count * lh + 2 * pad
+            var bh = lines.Count * lh + 2 * pad
             this.brush.Color = UI.Color.Rgb(22, 26, 32)
             root.renderer.FillRect(x0, top, bw + 2 * pad, bh, this.brush)
             this.thin.Color = UI.Color.Rgb(70, 80, 95)
@@ -1127,10 +1127,10 @@ namespace UI {
                     }
                 }
             }
-            for (int i = 0; i + 1 < this.infoProps.count; i = i + 2) {
+            for (int i = 0; i + 1 < this.infoProps.Count; i = i + 2) {
                 lines.Add(this.infoProps[i] + " = " + this.Pretty(e, this.infoProps[i], this.infoProps[i + 1]))
             }
-            var pins = e.pins.count / 2
+            var pins = e.pins.Count / 2
             if (pins == 2) {
                 var vd = e.PinVoltage(0) - e.PinVoltage(1)
                 // a source runs from its first point (-) to its second (+)
@@ -1149,7 +1149,7 @@ namespace UI {
                 var n = UI.M.Min(pins, 8)
                 for (int k = 0; k < n; k++) {
                     var label = "V" + (k + 1)
-                    if (k < e.nets.count && e.nets[k] != undefined) {
+                    if (k < e.nets.Count && e.nets[k] != undefined) {
                         var p = e.nets[k]
                         if (p.name != "" && e.part != undefined) { label = "V(" + p.name + ")" }
                     }
@@ -1298,7 +1298,7 @@ namespace UI {
             foreach (d in s.PortDefinitions()) {
                 if (d.slot < 0) { continue }
                 var e = s.Find(d.element)
-                if (e == undefined || d.slot * 2 + 1 >= e.pins.count) { continue }
+                if (e == undefined || d.slot * 2 + 1 >= e.pins.Count) { continue }
                 var px = this.SX(e.pins[d.slot * 2])
                 var py = this.SY(e.pins[d.slot * 2 + 1])
                 var r = UI.M.Max(3, this.Dp(Math.Round(this.scale * 0.45)!int))
@@ -1365,7 +1365,7 @@ namespace UI {
             var y0 = this.SY(UI.M.Min(e.y1, e.y2)) - this.Dp(4)
             var x1 = this.SX(UI.M.Max(e.x1, e.x2)) + this.Dp(4)
             var y1 = this.SY(UI.M.Max(e.y1, e.y2)) + this.Dp(4)
-            for (int i = 0; i < e.pins.count / 2; i++) {
+            for (int i = 0; i < e.pins.Count / 2; i++) {
                 x0 = UI.M.Min(x0, this.SX(e.pins[i * 2]) - this.Dp(4))
                 y0 = UI.M.Min(y0, this.SY(e.pins[i * 2 + 1]) - this.Dp(4))
                 x1 = UI.M.Max(x1, this.SX(e.pins[i * 2]) + this.Dp(4))
@@ -1385,7 +1385,7 @@ namespace UI {
                 y1 = UI.M.Max(y1, ay1 + this.Dp(3))
             }
             root.renderer.DrawRect(x0, y0, x1 - x0, y1 - y0, this.thin)
-            if (!this.readOnly && this.selection.count == 1 && !Circuits.Symbols.IsChip(e.type) && e.type != "Text") {
+            if (!this.readOnly && this.selection.Count == 1 && !Circuits.Symbols.IsChip(e.type) && e.type != "Text") {
                 this.brush.Color = UI.Color.Rgb(90, 160, 255)
                 var hs = this.Dp(3)
                 root.renderer.FillRect(this.SX(e.x1) - hs, this.SY(e.y1) - hs, 2 * hs + 1, 2 * hs + 1, this.brush)
@@ -2091,7 +2091,7 @@ namespace UI {
         undefined DrawGate(Root root, Circuits.Element e, float L) {
             var t = e.type
             var white = UI.Color.Rgb(220, 220, 220)
-            var n = e.pins.count / 2 - 1
+            var n = e.pins.Count / 2 - 1
             var vo = e.PinVoltage(n)
             if (t == "Not" || t == "Buffer") {
                 var m = L / 2
@@ -2841,11 +2841,11 @@ namespace UI {
             var ys = new List()
             var counts = new List()
             foreach (e in s.Elements()) {
-                for (int i = 0; i < e.pins.count / 2; i++) {
+                for (int i = 0; i < e.pins.Count / 2; i++) {
                     var x = e.pins[i * 2]
                     var y = e.pins[i * 2 + 1]
                     var found = -1
-                    for (int k = 0; k < xs.count; k++) {
+                    for (int k = 0; k < xs.Count; k++) {
                         if (xs[k] == x && ys[k] == y) {
                             found = k
                             break
@@ -2858,7 +2858,7 @@ namespace UI {
                     } else { counts[found] = counts[found] + 1 }
                 }
             }
-            for (int k = 0; k < xs.count; k++) {
+            for (int k = 0; k < xs.Count; k++) {
                 if (counts[k] >= 3) {
                     this.junctions.Add(xs[k])
                     this.junctions.Add(ys[k])
@@ -2904,7 +2904,7 @@ namespace UI {
                 var cur = 0.0
                 var t = e.type
                 if (t == "Wire") { cur = wires[i] } else { cur = this.CurrentOf(e) }
-                if (Math.Abs(cur) > 0.000000001 && i < this.phases.count) {
+                if (Math.Abs(cur) > 0.000000001 && i < this.phases.Count) {
                     // the speed grows with the logarithm of the current
                     var mag = Math.Log(Math.Abs(cur) * 1000000000.0) / Math.Log(10.0)
                     if (mag < 0.0) { mag = 0.0 }
@@ -2930,13 +2930,13 @@ namespace UI {
             // junctions and open pins
             var white = UI.Color.Rgb(220, 220, 220)
             this.brush.Color = white
-            for (int k = 0; k < this.junctions.count / 2; k++) {
+            for (int k = 0; k < this.junctions.Count / 2; k++) {
                 var r = UI.M.Max(this.Dp(2), Math.Round(this.scale * 0.35 * this.dev)!int)
                 root.renderer.FillCircle(this.SX(this.junctions[k * 2]), this.SY(this.junctions[k * 2 + 1]), r, this.brush)
             }
             if (!this.readOnly) {
                 this.thin.Color = UI.Color.Rgb(200, 80, 80)
-                for (int k = 0; k < this.openPins.count / 2; k++) {
+                for (int k = 0; k < this.openPins.Count / 2; k++) {
                     root.renderer.DrawCircle(this.SX(this.openPins[k * 2]), this.SY(this.openPins[k * 2 + 1]), this.Dp(2), this.thin)
                 }
             }
@@ -2956,23 +2956,23 @@ namespace UI {
 
         undefined WireTopology(List els) {
             var sig = 0
-            foreach (e in els) { sig = (sig * 31 + e.x1 * 7 + e.y1 * 13 + e.x2 * 17 + e.y2 * 19 + e.pins.count) % 1000000007 }
-            if (sig == this.wcSignature && els.count == this.wcCount && this.wcPinPoint != undefined) { return }
+            foreach (e in els) { sig = (sig * 31 + e.x1 * 7 + e.y1 * 13 + e.x2 * 17 + e.y2 * 19 + e.pins.Count) % 1000000007 }
+            if (sig == this.wcSignature && els.Count == this.wcCount && this.wcPinPoint != undefined) { return }
             var xs = new List()
             var ys = new List()
             this.wcPinStart = new List()
             this.wcPinPoint = new List()
             foreach (e in els) {
-                this.wcPinStart.Add(this.wcPinPoint.count)
-                for (int i = 0; i < e.pins.count / 2; i++) { this.wcPinPoint.Add(this.PointIndex(xs, ys, e.pins[i * 2], e.pins[i * 2 + 1])) }
+                this.wcPinStart.Add(this.wcPinPoint.Count)
+                for (int i = 0; i < e.pins.Count / 2; i++) { this.wcPinPoint.Add(this.PointIndex(xs, ys, e.pins[i * 2], e.pins[i * 2 + 1])) }
             }
-            this.wcPoints = xs.count
+            this.wcPoints = xs.Count
             this.wcWa = new List()
             this.wcWb = new List()
             this.wcWi = new List()
             var idx = 0
             foreach (e in els) {
-                if (e.type == "Wire" && e.pins.count == 4) {
+                if (e.type == "Wire" && e.pins.Count == 4) {
                     int start = this.wcPinStart[idx]
                     this.wcWa.Add(this.wcPinPoint[start])
                     this.wcWb.Add(this.wcPinPoint[start + 1])
@@ -2981,7 +2981,7 @@ namespace UI {
                 idx = idx + 1
             }
             this.wcSignature = sig
-            this.wcCount = els.count
+            this.wcCount = els.Count
         }
 
         List WireCurrents(List els) {
@@ -3006,7 +3006,7 @@ namespace UI {
                 var c = this.CurrentOf(e)
                 var unknown = (c == 0.0 && t != "Resistor" && t != "Capacitor" && t != "Inductor" && t != "Switch" && t != "Diode" && t != "Led" && t != "Zener"
                     && t != "Source" && t != "Rail" && t != "CurrentSource" && t != "AudioInput" && t != "LogicInput" && t != "Formula")
-                for (int i = 0; i < e.pins.count / 2; i++) {
+                for (int i = 0; i < e.pins.Count / 2; i++) {
                     int k = this.wcPinPoint[start + i]
                     if (unknown) { known[k] = false }
                     // the current enters the part at its first pin and leaves it at the second
@@ -3017,8 +3017,8 @@ namespace UI {
             var wa = this.wcWa
             var wb = this.wcWb
             var wi = this.wcWi
-            var done = new bool[wa.count]
-            for (int k = 0; k < wa.count; k++) { done[k] = false }
+            var done = new bool[wa.Count]
+            for (int k = 0; k < wa.Count; k++) { done[k] = false }
             // peel the ends: a point with one open wire and a known need gets it through that wire
             var progress = true
             while (progress) {
@@ -3027,7 +3027,7 @@ namespace UI {
                     if (!known[p]) { continue }
                     var open = -1
                     var count = 0
-                    for (int k = 0; k < wa.count; k++) {
+                    for (int k = 0; k < wa.Count; k++) {
                         if (!done[k] && (wa[k] == p || wb[k] == p)) {
                             open = k
                             count = count + 1
@@ -3053,12 +3053,12 @@ namespace UI {
         }
 
         int PointIndex(List xs, List ys, int x, int y) {
-            for (int k = 0; k < xs.count; k++) {
+            for (int k = 0; k < xs.Count; k++) {
                 if (xs[k] == x && ys[k] == y) { return k }
             }
             xs.Add(x)
             ys.Add(y)
-            return xs.count - 1
+            return xs.Count - 1
         }
 
         // ---- the mouse ----
@@ -3068,7 +3068,7 @@ namespace UI {
             var els = this.Schematic.Elements()
             var best = undefined
             var bestD = 1.2
-            for (int i = els.count - 1; i >= 0; i--) {
+            for (int i = els.Count - 1; i >= 0; i--) {
                 Circuits.Element e = els[i]
                 var d = this.Distance(e, ux, uy)
                 if (d < bestD) {
@@ -3108,7 +3108,7 @@ namespace UI {
                 return 100.0
             }
             var d = this.SegDistance(ux, uy, e.x1 + 0.0, e.y1 + 0.0, e.x2 + 0.0, e.y2 + 0.0)
-            for (int i = 0; i < e.pins.count / 2; i++) {
+            for (int i = 0; i < e.pins.Count / 2; i++) {
                 var dp = this.SegDistance(ux, uy, e.pins[i * 2] + 0.0, e.pins[i * 2 + 1] + 0.0, e.x2 + 0.0, e.y2 + 0.0)
                 if (dp < d) { d = dp }
             }
@@ -3177,7 +3177,7 @@ namespace UI {
             if (r < 0.5) { r = 0.5 }
             foreach (e in this.Schematic.Elements()) {
                 if (e.type == "Scope" || e.type == "Text") { continue }
-                for (int i = 0; i < e.pins.count / 2; i++) {
+                for (int i = 0; i < e.pins.Count / 2; i++) {
                     if (Math.Abs(ux - e.pins[i * 2]) <= r && Math.Abs(uy - e.pins[i * 2 + 1]) <= r) {
                         this.contextPin = i
                         return e
@@ -3191,7 +3191,7 @@ namespace UI {
             var r = 5.0 / this.scale
             if (r < 0.5) { r = 0.5 }
             foreach (e in this.Schematic.Elements()) {
-                for (int i = 0; i < e.pins.count / 2; i++) {
+                for (int i = 0; i < e.pins.Count / 2; i++) {
                     if (Math.Abs(ux - e.pins[i * 2]) <= r && Math.Abs(uy - e.pins[i * 2 + 1]) <= r) {
                         this.downGX = e.pins[i * 2]
                         this.downGY = e.pins[i * 2 + 1]
@@ -3205,7 +3205,7 @@ namespace UI {
         // is there a pin at the grid point?
         bool PinAt(int gx, int gy) {
             foreach (e in this.Schematic.Elements()) {
-                for (int i = 0; i < e.pins.count / 2; i++) {
+                for (int i = 0; i < e.pins.Count / 2; i++) {
                     if (e.pins[i * 2] == gx && e.pins[i * 2 + 1] == gy) { return true }
                 }
             }
@@ -3248,7 +3248,7 @@ namespace UI {
                 return
             }
             // the end of the selected element: stretch it
-            if (this.selection.count == 1) {
+            if (this.selection.Count == 1) {
                 var end = this.EndAt(this.selection[0], this.downX, this.downY)
                 if (end > 0) {
                     this.stretchEnd = end
@@ -3271,7 +3271,7 @@ namespace UI {
                 this.mode = 1
                 return
             }
-            if (this.selection.count > 0) { this.Select(undefined, false) }
+            if (this.selection.Count > 0) { this.Select(undefined, false) }
             this.mode = 2
         }
 
@@ -3351,7 +3351,7 @@ namespace UI {
             if (hit != undefined && this.IsInteractive(hit)) { return UI.Cursor.Hand }
             if (this.readOnly) { return UI.Cursor.Arrow }
             if (this.NearPin(ux, uy)) { return UI.Cursor.Cross }
-            if (this.selection.count == 1 && this.EndAt(this.selection[0], ux, uy) > 0) { return UI.Cursor.Cross }
+            if (this.selection.Count == 1 && this.EndAt(this.selection[0], ux, uy) > 0) { return UI.Cursor.Cross }
             if (hit != undefined && this.selection.IndexOf(hit) >= 0) { return UI.Cursor.SizeAll }
             return UI.Cursor.Arrow
         }
@@ -3373,8 +3373,8 @@ namespace UI {
         string Describe(Circuits.Element e) {
             var text = e.type
             if (e.name != "") { text = text + " " + e.name }
-            if (e.pins.count >= 4) { text = text + "  V = " + UI.CircuitView.Short(e.PinVoltage(0) - e.PinVoltage(1)) + "V" }
-            else if (e.pins.count >= 2) { text = text + "  V = " + UI.CircuitView.Short(e.PinVoltage(0)) + "V" }
+            if (e.pins.Count >= 4) { text = text + "  V = " + UI.CircuitView.Short(e.PinVoltage(0) - e.PinVoltage(1)) + "V" }
+            else if (e.pins.Count >= 2) { text = text + "  V = " + UI.CircuitView.Short(e.PinVoltage(0)) + "V" }
             var c = this.CurrentOf(e)
             if (c != 0.0) { text = text + "  I = " + UI.CircuitView.Short(c) + "A" }
             if (e.error != "") { text = text + "  (" + e.error + ")" }
@@ -3394,7 +3394,7 @@ namespace UI {
                 // a click: switch, or the second click of a double click edits
                 var e = this.pressedElement
                 this.pressedElement = undefined
-                if (mode == 1) { this.undo.RemoveAt(this.undo.count - 1) }
+                if (mode == 1) { this.undo.RemoveAt(this.undo.Count - 1) }
                 if (e != undefined) {
                     if (e.Flag("momentary")) { this.Toggle(e) }
                     else if (this.IsInteractive(e)) { this.Toggle(e) }
@@ -3423,7 +3423,7 @@ namespace UI {
                 }
                 this.Remember()
                 var props = ""
-                for (int i = 0; i < g.keys.count; i++) {
+                for (int i = 0; i < g.keys.Count; i++) {
                     if (i > 0) { props = props + ";" }
                     props = props + g.keys[i] + "=" + g.values[i]
                 }
@@ -3446,7 +3446,7 @@ namespace UI {
                     s.Move(e, e.x1, e.y1, e.x2, e.y2)
                     s.Changed(true)
                     this.Changed()
-                } else { this.undo.RemoveAt(this.undo.count - 1) }
+                } else { this.undo.RemoveAt(this.undo.Count - 1) }
             } else if (mode == 2) {
                 var x0 = Math.Min(this.downX, this.mouseUX)
                 var x1 = Math.Max(this.downX, this.mouseUX)
@@ -3531,7 +3531,7 @@ namespace UI {
                 this.CancelPlace()
                 this.ghost = undefined
                 this.mode = 0
-                if (this.selection.count > 0) { this.Select(undefined, false) }
+                if (this.selection.Count > 0) { this.Select(undefined, false) }
                 return
             }
             if (key == UI.Keys.Space()) {
@@ -3550,7 +3550,7 @@ namespace UI {
             else if (key == 114) { this.RotateSelection() }
             else if (key == 102) { this.FlipSelection() }
             else if (key == 119) { this.BeginPlace("Wire") }
-            else if (key == UI.Keys.Enter() && this.selection.count == 1) { this.Edit(this.selection[0]) }
+            else if (key == UI.Keys.Enter() && this.selection.Count == 1) { this.Edit(this.selection[0]) }
         }
 
         /// <summary>Edits the properties of an element: OnEdit if it is set (an editor around the view), else the editor of the view.</summary>
@@ -3661,11 +3661,11 @@ namespace UI {
         bool CanProbe(Circuits.Element e) {
             var t = e.type
             if (t == "Scope" || t == "Text" || t == "Wire" || t == "Ground") { return false }
-            return e.pins.count >= 2
+            return e.pins.Count >= 2
         }
 
         // a part with two pins whose current a scope can show
-        bool HasCurrent(Circuits.Element e) { return e.part != undefined && e.pins.count == 4 }
+        bool HasCurrent(Circuits.Element e) { return e.part != undefined && e.pins.Count == 4 }
 
         /// <summary>What a row of the context menu does (see ShowContextMenu): "scope <quantity> <display>", "display <how>", "edit", "rotate", ...</summary>
         undefined MenuAction(string action) {
@@ -3718,12 +3718,12 @@ namespace UI {
             var probe = e.name
             if (pin >= 0) { probe = e.name + "." + (pin + 1) }
             var x = UI.M.Min(e.x1, e.x2)
-            for (int i = 0; i < e.pins.count / 2; i++) { x = UI.M.Min(x, e.pins[i * 2]) }
+            for (int i = 0; i < e.pins.Count / 2; i++) { x = UI.M.Min(x, e.pins[i * 2]) }
             var bottom = UI.M.Max(e.y1, e.y2)
             foreach (o in s.Elements()) {
                 if (o.type == "Scope") { continue }
                 bottom = UI.M.Max(bottom, UI.M.Max(o.y1, o.y2))
-                for (int i = 0; i < o.pins.count / 2; i++) { bottom = UI.M.Max(bottom, o.pins[i * 2 + 1]) }
+                for (int i = 0; i < o.pins.Count / 2; i++) { bottom = UI.M.Max(bottom, o.pins[i * 2 + 1]) }
             }
             x = this.Snap(x)
             var y = this.Snap(bottom + 4)
@@ -3861,7 +3861,7 @@ namespace UI {
         undefined Accept() {
             var v = this.view
             var e = this.element
-            for (int i = 0; i < this.keys.count; i++) {
+            for (int i = 0; i < this.keys.Count; i++) {
                 string key = this.keys[i]
                 var field = this.fields[i]
                 var value = ""

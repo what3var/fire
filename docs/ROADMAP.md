@@ -107,8 +107,8 @@ kein Parameter hat, oder ein doppelt gesetzter ist ein Fehler beim Übersetzen. 
   * Bei `List` und `HashSet` gelten `Owns.Values`/`Owns.All` für die Elemente.
 
 Stand: umgesetzt (VM und nativ), dokumentiert in [Arrays und Listen](language/07-arrays-and-lists.md#dictionaries-and-sets-dictionaryk-v-hashsett). Abweichungen
-vom Entwurf: Schlüssel mit eigener Gleichheit implementieren das Interface `IEquatable` (`Equals`, `GetHashCode`); die Anzahl heißt `count` wie bei
-`List`; die Tabellen behalten die Reihenfolge des Einfügens (`foreach` ist so in VM und nativ gleich). `List` hat `TakeAt(index)`.
+vom Entwurf: Schlüssel mit eigener Gleichheit implementieren das Interface `IEquatable` (`Equals`, `GetHashCode`); die Anzahl ist wie bei `List` die
+read-only Property `Count` (auf ein privates Feld); die Tabellen behalten die Reihenfolge des Einfügens (`foreach` ist so in VM und nativ gleich). `List` hat `TakeAt(index)`.
 
 ## 4. Kommandozeilenargumente und Umgebungsvariablen
 

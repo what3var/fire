@@ -215,7 +215,7 @@ namespace fire.UI.Markup
                 code.Line("// where every element ended up, for the design view");
                 code.Line("undefined FxDump() {");
                 code.Line("    print(\"@fb \" + this.framebuffer.id)");
-                code.Line("    for (var i = 0; i < this.fxAll.count; i = i + 1) {");
+                code.Line("    for (var i = 0; i < this.fxAll.Count; i = i + 1) {");
                 code.Line("        var e = this.fxAll[i]");
                 code.Line("        print(\"@\" + i + \" \" + e.ax + \" \" + e.ay + \" \" + e.actualWidth + \" \" + e.actualHeight)");
                 code.Line("    }");
@@ -661,7 +661,7 @@ namespace fire.UI.Markup
 
                 // unbind: silence every probe of the binding
                 code.Line($"undefined fxUnbind{b.Index}() {{");
-                code.Line($"    for (var i = 0; i < this.fxHandles{b.Index}.count; i = i + 1) {{");
+                code.Line($"    for (var i = 0; i < this.fxHandles{b.Index}.Count; i = i + 1) {{");
                 code.Line($"        var h = this.fxHandles{b.Index}[i]");
                 code.Line("        silence h");
                 code.Line("    }");

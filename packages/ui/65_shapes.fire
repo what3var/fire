@@ -6,12 +6,12 @@ namespace UI {
 
         construct() { this.points = new List() }
 
-        int Count() { return this.points.count / 2 }
+        int Count() { return this.points.Count / 2 }
 
         // The points as an array for the renderer.
         int[] ToArray() {
-            var a = new int[this.points.count]
-            for (var i = 0; i < this.points.count; i = i + 1) { a[i] = this.points[i] }
+            var a = new int[this.points.Count]
+            for (var i = 0; i < this.points.Count; i = i + 1) { a[i] = this.points[i] }
             return a
         }
     }
@@ -108,8 +108,8 @@ namespace UI {
 
         undefined AddEllipse(int mx, int my, int rx, int ry) {
             this.AddArc(mx, my, rx, ry, 0, 360)
-            this.current.points.RemoveAt(this.current.points.count - 1)
-            this.current.points.RemoveAt(this.current.points.count - 1)
+            this.current.points.RemoveAt(this.current.points.Count - 1)
+            this.current.points.RemoveAt(this.current.points.Count - 1)
             this.Close()
         }
 
@@ -124,18 +124,18 @@ namespace UI {
         // The size of the rectangle around all points (bottom right = largest coordinates).
         int Width() {
             var w = 0
-            for (var i = 0; i < this.figures.count; i = i + 1) {
+            for (var i = 0; i < this.figures.Count; i = i + 1) {
                 var p = this.figures[i].points
-                for (var k = 0; k < p.count; k = k + 2) { w = UI.M.Max(w, p[k]) }
+                for (var k = 0; k < p.Count; k = k + 2) { w = UI.M.Max(w, p[k]) }
             }
             return w
         }
 
         int Height() {
             var h = 0
-            for (var i = 0; i < this.figures.count; i = i + 1) {
+            for (var i = 0; i < this.figures.Count; i = i + 1) {
                 var p = this.figures[i].points
-                for (var k = 1; k < p.count; k = k + 2) { h = UI.M.Max(h, p[k]) }
+                for (var k = 1; k < p.Count; k = k + 2) { h = UI.M.Max(h, p[k]) }
             }
             return h
         }
@@ -183,7 +183,7 @@ namespace UI {
                 }
                 args.Add(sign * value)
                 var need = UI.Geometry.ArgCount(command)
-                if (need > 0 && args.count == need) {
+                if (need > 0 && args.Count == need) {
                     g.Apply(command, args)
                     args.Clear()
                 }
@@ -331,7 +331,7 @@ namespace UI {
         undefined Draw(Root root, int ax, int ay) {
             if (!this.NeedsDraw(root, ax, ay)) { return }
             if (this.data == undefined) { return }
-            for (var i = 0; i < this.data.figures.count; i = i + 1) {
+            for (var i = 0; i < this.data.figures.Count; i = i + 1) {
                 var f = this.data.figures[i]
                 if (f.Count() < 2) { continue }
                 var pts = f.ToArray()

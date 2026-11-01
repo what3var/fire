@@ -2643,6 +2643,20 @@ namespace fire.Runtime
             // Properties deliberately NEVER have a Fields
             // entry of their own, so they always end up here.
             var rcGet = ResolveClass(obj.ClassName);
+            // a getter that only returns a field (FunctionProto.FieldGetterOf): read like that field, and the site caches it - as fast as a field
+            if (rcGet.FindMethodWithAccess("get_" + fieldName, 0) is { Proto: { FieldGetterOf: { } backing } } plainGetter
+                && obj.RtClass != null && obj.ThreadLock == null && obj.Mailbox == null && !(_threadBroker != null && obj.InGlobalsDomain)
+                && obj.RtClass.FieldIndex.TryGetValue(backing, out int backingIndex) && obj.TryGetFieldLocked(backing, out var backingValue))
+            {
+                if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(plainGetter.DeclaringClass!, plainGetter.Access))
+                {
+                    ThrowAccessDenied($"Property '{fieldName}' of '{plainGetter.DeclaringClass!.Name}' is {DescribeAccess(plainGetter.Access)} and cannot be accessed from here.");
+                    return false;
+                }
+                if (site >= 0 && plainGetter.Access == AccessModifier.Public) StoreSite(site, new SiteCache(obj.RtClass, null, backingIndex));
+                Push(backingValue);
+                return true;
+            }
             if (rcGet.FindMethod("get_" + fieldName, 0) != null)
             {
                 var result = CallMethodNested(obj, "get_" + fieldName, Array.Empty<Value>());

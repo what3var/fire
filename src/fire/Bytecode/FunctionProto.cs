@@ -45,6 +45,10 @@ namespace fire.Bytecode
         /// <summary>Per parameter of a method or constructor: its type for overloading by type (see Overloads; "" untyped). Null: all untyped (a lambda).</summary>
         public string?[]? ParamTypes { get; set; }
 
+        /// <summary>A property getter that only returns a field of `this` (`int Count { get { return this.count } }`): the name of that field - the VM
+        /// reads it like a field (with the inline cache of the site); null for any other method.</summary>
+        public string? FieldGetterOf { get; set; }
+
         /// <summary>The names of the parameters (for named arguments, `f(size: 2)`); null when unknown.</summary>
         public string[]? ParamNames { get; set; }
 

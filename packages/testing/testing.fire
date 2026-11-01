@@ -9,7 +9,7 @@ namespace Testing {
 
         // The number of items of an array or a list.
         static int CountOf(any items) {
-            if (items is of List) { return items.count }
+            if (items is of List) { return items.Count }
             return items.Length
         }
 

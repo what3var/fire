@@ -118,13 +118,13 @@ namespace IO {
             var start = IO.Path.Parts(IO.Path.GetFullPath(relativeTo))
             var goal = IO.Path.Parts(IO.Path.GetFullPath(path))
             var full = IO.Path.GetFullPath(path)
-            if (start.count == 0 || goal.count == 0 || !IO.Path.SamePart(start[0], goal[0])) { return full }
+            if (start.Count == 0 || goal.Count == 0 || !IO.Path.SamePart(start[0], goal[0])) { return full }
             var same = 0
-            while (same < start.count && same < goal.count && IO.Path.SamePart(start[same], goal[same])) { same++ }
+            while (same < start.Count && same < goal.Count && IO.Path.SamePart(start[same], goal[same])) { same++ }
             var result = new List()
-            for (var i = same; i < start.count; i++) { result.Add("..") }
-            for (var i = same; i < goal.count; i++) { result.Add(goal[i]) }
-            if (result.count == 0) { return "." }
+            for (var i = same; i < start.Count; i++) { result.Add("..") }
+            for (var i = same; i < goal.Count; i++) { result.Add(goal[i]) }
+            if (result.Count == 0) { return "." }
             return sep.Join(result)
         }
 
@@ -232,7 +232,7 @@ namespace IO {
             IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
         }
 
-        // All lines as a List of strings (`foreach (line in ...)`, `.count`, `[i]`).
+        // All lines as a List of strings (`foreach (line in ...)`, `.Count`, `[i]`).
         static List ReadAllLines(string path) {
             return new List(__IOSplitLines(IO.File.ReadAllText(path)))
         }

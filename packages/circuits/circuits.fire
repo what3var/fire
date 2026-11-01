@@ -797,7 +797,7 @@ namespace Circuits {
         /// <summary>A copy with another name and changed numbers (`Model.Get("1N4148").With("mine", 0, 3e-9)` - the index of the number and its value).</summary>
         Circuits.Model With(string name, int index, float value) {
             var m = new Circuits.Model(name, this.kind, this.p0, this.p1, this.p2, this.p3)
-            for (int i = 0; i < this.extraNames.count; i++) { m.Set(this.extraNames[i], this.extraValues[i]) }
+            for (int i = 0; i < this.extraNames.Count; i++) { m.Set(this.extraNames[i], this.extraValues[i]) }
             m.current1 = this.current1
             m.current2 = this.current2
             m.parameters = this.parameters
@@ -880,7 +880,7 @@ namespace Circuits {
 
         static undefined Put(Circuits.Model model) {
             // a model of the same name is replaced
-            for (int i = 0; i < Circuits.Models.all.count; i++) {
+            for (int i = 0; i < Circuits.Models.all.Count; i++) {
                 if (Circuits.Models.all[i].name.ToUpper() == model.name.ToUpper()) {
                     Circuits.Models.all.RemoveAt(i)
                     break
@@ -2812,7 +2812,7 @@ namespace Circuits {
             var seen = new List()
             Circuits.Circuit c = this
             while (c != undefined) {
-                for (int i = 0; i < c.paramNames.count; i++) {
+                for (int i = 0; i < c.paramNames.Count; i++) {
                     if (seen.IndexOf(c.paramNames[i]) < 0) {
                         seen.Add(c.paramNames[i])
                         text = text + " " + c.paramNames[i] + "=" + c.paramValues[i]
@@ -2939,9 +2939,9 @@ namespace Circuits {
                 top.Service()
                 return
             }
-            if (top.streams.count > 0) { __CirStreamPump() }
+            if (top.streams.Count > 0) { __CirStreamPump() }
             top.clock.Advance(Circuits.Units.Seconds(budget))
-            if (top.streams.count > 0) { __CirStreamPump() }
+            if (top.streams.Count > 0) { __CirStreamPump() }
         }
 
         /// <summary>The clock of real time starts anew: the time since the last AdvanceRealTime (a pause) is not made up. With the thread of the kernel, the
@@ -3012,7 +3012,7 @@ namespace Circuits {
         /// <summary>The circuit stops writing into (or reading from) a stream of Output or Input.</summary>
         undefined CloseStream(Circuits.SignalStream stream) {
             var top = this.Top()
-            for (int i = 0; i < top.streams.count; i++) {
+            for (int i = 0; i < top.streams.Count; i++) {
                 Circuits.StreamBinding b = top.streams[i]!Circuits.StreamBinding
                 if (b.stream == stream) {
                     top.streams.RemoveAt(i)
@@ -3070,7 +3070,7 @@ namespace Circuits {
 
         // the parts written in fire see the voltages of now; what they add from here is what the thread adds in every step until the next service
         undefined ServiceParts() {
-            if (this.external.count == 0) { return }
+            if (this.external.Count == 0) { return }
             var s = this.solver
             s.time = this.time
             this.stepping = true
@@ -3090,13 +3090,13 @@ namespace Circuits {
             this.stepParts.Clear()
             this.commitParts.Clear()
             var i = 0
-            while (i < this.external.count) {
+            while (i < this.external.Count) {
                 var p = this.external[i]
                 if (p.stepsInFire) { this.stepParts.Add(p) }
                 if (p.commitsInFire) { this.commitParts.Add(p) }
                 if (!p.stepsInFire && !p.commitsInFire) { this.external.RemoveAt(i) } else { i = i + 1 }
             }
-            if (this.external.count == 0) { this.fireSteps = this.recordInstruments.count > 0 }
+            if (this.external.Count == 0) { this.fireSteps = this.recordInstruments.Count > 0 }
         }
 
         /// <summary>Runs in real time for `duration` (of the clock) and returns: what the circuit simulates in the meantime is as long as it manages (all of it
@@ -3289,7 +3289,7 @@ namespace Circuits {
                     if (!scope.Compile(s)) { this.recordInstruments.Add(inst) }
                 } else { this.recordInstruments.Add(inst) }
             }
-            this.fireSteps = this.external.count > 0 || this.recordInstruments.count > 0
+            this.fireSteps = this.external.Count > 0 || this.recordInstruments.Count > 0
             Circuits.Devices.Attach(s, leaves)
             foreach (b in this.streams) {
                 if (b.source != undefined) {
@@ -3452,7 +3452,7 @@ namespace Circuits {
         int PlanInfo(int what) {
             var top = this.Top()
             if (top.dirty || top.solver == undefined) { top.Build() }
-            if (what == 5) { return top.external.count }
+            if (what == 5) { return top.external.Count }
             return top.solver.Info(what)
         }
     }
@@ -3633,7 +3633,7 @@ namespace Circuits {
         undefined SetCaps(int index, float cjA, float cjB, float vj, float m, float tt, float tr = 0.0) { __CirSetCaps(this.handle, index, cjA, cjB, vj, m, tt, tr) }
         int AddTube(int kind, List ports, string parameters) {
             var n = [-2, -2, -2, -2]
-            for (int i = 0; i < ports.count; i++) { n[i] = ports[i].Root().node }
+            for (int i = 0; i < ports.Count; i++) { n[i] = ports[i].Root().node }
             var index = __CirAddTube(this.handle, kind, n[0], n[1], n[2], n[3], parameters)
             if (index < 0) { throw new ArgumentException(this.Error()) }
             return index
@@ -3868,7 +3868,7 @@ namespace Circuits {
         Port At(int i) { return this.ports[i] }
 
         bool Compile(Circuits.Solver solver) {
-            var n = this.ports.count
+            var n = this.ports.Count
             var nodes = new int[n]
             var modes = new int[n]
             for (int i = 0; i < n; i++) {
@@ -3877,8 +3877,8 @@ namespace Circuits {
             }
             this.index = solver.AddChip(this.kind, nodes, modes, this.supply, this.supply / 2, this.rout, this.bits, this.flags, this.p0, this.p1)
             if (this.hasSaved) {
-                for (int i = 0; i < this.savedVal.count && i < n; i++) { solver.ChipSet(this.index, 0, i, this.savedVal[i]) }
-                for (int i = 0; i < this.savedSt.count; i++) { solver.ChipSet(this.index, 1, i, this.savedSt[i]) }
+                for (int i = 0; i < this.savedVal.Count && i < n; i++) { solver.ChipSet(this.index, 0, i, this.savedVal[i]) }
+                for (int i = 0; i < this.savedSt.Count; i++) { solver.ChipSet(this.index, 1, i, this.savedSt[i]) }
                 if (this.savedClock) { solver.ChipSet(this.index, 4, 0, 1.0) }
                 if (this.savedLoad) { solver.ChipSet(this.index, 5, 0, 1.0) }
             } else {
@@ -3891,7 +3891,7 @@ namespace Circuits {
             if (this.index < 0) { return }
             this.savedVal.Clear()
             this.savedSt.Clear()
-            for (int i = 0; i < this.ports.count; i++) { this.savedVal.Add(solver.ChipGet(this.index, 0, i)) }
+            for (int i = 0; i < this.ports.Count; i++) { this.savedVal.Add(solver.ChipGet(this.index, 0, i)) }
             var count = solver.ChipGet(this.index, 2, 0)!int
             for (int i = 0; i < count; i++) { this.savedSt.Add(solver.ChipGet(this.index, 1, i)) }
             this.savedClock = solver.ChipGet(this.index, 4, 0) != 0.0
@@ -3908,7 +3908,7 @@ namespace Circuits {
         bool High(int i) {
             var plan = this.Plan()
             if (plan == undefined || this.index < 0) {
-                if (this.hasSaved && i < this.savedVal.count) { return this.savedVal[i] != 0.0 }
+                if (this.hasSaved && i < this.savedVal.Count) { return this.savedVal[i] != 0.0 }
                 return this.initialHigh.IndexOf(i) >= 0
             }
             return plan.ChipGet(this.index, 0, i) != 0.0
@@ -4801,7 +4801,7 @@ namespace Circuits {
             this.inFire.Clear()
             this.fireChannels = 0
             this.kernelChannels = false
-            for (int i = 0; i < this.sources.count; i++) {
+            for (int i = 0; i < this.sources.Count; i++) {
                 var src = this.sources[i]
                 var done = false
                 if (src is of List) {
@@ -4832,7 +4832,7 @@ namespace Circuits {
         int Count { get { return __CirRecCount(this.recorder) } }
 
         int ChannelOf(string name) {
-            for (int i = 0; i < this.names.count; i++) {
+            for (int i = 0; i < this.names.Count; i++) {
                 if (this.names[i] == name) { return i }
             }
             throw new ArgumentException("The scope has no channel '" + name + "'.")

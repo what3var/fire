@@ -103,7 +103,7 @@ namespace fire.Standard
             // `", ".Join(items)`: the elements of a List or an array as text (like `"" + x`), joined by this text - in one piece, natively
             sb.AppendLine("    string Join(any items) {");
             sb.AppendLine("        int n = 0");
-            sb.AppendLine("        if (items is of List) { n = items.count } else { n = items.length }");
+            sb.AppendLine("        if (items is of List) { n = items.Count } else { n = items.length }");
             sb.AppendLine("        var texts = new string[n]");
             sb.AppendLine("        for (int i = 0; i < n; i++) { texts[i] = \"\" + items[i] }");
             sb.AppendLine($"        return {NativeName}({(int)StringMethod.Join}, this, texts)");

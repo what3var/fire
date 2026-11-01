@@ -299,7 +299,7 @@ static class CircuitEditorTests
                 "var counts = new List()\n" +
                 "foreach (e in c.Schematic.Elements()) {\n" +
                 "    if (e.Error != \"\") { bad = bad + 1 }\n" +
-                "    for (int k = 0; k < e.pins.count / 2; k++) {\n" +
+                "    for (int k = 0; k < e.pins.Count / 2; k++) {\n" +
                 "        var key = e.pins[k * 2] + \",\" + e.pins[k * 2 + 1]\n" +
                 "        var i = keys.IndexOf(key)\n" +
                 "        if (i < 0) { keys.Add(key)\n counts.Add(1) } else { counts[i] = counts[i] + 1 }\n" +
@@ -398,7 +398,7 @@ static class CircuitEditorTests
             ui.KeyDown(122, 64)
             view.Select(s.Find("D1"))
             ui.KeyDown(127, 0)
-            print("del " + s.Elements().count)
+            print("del " + s.Elements().Count)
             ui.KeyDown(122, 64)
             view.BeginPlace("Switch")
             ui.MouseDown(1, P.X(20), P.X(0))
@@ -418,12 +418,12 @@ static class CircuitEditorTests
             ed.nameBox.Text = "Rload"
             ed.Accept()
             ui.Update()
-            print("editor " + ui.popups.count + " " + s.Find("Rload").Get("resistance") + " " + s.Find("Rload").part!Circuits.Resistor.Resistance)
+            print("editor " + ui.popups.Count + " " + s.Find("Rload").Get("resistance") + " " + s.Find("Rload").part!Circuits.Resistor.Resistance)
             view.readOnly = true
             view.BeginPlace("Resistor")
             ui.MouseDown(1, P.X(24), P.X(0))
             ui.MouseUp(1, P.X(24), P.X(0))
-            print("read-only: " + s.Elements().count + " elements, switch " + sw.part!Circuits.Switch.Closed)
+            print("read-only: " + s.Elements().Count + " elements, switch " + sw.part!Circuits.Switch.Closed)
             ui.Draw()
             """), new[]
         {
@@ -613,7 +613,7 @@ static class CircuitEditorTests
             view.SelectAll()
             var clip = view.SelectionText()
             print(clip)
-            print(view.PasteText(clip) + " " + s.Elements().count + " sel " + view.Selection().count)
+            print(view.PasteText(clip) + " " + s.Elements().Count + " sel " + view.Selection().Count)
             foreach (e in s.Elements()) { print(e.type + " '" + e.name + "' " + e.x1 + "," + e.y1 + " " + e.Get("resistance")) }
             print(view.PasteText("hallo") + " " + view.FindNext("4k7") + " " + view.SelectedElement.name)
             print(view.ReplaceAll("4k7", "10k") + " " + s.Find("R1").Get("resistance"))

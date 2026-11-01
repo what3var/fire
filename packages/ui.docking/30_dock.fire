@@ -192,14 +192,14 @@ namespace UI.Docking {
         string StyleKey() { return "DockPane" }
 
         UI.Docking.ToolWindow ActiveWindow() {
-            if (this.windows.count == 0) { return undefined }
-            return this.windows[UI.M.Clamp(this.active, 0, this.windows.count - 1)]
+            if (this.windows.Count == 0) { return undefined }
+            return this.windows[UI.M.Clamp(this.active, 0, this.windows.Count - 1)]
         }
 
         // Shows the window in this pane (at `at`, -1: as the last tab) and makes it the visible one.
         undefined AddWindow(UI.Docking.ToolWindow window, int at = -1) {
             window.parent = this
-            if (at < 0 || at > this.windows.count) { at = this.windows.count }
+            if (at < 0 || at > this.windows.Count) { at = this.windows.Count }
             this.windows.Insert(at, window)
             this.active = at
             this.Invalidate()
@@ -211,20 +211,20 @@ namespace UI.Docking {
             this.windows.RemoveAt(index)
             window.parent = undefined
             if (index < this.active) { this.active = this.active - 1 }
-            if (this.active >= this.windows.count) { this.active = this.windows.count - 1 }
+            if (this.active >= this.windows.Count) { this.active = this.windows.Count - 1 }
             if (this.active < 0) { this.active = 0 }
             this.Invalidate()
         }
 
         undefined Select(int index) {
-            if (index < 0 || index >= this.windows.count || index == this.active) { return }
+            if (index < 0 || index >= this.windows.Count || index == this.active) { return }
             this.active = index
             this.Invalidate()
         }
 
         // Can the pane float (all its windows allow it)?
         bool CanFloat() {
-            for (var i = 0; i < this.windows.count; i = i + 1) {
+            for (var i = 0; i < this.windows.Count; i = i + 1) {
                 if (!this.windows[i].canFloat) { return false }
             }
             return true
@@ -233,7 +233,7 @@ namespace UI.Docking {
         int CaptionHeight(UI.Root root) { return this.TextHeight(root) + 8 }
 
         int TabHeight(UI.Root root) {
-            if (this.windows.count > 1) { return this.TextHeight(root) + 8 }
+            if (this.windows.Count > 1) { return this.TextHeight(root) + 8 }
             return 0
         }
 
@@ -247,7 +247,7 @@ namespace UI.Docking {
         }
 
         int FloatLeft(UI.Root root) {
-            if (!this.CanFloat() || this.windows.count == 0) { return -1 }
+            if (!this.CanFloat() || this.windows.Count == 0) { return -1 }
             var right = this.ax + this.actualWidth - 3
             var close = this.CloseLeft(root)
             if (close >= 0) { right = close - 2 }
@@ -256,7 +256,7 @@ namespace UI.Docking {
 
         int TabWidth(UI.Root root, int index) {
             var w = this.TextWidth(root, this.windows[index].title) + 16
-            return UI.M.Min(w, UI.M.Max(24, (this.actualWidth - 2) / UI.M.Max(1, this.windows.count)))
+            return UI.M.Min(w, UI.M.Max(24, (this.actualWidth - 2) / UI.M.Max(1, this.windows.Count)))
         }
 
         int TabLeft(UI.Root root, int index) {
@@ -267,7 +267,7 @@ namespace UI.Docking {
 
         int TabAt(UI.Root root, int px) {
             var x = this.ax + 1
-            for (var i = 0; i < this.windows.count; i = i + 1) {
+            for (var i = 0; i < this.windows.Count; i = i + 1) {
                 var w = this.TabWidth(root, i)
                 if (px >= x && px < x + w) { return i }
                 x = x + w
@@ -329,7 +329,7 @@ namespace UI.Docking {
 
         undefined Poll(UI.Root root) {
             base.Poll(root)
-            for (var i = 0; i < this.windows.count; i = i + 1) { this.windows[i].Poll(root) }
+            for (var i = 0; i < this.windows.Count; i = i + 1) { this.windows[i].Poll(root) }
             var inside = this.FocusIn(root)
             if (inside != this.focusInside) {
                 this.focusInside = inside
@@ -404,7 +404,7 @@ namespace UI.Docking {
                     r.FillRect(ax, ty, w, tabs, theme.back)
                     r.DrawLine(ax, ty, ax + w - 1, ty, theme.border)
                     var x = ax + 1
-                    for (var i = 0; i < this.windows.count; i = i + 1) {
+                    for (var i = 0; i < this.windows.Count; i = i + 1) {
                         var tw = this.TabWidth(root, i)
                         var text = theme.text
                         if (i == this.active) {
@@ -441,7 +441,7 @@ namespace UI.Docking {
 
         UI.Element FindName(string name) {
             if (this.Name == name) { return this }
-            for (var i = 0; i < this.windows.count; i = i + 1) {
+            for (var i = 0; i < this.windows.Count; i = i + 1) {
                 var found = this.windows[i].FindName(name)
                 if (found != undefined) { return found }
             }
@@ -454,7 +454,7 @@ namespace UI.Docking {
             if (win == undefined) { return }
             var list = new List()
             win.Collect(list)
-            if (list.count > 0) { root.SetFocus(list[0]) }
+            if (list.Count > 0) { root.SetFocus(list[0]) }
         }
 
         undefined Hover(UI.Root root, int px, int py) {
@@ -945,9 +945,9 @@ namespace UI.Docking {
             var list = new List()
             foreach (side in UI.Dock.Values()) {
                 var panel = this.PanelOf(side)
-                for (var i = 0; i < panel.strips.count; i = i + 1) { list.Add(panel.strips[i]) }
+                for (var i = 0; i < panel.strips.Count; i = i + 1) { list.Add(panel.strips[i]) }
             }
-            for (var i = 0; i < this.floats.count; i = i + 1) {
+            for (var i = 0; i < this.floats.Count; i = i + 1) {
                 var f = this.floats[i]
                 if (f.HoldsStrip()) { list.Add(f.body) }
             }
@@ -982,9 +982,9 @@ namespace UI.Docking {
 
         UI.Docking.DockPane NewPane() {
             UI.Docking.DockPane pane = undefined
-            if (this.sparePanes.count > 0) {
-                pane = this.sparePanes[this.sparePanes.count - 1]
-                this.sparePanes.RemoveAt(this.sparePanes.count - 1)
+            if (this.sparePanes.Count > 0) {
+                pane = this.sparePanes[this.sparePanes.Count - 1]
+                this.sparePanes.RemoveAt(this.sparePanes.Count - 1)
             } else {
                 pane = new UI.Docking.DockPane()
                 pane.TakeTo(this)
@@ -999,9 +999,9 @@ namespace UI.Docking {
 
         UI.Docking.FloatWindow NewFloat() {
             UI.Docking.FloatWindow f = undefined
-            if (this.spareFloats.count > 0) {
-                f = this.spareFloats[this.spareFloats.count - 1]
-                this.spareFloats.RemoveAt(this.spareFloats.count - 1)
+            if (this.spareFloats.Count > 0) {
+                f = this.spareFloats[this.spareFloats.Count - 1]
+                this.spareFloats.RemoveAt(this.spareFloats.Count - 1)
             } else {
                 f = new UI.Docking.FloatWindow()
                 f.TakeTo(this)
@@ -1052,9 +1052,9 @@ namespace UI.Docking {
             pane.floating = false
             pane.parent = this
             var list = this.PanesOf(side)
-            if (index < 0 || index > list.count) { index = list.count }
+            if (index < 0 || index > list.Count) { index = list.Count }
             list.Insert(index, pane)
-            for (var i = 0; i < pane.windows.count; i = i + 1) {
+            for (var i = 0; i < pane.windows.Count; i = i + 1) {
                 var w = pane.windows[i]
                 w.lastSide = side
                 w.wasFloating = false
@@ -1072,7 +1072,7 @@ namespace UI.Docking {
             f.Width = UI.M.Max(160, w)
             f.Height = UI.M.Max(100, h)
             this.floats.Add(f)
-            for (var i = 0; i < pane.windows.count; i = i + 1) { pane.windows[i].wasFloating = true }
+            for (var i = 0; i < pane.windows.Count; i = i + 1) { pane.windows[i].wasFloating = true }
             this.Changed()
             return f
         }
@@ -1094,7 +1094,7 @@ namespace UI.Docking {
                 window.lastIndex = this.PanesOf(pane.side).IndexOf(pane)
             }
             pane.RemoveWindow(window)
-            if (pane.windows.count == 0) { this.RecyclePane(pane) }
+            if (pane.windows.Count == 0) { this.RecyclePane(pane) }
             this.Changed()
         }
 
@@ -1186,7 +1186,7 @@ namespace UI.Docking {
                 return
             }
             var last = window.lastPane
-            if (last != undefined && !last.floating && last.windows.count > 0 && this.PanesOf(last.side).IndexOf(last) >= 0) {
+            if (last != undefined && !last.floating && last.windows.Count > 0 && this.PanesOf(last.side).IndexOf(last) >= 0) {
                 last.AddWindow(window)
                 this.Changed()
                 return
@@ -1219,25 +1219,25 @@ namespace UI.Docking {
             var list = new List()
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
-                for (var i = 0; i < panes.count; i = i + 1) {
+                for (var i = 0; i < panes.Count; i = i + 1) {
                     var p = panes[i]
-                    for (var k = 0; k < p.windows.count; k = k + 1) { list.Add(p.windows[k]) }
+                    for (var k = 0; k < p.windows.Count; k = k + 1) { list.Add(p.windows[k]) }
                 }
             }
-            for (var i = 0; i < this.floats.count; i = i + 1) {
+            for (var i = 0; i < this.floats.Count; i = i + 1) {
                 var f = this.floats[i]
                 if (f.body != undefined && f.body is of UI.Docking.DockPane) {
                     any p = f.body
-                    for (var k = 0; k < p.windows.count; k = k + 1) { list.Add(p.windows[k]) }
+                    for (var k = 0; k < p.windows.Count; k = k + 1) { list.Add(p.windows[k]) }
                 }
             }
-            for (var i = 0; i < this.hidden.count; i = i + 1) { list.Add(this.hidden[i]) }
+            for (var i = 0; i < this.hidden.Count; i = i + 1) { list.Add(this.hidden[i]) }
             return list
         }
 
         UI.Docking.ToolWindow FindToolWindow(string title) {
             var all = this.ToolWindows()
-            for (var i = 0; i < all.count; i = i + 1) {
+            for (var i = 0; i < all.Count; i = i + 1) {
                 if (all[i].title == title) { return all[i] }
             }
             return undefined
@@ -1245,7 +1245,7 @@ namespace UI.Docking {
 
         undefined BringToFront(UI.Docking.FloatWindow f) {
             var index = this.floats.IndexOf(f)
-            if (index < 0 || index == this.floats.count - 1) { return }
+            if (index < 0 || index == this.floats.Count - 1) { return }
             this.floats.RemoveAt(index)
             this.floats.Add(f)
             this.Changed()
@@ -1300,10 +1300,10 @@ namespace UI.Docking {
             this.areaH = mid
 
             // the edges: left and right over the whole height, top and bottom between them
-            var hasL = this.leftPanes.count > 0
-            var hasR = this.rightPanes.count > 0
-            var hasT = this.topPanes.count > 0
-            var hasB = this.bottomPanes.count > 0
+            var hasL = this.leftPanes.Count > 0
+            var hasR = this.rightPanes.Count > 0
+            var hasT = this.topPanes.Count > 0
+            var hasB = this.bottomPanes.Count > 0
             var lw = 0
             var rw = 0
             var gaps = 0
@@ -1361,7 +1361,7 @@ namespace UI.Docking {
                 c.Arrange(root, this.centerX, this.centerY, this.centerW, this.centerH)
             }
             // the floating frames: inside the manager as far as possible
-            for (var i = 0; i < this.floats.count; i = i + 1) {
+            for (var i = 0; i < this.floats.Count; i = i + 1) {
                 var f = this.floats[i]
                 f.Measure(root, -1, -1)
                 f.Left = UI.M.Clamp(f.Left, 0, UI.M.Max(0, w - f.dw))
@@ -1373,7 +1373,7 @@ namespace UI.Docking {
         // Arranges the panes of an edge one after the other (below one another at the left and right edge), sharing the length by their weight.
         undefined LayoutSide(UI.Root root, UI.Dock side) {
             var panes = this.PanesOf(side)
-            var n = panes.count
+            var n = panes.Count
             if (n == 0) { return }
             var i0 = side * 4
             var rx = this.sideRects[i0]
@@ -1412,9 +1412,9 @@ namespace UI.Docking {
             if (this.statusBar != undefined) { this.statusBar.Poll(root) }
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
-                for (var i = 0; i < panes.count; i = i + 1) { panes[i].Poll(root) }
+                for (var i = 0; i < panes.Count; i = i + 1) { panes[i].Poll(root) }
             }
-            for (var i = 0; i < this.floats.count; i = i + 1) { this.floats[i].Poll(root) }
+            for (var i = 0; i < this.floats.Count; i = i + 1) { this.floats[i].Poll(root) }
         }
 
         undefined Draw(UI.Root root, int ax, int ay) {
@@ -1428,7 +1428,7 @@ namespace UI.Docking {
             if (this.statusBar != undefined) { this.DrawChild(root, this.statusBar) }
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
-                for (var i = 0; i < panes.count; i = i + 1) { this.DrawChild(root, panes[i]) }
+                for (var i = 0; i < panes.Count; i = i + 1) { this.DrawChild(root, panes[i]) }
             }
             if (this.content != undefined) {
                 var c = this.content
@@ -1438,7 +1438,7 @@ namespace UI.Docking {
                     root.PopClip()
                 }
             }
-            for (var i = 0; i < this.floats.count; i = i + 1) { this.DrawChild(root, this.floats[i]) }
+            for (var i = 0; i < this.floats.Count; i = i + 1) { this.DrawChild(root, this.floats[i]) }
             if (this.dragKind == 1 && this.dragStarted) { this.DrawDropOverlay(root) }
         }
 
@@ -1448,7 +1448,7 @@ namespace UI.Docking {
 
         UI.Element HitTest(int px, int py) {
             if (!this.Visible || !this.Contains(px, py)) { return undefined }
-            var i = this.floats.count - 1
+            var i = this.floats.Count - 1
             while (i >= 0) {
                 var hit = this.floats[i].HitTest(px, py)
                 if (hit != undefined) { return hit }
@@ -1462,7 +1462,7 @@ namespace UI.Docking {
                 var hp = this.PanelOf(side).HitTest(px, py)
                 if (hp != undefined) { return hp }
                 var panes = this.PanesOf(side)
-                for (var k = 0; k < panes.count; k = k + 1) {
+                for (var k = 0; k < panes.Count; k = k + 1) {
                     var hit = panes[k].HitTest(px, py)
                     if (hit != undefined) { return hit }
                 }
@@ -1480,13 +1480,13 @@ namespace UI.Docking {
             this.leftStrips.Collect(list)
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
-                for (var i = 0; i < panes.count; i = i + 1) { panes[i].Collect(list) }
+                for (var i = 0; i < panes.Count; i = i + 1) { panes[i].Collect(list) }
             }
             if (this.content != undefined) { this.content.Collect(list) }
             this.rightStrips.Collect(list)
             this.bottomStrips.Collect(list)
             if (this.statusBar != undefined) { this.statusBar.Collect(list) }
-            for (var i = 0; i < this.floats.count; i = i + 1) { this.floats[i].Collect(list) }
+            for (var i = 0; i < this.floats.Count; i = i + 1) { this.floats[i].Collect(list) }
         }
 
         UI.Element FindName(string name) {
@@ -1496,8 +1496,8 @@ namespace UI.Docking {
             foreach (side in UI.Dock.Values()) { if (found == undefined) { found = this.PanelOf(side).FindName(name) } }
             if (found == undefined && this.statusBar != undefined) { found = this.statusBar.FindName(name) }
             var all = this.ToolWindows()
-            for (var i = 0; i < all.count && found == undefined; i = i + 1) { found = all[i].FindName(name) }
-            for (var i = 0; i < this.floats.count && found == undefined; i = i + 1) { found = this.floats[i].FindName(name) }
+            for (var i = 0; i < all.Count && found == undefined; i = i + 1) { found = all[i].FindName(name) }
+            for (var i = 0; i < this.floats.Count && found == undefined; i = i + 1) { found = this.floats[i].FindName(name) }
             return found
         }
 
@@ -1538,7 +1538,7 @@ namespace UI.Docking {
             var s = this.splitter
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
-                if (panes.count == 0) { continue }
+                if (panes.Count == 0) { continue }
                 var i0 = side * 4
                 var rx = this.sideRects[i0]
                 var ry = this.sideRects[i0 + 1]
@@ -1555,7 +1555,7 @@ namespace UI.Docking {
                     this.dragSide = side
                     return true
                 }
-                for (var i = 0; i + 1 < panes.count; i = i + 1) {
+                for (var i = 0; i + 1 < panes.Count; i = i + 1) {
                     var a = panes[i]
                     var b = panes[i + 1]
                     if (vertical) { hit = x >= rx && x < rx + rw && y >= a.ry + a.actualHeight && y < b.ry }
@@ -1693,7 +1693,7 @@ namespace UI.Docking {
                     var h = UI.M.Max(100, pane.actualHeight)
                     var gx = UI.M.Clamp(this.pressX - pane.ax, 10, w - 30)
                     var gy = UI.M.Clamp(this.pressY - pane.ay, 4, 12)
-                    if (this.dragTab >= 0 && pane.windows.count > 1) {
+                    if (this.dragTab >= 0 && pane.windows.Count > 1) {
                         // one tab leaves the pane
                         var win = pane.windows[this.dragTab]
                         win.lastPane = pane
@@ -1723,7 +1723,7 @@ namespace UI.Docking {
         UI.Docking.DockPane DockedPaneAt(int x, int y) {
             foreach (side in UI.Dock.Values()) {
                 var panes = this.PanesOf(side)
-                for (var i = 0; i < panes.count; i = i + 1) {
+                for (var i = 0; i < panes.Count; i = i + 1) {
                     var p = panes[i]
                     if (x >= p.rx && x < p.rx + p.actualWidth && y >= p.ry && y < p.ry + p.actualHeight) { return p }
                 }
@@ -1811,7 +1811,7 @@ namespace UI.Docking {
                 var ry = this.sideRects[i0 + 1]
                 var rw = this.sideRects[i0 + 2]
                 var rh = this.sideRects[i0 + 3]
-                if (this.PanesOf(side).count > 0) {
+                if (this.PanesOf(side).Count > 0) {
                     // a new pane at the end of the edge
                     if (side == UI.Dock.Left || side == UI.Dock.Right) { this.SetPreview(rx, ry + rh / 2, rw, rh - rh / 2) }
                     else { this.SetPreview(rx + rw / 2, ry, rw - rw / 2, rh) }
@@ -1839,8 +1839,8 @@ namespace UI.Docking {
                 this.DockPaneAt(pane, this.dropSide, -1)
             } else if (kind == UI.Docking.Drop.Tab && this.dropPane != undefined) {
                 var target = this.dropPane
-                var first = target.windows.count
-                while (pane.windows.count > 0) {
+                var first = target.windows.Count
+                while (pane.windows.Count > 0) {
                     var w = pane.windows[0]
                     pane.RemoveWindow(w)
                     target.AddWindow(w)

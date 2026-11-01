@@ -2050,7 +2050,7 @@ name). The names are those of .NET (docs/FILESYSTEM.md has the full list).
 var f = IO.Path.Combine("data", "notes.txt")
 IO.Directory.CreateDirectory("data")
 IO.File.WriteAllText(f, "Greetings\nsecond line")
-foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // a List of strings (.count, [i])
+foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // a List of strings (.Count, [i])
 print(IO.File.Size(f) + " bytes, modified " + IO.File.GetLastWriteTime(f))   // a DateTime (local time)
 IO.File.Copy(f, "backup.txt", true)
 foreach (name in IO.Directory.GetFiles("data", "*.txt")) { print(IO.Path.GetFileName(name)) }

@@ -348,8 +348,8 @@ namespace fire.Editor
                 static string Selected(UI.CircuitView view) {
                     var e = view.SelectedElement
                     if (e == undefined) { return "@select" }
-                    var text = "@select\t" + view.Schematic.Elements().IndexOf(e) + "\t" + e.type + "\t" + e.name + "\t" + view.Selection().count + "\t" + e.Error
-                    for (int k = 0; k < e.keys.count; k++) { text = text + "\t" + e.keys[k] + "=" + e.values[k] }
+                    var text = "@select\t" + view.Schematic.Elements().IndexOf(e) + "\t" + e.type + "\t" + e.name + "\t" + view.Selection().Count + "\t" + e.Error
+                    for (int k = 0; k < e.keys.Count; k++) { text = text + "\t" + e.keys[k] + "=" + e.values[k] }
                     return text
                 }
 
@@ -376,7 +376,7 @@ namespace fire.Editor
                 static Circuits.Element At(UI.CircuitView view, string index) {
                     var i = index.ToInt()
                     var list = view.Schematic.Elements()
-                    if (i < 0 || i >= list.count) { return undefined }
+                    if (i < 0 || i >= list.Count) { return undefined }
                     return list[i]
                 }
 

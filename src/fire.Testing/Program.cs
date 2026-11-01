@@ -5535,9 +5535,9 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.Exists(f) + " " + IO.File.Size(f))
         print(IO.File.ReadAllText(f))
         var lines = IO.File.ReadAllLines(f)
-        print(lines.count + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
+        print(lines.Count + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
         IO.File.AppendAllText(f, "\nvierte\n")
-        print(IO.File.ReadAllLines(f).count)
+        print(IO.File.ReadAllLines(f).Count)
         IO.File.WriteAllLines(f, lines)
         print(IO.File.Size(f))
         print(IO.File.GetLastWriteTime(f).Year >= 2001)
@@ -5582,9 +5582,9 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
         IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
         var files = IO.Directory.GetFiles(sub)
-        print(files.count + " " + IO.Path.GetFileName(files[0]) + " " + IO.Path.GetFileName(files[1]))
-        print(IO.Directory.GetFiles(sub, "*.txt").count)
-        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).count)
+        print(files.Count + " " + IO.Path.GetFileName(files[0]) + " " + IO.Path.GetFileName(files[1]))
+        print(IO.Directory.GetFiles(sub, "*.txt").Count)
+        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).Count)
         print(IO.Path.GetFileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
         try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
         IO.Directory.Delete(IO.Path.Combine(d, "a"), true)
@@ -5641,14 +5641,14 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         var rd = IO.File.OpenText(f)
         print(rd.ReadAll())
         rd.Close()
-        print(IO.File.OpenText(f).ReadLines().count)
+        print(IO.File.OpenText(f).ReadLines().Count)
         var cw = IO.File.CreateText(f)
         cw.WriteLine("neu")
         cw.Close()
         var ap = IO.File.AppendText(f)
         ap.WriteLine("mehr")
         ap.Close()
-        print(IO.File.ReadAllLines(f).count)
+        print(IO.File.ReadAllLines(f).Count)
         """, new[] { "f:Grüße", "f:zwei 3", "f:", "f:ohne Ende", "Grüße\nzwei 3\n\nohne Ende!\n", "4", "2" });
 
     CheckIo("TextReader: CRLF, leere Zeilen, fremder Stream, lange Eingabe", """
@@ -6590,7 +6590,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         var q = 3
         l.Add(q)
         l.Add(5)
-        print(l.count + " " + q)
+        print(l.Count + " " + q)
         var c = new Counter()
         c.Add(q)
         print(q)
@@ -9007,8 +9007,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         slicer.flipY = false
         print(slicer.StepOver)
         var paths = slicer.Slice(mask)
-        print(paths.count)
-        var outline = paths[paths.count - 1]
+        print(paths.Count)
+        var outline = paths[paths.Count - 1]
         var minX = 1000.0
         var maxX = 0.0
         for (var i = 0; i < outline.Count(); i = i + 1) {
@@ -9017,9 +9017,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         print((outline.kind == PathKind.Outline) + " " + outline.closed + " " + (minX > 1.44 && minX < 1.56) + " " + (maxX > 10.44 && maxX < 10.56))
         slicer.strategy = FillStrategy.OutlineOnly
-        print(slicer.Slice(mask).count)
+        print(slicer.Slice(mask).Count)
         slicer.lineWidth = 50
-        print(slicer.Slice(mask).count)
+        print(slicer.Slice(mask).Count)
         try { var bad = new Slicer(0, 1) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
         slicer.overlap = 0.99
         try { slicer.Slice(mask) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
@@ -9102,7 +9102,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     const string everything = """
         try { var l = new Net.TcpListener("127.0.0.1", 0); print("listen ok " + (l.Port > 0)); l.Close() } catch (Net.PermissionException e) { print("listen denied " + e.code) }
         try { var u = new Net.UdpSocket("127.0.0.1", 0); print("udp ok"); u.Close() } catch (Net.PermissionException e) { print("udp denied " + e.code) }
-        try { print("resolve " + Net.Dns.Resolve("127.0.0.1").count) } catch (Net.PermissionException e) { print("resolve denied " + e.code) }
+        try { print("resolve " + Net.Dns.Resolve("127.0.0.1").Count) } catch (Net.PermissionException e) { print("resolve denied " + e.code) }
         try { var c = new Net.TcpClient("127.0.0.1", 9, 500); print("connected?") } catch (Net.PermissionException e) { print("connect denied " + e.code) } catch (Net.NetException e) { print("connect failed " + e.code) }
         try { var c = new Net.TcpClient("example.invalid", 80, 500); print("connected?") } catch (Net.PermissionException e) { print("outside denied " + e.code) } catch (Net.NetException e) { print("outside failed " + e.code) }
         """;
@@ -10270,7 +10270,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         lv.Add(new Person("Bob", 25))
         ui.Add(lv)
         ui.Draw()
-        print("Liste " + lb.SelectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
+        print("Liste " + lb.SelectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.Count)
         ui.MouseDown(1, 20, 25)
         ui.MouseUp(1, 20, 25)
         ui.Draw()
@@ -10305,7 +10305,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         cv.Filter = func (p) => p.age > 26
         cv.SortBy("age", true)
         cv.Update()
-        print("Sicht " + cv.count + " " + cv[0].name + " " + cv[1].name)
+        print("Sicht " + cv.Count + " " + cv[0].name + " " + cv[1].name)
         cv.MoveCurrentToFirst()
         cv.MoveCurrentToNext()
         print("aktuell " + cv.CurrentItem().name + " " + cv.MoveCurrentTo(5))
@@ -10318,7 +10318,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         names.SetView(new UI.CollectionView(lv.items))
         ui.Add(names)
         ui.Draw()
-        print("Anzeigeeigenschaft " + names.count + " " + names.ItemText(names.Rows()[1]))
+        print("Anzeigeeigenschaft " + names.Count + " " + names.ItemText(names.Rows()[1]))
         names.view.sortMember = "name"
         names.view.Invalidate()
         ui.Draw()
@@ -10339,11 +10339,11 @@ string[] uiDrawExpected = Array.Empty<string>();
         a.Expanded = true
         ui.Add(tv)
         ui.Draw()
-        print("sichtbar " + tv.visibleNodes.count)
+        print("sichtbar " + tv.visibleNodes.Count)
         ui.MouseDown(1, 32, 36)
         ui.MouseUp(1, 32, 36)
         ui.Draw()
-        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.Expanded + " ausgewaehlt " + (tv.selected == undefined))
+        print("Dogs aufgeklappt " + tv.visibleNodes.Count + " " + d.Expanded + " ausgewaehlt " + (tv.selected == undefined))
         ui.MouseDown(1, 80, 36)
         ui.MouseUp(1, 80, 36)
         ui.Draw()
@@ -10355,7 +10355,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Links zum Eltern " + tv.selected.Text)
         ui.KeyDown(1073741904, 0)
         ui.Draw()
-        print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.count)
+        print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.Count)
         ui.KeyDown(1073741903, 0)
         ui.KeyDown(1073741903, 0)
         print("Rechts klappt auf, dann zum Kind " + d.Expanded + " " + tv.selected.Text)
@@ -10363,7 +10363,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Pos1 " + tv.selected.Text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.count)
+        print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.Count)
         """, new[] { "sichtbar 4", "Dogs aufgeklappt 6 True ausgewaehlt True", "gewaehlt Dogs True", "Pfeil ab Fido", "Links zum Eltern Dogs", "Links klappt zu False 4", "Rechts klappt auf, dann zum Kind True Cats", "Pos1 Animals Tiefe 0 2", "Enter klappt um False 2" });
 
     CheckUi("Menues: MenuBar, Untermenue, Haken, gesperrte Zeile, Tastatur, Kontextmenue, Klick daneben", uiHead + """
@@ -10389,11 +10389,11 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
         ui.Draw()
-        print("offen " + ui.popups.count + " " + mb.openIndex)
+        print("offen " + ui.popups.Count + " " + mb.openIndex)
         // the pointer over the second title switches the menu
         ui.MouseMove(60, 5)
         ui.Draw()
-        print("gewechselt " + ui.popups.count + " " + mb.openIndex)
+        print("gewechselt " + ui.popups.Count + " " + mb.openIndex)
         // back to File, open submenu Recent via pointer
         ui.MouseMove(10, 5)
         ui.Draw()
@@ -10401,21 +10401,21 @@ string[] uiDrawExpected = Array.Empty<string>();
         var y = menu.RowTop(ui, 2) + 4
         ui.MouseMove(menu.ax + 10, y)
         ui.Draw()
-        print("Untermenue " + ui.popups.count)
+        print("Untermenue " + ui.popups.Count)
         var subMenu = ui.popups[1]
         var sx = subMenu.ax + 10
         var sy = subMenu.ay + 4
         ui.MouseDown(1, sx, sy)
         ui.MouseUp(1, sx, sy)
         ui.Draw()
-        print("gewaehlt " + cnt + " offen " + ui.popups.count)
+        print("gewaehlt " + cnt + " offen " + ui.popups.Count)
         // keyboard: Enter on New
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
         ui.Draw()
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(13, 0)
-        print("Tastatur " + cnt + " offen " + ui.popups.count)
+        print("Tastatur " + cnt + " offen " + ui.popups.Count)
         // check mark and disabled row
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
@@ -10434,9 +10434,9 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, dx, dy)
         ui.MouseUp(1, dx, dy)
         ui.Draw()
-        print("Haken " + chk.IsChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
+        print("Haken " + chk.IsChecked + " gesperrt " + cnt + " offen " + ui.popups.Count)
         ui.KeyDown(27, 0)
-        print("Escape " + ui.popups.count)
+        print("Escape " + ui.popups.Count)
         // Kontextmenue
         var cm = new List()
         cm.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 5 }))
@@ -10448,18 +10448,18 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(3, 155, 155)
         ui.MouseUp(3, 155, 155)
         ui.Draw()
-        print("Kontextmenue " + ui.popups.count)
+        print("Kontextmenue " + ui.popups.Count)
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(13, 0)
-        print("Paste " + cnt + " " + ui.popups.count)
+        print("Paste " + cnt + " " + ui.popups.Count)
         ui.MouseDown(3, 155, 155)
         ui.MouseUp(3, 155, 155)
         ui.Draw()
         ui.MouseDown(1, 5, 190)
         ui.MouseUp(1, 5, 190)
         ui.Draw()
-        print("Klick daneben " + ui.popups.count)
+        print("Klick daneben " + ui.popups.Count)
         """, new[] { "Leiste 320x22", "offen 1 0", "gewechselt 1 1", "Untermenue 2", "gewaehlt 10 offen 0", "Tastatur 11 offen 0", "Haken True gesperrt 11 offen 1", "Escape 0", "Kontextmenue 1", "Paste 61 0", "Klick daneben 0" });
 
     CheckUi("RadioButtons, AutoSuggestBox, ToolBar und Image (alle Dehnungsarten)", uiHead + """
@@ -10496,25 +10496,25 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseUp(1, 160, 20)
         ui.TextInput("ap")
         ui.Draw()
-        print("Vorschlaege " + ui.popups.count + " " + asb.popupList.count)
+        print("Vorschlaege " + ui.popups.Count + " " + asb.popupList.Count)
         ui.KeyDown(1073741905, 0)
         ui.Draw()
         print("Auswahl " + asb.popupList.SelectedIndex)
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("uebernommen " + asb.Text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
+        print("uebernommen " + asb.Text + " " + ui.popups.Count + " " + asb.TakeChosen() + " " + asb.chosenItem)
         asb.SetText("")
         ui.TextInput("B")
         ui.Draw()
-        print("ohne Gross/Klein " + asb.popupList.count)
+        print("ohne Gross/Klein " + asb.popupList.Count)
         ui.MouseDown(1, 160, 10 + 24 + 12)
         ui.MouseUp(1, 160, 10 + 24 + 12)
         ui.Draw()
-        print("Klick auf Vorschlag " + asb.Text + " " + ui.popups.count)
+        print("Klick auf Vorschlag " + asb.Text + " " + ui.popups.Count)
         asb.SetText("")
         ui.TextInput("x")
         ui.Draw()
-        print("kein Treffer " + ui.popups.count)
+        print("kein Treffer " + ui.popups.Count)
         asb.provider = func (text) => {
             var l = new List()
             l.Add(text + "1")
@@ -10523,13 +10523,13 @@ string[] uiDrawExpected = Array.Empty<string>();
         }
         ui.TextInput("y")
         ui.Draw()
-        print("Anbieter " + asb.popupList.count + " " + asb.popupList.Rows()[1])
+        print("Anbieter " + asb.popupList.Count + " " + asb.popupList.Rows()[1])
         ui.KeyDown(27, 0)
-        print("Escape " + ui.popups.count)
+        print("Escape " + ui.popups.Count)
         ui.MouseDown(1, 20, 125)
         ui.MouseUp(1, 20, 125)
         ui.Draw()
-        print("Leiste " + clicks + " " + tb.children.count)
+        print("Leiste " + clicks + " " + tb.children.Count)
         var img = new Framebuffer(16, 16)
         var ir = new Renderer(img)
         ir.FillRect(0, 0, 16, 16, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
@@ -10586,7 +10586,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.Stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
         print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.Fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
         print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.Stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.Stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
-        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.Stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
+        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.Stroke.Color) + " " + p.data.figures.Count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
         print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.Fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
         print("Ellipse-Pfad " + g.figures[0].Count() + " " + p3.actualWidth + "x" + p3.actualHeight + " " + (Px.Get(ui.renderer, 150 + 30, 70 + 30) == ui.theme.back.Color))
         var dc = new UI.DrawingCanvas(10, 150, 120, 40)
@@ -10637,7 +10637,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         lb.Add("three")
         ui.Add(lb)
         ui.Draw()
-        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].Text)
+        print("Vorlagenzeilen " + lb.rowElements.Count + " " + lb.rowElements[1].children.Count + " " + lb.rowElements[1].children[1].Text)
         ui.renderer.SetClip(150, 20, 10, 10)
         ui.renderer.FillRect(100, 0, 100, 100, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
         ui.renderer.DrawText(148, 20, "AB", new SolidBrush(UI.Color.Rgb(0, 255, 0)))
@@ -11008,7 +11008,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 v.Attach(ui.content)
                 v.SetDataContext(new Item())
                 print(v.title.Text + " " + v.other.Text + " " + (v.title.Background is of SolidBrush))
-                print(v.names.ItemsSource.count + " " + v.names.ItemsSource[1])
+                print(v.names.ItemsSource.Count + " " + v.names.ItemsSource[1])
                 """, new[] { "FIRE xfire True", "2 it's" });
             File.WriteAllText(P("Amb.fxml"), """
                 <View Class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
@@ -11105,7 +11105,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var app = new RichApp()
                 app.ui.Draw()
                 app.ui.Draw()
-                print("namen " + app.names.count + " baum " + app.tree.visibleNodes.count + " vorschlaege " + app.sugg.suggestions.count + " tabelle " + app.table.columns.count)
+                print("namen " + app.names.Count + " baum " + app.tree.visibleNodes.Count + " vorschlaege " + app.sugg.suggestions.Count + " tabelle " + app.table.columns.Count)
                 var n = app.names
                 app.ui.MouseDown(1, n.ax + 10, n.ay + 25)
                 app.ui.MouseUp(1, n.ax + 10, n.ay + 25)
@@ -11115,7 +11115,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
                 print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
                 print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").Text)
-                print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.count)
+                print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.Count)
                 app.bar.Open(app.ui, 0)
                 app.ui.Draw()
                 var menu = app.ui.popups[0]
@@ -11123,7 +11123,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var my = menu.ay + 4
                 app.ui.MouseDown(1, mx, my)
                 app.ui.MouseUp(1, mx, my)
-                print("Menue " + app.ui.popups.count + " " + app.bar.menus.count)
+                print("Menue " + app.ui.popups.Count + " " + app.bar.menus.Count)
                 """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
 
             // the design view: the same library draws, without handlers and without the code of the program
@@ -11198,12 +11198,12 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.SetDataContext(m)
                 app.ui.Draw()
                 app.ui.Draw()
-                print("zeilen " + app.viaView.count + " " + app.direct.count + " " + app.young.count + " erste " + app.viaView.selectedItem)
+                print("zeilen " + app.viaView.Count + " " + app.direct.Count + " " + app.young.Count + " erste " + app.viaView.selectedItem)
                 print("zeile " + app.viaView.rowElements[0].children[0].Text + " " + app.viaView.rowElements[0].children[1].Text + " " + app.direct.rowElements[1].Text)
                 m.people.Add(new Person("Dave", 22))
                 m.names.Add("three")
                 app.ui.Draw()
-                print("mehr " + app.viaView.count + " " + app.direct.count + " jung " + app.young.count + " " + app.young.view[0].name)
+                print("mehr " + app.viaView.Count + " " + app.direct.Count + " jung " + app.young.Count + " " + app.young.view[0].name)
                 m.sel = 1
                 app.ui.Draw()
                 print("Auswahl " + app.viaView.SelectedIndex + " " + app.viaView.selectedItem.name)
@@ -11214,7 +11214,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 other.Add("x")
                 m.names = other
                 app.ui.Draw()
-                print("neue Liste " + app.direct.count + " " + app.ui.Update())
+                print("neue Liste " + app.direct.Count + " " + app.ui.Update())
                 """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
 
             // the design view shows the rows without knowing the data
@@ -11269,7 +11269,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 ui1.Add(new UI.Label("one", 5, 5))
                 ui1.Attach(ui2)
                 ui1.Attach(ui2)
-                print("angehaengt " + ui1.attached.count)
+                print("angehaengt " + ui1.attached.Count)
                 print(ui1.Tick())
                 print(ui1.Tick())
                 print("ticks " + ticks + " gezeichnet " + (Px.Get(ui2.renderer, 10, 10) == ui2.theme.face.Color))
@@ -11293,7 +11293,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 a.Open(t)
                 a.ui.Tick()
                 a.ui.Tick()
-                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.count)
+                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.Count)
                 t.l.Text = "changed"
                 print("Update " + t.ui.Update())
                 """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
@@ -12146,7 +12146,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(fb.Width() + "x" + fb.Height())
         print(DateTime.Now.Year > 2000)
         print(Type.Of(fb).Name)
-        print(DeviceManager.Devices().count)
+        print(DeviceManager.Devices().Count)
         print(IO.File.Exists("/gibt/es/nicht"))
         var con = new Renderer(fb)
         con.AlphaBlending = false      // without blending the value including alpha 0 is simply copied
@@ -12866,7 +12866,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
                 e.MoveNext()
                 print(e.GetCurrent() + " " + T.Count(arr))
                 print(arr.Where(x => x > 2).Select(x => x * 10).Join(","))
-                print(arr.OrderBy(x => x).ToList().count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
+                print(arr.OrderBy(x => x).ToList().Count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
                 print(Linq.From(new Bag()).Select(x => x + 1).Join(","))
             }
         }
@@ -13009,7 +13009,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         class Thing : Circle, IThing { construct() : base(1.0) { } Ping() { return 1 } }
         var t = Type.Of("Thing")
         print(t.Base.Name + " " + t.Interfaces.length + " " + t.Interfaces[0])
-        print(t.Fields().count + " " + t.Properties().count + " " + t.Methods().count + " " + t.Constructors().count)
+        print(t.Fields().Count + " " + t.Properties().Count + " " + t.Methods().Count + " " + t.Constructors().Count)
         print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
         print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
         """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True" }, debugRelease);
@@ -13402,7 +13402,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         T.Batch()
         print("batch done")
         var items = T.Items()
-        print(items.count + " " + items[2].n)
+        print(items.Count + " " + items[2].n)
         var ring = T.Ring()
         print(ring.next.next.n)
         T.Lost()
@@ -13557,9 +13557,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
           }
         }
         var l = F.Fill()
-        print(l.count + " " + l[2].n)
+        print(l.Count + " " + l[2].n)
         var l2 = F.FillChildren()
-        print(l2.count)
+        print(l2.Count)
         F.Local(0)
         print("end")
         """, new[] { "3 i2", "2", "True", "~x", "end", "~i0", "~i1", "~i2", "~c1", "~c2" });
@@ -14961,7 +14961,7 @@ else
               undefined Tick() { this.count = this.count + 1 } }
             Counter c = new Counter()
             for (int i = 0; i < 1000; i++) { c.Tick() }
-            print(c.count)
+            print(c.Count)
             class Holder { Box inner
               construct() { this.inner = new Box() } }
             Holder h = new Holder()
@@ -15683,7 +15683,7 @@ else
             print(l[3])
             l[3] = 100
             print(l[3])
-            print(l.count)
+            print(l.Count)
             var names = new List(["x", "y", "z"])
             var joined = ""
             foreach (n in names) { joined = joined + n }
@@ -15773,7 +15773,7 @@ else
                 int id
                 int legs = 4
                 static int count = 0
-                construct(int id) { this.id = id; Animal.count = Animal.count + 1 }
+                construct(int id) { this.id = id; Animal.Count = Animal.Count + 1 }
                 destruct() { print(0 - this.id) }
                 Speak() { print(this.id) }
                 int Legs() { return this.legs }
@@ -15801,7 +15801,7 @@ else
             }
             var m = Maker.Make(9)
             m.Speak()
-            print(Animal.count)
+            print(Animal.Count)
             """),
         ("Objekte: virtuelle Methoden und gleiche Feldnamen in verschiedenen Klassen", """
             class Shape {
@@ -16098,7 +16098,7 @@ else
                 }
                 print("tail " + i)
             }
-            print("sum " + sum + " count " + w.count)
+            print("sum " + sum + " count " + w.Count)
             // nested try in catch, rethrow from nested
             try {
                 try {
@@ -16570,7 +16570,7 @@ else
             var q = 3
             l.Add(q)
             l.Add(5)
-            print(l.count + " " + q)
+            print(l.Count + " " + q)
             var c = new Counter()
             c.Add(q)
             print(q)
@@ -16699,7 +16699,7 @@ else
             for (var i = 0; i < 40; i = i + 1) { l.Add(i) }
             var sum = 0
             foreach (v in l) { sum = sum + v }
-            print(sum + " " + l.count)
+            print(sum + " " + l.Count)
             try {
                 var local = new int[4]
                 local[9] = 1
@@ -16866,7 +16866,7 @@ else
                 }
                 string Secret { set { this.label = "secret " + value } }
                 static int count = 0
-                static int Count { get { return Circle.count } set { Circle.count = value * 10 } }
+                static int Count { get { return Circle.Count } set { Circle.Count = value * 10 } }
             }
             class Ring : Circle {
                 float hole = 1.0
@@ -17226,8 +17226,8 @@ else
             var t = Type.Of(c)
             print(t.Name)
             print(t.Base == undefined)
-            print(t.Fields().count)
-            print(t.Properties().count)
+            print(t.Fields().Count)
+            print(t.Properties().Count)
             var names = ""
             foreach (m in t.All) { names = names + m.Kind + ":" + m.Name + " " }
             print(names)
@@ -17262,7 +17262,7 @@ else
             var mem = Type.Of(c).Find("Scale")
             print(mem.Kind + " " + mem.ParamCount() + " " + mem.TypeName)
             print(mem.Call(c, [3.0]))
-            print(mem.Attributes.count + " " + mem.HasAttribute("Doc") + " " + mem.HasAttribute("Nope") + " " + Type.Of(c).Find("Grow").Attributes.count)
+            print(mem.Attributes.Count + " " + mem.HasAttribute("Doc") + " " + mem.HasAttribute("Nope") + " " + Type.Of(c).Find("Grow").Attributes.Count)
             var vals = mem.FindAttribute("Values")
             for (int ai = 0; ai < vals.ArgCount(); ai++) { print(vals.ArgTexts[ai] + " = " + vals.Args[ai]) }
             print(vals.Args[0][2] + " " + vals.Args[1][1] + " " + vals.Args[1].length + " " + (vals.Args[4] == undefined) + " " + mem.FindAttribute("Doc").Args[1])
@@ -17959,7 +17959,7 @@ else
             print(IO.File.ReadAllText(f))
             foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
             IO.File.AppendAllText(f, "\nangehaengt")
-            print(IO.File.ReadAllLines(f).count)
+            print(IO.File.ReadAllLines(f).Count)
             var reader = IO.File.OpenText(f)
             print(reader.ReadLine())
             print(reader.ReadLine())
@@ -18104,14 +18104,14 @@ else
             print(count + " " + rd.EndOfStream)
             rd.Close()
             var lines = IO.File.ReadAllLines(IO.Path.Combine(dir, "lines.txt"))
-            print(lines.count + " [" + lines[2] + "] " + lines[3])
+            print(lines.Count + " [" + lines[2] + "] " + lines[3])
             var open = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
             print(open.ReadLine() + "|" + open.ReadAll().length)
             open.Close()
             try { open.ReadLine() } catch (IO.StreamClosedException e) { print("reader closed") }
             IO.File.AppendAllText(IO.Path.Combine(dir, "lines.txt"), "tail")
             print(IO.File.ReadAllText(IO.Path.Combine(dir, "lines.txt")).length)
-            print(IO.Directory.GetFiles(dir).count)
+            print(IO.Directory.GetFiles(dir).Count)
             IO.Directory.Delete(dir, true)
             print(IO.Directory.Exists(dir))
             """),
@@ -18273,7 +18273,7 @@ else
             }
             var h = new Holder()
             print(h.k.items[0].name)
-            print(h.people.count)
+            print(h.people.Count)
             print(h.people[0].name + h.people[1].name)
         """),
         ("Besitz: ein Konstruktor uebernimmt ein `new`-Argument per take, TakeTo oder try TakeTo", """
@@ -18414,16 +18414,16 @@ else
             // the slicer
             var slicer = new Slicer(2.0, 1.0)
             var paths = slicer.Slice(mask)
-            print(paths.count)
+            print(paths.Count)
             var total = 0
             foreach (p in paths) { total = total + p.Count() }
             print(total)
-            if (paths.count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
+            if (paths.Count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
             var zz = new Slicer(1.5, 1.0)
             zz.strategy = FillStrategy.ZigZag
             zz.flipY = false
             var zp = zz.Slice(mask)
-            print(zp.count)
+            print(zp.Count)
             """),
         ("Grafik: Bilder PNG/BMP/GIF aus Bytes", """
             #import "graphics"
@@ -18531,7 +18531,7 @@ else
             T.Batch()
             print("batch done")
             var items = T.Items()
-            print(items.count + " " + items[2].n)
+            print(items.Count + " " + items[2].n)
             var ring = T.Ring()
             print(ring.next.next.n)
             T.Lost()
@@ -18632,7 +18632,7 @@ else
                 return l
             } }
             var l = F.Make()
-            print("made " + l.count)
+            print("made " + l.Count)
             print(l[0].n + l[1].n)
             class G { static Gone() { var i = new Item(9); return i }
               static Lost() { var a = new Item(7); return 1 } }
@@ -18718,9 +18718,9 @@ else
               }
             }
             var l = F.Fill()
-            print(l.count + " " + l[2].n)
+            print(l.Count + " " + l[2].n)
             var l2 = F.FillChildren()
-            print(l2.count)
+            print(l2.Count)
             F.Local(0)
             print("end")
             """),
@@ -18955,7 +18955,7 @@ else
             print(t.HasFlag(Test.b))
             print(t.Flags(Test.a))
             print(t.Flags("Test"))
-            print(t.Attributes.count)
+            print(t.Attributes.Count)
             var m = t.Find("value")
             print(m.HasFlag(Test.b))
             print(m.Flags(Test.a))
@@ -19023,18 +19023,18 @@ else
             d["b"] = 2
             d.Add("c", 3)
             d["a"] = 10
-            print(d["a"] + " " + d.count)
+            print(d["a"] + " " + d.Count)
             print(d.ContainsKey("b") + " " + d.ContainsKey("x"))
             print(d.Get("x", -1))
             int v = 0
             print(d.TryGet("c", v) + " " + v)
             foreach (p in d) { print(p.Key + "=" + p.Value) }
-            print(d.Remove("b") + " " + d.Remove("b") + " " + d.count)
+            print(d.Remove("b") + " " + d.Remove("b") + " " + d.Count)
             foreach (k in d.Keys) { print(k) }
             for (var i = 0; i < 100; i++) { d["k" + i] = i }
-            print(d.count + " " + d["k57"])
+            print(d.Count + " " + d["k57"])
             for (var i = 0; i < 100; i += 2) { d.Remove("k" + i) }
-            print(d.count + " " + d["k57"] + " " + d.ContainsKey("k56"))
+            print(d.Count + " " + d["k57"] + " " + d.ContainsKey("k56"))
             try { d.Add("a", 5) } catch (ArgumentException e) { print(e.message) }
             try { print(d["zz"]) } catch (ArgumentException e) { print(e.message) }
             var u = new Dictionary<any, string>()
@@ -19043,11 +19043,11 @@ else
             u[2] = "two"
             print(u[2.0])
             var s = new HashSet<string>()
-            print(s.Add("x") + " " + s.Add("y") + " " + s.Add("x") + " " + s.count)
+            print(s.Add("x") + " " + s.Add("y") + " " + s.Add("x") + " " + s.Count)
             foreach (x in s) { print(x) }
             print(s.Contains("y") + " " + s.Remove("y") + " " + s.Contains("y"))
             d.Clear()
-            print(d.count)
+            print(d.Count)
             """),
         ("Dictionary/HashSet/List mit Owns: Explicit behaelt nur Uebergebenes, Values zerstoert Herausfallendes, Take/TakeAt geben es heraus; IEquatable-Schluessel", """
             class Node { string n
@@ -19062,7 +19062,7 @@ else
                 var plain = new Dictionary<string, Node>()
                 plain["ref"] = keep
                 plain.Add("given", new Node("given"))
-                print("plain " + plain.count)
+                print("plain " + plain.Count)
             }
             print("after plain")
             var owning = new Dictionary<string, Node>(Owns.Values)
@@ -19073,7 +19073,7 @@ else
             owning.Remove("b")
             print("removed")
             var t = owning.Take("a")
-            print("took " + t.n + " " + owning.count)
+            print("took " + t.n + " " + owning.Count)
             owning["c"] = new Node("c")
             owning.Clear()
             print("cleared")
@@ -19084,7 +19084,7 @@ else
             set.Add(new Node("s1"))
             var s2 = new Node("s2")
             set.Add(s2)
-            print(set.Contains(s2) + " " + set.count)
+            print(set.Contains(s2) + " " + set.Count)
             set.Remove(s2)
             print("set removed")
             var list = new List<Node>(Owns.Values)
@@ -19093,7 +19093,7 @@ else
             list.Add(new Node("l3"))
             list.RemoveAt(0)
             var back = list.TakeAt(1)
-            print("list " + list.count + " " + back.n)
+            print("list " + list.Count + " " + back.n)
             list.Clear()
             print("end")
             """),
@@ -19317,7 +19317,7 @@ else
             var sum = 0
             var moved = 0
             for (var i = 0; i < 20; i = i + 1) { sum = sum + shuffled[i]; if (shuffled[i] != i) { moved = moved + 1 } }
-            print("Mischen " + shuffled.count + " " + sum + " " + (moved > 5))
+            print("Mischen " + shuffled.Count + " " + sum + " " + (moved > 5))
             print(r.Pick(list) >= 0)
             print(r.Pick(new List()))
             var bools = 0
@@ -19377,7 +19377,7 @@ else
             print(Json.Serialize(a, new JsonOptions(true)))
             Person c = Json.Deserialize<Person>(text)
             print(c.name + " " + c.age + " " + c.secret + " " + c.nickname + " " + c.friend.name + " " + (c.friend.friend == c))
-            print(c.path.count + " " + c.path[1].y + " " + c.path[0].x)
+            print(c.path.Count + " " + c.path[1].y + " " + c.path[0].x)
             print(c.extra[1] + " " + c.extra[3] + " " + c.extra[6])
             var tree = Json.Parse("{\"a\": [1, {\"b\": null}], \"c\": \"d\"}")
             print(tree.Get("c") + " " + tree.Get("a")[0] + " " + tree.Get("a")[1].Has("b"))
@@ -19546,7 +19546,7 @@ else
             DeviceManager.AddDriver(new ThermometerDriver())
             DeviceManager.AddDriver(new GpioDriver())
             foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
-            print(DeviceManager.Drivers().count)
+            print(DeviceManager.Drivers().Count)
             any port = DeviceManager.Get("gpiosim")
             print("port " + port.Identifier() + " " + port.Lines)
             Gpio.Sim.Wire(0, 8)
@@ -19675,7 +19675,7 @@ else
             vs.A.Connect(inner.PortAt("in"))
             vs.B.Connect(outer.Ground)
             outer.Step()
-            print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().count + " " + outer.Parts().count)
+            print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().Count + " " + outer.Parts().Count)
             try { new Circuits.Resistor(3V) } catch (ArgumentException e) { print(e.message) }
             """),
         ("Circuits: Scope.Stats - Min/Max/Mittelwert/RMS ueber ganze Perioden und Frequenz (Sinus mit Offset, Leistung als Produkt zweier Kanaele)", """
@@ -19903,7 +19903,7 @@ else
                 if ((qs[i] > 2.5) != (qs[i - 1] > 2.5)) { changes++ }
             }
             print("toggle changes " + changes)
-            print(Circuits.Models.Names("NPN").count + " " + Circuits.Models.Get("1n4148").Name)
+            print(Circuits.Models.Names("NPN").Count + " " + Circuits.Models.Get("1n4148").Name)
             Circuits.Models.Add(new Circuits.Model("mydiode", "D", 0.000000001, 1.5))
             var c2 = new Circuits.Circuit()
             var d2 = c2.Add(new Circuits.Diode("mydiode"))
@@ -20333,7 +20333,7 @@ else
             c.TimeStep = 10us
             c.Run(1ms)
             var cap = s.Find("c1")
-            print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().count + " scope " + s.Elements()[5].scope.Count)
+            print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().Count + " scope " + s.Elements()[5].scope.Count)
             var text = s.ToText()
             print(text)
             var c2 = new Circuits.Circuit("copy")
@@ -20345,7 +20345,7 @@ else
             c.Run(1ms)
             print("moved: r1 carries " + H.R(s.Find("r1").part.Current / 1mA) + " mA, version " + s.Version)
             s.Remove(s.Find("r1"))
-            print("removed: " + s.Elements().count + " elements, " + c.Parts().count + " parts")
+            print("removed: " + s.Elements().Count + " elements, " + c.Parts().Count + " parts")
             """),
         ("Circuits: Schaltplan mit Op-Amp, Transistor, LED, Gattern und 555 (Pins wie bei Falstad)", """
             #import "circuits"
@@ -21601,7 +21601,7 @@ else
     {
         ("Gpio: simulierter Chip - Ausgang, Eingang, Draht, Pull, Flanken, Fehler", """
             #import "gpio"
-            print("chips " + Gpio.Board.Chips()[0] + " " + (Gpio.Board.Chips().count >= 1))
+            print("chips " + Gpio.Board.Chips()[0] + " " + (Gpio.Board.Chips().Count >= 1))
             var led = new Gpio.Pin("sim", 1).Output()
             var btn = new Gpio.Pin("sim", 2).Input(Gpio.Pull.Down, Gpio.Edge.Both)
             print("props " + led.Chip + " " + led.Line + " " + led.IsOutput + " " + btn.IsInput + " " + led.IsClosed)
@@ -21817,7 +21817,7 @@ else
         ("Audio: simuliertes Geraet - Schreiben, Wellen, Lautstaerke, WAV, Halten/Stop, Fehler", """
             #import "audio"
 
-            print("devices " + Audio.Board.Devices()[0] + " " + (Audio.Board.Devices().count >= 1))
+            print("devices " + Audio.Board.Devices()[0] + " " + (Audio.Board.Devices().Count >= 1))
             var out = new Audio.Output("sim", 8000, 1)
             print("output " + out.Name + " " + out.Rate + " " + out.Channels + " " + out.Volume + " " + out.IsClosed)
             print("sim " + Audio.Sim.Rate() + " " + Audio.Sim.Channels())
@@ -21927,7 +21927,7 @@ else
             try { new Audio.Output(25) } catch (Audio.NotFoundException e) { print("pwm pin " + e.code) }
             var hasAlsa = false
             var names = Audio.Board.Devices()
-            for (var i = 0; i < names.count; i++) { if (names[i] == "alsa") { hasAlsa = true } }
+            for (var i = 0; i < names.Count; i++) { if (names[i] == "alsa") { hasAlsa = true } }
             if (hasAlsa) {
                 // the PCM "null" of ALSA throws the sound away: the real code path of the Linux backend without a sound card
                 try {
@@ -21949,16 +21949,16 @@ else
         ("I2c: simulierter Bus - Geraete, Register, Scan, Fehler", """
             #import "i2c"
 
-            print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().count)
+            print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().Count)
             var bus = new I2c.Bus("sim")
             print("name " + bus.Name)
-            print("scan empty " + bus.Scan().count)
+            print("scan empty " + bus.Scan().Count)
             I2c.Sim.Add(0x50)
             I2c.Sim.Add(0x76)
             I2c.Sim.SetRegister(0x76, 0xD0, 0x58)
             print("probe " + bus.Probe(0x50) + " " + bus.Probe(0x51))
             var found = bus.Scan()
-            print("scan " + found.count + " " + found[0] + " " + found[1])
+            print("scan " + found.Count + " " + found[0] + " " + found[1])
             print("id " + bus.ReadRegister(0x76, 0xD0))
             bus.WriteRegister(0x76, 0xF4, 0x27)
             print("wrote " + I2c.Sim.GetRegister(0x76, 0xF4) + " " + bus.ReadRegister(0x76, 0xF4))
@@ -22003,7 +22003,7 @@ else
         ("Spi: simuliertes Geraet - Loopback, Antworten, Protokoll, Einstellungen, Fehler", """
             #import "spi"
 
-            print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().count + " " + Spi.Board.Available())
+            print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().Count + " " + Spi.Board.Available())
             var chip = new Spi.Device("sim", 0, 2000000)
             print("name " + chip.Name + " " + chip.Mode + " " + chip.Speed + " " + chip.LsbFirst)
             print("sim setup " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst())
@@ -22065,22 +22065,22 @@ else
         ("WiFi: simuliertes Funkmodul - Scan, Verbinden, Fehler, Zugangspunkt", """
             #import "wifi"
 
-            print("ifaces " + WiFi.Board.Interfaces()[0] + " " + WiFi.Board.Interfaces().count + " " + WiFi.Board.Available())
+            print("ifaces " + WiFi.Board.Interfaces()[0] + " " + WiFi.Board.Interfaces().Count + " " + WiFi.Board.Available())
             var sta = new WiFi.Station()
             print("name " + sta.Name + " state " + sta.State + " ip [" + sta.Ip + "] mac " + sta.Mac + " rssi " + sta.Rssi)
-            print("empty scan " + sta.Scan().count)
+            print("empty scan " + sta.Scan().Count)
             WiFi.Sim.AddNetwork("home", "secret-pass", -55, 6)
             WiFi.Sim.AddNetwork("cafe", "", -70, 1)
             WiFi.Sim.AddNetwork("far", "farfarfar", -85, 11)
             var nets = sta.Scan()
-            print("scan " + nets.count)
-            for (var i = 0; i < nets.count; i++) {
+            print("scan " + nets.Count)
+            for (var i = 0; i < nets.Count; i++) {
                 var n = nets[i]
                 print(n.ssid + " " + n.rssi + " ch" + n.channel + " auth" + n.auth + " secure " + n.Secure + " " + n.bssid)
             }
             sta.Connect("home", "secret-pass", 2s)
             print("connected " + sta.IsConnected + " ssid " + sta.Ssid + " ip " + sta.Ip + " rssi " + sta.Rssi)
-            print("scan while connected " + sta.Scan().count)
+            print("scan while connected " + sta.Scan().Count)
             sta.Disconnect()
             print("after disconnect " + sta.State + " [" + sta.Ssid + "]")
             try { sta.Connect("home", "wrong-password", 2s) } catch (WiFi.AuthException e) { print("auth " + e.code + " " + e.message) }
@@ -22170,7 +22170,7 @@ else
             print("udp back " + u2.ReceiveFrom(buf, 0, 16, 2000))
             try { u1.ReceiveFrom(buf, 0, 16, 100) } catch (Net.TimeoutException e) { print("udp timeout") }
             var addresses = Net.Dns.Resolve("127.0.0.1")
-            print("dns " + addresses.count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").count > 0))
+            print("dns " + addresses.Count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").Count > 0))
             try { Net.Dns.Resolve("no-such-host.invalid") } catch (Net.ResolveException e) { print("resolve " + e.code) }
             try { var bad = new Net.TcpListener("127.0.0.1", 70000) } catch (Net.NetException e) { print("port " + e.code) }
             var l2 = new Net.TcpListener("127.0.0.1", 0)

@@ -90,7 +90,7 @@ print(c[0])         // 1
 | Member | Meaning |
 |---|---|
 | `new List<T>()`, `new List<T>([1, 2])`, `new List<T>(Owns.Values)` | an empty list, a list with the elements of an array, a list that owns its elements (below) |
-| `count` | the number of elements |
+| `Count` | the number of elements (a read-only property) |
 | `Add(value)` | appends at the end |
 | `list[i]`, `list[i] = value` | reads/writes an element |
 | `Insert(index, value)` | inserts; the elements behind move up |
@@ -105,7 +105,7 @@ var list = new List<int>()
 list.Add(5)
 list.Add(7)
 list.Insert(0, 1)
-print(list.count)           // 3
+print(list.Count)           // 3
 print(list[0])              // 1
 list.RemoveAt(0)
 print(list.IndexOf(7))      // 1
@@ -136,7 +136,7 @@ checked by the type checker: `list.Add("x")` on a `List<int>` is reported. `new 
 | `Remove(key)` | removes key and value; `False` if the key is not there |
 | `Take(key)` | removes the key and gives its value to the caller |
 | `Keys`, `Values` | new lists of the keys / values |
-| `count`, `Clear()` | the number of entries; removes everything |
+| `Count`, `Clear()` | the number of entries; removes everything |
 | `foreach (pair in dict)` | `KeyValuePair`s with `Key` and `Value` |
 
 ```fire
@@ -156,7 +156,7 @@ print(seen.Add("x"))                // False - already there
 print(seen.Contains("x"))           // True
 ```
 
-`HashSet<T>` has `Add` (`False` if an equal value is there), `Contains`, `Remove`, `Take`, `Clear`, `count` and `foreach`.
+`HashSet<T>` has `Add` (`False` if an equal value is there), `Contains`, `Remove`, `Take`, `Clear`, `Count` and `foreach`.
 
 **Equal keys** are those that `==` finds equal: strings by their text, numbers by their value (`1` and `1.0`, also `1km` and `1000m`), chars, bools,
 enum values; objects only themselves. A class whose objects should be equal by their content implements `IEquatable` - `bool Equals(any other)` and
