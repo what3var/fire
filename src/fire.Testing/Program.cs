@@ -22127,7 +22127,7 @@ else
             """),
     }).ToArray();
 
-    // WiFi (bridges/fire_bridge_wifi.hpp): the simulated radio "sim" - scan, join, failures, access point - the same in the VM and in the native build
+    // WiFi (packages/wifi/native/fire_bridge_wifi.h): the simulated radio "sim" - scan, join, failures, access point - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("WiFi: simuliertes Funkmodul - Scan, Verbinden, Fehler, Zugangspunkt", """

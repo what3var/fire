@@ -8,149 +8,150 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'devices' of fire: prelude and C++ sources."
+    "description": "The standard library 'devices' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_devices.hpp"
+      "native/fire_bridge_devices.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__DEVMgrRefresh",
         "arguments": 1,
-        "cpp": "dev::MgrRefresh"
+        "c": "fire_devices_MgrRefresh"
       },
       {
         "name": "__DEVMgrHandleForIdentifier",
         "arguments": 1,
-        "cpp": "dev::MgrHandleForIdentifier"
+        "c": "fire_devices_MgrHandleForIdentifier"
       },
       {
         "name": "__DEVMgrCount",
         "arguments": 0,
-        "cpp": "dev::MgrCount"
+        "c": "fire_devices_MgrCount"
       },
       {
         "name": "__DEVMgrHandleAt",
         "arguments": 1,
-        "cpp": "dev::MgrHandleAt"
+        "c": "fire_devices_MgrHandleAt"
       },
       {
         "name": "__DEVMgrIsShared",
         "arguments": 0,
-        "cpp": "dev::MgrIsShared"
+        "c": "fire_devices_MgrIsShared"
       },
       {
         "name": "__DEVMgrDefaultHandle",
         "arguments": 0,
-        "cpp": "dev::MgrDefaultHandle"
+        "c": "fire_devices_MgrDefaultHandle"
       },
       {
         "name": "__DEVHostDefault",
         "arguments": 0,
-        "cpp": "dev::HostDefault",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_devices_HostDefault"
       },
       {
         "name": "__DEVIdentifier",
         "arguments": 1,
-        "cpp": "dev::Identifier",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_devices_Identifier"
       },
       {
         "name": "__DEVIsShared",
         "arguments": 1,
-        "cpp": "dev::IsShared"
+        "c": "fire_devices_IsShared"
       },
       {
         "name": "__DEVIsConnected",
         "arguments": 1,
-        "cpp": "dev::IsConnected"
+        "c": "fire_devices_IsConnected"
       },
       {
         "name": "__DEVPortName",
         "arguments": 1,
-        "cpp": "dev::PortName",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_devices_PortName"
       },
       {
         "name": "__DEVAvailability",
         "arguments": 1,
-        "cpp": "dev::Availability"
+        "c": "fire_devices_Availability"
       },
       {
         "name": "__DEVTestAvailability",
         "arguments": 1,
-        "cpp": "dev::TestAvailability"
+        "c": "fire_devices_TestAvailability"
       },
       {
         "name": "__DEVConnect",
         "arguments": 1,
-        "cpp": "dev::Connect"
+        "c": "fire_devices_Connect"
       },
       {
         "name": "__DEVDisconnect",
         "arguments": 1,
-        "cpp": "dev::Disconnect"
+        "c": "fire_devices_Disconnect"
       },
       {
         "name": "__DEVDoCommand",
         "arguments": 2,
-        "cpp": "dev::DoCommand"
+        "c": "fire_devices_DoCommand"
       },
       {
         "name": "__DEVHasData",
         "arguments": 1,
-        "cpp": "dev::HasData"
+        "c": "fire_devices_HasData"
       },
       {
         "name": "__DEVReadString",
         "arguments": 1,
-        "cpp": "dev::ReadString",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_devices_ReadString"
       },
       {
         "name": "__DEVRead",
         "arguments": 1,
-        "cpp": "dev::Read",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_devices_Read"
       },
       {
         "name": "__DEVWriteString",
         "arguments": 2,
-        "cpp": "dev::WriteString"
+        "c": "fire_devices_WriteString"
       },
       {
         "name": "__DEVWrite",
         "arguments": 2,
-        "cpp": "dev::Write"
+        "c": "fire_devices_Write"
       },
       {
         "name": "__DEVWaitForString",
         "arguments": 3,
-        "cpp": "dev::WaitForString",
-        "host": true
+        "host": true,
+        "c": "fire_devices_WaitForString"
       },
       {
         "name": "__DEVWaitFor",
         "arguments": 3,
-        "cpp": "dev::WaitFor",
-        "host": true
+        "host": true,
+        "c": "fire_devices_WaitFor"
       },
       {
         "name": "__DEVWaitStep",
         "arguments": 2,
-        "cpp": "dev::WaitStep"
+        "c": "fire_devices_WaitStep"
       }
     ],
     "exceptions": [
       "DestroyedException"
-    ]
+    ],
+    "language": "c"
   }
 }

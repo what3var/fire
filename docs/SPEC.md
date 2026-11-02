@@ -2335,7 +2335,7 @@ int levels = port.Read()                           // all lines of the port at o
 foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
 ```
 
-Drivers of the standard libraries: `SerialDriver` (`serial:COM3`, `loopback:echo`; the C++ of `packages/devices/native/fire_bridge_devices.hpp`, which in the VM asks the host's device
+Drivers of the standard libraries: `SerialDriver` (`serial:COM3`, `loopback:echo`; the C of `packages/devices/native/fire_bridge_devices.h`, which in the VM asks the host's device
 manager through the callbacks of the package ABI), `GpioDriver` (`gpio:gpioa`, `gpio:gpiosim`; Read/Write the whole port as an int, `PinAt(n)` for one line), `I2cDriver` (the buses `i2c:i2c-1`,
 `i2c:sim` - Read/Write are NotSupported - and the devices on them `i2c:i2c-1/0x48`, made with `bus.At(0x48)` or by `Get`), `SpiDriver` (`spi:spidev0.0`, `spi:sim`; `Transfer`, `WriteRead`).
 A driver of your own derives from `Driver` (`Refresh` adds its devices with `Add`, `Find` may make one on demand) and its devices from `Device`.
