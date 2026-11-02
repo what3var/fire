@@ -11,6 +11,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using fire.Projects;
+using static fire.Editor.SettingsLayout;
 
 namespace fire.Editor
 {
@@ -21,10 +22,6 @@ namespace fire.Editor
     /// </summary>
     internal sealed class ProjectPropertiesDialog : Window
     {
-        private static readonly IBrush Accent = new SolidColorBrush(EditorTheme.AccentColor);
-        private static readonly IBrush AccentText = new SolidColorBrush(EditorTheme.AccentTextColor);
-        private static readonly IBrush NavSelected = new SolidColorBrush(Color.FromRgb(0x3A, 0x21, 0x31));
-        private static readonly IBrush Field = new SolidColorBrush(Color.FromRgb(0x2E, 0x29, 0x34));
 
         /// <summary>What a setting is when nobody sets it.</summary>
         private static readonly Dictionary<string, string> Defaults = new()
@@ -40,8 +37,7 @@ namespace fire.Editor
         private readonly List<ProjectReference> _referenceList;
         private readonly ListBox _references = new() { MinHeight = 180 };
         private readonly TextBlock _error = new() { Foreground = EditorTheme.ErrorMark, TextWrapping = TextWrapping.Wrap, IsVisible = false, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Center };
-        private readonly ScrollViewer _pageHost = new() { HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-        private readonly List<(string Key, Button Nav, Control Page)> _pages = new();
+        private readonly SettingsNav _nav = new();
         private fire.Native.NativeConfig _native;
 
         private string _name;
@@ -51,7 +47,6 @@ namespace fire.Editor
         private string? _notes;
         private string? _solutionNotes;
         private string? _startup;
-        private readonly Dictionary<string, Avalonia.Controls.Shapes.Path> _icons = new();   // the icons of the list at the left (drawn: the glyphs of the fonts differ too much in size)
         private readonly List<Action> _refresh = new();   // fields that show what other fields decide (program or library)
 
         /// <summary>Opens the native settings (targets and toolchains, fire.native.json); set by the main window.</summary>
@@ -83,52 +78,30 @@ namespace fire.Editor
             ShowInTaskbar = false;
 
             // the pages and the list at the left
-            var nav = new StackPanel { Spacing = 2, Margin = new Thickness(8, 10, 8, 10) };
-            nav.Children.Add(Scope("Project"));
-            AddPage(nav, "general", "M1.5,4 H12.5 M1.5,10 H12.5 M5,1.5 V6.5 M9,7.5 V12.5", "General", GeneralPage());
-            AddPage(nav, "version", "M1.5,1.5 H8 L12.5,6 V12.5 H1.5 Z M8,1.5 V6 H12.5 M4,8.5 H10 M4,10.5 H8", "Version & Info", VersionPage());
-            AddPage(nav, "build", "M7,1.5 L12.5,4.5 V10 L7,13 L1.5,10 V4.5 Z M1.5,4.5 L7,7.5 L12.5,4.5 M7,7.5 V13", "Build", BuildPage());
-            AddPage(nav, "native", "M4,4 H10 V10 H4 Z M6,1 V4 M8,1 V4 M6,10 V13 M8,10 V13 M1,6 H4 M1,8 H4 M10,6 H13 M10,8 H13", "Native & Toolchain", NativePage());
-            AddPage(nav, "run", "M3.5,1.8 L12,7 L3.5,12.2 Z", "Run & Debug", RunPage());
-            AddPage(nav, "references", "M1.5,4.5 H11 M8.5,2 L11,4.5 L8.5,7 M12.5,9.5 H3 M5.5,7 L3,9.5 L5.5,12", "References", ReferencesPage());
-            AddPage(nav, "notes", "M1.5,12.5 L2.5,9.5 L9.5,2.5 L11.5,4.5 L4.5,11.5 Z M8,4 L10,6", "Notes", NotesPage());
+            _nav.AddScope("Project");
+            _nav.Add("general", NavIcons.Sliders, "General", GeneralPage());
+            _nav.Add("version", NavIcons.Document, "Version & Info", VersionPage());
+            _nav.Add("build", NavIcons.Cube, "Build", BuildPage());
+            _nav.Add("native", NavIcons.Chip, "Native & Toolchain", NativePage());
+            _nav.Add("run", NavIcons.Play, "Run & Debug", RunPage());
+            _nav.Add("references", NavIcons.Arrows, "References", ReferencesPage());
+            _nav.Add("notes", NavIcons.Pencil, "Notes", NotesPage());
             if (workspace.Solution != null)
             {
-                nav.Children.Add(new Border { Height = 1, Background = EditorTheme.Border, Margin = new Thickness(6, 8) });
-                nav.Children.Add(Scope("Solution"));
-                AddPage(nav, "solution", "M1.5,1.5 H6 V6 H1.5 Z M8,1.5 H12.5 V6 H8 Z M1.5,8 H6 V12.5 H1.5 Z M8,8 H12.5 V12.5 H8 Z", $"{workspace.Solution.Name}", SolutionPage());
+                _nav.AddSeparator();
+                _nav.AddScope("Solution");
+                _nav.Add("solution", NavIcons.Grid, $"{workspace.Solution.Name}", SolutionPage());
             }
-            var navBorder = new Border { Width = 210, Background = EditorTheme.DarkSurface, BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(0, 0, 1, 0), Child = nav };
 
             // Save / Cancel, and which files are written
-            var save = new Button { Content = "Save", MinWidth = 84, HorizontalContentAlignment = HorizontalAlignment.Center };
-            save.Classes.Add("accent");
+            var save = DialogButton("Save", accent: true);
             save.Click += (_, _) => Accept();
-            var cancel = new Button { Content = "Cancel", MinWidth = 84, HorizontalContentAlignment = HorizontalAlignment.Center };
+            var cancel = DialogButton("Cancel");
             cancel.Click += (_, _) => Close(false);
             string files = Path.GetFileName(project.FilePath) + (workspace.Solution?.FilePath is { } s ? " and " + Path.GetFileName(s) : "");
-            var hint = new TextBlock
-            {
-                Text = $"Grey values come from the solution or the defaults. Save writes {files}.", Foreground = EditorTheme.TextDim, FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap,
-            };
-            var footer = new DockPanel { Margin = new Thickness(16, 10) };
-            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { cancel, save } };
-            DockPanel.SetDock(buttons, Avalonia.Controls.Dock.Right);
-            footer.Children.Add(buttons);
-            footer.Children.Add(new StackPanel { Children = { _error, hint }, VerticalAlignment = VerticalAlignment.Center });
-            var footerBorder = new Border { Background = EditorTheme.DarkSurface, BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(0, 1, 0, 0), Child = footer };
-
-            var body = new DockPanel();
-            DockPanel.SetDock(navBorder, Avalonia.Controls.Dock.Left);
-            body.Children.Add(navBorder);
-            body.Children.Add(_pageHost);
-            var root = new DockPanel();
-            DockPanel.SetDock(footerBorder, Avalonia.Controls.Dock.Bottom);
-            root.Children.Add(footerBorder);
-            root.Children.Add(body);
-            Content = root;
-            ShowPage("general");
+            var hint = Hint($"Grey values come from the solution or the defaults. Save writes {files}.");
+            Content = Frame(_nav, new StackPanel { Children = { _error, hint }, VerticalAlignment = VerticalAlignment.Center }, cancel, save);
+            _nav.Show("general");
             foreach (var r in _refresh) r();
 
             KeyDown += (_, e) => { if (e.Key == Key.Escape) { Close(false); e.Handled = true; } };
@@ -137,90 +110,10 @@ namespace fire.Editor
         // ---------------------------------------------------------------- pages
 
         /// <summary>Starts on a page (0 general, 1 build, 2 references, 3 solution) - the numbers of the old tabs.</summary>
-        public void SelectTab(int index) => ShowPage(index switch { 1 => "build", 2 => "references", 3 => "solution", _ => "general" });
+        public void SelectTab(int index) => _nav.Show(index switch { 1 => "build", 2 => "references", 3 => "solution", _ => "general" });
 
         /// <summary>Starts on the page of the solution.</summary>
-        public void SelectSolutionTab() => ShowPage("solution");
-
-        private void ShowPage(string key)
-        {
-            if (_pages.FirstOrDefault(p => p.Key == key) is not { Page: not null } page) page = _pages[0];
-            foreach (var (k, nav, _) in _pages)
-            {
-                bool on = k == page.Key;
-                nav.Background = on ? NavSelected : Brushes.Transparent;
-                nav.BorderThickness = new Thickness(on ? 3 : 0, 0, 0, 0);
-                nav.Foreground = on ? EditorTheme.Text : EditorTheme.TextDim;
-                _icons[k].Stroke = on ? AccentText : EditorTheme.TextDim;
-            }
-            _pageHost.Content = page.Page;
-            _pageHost.Offset = default;
-        }
-
-        private void AddPage(StackPanel nav, string key, string icon, string title, Control page)
-        {
-            var button = new Button
-            {
-                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Background = Brushes.Transparent,
-                BorderBrush = AccentText, BorderThickness = new Thickness(0), Padding = new Thickness(10, 7), CornerRadius = new CornerRadius(6),
-                Content = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal, Spacing = 10,
-                    Children = { (_icons[key] = new Avalonia.Controls.Shapes.Path { Data = Geometry.Parse(icon), Width = 14, Height = 14, StrokeThickness = 1.3, StrokeJoin = PenLineJoin.Round, StrokeLineCap = PenLineCap.Round, VerticalAlignment = VerticalAlignment.Center }), new TextBlock { Text = title, TextTrimming = TextTrimming.CharacterEllipsis } },
-                },
-            };
-            button.Click += (_, _) => ShowPage(key);
-            nav.Children.Add(button);
-            _pages.Add((key, button, page));
-        }
-
-        private static TextBlock Scope(string text) =>
-            new() { Text = text.ToUpperInvariant(), FontSize = 11, Foreground = EditorTheme.TextDim, Margin = new Thickness(8, 6, 8, 4), LetterSpacing = 0.8 };
-
-        private static Control Page(string title, string subtitle, params Control[] content)
-        {
-            var stack = new StackPanel { Spacing = 14, Margin = new Thickness(24, 18, 24, 24) };
-            stack.Children.Add(new StackPanel
-            {
-                Spacing = 2,
-                Children =
-                {
-                    new TextBlock { Text = title, FontSize = 18, FontWeight = FontWeight.SemiBold },
-                    new TextBlock { Text = subtitle, Foreground = EditorTheme.TextDim, TextWrapping = TextWrapping.Wrap },
-                },
-            });
-            foreach (var c in content) stack.Children.Add(c);
-            return stack;
-        }
-
-        private static Control Group(string title, params Control[] rows)
-        {
-            var stack = new StackPanel { Spacing = 8 };
-            stack.Children.Add(new TextBlock { Text = title.ToUpperInvariant(), FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = AccentText, LetterSpacing = 0.8 });
-            foreach (var r in rows) stack.Children.Add(r);
-            return new Border { BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(14, 12), Child = stack };
-        }
-
-        private static Control Columns(Control left, Control right)
-        {
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("*,14,*") };
-            Grid.SetColumn(right, 2);
-            grid.Children.Add(left);
-            grid.Children.Add(right);
-            return grid;
-        }
-
-        private static Control Row(string label, Control control, double labelWidth = 150)
-        {
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions($"{labelWidth},*") };
-            var text = new TextBlock { Text = label, Foreground = EditorTheme.TextDim, VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 8, 0) };
-            Grid.SetColumn(control, 1);
-            grid.Children.Add(text);
-            grid.Children.Add(control);
-            return grid;
-        }
-
-        private static TextBlock Hint(string text) => new() { Text = text, Foreground = EditorTheme.TextDim, FontSize = 12, TextWrapping = TextWrapping.Wrap };
+        public void SelectSolutionTab() => _nav.Show("solution");
 
         // ---------------------------------------------------------------- fields
 
@@ -252,8 +145,7 @@ namespace fire.Editor
                 for (int i = 0; i < options.Length; i++)
                 {
                     bool on = options[i].Value == shown;
-                    buttons[i].Background = on ? Accent : Brushes.Transparent;
-                    buttons[i].Foreground = on ? Brushes.White : EditorTheme.TextDim;
+                    PaintSegment(buttons[i], on);
                     buttons[i].Opacity = on && own == null ? 0.6 : 1;
                 }
                 source.Text = own == null && inherited != null ? $"({from})" : "";
@@ -275,6 +167,7 @@ namespace fire.Editor
             reset.Click += (_, _) => { set(null); Update(); };
             Update();
             var frame = new Border { BorderBrush = EditorTheme.Border, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(6), ClipToBounds = true, Child = segments };
+            frame.Styles.AddRange(SegmentStyles());
             var row = new StackPanel { Orientation = Orientation.Horizontal, Children = { frame, source, reset } };
             if (hint != null) row.Children.Add(new TextBlock { Text = hint, Foreground = EditorTheme.TextDim, FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 0, 0) });
             return row;

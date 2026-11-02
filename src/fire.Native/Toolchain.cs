@@ -37,6 +37,7 @@ namespace fire.Native
         /// <summary>A command that runs in the output folder after the files are written (e.g. <c>idf.py build</c>).</summary>
         public string? BuildCommand { get; set; }
 
+        [System.Text.Json.Serialization.JsonIgnore]
         public string EffectiveKind => Kind ?? "gcc";
 
         public static readonly IReadOnlyDictionary<string, ToolchainDef> BuiltIn = new Dictionary<string, ToolchainDef>(StringComparer.OrdinalIgnoreCase)
@@ -68,13 +69,16 @@ namespace fire.Native
         }
 
         /// <summary>The compiler to run (the default of the kind when none is named).</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
         public string EffectiveCompiler => Compiler ?? EffectiveKind switch { "clang" => "clang++", "msvc" => "cl", "emscripten" => "em++", "tcc" => "tcc", _ => "g++" };
 
         /// <summary>Whether the toolchain compiles C++ too (TinyCC does not).</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
         public bool CompilesCpp => EffectiveKind != "tcc";
 
         /// <summary>The C compiler to run: <see cref="CCompiler"/>, or the one that belongs to the C++ compiler (same folder, same prefix: <c>x86_64-w64-mingw32-g++</c> ->
         /// <c>x86_64-w64-mingw32-gcc</c>).</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
         public string EffectiveCCompiler => CCompiler ?? CCompilerFor(EffectiveCompiler);
 
         /// <summary>The C compiler that goes with the C++ compiler <paramref name="cxx"/>.</summary>

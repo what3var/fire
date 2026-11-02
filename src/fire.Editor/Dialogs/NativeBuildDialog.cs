@@ -7,33 +7,94 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using fire.Native;
 using fire.Runtime;
+using static fire.Editor.SettingsLayout;
 
 namespace fire.Editor
 {
     /// <summary>
-    /// Edits the native build configuration (<c>fire.native.json</c>, see <see cref="NativeConfig"/>): what Build does (VM or native), the target (platform package, includes,
+    /// Edits the native build configuration (<c>fire.native.json</c>, see <see cref="NativeConfig"/>) on pages chosen at the left (<see cref="SettingsLayout"/>): what Build does (VM or native), the target (platform package, includes,
     /// definitions, entry point) and the toolchain (which C++ compiler with which arguments). The dialog works on a copy; <see cref="Result"/> is the changed configuration.
     /// </summary>
-    public partial class NativeBuildDialog : Window
+    public sealed class NativeBuildDialog : Window
     {
         private readonly NativeConfig _config;
         private string? _currentTarget, _currentToolchain;
         private string? _targetSnapshot, _toolchainSnapshot;
         private bool _loading;
+        private readonly SettingsNav _nav = new();
+
+        // build
+        private readonly Segmented segEngine = new("Virtual machine", "Native");
+        // target
+        private readonly ComboBox cmbTarget = Combo();
+        private readonly TextBlock txtTargetHint = Hint("");
+        private readonly AutoCompleteBox cmbPlatform = new() { MinimumPrefixLength = 0, Background = Field, HorizontalAlignment = HorizontalAlignment.Stretch };
+        private readonly TextBox txtPlatformPath = TextField("(the platform package of the runtime)");
+        private readonly Segmented segFloat = new("32 bit", "64 bit");
+        private readonly TextBox txtStack = TextField(width: 120);
+        private readonly CheckBox chkThreads = new() { Content = "The platform package implements fire threads" };
+        private readonly CheckBox chkEmbedded = new() { Content = "A board without an operating system shell" };
+        private readonly TextBox txtEntryName = TextField(mono: true);
+        private readonly Segmented segEntryKind = new("Process", "Function");
+        private readonly CheckBox chkExternC = new() { Content = "extern \"C\" (the board's startup code is C)" };
+        private readonly TextBox txtIncludes = LinesField("freertos/FreeRTOS.h");
+        private readonly TextBox txtDefines = LinesField("NAME or NAME=VALUE");
+        private readonly TextBox txtTargetArgs = LinesField("-pthread", 50);
+        private readonly TextBox txtTargetLibs = LinesField(null, 50);
+        // toolchain
+        private static readonly string[] Kinds = { "gcc", "clang", "msvc", "custom", "files" };
+        private readonly ComboBox cmbToolchain = Combo();
+        private readonly TextBlock txtToolchainHint = Hint("");
+        private readonly Segmented segKind = new(Kinds);
+        private readonly TextBox txtCompiler = TextField("g++, clang++, cl or a full path", mono: true);
+        private readonly TextBox txtStd = TextField("c++17", 120, mono: true);
+        private readonly TextBox txtOptimization = TextField("-O2", 120, mono: true);
+        private readonly CheckBox chkStrip = new() { Content = "Strip symbols" };
+        private readonly Segmented segLayout = new("flat", "idf-component");
+        private readonly TextBox txtBuildCommand = TextField("idf.py build", mono: true);
+        private readonly TextBox txtCommand = TextField("{cpp} {dir} {out} {args} {libs}", mono: true);
+        private readonly TextBox txtToolArgs = LinesField("-Wall");
+        private readonly TextBox txtToolLibs = LinesField(null, 50);
+        private readonly TextBox txtToolIncludes = LinesField(null, 50);
 
         public NativeConfig Result => _config;
 
         public NativeBuildDialog(NativeConfig config, string saveTo)
         {
-            InitializeComponent();
             _config = NativeConfig.Parse(config.ToJson());   // a copy
             _config.Path = config.Path ?? saveTo;
-            txtConfigPath.Text = _config.Path + (System.IO.File.Exists(_config.Path) ? "" : "  (new)");
 
-            (_config.Engine?.ToLowerInvariant() == "native" ? rbEngineNative : rbEngineVm).IsChecked = true;
+            Title = "Native Build Settings";
+            Width = 840; Height = 600; MinWidth = 720; MinHeight = 480;
+            WindowStartupLocation = WindowStartupLocation.CenterOwner;
+            ShowInTaskbar = false;
+
+            _nav.AddScope("Native build");
+            _nav.Add("build", NavIcons.Cube, "Build", BuildPage());
+            _nav.Add("target", NavIcons.Target, "Target", TargetPage());
+            _nav.Add("toolchain", NavIcons.Wrench, "Toolchain", ToolchainPage());
+
+            var save = DialogButton("Save", accent: true);
+            save.IsDefault = true;
+            save.Click += Save_Click;
+            var cancel = DialogButton("Cancel");
+            cancel.IsCancel = true;
+            cancel.Click += Cancel_Click;
+            bool exists = System.IO.File.Exists(_config.Path);
+            var where = Hint($"Save writes {System.IO.Path.GetFileName(_config.Path)}{(exists ? "" : " (new)")} - next to the project, for all scripts and projects in that folder and below.");
+            where.VerticalAlignment = VerticalAlignment.Center;
+            ToolTip.SetTip(where, _config.Path);
+            Content = Frame(_nav, where, cancel, save);
+            _nav.Show("build");
+
+            segEngine.SelectedIndex = _config.Engine?.ToLowerInvariant() == "native" ? 1 : 0;
+            segKind.SelectionChanged += Kind_SelectionChanged;
+            cmbTarget.SelectionChanged += Target_SelectionChanged;
+            cmbToolchain.SelectionChanged += Toolchain_SelectionChanged;
 
             cmbPlatform.ItemsSource = NativeRuntimeFiles.AllPackages().ToList();
             cmbTarget.ItemsSource = _config.TargetNames.ToList();
@@ -43,6 +104,92 @@ namespace fire.Editor
             string? wanted = _config.Toolchain ?? _config.ResolveTarget(_config.Target).Native.Toolchain;
             cmbToolchain.SelectedItem = _config.ToolchainNames.FirstOrDefault(n => string.Equals(n, wanted, StringComparison.OrdinalIgnoreCase))
                 ?? _config.ToolchainNames.FirstOrDefault(n => ToolchainDetector.Find(ToolchainDef.BuiltIn.GetValueOrDefault(n) ?? new ToolchainDef()) != null) ?? "gcc";
+
+            KeyDown += (_, e) => { if (e.Key == Key.Escape) { Close(false); e.Handled = true; } };
+        }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // the pages
+        // -------------------------------------------------------------------------------------------------------------
+        private Control BuildPage() => Page("Build", "What Build and Start make of a program.",
+            Group("Engine",
+                Row("Default engine", segEngine),
+                Hint("Virtual machine: one self-contained file with the interpreter. Native: C++ for the target, compiled with the toolchain. "
+                    + "A project decides for itself in Project Properties > General > Runs as; this is the engine of the scripts and projects that do not.")),
+            Group("File",
+                Row("Settings file", new SelectableTextBlock { Text = _config.Path, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center }),
+                Hint("The targets and toolchains below are kept in this file (fire.native.json); the built-in ones need no file.")));
+
+        private Control TargetPage()
+        {
+            var newTarget = new Button { Content = "New..." };
+            newTarget.Click += NewTarget_Click;
+            var browse = new Button { Content = "..." , Width = 32, HorizontalContentAlignment = HorizontalAlignment.Center };
+            browse.Click += BrowsePlatform_Click;
+            ToolTip.SetTip(cmbPlatform, "The folder native/platform/<name> of the runtime: everything that depends on the operating system or the board");
+            ToolTip.SetTip(txtPlatformPath, "A folder with your own fire_platform.hpp; it is copied to platform/<name>/ next to the generated file");
+            return Page("Target", "The system a native build runs on: the platform package of the runtime, the entry point and what the compiler gets for it.",
+                Group("Target", Row("Target", WithButton(cmbTarget, newTarget)), txtTargetHint),
+                Group("Platform",
+                    Row("Platform package", cmbPlatform),
+                    Row("Own platform folder", WithButton(txtPlatformPath, browse)),
+                    Row("Float precision", segFloat),
+                    Row("Thread stack (bytes)", txtStack),
+                    Row("", chkThreads),
+                    Row("", chkEmbedded)),
+                Group("Entry point",
+                    Row("Function name", txtEntryName),
+                    Row("Starts as", segEntryKind),
+                    Row("", Hint("Process: int main and an exit code. Function: the board calls it from a task.")),
+                    Row("", chkExternC)),
+                Group("Compiler input",
+                    Columns(Block("Includes before the platform package", txtIncludes), Block("Definitions", txtDefines)),
+                    Columns(Block("Compiler arguments", txtTargetArgs), Block("Libraries to link", txtTargetLibs)),
+                    Hint("One entry per line. The arguments and libraries are the ones this platform always needs, whatever the toolchain.")));
+        }
+
+        private Control ToolchainPage()
+        {
+            var newToolchain = new Button { Content = "New..." };
+            newToolchain.Click += NewToolchain_Click;
+            var detect = new Button { Content = "Detect" };
+            detect.Click += Detect_Click;
+            ToolTip.SetTip(detect, "Looks for a C++ toolchain on this machine (the portable w64devkit of fire first)");
+            var test = new Button { Content = "Test" };
+            test.Click += Test_Click;
+            ToolTip.SetTip(test, "Compiles and runs a small program with the toolchain as it is set up here");
+            var browse = new Button { Content = "...", Width = 32, HorizontalContentAlignment = HorizontalAlignment.Center };
+            browse.Click += BrowseCompiler_Click;
+            ToolTip.SetTip(txtOptimization, "-O2 (default), -O3, -O0 ... or 'size': a small program (-Os, the linker drops unused code)");
+            ToolTip.SetTip(chkStrip, "Remove symbols and debug information (about half the size); switch off to debug the program");
+            chkStrip.VerticalAlignment = VerticalAlignment.Center;
+            return Page("Toolchain", "The C++ compiler that turns the generated code into a program, and what it gets.",
+                Group("Toolchain", Row("Toolchain", WithButton(cmbToolchain, newToolchain)), Row("", txtToolchainHint), Row("", Line(detect, test))),
+                Group("Compiler",
+                    Row("Kind", segKind),
+                    Row("Compiler", WithButton(txtCompiler, browse)),
+                    Row("C++ standard", txtStd),
+                    Row("Optimization", Line(txtOptimization, chkStrip))),
+                Group("Output",
+                    Row("Project layout", segLayout),
+                    Row("Build command", txtBuildCommand),
+                    Hint("Runs in the output folder after the files are written (e.g. idf.py build). With the layout idf-component a CMakeLists.txt for an ESP-IDF component is written, too."),
+                    Row("Custom command", txtCommand),
+                    Hint("For the kind custom: {cpp}, {dir}, {out}, {args} and {libs} are replaced.")),
+                Group("Arguments",
+                    Block("Compiler arguments", txtToolArgs),
+                    Columns(Block("Libraries and linker arguments", txtToolLibs), Block("Include folders", txtToolIncludes)),
+                    Hint("One entry per line.")));
+        }
+
+        private static Control WithButton(Control field, Button button)
+        {
+            var dock = new DockPanel();
+            button.Margin = new Thickness(8, 0, 0, 0);
+            DockPanel.SetDock(button, Avalonia.Controls.Dock.Right);
+            dock.Children.Add(button);
+            dock.Children.Add(field);
+            return dock;
         }
 
         // -------------------------------------------------------------------------------------------------------------
@@ -62,12 +209,12 @@ namespace fire.Editor
             _loading = true;
             cmbPlatform.Text = t.Native.Platform;
             txtPlatformPath.Text = t.Native.PlatformPath ?? "";
-            cmbFloat.SelectedIndex = t.FloatWidth == 32 ? 0 : 1;
+            segFloat.SelectedIndex = t.FloatWidth == 32 ? 0 : 1;
             txtStack.Text = t.DefaultStackBytes.ToString();
             chkThreads.IsChecked = t.Native.SupportsThreads;
             chkEmbedded.IsChecked = t.IsEmbedded;
             txtEntryName.Text = t.Native.Entry.Name;
-            cmbEntryKind.SelectedIndex = t.Native.Entry.Kind == EntryKind.Function ? 1 : 0;
+            segEntryKind.SelectedIndex = t.Native.Entry.Kind == EntryKind.Function ? 1 : 0;
             chkExternC.IsChecked = t.Native.Entry.ExternC;
             txtIncludes.Text = string.Join("\r\n", t.Native.Includes);
             txtDefines.Text = string.Join("\r\n", t.Native.Defines);
@@ -91,19 +238,19 @@ namespace fire.Editor
         {
             var def = new TargetDef
             {
-                Platform = cmbPlatform.Text.Trim(),
-                PlatformPath = string.IsNullOrWhiteSpace(txtPlatformPath.Text) ? null : txtPlatformPath.Text.Trim(),
-                FloatWidth = cmbFloat.SelectedIndex == 0 ? 32 : 64,
+                Platform = (cmbPlatform.Text ?? "").Trim(),
+                PlatformPath = OrNull(txtPlatformPath.Text),
+                FloatWidth = segFloat.SelectedIndex == 0 ? 32 : 64,
                 SupportsThreads = chkThreads.IsChecked == true,
                 Embedded = chkEmbedded.IsChecked == true,
-                Entry = new EntryDef { Name = txtEntryName.Text.Trim(), Kind = cmbEntryKind.SelectedIndex == 1 ? EntryKind.Function : EntryKind.Process, ExternC = chkExternC.IsChecked == true },
+                Entry = new EntryDef { Name = (txtEntryName.Text ?? "").Trim(), Kind = segEntryKind.SelectedIndex == 1 ? EntryKind.Function : EntryKind.Process, ExternC = chkExternC.IsChecked == true },
                 Includes = Lines(txtIncludes.Text),
                 Defines = Lines(txtDefines.Text),
                 CompileArgs = Lines(txtTargetArgs.Text),
                 LinkLibs = Lines(txtTargetLibs.Text),
                 Toolchain = current.Native.Toolchain,
             };
-            if (int.TryParse(txtStack.Text.Trim(), out int stack) && stack > 0) def.StackBytes = stack;
+            if (int.TryParse((txtStack.Text ?? "").Trim(), out int stack) && stack > 0) def.StackBytes = stack;
             return def;
         }
 
@@ -159,12 +306,12 @@ namespace fire.Editor
         private void LoadToolchain(ToolchainDef t)
         {
             _loading = true;
-            cmbKind.SelectedIndex = Math.Max(0, new[] { "gcc", "clang", "msvc", "custom", "files" }.ToList().IndexOf(t.EffectiveKind));
+            segKind.SelectedIndex = Math.Max(0, Array.IndexOf(Kinds, t.EffectiveKind));
             txtCompiler.Text = t.Compiler ?? "";
             txtStd.Text = t.Std ?? "";
             txtOptimization.Text = t.Optimization ?? "";
             chkStrip.IsChecked = t.Strip != false;
-            cmbLayout.SelectedIndex = t.Layout == "idf-component" ? 1 : 0;
+            segLayout.SelectedIndex = t.Layout == "idf-component" ? 1 : 0;
             txtBuildCommand.Text = t.BuildCommand ?? "";
             txtCommand.Text = t.Command ?? "";
             txtToolArgs.Text = string.Join("\r\n", t.Args ?? new List<string>());
@@ -177,10 +324,10 @@ namespace fire.Editor
 
         private ToolchainDef ToolchainFromFields() => new()
         {
-            Kind = (cmbKind.SelectedItem as ComboBoxItem)?.Content as string ?? "gcc",
+            Kind = segKind.SelectedLabel ?? "gcc",
             Compiler = OrNull(txtCompiler.Text), Std = OrNull(txtStd.Text), Optimization = OrNull(txtOptimization.Text),
             Strip = chkStrip.IsChecked == false ? false : null,
-            Layout = cmbLayout.SelectedIndex == 1 ? "idf-component" : "flat",
+            Layout = segLayout.SelectedIndex == 1 ? "idf-component" : "flat",
             BuildCommand = OrNull(txtBuildCommand.Text), Command = OrNull(txtCommand.Text),
             Args = Lines(txtToolArgs.Text), Libs = Lines(txtToolLibs.Text), IncludeDirs = Lines(txtToolIncludes.Text),
         };
@@ -194,7 +341,7 @@ namespace fire.Editor
             _toolchainSnapshot = def.ToJsonText();
         }
 
-        private void Kind_SelectionChanged(object? sender, SelectionChangedEventArgs e) { if (!_loading) UpdateToolchainHint(); }
+        private void Kind_SelectionChanged(object? sender, EventArgs e) { if (!_loading) UpdateToolchainHint(); }
 
         private void UpdateToolchainHint()
         {
@@ -206,10 +353,11 @@ namespace fire.Editor
                 "custom" => "Runs your command; {cpp}, {dir}, {out}, {args} and {libs} are replaced.",
                 _ => ToolchainDetector.Find(t) is { } path ? $"Found: {path}" : $"'{t.EffectiveCompiler}' was not found on this machine - install it or give the full path of a compiler.",
             };
+            txtToolchainHint.Foreground = kind is not ("files" or "custom") && !txtToolchainHint.Text!.StartsWith("Found") ? EditorTheme.ErrorMark : EditorTheme.TextDim;
         }
 
         /// <summary>Opens the dialog on the toolchain page (when a toolchain is needed).</summary>
-        public void SelectToolchainTab() => tabs.SelectedIndex = 1;
+        public void SelectToolchainTab() => _nav.Show("toolchain");
 
         /// <summary>"Detect": looks for a toolchain on this machine - the portable w64devkit first - and fills in the kind and the compiler.</summary>
         private async void Detect_Click(object? sender, RoutedEventArgs e)
@@ -223,8 +371,8 @@ namespace fire.Editor
                 return;
             }
             string kind = found.Value.Toolchain.EffectiveKind;
-            for (int i = 0; i < cmbKind.Items.Count; i++)
-                if (cmbKind.Items[i] is ComboBoxItem item && string.Equals(item.Content as string, kind, StringComparison.OrdinalIgnoreCase)) cmbKind.SelectedIndex = i;
+            int k = Array.FindIndex(Kinds, n => string.Equals(n, kind, StringComparison.OrdinalIgnoreCase));
+            if (k >= 0) segKind.SelectedIndex = k;
             txtCompiler.Text = found.Value.Path;
             UpdateToolchainHint();
             await Dialogs.Message(this, $"Found: {found.Value.Path}", "Detect toolchain");
@@ -266,7 +414,7 @@ namespace fire.Editor
         {
             StoreTarget();
             StoreToolchain();
-            _config.Engine = rbEngineNative.IsChecked == true ? "native" : "vm";
+            _config.Engine = segEngine.SelectedIndex == 1 ? "native" : "vm";
             _config.Target = cmbTarget.SelectedItem as string;
             _config.Toolchain = cmbToolchain.SelectedItem as string;
             Close(true);
@@ -274,10 +422,10 @@ namespace fire.Editor
 
         private void Cancel_Click(object? sender, RoutedEventArgs e) => Close(false);
 
-        private static List<string> Lines(string text) =>
-            text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        private static List<string> Lines(string? text) =>
+            (text ?? "").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
 
-        private static string? OrNull(string text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
+        private static string? OrNull(string? text) => string.IsNullOrWhiteSpace(text) ? null : text.Trim();
 
         /// <summary>A small question: a name and the entry it is based on.</summary>
         private async Task<(string Name, string Base)?> AskNameAndBase(string title, string nameLabel, string baseLabel, List<string> bases, string? selectedBase)
