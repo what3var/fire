@@ -403,8 +403,11 @@ SDL3 liegt immer unter `<SDL3/SDL.h>`; `SDL_DISABLE_IMMINTRIN_H` wie bei SDL2). 
 `fire_display_clipboardGetImage/SetImage/HasImage` (PNG- oder BMP-Datei; gesetzt als `image/png` und `image/bmp` - SDL3 legt `image/bmp` unter Windows als `CF_DIB` ab) und
 `fire_display_clipboardGetFiles/SetFiles/HasFiles` (Pfade zeilenweise; `text/uri-list` und `x-special/gnome-copied-files`, unter Windows `CF_HDROP` - das hat SDL3 nicht, die Anzeige spricht dafür selbst
 mit der Zwischenablage von Windows). Die SDL2-Anzeige sagt dort "nicht vorhanden" (`GetImage` undefined, `SetImage` false, keine Dateien), `fire_display_none.h` hat für alle Arten eine Zwischenablage im
-Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. Grenze von SDL 3.2 unter X11: es kennt die Arten in der Zwischenablage
-erst, wenn ihr Besitzer wechselt, während es läuft - was ein anderes Programm vor dem Start kopiert hat, sieht ein SDL3-Programm (nativ wie die VM) nicht; SDL2 fragt jedes Mal neu.
+Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. SDL 3.2 unter X11 kennt die Arten in der Zwischenablage
+erst, wenn ihr Besitzer wechselt, während es läuft (XFixes meldet es, dann fragt SDL nach `TARGETS`; `SDL_GetClipboardData` lehnt jede Art ab, die es nicht kennt) - was ein anderes Programm vor dem
+Start kopiert hat, sähe ein SDL3-Programm nicht. Deshalb schickt `fire_display_x11ClipboardRefresh` beim ersten Zugriff auf die Zwischenablage, wenn SDL keine Art kennt, CLIPBOARD aber einen
+Besitzer hat, über SDLs eigene Verbindung ein `XFixesSelectionNotify` an ein verstecktes Fenster von SDL (libX11 per `dlopen` aus `fire_dragout.h`); SDL bekommt es zurück, fragt selbst nach
+`TARGETS`, und die Anzeige holt Ereignisse ab, bis es die Arten kennt (höchstens eine halbe Sekunde). Die VM macht dasselbe (`X11Refresh` in `SdlClipboard.cs`). SDL2 fragt jedes Mal neu.
 
 **Ziehen aus dem Fenster** (`Window.StartDrag`) können weder SDL2 noch SDL3 beginnen: `fire_display_startDrag` beider Anzeigen holt sich das Fenster des Betriebssystems (SDL3: die Eigenschaften
 `SDL_PROP_WINDOW_WIN32_HWND_POINTER` bzw. `..._X11_DISPLAY_POINTER`/`..._X11_WINDOW_NUMBER`; SDL2: `SDL_GetWindowWMInfo`, dessen Struktur `fire_display_sdl.h` selbst beschreibt, damit

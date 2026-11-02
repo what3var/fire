@@ -487,8 +487,8 @@ Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import 
 Sie braucht kein offenes Fenster (SDL startet seinen Video-Teil dafür einmal). Ohne Desktop - ein Board, die Tests mit einem Ersatz-Renderer - hat das Programm eine eigene Zwischenablage,
 die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet SDL auf die Antwort des
 Besitzers der Zwischenablage, indem es selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
-aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 sieht nur, was kopiert wurde, während das Programm lief (es fragt nach den Arten, wenn der Besitzer wechselt) - was vor dem
-Start kopiert wurde, sieht ein SDL3-Programm nicht (SDL2 fragt jedes Mal). Unter Windows hat SDL3 keine Dateilisten: die VM hält Dateien dort in ihrer eigenen Zwischenablage, ein nativer Build spricht
+aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 fragt nach den Arten in der Zwischenablage nur, wenn ihr Besitzer wechselt, während das Programm läuft; damit auch
+da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim ersten Zugriff einmal, der Besitzer habe gewechselt (VM und nativ; danach fragt SDL selbst). Unter Windows hat SDL3 keine Dateilisten: die VM hält Dateien dort in ihrer eigenen Zwischenablage, ein nativer Build spricht
 selbst mit `CF_HDROP`.
 
 Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht

@@ -218,7 +218,7 @@ Dynamisches Laden:
 
 Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
-Windows `CF_HDROP` nativ) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms; die Ereignisse `DropFiles`/`DropText` mit Position
+Windows `CF_HDROP` nativ) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms, unter X11 auch mit dem, was vor dem Start kopiert wurde (SDL 3.2 sähe es nicht); die Ereignisse `DropFiles`/`DropText` mit Position
 und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
 Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
 `OnDragDone`, `UI.DropEffect`) mit einem Schild am Zeiger (`DragData.ShowImage`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`);
@@ -230,8 +230,7 @@ Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und 
   ein Ziehen im `ui` beim Verlassen des Fensters mit `None` - besser wäre, es dann im Fenster weiterlaufen zu lassen (die Plattform müsste sagen, ob sie Drag-out kann).
 - Ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text, und nur im Fenster).
 - Drag-out in der VM unter echtem Windows prüfen (OLE-Pfad nur unter Wine nativ getestet; die VM läuft dort nicht).
-- SDL 3.2 unter X11 sieht nicht, was ein anderes Programm vor seinem Start kopiert hat (es fragt nach den Arten nur, wenn der Besitzer wechselt); Dateien in der Zwischenablage unter Windows
-  in der VM (SDL3 hat kein `CF_HDROP`, die VM bleibt dort bei ihrer eigenen).
+- Dateien in der Zwischenablage unter Windows in der VM (SDL3 hat kein `CF_HDROP`, die VM bleibt dort bei ihrer eigenen).
 - `TextArea`: Rückgängig/Wiederholen, Markierung im Text ziehen (Drag & Drop aus dem Feld heraus).
 
 Ursprünglicher Plan:

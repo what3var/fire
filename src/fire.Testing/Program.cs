@@ -24302,9 +24302,11 @@ else
             // (under X11 libdbus, which SDL3 uses, keeps a buffer until the end: not a leak of the program)
             string lsanFile = Path.Combine(workDir, "lsan.supp");
             File.WriteAllText(lsanFile, "leak:libdbus-1.so\n");
-            // Builds a case for SDL `version` and runs it: `display` "dummy" (the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), or "x11-two"
-            // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's)
-            void RunWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null)
+            // Builds a case for SDL `version` and runs it: `display` "dummy" (the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
+            // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
+            // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
+            // `firstCommand` instead of the reader built from `script` (the VM: forge run).
+            void RunWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
             {
                 string label = version == 3 ? $"{title} [SDL3]" : title;
                 var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
@@ -24326,7 +24328,8 @@ else
                     return buildExit != 0 || log.Contains("warning:") ? "C/C++-Compiler: " + log : "";
                 }
                 string name = $"window{version}_" + Math.Abs(title.GetHashCode());
-                string failed = Build(generated, name, out string exe);
+                string exe = "";
+                string failed = firstCommand == null ? Build(generated, name, out exe) : "";
                 string exe2 = "";
                 if (failed == "" && second != null && secondCommand == null) failed = Build(Generate(second), name + "_w", out exe2);
                 if (failed != "") { CheckNat($"Fenster: {label}", false, failed); return; }
@@ -24347,9 +24350,15 @@ else
                         string readerOut = Path.Combine(workDir, name + ".out");
                         // (a script: the reader in the background, the writer 0.3 s later; the exit code says whether both ended well)
                         string both = Path.Combine(workDir, name + ".sh");
-                        File.WriteAllText(both, $"\"{exe}\" > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{secondCommand ?? $"\"{exe2}\""} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
+                        string reader = firstCommand ?? $"\"{exe}\"", writer = secondCommand ?? $"\"{exe2}\"";
+                        File.WriteAllText(both, display == "x11-late"
+                            ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 1\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
+                            : $"{reader} > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{writer} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
                         string writerLog = RunProc(xvfbRun!, $"-a sh \"{both}\"", workDir, out runExit);
                         actual = (File.Exists(readerOut) ? File.ReadAllText(readerOut) : "") + writerLog;
+                        // (the VM as the reader: its first start after a build installs the standard packages and says so)
+                        if (firstCommand != null)
+                            actual = string.Concat(actual.Split('\n').Where(l => l != "" && !l.StartsWith("Installing the standard package") && !l.StartsWith("Building the native part")).Select(l => l + "\n"));
                     }
                     Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
@@ -24450,6 +24459,25 @@ else
             foreach (f in files) { line = line + " [" + f + "]" }
             print(line)
             """;
+            // (the writer copies first and serves until another program takes the clipboard; the reader starts 1 s later, asks once, then takes the clipboard)
+            const string lateWriterScript = """
+            #import "windows"
+            #import "time"
+            Clipboard.SetText("Text von vorher ä")
+            for (var t = 0; t < 1500; t++) {
+                var s = Clipboard.GetText()
+                if (s == undefined) { break }
+                if (s != "Text von vorher ä") { break }
+                Sleep(20ms)
+            }
+            """;
+            const string lateReaderScript = """
+            #import "windows"
+            print("has " + Clipboard.HasText)
+            print("text [" + Clipboard.GetText() + "]")
+            Clipboard.SetText("fertig")
+            """;
+            string[] lateExpected = { "has True", "text [Text von vorher ä]" };
             var sdlCases = new (string Title, string Script, string[]? Expected2, string[]? Expected3, string Define, string Display, string? Second)[]
             {
                 ("Fenster: DragHover und DragLeave, solange etwas aus einem anderen Programm ueber dem Fenster ist (Callbacks, Warteschlange)", """
@@ -24475,6 +24503,8 @@ else
                 ("Fenster: die Zwischenablage von X11 (Xvfb) zwischen zwei Programmen: Text, Bild, Dateien", readerScript,
                     new[] { "text [Text aus dem anderen Programm ä]", "image none", "files 0" },
                     new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" }, "", "x11-two", writerScript),
+                ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
+                    lateExpected, lateExpected, "", "x11-late", lateWriterScript),
             };
             foreach (var sc in sdlCases)
             {
@@ -24526,6 +24556,19 @@ else
                     File.WriteAllText(writer, writerScript);
                     RunWindowCase(title, readerScript, new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" },
                         "", 3, "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
+                }
+            }
+            // ---- the VM as the reader that starts after a native program copied (SDL 3.2 alone would not see it: SdlClipboard asks once, like fire_display_sdl3.h)
+            {
+                string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) sieht, was ein natives Programm vor ihrem Start kopiert hat";
+                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                if (!TestSelected(title)) { }
+                else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
+                else
+                {
+                    string reader = Path.Combine(workDir, "vmlatereader.fire");
+                    File.WriteAllText(reader, lateReaderScript);
+                    RunWindowCase(title, lateReaderScript, lateExpected, "", 3, "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
                 }
             }
 

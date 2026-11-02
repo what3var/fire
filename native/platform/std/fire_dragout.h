@@ -361,7 +361,9 @@ typedef struct FireXClient { int type; unsigned long serial; int send_event; voi
 typedef struct FireXSelRequest { int type; unsigned long serial; int send_event; void* display; FireXId owner, requestor, selection, target, property, time; } FireXSelRequest;
 typedef struct FireXSelNotify { int type; unsigned long serial; int send_event; void* display; FireXId requestor, selection, target, property, time; } FireXSelNotify;
 typedef struct FireXProperty { int type; unsigned long serial; int send_event; void* display; FireXId window, atom, time; int state; } FireXProperty;
-typedef union FireXEvent { int type; FireXClient xclient; FireXSelRequest xselectionrequest; FireXSelNotify xselection; FireXProperty xproperty; long pad[24]; } FireXEvent;
+/* (XFixesSelectionNotifyEvent: fire_display_sdl3.h tells SDL that the owner of the clipboard changed) */
+typedef struct FireXFixesNotify { int type; unsigned long serial; int send_event; void* display; FireXId window; int subtype; FireXId owner, selection, time, selectionTime; } FireXFixesNotify;
+typedef union FireXEvent { int type; FireXClient xclient; FireXSelRequest xselectionrequest; FireXSelNotify xselection; FireXProperty xproperty; FireXFixesNotify xfixes; long pad[24]; } FireXEvent;
 enum { FIRE_X_PROPERTY_NOTIFY = 28, FIRE_X_SELECTION_REQUEST = 30, FIRE_X_SELECTION_NOTIFY = 31, FIRE_X_CLIENT_MESSAGE = 33 };
 #define FIRE_X_ATOM 4ul           /* XA_ATOM */
 #define FIRE_X_WINDOW 33ul        /* XA_WINDOW */
@@ -389,6 +391,8 @@ typedef struct FireX11 {
     unsigned char (*KeysymToKeycode)(void*, FireXId);
     int (*QueryKeymap)(void*, char*);
     FireXErrorHandler (*SetErrorHandler)(FireXErrorHandler);
+    FireXId (*GetSelectionOwner)(void*, FireXId);
+    int (*QueryExtension)(void*, const char*, int*, int*, int*);
 } FireX11;
 
 static int fire_x11_bind(FireX11* x, const char* name, void* fn) {
@@ -411,7 +415,8 @@ static FireX11* fire_x11_load(void) {
                  && fire_x11_bind(&x, "XQueryPointer", &x.QueryPointer) && fire_x11_bind(&x, "XTranslateCoordinates", &x.TranslateCoordinates)
                  && fire_x11_bind(&x, "XCheckIfEvent", &x.CheckIfEvent) && fire_x11_bind(&x, "XConnectionNumber", &x.ConnectionNumber)
                  && fire_x11_bind(&x, "XDefaultRootWindow", &x.DefaultRootWindow) && fire_x11_bind(&x, "XKeysymToKeycode", &x.KeysymToKeycode)
-                 && fire_x11_bind(&x, "XQueryKeymap", &x.QueryKeymap) && fire_x11_bind(&x, "XSetErrorHandler", &x.SetErrorHandler))) {
+                 && fire_x11_bind(&x, "XQueryKeymap", &x.QueryKeymap) && fire_x11_bind(&x, "XSetErrorHandler", &x.SetErrorHandler)
+                 && fire_x11_bind(&x, "XGetSelectionOwner", &x.GetSelectionOwner) && fire_x11_bind(&x, "XQueryExtension", &x.QueryExtension))) {
             dlclose(x.lib);
             x.lib = NULL;
         }

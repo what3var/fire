@@ -364,12 +364,68 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
 }
 
 /* ---- the clipboard of the desktop: text, pictures, files ---- */
+#ifdef FIRE_DRAGOUT_X11
+/* SDL 3.2 on X11 learns what the clipboard offers only when its owner changes (XFixes tells it, then it asks the owner for TARGETS): what another program
+ * copied before this one started stays invisible - SDL_GetClipboardData refuses every kind it was not told of. So once, when the clipboard is first used: if
+ * SDL knows no kinds but somebody owns CLIPBOARD, SDL is told that the owner changed (an XFixesSelectionNotify sent through SDL's own connection to a hidden
+ * window of SDL - delivered back to SDL, which then asks for TARGETS itself), and its events are pumped until it has the kinds (at most half a second). libX11
+ * is the one of fire_dragout.h (dlopen). The caller holds the lock. */
+static void fire_display_x11ClipboardRefresh(void) {
+    const char* driver = SDL_GetCurrentVideoDriver();
+    size_t n = 0;
+    char** kinds;
+    FireX11* x;
+    SDL_Window* hidden;
+    int sent = 0, i;
+    if (driver == NULL || strcmp(driver, "x11") != 0) return;
+    kinds = SDL_GetClipboardMimeTypes(&n);
+    SDL_free(kinds);
+    if (n > 0 || (x = fire_x11_load()) == NULL) return;
+    hidden = SDL_CreateWindow("", 1, 1, SDL_WINDOW_HIDDEN);
+    if (hidden == NULL) return;
+    {
+        SDL_PropertiesID props = SDL_GetWindowProperties(hidden);
+        void* display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+        FireXId xwindow = (FireXId)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+        int opcode, eventBase, errorBase;
+        if (display != NULL && xwindow != 0 && x->QueryExtension(display, "XFIXES", &opcode, &eventBase, &errorBase)) {
+            FireXId clipboard = x->InternAtom(display, "CLIPBOARD", 0);
+            FireXId owner = x->GetSelectionOwner(display, clipboard);
+            if (owner != 0) {
+                FireXEvent e;
+                memset(&e, 0, sizeof e);
+                e.xfixes.type = eventBase;   /* + XFixesSelectionNotify (0) */
+                e.xfixes.display = display;
+                e.xfixes.window = xwindow;
+                e.xfixes.subtype = 0;        /* XFixesSetSelectionOwnerNotify */
+                e.xfixes.owner = owner;
+                e.xfixes.selection = clipboard;
+                sent = x->SendEvent(display, xwindow, 0, 0, &e) != 0;   /* (no mask: to the client that made the window - SDL) */
+                x->Flush(display);
+            }
+        }
+    }
+    SDL_DestroyWindow(hidden);
+    for (i = 0; sent && i < 100; i++) {
+        SDL_PumpEvents();
+        kinds = SDL_GetClipboardMimeTypes(&n);
+        SDL_free(kinds);
+        if (n > 0) break;
+        SDL_Delay(5);
+    }
+}
+#endif
+
 /* The video part of SDL must run for the clipboard (on X11 it needs a window of SDL's own): it is started once and stays. */
 static int fire_display_clipboardReady(void) {
     static int ready = 0;
     if (!ready) {
         if (!SDL_InitSubSystem(SDL_INIT_VIDEO)) return 0;
         ready = 1;
+#ifdef FIRE_DRAGOUT_X11
+        SDL_PumpEvents();
+        fire_display_x11ClipboardRefresh();
+#endif
     }
     /* the events of the clipboard are taken in: what other programs did with it (X11: the owner changed, then the kinds it offers) before it is read, and their
      * questions for what this program put there (a program without a window answers here) */
