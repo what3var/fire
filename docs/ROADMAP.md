@@ -151,6 +151,13 @@ Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTL
 
 ## 7. Zip / Deflate
 
+Stand: **umgesetzt** (docs/COMPRESSION.md) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
+Strömen unter ASan geprüft; Größe wie zlib), `DeflateStream`/`GZipStream`/`ZLibStream`, Einmal-Funktionen, `Zip.Archive` lesen (Zip64, Datendeskriptoren,
+CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 wird beim Schreiben für die Endsätze erzeugt; ein
+einzelner Eintrag über 4 GB wird beim Schreiben abgelehnt.
+
+Ursprünglicher Plan:
+
 * `Compression.Deflate`/`Inflate` (Bytes und Streams), `GZip`.
 * `Zip.Archive`: lesen (Einträge, `Open(name)` als Stream, `ExtractTo(folder)`), schreiben (`Add(name, bytes|stream|file)`, `CreateFromDirectory`),
   Zip64 lesen.

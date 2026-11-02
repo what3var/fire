@@ -19193,6 +19193,68 @@ else
             """),
     }).ToArray();
 
+    // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Compression: Deflate/zlib/gzip in einem Rutsch und als Streams, Zip schreiben/lesen/entpacken, kaputte Daten, Zip-Slip", """
+            #import "compression"
+            #import "io"
+            #import "filesystem"
+            var data = new byte[30000]
+            for (var i = 0; i < data.length; i++) { data[i] = (i * 13 + i / 97) % 256 }
+            for (var level = 0; level <= 9; level += 3) {
+                var g = Compression.GZip.Compress(data, level)
+                var back = Compression.GZip.Decompress(g)
+                print(level + ": " + g.length + " " + Compression.ZLib.Compress(data, level).length + " " + Compression.Deflate.Compress(data, level).length + " " + (back.length == data.length && back[29999] == data[29999]))
+            }
+            var m = new IO.MemoryStream()
+            var z = new Compression.ZLibStream(m, Compression.Mode.Compress, 6, true)
+            var w = new IO.TextWriter(z, true)
+            for (var i = 0; i < 800; i++) { w.WriteLine("zeile " + i + " äöü") }
+            w.Close()
+            z.Close()
+            print("zlib stream " + m.Length)
+            m.Position = 0
+            var r = new IO.TextReader(new Compression.ZLibStream(m, Compression.Mode.Decompress, 6, true))
+            var n = 0
+            foreach (line in r) { n++ }
+            print("lines " + n)
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_nat_zip")
+            if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+            IO.Directory.CreateDirectory(dir)
+            var zipPath = IO.Path.Combine(dir, "t.zip")
+            var a = Zip.Archive.Create(zipPath)
+            a.Add("a.txt", "Hallo", 6, new DateTime(2024, 2, 29, 23, 59, 58))
+            a.Add("bin/data.bin", data)
+            a.AddDirectory("leer")
+            var s = a.CreateEntry("strom.txt", 9)
+            s.Write(data, 0, 20000)
+            s.Close()
+            a.Close()
+            print("zip " + IO.File.Size(zipPath))
+            var b = Zip.Archive.Open(zipPath)
+            foreach (e in b.Entries) {
+                var t = e.LastWriteTime
+                print(e.FullName + " " + e.Length + " " + e.CompressedLength + " " + e.CompressionMethod + " " + e.Crc32 + " " + e.IsDirectory)
+            }
+            print(b.GetEntry("a.txt").LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") + " " + b.GetEntry("a.txt").ReadAllText())
+            b.ExtractTo(IO.Path.Combine(dir, "aus"))
+            b.Close()
+            print(IO.File.Size(IO.Path.Combine(dir, "aus/bin/data.bin")) + " " + IO.Directory.Exists(IO.Path.Combine(dir, "aus/leer")))
+            var bytes = IO.File.ReadAllBytes(zipPath)
+            bytes[bytes.length - 22] = 0   // the signature of the end record
+            try { Zip.Archive.FromBytes(bytes).GetEntry("a.txt") } catch (IO.IOException e) { print("kaputt: " + e.message) }
+            var evil = new IO.MemoryStream()
+            var x = Zip.Archive.Write(evil, true)
+            x.Add("../raus.txt", "boese")
+            x.Close()
+            try { Zip.Archive.FromBytes(evil.ToBuffer()).ExtractTo(IO.Path.Combine(dir, "evil")) } catch (Zip.ZipException e) { print(e.message) }
+            try { Compression.GZip.Decompress(IO.Utf8.GetBytes("kein gzip")) } catch (Compression.InvalidDataException e) { print(e.message) }
+            IO.Directory.Delete(dir, true)
+            print("end")
+            """),
+    }).ToArray();
+
     // Differences that were aligned
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

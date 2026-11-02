@@ -18,6 +18,7 @@
     "net/net.fireproj",
     "process/process.fireproj",
     "hash/hash.fireproj",
+    "compression/compression.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
     "gpio/gpio.fireproj",

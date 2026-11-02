@@ -33,6 +33,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"linq"` | queries over arrays, lists and `IEnumerable`s - see [Arrays and lists](07-arrays-and-lists.md#queries-import-linq) |
 | `"process"` | `Process.Run(file, args)` (exit code and output), `Process.Start` with pipes as IO streams, `WaitForExit`, `Kill`, the output line by line as events - see docs/PROCESS.md |
 | `"hash"` | `Hash.Sha256.HexOf(data)` / `.Of(data)` (also `Sha1`, `Sha384`, `Sha512`, `Md5`), `Hash.Crc32.Of`, `Hash.Adler32.Of`, `Hash.Hmac`, incremental hashers (`Update`, `Finish`), `Hash.Hex`; data is bytes, a string (UTF-8) or a stream - see docs/HASH.md |
+| `"compression"` | `Compression.GZip.Compress/Decompress` (also `Deflate`, `ZLib`), `GZipStream`/`DeflateStream`/`ZLibStream` as IO streams, Zip archives: `Zip.Archive.Open`/`Create`, `Entries`, `ExtractTo`, `Add`, `CreateFromDirectory` - see docs/COMPRESSION.md |
 | `"reflection"` | `Type`, `Member`, `Reflect`, selectors - see [Probes and reflection](16-probes-and-reflection.md) |
 | `"io"` | namespace `IO`: streams (`MemoryStream`, your own), text (`TextReader`, `TextWriter`, `Utf8`), console input and output (`Stdio`) |
 | `"filesystem"` | the file system in namespace `IO`, named like .NET: `File`, `Directory`, `Path`, `FileStream` - see docs/FILESYSTEM.md |
