@@ -68,6 +68,8 @@ namespace fire.Editor
         private static readonly IBrush Page = new SolidColorBrush(Color.FromRgb(0x24, 0x20, 0x28));
         private static readonly IBrush EditorBack = EditorTheme.CodeBlockBackground;
         public const double TextWidth = 680;
+        /// <summary>The space inside a container: at the sides, and above and below its text.</summary>
+        private const double SidePadding = 10;
         private const double Padding = 8;
         private const double Raster = 10;
 
@@ -254,13 +256,13 @@ namespace fire.Editor
 
         private Control Container(OvContainer c, OverviewContext context)
         {
-            Control body = c.Src != null ? Document(c.Src, context, c.W - 2 * Padding) : MarkdownText(c.Markdown, context, c.W - 2 * Padding, compact: true);
-            if (_host != null && c.Src == null && body is Panel { Width: 0 }) body = EmptyText(c.W - 2 * Padding, "Double click to write.");
+            Control body = c.Src != null ? Document(c.Src, context, c.W - 2 * SidePadding) : MarkdownText(c.Markdown, context, c.W - 2 * SidePadding, compact: true);
+            if (_host != null && c.Src == null && body is Panel { Width: 0 }) body = EmptyText(c.W - 2 * SidePadding, "Double click to write.");
 
             var box = new Border
             {
                 Background = Surface, BorderBrush = ContainerBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(Padding, Padding + (c.Name != null ? 4 : 0), Padding, Padding), Child = body,
+                Padding = new Thickness(SidePadding, Padding + (c.Name != null ? 4 : 0), SidePadding, Padding), Child = body,
                 Width = c.W, MinHeight = 24,
             };
             if (c.H is { } h) { box.Height = h; box.ClipToBounds = true; }
@@ -401,7 +403,7 @@ namespace fire.Editor
                     double w = Math.Max(60, Snap(drag.Size.Width + dx, free));
                     cell.Width = w;
                     cell.Box.Width = w;
-                    if (cell.Body is Control body && body.Width > 0) body.Width = w - 2 * Padding;
+                    if (cell.Body is Control body && body.Width > 0) body.Width = w - 2 * SidePadding;
                     if (drag.Kind == DragKind.Resize)
                     {
                         cell.Box.Height = Math.Max(30, Snap(drag.Size.Height + dy, free));
@@ -436,7 +438,7 @@ namespace fire.Editor
         {
             if (_host == null) return;
             string original = OverviewSource.OwnText(_host.Lines, _doc, cell?.Model);
-            double width = cell == null ? TextWidth : cell.Box.Width - 2 * Padding;
+            double width = cell == null ? TextWidth : cell.Box.Width - 2 * SidePadding;
             var shown = cell?.Body ?? _rootText;
             var editor = new AvaloniaEdit.TextEditor
             {
