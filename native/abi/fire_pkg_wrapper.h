@@ -19,6 +19,8 @@
 
 /* A package library has no classes of its own (objects cannot cross the boundary): nothing to run. */
 void runDestructors(Obj* o) { (void)o; }
+/* ... and so no TimeSpan either (the prelude hands the bridge its ticks). */
+bool timeObjTicks(Value v, int64_t* ticks) { (void)v; (void)ticks; return false; }
 
 /* A native of the package as the wrapper calls it: the arguments, and the list of the scope that owns what the call allocates. */
 typedef struct FirePkgFn { const char* name; int arity; Value (*call)(const Value* args, OwnList* list); } FirePkgFn;
@@ -40,8 +42,9 @@ static fire_pkgThread fire_pkgSelf(void) { return pthread_self(); }
 static int fire_pkgSame(fire_pkgThread a, fire_pkgThread b) { return pthread_equal(a, b); }
 #endif
 
-/* ---- memory for results: lives until the next call of the same thread (the caller copies it) ---- */
-typedef struct FirePkgArena { fire_pkgThread thread; int used; void** blocks; size_t count, cap; } FirePkgArena;
+/* ---- per thread of the caller: the memory for results (lives until the next call of the same thread; the caller copies it) and the last errors of the
+ * bridges (`g_ioError` & co. are plain globals in a library without FIRE_THREADS: they are swapped in and out around each call, which holds the lock) ---- */
+typedef struct FirePkgArena { fire_pkgThread thread; int used; void** blocks; size_t count, cap; BridgeError io, device, gfx; } FirePkgArena;
 static FirePkgArena* g_pkgArenas = NULL;
 static size_t g_pkgArenaCount = 0, g_pkgArenaCap = 0;
 
@@ -167,6 +170,9 @@ static int fire_pkgCallEntry(const FirePkgFn* entries, int count, int index, con
     fire_pkgLock();
     arena = fire_pkgArena();
     fire_pkgArenaClear(arena);
+    g_ioError = arena->io;
+    g_deviceError = arena->device;
+    g_gfxError = arena->gfx;
     ownListInit(&list, poolMark(), NULL);
     g_libraryJump = &jump;
     if (setjmp(jump) == 0) {
@@ -184,6 +190,9 @@ static int fire_pkgCallEntry(const FirePkgFn* entries, int count, int index, con
     }
     g_libraryJump = NULL;
     leave(&list);
+    arena->io = g_ioError;
+    arena->device = g_deviceError;
+    arena->gfx = g_gfxError;
     fire_pkgUnlock();
     return status;
 }

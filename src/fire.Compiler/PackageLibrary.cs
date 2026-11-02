@@ -184,6 +184,7 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_HAL_{target.HalPackage.ToUpperInvariant()} 1");
             sb.AppendLine("#define FIRE_NDIMS 1");
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{target.Native.Platform}/fire_platform.h\"");
+            foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   /* the library has a runtime of its own (its state lives here) */");
             sb.AppendLine("#include \"fire_rt.h\"");
             foreach (var (name, text) in import.ReadNativeSources(HostPlatformKeys))
@@ -234,8 +235,6 @@ namespace fire.Compiler
             sb.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{target.Native.Platform}/fire_platform.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
-            sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{target.Native.Platform}/fire_net.hpp\"");
-            sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{target.Native.Platform}/fire_tls.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{target.Native.Platform}/fire_gpio.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{target.Native.Platform}/fire_i2c.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{target.Native.Platform}/fire_spi.hpp\"");

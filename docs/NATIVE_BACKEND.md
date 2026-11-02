@@ -353,12 +353,15 @@ Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `Dat
   Eine falsche Angabe ist eine `TimeException` mit den Texten der VM.
 * Abweichung: `DateTime.Parse` liest eine Teilmenge der .NET-Formate (ISO-Datum und -Zeit mit `Z`/`+hh:mm`, `yyyy-MM`, `M/d/yyyy`, Monatsnamen (auch `March 2024`), `3:45 PM`, `GMT`); sonst `undefined` bzw. `TimeException`.
 
-**`io`** (`fire_bridge_io.hpp`): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8. Die Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread:
-`g_ioError` in den Thread-Variablen) sind in C++, das Dateisystem kommt aus dem Plattformpaket: `platform/<name>/fire_fs.hpp` (der Generator setzt `FIRE_PLATFORM_FS_HEADER`) mit
-`plat::fs::open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/fullPath/...`. Mitgeliefert: `std/fire_fs_std.hpp` (`<filesystem>`, für posix und
-windows), `std/fire_fs_posix.hpp` (POSIX-Aufrufe für `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF; `FIRE_FS_ROOT` für relative Pfade) und
-`std/fire_fs_none.hpp` (`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.hpp`.
-Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund)` (Funktion, vor den Includes in der Zielkonfiguration), Standard: alles erlaubt.
+**`io`** (`fire_bridge_io.h`, C - auch mit TinyCC): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8 (der Decoder ersetzt ungültige Folgen wie .NET). Die
+Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread: `g_ioError` in den Thread-Variablen) sind in der Brücke, das Dateisystem kommt aus dem Plattformpaket:
+`platform/<name>/fire_fs.h` (der Generator setzt `FIRE_PLATFORM_FS_C_HEADER`) mit `fire_fs_open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/
+fullPath/...` (die Schnittstelle und das Gemeinsame: `std/fire_fs_c.h`). Mitgeliefert: `std/fire_fs_posix.h` (POSIX-Aufrufe; für `posix`, `wasm` und - mit `FIRE_FS_ROOT` für relative Pfade und
+32-Bit-Positionen - `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF), `std/fire_fs_win32.h` (die Wide-API von Windows) und `std/fire_fs_none.h`
+(`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.h`. (Die C++-Schicht
+`fire_fs.hpp` mit `plat::fs::` gibt es noch für `graphics`, bis auch das in C ist.)
+Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund, größe)` (eine Funktion `int(const char*, int, char*, size_t)`, 1 erlaubt; vor den
+Includes in der Zielkonfiguration), Standard: alles erlaubt.
 Abweichungen: Standardeingabe wartet bei `Read` auf die verlangte Byteanzahl oder das Ende; `IO.Stdio` schreibt direkt auf `stdout`/`stderr` (gemeinsame Pufferung mit `print`);
 was ein Skript offen lässt, wird am Programmende geschlossen (statisches Destruktor-Netz).
 

@@ -17943,7 +17943,7 @@ else
             """),
     }).ToArray();
 
-    // The IO bridge (bridges/fire_bridge_io.hpp); the console is tested separately (a program with input)
+    // The IO bridge (packages/io/native/fire_bridge_io.h); the console is tested separately (a program with input)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)", """
@@ -21552,7 +21552,7 @@ else
             """),
     }).ToArray();
 
-    // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
+    // TLS (packages/tls/native/fire_bridge_tls.h) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
     {
         bool hasOpenSsl = new[] { "/usr/include/openssl/ssl.h", "/usr/local/include/openssl/ssl.h", "/opt/homebrew/include/openssl/ssl.h", "/usr/include/x86_64-linux-gnu/openssl/ssl.h" }.Any(File.Exists);
         if (!hasOpenSsl)

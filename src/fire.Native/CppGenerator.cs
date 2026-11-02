@@ -1117,7 +1117,10 @@ namespace fire.Native
             sb.AppendLine("#pragma GCC diagnostic ignored \"-Wunused-function\"");
             sb.AppendLine("#endif");
 
-            // The natives in C of the packages ("language": "c"): part of this file, after the runtime - a C compiler is enough (TinyCC, a board without C++)
+            // The natives in C of the packages ("language": "c"): part of this file, after the runtime - a C compiler is enough (TinyCC, a board without C++).
+            // The platform layers in C for them (FIRE_PLATFORM_FS_C_HEADER, ...).
+            if (_packageImports.Any(p => p.Import.Import.Native is { IsC: true }))
+                foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) sb.AppendLine(line);
             foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is { IsC: true } && !_standardNativesWritten.Contains(p.Import.Name)))
                 foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
@@ -1135,8 +1138,6 @@ namespace fire.Native
             bool natSources = false;
             if (_packageImports.Count > 0 || _usesGraphics) nat.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
-            if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{_target.Native.Platform}/fire_net.hpp\"");   // (the net package)
-            if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{_target.Native.Platform}/fire_tls.hpp\"");   // (the tls package)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{_target.Native.Platform}/fire_gpio.hpp\"");   // (the gpio package)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{_target.Native.Platform}/fire_i2c.hpp\"");   // (the i2c package)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{_target.Native.Platform}/fire_spi.hpp\"");   // (the spi package)
@@ -1233,7 +1234,7 @@ namespace fire.Native
             {
                 string text = _strings[i];
                 // the code units as numbers (C99: TinyCC and older compilers know no u"..." literals); a plain text stands next to them as a comment
-                bool plain = text.All(c => c >= 0x20 && c < 0x7F) && !text.Contains("*/");
+                bool plain = text.All(c => c >= 0x20 && c < 0x7F) && !text.Contains("*/") && !text.Contains("/*");
                 string data = "{" + string.Join(", ", text.Select(c => ((int)c).ToString(CultureInfo.InvariantCulture)).Append("0")) + "}";
                 sb.AppendLine($"static const fire_char16 K{i}_d[] = {data};{(plain ? "   /* " + CString(text) + " */" : "")}");
                 sb.AppendLine($"static const Str K{i} = {{{{IMMORTAL, R_Str}}, {text.Length}, K{i}_d}};");
@@ -2035,14 +2036,14 @@ namespace fire.Native
                 sb.AppendLine("    return Undef();");
                 sb.AppendLine("}");
             }
-            if (_needsTimeObj)
+            // (always: a compiler that keeps unused static functions - TinyCC - still links `timeTicksOf`, which calls it)
             {
                 // a TimeSpan is any class with a whole number field `ticks` (like the VM looks at the field, not at the class name)
                 sb.AppendLine("bool timeObjTicks(Value v, int64_t* ticks) {");
                 var tick = new StringBuilder();
                 foreach (var cls in _classList)
                     if (cls.Rc.FieldIndex.TryGetValue("ticks", out int index)) tick.AppendLine($"        case {cls.Id}: if (objFields(o)[{index}].kind == K_Int) {{ *ticks = objFields(o)[{index}].i; return true; }} return false;");
-                if (tick.Length > 0)
+                if (tick.Length > 0 && _needsTimeObj)
                 {
                     sb.AppendLine("    Obj* o = asObj(v);");
                     sb.AppendLine("    switch (o->cls) {");
@@ -2149,6 +2150,13 @@ namespace fire.Native
             _usesGlobalOwn = true;
             _version++;
         }
+
+        /// <summary>The parts of the platform layer in C that the packages in C include (`#include FIRE_PLATFORM_NET_C_HEADER`): the file system (io), the sockets (net), TLS (tls).</summary>
+        public static readonly string[] CPlatformLayers = { "fs", "net", "tls" };
+
+        /// <summary>`#define FIRE_PLATFORM_<PART>_C_HEADER "platform/<platform>/fire_<part>.h"` for every part of <see cref="CPlatformLayers"/>.</summary>
+        public static IEnumerable<string> CPlatformHeaderDefines(string platform) =>
+            CPlatformLayers.Select(part => $"#define FIRE_PLATFORM_{part.ToUpperInvariant()}_C_HEADER \"platform/{platform}/fire_{part}.h\"");
 
         private void NeedTimeObj()
         {
