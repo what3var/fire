@@ -9343,6 +9343,15 @@ uiDrawScript = """
     for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
     print("hash " + h)
     print(ui.Tick())
+    // a watched text field set again and again after the layout: the probes compare the old value with the new one (natively it once was freed before that)
+    var probed = new UI.Label("first", 300, 200)
+    ui.Add(probed)
+    ui.Draw()
+    for (var i = 0; i < 20; i = i + 1) {
+        probed.Text = "text " + i
+        ui.Draw()
+    }
+    print(probed.Text)
     """;
 
 // ---------------------------------------------------------------------------
@@ -24525,7 +24534,7 @@ else
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
                     string actual = RunProc(exe, "", workDir, out int runExit);
                     string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
-                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 4, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 5, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
                 }
             }
         }
