@@ -47,6 +47,10 @@ namespace fire.Terminal.Event
                 case EventType.DropFiles:
                 case EventType.DropText:
                     return callback.Proto.ParamCount == 3;
+                case EventType.DragHover:
+                    return callback.Proto.ParamCount == 2;
+                case EventType.DragLeave:
+                    return callback.Proto.ParamCount == 0;
                 default:
                     return callback.Proto.ParamCount == 0;
             }

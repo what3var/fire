@@ -113,7 +113,7 @@ namespace fire.Terminal.Windows
         /// TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer, pressure 0 to 1 as floating point);
         /// JoystickAxis [type, joystick, axis, position] (position -1 to 1 as floating point); JoystickButtonDown/Up [type, joystick, button];
         /// JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre); JoystickAdded/Removed [type, joystick];
-        /// DropFiles [type, paths (string[]), x, y]; DropText [type, text, x, y].</summary>
+        /// DropFiles [type, paths (string[]), x, y]; DropText [type, text, x, y]; DragHover [type, x, y]; DragLeave [type].</summary>
         /// <summary>The paths of a drop as an array of strings.</summary>
         private static Value Paths(string[] files)
         {
@@ -169,6 +169,9 @@ namespace fire.Terminal.Windows
                     break;
                 case DropEvent drop:
                     items = new[] { Value.MakeInt((int)drop.Type), Value.MakeString(drop.Text), Value.MakeInt(Px(drop.X)), Value.MakeInt(Px(drop.Y)) };
+                    break;
+                case DragHoverEvent hover:
+                    items = new[] { Value.MakeInt((int)hover.Type), Value.MakeInt(Px(hover.X)), Value.MakeInt(Px(hover.Y)) };
                     break;
                 default:
                     items = new[] { Value.MakeInt((int)evnt.Type) };
@@ -404,6 +407,13 @@ namespace fire.Terminal.Windows
                             case Event.EventType.DropText:
                                 var dropevent = (DropEvent)evnt;
                                 Callback(hndlr.Callback, new[] { Value.MakeString(dropevent.Text), Value.MakeFloat(dropevent.X), Value.MakeFloat(dropevent.Y) });
+                                break;
+                            case Event.EventType.DragHover:
+                                var hoverevent = (DragHoverEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeFloat(hoverevent.X), Value.MakeFloat(hoverevent.Y) });
+                                break;
+                            case Event.EventType.DragLeave:
+                                Callback(hndlr.Callback, new Value[0]);
                                 break;
                             case Event.EventType.TextInput:
                                 var textevent = (TextEvent)evnt;

@@ -421,7 +421,7 @@ namespace fire.Compiler
             try
             {
                 var config = LoadConfig(options);
-                var target = config.ResolveTarget(options.TargetName);
+                var target = NativeBuilder.WithRequestedSdl(config.ResolveTarget(options.TargetName), null);   // (only the sources: SDL2 for a window, unless FIRE_SDL or the target say 3)
                 var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options));
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);

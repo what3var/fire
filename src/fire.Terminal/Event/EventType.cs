@@ -38,6 +38,10 @@ namespace fire.Terminal.Event
         DropFiles = 40,
         /// <summary>The user dropped text onto the window.</summary>
         DropText = 41,
+        /// <summary>Something of another program is dragged over the window (what it is comes with the drop): the position (see <see cref="DragHoverEvent"/>).</summary>
+        DragHover = 42,
+        /// <summary>It left the window without being dropped.</summary>
+        DragLeave = 43,
     }
 
 }

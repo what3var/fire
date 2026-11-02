@@ -254,13 +254,15 @@ namespace UI {
     enum DropEffect { None = 0, Copy = 1, Move = 2, Link = 3 }
 
     // What is dragged: a text, files (their paths - a drop from the file manager), or any value of the program (`Value`, with a `Kind` the targets can
-    // ask for). `Source` is the element the drag started from; undefined for a drop from another program.
+    // ask for). `Source` is the element the drag started from; undefined for a drop from another program. `Pending`: something of another program is still being
+    // dragged over the window (OnDragOver while it hovers) - what it is comes only with the drop, Text and Files are empty until then.
     class DragData {
         string Text = ""
         List<string> Files
         any Value
         string Kind = ""
         UI.Element Source
+        bool Pending = false
 
         construct(string text = "", any value = undefined, string kind = "") {
             this.Text = text

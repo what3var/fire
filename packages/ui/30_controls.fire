@@ -528,7 +528,7 @@ namespace UI {
         UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
             if (this.OnDragOver != undefined) { return base.DragOver(root, data, px, py) }
             if (data.Source == this) { return UI.DropEffect.None }
-            if (data.HasText || data.HasFiles) { return UI.DropEffect.Copy }
+            if (data.HasText || data.HasFiles || data.Pending) { return UI.DropEffect.Copy }
             return UI.DropEffect.None
         }
         UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {

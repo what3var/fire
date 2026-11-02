@@ -1,4 +1,5 @@
 /* fire native platform package "std": a window on the desktop through SDL2 (link with -lSDL2; the generated program asks for it with a `// fire-link: SDL2` line).
+ * The build takes SDL3 instead (fire_display_sdl3.h) when the toolchain can compile and link it; this one has text only on its clipboard and no hover events.
  * What it shows is the same as the VM's window (src/fire.Terminal.Sdl): the framebuffer as a streaming texture (R,G,B,A in memory = ABGR8888 on little endian),
  * stretched to the window, which can be resized; positions come back in framebuffer pixels; closing the window ends `Tick`. The interface is described in fire_display_c.h. */
 #ifndef FIRE_DISPLAY_SDL_H
@@ -372,6 +373,8 @@ static int fire_display_clipboardReady(void) {
         if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return 0;
         ready = 1;
     }
+    /* the events of the clipboard are taken in (X11: another program asks this one for what it put there - a program without a window answers here) */
+    SDL_PumpEvents();
     return 1;
 }
 static int fire_display_clipboardSet(const char* text) {
@@ -403,6 +406,14 @@ static int fire_display_clipboardHas(void) {
     fire_display_unlockSdl();
     return has;
 }
+
+/* Pictures and files: SDL2 has only text on its clipboard (SDL3 has more, see fire_display_sdl3.h) - not available. */
+static unsigned char* fire_display_clipboardGetImage(size_t* size) { *size = 0; return NULL; }
+static int fire_display_clipboardSetImage(const unsigned char* png, size_t pngSize, const unsigned char* bmp, size_t bmpSize) { (void)png; (void)pngSize; (void)bmp; (void)bmpSize; return 0; }
+static int fire_display_clipboardHasImage(void) { return 0; }
+static char* fire_display_clipboardGetFiles(void) { return NULL; }
+static int fire_display_clipboardSetFiles(const char* paths) { (void)paths; return 0; }
+static int fire_display_clipboardHasFiles(void) { return 0; }
 
 /* Shows the pixels (R,G,B,A per 32-bit word, width*height), stretched to the window. */
 static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int width, int height) {

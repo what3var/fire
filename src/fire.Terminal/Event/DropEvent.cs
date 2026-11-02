@@ -9,4 +9,12 @@ namespace fire.Terminal.Event
         public float X { get; init; }
         public float Y { get; init; }
     }
+
+    /// <summary>Something of another program is dragged over the window (<see cref="EventType.DragHover"/>), at a position in framebuffer pixels; what it is, is not
+    /// known until it is dropped. <see cref="EventType.DragLeave"/> (a plain <see cref="Event"/>) says that it left without being dropped.</summary>
+    public class DragHoverEvent : Event
+    {
+        public float X { get; init; }
+        public float Y { get; init; }
+    }
 }

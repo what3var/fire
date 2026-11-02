@@ -58,6 +58,9 @@ namespace fire.Terminal.Sdl
         private readonly List<string> _dropFiles = new();
         private readonly System.Text.StringBuilder _dropText = new();
         private bool _dropping;
+        // something of another program is over the window (a DragHover went out) and where
+        private bool _hovering;
+        private float _hoverX, _hoverY;
 
         /// <inheritdoc/>
         public bool TouchMouse
@@ -94,6 +97,9 @@ namespace fire.Terminal.Sdl
             var at = ToFramebuffer(x, y);
             if (_dropFiles.Count > 0) events.Add(new fire.Terminal.Event.DropEvent { Type = Event.EventType.DropFiles, Files = _dropFiles.ToArray(), X = at.X, Y = at.Y, SourceHandle = _internalHandle });
             if (_dropText.Length > 0) events.Add(new fire.Terminal.Event.DropEvent { Type = Event.EventType.DropText, Text = _dropText.ToString(), X = at.X, Y = at.Y, SourceHandle = _internalHandle });
+            // a drag that brought nothing left the window
+            if (_dropFiles.Count == 0 && _dropText.Length == 0 && _hovering) events.Add(new Terminal.Event.Event { Type = Event.EventType.DragLeave, SourceHandle = _internalHandle });
+            _hovering = false;
             _dropFiles.Clear();
             _dropText.Clear();
             _dropping = false;
@@ -324,6 +330,16 @@ namespace fire.Terminal.Sdl
                         break;
                     case SDL.EventType.DropBegin:
                         _dropping = true;
+                        break;
+                    case SDL.EventType.DropPosition:
+                        // something of another program is over the window: where (only when it moved)
+                        _dropping = true;
+                        if (!_hovering || ev.Drop.X != _hoverX || ev.Drop.Y != _hoverY)
+                        {
+                            _hovering = true; _hoverX = ev.Drop.X; _hoverY = ev.Drop.Y;
+                            var hoverAt = ToFramebuffer(ev.Drop.X, ev.Drop.Y);
+                            resultEvents.Add(new DragHoverEvent { Type = Event.EventType.DragHover, X = hoverAt.X, Y = hoverAt.Y, SourceHandle = _internalHandle });
+                        }
                         break;
                     case SDL.EventType.DropFile:
                     case SDL.EventType.DropText:

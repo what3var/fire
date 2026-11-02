@@ -96,6 +96,7 @@ namespace fire.Terminal.Bridge
                 ["SetTransparentIndex"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ToMask"] = args => Value.MakeUndefined() /*STUB*/,
                 ["Resize"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ToPng"] = args => Value.MakeUndefined() /*STUB*/,
             };
         }
 
@@ -190,6 +191,8 @@ namespace fire.Terminal.Bridge
                 ["ToMask"] = args => LoadGuarded(() => mgr.CreateMask(I(args[0]), I(args[1]), args[2].AsBool(), I(args[3]))),
                 // false for an invalid size (the framebuffer stays as it was)
                 ["Resize"] = args => Value.MakeBool(mgr.Resize(I(args[0]), I(args[1]), I(args[2]))),
+                // Framebuffer.ToPng: the bytes of a PNG file (RGBA)
+                ["ToPng"] = args => Value.MakeBuffer(new ByteBuffer(mgr.ToPng(I(args[0])), ByteConversions.HostByteOrder)),
             };
         }
 

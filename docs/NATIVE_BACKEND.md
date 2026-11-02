@@ -384,17 +384,33 @@ die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Ar
 **`windows`** (`fire_bridge_windows.h`, C - auch mit TinyCC; `__GRPHWinName` heißt im Programm `fire_win_WinName`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
 Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
 Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.h`, als `FIRE_PLATFORM_DISPLAY_C_HEADER` eingebunden; die Schnittstelle, die Ereignisse und das
-Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl.h` (SDL2, für `posix`, `windows` und `wasm`;
-das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`; das Systemaussehen aus `std/fire_systheme.h`)
+Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
+der Build `FIRE_SDL3` definiert; das Programm bittet dann mit der Zeile `// fire-link: SDL3` um `-lSDL3` bzw. `SDL3.lib`), `std/fire_display_sdl.h` (SDL2, für `posix` und `windows` sonst und immer für `wasm`;
+`// fire-link: SDL2`, `-lSDL2`; beide mit dem Systemaussehen aus `std/fire_systheme.h`)
 und `std/fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
 Fenstermanager an und die Fenster schließen sich. Die VM nutzt SDL3, die Tasten- und
-Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
-(`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
+Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist (beide
+Anzeigen speisen dieselbe Folge ein und liefern dieselbe Ausgabe); die UI-Bibliothek (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
-**SDL2 finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL2 übersetzt (`SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
-die Umgebungsvariable `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers
-(MSYS2: `ucrt64\include\SDL2`), das System (`/usr/include/SDL2`, Homebrew) und `pkg-config sdl2`. Fehlt SDL2 unter Windows (das portable w64devkit bringt es nicht mit), fragt der Build wie bei der Toolchain
-(Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL2.dll` neben dem gebauten Programm.
+**SDL3 oder SDL2.** Welche SDL ein Programm mit Fenster bekommt, entscheidet der Build (`NativeBuilder.ChooseSdl`), und zwar erst, wenn das Programm wirklich ein Fenster hat: zuerst die
+Umgebungsvariable `FIRE_SDL=2|3`, dann `"sdl": 2|3` des Ziels in `fire.native.json`, dann `"sdl"` der Toolchain; sagt niemand etwas, probiert der Build, ob die Toolchain SDL3 für das Ziel übersetzen
+und binden kann (ein winziges Programm mit `<SDL3/SDL.h>` und `SDL_Init`, mit denselben `-I`/`-L` wie der Build) - SDL3, wenn ja, sonst SDL2. Die Antwort wird gemerkt (`NativeProbeCache`: im Speicher und in
+`native-probes.json` im Ordner der lokalen Daten von fire, `FIRE_PROBE_CACHE=0` schaltet die Datei ab), unter dem Compiler (Pfad und Zeit), dem Ziel und dem Ort von SDL3 (Ordner, Zeit des Headers):
+wer SDL3 nachinstalliert, wird neu gefragt. Ohne Toolchain (`files`, `forge native`) gilt SDL2, außer `FIRE_SDL`/`sdl` sagen 3; `wasm` bleibt bei SDL2 von Emscripten. Das erzeugte Programm sagt
+`// fire-link: SDL3` und `#define FIRE_SDL3 1` (das `fire_display.h` von `posix`/`windows` nimmt dann `fire_display_sdl3.h`) bzw. `// fire-link: SDL2`. TinyCC übersetzt beide (ohne `__has_include`:
+SDL3 liegt immer unter `<SDL3/SDL.h>`; `SDL_DISABLE_IMMINTRIN_H` wie bei SDL2). Was nur SDL3 hat: das **Schweben** eines Zugs aus einem anderen Programm (`FIRE_EV_DRAG_HOVER` 42 mit `x`, `y` aus
+`SDL_EVENT_DROP_POSITION`, `FIRE_EV_DRAG_LEAVE` 43 bei `SDL_EVENT_DROP_COMPLETE` ohne Datei und Text; die Stelle eines Drops nennt SDL3 selbst), und **Bilder und Dateien in der Zwischenablage**:
+`fire_display_clipboardGetImage/SetImage/HasImage` (PNG- oder BMP-Datei; gesetzt als `image/png` und `image/bmp` - SDL3 legt `image/bmp` unter Windows als `CF_DIB` ab) und
+`fire_display_clipboardGetFiles/SetFiles/HasFiles` (Pfade zeilenweise; `text/uri-list` und `x-special/gnome-copied-files`, unter Windows `CF_HDROP` - das hat SDL3 nicht, die Anzeige spricht dafür selbst
+mit der Zwischenablage von Windows). Die SDL2-Anzeige sagt dort "nicht vorhanden" (`GetImage` undefined, `SetImage` false, keine Dateien), `fire_display_none.h` hat für alle Arten eine Zwischenablage im
+Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. Grenze von SDL 3.2 unter X11: es kennt die Arten in der Zwischenablage
+erst, wenn ihr Besitzer wechselt, während es läuft - was ein anderes Programm vor dem Start kopiert hat, sieht ein SDL3-Programm (nativ wie die VM) nicht; SDL2 fragt jedes Mal neu.
+
+**SDL finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL3 oder SDL2 übersetzt (`SDL3/SDL.h` bzw. `SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
+die Umgebungsvariable `SDL3_DIR` bzw. `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL3-3.2.26\x86_64-w64-mingw32` oder `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL3`
+bzw. `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers (MSYS2: `ucrt64\include\SDL3`), das System (`/usr/include/SDL3`, `/usr/local`, Homebrew) und `pkg-config sdl3`/`sdl2`. Für einen
+Windows-Build unter Linux (MinGW) zeigt `SDL3_DIR` auf das MinGW-Paket (auf dieser Maschine: `/opt/sdl-mingw/SDL3-3.2.26`, daneben `SDL2-2.30.12`). Fehlt die SDL unter Windows (das portable w64devkit bringt sie nicht mit), fragt der Build wie bei der Toolchain
+(Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL3` bzw. `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL3.dll` bzw. `SDL2.dll` neben dem gebauten Programm.
 Unter Linux und macOS gibt es keinen Download: die Meldung nennt das Paket (`sudo apt install libsdl2-dev`, `brew install sdl2`). Das Programm definiert `SDL_MAIN_HANDLED`, braucht also weder `SDL2main` noch `-lmingw32`.
 Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `FIRE_EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
 (`fire_gfx_fbResize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.

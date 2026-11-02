@@ -107,9 +107,24 @@ namespace fire.Windows.Bridge
                 ["ClipboardSetText"] = args => Value.MakeBool(args[0].Kind == ValueKind.String && mgr.Clipboard.SetText(args[0].AsString())),
                 ["ClipboardGetText"] = args => mgr.Clipboard.GetText() is string text ? Value.MakeString(text) : Value.MakeUndefined(),
                 ["ClipboardHasText"] = args => Value.MakeBool(mgr.Clipboard.HasText),
+                // Clipboard: pictures (the bytes of a PNG or BMP file; the prelude decodes and encodes them) and files
+                ["ClipboardGetImage"] = args => mgr.Clipboard.GetImage() is byte[] image ? Value.MakeBuffer(new ByteBuffer(image, ByteConversions.HostByteOrder)) : Value.MakeUndefined(),
+                ["ClipboardSetImage"] = args => Value.MakeBool(args[0].Kind == ValueKind.Buffer && mgr.Clipboard.SetImage(args[0].AsBuffer().Bytes)),
+                ["ClipboardHasImage"] = args => Value.MakeBool(mgr.Clipboard.HasImage),
+                ["ClipboardGetFiles"] = args => Paths(mgr.Clipboard.GetFiles()),
+                ["ClipboardSetFiles"] = args => Value.MakeBool(args[0].Kind == ValueKind.Array && mgr.Clipboard.SetFiles(args[0].AsArray().Items.Where(v => v.Kind == ValueKind.String).Select(v => v.AsString()).ToArray())),
+                ["ClipboardHasFiles"] = args => Value.MakeBool(mgr.Clipboard.HasFiles),
             };
         }
         
+        /// <summary>Paths as an array of strings.</summary>
+        private static Value Paths(string[] files)
+        {
+            var array = new ScriptArray(files.Length);
+            for (int i = 0; i < files.Length; i++) array.Items[i] = Value.MakeString(files[i]);
+            return Value.MakeArray(array);
+        }
+
         private static Dictionary<string, NativeFunction> BuildWindowFunctionStubs()
         {
             return new Dictionary<string, NativeFunction>
@@ -143,6 +158,12 @@ namespace fire.Windows.Bridge
                 ["ClipboardSetText"] = args => Value.MakeBool(false) /*STUB*/,
                 ["ClipboardGetText"] = args => Value.MakeUndefined() /*STUB*/,
                 ["ClipboardHasText"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardGetImage"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ClipboardSetImage"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardHasImage"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardGetFiles"] = args => Value.MakeArray(new ScriptArray(0)) /*STUB*/,
+                ["ClipboardSetFiles"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardHasFiles"] = args => Value.MakeBool(false) /*STUB*/,
             };
         }
 

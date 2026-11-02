@@ -196,6 +196,12 @@ bei einem Drop aus einem anderen Programm, `External`), `HasText`, `HasFiles`. *
 Stelle, das annimmt, sonst an `ui.onDrop(daten, x, y)`. Das Textfeld nimmt Text und Dateien (die Pfade, durch Leerzeichen getrennt) von selbst an der Stelle des Loslassens; `AllowDrop = false` schaltet
 das ab. Eigene Elemente überschreiben statt der Lambdas `DragStart`, `AcceptsDrops`, `DragOver`, `Drop`, `DragLeave`, `DragDone`.
 
+**Schweben (Hover) eines Zugs aus einem anderen Programm**: Solange der Nutzer etwas aus einem anderen Programm über das Fenster zieht (die Ereignisse `DragHover`/`DragLeave`, docs/CONSOLE.md; mit SDL3, also
+in der VM und in nativen Builds mit SDL3), bekommt das Ziel darunter schon `OnDragOver(daten, x, y)` - mit einem `UI.DragData`, dessen `External` wahr ist und dessen Inhalt noch nicht feststeht:
+`Pending` ist `true`, `Text` und `Files` sind leer (was gezogen wird, sagt das Betriebssystem erst beim Loslassen). So kann ein Ziel sich schon hervorheben. Zieht der Zeiger weiter auf ein anderes Ziel
+oder verlässt das Gezogene das Fenster, hört das alte `OnDragLeave()`. Der Drop selbst kommt wie bisher: das Ziel darunter bekommt `OnDragOver` mit den echten Daten (`Pending` falsch) und `OnDrop`;
+ein anderes Ziel, über dem es zuletzt schwebte, hört `OnDragLeave()`. Das Textfeld nimmt einen schwebenden Zug an (`Copy`). Ein nativer Build mit SDL2 meldet kein Schweben, nur den Drop.
+
 ## Fenstergröße
 
 Ein `UI.Root` schaltet `window.AutoResize` ein: zieht der Nutzer das Fenster auf eine andere Größe, bekommt der Framebuffer sie (sofern sie gültig ist, siehe docs/CONSOLE.md "Fenstergröße ändern") und die Oberfläche
