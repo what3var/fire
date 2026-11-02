@@ -95,6 +95,8 @@ typedef struct FireGfxFramebuffer {
     FireGfxPalette palette;
     int transparentIndex;
     int refs;   /* the table of the bridge, every canvas and every window that shows it: it lives as long as one of them does */
+    void (*presentFn)(void);   /* a presenter of a package that the windows showing it call instead (a fire_present_fn, fire_display_c.h; scene3d DirectDrawing), or NULL */
+    void* presentCtx;
 } FireGfxFramebuffer;
 
 #define FIRE_GFX_MAX_SIDE ((int64_t)16384)
@@ -107,6 +109,7 @@ static void fire_gfx_fbInit(FireGfxFramebuffer* fb) {
     fire_gfx_paletteInit(&fb->palette);
     fb->transparentIndex = -1;
     fb->refs = 1;
+    fb->presentFn = NULL; fb->presentCtx = NULL;
 }
 /* A new empty framebuffer (malloc), NULL without memory. */
 static FireGfxFramebuffer* fire_gfx_fbNew(void) {

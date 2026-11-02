@@ -38,7 +38,9 @@ for name, (items, _) in enums.items():
 
 # ---- what the backend names ----
 used_constants = set(re.findall(r"\bVK_[A-Z0-9_]+\b", backend))
-used_types = set(re.findall(r"\bVk[A-Z]\w+\b", backend))
+# a type that the backend only uses through a pointer needs only to be declared
+used_types = set(m.group(1) for m in re.finditer(r"\b(Vk[A-Z]\w+)\b(?!\s*\*)", backend))
+used_pointer_types = set(re.findall(r"\b(Vk[A-Z]\w+)\b\s*\*", backend)) - used_types
 used_functions = set(re.findall(r"X\((vk\w+)\)", backend)) | {"vkGetInstanceProcAddr", "vkCreateInstance", "vkEnumerateInstanceExtensionProperties"}
 
 need_struct, need_decl, need_enum, need_flags, need_handle, need_pfn, need_define = set(), set(), {}, set(), set(), set(), set()
@@ -73,6 +75,8 @@ for c in used_constants:
         need_define.add(c)
 for t in used_types:
     need_type(t, True)
+for t in used_pointer_types:
+    need_type(t, False)
 for f in used_functions:
     p = "PFN_" + f
     if p not in pfns:
@@ -151,7 +155,7 @@ for e in sorted(need_enum, key=lambda e: enums[e][1]):
     keep = need_enum[e]
     w("typedef enum %s {" % e)
     for c, v in items:
-        if c in keep or c.endswith("_MAX_ENUM"):
+        if c in keep or "_MAX_ENUM" in c:
             w("    %s = %s," % (c, v))
     w("} %s;" % e)
 w("")

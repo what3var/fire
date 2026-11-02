@@ -1,0 +1,66 @@
+#import "windows"
+#import "scene3d"
+#import "time"
+// How fast is the same scene in each way of drawing it? Each mode runs for some seconds; the window shows it, a bar is drawn over the picture (a HUD), VSync is off.
+//   Software          the software renderer (the same pixels everywhere)
+//   Hardware          the GPU, the picture read back into the framebuffer, the window shows the framebuffer
+//   DirectDrawing     the GPU, the picture straight into the window, the framebuffer laid over it
+// FIRE_S3D_GPU=cpu also takes a Vulkan device that is a CPU (to try it without a GPU: the numbers then say nothing about a GPU).
+
+var seconds = 5
+var fb = new Framebuffer(1280, 720)
+var win = new Window(fb, "Scene3D Benchmark")
+win.VSync = false
+var scene = new Scene()
+var hud = new Renderer(fb)
+var bar = new SolidBrush(S3D.Rgb(255, 200, 40))
+
+var floor = new Object(Template.Plane, 0m, 0m, 0m, 12m, 0m, 12m)
+floor.Texture = Texture.Checker(64, 8, S3D.Rgb(235, 235, 235), S3D.Rgb(90, 100, 120))
+floor.TextureWidth = 1m
+floor.TextureHeight = 1m
+scene.Add(floor)
+for (var i = 0; i < 24; i++) {
+    var b = new Object(Template.Box, ((i % 6) * 1.6 - 4.0) * 1m, 0.5m, ((i / 6) * 1.6 - 3.0) * 1m, 0.8m, 1m, 0.8m)
+    b.Texture = Texture.Checker(32, 4)
+    b.Material = Material.Plastic()
+    scene.Add(take b)   // (b belongs to the loop body: `take` hands it to the scene, else it would die with the body)
+}
+var ball = new Object(Template.Sphere, 0m, 1.5m, 0m, 1.2m, 1.2m, 1.2m)
+ball.Opacity = 0.6
+scene.Add(ball)
+scene.Add(Light.Directional(-0.5, -1.0, -0.4))
+scene.Add(Light.Point(2m, 3m, 2m, S3D.Rgb(255, 230, 200), 0.8))
+scene.Add(Light.Point(-3m, 2m, -1m, S3D.Rgb(150, 180, 255), 0.6))
+
+var cam = new Camera(fb)
+cam.SetPosition(0m, 4m, 8m)
+cam.LookAt(0m, 0.5m, 0m)
+scene.Add(cam)
+print("GPU: '" + S3D.HardwareName() + "' " + S3D.HardwareError())
+
+class Bench {
+    // Runs one mode for `seconds`: the frames per second.
+    static float Run(string name, Window win, Scene scene, Camera cam, Renderer hud, Brush bar, int seconds, RenderMode renderer, bool direct) {
+        scene.Renderer = renderer
+        cam.DirectDrawing = direct
+        var frames = 0
+        var drewDirect = 0
+        var start = DateTime.UtcNow.Ticks
+        var end = start + seconds * 10000000
+        while (DateTime.UtcNow.Ticks < end && win.Tick()) {
+            for (var i = 1; i <= 24; i++) { scene.Objects[i].Rotate(0deg, 2deg, 0deg) }
+            cam.Render()
+            if (cam.DrewDirectly) { drewDirect++ }
+            hud.FillRect(20, 20, (frames % 200) + 20, 16, bar)
+            frames++
+        }
+        var fps = frames * 10000000.0 / (DateTime.UtcNow.Ticks - start)
+        print(name + ": " + fps + " frames per second (" + frames + " frames, " + drewDirect + " straight into the window, drawn by " + cam.LastRenderer + ")")
+        return fps
+    }
+}
+
+Bench.Run("Software", win, scene, cam, hud, bar, seconds, RenderMode.Software, false)
+Bench.Run("Hardware", win, scene, cam, hud, bar, seconds, RenderMode.Hardware, false)
+Bench.Run("DirectDrawing", win, scene, cam, hud, bar, seconds, RenderMode.Hardware, true)

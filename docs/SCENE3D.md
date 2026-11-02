@@ -64,6 +64,9 @@ scene.AmbientColor  scene.AmbientIntensity                         // the light 
 ```
 
 The scene owns what it holds (ownership like everywhere in fire: `Add` takes the item, destroying the scene destroys its objects, cameras, lights and textures).
+`Add` keeps an item only when it is handed over (`try item.TakeTo(scene)`, SPEC 2.2): a fresh one (`scene.Add(new Object(...))`) or one passed with `take`. An item in a variable of
+the caller stays the caller's - at the top level that is fine (it lives as long as the program), but in a loop or a function it dies with that scope and the scene is left with a
+destroyed object (`DestroyedException`). Hand it over: `var b = new Object(...); b.Color = ...; scene.Add(take b)`.
 
 ## Objects
 
@@ -195,7 +198,8 @@ print(S3D.HardwareError())               // why there is none ("" when there is 
   filtered like the software ones). The pictures are close to the software ones but not the same pixel for pixel (the GPU rasterises and filters by its own rules); the software renderer stays the
   reference, and only it gives the same pixels everywhere.
 * **How.** A picture is drawn into an image on the GPU and read back into the camera's framebuffer, so everything else stays as it is (a window shows it, `new Texture(cameraFramebuffer)` takes it).
-  Meshes and textures are copied to the GPU when they are first drawn, and again when a texture gets another bump map. One picture at a time: `Render` waits for the GPU.
+  Meshes and textures are copied to the GPU when they are first drawn, and again when a texture gets another bump map. One picture at a time: `Render` waits for the GPU. With
+  `DirectDrawing` (below) the picture is not read back.
 * **No limits** on lights and shadows (as in the software renderer): the lights and the shadow maps are storage buffers of any length, and the shadow maps are packed into an atlas
   (an array of layers, several maps per layer). The shadow maps may take a quarter of the GPU's memory (64 MB to 1 GB): when a scene has more of them than fit, all of them are made
   smaller (half the size, again if needed) - a light never loses its shadow for that; it gets softer. Checked with 250 lights and 1250 shadow maps.
@@ -204,6 +208,35 @@ print(S3D.HardwareError())               // why there is none ("" when there is 
 * **For the developers of the package**: `native/shaders/` holds the GLSL (`build.sh` compiles it with `glslangValidator` into `s3d_shaders.h`), `native/tools/make_s3d_vk.py` makes `s3d_vk.h`
   from the Vulkan header (only what the backend uses) and `native/tools/check_s3d_vk.sh` checks every struct and value of it against the real header. The backend is checked with the Khronos
   validation layers (`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`, also with synchronization validation).
+
+### DirectDrawing
+
+```
+scene.Renderer = RenderMode.Hardware
+cam.DirectDrawing = true                 // the camera's pictures go straight from the GPU into the window that shows its framebuffer
+while (win.Tick()) {
+    cam.Render()                         // draws on the GPU; the framebuffer becomes transparent
+    hud.FillText(10, 10, "Score 42", ...) // what is drawn into the framebuffer now lies over the picture
+}
+print(cam.DrewDirectly)                  // the last picture went straight into the window
+```
+
+Without DirectDrawing a picture of the GPU travels back to the CPU, into the framebuffer, and from there into the window (another copy, and another way to the GPU of the window). With it,
+the window shows the picture from the GPU itself: the camera's renderer draws into the window through a swap chain (Vulkan's `VK_KHR_swapchain` on a surface of the window system: Win32,
+X11, Wayland, or a `CAMetalLayer` on macOS), and `Render` does not wait for the GPU - the program goes on (the next `Render` waits for the picture before).
+
+* **The framebuffer is the overlay.** `Render` clears the framebuffer to transparent; what the program draws into it afterwards (a HUD, text, a UI) is laid over the picture where its
+  alpha is not 0, stretched to the window like the picture. So a program that draws a HUD after `Render` looks the same with and without DirectDrawing. The framebuffer does not hold the
+  picture then: `new Texture(cameraFramebuffer)` or a screenshot of the framebuffer see only the overlay.
+* **When it works**: the scene's `Renderer` is `RenderMode.Hardware`, there is a GPU with swap chains, and a `Window` shows the camera's framebuffer (also one of a started
+  `WindowManager`, which presents on its own thread). The window gives itself to the camera at its next frame: its usual way of showing the framebuffer (SDL's renderer) is put away
+  and comes back when `DirectDrawing` is switched off, the camera goes, or the GPU cannot show the window. The first picture after switching it on is also read back (the window may not
+  take it); a camera whose window cannot take it works as without (`DrewDirectly` stays false). One window per camera: a second window of the same framebuffer shows the framebuffer.
+* **Is it faster?** It saves reading the picture back (on a GPU of its own a wait for the GPU and a copy over the bus), the copy into the framebuffer and the copy into the window's
+  texture, and the CPU and the GPU work at the same time; it costs the copy of the overlay to the GPU (skipped when nothing is drawn into the framebuffer). The sample
+  **Scene3D Benchmark** (Help > Samples) measures the three ways on a machine: software, hardware with the picture read back, and DirectDrawing.
+* **In the VM** the host shows the windows (src/fire.Terminal.Sdl): the package library gets them through `fire_host.win_attach` (native/abi/fire_pkg_abi.h, `fire_present_fn`); in a
+  native build the windows bridge does the same through the graphics bridge (`fire_gfx_attachPresenter`; the display layer gives the native handles: `fire_display_native`).
 
 Why Vulkan: it is the GPU API with a future on all desktop systems and Android, has a C interface (it fits a C package) and a loader on every machine with a GPU driver; OpenGL is frozen and
 deprecated on macOS, Direct3D is Windows only. Further backends can sit behind the same queue (`s3d_gpu_flush`): WebGPU for the browser (through `webgpu.h`) or Metal directly are the candidates.

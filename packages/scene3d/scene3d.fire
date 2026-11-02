@@ -639,10 +639,18 @@ class Camera {
     float farPlane
     int Background
     string Key
+    // true: with the scene's RenderMode.Hardware the pictures go straight from the GPU into the window that shows the framebuffer, without the way through the framebuffer.
+    // The framebuffer is then cleared to transparent by Render: what the program draws into it afterwards is laid over the picture (a HUD). Where that is not possible (no GPU,
+    // no window, a window system the GPU cannot draw into) the camera draws as without.
+    bool DirectDrawing
+    bool directOn
+    byte clearBytes[]
 
     construct(Framebuffer target) {
         this.framebuffer = target
         try target.TakeTo(this)
+        this.DirectDrawing = false
+        this.directOn = false
         this.frame = 0
         this.frameWidth = 0
         this.frameHeight = 0
@@ -711,19 +719,37 @@ class Camera {
             this.frameWidth = w
             this.frameHeight = h
         }
+        // DirectDrawing: the frame draws into the windows of the framebuffer (or no longer)
+        var direct = this.DirectDrawing && this.scene.Renderer == RenderMode.Hardware
+        if (direct != this.directOn) { this.directOn = __S3DFrameDirect(this.frame, this.framebuffer.id, direct) }
         if (!__S3DFrameClear(this.frame, this.pixels, w, h, this.Background)) { throw new Scene3DException("The frame cannot be cleared.") }
         var camera = [this.x, this.y, this.z, this.rx, this.ry, this.rz, this.fov, this.nearPlane, this.farPlane]
         var lights = this.scene.LightParameters()
         foreach (o in this.scene.Objects) { o.Draw(this.frame, camera) }
         if (!__S3DFlush(this.frame, this.pixels, camera, lights, this.scene.Settings())) { throw new Scene3DException("The scene cannot be drawn (a handle is no longer valid).") }
-        this.framebuffer.WriteBytes(this.pixels)
+        if (__S3DFrameRenderer(this.frame) == 2) {
+            // the picture went to the window: the framebuffer becomes transparent, for what the program lays over it
+            if (this.clearBytes == undefined || this.clearBytes.length != w * h * 4) { this.clearBytes = new byte[w * h * 4] }
+            this.framebuffer.WriteBytes(this.clearBytes)
+        } else {
+            this.framebuffer.WriteBytes(this.pixels)
+        }
+    }
+
+    // The last picture went straight from the GPU into the window (DirectDrawing), not through the framebuffer.
+    bool DrewDirectly {
+        get {
+            if (this.frame == 0) { return false }
+            return __S3DFrameRenderer(this.frame) == 2
+        }
     }
 
     // Who drew the last picture: RenderMode.Software or RenderMode.Hardware (the scene asked for the hardware renderer and there is a GPU).
     RenderMode LastRenderer {
         get {
             if (this.frame == 0) { return RenderMode.Software }
-            return __S3DFrameRenderer(this.frame)!RenderMode
+            if (__S3DFrameRenderer(this.frame) == 0) { return RenderMode.Software }
+            return RenderMode.Hardware
         }
     }
 }

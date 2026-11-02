@@ -21,6 +21,8 @@ namespace fire.Runtime
                 DevDisconnect, DevWrite, DevSendCommand, DevPoll;
             // the network (see NetPolicy)
             public IntPtr NetAllow;
+            // the windows (a package that draws into them itself: scene3d DirectDrawing)
+            public IntPtr WinAttach, WinDetach;
         }
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int IoAllowFn(IntPtr pathUtf8, int access, IntPtr reason, int reasonSize);
@@ -28,6 +30,8 @@ namespace fire.Runtime
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdReadFn(int stream, IntPtr buffer, int count);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdWriteFn(int stream, IntPtr buffer, int count);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int StdFlushFn(int stream);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int WinAttachFn(int framebuffer, IntPtr present, IntPtr ctx);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void WinDetachFn(int framebuffer, IntPtr ctx);
 
         private static readonly object Lock = new();
         private static IoPolicy _policy = IoPolicy.AllowAll;
@@ -41,6 +45,8 @@ namespace fire.Runtime
         private static StdReadFn? _stdRead;
         private static StdWriteFn? _stdWrite;
         private static StdFlushFn? _stdFlush;
+        private static WinAttachFn? _winAttach;
+        private static WinDetachFn? _winDetach;
 
         /// <summary>The `fire_host` structure that is handed to a library (`fire_pkg_set_host`).</summary>
         internal static IntPtr Block
@@ -50,7 +56,7 @@ namespace fire.Runtime
                 lock (Lock)
                 {
                     if (_block != IntPtr.Zero) return _block;
-                    _ioAllow = IoAllow; _netAllow = NetAllow; _stdRead = StdRead; _stdWrite = StdWrite; _stdFlush = StdFlush;
+                    _ioAllow = IoAllow; _netAllow = NetAllow; _stdRead = StdRead; _stdWrite = StdWrite; _stdFlush = StdFlush; _winAttach = WinAttach; _winDetach = WinDetach;
                     var host = new FireHost
                     {
                         Size = Marshal.SizeOf<FireHost>(),
@@ -59,6 +65,8 @@ namespace fire.Runtime
                         StdRead = Marshal.GetFunctionPointerForDelegate(_stdRead),
                         StdWrite = Marshal.GetFunctionPointerForDelegate(_stdWrite),
                         StdFlush = Marshal.GetFunctionPointerForDelegate(_stdFlush),
+                        WinAttach = Marshal.GetFunctionPointerForDelegate(_winAttach),
+                        WinDetach = Marshal.GetFunctionPointerForDelegate(_winDetach),
                     };
 
                     _block = Marshal.AllocHGlobal(Marshal.SizeOf<FireHost>());
@@ -113,6 +121,30 @@ namespace fire.Runtime
                     Array.Clear(StdStreams);
                 }
             }
+        }
+
+        /// <summary>`win_attach`: the windows that show the framebuffer call the package's presenter from now on (1), 0: there is no such framebuffer.</summary>
+        private static int WinAttach(int framebuffer, IntPtr present, IntPtr ctx)
+        {
+            try
+            {
+                var fb = fire.Terminal.Bridge.GraphicsBridge.CurrentFramebuffers?.GetFramebuffer(framebuffer);
+                if (fb == null || present == IntPtr.Zero) return 0;
+                fb.Presenter = new fire.Terminal.DirectPresenter(present, ctx);
+                return 1;
+            }
+            catch (Exception) { return 0; }
+        }
+
+        /// <summary>`win_detach`: the presenter of `ctx` is taken away again (the windows show the framebuffer).</summary>
+        private static void WinDetach(int framebuffer, IntPtr ctx)
+        {
+            try
+            {
+                var fb = fire.Terminal.Bridge.GraphicsBridge.CurrentFramebuffers?.GetFramebuffer(framebuffer);
+                if (fb?.Presenter is { } p && p.Context == ctx) fb.Presenter = null;
+            }
+            catch (Exception) { }
         }
 
         private static Stream StdStream(int kind)

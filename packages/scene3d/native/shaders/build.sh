@@ -11,7 +11,7 @@ trap 'rm -rf "$tmp"' EXIT
     echo "#ifndef FIRE_S3D_SHADERS_H"
     echo "#define FIRE_S3D_SHADERS_H"
     echo "#include <stdint.h>"
-    for s in s3d_main.vert s3d_main.frag s3d_shadow.vert s3d_shadow.frag; do
+    for s in s3d_main.vert s3d_main.frag s3d_shadow.vert s3d_shadow.frag s3d_present.vert s3d_present.frag; do
         name=$(echo "$s" | sed 's/^s3d_//; s/\./_/')
         glslangValidator -V --target-env vulkan1.0 -Os -o "$tmp/$s.spv" "$s" > "$tmp/log" || { cat "$tmp/log" >&2; exit 1; }
         echo "static const uint32_t s3d_spv_$name[] = {"

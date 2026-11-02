@@ -404,7 +404,7 @@ typedef struct S3dFlushSettings {
     int threads;               /* 0: as many as the machine has (up to 8), 1: none */
     int backend;               /* S3D_BACKEND_*: who draws */
 } S3dFlushSettings;
-enum { S3D_BACKEND_SOFTWARE = 0, S3D_BACKEND_HARDWARE = 1 };
+enum { S3D_BACKEND_SOFTWARE = 0, S3D_BACKEND_HARDWARE = 1, S3D_BACKEND_DIRECT = 2 };   /* (DIRECT: who drew - the GPU, into the windows of the camera; never asked for) */
 
 typedef struct S3dFrame {
     int w, h;
@@ -417,6 +417,7 @@ typedef struct S3dFrame {
     S3dContext ctx;
     int lastBackend;           /* who drew the last picture (S3D_BACKEND_*) */
     void* gpu;                 /* the targets of the hardware backend, or NULL */
+    void* direct;              /* DirectDrawing: the windows the camera draws into (s3d_gpu_attach), or NULL */
 } S3dFrame;
 
 static void s3d_gpu_releaseFrame(S3dFrame* f);
@@ -1257,13 +1258,16 @@ static void s3d_flushSoftware(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, 
     s3d_parallelFor(bands, workers, s3d_bandTask, &job);
 }
 
-/* The hardware backend (s3d_gpu_vk.h): 1 when it drew the queue, 0 when it cannot (no Vulkan, no device, an error): then the software renderer draws. */
+/* The hardware backend (s3d_gpu_vk.h): 1 when it drew the queue into `rgba`, 2 when it drew it for the windows of the camera only (DirectDrawing), 0 when it cannot (no Vulkan,
+ * no device, an error): then the software renderer draws. */
 static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st);
 
 /* Draws everything that was queued with `s3d_queueMesh` into `rgba` (the camera's picture, already cleared with FrameClear) and empties the queue. */
 static void s3d_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const S3dLight* lights, size_t lightCount, const S3dFlushSettings* st) {
+    int drawn;
     if (f->w <= 0 || f->h <= 0 || f->batchN == 0) { s3d_frameEmpty(f); f->lastBackend = S3D_BACKEND_SOFTWARE; return; }
-    if (st->backend == S3D_BACKEND_HARDWARE && s3d_gpu_flush(rgba, f, cam, lights, lightCount, st)) f->lastBackend = S3D_BACKEND_HARDWARE;
+    drawn = st->backend == S3D_BACKEND_HARDWARE ? s3d_gpu_flush(rgba, f, cam, lights, lightCount, st) : 0;
+    if (drawn) f->lastBackend = drawn == 2 ? S3D_BACKEND_DIRECT : S3D_BACKEND_HARDWARE;
     else { s3d_flushSoftware(rgba, f, cam, lights, lightCount, st); f->lastBackend = S3D_BACKEND_SOFTWARE; }
     s3d_frameEmpty(f);
 }

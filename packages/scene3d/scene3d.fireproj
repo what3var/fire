@@ -126,6 +126,11 @@
         "c": "fire_s3d_Flush"
       },
       {
+        "name": "__S3DFrameDirect",
+        "arguments": 3,
+        "c": "fire_s3d_FrameDirect"
+      },
+      {
         "name": "__S3DFrameRenderer",
         "arguments": 1,
         "c": "fire_s3d_FrameRenderer"

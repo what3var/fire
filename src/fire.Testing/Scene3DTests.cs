@@ -180,6 +180,15 @@ static class Scene3DTests
         else { print("hardware " + (cam.LastRenderer == 0) + " " + (off == 0) + " " + (S3D.HardwareError() != "")) }
         cam.Render()
         print("again " + (frame.ReadBytes().length == software.length))
+        // DirectDrawing without a window that shows the framebuffer: the camera draws as without (the picture is in the framebuffer)
+        var before = H.Sum(frame)
+        cam.DirectDrawing = true
+        cam.Render()
+        cam.Render()
+        print("direct " + cam.DrewDirectly + " " + (H.Sum(frame) == before))
+        cam.DirectDrawing = false
+        cam.Render()
+        print("indirect " + cam.DrewDirectly + " " + (H.Sum(frame) == before))
         scene.Renderer = RenderMode.Software
         cam.Render()
         print("software " + (H.Sum(frame) == H.Sum(frame)) + " " + cam.LastRenderer)

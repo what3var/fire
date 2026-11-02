@@ -351,7 +351,17 @@ static Value fire_s3d_Flush(Value frame, Value buffer, Value camera, Value light
     return Bool(true);
 }
 
-/* Who drew the last picture of the frame: 0 the software renderer, 1 the GPU. */
+/* DirectDrawing: the frame's pictures go straight from the GPU into the windows that show the framebuffer `framebuffer` (on), or no longer (off). Returns whether it is attached
+ * (false: no GPU, no swap chains, or no such framebuffer - the camera then works as without). */
+static Value fire_s3d_FrameDirect(Value h, Value framebuffer, Value on) {
+    S3dFrame* f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
+    if (f == NULL) return Bool(false);
+    if (on.i) return Bool(s3d_gpu_attach(f, framebuffer.i) != 0);
+    s3d_gpu_detach(f);
+    return Bool(false);
+}
+
+/* Who drew the last picture of the frame: 0 the software renderer, 1 the GPU (the picture is in the pixels), 2 the GPU straight into the windows (DirectDrawing: not in the pixels). */
 static Value fire_s3d_FrameRenderer(Value h) {
     S3dFrame* f = (S3dFrame*)fire_s3d_find(&g_s3dFrames, h);
     return Int(f ? f->lastBackend : 0);

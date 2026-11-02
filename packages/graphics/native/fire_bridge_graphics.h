@@ -63,6 +63,21 @@ static FireGfxFramebuffer* fire_gfxb_fbOf(Value id) {
     fire_gfxb_noResource(i);
     return NULL;
 }
+/* A package draws the pictures of the windows that show the framebuffer `fbId` itself (scene3d DirectDrawing): the windows bridge calls `fn` (a fire_present_fn, see
+ * fire_display_c.h) instead of showing the framebuffer. 1: attached; 0: there is no such framebuffer. Detaching takes only the presenter of the same ctx away. */
+static int fire_gfx_attachPresenter(int64_t fbId, void (*fn)(void), void* ctx) {
+    FireGfxTables* t = fire_gfxb_tables();
+    if (fbId <= 0 || (size_t)fbId >= t->fbCount || !t->framebuffers[(size_t)fbId]) return 0;
+    t->framebuffers[(size_t)fbId]->presentFn = fn;
+    t->framebuffers[(size_t)fbId]->presentCtx = ctx;
+    return 1;
+}
+static void fire_gfx_detachPresenter(int64_t fbId, void* ctx) {
+    FireGfxTables* t = fire_gfxb_tables();
+    if (fbId <= 0 || (size_t)fbId >= t->fbCount || !t->framebuffers[(size_t)fbId] || t->framebuffers[(size_t)fbId]->presentCtx != ctx) return;
+    t->framebuffers[(size_t)fbId]->presentFn = NULL;
+    t->framebuffers[(size_t)fbId]->presentCtx = NULL;
+}
 static FireGfxRenderer* fire_gfxb_rendererOf(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();

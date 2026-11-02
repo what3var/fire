@@ -54,9 +54,20 @@ typedef struct FireWinShared {
     int sizeReqW, sizeReqH;       /* a new size of the window for the thread (0: none) */
     int cursorReq;                /* a new cursor for the thread (-1: none) */
     int release;                  /* the window is gone: the thread closes it and frees this */
+    fire_present_fn frontFn;      /* the presenter of the framebuffer when the frame was published (scene3d DirectDrawing), or NULL */
+    void* frontCtx;
     /* the thread's own */
     uint32_t* shown;
     int shownW, shownH;
+    fire_present_fn shownFn;
+    void* shownCtx;
+    /* who shows the window (on the thread that owns it): the display, or a presenter (direct: the display gave the window to presentFn) */
+    int direct;
+    fire_present_fn presentFn;
+    void* presentCtx;
+    fire_native_window native;    /* the handles the presenter got last */
+    fire_present_fn failedFn;     /* a presenter that could not show this window: not asked again until another one is attached */
+    void* failedCtx;
 } FireWinShared;
 
 static FireWinShared* fire_winb_sharedNew(const char* title, int width, int height) {
@@ -70,9 +81,32 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
     s->cursorReq = -1;
     return s;
 }
+/* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
+ * or - without one, or when it cannot - as the display shows framebuffers. */
+static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height) {
+    if (s->direct && (fn != s->presentFn || ctx != s->presentCtx)) {
+        /* the presenter is gone (or another one came): it lets go of the window, and the display takes it back */
+        s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0);
+        s->direct = 0;
+        fire_display_restore(&s->display);
+    }
+    if (fn != NULL && !(fn == s->failedFn && ctx == s->failedCtx)) {
+        if (fire_display_native(&s->display, &s->native)) {
+            s->direct = 1; s->presentFn = fn; s->presentCtx = ctx;
+            if (fn(ctx, 1, &s->native, pixels, width, height)) return;
+            fn(ctx, 0, &s->native, NULL, 0, 0);
+            s->direct = 0;
+            fire_display_restore(&s->display);
+        }
+        s->failedFn = fn; s->failedCtx = ctx;
+    }
+    fire_display_present(&s->display, pixels, width, height);
+}
+
 /* Frees it (and closes the OS window). */
 static void fire_winb_sharedDelete(FireWinShared* s) {
     if (s == NULL) return;
+    if (s->direct) { s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0); s->direct = 0; }   /* (the presenter lets go of the window before it closes) */
     fire_display_close(&s->display);
     fire_display_eventsFree(&s->inbox);
     free(s->front);
@@ -405,10 +439,11 @@ static void fire_winb_pumpThread(void* arg) {
                 uint32_t* t = s->shown;
                 s->shown = s->front; s->front = t;
                 s->shownW = s->frontW; s->shownH = s->frontH; s->frontNew = 0;
+                s->shownFn = s->frontFn; s->shownCtx = s->frontCtx;
             }
             fire_winb_unlock(&s->m);
             /* (the program publishes into `front` meanwhile; what is shown is the thread's own copy) */
-            if (s->shown != NULL) fire_display_present(&s->display, s->shown, s->shownW, s->shownH);
+            if (s->shown != NULL) fire_winb_show(s, s->shownFn, s->shownCtx, s->shown, s->shownW, s->shownH);
         }
         fire_mutex_lock(&m->cycleM);
         m->cycles++;
@@ -429,7 +464,10 @@ static void fire_winb_pumpThread(void* arg) {
         int gone;
         fire_winb_lock(&s->m);
         gone = s->release;
-        if (!gone) fire_display_close(&s->display);   /* (the program frees it with its window) */
+        if (!gone) {
+            if (s->direct) { s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0); s->direct = 0; }   /* (the presenter lets go of the window before it closes) */
+            fire_display_close(&s->display);   /* (the program frees it with its window) */
+        }
         fire_winb_unlock(&s->m);
         if (gone) fire_winb_sharedDelete(s);
     }
@@ -682,6 +720,7 @@ static Value fire_win_WinPresent(Value id) {
         old = w->sh->front;
         w->sh->front = pixels;
         w->sh->frontW = w->fb->width; w->sh->frontH = w->fb->height;
+        w->sh->frontFn = (fire_present_fn)w->fb->presentFn; w->sh->frontCtx = w->fb->presentCtx;
         w->sh->frontNew = 1;
         fire_winb_unlock(&w->sh->m);
         free(old);
@@ -689,7 +728,7 @@ static Value fire_win_WinPresent(Value id) {
     }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Undef();
     pixels = fire_winb_resolve(w->fb);
-    fire_display_present(&w->sh->display, pixels, w->fb->width, w->fb->height);
+    fire_winb_show(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height);
     free(pixels);
     return Undef();
 }
@@ -710,7 +749,7 @@ static Value fire_win_WinTick(Value id) {
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
     fire_winb_dropBlocked(w, &events);
     pixels = fire_winb_resolve(w->fb);
-    fire_display_present(&w->sh->display, pixels, w->fb->width, w->fb->height);
+    fire_winb_show(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height);
     free(pixels);
     fire_winb_enqueue(w, &events);
     i = (int32_t)id.i;

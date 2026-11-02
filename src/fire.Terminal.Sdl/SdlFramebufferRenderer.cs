@@ -329,8 +329,111 @@ namespace fire.Terminal.Sdl
             };
         }
 
+        // DirectDrawing (scene3d): a package draws into this window itself; the renderer is given up meanwhile (a swap chain of another API on the window would stand in its way)
+        private DirectPresenter? _direct;          // the presenter that has the window
+        private DirectPresenter? _failed;          // a presenter that could not show this window (not asked again)
+        private NativeWindow _native;              // the handles it got
+        private IntPtr _metalView;
+
+        /// <summary>Calls a presenter (`fire_present_fn` of the package library).</summary>
+        private static unsafe int CallPresenter(DirectPresenter p, int op, ref NativeWindow window, uint* pixels, int width, int height)
+        {
+            fixed (NativeWindow* w = &window)
+                return ((delegate* unmanaged[Cdecl]<IntPtr, int, NativeWindow*, uint*, int, int, int>)p.Function)(p.Context, op, w, pixels, width, height);
+        }
+
+        /// <summary>Gives the window to a presenter: its native handles (from the properties of the SDL window), and the renderer goes. false: not possible here.</summary>
+        private bool TakeWindow(out NativeWindow window)
+        {
+            window = default;
+            if (_window == IntPtr.Zero) return false;
+            uint props = SDL.GetWindowProperties(_window);
+            string driver = SDL.GetCurrentVideoDriver() ?? "";
+            switch (driver)
+            {
+                case "windows":
+                    window.Kind = NativeWindow.Win32;
+                    window.A = SDL.GetPointerProperty(props, "SDL.window.win32.instance", IntPtr.Zero);
+                    window.B = SDL.GetPointerProperty(props, "SDL.window.win32.hwnd", IntPtr.Zero);
+                    if (window.B == IntPtr.Zero) return false;
+                    break;
+                case "x11":
+                    window.Kind = NativeWindow.X11;
+                    window.A = SDL.GetPointerProperty(props, "SDL.window.x11.display", IntPtr.Zero);
+                    window.Id = (ulong)SDL.GetNumberProperty(props, "SDL.window.x11.window", 0);
+                    if (window.A == IntPtr.Zero || window.Id == 0) return false;
+                    break;
+                case "wayland":
+                    window.Kind = NativeWindow.Wayland;
+                    window.A = SDL.GetPointerProperty(props, "SDL.window.wayland.display", IntPtr.Zero);
+                    window.B = SDL.GetPointerProperty(props, "SDL.window.wayland.surface", IntPtr.Zero);
+                    if (window.A == IntPtr.Zero || window.B == IntPtr.Zero) return false;
+                    break;
+                case "cocoa":
+                    if (_metalView == IntPtr.Zero) _metalView = SDL.MetalCreateView(_window);
+                    if (_metalView == IntPtr.Zero) return false;
+                    window.Kind = NativeWindow.Metal;
+                    window.B = SDL.MetalGetLayer(_metalView);
+                    break;
+                default:
+                    return false;
+            }
+            if (_texture != IntPtr.Zero) { SDL.DestroyTexture(_texture); _texture = IntPtr.Zero; _texWidth = _texHeight = 0; }
+            if (_renderer != IntPtr.Zero) { SDL.DestroyRenderer(_renderer); _renderer = IntPtr.Zero; }
+            SDL.GetWindowSizeInPixels(_window, out window.Width, out window.Height);
+            window.VSync = _vsync ? 1 : 0;
+            return true;
+        }
+
+        /// <summary>Takes the window back from the presenter (it has let go): the renderer comes again.</summary>
+        private void RestoreWindow()
+        {
+            if (_metalView != IntPtr.Zero) { SDL.MetalDestroyView(_metalView); _metalView = IntPtr.Zero; }
+            if (_renderer == IntPtr.Zero && _window != IntPtr.Zero)
+            {
+                _renderer = SDL.CreateRenderer(_window, null!);
+                if (_renderer != IntPtr.Zero) SDL.SetRenderVSync(_renderer, _vsync ? 1 : 0);
+            }
+        }
+
+        /// <summary>The presenter that has the window lets go of it (it is gone, another one came, or the window closes).</summary>
+        private unsafe void ReleaseDirect()
+        {
+            if (_direct == null) return;
+            var p = _direct;
+            _direct = null;
+            CallPresenter(p, 0, ref _native, null, 0, 0);
+            RestoreWindow();
+        }
+
+        /// <summary>Shows the framebuffer through its presenter (the package draws into the window): true when it did.</summary>
+        private unsafe bool PresentDirect(Framebuffer framebuffer)
+        {
+            var presenter = framebuffer.Presenter;
+            if (_direct != null && !ReferenceEquals(presenter, _direct)) ReleaseDirect();
+            if (presenter == null || ReferenceEquals(presenter, _failed)) return false;
+            if (_direct == null)
+            {
+                if (!TakeWindow(out _native)) { _failed = presenter; RestoreWindow(); return false; }
+                _direct = presenter;
+            }
+            else
+            {
+                SDL.GetWindowSizeInPixels(_window, out _native.Width, out _native.Height);
+                _native.VSync = _vsync ? 1 : 0;
+            }
+            framebuffer.Resolve();
+            fixed (uint* px = framebuffer.Pixels)
+                if (CallPresenter(presenter, 1, ref _native, px, framebuffer.Width, framebuffer.Height) != 0) return true;
+            _failed = presenter;
+            ReleaseDirect();
+            return false;
+        }
+
         public void Present(Framebuffer framebuffer)
         {
+            if (PresentDirect(framebuffer)) return;
+            if (_renderer == IntPtr.Zero) return;
             framebuffer.Resolve(); // Palette framebuffer: compute pixels from indices and palette (a no-op in RGBA mode)
             EnsureTexture(framebuffer.Width, framebuffer.Height);
 
@@ -373,6 +476,7 @@ namespace fire.Terminal.Sdl
         {
             if (_disposed) return;
             _disposed = true;
+            try { ReleaseDirect(); } catch (Exception) { }   // (the presenter lets go of the window before it closes)
             foreach (var joystick in _joysticks.Values) SDL.CloseJoystick(joystick);
             _joysticks.Clear();
             if (_texture != IntPtr.Zero) SDL.DestroyTexture(_texture);
