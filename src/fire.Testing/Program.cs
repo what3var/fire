@@ -24407,10 +24407,11 @@ else
                             bool second = fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.Host);
                             long secondMs = watch.ElapsedMilliseconds;
                             bool remembered = File.Exists(fire.Native.NativeProbeCache.FilePath) && File.ReadAllText(fire.Native.NativeProbeCache.FilePath).Contains("sdl3|gcc");
+                            // (a probe is only built where SDL3's header is: without it the answer is "no" at once - and not remembered, so that SDL3 installed later counts)
                             CheckNat("SDL3 oder SDL2: die Probe (kann die Toolchain SDL3 uebersetzen und binden?) wird gemerkt",
-                                first == expectSdl3 && second == first && remembered && fire.Compiler.NativeBuilder.ChooseSdl(gcc, TargetProfile.Host) == (expectSdl3 ? 3 : 2)
+                                first == expectSdl3 && second == first && remembered == expectSdl3 && fire.Compiler.NativeBuilder.ChooseSdl(gcc, TargetProfile.Host) == (expectSdl3 ? 3 : 2)
                                 && !fire.Compiler.NativeBuilder.CanBuildSdl3(fire.Native.ToolchainDef.BuiltIn["files"], TargetProfile.Host)
-                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.FreeRtos), $"first {first} ({firstMs} ms), second {second} ({secondMs} ms), expected {expectSdl3}");
+                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.FreeRtos), $"first {first} ({firstMs} ms), second {second} ({secondMs} ms), expected {expectSdl3}, remembered {remembered}");
                         }
                         finally
                         {
