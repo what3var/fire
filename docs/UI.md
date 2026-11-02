@@ -42,11 +42,12 @@ Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibl
   Mausrad (mit waagerechtem Rad seitlich), Ziehen am Griff, Klick neben den Griff blättert eine Seite; `ScrollIntoView(x, y, w, h)`. Dahinter steckt `UI.Scroller` (Versatz, Inhalts- und Ausschnittsgröße, Griff), den die Listen mitbenutzen.
 - **`TextArea(text, x, y, w, h)`**: ein Textfeld mit mehreren Zeilen, Bildlaufleisten und `WordWrap` (siehe *Mehrzeiliges Textfeld*).
 - **`ListBox(x, y, w, h)`**: `Add(item)` (Text, Zahl oder Objekt; ein Objekt gehört danach der Liste), `SetItems(liste)`, `Remove`, `Clear`; `DisplayMember = "name"` zeigt diese Eigenschaft der Objekte; `SelectedIndex`/`selectedItem`, `Select(i)`, `OnSelect`/`TakeChanged()`,
-  Enter oder ein Doppelklick auf eine Zeile (zweiter Klick auf dieselbe Zeile innerhalb von `doubleClickCycles` = 24 Zyklen) meldet `OnActivate`/`TakeActivated()`; Pfeile, Pos1/Ende, Bild auf/ab, Mausrad, Klick. `ItemTemplate = new UI.DataTemplate(func (item) => element)` baut jede Zeile als eigenes Element (nur zum Anzeigen). Nach einer Änderung in den Objekten selbst: `Refresh()`.
+  Enter oder ein Doppelklick auf eine Zeile (zweiter Klick auf dieselbe Zeile, gezählt mit `root.clickCount`, siehe *Doppelklick*) meldet `OnActivate`/`TakeActivated()`; Pfeile, Pos1/Ende, Bild auf/ab, Mausrad, Klick. `ItemTemplate = new UI.DataTemplate(func (item) => element)` baut jede Zeile als eigenes Element (nur zum Anzeigen). Nach einer Änderung in den Objekten selbst: `Refresh()`.
 - **`ListView`**: wie die ListBox, mit Spalten und Kopfzeile: `AddColumn("Name", "name", 100)` (Breite -1: der Rest); ein Klick auf den Titel sortiert (noch einmal: umgekehrt).
 - **`CollectionView(liste)`**: eine Sicht auf eine Liste - `Filter` (Lambda mit einem Parameter), `SortBy("eigenschaft", absteigend)` oder `Comparer` (Lambda mit zwei Parametern), `current` mit `MoveCurrentTo.../CurrentItem()`;
   `listBox.SetView(sicht)` zeigt sie (die Auswahl folgt `current`). Die Sicht aktualisiert sich beim Zeichnen, wenn sich die Anzahl der Quelle ändert, sonst mit `Refresh()`/`Invalidate()`.
-- **`TreeView`**: `AddNode(new UI.TreeNode("Text", wert))`, Kinder mit `node.Add(...)`, `Expanded`; Klick aufs Kästchen klappt auf/zu, Klick wählt (`selected`, `OnSelect`/`TakeChanged()`); Auf/Ab wandern, Rechts klappt auf bzw. geht zum ersten Kind, Links klappt zu bzw. geht zum Elternknoten.
+- **`TreeView`**: `AddNode(new UI.TreeNode("Text", wert))`, Kinder mit `node.Add(...)`, `Expanded`; Klick aufs Kästchen klappt auf/zu, Klick wählt (`selected`, `OnSelect`/`TakeChanged()`); ein Doppelklick auf eine Zeile klappt sie auf/zu und meldet `OnActivate`/`TakeActivated()`, ebenso Enter;
+  Auf/Ab wandern, Rechts klappt auf bzw. geht zum ersten Kind, Links klappt zu bzw. geht zum Elternknoten.
 - **`RadioButtons`**: `Add("Text")`, `Header`, `Horizontal`, `SelectedIndex`/`selectedItem`, `OnChange`/`TakeChanged()`; Pfeiltasten wechseln die Wahl.
 - **`ComboBox(x, y, w, h)`**: eine Auswahl aus einer aufklappenden Liste: `Add(item)`, `SetItems(liste)`/`ItemsSource`, `Remove`, `Clear`, `DisplayMember`, `SelectedIndex`/`selectedItem`, `Text` (der Text der Wahl), `SelectText("x")`,
   `OnSelect`/`TakeChanged()`; ein Klick (oder Alt+Ab, F4, Enter, Leertaste) klappt die Liste auf (höchstens `MaxDropDownItems` Zeilen, mehr rollen), ein Klick auf eine Zeile wählt, Escape oder ein Klick daneben schließt;
@@ -177,7 +178,20 @@ ganz passt, wird nicht genommen, Eingefügtes wird abgeschnitten. Aus dem Progra
 
 Ein **Doppelklick** markiert das Wort unter dem Zeiger (Buchstaben, Ziffern und `_`; auf Leerzeichen oder Satzzeichen die Folge davon), ein **Dreifachklick** alles; wird nach dem
 Doppelklick mit gehaltener Taste gezogen, wächst die Markierung wortweise. `Ctrl+Links`/`Ctrl+Rechts` springen wortweise (mit Umschalt markierend). Mit `ReadOnly = true` lässt sich der
-Text markieren und kopieren, aber nicht ändern (Tippen, Rücktaste/Entf, Ausschneiden, Einfügen und Drops tun nichts; Enter meldet weiter `OnEnter`); das Programm kann ihn weiter setzen.
+Text markieren und kopieren, aber nicht ändern (Tippen, Rücktaste/Entf, Ausschneiden, Einfügen, Rückgängig und Drops tun nichts; Enter meldet weiter `OnEnter`); das Programm kann ihn weiter setzen.
+
+**Rückgängig/Wiederholen** (`TextBox` und `TextArea`): `Ctrl+Z` nimmt den letzten Schritt zurück, `Ctrl+Y` und `Ctrl+Umschalt+Z` stellen ihn wieder her (auf dem Mac mit Cmd); die Einfügemarke und
+die Markierung kommen dabei wie vor bzw. nach dem Schritt zurück. Tippen wird zu einem Schritt je Wort zusammengefasst (ein neuer beginnt, wenn nach einem Leerzeichen oder Zeilenumbruch wieder ein
+Zeichen getippt wird, nach einer Pause von mehr als einer Sekunde - die Zeit kommt von `root.ClickTime()`, siehe *Doppelklick* - oder wenn woanders weitergetippt wird); einzelne Zeichen mit
+Rücktaste/Entf löschen ebenso. Einfügen, Ausschneiden, eine Markierung löschen und Drops sind eigene Schritte. Es gibt höchstens `UndoLimit` Schritte (100; 0: kein Verlauf), die ältesten fallen weg.
+Aus dem Programm: `CanUndo`, `CanRedo`, `Undo()`/`Redo()` (false: nichts zu tun), `ClearUndo()`. Was über `ReplaceSelection`, `Cut`, `Paste` geht, lässt sich zurücknehmen; **setzt das Programm
+`Text`** (oder `SetText`, bei der `TextArea` auch `AppendText`), ist der Verlauf weg - er passt nicht mehr zum neuen Text. Mit `ReadOnly` geht weder Rückgängig noch Wiederholen.
+
+**Markierung ziehen**: Drückt man die Maustaste auf die Markierung und bewegt den Zeiger, wird ihr Text gezogen (ein `UI.DragData` mit `Text`; ein eigenes `OnDragStart` geht vor). Ein anderes
+Textfeld fügt ihn an der Stelle des Loslassens ein (eine Kopie) und markiert ihn; im selben Feld wird er **verschoben**, mit gehaltenem Ctrl **kopiert** (die Wurzel kennt die gehaltenen Tasten aus
+`KeyDown`/`KeyUp`: `root.modifiers`); auf die Markierung selbst fallen gelassen geschieht nichts. Solange etwas über einem Textfeld schwebt, zeigt eine zweite Einfügemarke, wohin es käme
+(`dropPos`). Ein Klick in die Markierung ohne Bewegung setzt wie sonst die Einfügemarke. Aus dem Fenster heraus geht der Text an andere Programme (siehe *Drag & Drop*); verschiebt das andere
+Programm ihn (`Move`), löscht das Feld ihn bei sich - als eigener Schritt für Rückgängig. Text und Dateien von anderen Elementen und aus anderen Programmen nimmt das Feld wie bisher an.
 
 ## Doppelklick
 
@@ -185,7 +199,8 @@ Der Root zählt die Klicks: `root.clickCount` ist beim `MouseDown` eines Element
 Ein Druck zählt weiter, wenn es dieselbe Taste ist wie beim Druck davor, höchstens `root.doubleClickTime` Millisekunden (400) danach und höchstens `root.doubleClickDistance`
 Pixel (4) davon entfernt; sonst beginnt er wieder bei 1. Die Zeit kommt aus `root.clock` (ein Lambda, das Millisekunden liefert, etwa `func () => { return DateTime.Now.Ticks / 10000 }`
 mit `#import "time"`); ohne es zählen die Zyklen des Roots (60 je Sekunde gerechnet, mit VSync ist ein Zyklus ein Bild) - so geht es in der VM und nativ ohne weiteres Paket.
-Eigene Elemente lesen den Wert in `MouseDown(root, button, x, y)`. (`ListBox`, `ListView` und `TreeView` erkennen ihren Doppelklick weiter selbst, siehe `doubleClickCycles`.)
+Eigene Elemente lesen den Wert in `MouseDown(root, button, x, y)`. `ListBox` und `ListView` melden einen Doppelklick auf dieselbe Zeile als `OnActivate` (wie Enter), der `TreeView` klappt
+die Zeile dabei auf oder zu und meldet ebenfalls `OnActivate`.
 
 ## Mehrzeiliges Textfeld (`TextArea`)
 
@@ -212,6 +227,7 @@ ui.Add(notes)
   gibt es keine waagerechte Leiste: eine Zeile bricht nach dem letzten Leerzeichen um, das noch passt (die Leerzeichen bleiben am Ende der Zeile), ein zu langes Wort dort, wo die Zeile voll ist.
 - `MaxLength` (0 = ohne Grenze; Getipptes, das nicht ganz passt, wird nicht genommen, Eingefügtes abgeschnitten), `ReadOnly`, `TabSize` (4: ein Tabulator reicht bis zur nächsten
   Spalte, die ein Vielfaches davon ist), `OnChange`/`TakeChanged()`. Das Feld nimmt Text und Dateien (die Pfade, eine Zeile je Datei) als Drop an der Stelle des Loslassens; `AllowDrop = false` schaltet das ab.
+- **Rückgängig/Wiederholen** und **Markierung ziehen** wie beim `TextBox` (siehe *Textfeld*): `Ctrl+Z`, `Ctrl+Y`/`Ctrl+Umschalt+Z`, `CanUndo`, `CanRedo`, `Undo()`, `Redo()`, `ClearUndo()`, `UndoLimit`.
 - **Schriften:** wie das `TextBox` mit der Schrift des Elements; mit der Konsolenschrift (dicktengleich) werden Spalten gezählt, mit einer Proportionalschrift gemessen.
 - **Lange Texte** bleiben schnell: das Feld hält einen Index, wo jede Zeile (und mit `WordWrap` jede Bildschirmzeile) beginnt; eine Änderung passt nur die betroffenen Zeilen an und
   verschiebt die Anfänge dahinter, gezeichnet werden nur die sichtbaren Zeilen. Gemessen in der VM mit 5000 Zeilen (400 KB): ein Tastendruck etwa 10 ms, ein Bildlaufschritt etwa 1 ms,
@@ -246,14 +262,25 @@ in der VM und in nativen Builds mit SDL3), bekommt das Ziel darunter schon `OnDr
 oder verlässt das Gezogene das Fenster, hört das alte `OnDragLeave()`. Der Drop selbst kommt wie bisher: das Ziel darunter bekommt `OnDragOver` mit den echten Daten (`Pending` falsch) und `OnDrop`;
 ein anderes Ziel, über dem es zuletzt schwebte, hört `OnDragLeave()`. Das Textfeld nimmt einen schwebenden Zug an (`Copy`). Ein nativer Build mit SDL2 meldet kein Schweben, nur den Drop.
 
-**Das Schild am Zeiger.** Solange gezogen wird, zeichnet der Root rechts unter dem Zeiger ein kleines Schild über allem (auch über Menüs): den Text der Daten (eine Zeile, auf 30
-Zeichen gekürzt), den Namen der Datei bzw. "n files", sonst `Kind`; ohne all das kein Schild. Es folgt dem Zeiger, bleibt im Fenster und malt dabei nur seinen alten und seinen neuen
-Bereich neu, nicht die ganze Oberfläche. `data.ShowImage = false` schaltet es für diese Daten ab; `root.DragImageText(data)` sagt, was es zeigen würde.
+**Das Bild am Zeiger.** Solange gezogen wird, zeichnet der Root am Zeiger ein Bild über allem (auch über Menüs). Es folgt dem Zeiger und malt dabei nur seinen alten und seinen neuen
+Bereich neu, nicht die ganze Oberfläche. Was es zeigt:
+
+- `data.Image` (ein `Framebuffer` der Quelle, in Pixeln des Framebuffers, überblendet gezeichnet - mit Alpha unter 255 scheint es durch), mit der linken oberen Ecke bei `data.ImageX`/`ImageY`
+  (12/16) vom Zeiger aus;
+- sonst einen **durchscheinenden Schnappschuss des Quellelements**: was das Fenster beim Beginn des Ziehens von ihm zeigt (höchstens 240 x 160 um die gedrückte Stelle), mit Alpha 150; es hängt am
+  Zeiger dort, wo man es gepackt hat. Ein Element sagt mit `bool DragSnapshot()`, ob ein Schnappschuss Sinn ergibt - `TextBox`, `TextArea`, `ListBox`/`ListView` und `TreeView` sagen nein (ein
+  Bild des ganzen Felds bzw. der ganzen Liste zeigte nicht, was gezogen wird); `data.Snapshot = false` schaltet ihn für diese Daten ab. Nur mit einem RGBA-Framebuffer;
+- sonst ein kleines **Schild** rechts unter dem Zeiger (es bleibt im Fenster): den Text der Daten (eine Zeile, auf 30 Zeichen gekürzt), den Namen der Datei bzw. "n files", sonst `Kind`; ohne all
+  das kein Schild. `root.DragImageText(data)` sagt, was es zeigen würde.
+
+`data.ShowImage = false` schaltet das Bild ganz ab.
 
 **Aus dem Fenster heraus in andere Programme**: Trägt das `UI.DragData` eines Ziehens `Text` oder `Files` und verlässt der Zeiger mit gehaltener Taste das Fenster, übergibt die Wurzel das Ziehen dem
 Desktop (`Window.StartDrag`, docs/CONSOLE.md): das Ziel, über dem der Zeiger zuletzt war, hört `OnDragLeave()`, dann zieht der Nutzer in einem Dateimanager, Editor oder Browser weiter. Lässt er los,
 endet das Ziehen im Programm, und die Quelle hört mit `OnDragDone(daten, effekt)`, was das andere Programm getan hat: `None` (niemand nahm es, Escape), `Copy` oder `Move` (z. B. hat ein Dateimanager
-die Dateien verschoben). Das geht unter Windows und X11 (in der VM und nativ, mit SDL3 und SDL2); unter Wayland und macOS kann der Desktop es nicht übernehmen: das Ziehen endet dort beim Verlassen des Fensters mit `None`.
+die Dateien verschoben). Das geht unter Windows und X11 (in der VM und nativ, mit SDL3 und SDL2). Wo der Desktop es nicht übernehmen kann (Wayland, macOS, ohne Desktop, ein Dummy-Videotreiber -
+`window.CanStartDrag()` sagt es, docs/CONSOLE.md), bleibt das Ziehen im Fenster: außerhalb nimmt es niemand (`None` beim Loslassen dort), das Bild bleibt am Rand, und der Nutzer kann mit dem Zeiger
+zurück ins Fenster und dort fallen lassen.
 `AllowExternal = false` am `UI.DragData` hält ein Ziehen im Fenster; ein Ziehen nur mit `Value` (ohne Text und Dateien) bleibt ohnehin drinnen - andere Programme könnten damit nichts anfangen.
 
 ```fire

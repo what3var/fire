@@ -9395,6 +9395,7 @@ uiDrawScript = """
         });
         // Window.StartDrag: the answer of the desktop, and each call as a line of the output
         natives.Register("__TestDragAnswer", args => { renderer.DragAnswer = (int)args[0].AsInt(); return Value.MakeUndefined(); });
+        natives.Register("__TestCanDrag", args => { renderer.CanDrag = args[0].AsBool(); return Value.MakeUndefined(); });
         renderer.Dragged = (text, files) => { lock (lines) lines.Add($"StartDrag [{text}] [{string.Join(",", files)}]"); };
 
         var resolveResult = Resolver.Resolve(program, natives.Names);
@@ -10409,6 +10410,8 @@ uiDrawScript = """
         }
         var src = new UI.Button("Quelle", 10, 10, 120, 30)
         var data = new UI.DragData("Kurz")
+        // (the label: without it the root would show a snapshot of the button, see the next case)
+        data.Snapshot = false
         src.OnDragStart = func (int x, int y) => { return data }
         var far = new Counter(270, 150)
         ui.Add(src)
@@ -10456,6 +10459,335 @@ uiDrawScript = """
         __TestEvent(11, 1, 60.0, 20.0)
         ui.Tick()
         """, new[] { "True 72 36 40 20", "True True", "True True True", "True True", "False 0 True", "Ein sehr langer gezogener Tex... | zwei Zeilen", "3 files | bild.png | eintrag", "True 0 True" });
+
+    CheckUi("Textfeld: Undo/Redo mit Ctrl+Z, Ctrl+Y und Ctrl+Umschalt+Z - Tippen wortweise und nach einer Pause, Einfuegen und Entfernen eigene Schritte, Auswahl zurueck, Grenze, Text aus dem Programm loescht den Verlauf, ReadOnly", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var tb = new UI.TextBox("", 10, 10, 200, 24)
+        ui.Add(tb)
+        ui.Draw()
+        ui.SetFocus(tb)
+        print(tb.CanUndo + " " + tb.CanRedo)
+        foreach (c in ["H", "a", "l", "l", "o", " ", "W", "e", "l", "t"]) { __TestEvent(3, c) }
+        ui.Tick()
+        print(tb.Text + " " + tb.CanUndo)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + tb.Text + "] " + tb.caret)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + tb.Text + "] " + tb.caret + " " + tb.CanUndo + " " + tb.CanRedo)
+        __TestEvent(24, UI.Keys.Y(), 64)
+        __TestEvent(24, UI.Keys.Z(), 65)
+        ui.Tick()
+        print("[" + tb.Text + "] " + tb.caret + " " + tb.CanRedo)
+        // pasting over a selection is a step of its own; undo brings the text and the selection back
+        Clipboard.SetText("X")
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text + " [" + tb.SelectedText + "]")
+        // Backspace three times: one step
+        __TestEvent(24, UI.Keys.End(), 0)
+        for (var i = 0; i < 3; i++) { __TestEvent(24, UI.Keys.Backspace(), 0) }
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text + " " + tb.caret)
+        // a pause of more than a second starts a new step
+        __TestEvent(3, "!")
+        ui.Tick()
+        now = 5000
+        __TestEvent(3, "?")
+        ui.Tick()
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text)
+        // the limit: only the last two steps
+        tb.UndoLimit = 2
+        for (var k = 0; k < 4; k++) {
+            now = now + 2000
+            __TestEvent(3, "" + k)
+            ui.Tick()
+        }
+        print(tb.Text + " " + tb.Undo() + " " + tb.Undo() + " " + tb.Undo() + " " + tb.Text)
+        // the program sets Text: the history is gone
+        tb.UndoLimit = 100
+        __TestEvent(3, "z")
+        ui.Tick()
+        tb.Text = "neu"
+        print(tb.CanUndo + " " + tb.Undo() + " " + tb.Text)
+        // ReadOnly: no Undo
+        __TestEvent(3, "s")
+        ui.Tick()
+        tb.ReadOnly = true
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text + " " + tb.CanUndo)
+        tb.ReadOnly = false
+        print(tb.Undo() + " " + tb.Text + " " + tb.Redo() + " " + tb.Text)
+        tb.ClearUndo()
+        print(tb.CanUndo + " " + tb.CanRedo)
+        """, new[] { "False False", "Hallo Welt True", "[Hallo ] 6", "[] 0 False True", "[Hallo Welt] 10 False", "X", "Hallo Welt [Hallo Welt]", "Hallo W", "Hallo Welt 10",
+                     "Hallo Welt!", "Hallo Welt!0123 True True False Hallo Welt!01", "False False neu", "neus False", "True neu True neus", "False False" });
+
+    CheckUi("TextArea: Undo/Redo - Tippen bis zum neuen Wort ein Schritt, Ctrl+Ruecktaste, SetText/AppendText loeschen den Verlauf", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var ta = new UI.TextArea("", 10, 10, 200, 100)
+        ui.Add(ta)
+        ui.Draw()
+        ui.SetFocus(ta)
+        foreach (c in ["a", "b"]) { __TestEvent(3, c) }
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        foreach (c in ["c", "d"]) { __TestEvent(3, c) }
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " " + ta.LineCount)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " " + ta.LineCount + " " + ta.CaretLine)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + ta.Text + "] " + ta.LineCount)
+        __TestEvent(24, UI.Keys.Y(), 64)
+        __TestEvent(24, UI.Keys.Y(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " " + ta.CaretLine + " " + ta.CaretColumn)
+        __TestEvent(24, UI.Keys.Backspace(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|"))
+        __TestEvent(24, UI.Keys.Z(), 65)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|"))
+        ta.AppendText("\nef")
+        print(ta.CanUndo + " " + ta.Text.Replace("\n", "|"))
+        __TestEvent(3, "g")
+        ui.Tick()
+        ta.SetText("neu")
+        print(ta.CanUndo + " " + ta.Undo() + " " + ta.Text)
+        """, new[] { "ab|cd 2", "ab| 2 1", "[] 1", "ab|cd 1 2", "ab|", "ab|cd", "False ab|cd|ef", "False False neu" });
+
+    CheckUi("Markierung ziehen: im Textfeld verschieben (mit Ctrl kopieren), Klick in die Markierung setzt die Einfuegemarke, in ein anderes Feld kopieren (Einfuegemarke folgt dem Zeiger), hinaus mit Move loescht, TextArea", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var tb = new UI.TextBox("Hallo Welt", 10, 100, 200, 24)
+        var tb2 = new UI.TextBox("ab", 10, 140, 200, 24)
+        ui.Add(tb)
+        ui.Add(tb2)
+        ui.Draw()
+        var cw = ui.cw
+        var x0 = tb.ax + 4
+        // "Hallo" to the end of the field: moved
+        tb.Select(0, 5)
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, x0 + 10.0 * cw, 112.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + tb.dropPos + " " + ui.dragEffect!int)
+        __TestEvent(11, 1, x0 + 10.0 * cw, 112.0)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb.SelectedText + "] " + tb.dropPos)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb.SelectedText + "]")
+        // with Ctrl held: copied
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, x0 + 10.0 * cw, 112.0)
+        ui.Tick()
+        __TestEvent(24, 1073742048, 64)
+        ui.Tick()
+        print(ui.dragEffect!int)
+        __TestEvent(11, 1, x0 + 10.0 * cw, 112.0)
+        __TestEvent(25, 1073742048, 0)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb.SelectedText + "] " + tb.SelectionStart)
+        // a click into the selection without moving puts the caret there
+        now = now + 1000
+        __TestEvent(8, 1, x0 + 12.0 * cw + 2, 112.0)
+        __TestEvent(11, 1, x0 + 12.0 * cw + 2, 112.0)
+        ui.Tick()
+        print(tb.caret + " " + tb.HasSelection() + " " + ui.IsDragging)
+        // into the other field: a copy at the place of the pointer, which the drop caret shows meanwhile
+        tb.Select(0, 5)
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, tb2.ax + 4.0 + cw, 152.0)
+        ui.Tick()
+        print(tb2.dropPos + " " + ui.dragEffect!int)
+        __TestEvent(11, 1, tb2.ax + 4.0 + cw, 152.0)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb2.Text + "] [" + tb2.SelectedText + "] " + (ui.focusElement == tb2) + " " + tb2.dropPos)
+        // out of the window: the other program moves it - it is deleted here (one step for Undo)
+        __TestDragAnswer(2)
+        tb.Select(0, 6)
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, 400.0, 112.0)
+        __TestEvent(11, 1, 400.0, 112.0)
+        ui.Tick()
+        print("[" + tb.Text + "] " + ui.IsDragging)
+        tb.Undo()
+        print("[" + tb.Text + "]")
+        // the desktop cannot take drags (Wayland, macOS): the drag stays in the window and can come back
+        __TestCanDrag(false)
+        print(win.CanStartDrag())
+        tb.Select(0, 5)
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, 400.0, 112.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragEffect!int + " " + (ui.dragTarget == undefined) + " " + (ui.dragImageX + ui.dragImageW <= 320))
+        __TestEvent(9, tb2.ax + 4.0, 152.0)
+        __TestEvent(11, 1, tb2.ax + 4.0, 152.0)
+        ui.Tick()
+        print("[" + tb2.Text + "] " + ui.IsDragging)
+        __TestCanDrag(true)
+        // TextArea: "eins" behind "zwei" in the next line
+        var ta = new UI.TextArea("eins\nzwei", 220, 10, 90, 80)
+        ui.Add(ta)
+        ui.Draw()
+        ta.Select(0, 4)
+        var lx = ta.ax + 1 + ta.padding
+        var ly = ta.ay + 1 + ta.padding
+        now = now + 1000
+        __TestEvent(8, 1, lx + cw + 2.0, ly + 2.0)
+        __TestEvent(9, lx + 4.0 * cw, ly + ta.lineH + 2.0)
+        ui.Tick()
+        print(ta.dropPos + " " + ui.dragEffect!int)
+        __TestEvent(11, 1, lx + 4.0 * cw, ly + ta.lineH + 2.0)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " [" + ta.SelectedText + "] " + ta.LineCount)
+        ta.Undo()
+        print(ta.Text.Replace("\n", "|") + " [" + ta.SelectedText + "]")
+        // a click on the selection without moving: the caret
+        now = now + 1000
+        __TestEvent(8, 1, lx + 2.0 * cw + 2, ly + 2.0)
+        __TestEvent(11, 1, lx + 2.0 * cw + 2, ly + 2.0)
+        ui.Tick()
+        print(ta.caret + " " + ta.HasSelection())
+        """, new[] { "True 10 2", "[ WeltHallo] [Hallo] -1", "[Hallo Welt] [Hallo]", "1", "[Hallo WeltHallo] [Hallo] 10", "12 False False",
+                     "1 1", "[Hallo WeltHallo] [aHallob] [Hallo] True -1", "StartDrag [Hallo ] []", "[WeltHallo] False", "[Hallo WeltHallo]",
+                     "False", "True 0 True True", "[HalloaHallob] False", "9 2", "|zweieins [eins] 2", "eins|zwei [eins]", "2 False" });
+
+    CheckUi("Drag-Bild: durchscheinender Schnappschuss des Quellelements (mit dem Griffversatz), DragData.Image, Snapshot = false und Listen zeigen das Schild", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var src = new UI.Button("Quelle", 10, 10, 120, 30)
+        var data = new UI.DragData("Kurz")
+        src.OnDragStart = func (int x, int y) => { return data }
+        ui.Add(src)
+        ui.Draw()
+        var t = ui.theme
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 200.0, 120.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH + " " + (ui.dragSnapshot != undefined))
+        // the face of the button, see-through over the background
+        var c = Px.Get(ui.renderer, 196, 125)
+        print((c != t.back.Color) + " " + (c != t.face.Color))
+        __TestEvent(9, 210.0, 130.0)
+        ui.Tick()
+        ui.Tick()
+        print((Px.Get(ui.renderer, 192, 112) == t.back.Color) + " " + ui.dragImageX)
+        __TestEvent(11, 1, 210.0, 130.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + (ui.dragSnapshot == undefined) + " " + (Px.Get(ui.renderer, 206, 135) == t.back.Color))
+        // a picture of the source: drawn at (ImageX, ImageY) from the pointer
+        var pic = new Framebuffer(10, 10)
+        var pr = new Renderer(pic)
+        pr.FillRect(0, 0, 10, 10, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        data.Image = pic
+        now = now + 1000
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 200.0, 120.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH + " " + (Px.Get(ui.renderer, 215, 139) == UI.Color.Rgb(255, 0, 0)))
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 200.0, 120.0)
+        ui.Tick()
+        // Snapshot = false: the label
+        data.Image = undefined
+        data.Snapshot = false
+        now = now + 1000
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        print((ui.dragPicture == undefined) + " " + ui.dragImageW)
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 60.0, 20.0)
+        ui.Tick()
+        // a list: the label with the text of the row, not a picture of the whole list
+        var lb = new UI.ListBox(10, 60, 100, 80)
+        lb.Add("eins")
+        lb.OnDragStart = func (int x, int y) => { return new UI.DragData("eins") }
+        ui.Add(lb)
+        ui.Draw()
+        now = now + 1000
+        __TestEvent(8, 1, 20.0, 66.0)
+        __TestEvent(9, 60.0, 66.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + (ui.dragPicture == undefined) + " " + ui.dragImageW)
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 60.0, 66.0)
+        ui.Tick()
+        """, new[] { "True 190 110 120 30 True", "True True", "True 200", "False True True", "212 136 10 10 True", "True 40", "True True 40" });
+
+    CheckUi("Doppelklick in Liste und Baum ueber root.clickCount: TreeView klappt auf/zu und meldet OnActivate (auch Enter), Klick auf das Kaestchen nicht", uiHead + """
+        var tv = new UI.TreeView(10, 10, 200, 120)
+        var a = tv.AddNode(new UI.TreeNode("A"))
+        a.Add(new UI.TreeNode("A1"))
+        tv.AddNode(new UI.TreeNode("B"))
+        var activated = 0
+        tv.OnActivate = func () => { activated = activated + 1 }
+        ui.Add(tv)
+        ui.Draw()
+        var rh = tv.RowHeight(ui)
+        var x = tv.ax + 80
+        var y = tv.ay + 1 + rh / 2
+        ui.MouseDown(1, x, y)
+        ui.MouseUp(1, x, y)
+        print(a.Expanded + " " + activated)
+        ui.MouseDown(1, x, y)
+        ui.MouseUp(1, x, y)
+        ui.Draw()
+        print(a.Expanded + " " + activated + " " + tv.TakeActivated() + " " + tv.TakeActivated() + " " + tv.visibleNodes.Count)
+        // the box: two clicks open and close, nothing is activated
+        var bx = tv.ax + 6
+        ui.MouseDown(1, bx, y)
+        ui.MouseUp(1, bx, y)
+        ui.MouseDown(1, bx, y)
+        ui.MouseUp(1, bx, y)
+        print(a.Expanded + " " + activated)
+        // Enter: toggles and activates
+        ui.SetFocus(tv)
+        ui.KeyDown(UI.Keys.Enter(), 0)
+        ui.Draw()
+        print(a.Expanded + " " + activated + " " + tv.visibleNodes.Count)
+        // a node without children: only activated
+        var y2 = tv.ay + 1 + rh + rh / 2
+        ui.cycles = ui.cycles + 100
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        print(tv.selected.Text + " " + activated)
+        // too slow is no double click
+        ui.cycles = ui.cycles + 100
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        ui.cycles = ui.cycles + 100
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        print(activated)
+        """, new[] { "False 0", "True 1 True False 3", "True 1", "False 2 2", "B 3", "3" });
 
     CheckUi("Touch: UI.Root fuehrt die Oberflaeche mit dem Finger (Antippen, Abheben daneben, zweiter Finger, kein Hover danach)", uiHead + """
         print(win.TouchMouse)
@@ -20709,7 +21041,7 @@ else
             root.Draw()
             print("back " + fb.Width() + "x" + fb.Height())
             """),
-        ("UI: TextArea (Zeilenindex, Tippen, Auf/Ab, WordWrap, Auswahl), Doppel-/Dreifachklick, Text des Drag-Bilds", """
+        ("UI: TextArea (Zeilenindex, Tippen, Auf/Ab, WordWrap, Auswahl), Doppel-/Dreifachklick, Text des Drag-Bilds, Undo/Redo, Markierung ziehen, Schnappschuss, Doppelklick im Baum", """
             #import "ui"
             var fb = new Framebuffer(320, 200)
             var win = new Window(fb, "t")
@@ -20765,6 +21097,51 @@ else
             ui.Draw()
             print(tb.Text)
             print(ui.DragImageText(new UI.DragData("Ein sehr langer gezogener Text, der gekuerzt wird")) + " | " + ui.DragImageText(new UI.DragData("", 1, "kind")))
+            // Undo/Redo
+            ui.SetFocus(tb)
+            ui.KeyDown(UI.Keys.Z(), 64)
+            print("undo [" + tb.Text + "] " + tb.CanRedo)
+            ui.KeyDown(UI.Keys.Y(), 64)
+            print("redo [" + tb.Text + "] " + tb.CanRedo)
+            // dragging the selection to the end of the field (moved), undone
+            tb.Select(0, 3)
+            ui.cycles = ui.cycles + 100
+            ui.MouseDown(1, tb.ax + 4 + ui.cw + 2, 160)
+            ui.MouseMove(tb.ax + 4 + 5 * ui.cw, 160)
+            print("drag " + ui.IsDragging + " " + tb.dropPos + " " + ui.dragEffect!int)
+            ui.MouseUp(1, tb.ax + 4 + 5 * ui.cw, 160)
+            print("moved [" + tb.Text + "] [" + tb.SelectedText + "]")
+            ui.KeyDown(UI.Keys.Z(), 64)
+            print("back [" + tb.Text + "] [" + tb.SelectedText + "]")
+            var can = win.CanStartDrag()
+            // a see-through snapshot of a button follows the pointer
+            var bt = new UI.Button("Knopf", 200, 150, 80, 24)
+            bt.OnDragStart = func (int px, int py) => { return new UI.DragData("k") }
+            ui.Add(bt)
+            ui.Draw()
+            ui.cycles = ui.cycles + 100
+            ui.MouseDown(1, 210, 160)
+            ui.MouseMove(230, 120)
+            print("snapshot " + (ui.dragSnapshot != undefined) + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH)
+            ui.Draw()
+            ui.KeyDown(UI.Keys.Escape(), 0)
+            ui.MouseUp(1, 230, 120)
+            print("ended " + ui.IsDragging + " " + (ui.dragSnapshot == undefined))
+            // a double click in a tree opens the node and activates it
+            var tv = new UI.TreeView(220, 10, 90, 60)
+            var node = tv.AddNode(new UI.TreeNode("A"))
+            node.Add(new UI.TreeNode("A1"))
+            var acts = 0
+            tv.OnActivate = func () => { acts = acts + 1 }
+            ui.Add(tv)
+            ui.Draw()
+            ui.cycles = ui.cycles + 100
+            var ty = tv.ay + 1 + tv.RowHeight(ui) / 2
+            ui.MouseDown(1, 280, ty)
+            ui.MouseUp(1, 280, ty)
+            ui.MouseDown(1, 280, ty)
+            ui.MouseUp(1, 280, ty)
+            print("tree " + node.Expanded + " " + acts + " " + tv.TakeActivated())
             """),
     }).ToArray();
 
@@ -25499,6 +25876,9 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
     public int DragAnswer { get; set; }
     public Action<string, string[]>? Dragged { get; set; }
     public int StartDrag(string text, string[] files) { Dragged?.Invoke(text, files); return DragAnswer; }
+    /// <summary>Window.CanStartDrag: the tests pretend a desktop that takes drags (__TestCanDrag(false): one that cannot, like Wayland).</summary>
+    public bool CanDrag { get; set; } = true;
+    public bool CanStartDrag() => CanDrag;
 
     public fire.Terminal.WindowPumpResult PumpEvents()
     {

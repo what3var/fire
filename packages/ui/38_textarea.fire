@@ -61,6 +61,17 @@ namespace UI {
         int selectMode = 1
         int wordStart = 0
         int wordEnd = 0
+        // Undo/Redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z): at most UndoLimit steps (0: no history); what the next ReplaceSelection is (1 typing, 2 deleting, 0 other)
+        UI.TextHistory history
+        int UndoLimit = 100
+        int pendingKind = 0
+        // dragging the selection (see TextBox): the press was on it, the drag came from here, a drop here moved it already, where a drop would go (-1: nowhere)
+        bool pressInSelection = false
+        int pressOffset = 0
+        bool dragOwn = false
+        int dragFrom = 0
+        bool dragMovedHere = false
+        int dropPos = -1
 
         construct(string text = "", int x = 0, int y = 0, int width = 240, int height = 120) : base(x, y, width, height) {
             this.cursor = UI.Cursor.IBeam
@@ -75,6 +86,7 @@ namespace UI {
             this.AllowDrop = true
             this.Text = UI.TextArea.Normalize(text)
             this.Reindex()
+            this.history = new UI.TextHistory(this.Text)
         }
 
         bool Focusable() { return true }
@@ -111,6 +123,7 @@ namespace UI {
             this.goalX = -1
             this.vbar.Set(0)
             this.hbar.Set(0)
+            this.ClearUndo()
         }
 
         // Appends text at the end (a log): the caret goes there and is scrolled into view.
@@ -121,6 +134,67 @@ namespace UI {
             this.caret = this.Text.Length
             this.anchor = -1
             this.reveal = true
+            // (a change by the program: the history is cleared, as when Text is set)
+            this.ClearUndo()
+            this.Changed()
+        }
+
+        // ---- Undo/Redo (see TextBox): typing is one step per word or until a pause, deleting single characters likewise; pasting, cutting, deleting a
+        // selection and drops are steps of their own. Text, SetText and AppendText from the program clear the history. ReadOnly: nothing is undone. ----
+        bool CanUndo {
+            get {
+                this.history.Check(this.Text)
+                return !this.ReadOnly && this.history.CanUndo
+            }
+        }
+        bool CanRedo {
+            get {
+                this.history.Check(this.Text)
+                return !this.ReadOnly && this.history.CanRedo
+            }
+        }
+        undefined ClearUndo() {
+            this.history.Clear()
+            this.history.Applied(this.Text)
+        }
+        bool Undo() {
+            if (!this.CanUndo) { return false }
+            var step = this.history.TakeUndo()
+            this.Apply(step.start, step.inserted.Length, step.removed, step.caretBefore, step.anchorBefore)
+            return true
+        }
+        bool Redo() {
+            if (!this.CanRedo) { return false }
+            var step = this.history.TakeRedo()
+            this.Apply(step.start, step.removed.Length, step.inserted, step.caretAfter, step.anchorAfter)
+            return true
+        }
+        undefined Apply(int start, int count, string value, int caret, int anchor) {
+            this.Splice(start, count, value)
+            this.caret = caret
+            this.anchor = anchor
+            this.goalX = -1
+            this.reveal = true
+            this.history.Applied(this.Text)
+            this.Changed()
+        }
+
+        // Replaces `count` characters from `start` by `value` (no MaxLength check here) and records it for Undo; the caret goes behind it.
+        undefined EditText(int start, int count, string value, int kind) {
+            this.EnsureIndex()
+            this.history.Check(this.Text)
+            var removed = this.Text.Substring(start, count)
+            var caretBefore = this.caret
+            var anchorBefore = this.anchor
+            if (anchorBefore == caretBefore) { anchorBefore = -1 }
+            this.Splice(start, count, value)
+            this.caret = start + value.Length
+            this.anchor = -1
+            this.goalX = -1
+            this.reveal = true
+            var now = 0
+            if (this.host != undefined) { now = this.host.ClickTime() }
+            this.history.Record(start, removed, value, caretBefore, anchorBefore, this.caret, -1, kind, now, this.UndoLimit, this.Text)
             this.Changed()
         }
 
@@ -559,13 +633,10 @@ namespace UI {
                 if (room < 0) { room = 0 }
                 value = value.Substring(0, room)
             }
+            var kind = this.pendingKind
+            this.pendingKind = 0
             if (value == "" && count == 0) { return }
-            this.Splice(start, count, value)
-            this.caret = start + value.Length
-            this.anchor = -1
-            this.goalX = -1
-            this.reveal = true
-            this.Changed()
+            this.EditText(start, count, value, kind)
         }
 
         // The clipboard (line breaks are kept; "\r\n" from another program becomes "\n").
@@ -730,11 +801,18 @@ namespace UI {
                 if (!root.Needs(ax, y, this.actualWidth, lh)) { continue }
                 this.DrawRow(root, row, left, y, selStart, selEnd, color)
             }
-            if (this.Focused) {
+            if (this.Focused && this.dropPos < 0) {
                 var cr = this.RowOf(this.caret)
                 var cx = left + this.XOf(root, this.RowStart(cr), this.caret)
                 var cy = top + cr * lh
                 r.DrawLine(cx, cy, cx, cy + lh - 1, theme.caret)
+            }
+            if (this.dropPos >= 0 && this.dropPos <= this.Text.Length) {
+                // where a drop would go: a caret of its own
+                var dr = this.RowOf(this.dropPos)
+                var dx = left + this.XOf(root, this.RowStart(dr), this.dropPos)
+                var dy = top + dr * lh
+                r.DrawLine(dx, dy, dx, dy + lh - 1, theme.caret)
             }
             root.PopClip()
             if (this.showV) { this.vbar.Draw(root, ax + 1 + this.viewW, ay + 1, this.viewH) }
@@ -837,9 +915,25 @@ namespace UI {
                 this.caret = this.wordEnd
                 return
             }
+            var position = this.OffsetAt(root, px, py)
+            if (this.InSelection(root, px, py)) {
+                // a press on the selection may drag it (DragStart); without moving it puts the caret there (MouseUp)
+                this.selecting = false
+                this.pressInSelection = true
+                this.pressOffset = position
+                return
+            }
             this.selectMode = 1
-            this.caret = this.OffsetAt(root, px, py)
+            this.caret = position
             this.anchor = this.caret
+        }
+
+        // Is the point on the selected text?
+        bool InSelection(Root root, int px, int py) {
+            if (!this.HasSelection()) { return false }
+            var at = this.OffsetAt(root, px, py, false)
+            var s = this.SelectionStart
+            return at >= s && at < s + this.SelectionLength && at < this.Text.Length
         }
 
         undefined MouseMove(Root root, int px, int py) {
@@ -888,6 +982,10 @@ namespace UI {
             this.selecting = false
             this.vbar.Release()
             this.hbar.Release()
+            if (this.pressInSelection) {
+                this.pressInSelection = false
+                this.MoveCaret(this.pressOffset, false)
+            }
         }
 
         undefined Hover(Root root, int px, int py) {
@@ -952,6 +1050,9 @@ namespace UI {
             else if (shortcut && (key == UI.Keys.C() || key == UI.Keys.Insert())) { this.Copy() }
             else if ((shortcut && key == UI.Keys.X()) || (shift && key == UI.Keys.Delete())) { this.Cut() }
             else if ((shortcut && key == UI.Keys.V()) || (shift && key == UI.Keys.Insert())) { this.Paste() }
+            else if (shortcut && key == UI.Keys.Z()) {
+                if (shift) { this.Redo() } else { this.Undo() }
+            } else if (shortcut && key == UI.Keys.Y()) { this.Redo() }
             else if (key == UI.Keys.Left()) {
                 if (shortcut) { this.MoveCaret(UI.Words.Previous(this.Text, this.caret), shift) }
                 else if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart, false) }
@@ -985,16 +1086,14 @@ namespace UI {
                 else if (this.caret > 0) {
                     var back = this.caret - 1
                     if (shortcut) { back = UI.Words.Previous(this.Text, this.caret) }
-                    this.anchor = back
-                    this.ReplaceSelection("")
+                    this.EditText(back, this.caret - back, "", 2)
                 }
             } else if (key == UI.Keys.Delete()) {
                 if (this.HasSelection()) { this.ReplaceSelection("") }
                 else if (this.caret < length) {
                     var ahead = this.caret + 1
                     if (shortcut) { ahead = UI.Words.Next(this.Text, this.caret) }
-                    this.anchor = ahead
-                    this.ReplaceSelection("")
+                    this.EditText(this.caret, ahead - this.caret, "", 2)
                 }
             } else if (key == UI.Keys.Enter()) {
                 if (this.AcceptsReturn) { this.TextInput(root, "\n") }
@@ -1008,19 +1107,106 @@ namespace UI {
             if (this.ReadOnly) { return }
             value = UI.TextArea.Normalize(value)
             if (this.MaxLength > 0 && this.Text.Length - this.SelectionLength + value.Length > this.MaxLength) { return }
+            this.pendingKind = 1
             this.ReplaceSelection(value)
         }
 
-        // ---- a drop target for text and files (the paths, one per line); OnDragOver/OnDrop of the program decide first ----
+        // ---- dragging the selection (as in the TextBox): to another field a copy, within the area moved (with Ctrl copied), out of the window into another
+        // program, which may move it (then it is deleted here). OnDragStart of the program decides first. ----
+        UI.DragData DragStart(Root root, int px, int py) {
+            if (this.OnDragStart != undefined) { return base.DragStart(root, px, py) }
+            if (!this.pressInSelection || !this.HasSelection()) { return undefined }
+            this.pressInSelection = false
+            this.dragOwn = true
+            this.dragMovedHere = false
+            this.dragFrom = this.SelectionStart
+            return new UI.DragData(this.SelectedText)
+        }
+        undefined DragDone(Root root, UI.DragData data, UI.DropEffect effect) {
+            var own = this.dragOwn
+            var moved = this.dragMovedHere
+            this.dragOwn = false
+            this.dragMovedHere = false
+            this.dropPos = -1
+            if (own && effect == UI.DropEffect.Move && !moved && !this.ReadOnly) {
+                var n = data.Text.Length
+                if (this.dragFrom + n <= this.Text.Length && this.Text.Substring(this.dragFrom, n) == data.Text) {
+                    this.anchor = -1
+                    this.caret = this.dragFrom
+                    this.EditText(this.dragFrom, n, "", 0)
+                }
+            }
+            this.Invalidate()
+            base.DragDone(root, data, effect)
+        }
+        bool DragSnapshot() { return false }
+
+        // ---- a drop target for text and files (the paths, one per line); OnDragOver/OnDrop of the program decide first. While something is dragged over the
+        // area, a second caret shows where it would go. ----
         UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
             if (this.OnDragOver != undefined) { return base.DragOver(root, data, px, py) }
-            if (data.Source == this || this.ReadOnly) { return UI.DropEffect.None }
-            if (data.HasText || data.HasFiles) { return UI.DropEffect.Copy }
+            var effect = this.DropEffectAt(root, data, px, py)
+            var at = -1
+            if (effect != UI.DropEffect.None) { at = this.OffsetAt(root, px, py) }
+            if (at != this.dropPos) {
+                this.dropPos = at
+                this.Invalidate()
+            }
+            return effect
+        }
+        UI.DropEffect DropEffectAt(Root root, UI.DragData data, int px, int py) {
+            if (this.ReadOnly) { return UI.DropEffect.None }
+            if (data.Source == this) {
+                if (!this.dragOwn || !this.HasSelection()) { return UI.DropEffect.None }
+                var at = this.OffsetAt(root, px, py)
+                var s = this.SelectionStart
+                if (at >= s && at <= s + this.SelectionLength) { return UI.DropEffect.None }
+                if (UI.Keys.Shortcut(root.modifiers)) {
+                    if (this.MaxLength > 0 && this.Text.Length + this.SelectionLength > this.MaxLength) { return UI.DropEffect.None }
+                    return UI.DropEffect.Copy
+                }
+                return UI.DropEffect.Move
+            }
+            if (data.HasText || data.HasFiles || data.Pending) { return UI.DropEffect.Copy }
             return UI.DropEffect.None
         }
+        undefined DragLeave(Root root) {
+            if (this.dropPos >= 0) {
+                this.dropPos = -1
+                this.Invalidate()
+            }
+            base.DragLeave(root)
+        }
         UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
+            this.dropPos = -1
+            this.Invalidate()
             if (this.OnDrop != undefined) { return base.Drop(root, data, px, py) }
-            if (this.ReadOnly) { return UI.DropEffect.None }
+            var effect = this.DropEffectAt(root, data, px, py)
+            if (effect == UI.DropEffect.None) { return effect }
+            var at = this.OffsetAt(root, px, py)
+            if (data.Source == this) {
+                var s = this.SelectionStart
+                var n = this.SelectionLength
+                var piece = this.SelectedText
+                if (effect == UI.DropEffect.Copy) {
+                    this.EditText(at, 0, piece, 0)
+                    this.Select(at, n)
+                } else {
+                    // moved: one step that rewrites the stretch between the old and the new place
+                    var text = this.Text
+                    if (at < s) {
+                        this.EditText(at, s + n - at, piece + text.Substring(at, s - at), 0)
+                        this.Select(at, n)
+                    } else {
+                        this.EditText(s, at - s, text.Substring(s + n, at - s - n) + piece, 0)
+                        this.Select(at - n, n)
+                    }
+                    this.dragMovedHere = true
+                }
+                this.history.SetAfter(this.caret, this.anchor)
+                root.SetFocus(this)
+                return effect
+            }
             var text = data.Text
             if (!data.HasText) {
                 text = ""
@@ -1030,9 +1216,14 @@ namespace UI {
                 }
             }
             if (text == "") { return UI.DropEffect.None }
-            this.caret = this.OffsetAt(root, px, py)
+            this.caret = at
             this.anchor = -1
             this.ReplaceSelection(text)
+            // what was dropped stays selected
+            if (this.caret > at) {
+                this.Select(at, this.caret - at)
+                this.history.SetAfter(this.caret, this.anchor)
+            }
             root.SetFocus(this)
             return UI.DropEffect.Copy
         }

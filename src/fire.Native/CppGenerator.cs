@@ -225,6 +225,7 @@ namespace fire.Native
             ["SetCursor"] = (2, false), ["ClipboardSetText"] = (1, false), ["ClipboardGetText"] = (0, true), ["ClipboardHasText"] = (0, false),
             ["ClipboardGetImage"] = (0, true), ["ClipboardSetImage"] = (1, false), ["ClipboardHasImage"] = (0, false),
             ["ClipboardGetFiles"] = (0, true), ["ClipboardSetFiles"] = (1, false), ["ClipboardHasFiles"] = (0, false), ["StartDrag"] = (3, false),
+            ["CanStartDrag"] = (1, false),
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName", "FbToPng" };

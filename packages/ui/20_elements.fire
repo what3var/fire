@@ -501,6 +501,9 @@ namespace UI {
         }
         // Does the element use a held mouse button itself (a text field selects with it)? Then no drag starts from the elements around it.
         bool KeepsMouseDrag() { return false }
+        // Does a drag from here show a see-through snapshot of the element at the pointer (true), or the label with the text (false: a text field, a list, a tree
+        // - a picture of all of it would not show what is dragged)? See Root.PrepareDragImage.
+        bool DragSnapshot() { return true }
     }
 
     // Container with children. This panel arranges them at their x/y (like a Canvas) and can draw background and frame; the other containers

@@ -47,5 +47,7 @@ static int fire_display_clipboardHasFiles(void) { return fire_display_memHasFile
 /* No desktop: nothing to drag into (Window.StartDrag says 0). */
 #define FIRE_DISPLAY_START_DRAG 1
 static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) { (void)w; (void)text; (void)files; return 0; }
+#define FIRE_DISPLAY_CAN_START_DRAG 1
+static int fire_display_canStartDrag(FireDisplayWindow* w) { (void)w; return 0; }
 
 #endif

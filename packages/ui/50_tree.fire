@@ -37,8 +37,9 @@ namespace UI {
         undefined Collapse() { this.Expanded = false }
     }
 
-    // A tree: `AddNode` appends nodes of the top level. A click on the box expands and collapses, a click on the row selects, keys: Up/Down move, Right expands
-    // (or goes to the first child), Left collapses (or goes to the parent node), Enter toggles.
+    // A tree: `AddNode` appends nodes of the top level. A click on the box expands and collapses, a click on the row selects, a double click on the row
+    // expands/collapses it and activates it (OnActivate/TakeActivated, like Enter); keys: Up/Down move, Right expands (or goes to the first child), Left
+    // collapses (or goes to the parent node), Enter toggles and activates.
     class TreeView : Element {
         List nodes
         TreeNode selected
@@ -46,7 +47,11 @@ namespace UI {
         int rowHeight = -1
         Scroller scroller
         lambda OnSelect
+        lambda OnActivate
         bool changed = false
+        bool activated = false
+        // the node of the last click on a row: a double click on the same one (Root.clickCount) activates it
+        TreeNode lastClickNode
         // the visible nodes of the last arrangement, from top to bottom
         List visibleNodes
         int hotIndex = -1
@@ -74,6 +79,7 @@ namespace UI {
 
         undefined Clear() {
             this.selected = undefined
+            this.lastClickNode = undefined
             this.nodes = new List()
             this.visibleNodes = new List()
             this.Invalidate()
@@ -215,6 +221,23 @@ namespace UI {
             return was
         }
 
+        // Has a node been activated (double click, Enter) since the last query? (resets the flag)
+        bool TakeActivated() {
+            var was = this.activated
+            this.activated = false
+            return was
+        }
+
+        // Reports the selected node as activated (OnActivate).
+        undefined Activate() {
+            this.activated = true
+            var callback = this.OnActivate
+            if (callback != undefined) { callback() }
+        }
+
+        // A drag of a node shows the label with its text, not a picture of the whole tree.
+        bool DragSnapshot() { return false }
+
         // Scrolls until the node is visible (it must be visible, i.e. its parent path expanded).
         undefined EnsureVisible(Root root, TreeNode node) {
             var index = this.visibleNodes.IndexOf(node)
@@ -236,9 +259,18 @@ namespace UI {
             var boxX = this.ax + 3 + node.Depth() * this.Indent
             if (node.HasChildren() && px >= boxX && px < boxX + 12) {
                 node.Expanded = !node.Expanded
+                this.lastClickNode = undefined
                 return
             }
             this.SelectNode(node)
+            if (node == this.lastClickNode && root.clickCount == 2) {
+                // a double click: open or close it, and report it
+                this.lastClickNode = undefined
+                if (node.HasChildren()) { node.Expanded = !node.Expanded }
+                this.Activate()
+                return
+            }
+            this.lastClickNode = node
         }
 
         undefined MouseMove(Root root, int px, int py) {
@@ -304,6 +336,7 @@ namespace UI {
                 if (index >= 0) {
                     var n = this.visibleNodes[index]
                     if (n.HasChildren()) { n.Expanded = !n.Expanded }
+                    this.Activate()
                 }
                 return
             } else { return }

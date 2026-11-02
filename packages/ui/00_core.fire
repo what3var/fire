@@ -243,6 +243,8 @@ namespace UI {
         static int C() { return 99 }
         static int V() { return 118 }
         static int X() { return 120 }
+        static int Y() { return 121 }
+        static int Z() { return 122 }
 
         // The modifier keys of a KeyDown (`mod`): a shift key, and the key of the shortcuts - Ctrl, or Cmd on a Mac (both count everywhere).
         static bool Shift(int mod) { return (mod & 3) != 0 }
@@ -310,8 +312,16 @@ namespace UI {
         string Kind = ""
         UI.Element Source
         bool Pending = false
-        // While it is dragged in the interface, the root shows a small label at the pointer (the text, the files or the kind); false: none
+        // While it is dragged in the interface, the root shows a picture at the pointer: `Image` if the source gives one, else a semi-transparent snapshot of the
+        // source element (Element.DragSnapshot), else - and for text fields - a small label (the text, the files or the kind); false: none of them
         bool ShowImage = true
+        // A picture of what is dragged (a Framebuffer, in pixels of the framebuffer, drawn blended - give it alpha below 255 for a see-through one), with its top
+        // left corner at (ImageX, ImageY) from the pointer
+        Framebuffer Image
+        int ImageX = 12
+        int ImageY = 16
+        // Without Image: a snapshot of the source element (where it allows one); false: the label
+        bool Snapshot = true
         // May the drag leave the window? With Text or Files, a drag whose pointer leaves the window goes on in the desktop: other programs (a file manager,
         // an editor) can take it, and the source hears in OnDragDone what they did (Window.StartDrag). false keeps it inside the program.
         bool AllowExternal = true

@@ -222,6 +222,10 @@ class Window {
         return __GRPHWinStartDrag(this.id, t, array)
     }
 
+    // Can StartDrag hand a drag to the desktop here (Windows, X11), or does it always say 0 (Wayland, macOS, a board, a dummy video driver, a window that
+    // is not open)? UI.Root keeps a drag inside the window when it cannot leave.
+    bool CanStartDrag() { return __GRPHWinCanStartDrag(this.id) }
+
     bool RegisterTextInput(lambda<string> fn)
     {
         return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);
