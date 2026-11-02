@@ -327,6 +327,31 @@ FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) {
     snprintf(e.text, sizeof e.text, "%s", utf8);
     throw e;
 }
+#elif defined(FIRE_LIBRARY)
+/* The natives of a package in C built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.h): a run-time error does not end the process - it
+ * jumps back (longjmp) to the wrapper of the entry point, which reports it to the VM. (So a native that calls fireError or fatal must not hold anything it has to
+ * release first: memory it allocated with malloc, a lock.) The calls into the library are serialised: one jump target is enough. */
+#include <setjmp.h>
+typedef struct FireLibraryError { int kind; char cls[96]; char text[256]; } FireLibraryError;   /* kind 1: an error of the runtime, 2: an exception of the program */
+extern jmp_buf* g_libraryJump;
+extern FireLibraryError g_libraryError;
+/* What the host of the VM decides (fire_pkg_abi.h: `fire_host`); null until the host has told the library. */
+extern const fire_host* g_libraryHost;
+FIRE_FN const fire_host* libraryHost(void) { return g_libraryHost; }
+FIRE_NORETURN FIRE_FN void fireLibraryJump(int kind, const char* cls, const char* text) {
+    g_libraryError.kind = kind;
+    snprintf(g_libraryError.cls, sizeof g_libraryError.cls, "%s", cls);
+    snprintf(g_libraryError.text, sizeof g_libraryError.text, "%s", text);
+    if (g_libraryJump == NULL) { fprintf(stderr, "fire package library: %s\n", text); abort(); }
+    longjmp(*g_libraryJump, 1);
+}
+FIRE_NORETURN FIRE_FN void fatal(const char* message) { fireLibraryJump(1, "", message); }
+FIRE_NORETURN FIRE_FN void unsupported(const char* what) {
+    char text[256];
+    snprintf(text, sizeof text, "'%s' is not supported in a package library", what);
+    fireLibraryJump(1, "", text);
+}
+FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) { fireLibraryJump(2, cls, utf8); }
 #else
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
     fflush(stdout);
@@ -5264,6 +5289,11 @@ FIRE_FN void fire_threadsInit(void) {
  * The global state, defined in the one translation unit that defines FIRE_RT_IMPLEMENTATION (the generated program, or the library of a package for the VM).
  * --------------------------------------------------------------------------------------------------------------------- */
 #ifdef FIRE_RT_IMPLEMENTATION
+#if defined(FIRE_LIBRARY) && !defined(__cplusplus)
+jmp_buf* g_libraryJump = NULL;
+FireLibraryError g_libraryError;
+const fire_host* g_libraryHost = NULL;
+#endif
 #if !(defined(FIRE_THREADS) && defined(FIRE_TLS_STRUCT))
 #define FIRE_X(type, name, init) FIRE_TLS type name = init;
 FIRE_THREAD_VARS(FIRE_X)

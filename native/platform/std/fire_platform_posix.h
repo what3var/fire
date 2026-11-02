@@ -12,6 +12,16 @@
 #include <pthread.h>
 #endif
 
+#if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT)
+/* TinyCC has no thread-local storage: the state of a thread hangs on a key of pthreads instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */
+#define FIRE_TLS_STRUCT 1
+static pthread_key_t fire_tlsKey;
+static pthread_once_t fire_tlsOnce = PTHREAD_ONCE_INIT;
+static void fire_tlsMakeKey(void) { pthread_key_create(&fire_tlsKey, NULL); }
+static inline void* fire_tls_get(void) { pthread_once(&fire_tlsOnce, fire_tlsMakeKey); return pthread_getspecific(fire_tlsKey); }
+static inline void fire_tls_set(void* p) { pthread_once(&fire_tlsOnce, fire_tlsMakeKey); pthread_setspecific(fire_tlsKey, p); }
+#endif
+
 static inline int64_t fire_plat_nowMs(void) {
     struct timespec t;
     clock_gettime(CLOCK_MONOTONIC, &t);

@@ -37,6 +37,8 @@ namespace fire.Projects
 
         /// <summary>Files and patterns relative to the project file, in this order; not set: everything in `native/` - the headers first.</summary>
         public List<string>? Sources { get; set; }
+        /// <summary>`c` or `c++` (the default), see PackageNative.Language.</summary>
+        public string? Language { get; set; }
         /// <summary>More files for one platform or target (the key as in a package).</summary>
         public Dictionary<string, List<string>>? PlatformSources { get; set; }
         public List<string>? Platforms { get; set; }

@@ -11,7 +11,7 @@ namespace fire.Native
     public sealed class ToolchainDef
     {
         public string? Extends { get; set; }
-        /// <summary><c>gcc</c>, <c>clang</c>, <c>msvc</c>, <c>custom</c> or <c>files</c>.</summary>
+        /// <summary><c>gcc</c>, <c>clang</c>, <c>msvc</c>, <c>tcc</c> (TinyCC, C only), <c>custom</c> or <c>files</c>.</summary>
         public string? Kind { get; set; }
         /// <summary>The compiler: a name on the PATH or a full path (default by kind: <c>g++</c>, <c>clang++</c>, <c>cl</c>).</summary>
         public string? Compiler { get; set; }
@@ -47,6 +47,9 @@ namespace fire.Native
             // Emscripten (emsdk): C++ to WebAssembly. -fexceptions: fire exceptions are C++ exceptions, which Emscripten leaves off by default. ASYNCIFY lets `Sleep` and the window loop hand the thread back to the browser; SINGLE_FILE puts the .wasm into the page, so that the
             // .html opens as it is (also from a folder, without a web server).
             ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
+            // TinyCC: a small, fast C compiler - enough for programs whose packages are all in C (it compiles no C++: a program with natives in C++ needs one of the
+            // others). -w: tcc warns about every call of a function that does not return (it does not know the attribute).
+            ["tcc"] = new() { Kind = "tcc", Compiler = "tcc", CCompiler = "tcc", CStd = "c11", Optimization = "-O2", Args = new() { "-w" } },
             ["files"] = new() { Kind = "files", Layout = "flat" },
             ["esp-idf"] = new() { Kind = "files", Layout = "idf-component" },
         };
@@ -65,7 +68,10 @@ namespace fire.Native
         }
 
         /// <summary>The compiler to run (the default of the kind when none is named).</summary>
-        public string EffectiveCompiler => Compiler ?? EffectiveKind switch { "clang" => "clang++", "msvc" => "cl", "emscripten" => "em++", _ => "g++" };
+        public string EffectiveCompiler => Compiler ?? EffectiveKind switch { "clang" => "clang++", "msvc" => "cl", "emscripten" => "em++", "tcc" => "tcc", _ => "g++" };
+
+        /// <summary>Whether the toolchain compiles C++ too (TinyCC does not).</summary>
+        public bool CompilesCpp => EffectiveKind != "tcc";
 
         /// <summary>The C compiler to run: <see cref="CCompiler"/>, or the one that belongs to the C++ compiler (same folder, same prefix: <c>x86_64-w64-mingw32-g++</c> ->
         /// <c>x86_64-w64-mingw32-gcc</c>).</summary>

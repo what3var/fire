@@ -175,12 +175,27 @@ namespace fire.Compiler
         {
             if (nativesFile == null || toolchain.EffectiveKind == "custom")
                 return new[] { CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile) };
+            if (!toolchain.CompilesCpp)
+                throw new NativeConfigException($"The program uses natives in C++ ({NativesInCpp(nativesFile)}): the toolchain '{toolchain.EffectiveKind}' compiles only C. Build it with gcc, clang or msvc (--toolchain).");
             string obj = Path.Combine(workDir, toolchain.EffectiveKind == "msvc" ? "fire_program.obj" : "fire_program.o");
             return new[]
             {
                 CompilerCommand(toolchain, target, cFile, workDir, obj, gui: gui, language: "c", compileOnly: true),
                 CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: new[] { obj }, programFile: cFile),
             };
+        }
+
+        /// <summary>What the natives in C++ of a program come from (the packages and bridges named in the file), for a message.</summary>
+        private static string NativesInCpp(string nativesFile)
+        {
+            try
+            {
+                var names = File.ReadLines(nativesFile).Where(l => l.StartsWith("// ---- package ", StringComparison.Ordinal))
+                    .Select(l => l.Substring("// ---- package ".Length).Split(' ')[0]).Distinct().ToList();
+                if (File.ReadAllText(nativesFile).Contains("fire_bridge_graphics")) names.Insert(0, "graphics");
+                return names.Count > 0 ? string.Join(", ", names) : "a bridge of the compiler";
+            }
+            catch (IOException) { return "a bridge of the compiler"; }
         }
 
         /// <summary>The compiler command line for the generated file. <paramref name="language"/>: "c++" (the C++ compiler; a library for the VM, the natives) or "c" (the C
@@ -245,14 +260,15 @@ namespace fire.Compiler
             }
             else
             {
-                bool small = IsSizeProfile(toolchain.Optimization);
+                bool tcc = kind == "tcc";
+                bool small = IsSizeProfile(toolchain.Optimization) && !tcc;   // (TinyCC keeps every function anyway: no sections to drop)
                 args.Append($"-std={std} {(small ? "-Os -ffunction-sections -fdata-sections" : toolchain.Optimization ?? "-O2")} ");
                 if (compileOnly) args.Append("-c ");
                 // a library for the VM carries its C++ runtime (MinGW: no libgcc/libstdc++ DLLs next to it), so that it also runs on a machine without the toolchain
-                if (sharedLibrary) args.Append(RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
+                if (sharedLibrary) args.Append(tcc ? "-shared " : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-dynamiclib -fPIC " : RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "-shared -static-libgcc -static-libstdc++ " : "-shared -fPIC ");
                 foreach (string a in toolchain.Args ?? new()) args.Append(a).Append(' ');
                 foreach (string a in target.Native.CompileArgs) args.Append(a).Append(' ');
-                if (gui && !sharedLibrary && target.Name == "windows") args.Append("-mwindows ");   // no console window; MinGW's startup code still calls main
+                if (gui && !sharedLibrary && target.Name == "windows") args.Append(tcc ? "-Wl,-subsystem=windows " : "-mwindows ");   // no console window; the startup code still calls main
                 args.Append($"\"{cppFile}\" ");
                 foreach (string input in extraInputs ?? Array.Empty<string>()) args.Append($"\"{input}\" ");
                 args.Append($"-I\"{includeDir}\" ");

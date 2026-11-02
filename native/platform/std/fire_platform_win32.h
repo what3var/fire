@@ -18,6 +18,21 @@
 #include <wchar.h>
 #include "fire_platform_c.h"
 
+#if defined(FIRE_THREADS) && defined(__TINYC__) && !defined(FIRE_TLS_STRUCT)
+/* TinyCC has no thread-local storage: the state of a thread hangs on a TLS slot of Windows instead (fire_rt.h: FIRE_TLS_STRUCT, fire_tl()) */
+#define FIRE_TLS_STRUCT 1
+static DWORD fire_tlsSlot = TLS_OUT_OF_INDEXES;
+static inline DWORD fire_tlsIndex(void) {
+    if (fire_tlsSlot == TLS_OUT_OF_INDEXES) {
+        DWORD slot = TlsAlloc();
+        if (InterlockedCompareExchange((volatile LONG*)&fire_tlsSlot, (LONG)slot, (LONG)TLS_OUT_OF_INDEXES) != (LONG)TLS_OUT_OF_INDEXES) TlsFree(slot);
+    }
+    return fire_tlsSlot;
+}
+static inline void* fire_tls_get(void) { return TlsGetValue(fire_tlsIndex()); }
+static inline void fire_tls_set(void* p) { TlsSetValue(fire_tlsIndex(), p); }
+#endif
+
 static inline int64_t fire_plat_nowMs(void) {
     LARGE_INTEGER count, frequency;
     QueryPerformanceCounter(&count);

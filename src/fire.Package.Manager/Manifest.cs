@@ -95,10 +95,11 @@ namespace fire.Package.Manager
                     if (native.Sources.Count == 0 && native.PlatformSources.Count == 0 && native.Libraries.Count == 0) problems.Add(where + "'native' needs at least one file in 'sources' (or in 'platformSources' or 'libraries').");
                     foreach (var src in native.Sources.Concat(native.PlatformSources.Values.SelectMany(l => l)).Concat(native.Libraries.Values))
                         if (fileExists != null && !fileExists(src)) problems.Add(where + $"the file '{src}' does not exist.");
+                    if (native.Language is not (null or "c" or "c++")) problems.Add(where + $"'native.language' is '{native.Language}' (c or c++).");
                     var functions = new HashSet<string>();
                     foreach (var fn in native.Functions)
                     {
-                        if (string.IsNullOrWhiteSpace(fn.Name) || string.IsNullOrWhiteSpace(fn.Cpp)) problems.Add(where + "a native function needs 'name' and 'cpp'.");
+                        if (string.IsNullOrWhiteSpace(fn.Name) || string.IsNullOrWhiteSpace(fn.Symbol)) problems.Add(where + $"a native function needs 'name' and '{(native.IsC ? "c" : "cpp")}'.");
                         else if (!functions.Add(fn.Name)) problems.Add(where + $"the native function '{fn.Name}' is declared twice.");
                         if (fn.Arguments < 0 || fn.Arguments > 16) problems.Add(where + $"the native function '{fn.Name}' takes {fn.Arguments} arguments (0-16).");
                     }
@@ -133,6 +134,11 @@ namespace fire.Package.Manager
     /// way to run C++: calling such a native there is an error that says so; a prelude that has no natives works in both.</summary>
     public sealed class PackageNative
     {
+        /// <summary>The language of the sources: `c` (put into the generated program itself - a C compiler such as TinyCC is enough, also on a platform without C++) or `c++`
+        /// (the default: a file of its own, built with a C++ compiler). The functions of a C package are plain C functions (`Value io_Read(Value a, ...)`, named by `c`).</summary>
+        public string? Language { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsC => Language == "c";
         public List<string> Sources { get; set; } = new();
         /// <summary>More source files for one platform or target: the key is the platform package (`posix`, `windows`, `freertos`, `esp32`, ...) or the name of the target
         /// (`linux`, `macos`, `esp32`, ...); they come before <see cref="Sources"/> in builds for it, so that the common code can use what they declare. The same code can use `FIRE_TARGET_&lt;NAME&gt;` and `FIRE_HAL_&lt;PLATFORM&gt;`.</summary>
@@ -195,8 +201,13 @@ namespace fire.Package.Manager
         /// <summary>The name that fire code calls (the prelude of the package, or a script directly).</summary>
         public string Name { get; set; } = "";
         public int Arguments { get; set; }
-        /// <summary>The C++ function: `Value cpp(Value a, Value b)`.</summary>
+        /// <summary>The C++ function: `Value cpp(Value a, Value b)` (a package in C++).</summary>
         public string Cpp { get; set; } = "";
+        /// <summary>The C function: `Value c(Value a, Value b)` (a package in C, `"language": "c"`).</summary>
+        public string? C { get; set; }
+        /// <summary>The function the native is: <see cref="C"/> or <see cref="Cpp"/>.</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public string Symbol => !string.IsNullOrEmpty(C) ? C! : Cpp;
         /// <summary>The function gets the list of the scope (`OwnList* list`) as its last argument: what it allocates for its result (arrays, buffers) belongs to the caller.</summary>
         public bool NeedsList { get; set; }
         /// <summary>The result can be an object, array or buffer that has to be adopted (set it with `NeedsList`).</summary>
