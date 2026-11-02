@@ -25,7 +25,7 @@
 #define MyAppAssoc5Name "fire circuit"
 #define MyAppAssoc5Ext ".biscuit"
 #define MyAppAssoc5Key StringChange(MyAppAssoc5Name, " ", "") + MyAppAssoc5Ext
-#define MyAppAssoc6Name "fire xmd"
+#define MyAppAssoc6Name "fire canvas"
 #define MyAppAssoc6Ext ".xmd"
 #define MyAppAssoc6Key StringChange(MyAppAssoc6Name, " ", "") + MyAppAssoc6Ext
 
@@ -117,7 +117,7 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Ext}\OpenWithProgids"; ValueTy
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc5Name}"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconBiscuit}"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
-; xmd
+; xmd (canvas: extended Markdown, docs/NOTES.md)
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc6Key}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc6Name}"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFire}"
