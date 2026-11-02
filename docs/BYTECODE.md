@@ -1248,7 +1248,7 @@ vermerkt statt umgesetzt):
 
 ## 23. IO-Bridge (`#import "io"`) und zwei Sprachänderungen dazu
 
-> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C++ von `packages/io/native/fire_bridge_io.hpp`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
+> **Stand:** `io` ist inzwischen ein Paket (`fire-io`): die Natives sind das C von `packages/io/native/fire_bridge_io.h`, die VM führt sie in einer Shared Library über die Paket-ABI aus (docs/PACKAGE_NATIVES.md); `IoPolicy` und `IoStdio` bleiben die Entscheidung des Hosts und werden der Bibliothek über `fire_host` (Callbacks, `PackageHost` in fire.Runtime) gegeben. Das Projekt `fire.IO.Bridge` gibt es nicht mehr; der Text unten beschreibt die frühere C#-Bridge.
 
 `src/fire.IO.Bridge` (inzwischen ein Paket, s.u. und docs/PACKAGE_NATIVES.md): dasselbe Muster wie `GraphicsBridge`/`DeviceBridge` - `IoBridge.RegisterAll`
 (echt) / `RegisterStubs` (nur Namen, für Linker und Live-Diagnostik über `ImportedPreludes`),
@@ -1814,7 +1814,7 @@ diesen Zuständen in lokalen Variablen (nur für die häufigen Instruktionen, al
 
 - **Empfangspuffer (`ReceiveBuffer`).** Die Brücke hält je Gerät die empfangenen Pakete in der Reihenfolge ihres Eintreffens. `ReadString`/`Read` holen das nächste Paket (nach einem `WaitFor` den Rest des angebrochenen), `TryConsumeThrough(muster)`
   sucht die Bytefolge über die Paketgrenzen hinweg und schneidet hinter dem ersten Treffer ab. `IDevice.Write(byte[])` (neu, neben `SendCommand(string)`) schreibt rohe Bytes; `LoopbackDevice` echot sie wie Befehle.
-- **Stand:** `devices` ist inzwischen ein Paket (`fire-devices`): C++ (`fire_bridge_devices.hpp`) in einer Bibliothek, die Geräte kommen vom Geräte-Manager des Hosts (`dev_*` in `fire_host`, `PackageHost.Devices.cs`); `WaitFor*` läuft als Host-Funktion (`DeviceHostNatives`, `VM.WaitUntil`) und fragt die Bibliothek je Schritt (`__DEVWaitStep`). Der folgende Text beschreibt die frühere C#-Bridge.
+- **Stand:** `devices` ist inzwischen ein Paket (`fire-devices`): C (`fire_bridge_devices.h`) in einer Bibliothek, die Geräte kommen vom Geräte-Manager des Hosts (`dev_*` in `fire_host`, `PackageHost.Devices.cs`); `WaitFor*` läuft als Host-Funktion (`DeviceHostNatives`, `VM.WaitUntil`) und fragt die Bibliothek je Schritt (`__DEVWaitStep`). Der folgende Text beschreibt die frühere C#-Bridge.
 - **Warten ohne taub zu sein.** `WaitFor*` ist KEIN blockierender nativer Aufruf: die Brücke bekommt vom Host eine `WaitUntilFunction` (`DeviceBridge.RegisterAll(..., waitUntil)`, die Sitzungen übergeben `VM.WaitUntil`), die in kurzen Stücken wartet und dazwischen
   `PollSignalsAfterOp` ausführt (wie `Sleep`): `leave`/`terminate` beenden das Warten sofort, die Warteschlange des Hauptprogramms läuft. Ohne Host (Tests der Brücke) wird gepollt. Die Zeitangabe versteht `TimeNatives.TryTimeTicks` (TimeSpan, Zeitwert, Millisekunden).
 - **`#timeout`.** `Parser` -> `TimeoutDirective(Expr)`, `Compiler.Compile` emittiert den Ausdruck und `SetTimeout` am Programmanfang (nach `SetAutoSync`), die VM setzt `VM.DefaultTimeout` (statisch, damit Fire-Threads es sehen; der VM-Konstruktor eines Hauptprogramms setzt es auf 30 s zurück).

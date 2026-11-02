@@ -62,6 +62,9 @@ namespace fire.Editor
         /// for display in completion.</summary>
         public string? Signature { get; init; }
 
+        /// <summary>The names of the parameters of a method or constructor (named arguments, `f(size: 2)`).</summary>
+        public IReadOnlyList<string> ParamNames { get; init; } = Array.Empty<string>();
+
         /// <summary>Name of the class that declares this member.</summary>
         public string Owner { get; internal set; } = string.Empty;
 
@@ -764,10 +767,12 @@ namespace fire.Editor
                     if (parenAt < bodyEnd && _tokens[parenAt].Type == TokenType.LParen)
                     {
                         int paramCount = CountParams(parenAt);
+                        var ctorParams = ReadParamList(parenAt, out _);
                         AddMember(info, new MemberInfo(className, MemberKind.Constructor, paramCount, DeclLineOf(_tokens[i]))
                         {
                             Access = access,
-                            Signature = FormatSignature(ReadParamList(parenAt, out _)),
+                            Signature = FormatSignature(ctorParams),
+                            ParamNames = ctorParams.Select(p => p.Name).ToList(),
                         });
                     }
                     i = SkipToNextMemberAfterBody(i, bodyEnd);
@@ -913,6 +918,7 @@ namespace fire.Editor
                     IsStatic = isStatic,
                     Access = access,
                     Signature = FormatSignature(parms),
+                    ParamNames = parms.Select(p => p.Name).ToList(),
                     BodyStart = bodyClose >= 0 ? bodyOpen : -1,
                     BodyEnd = bodyClose,
                 });

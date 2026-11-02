@@ -75,7 +75,7 @@ namespace UI {
         }
 
         bool Holds(Element owner) {
-            for (var i = 0; i < this.conditions.count; i = i + 1) {
+            for (var i = 0; i < this.conditions.Count; i = i + 1) {
                 if (!this.conditions[i].Holds(owner)) { return false }
             }
             return true
@@ -108,7 +108,7 @@ namespace UI {
 
         undefined Activate(Element owner) {
             this.active = true
-            for (var i = 0; i < this.trigger.setters.count; i = i + 1) {
+            for (var i = 0; i < this.trigger.setters.Count; i = i + 1) {
                 var setter = this.trigger.setters[i]
                 var element = setter.Find(owner)
                 if (element == undefined) { continue }
@@ -124,13 +124,13 @@ namespace UI {
         }
 
         undefined Deactivate() {
-            var i = this.saved.count - 1
+            var i = this.saved.Count - 1
             while (i >= 0) {
                 var s = this.saved[i]
                 Reflect.Set(s.element, s.property, s.value)
                 i = i - 1
             }
-            for (var j = 0; j < this.saved.count; j = j + 1) { delete this.saved[j] }
+            for (var j = 0; j < this.saved.Count; j = j + 1) { delete this.saved[j] }
             this.saved.Clear()
             this.active = false
         }
@@ -166,8 +166,8 @@ namespace UI {
         // Apply the setters and register the triggers with the element (first those of the base style).
         undefined Apply(Element owner) {
             if (this.basedOn != undefined) { this.basedOn.Apply(owner) }
-            for (var i = 0; i < this.setters.count; i = i + 1) { this.setters[i].Apply(owner) }
-            for (var j = 0; j < this.triggers.count; j = j + 1) { owner.AddTrigger(this.triggers[j]) }
+            for (var i = 0; i < this.setters.Count; i = i + 1) { this.setters[i].Apply(owner) }
+            for (var j = 0; j < this.triggers.Count; j = j + 1) { owner.AddTrigger(this.triggers[j]) }
         }
     }
 
@@ -290,7 +290,7 @@ namespace UI {
         }
 
         int IndexOf(string key) {
-            for (var i = 0; i < this.keys.count; i = i + 1) {
+            for (var i = 0; i < this.keys.Count; i = i + 1) {
                 if (this.keys[i] == key) { return i }
             }
             return -1
@@ -320,7 +320,7 @@ namespace UI {
         // An implicit style: applies to all elements with the style key `style.target` below it.
         undefined AddStyle(Style style) {
             style.TakeTo(this)
-            for (var i = 0; i < this.styles.count; i = i + 1) {
+            for (var i = 0; i < this.styles.Count; i = i + 1) {
                 if (this.styles[i].target == style.target) {
                     this.styles[i] = style
                     return
@@ -330,7 +330,7 @@ namespace UI {
         }
 
         UI.Style FindStyle(string key) {
-            for (var i = 0; i < this.styles.count; i = i + 1) {
+            for (var i = 0; i < this.styles.Count; i = i + 1) {
                 if (this.styles[i].target == key) { return this.styles[i] }
             }
             return undefined
@@ -338,7 +338,7 @@ namespace UI {
 
         // Takes over the entries and styles of another dictionary (it must live as long as this one).
         undefined Merge(any other) {
-            for (var i = 0; i < other.keys.count; i = i + 1) {
+            for (var i = 0; i < other.keys.Count; i = i + 1) {
                 var key = other.keys[i]
                 var at = this.IndexOf(key)
                 if (at >= 0) { this.values[at] = other.values[i] }
@@ -347,10 +347,10 @@ namespace UI {
                     this.values.Add(other.values[i])
                 }
             }
-            for (var j = 0; j < other.styles.count; j = j + 1) {
+            for (var j = 0; j < other.styles.Count; j = j + 1) {
                 var style = other.styles[j]
                 var found = false
-                for (var k = 0; k < this.styles.count; k = k + 1) {
+                for (var k = 0; k < this.styles.Count; k = k + 1) {
                     if (this.styles[k].target == style.target) {
                         this.styles[k] = style
                         found = true

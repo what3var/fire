@@ -1130,7 +1130,8 @@ unsafe {
 }
 """;
 
-try
+if (!OperatingSystem.IsWindows()) Console.WriteLine("(übersprungen: nur unter Windows)");
+else try
 {
     var natives = NativeRegistry.CreateDefault();
     var externs = ExternRegistry.CreateWinApiDemo();
@@ -1315,6 +1316,36 @@ try
 catch (Exception ex) when (ex is ParseException or ResolverException or NotSupportedException or PreprocessorException)
 {
     Console.WriteLine($"FEHLER: {ex.Message}");
+}
+
+Console.WriteLine();
+Console.WriteLine("=== #include: relativ zur Datei, die es enthaelt; jede Datei nur einmal (auch eine Datei des Programms) ===");
+{
+    // a/lib/l.fire includes helper.fire (next to it); b/y.fire includes ../a/lib/l.fire and ../a/x.fire, which is a file of the program itself and includes lib/l.fire too;
+    // forge runs from a third folder: every path is relative to the file that has the #include, nothing is inserted twice
+    string root = Path.Combine(Path.GetTempPath(), "fire-include-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(root, "a", "lib"));
+    Directory.CreateDirectory(Path.Combine(root, "b"));
+    Directory.CreateDirectory(Path.Combine(root, "elsewhere"));
+    File.WriteAllText(Path.Combine(root, "a", "lib", "l.fire"), "#include \"helper.fire\"\nclass L { static string Name() { return \"L \" + H.Name() } }\n");
+    File.WriteAllText(Path.Combine(root, "a", "lib", "helper.fire"), "class H { static string Name() { return \"H\" } }\n");
+    File.WriteAllText(Path.Combine(root, "a", "x.fire"), "#include \"lib/l.fire\"\nclass X { static string Name() { return \"X\" } }\n");
+    File.WriteAllText(Path.Combine(root, "b", "y.fire"), "#include \"../a/lib/l.fire\"\n#include \"../a/x.fire\"\nprint(L.Name() + \" \" + X.Name())\n");
+    string oldDir = Directory.GetCurrentDirectory();
+    var oldOut = Console.Out;
+    var captured = new StringWriter();
+    var err = new StringWriter();
+    int code;
+    try
+    {
+        Directory.SetCurrentDirectory(Path.Combine(root, "elsewhere"));
+        Console.SetOut(captured);
+        code = fire.Compiler.CommandLineRunner.Run(new[] { "run", Path.Combine("..", "a", "x.fire"), Path.Combine("..", "b", "y.fire") }, captured, err);
+    }
+    finally { Console.SetOut(oldOut); Directory.SetCurrentDirectory(oldDir); }
+    bool includeOk = code == 0 && captured.ToString().Trim() == "L H X";
+    Console.WriteLine(includeOk ? "OK: #include relativ zur Datei (verschachtelt, aus einem anderen Ordner), jede Datei einmal" : $"FEHLER: #include relativ zur Datei: Exitcode {code}, Ausgabe '{captured}', Fehler '{err}'");
+    try { Directory.Delete(root, true); } catch (IOException) { }
 }
 
 Console.WriteLine();
@@ -1506,8 +1537,8 @@ print(Status.Paused)
 print(Status.Done)
 
 var c = Color.Green
-if (c is of int) {
-    print("Color.Green ist (wie erwartet) ein int")
+if (c is of Color && !(c is of int)) {
+    print("Color.Green ist (wie erwartet) ein Color, kein int")
 }
 """;
 
@@ -1518,7 +1549,7 @@ try
     var resolveResult = Resolver.Resolve(program, natives.Names);
     var compiled = Compiler.Compile(program, resolveResult, natives);
 
-    Console.WriteLine("Ausgabe (erwartet: 0/1/2/10/11/20/21/\"Color.Green ist (wie erwartet) ein int\"):");
+    Console.WriteLine("Ausgabe (erwartet: Red/Green/Blue/Active/Inactive/Paused/Done/\"Color.Green ist (wie erwartet) ein Color, kein int\"):");
     var vmGlobalScope = new Scope(null, isGlobal: true);
     var vm = new VM(compiled.TopLevel, vmGlobalScope, natives, compiled.Classes);
     vm.Run();
@@ -5251,6 +5282,12 @@ Console.WriteLine("=== Editor-Vervollständigung: Klassen-Mitglieder werden übe
     }
 
     CheckCompletion("typisierte Variable", classes + "Dog d = new Dog(\"a\")\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
+    // named arguments: at the start of an argument the parameters of the callee as `name: ` (those already named left out)
+    const string namedDecl = "class W { static int F(int size, bool open = false) { return size }\n construct(int width, int height = 1) { } }\n";
+    CheckCompletion("benannte Argumente: statische Methode", classes + namedDecl + "W.F(1, |", "size: ,open: ");
+    CheckCompletion("benannte Argumente: schon benannte fehlen", classes + namedDecl + "W.F(open: true, |", "size: ", "open: ");
+    CheckCompletion("benannte Argumente: Konstruktor", classes + namedDecl + "var w = new W(|", "width: ,height: ");
+    CheckCompletion("benannte Argumente: nicht ausserhalb einer Argumentliste", classes + namedDecl + "var x = |", "", "size: ,width: ");
     CheckCompletion("typisierte Variable ohne Initialisierer", classes + "Dog d\nd.|", "Bark,Wag,tail,name,Speak", "Curl,Count,age,secret,Dog");
     // 'var x : unit' only fixes a unit, the type comes from the initialiser.
     CheckCompletion("var mit Einheit", classes + "var d : mm = new Dog(\"a\")\nd.|", "Bark,Wag", "Curl");
@@ -5499,9 +5536,9 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         print(IO.File.Exists(f) + " " + IO.File.Size(f))
         print(IO.File.ReadAllText(f))
         var lines = IO.File.ReadAllLines(f)
-        print(lines.count + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
+        print(lines.Count + " " + lines[0] + "|" + lines[1] + "|" + lines[2])
         IO.File.AppendAllText(f, "\nvierte\n")
-        print(IO.File.ReadAllLines(f).count)
+        print(IO.File.ReadAllLines(f).Count)
         IO.File.WriteAllLines(f, lines)
         print(IO.File.Size(f))
         print(IO.File.GetLastWriteTime(f).Year >= 2001)
@@ -5546,9 +5583,9 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         IO.File.WriteAllText(IO.Path.Combine(sub, "y.log"), "2")
         IO.File.WriteAllText(IO.Path.Combine(d, "a", "z.txt"), "3")
         var files = IO.Directory.GetFiles(sub)
-        print(files.count + " " + IO.Path.GetFileName(files[0]) + " " + IO.Path.GetFileName(files[1]))
-        print(IO.Directory.GetFiles(sub, "*.txt").count)
-        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).count)
+        print(files.Count + " " + IO.Path.GetFileName(files[0]) + " " + IO.Path.GetFileName(files[1]))
+        print(IO.Directory.GetFiles(sub, "*.txt").Count)
+        print(IO.Directory.GetFiles(IO.Path.Combine(d, "a"), "*.txt", true).Count)
         print(IO.Path.GetFileName(IO.Directory.GetDirectories(IO.Path.Combine(d, "a"))[0]))
         try { IO.Directory.Delete(IO.Path.Combine(d, "a")) } catch (IO.IOException e) { print("nicht leer") }
         IO.Directory.Delete(IO.Path.Combine(d, "a"), true)
@@ -5605,14 +5642,14 @@ Console.WriteLine("=== IO: Streams (FileStream, MemoryStream, eigene Streams) un
         var rd = IO.File.OpenText(f)
         print(rd.ReadAll())
         rd.Close()
-        print(IO.File.OpenText(f).ReadLines().count)
+        print(IO.File.OpenText(f).ReadLines().Count)
         var cw = IO.File.CreateText(f)
         cw.WriteLine("neu")
         cw.Close()
         var ap = IO.File.AppendText(f)
         ap.WriteLine("mehr")
         ap.Close()
-        print(IO.File.ReadAllLines(f).count)
+        print(IO.File.ReadAllLines(f).Count)
         """, new[] { "f:Grüße", "f:zwei 3", "f:", "f:ohne Ende", "Grüße\nzwei 3\n\nohne Ende!\n", "4", "2" });
 
     CheckIo("TextReader: CRLF, leere Zeilen, fremder Stream, lange Eingabe", """
@@ -6554,7 +6591,7 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         var q = 3
         l.Add(q)
         l.Add(5)
-        print(l.count + " " + q)
+        print(l.Count + " " + q)
         var c = new Counter()
         c.Add(q)
         print(q)
@@ -7436,7 +7473,8 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
         //    under a foreign name, so that it is not found via the normal search).
         if (OperatingSystem.IsLinux())
         {
-            var so = Directory.GetFiles(Path.Combine(baseDir, "runtimes", "linux-x64", "native"), "libSystem.IO.Ports.Native.so").FirstOrDefault();
+            var portsDir = Path.Combine(baseDir, "runtimes", "linux-x64", "native");
+            var so = Directory.Exists(portsDir) ? Directory.GetFiles(portsDir, "libSystem.IO.Ports.Native.so").FirstOrDefault() : null;
             if (so != null && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.X64)
             {
                 var loaderFile = Path.Combine(tmpDir, "loader.bin");
@@ -7617,7 +7655,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
                 "wasm: der Aufruf von em++ (Ausnahmen, ASYNCIFY, eine Datei, Ausgabe .html)");
             SfCheck(fire.Compiler.NativeBuilder.DefaultOutput(wasm) == "out.html", "wasm: die Standardausgabe ist out.html");
             string wasmCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#if wasm\nprint(\"browser\")\n#else\nprint(\"desktop\")\n#endif" }, null, null, VmExecutionMode.Release, null, wasm), wasm);
-            SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.hpp") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
+            SfCheck(wasmCpp.Contains("platform/wasm/fire_platform.h\"") && wasmCpp.Contains("\"browser\"") && !wasmCpp.Contains("\"desktop\""), "wasm: das erzeugte C++ nimmt die Plattform wasm, #if wasm gilt");
             string threadError = "";
             try { fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "fire { print(1) }" }, null, null, VmExecutionMode.Release, null, wasm), wasm); }
             catch (fire.Native.NativeNotSupportedException ex) { threadError = ex.Message; }
@@ -8970,8 +9008,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         slicer.flipY = false
         print(slicer.StepOver)
         var paths = slicer.Slice(mask)
-        print(paths.count)
-        var outline = paths[paths.count - 1]
+        print(paths.Count)
+        var outline = paths[paths.Count - 1]
         var minX = 1000.0
         var maxX = 0.0
         for (var i = 0; i < outline.Count(); i = i + 1) {
@@ -8980,9 +9018,9 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
         }
         print((outline.kind == PathKind.Outline) + " " + outline.closed + " " + (minX > 1.44 && minX < 1.56) + " " + (maxX > 10.44 && maxX < 10.56))
         slicer.strategy = FillStrategy.OutlineOnly
-        print(slicer.Slice(mask).count)
+        print(slicer.Slice(mask).Count)
         slicer.lineWidth = 50
-        print(slicer.Slice(mask).count)
+        print(slicer.Slice(mask).Count)
         try { var bad = new Slicer(0, 1) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
         slicer.overlap = 0.99
         try { slicer.Slice(mask) } catch (e) { print((e is of GraphicsException) + " " + e.message) }
@@ -9065,7 +9103,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
     const string everything = """
         try { var l = new Net.TcpListener("127.0.0.1", 0); print("listen ok " + (l.Port > 0)); l.Close() } catch (Net.PermissionException e) { print("listen denied " + e.code) }
         try { var u = new Net.UdpSocket("127.0.0.1", 0); print("udp ok"); u.Close() } catch (Net.PermissionException e) { print("udp denied " + e.code) }
-        try { print("resolve " + Net.Dns.Resolve("127.0.0.1").count) } catch (Net.PermissionException e) { print("resolve denied " + e.code) }
+        try { print("resolve " + Net.Dns.Resolve("127.0.0.1").Count) } catch (Net.PermissionException e) { print("resolve denied " + e.code) }
         try { var c = new Net.TcpClient("127.0.0.1", 9, 500); print("connected?") } catch (Net.PermissionException e) { print("connect denied " + e.code) } catch (Net.NetException e) { print("connect failed " + e.code) }
         try { var c = new Net.TcpClient("example.invalid", 80, 500); print("connected?") } catch (Net.PermissionException e) { print("outside denied " + e.code) } catch (Net.NetException e) { print("outside failed " + e.code) }
         """;
@@ -10233,7 +10271,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         lv.Add(new Person("Bob", 25))
         ui.Add(lv)
         ui.Draw()
-        print("Liste " + lb.SelectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.count)
+        print("Liste " + lb.SelectedIndex + " Leiste " + lb.scroller.Needed() + " Anzahl " + lb.Count)
         ui.MouseDown(1, 20, 25)
         ui.MouseUp(1, 20, 25)
         ui.Draw()
@@ -10268,7 +10306,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         cv.Filter = func (p) => p.age > 26
         cv.SortBy("age", true)
         cv.Update()
-        print("Sicht " + cv.count + " " + cv[0].name + " " + cv[1].name)
+        print("Sicht " + cv.Count + " " + cv[0].name + " " + cv[1].name)
         cv.MoveCurrentToFirst()
         cv.MoveCurrentToNext()
         print("aktuell " + cv.CurrentItem().name + " " + cv.MoveCurrentTo(5))
@@ -10281,7 +10319,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         names.SetView(new UI.CollectionView(lv.items))
         ui.Add(names)
         ui.Draw()
-        print("Anzeigeeigenschaft " + names.count + " " + names.ItemText(names.Rows()[1]))
+        print("Anzeigeeigenschaft " + names.Count + " " + names.ItemText(names.Rows()[1]))
         names.view.sortMember = "name"
         names.view.Invalidate()
         ui.Draw()
@@ -10302,11 +10340,11 @@ string[] uiDrawExpected = Array.Empty<string>();
         a.Expanded = true
         ui.Add(tv)
         ui.Draw()
-        print("sichtbar " + tv.visibleNodes.count)
+        print("sichtbar " + tv.visibleNodes.Count)
         ui.MouseDown(1, 32, 36)
         ui.MouseUp(1, 32, 36)
         ui.Draw()
-        print("Dogs aufgeklappt " + tv.visibleNodes.count + " " + d.Expanded + " ausgewaehlt " + (tv.selected == undefined))
+        print("Dogs aufgeklappt " + tv.visibleNodes.Count + " " + d.Expanded + " ausgewaehlt " + (tv.selected == undefined))
         ui.MouseDown(1, 80, 36)
         ui.MouseUp(1, 80, 36)
         ui.Draw()
@@ -10318,7 +10356,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Links zum Eltern " + tv.selected.Text)
         ui.KeyDown(1073741904, 0)
         ui.Draw()
-        print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.count)
+        print("Links klappt zu " + d.Expanded + " " + tv.visibleNodes.Count)
         ui.KeyDown(1073741903, 0)
         ui.KeyDown(1073741903, 0)
         print("Rechts klappt auf, dann zum Kind " + d.Expanded + " " + tv.selected.Text)
@@ -10326,7 +10364,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Pos1 " + tv.selected.Text + " Tiefe " + a.Depth() + " " + d.children[0].Depth())
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.count)
+        print("Enter klappt um " + a.Expanded + " " + tv.visibleNodes.Count)
         """, new[] { "sichtbar 4", "Dogs aufgeklappt 6 True ausgewaehlt True", "gewaehlt Dogs True", "Pfeil ab Fido", "Links zum Eltern Dogs", "Links klappt zu False 4", "Rechts klappt auf, dann zum Kind True Cats", "Pos1 Animals Tiefe 0 2", "Enter klappt um False 2" });
 
     CheckUi("Menues: MenuBar, Untermenue, Haken, gesperrte Zeile, Tastatur, Kontextmenue, Klick daneben", uiHead + """
@@ -10352,11 +10390,11 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
         ui.Draw()
-        print("offen " + ui.popups.count + " " + mb.openIndex)
+        print("offen " + ui.popups.Count + " " + mb.openIndex)
         // the pointer over the second title switches the menu
         ui.MouseMove(60, 5)
         ui.Draw()
-        print("gewechselt " + ui.popups.count + " " + mb.openIndex)
+        print("gewechselt " + ui.popups.Count + " " + mb.openIndex)
         // back to File, open submenu Recent via pointer
         ui.MouseMove(10, 5)
         ui.Draw()
@@ -10364,21 +10402,21 @@ string[] uiDrawExpected = Array.Empty<string>();
         var y = menu.RowTop(ui, 2) + 4
         ui.MouseMove(menu.ax + 10, y)
         ui.Draw()
-        print("Untermenue " + ui.popups.count)
+        print("Untermenue " + ui.popups.Count)
         var subMenu = ui.popups[1]
         var sx = subMenu.ax + 10
         var sy = subMenu.ay + 4
         ui.MouseDown(1, sx, sy)
         ui.MouseUp(1, sx, sy)
         ui.Draw()
-        print("gewaehlt " + cnt + " offen " + ui.popups.count)
+        print("gewaehlt " + cnt + " offen " + ui.popups.Count)
         // keyboard: Enter on New
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
         ui.Draw()
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(13, 0)
-        print("Tastatur " + cnt + " offen " + ui.popups.count)
+        print("Tastatur " + cnt + " offen " + ui.popups.Count)
         // check mark and disabled row
         ui.MouseDown(1, 10, 5)
         ui.MouseUp(1, 10, 5)
@@ -10397,9 +10435,9 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(1, dx, dy)
         ui.MouseUp(1, dx, dy)
         ui.Draw()
-        print("Haken " + chk.IsChecked + " gesperrt " + cnt + " offen " + ui.popups.count)
+        print("Haken " + chk.IsChecked + " gesperrt " + cnt + " offen " + ui.popups.Count)
         ui.KeyDown(27, 0)
-        print("Escape " + ui.popups.count)
+        print("Escape " + ui.popups.Count)
         // Kontextmenue
         var cm = new List()
         cm.Add(new UI.MenuItem("Copy", func () => { cnt = cnt + 5 }))
@@ -10411,18 +10449,18 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseDown(3, 155, 155)
         ui.MouseUp(3, 155, 155)
         ui.Draw()
-        print("Kontextmenue " + ui.popups.count)
+        print("Kontextmenue " + ui.popups.Count)
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(1073741905, 0)
         ui.KeyDown(13, 0)
-        print("Paste " + cnt + " " + ui.popups.count)
+        print("Paste " + cnt + " " + ui.popups.Count)
         ui.MouseDown(3, 155, 155)
         ui.MouseUp(3, 155, 155)
         ui.Draw()
         ui.MouseDown(1, 5, 190)
         ui.MouseUp(1, 5, 190)
         ui.Draw()
-        print("Klick daneben " + ui.popups.count)
+        print("Klick daneben " + ui.popups.Count)
         """, new[] { "Leiste 320x22", "offen 1 0", "gewechselt 1 1", "Untermenue 2", "gewaehlt 10 offen 0", "Tastatur 11 offen 0", "Haken True gesperrt 11 offen 1", "Escape 0", "Kontextmenue 1", "Paste 61 0", "Klick daneben 0" });
 
     CheckUi("RadioButtons, AutoSuggestBox, ToolBar und Image (alle Dehnungsarten)", uiHead + """
@@ -10459,25 +10497,25 @@ string[] uiDrawExpected = Array.Empty<string>();
         ui.MouseUp(1, 160, 20)
         ui.TextInput("ap")
         ui.Draw()
-        print("Vorschlaege " + ui.popups.count + " " + asb.popupList.count)
+        print("Vorschlaege " + ui.popups.Count + " " + asb.popupList.Count)
         ui.KeyDown(1073741905, 0)
         ui.Draw()
         print("Auswahl " + asb.popupList.SelectedIndex)
         ui.KeyDown(13, 0)
         ui.Draw()
-        print("uebernommen " + asb.Text + " " + ui.popups.count + " " + asb.TakeChosen() + " " + asb.chosenItem)
+        print("uebernommen " + asb.Text + " " + ui.popups.Count + " " + asb.TakeChosen() + " " + asb.chosenItem)
         asb.SetText("")
         ui.TextInput("B")
         ui.Draw()
-        print("ohne Gross/Klein " + asb.popupList.count)
+        print("ohne Gross/Klein " + asb.popupList.Count)
         ui.MouseDown(1, 160, 10 + 24 + 12)
         ui.MouseUp(1, 160, 10 + 24 + 12)
         ui.Draw()
-        print("Klick auf Vorschlag " + asb.Text + " " + ui.popups.count)
+        print("Klick auf Vorschlag " + asb.Text + " " + ui.popups.Count)
         asb.SetText("")
         ui.TextInput("x")
         ui.Draw()
-        print("kein Treffer " + ui.popups.count)
+        print("kein Treffer " + ui.popups.Count)
         asb.provider = func (text) => {
             var l = new List()
             l.Add(text + "1")
@@ -10486,13 +10524,13 @@ string[] uiDrawExpected = Array.Empty<string>();
         }
         ui.TextInput("y")
         ui.Draw()
-        print("Anbieter " + asb.popupList.count + " " + asb.popupList.Rows()[1])
+        print("Anbieter " + asb.popupList.Count + " " + asb.popupList.Rows()[1])
         ui.KeyDown(27, 0)
-        print("Escape " + ui.popups.count)
+        print("Escape " + ui.popups.Count)
         ui.MouseDown(1, 20, 125)
         ui.MouseUp(1, 20, 125)
         ui.Draw()
-        print("Leiste " + clicks + " " + tb.children.count)
+        print("Leiste " + clicks + " " + tb.children.Count)
         var img = new Framebuffer(16, 16)
         var ir = new Renderer(img)
         ir.FillRect(0, 0, 16, 16, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
@@ -10549,7 +10587,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         print("Rechteck " + (Px.Get(ui.renderer, 30, 30) == r.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 10) == r.Stroke.Color) + " " + (Px.Get(ui.renderer, 9, 9) == ui.theme.back.Color))
         print("Ellipse " + (Px.Get(ui.renderer, 110, 30) == e.Fill.Color) + " " + (Px.Get(ui.renderer, 81, 11) == ui.theme.back.Color))
         print("Strecke " + (Px.Get(ui.renderer, 150, 10) == l.Stroke.Color) + " " + (Px.Get(ui.renderer, 200, 40) == l.Stroke.Color) + " " + lc.children[0].actualWidth + "x" + lc.children[0].actualHeight)
-        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.Stroke.Color) + " " + p.data.figures.count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
+        print("Pfad " + p.actualWidth + "x" + p.actualHeight + " " + (Px.Get(ui.renderer, 30, 90) == p.Fill.Color) + " " + (Px.Get(ui.renderer, 10, 70) == p.Stroke.Color) + " " + p.data.figures.Count + " " + p.data.figures[0].Count() + " " + p.data.figures[0].closed)
         print("Kurve " + (Px.Get(ui.renderer, 105, 90) == p2.Fill.Color) + " " + p2.data.figures[0].closed + " " + p2.actualWidth + "x" + p2.actualHeight)
         print("Ellipse-Pfad " + g.figures[0].Count() + " " + p3.actualWidth + "x" + p3.actualHeight + " " + (Px.Get(ui.renderer, 150 + 30, 70 + 30) == ui.theme.back.Color))
         var dc = new UI.DrawingCanvas(10, 150, 120, 40)
@@ -10600,7 +10638,7 @@ string[] uiDrawExpected = Array.Empty<string>();
         lb.Add("three")
         ui.Add(lb)
         ui.Draw()
-        print("Vorlagenzeilen " + lb.rowElements.count + " " + lb.rowElements[1].children.count + " " + lb.rowElements[1].children[1].Text)
+        print("Vorlagenzeilen " + lb.rowElements.Count + " " + lb.rowElements[1].children.Count + " " + lb.rowElements[1].children[1].Text)
         ui.renderer.SetClip(150, 20, 10, 10)
         ui.renderer.FillRect(100, 0, 100, 100, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
         ui.renderer.DrawText(148, 20, "AB", new SolidBrush(UI.Color.Rgb(0, 255, 0)))
@@ -10971,7 +11009,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 v.Attach(ui.content)
                 v.SetDataContext(new Item())
                 print(v.title.Text + " " + v.other.Text + " " + (v.title.Background is of SolidBrush))
-                print(v.names.ItemsSource.count + " " + v.names.ItemsSource[1])
+                print(v.names.ItemsSource.Count + " " + v.names.ItemsSource[1])
                 """, new[] { "FIRE xfire True", "2 it's" });
             File.WriteAllText(P("Amb.fxml"), """
                 <View Class="AmbView" namespace:m="Amb.A" namespace:x="Amb.B">
@@ -11068,7 +11106,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var app = new RichApp()
                 app.ui.Draw()
                 app.ui.Draw()
-                print("namen " + app.names.count + " baum " + app.tree.visibleNodes.count + " vorschlaege " + app.sugg.suggestions.count + " tabelle " + app.table.columns.count)
+                print("namen " + app.names.Count + " baum " + app.tree.visibleNodes.Count + " vorschlaege " + app.sugg.suggestions.Count + " tabelle " + app.table.columns.Count)
                 var n = app.names
                 app.ui.MouseDown(1, n.ax + 10, n.ay + 25)
                 app.ui.MouseUp(1, n.ax + 10, n.ay + 25)
@@ -11078,7 +11116,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.ui.MouseUp(1, app.one.ax + 5, app.one.ay + 5)
                 print("Stil " + (app.styled.Background != undefined) + " " + app.styled.Margin.left + " " + (app.styled.Style == app.fxStyle_Primary))
                 print("Vorlage " + (app.templated.templateRoot != undefined) + " " + app.templated.FindPart("txt").Text)
-                print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.count)
+                print("implizit " + (app.rect.Stroke != undefined) + " " + app.radio.SelectedIndex + " " + app.radio.items.Count)
                 app.bar.Open(app.ui, 0)
                 app.ui.Draw()
                 var menu = app.ui.popups[0]
@@ -11086,7 +11124,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 var my = menu.ay + 4
                 app.ui.MouseDown(1, mx, my)
                 app.ui.MouseUp(1, mx, my)
-                print("Menue " + app.ui.popups.count + " " + app.bar.menus.count)
+                print("Menue " + app.ui.popups.Count + " " + app.bar.menus.Count)
                 """, new[] { "paint 80x40 True", "namen 3 baum 3 vorschlaege 2 tabelle 2", "picked Bob", "down 5,6 1", "one", "Stil True 2 True", "Vorlage True Templated", "implizit True 1 2", "open", "Menue 0 2" });
 
             // the design view: the same library draws, without handlers and without the code of the program
@@ -11161,12 +11199,12 @@ string[] uiDrawExpected = Array.Empty<string>();
                 app.SetDataContext(m)
                 app.ui.Draw()
                 app.ui.Draw()
-                print("zeilen " + app.viaView.count + " " + app.direct.count + " " + app.young.count + " erste " + app.viaView.selectedItem)
+                print("zeilen " + app.viaView.Count + " " + app.direct.Count + " " + app.young.Count + " erste " + app.viaView.selectedItem)
                 print("zeile " + app.viaView.rowElements[0].children[0].Text + " " + app.viaView.rowElements[0].children[1].Text + " " + app.direct.rowElements[1].Text)
                 m.people.Add(new Person("Dave", 22))
                 m.names.Add("three")
                 app.ui.Draw()
-                print("mehr " + app.viaView.count + " " + app.direct.count + " jung " + app.young.count + " " + app.young.view[0].name)
+                print("mehr " + app.viaView.Count + " " + app.direct.Count + " jung " + app.young.Count + " " + app.young.view[0].name)
                 m.sel = 1
                 app.ui.Draw()
                 print("Auswahl " + app.viaView.SelectedIndex + " " + app.viaView.selectedItem.name)
@@ -11177,7 +11215,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 other.Add("x")
                 m.names = other
                 app.ui.Draw()
-                print("neue Liste " + app.direct.count + " " + app.ui.Update())
+                print("neue Liste " + app.direct.Count + " " + app.ui.Update())
                 """, new[] { "zeilen 3 2 1 erste undefined", "zeile CAROL 31 two", "mehr 4 3 jung 2 Dave", "Auswahl 1 Carol", "zurueck 3", "neue Liste 1 False" });
 
             // the design view shows the rows without knowing the data
@@ -11232,7 +11270,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 ui1.Add(new UI.Label("one", 5, 5))
                 ui1.Attach(ui2)
                 ui1.Attach(ui2)
-                print("angehaengt " + ui1.attached.count)
+                print("angehaengt " + ui1.attached.Count)
                 print(ui1.Tick())
                 print(ui1.Tick())
                 print("ticks " + ticks + " gezeichnet " + (Px.Get(ui2.renderer, 10, 10) == ui2.theme.face.Color))
@@ -11256,7 +11294,7 @@ string[] uiDrawExpected = Array.Empty<string>();
                 a.Open(t)
                 a.ui.Tick()
                 a.ui.Tick()
-                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.count)
+                print("ticks " + mainTicks + " " + toolTicks + " angehaengt " + a.ui.attached.Count)
                 t.l.Text = "changed"
                 print("Update " + t.ui.Update())
                 """, new[] { "ticks 2 2 angehaengt 1", "Update True" });
@@ -12109,7 +12147,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         print(fb.Width() + "x" + fb.Height())
         print(DateTime.Now.Year > 2000)
         print(Type.Of(fb).Name)
-        print(DeviceManager.Devices().count)
+        print(DeviceManager.Devices().Count)
         print(IO.File.Exists("/gibt/es/nicht"))
         var con = new Renderer(fb)
         con.AlphaBlending = false      // without blending the value including alpha 0 is simply copied
@@ -12289,12 +12327,17 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
     }
 
     {
-        // Without a breakpoint a program runs to the end in one go; a breakpoint in the FIRST line does not count at the start
+        // A breakpoint in the FIRST line stops at the start (like other debuggers: the prelude runs first, then the program enters line 1), nothing has run there yet;
+        // going on from there does not stop on the same line again, the program runs to the end
         VM.ResetTerminateForTests();
         var (session, lines) = BuildDbg("print(\"a\")\nprint(\"b\")\n", VmExecutionMode.Debug);
         var vm = session.VirtualMachine!;
-        bool stopped = vm.RunUntilBreakpoint(new HashSet<(int, int)> { (session.FirstUserSourceIndex, 1) }, () => false);
-        DbgCheck(!stopped && lines.SequenceEqual(new[] { "a", "b" }), "RunUntilBreakpoint: ein Haltepunkt auf der Startzeile haelt nicht sofort an, das Programm laeuft zu Ende");
+        var firstLine = new HashSet<(int, int)> { (session.FirstUserSourceIndex, 1) };
+        bool stopped = vm.RunUntilBreakpoint(firstLine, () => false);
+        bool atStart = stopped && vm.CurrentLine == 1 && lines.Count == 0;
+        bool again = vm.RunUntilBreakpoint(firstLine, () => false);
+        DbgCheck(atStart && !again && lines.SequenceEqual(new[] { "a", "b" }), "RunUntilBreakpoint: ein Haltepunkt auf der ersten Zeile haelt beim Start an (vor ihr), weiter laeuft das Programm zu Ende",
+            $"angehalten {stopped}, Zeile {vm.CurrentLine}, nochmal {again}, Ausgabe {string.Join("|", lines)}");
         VM.ResetTerminateForTests();
     }
 
@@ -12824,7 +12867,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
                 e.MoveNext()
                 print(e.GetCurrent() + " " + T.Count(arr))
                 print(arr.Where(x => x > 2).Select(x => x * 10).Join(","))
-                print(arr.OrderBy(x => x).ToList().count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
+                print(arr.OrderBy(x => x).ToList().Count + " " + arr.Sum() + " " + arr.Count(x => x > 2) + " " + arr.First() + " " + arr.Any(x => x > 7))
                 print(Linq.From(new Bag()).Select(x => x + 1).Join(","))
             }
         }
@@ -12967,7 +13010,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         class Thing : Circle, IThing { construct() : base(1.0) { } Ping() { return 1 } }
         var t = Type.Of("Thing")
         print(t.Base.Name + " " + t.Interfaces.length + " " + t.Interfaces[0])
-        print(t.Fields().count + " " + t.Properties().count + " " + t.Methods().count + " " + t.Constructors().count)
+        print(t.Fields().Count + " " + t.Properties().Count + " " + t.Methods().Count + " " + t.Constructors().Count)
         print(t.Has("radius") + " " + t.Has("nope") + " " + t.Find("Diameter").CanWrite + " " + t.Find("Area").IsMethod())
         print(t.IsSubclassOf(Type.Of("Shape")) + " " + Type.Of("Shape").IsSubclassOf(t) + " " + (Type.Named("Gibts") == undefined))
         """, new[] { "Circle 1 IThing", "5 1 6 1", "True False True True", "True False True" }, debugRelease);
@@ -13360,7 +13403,7 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
         T.Batch()
         print("batch done")
         var items = T.Items()
-        print(items.count + " " + items[2].n)
+        print(items.Count + " " + items[2].n)
         var ring = T.Ring()
         print(ring.next.next.n)
         T.Lost()
@@ -13515,9 +13558,9 @@ var devNativeCases = new List<(string Title, string Script, string[] Expected, s
           }
         }
         var l = F.Fill()
-        print(l.count + " " + l[2].n)
+        print(l.Count + " " + l[2].n)
         var l2 = F.FillChildren()
-        print(l2.count)
+        print(l2.Count)
         F.Local(0)
         print("end")
         """, new[] { "3 i2", "2", "True", "~x", "end", "~i0", "~i1", "~i2", "~c1", "~c2" });
@@ -15642,7 +15685,7 @@ else
             print(l[3])
             l[3] = 100
             print(l[3])
-            print(l.count)
+            print(l.Count)
             var names = new List(["x", "y", "z"])
             var joined = ""
             foreach (n in names) { joined = joined + n }
@@ -16529,7 +16572,7 @@ else
             var q = 3
             l.Add(q)
             l.Add(5)
-            print(l.count + " " + q)
+            print(l.Count + " " + q)
             var c = new Counter()
             c.Add(q)
             print(q)
@@ -16658,7 +16701,7 @@ else
             for (var i = 0; i < 40; i = i + 1) { l.Add(i) }
             var sum = 0
             foreach (v in l) { sum = sum + v }
-            print(sum + " " + l.count)
+            print(sum + " " + l.Count)
             try {
                 var local = new int[4]
                 local[9] = 1
@@ -17185,8 +17228,8 @@ else
             var t = Type.Of(c)
             print(t.Name)
             print(t.Base == undefined)
-            print(t.Fields().count)
-            print(t.Properties().count)
+            print(t.Fields().Count)
+            print(t.Properties().Count)
             var names = ""
             foreach (m in t.All) { names = names + m.Kind + ":" + m.Name + " " }
             print(names)
@@ -17221,7 +17264,7 @@ else
             var mem = Type.Of(c).Find("Scale")
             print(mem.Kind + " " + mem.ParamCount() + " " + mem.TypeName)
             print(mem.Call(c, [3.0]))
-            print(mem.Attributes.count + " " + mem.HasAttribute("Doc") + " " + mem.HasAttribute("Nope") + " " + Type.Of(c).Find("Grow").Attributes.count)
+            print(mem.Attributes.Count + " " + mem.HasAttribute("Doc") + " " + mem.HasAttribute("Nope") + " " + Type.Of(c).Find("Grow").Attributes.Count)
             var vals = mem.FindAttribute("Values")
             for (int ai = 0; ai < vals.ArgCount(); ai++) { print(vals.ArgTexts[ai] + " = " + vals.Args[ai]) }
             print(vals.Args[0][2] + " " + vals.Args[1][1] + " " + vals.Args[1].length + " " + (vals.Args[4] == undefined) + " " + mem.FindAttribute("Doc").Args[1])
@@ -17485,9 +17528,11 @@ else
             print("NIE ERREICHT")
             """),
         ("Threads: catch threads() faengt die Ausnahme eines Threads", """
+            var caught = 0
             catch threads()
             {
                 print("Main-Thread: catch threads() gefangen")
+                caught = 1
             }
             class MyError {
                 string message
@@ -17496,10 +17541,7 @@ else
             fire {
                 throw new MyError("boom aus echter Sprachsyntax")
             }
-            var i = 0
-            while (i < 2000000) {
-                i = i + 1
-            }
+            while (caught == 0) { sync globals }   // (until the handler ran: not a counting loop that a fast machine finishes first)
             print("Hauptprogramm fertig")
             """),
         ("Threads: taking: der Thread bekommt eine isolierte Kopie, die Zerstoerung ruft keinen Destruktor", """
@@ -17577,28 +17619,21 @@ else
             while (i < 3000000) { i = i + 1 }
             print("fertig")
             """),
+        // (the threads wait for each other with flags, not with counting loops: the order does not depend on how fast the machine or the generated code is)
         ("Threads: Thread startet Thread", """
-            class Item {
-                int n
-                construct(int n) { this.n = n }
-                destruct() { print("~I" + this.n) }
-            }
-            class Box {
-                string name
-                Item item
-                Item extra
-                construct(string name) { this.name = name }
-                destruct() { print("~B" + this.name) }
-            }
+            var innerDone = 0
+            var outerDone = 0
             fire {
                 print("outer")
-                fire { print("inner") }
-                var i = 0
-                while (i < 1000000) { i = i + 1 }
+                fire {
+                    print("inner")
+                    sync global { innerDone = 1 }
+                }
+                while (innerDone == 0) { sync globals }
                 print("outer end")
+                sync global { outerDone = 1 }
             }
-            var i = 0
-            while (i < 6000000) { i = i + 1 }
+            while (outerDone == 0) { sync globals }
             print("fertig")
             """),
         ("Threads: sync: die Kopie schreibt ins Original zurueck", """
@@ -17910,7 +17945,7 @@ else
             """),
     }).ToArray();
 
-    // The IO bridge (bridges/fire_bridge_io.hpp); the console is tested separately (a program with input)
+    // The IO bridge (packages/io/native/fire_bridge_io.h); the console is tested separately (a program with input)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("IO: Dateien, Verzeichnisse, Text, Fehler (FileNotFound, DirectoryNotFound, FileExists)", """
@@ -17926,7 +17961,7 @@ else
             print(IO.File.ReadAllText(f))
             foreach (line in IO.File.ReadAllLines(f)) { print("[" + line + "]") }
             IO.File.AppendAllText(f, "\nangehaengt")
-            print(IO.File.ReadAllLines(f).count)
+            print(IO.File.ReadAllLines(f).Count)
             var reader = IO.File.OpenText(f)
             print(reader.ReadLine())
             print(reader.ReadLine())
@@ -18071,14 +18106,14 @@ else
             print(count + " " + rd.EndOfStream)
             rd.Close()
             var lines = IO.File.ReadAllLines(IO.Path.Combine(dir, "lines.txt"))
-            print(lines.count + " [" + lines[2] + "] " + lines[3])
+            print(lines.Count + " [" + lines[2] + "] " + lines[3])
             var open = IO.File.OpenText(IO.Path.Combine(dir, "lines.txt"))
             print(open.ReadLine() + "|" + open.ReadAll().length)
             open.Close()
             try { open.ReadLine() } catch (IO.StreamClosedException e) { print("reader closed") }
             IO.File.AppendAllText(IO.Path.Combine(dir, "lines.txt"), "tail")
             print(IO.File.ReadAllText(IO.Path.Combine(dir, "lines.txt")).length)
-            print(IO.Directory.GetFiles(dir).count)
+            print(IO.Directory.GetFiles(dir).Count)
             IO.Directory.Delete(dir, true)
             print(IO.Directory.Exists(dir))
             """),
@@ -18191,7 +18226,7 @@ else
             """),
     }).ToArray();
 
-    // Graphics (bridges/fire_bridge_graphics.hpp)
+    // Graphics (packages/graphics/native/fire_bridge_graphics.h)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Vergleiche: == mit Einheiten und int/float, Zeichen mit <, Fehler als ArgumentException", """
@@ -18240,7 +18275,7 @@ else
             }
             var h = new Holder()
             print(h.k.items[0].name)
-            print(h.people.count)
+            print(h.people.Count)
             print(h.people[0].name + h.people[1].name)
         """),
         ("Besitz: ein Konstruktor uebernimmt ein `new`-Argument per take, TakeTo oder try TakeTo", """
@@ -18381,16 +18416,16 @@ else
             // the slicer
             var slicer = new Slicer(2.0, 1.0)
             var paths = slicer.Slice(mask)
-            print(paths.count)
+            print(paths.Count)
             var total = 0
             foreach (p in paths) { total = total + p.Count() }
             print(total)
-            if (paths.count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
+            if (paths.Count > 0) { print(paths[0].kind + " " + paths[0].closed + " " + paths[0].Count() + " " + paths[0].X(0) + " " + paths[0].Y(0)) }
             var zz = new Slicer(1.5, 1.0)
             zz.strategy = FillStrategy.ZigZag
             zz.flipY = false
             var zp = zz.Slice(mask)
-            print(zp.count)
+            print(zp.Count)
             """),
         ("Grafik: Bilder PNG/BMP/GIF aus Bytes", """
             #import "graphics"
@@ -18498,7 +18533,7 @@ else
             T.Batch()
             print("batch done")
             var items = T.Items()
-            print(items.count + " " + items[2].n)
+            print(items.Count + " " + items[2].n)
             var ring = T.Ring()
             print(ring.next.next.n)
             T.Lost()
@@ -18599,7 +18634,7 @@ else
                 return l
             } }
             var l = F.Make()
-            print("made " + l.count)
+            print("made " + l.Count)
             print(l[0].n + l[1].n)
             class G { static Gone() { var i = new Item(9); return i }
               static Lost() { var a = new Item(7); return 1 } }
@@ -18685,9 +18720,9 @@ else
               }
             }
             var l = F.Fill()
-            print(l.count + " " + l[2].n)
+            print(l.Count + " " + l[2].n)
             var l2 = F.FillChildren()
-            print(l2.count)
+            print(l2.Count)
             F.Local(0)
             print("end")
             """),
@@ -18854,6 +18889,370 @@ else
             print("after Use")
             var kept = F.Pass(F.Make())
             print("kept " + kept.n)
+            print("end")
+            """),
+    }).ToArray();
+
+    // Real enums (not an int), flag enums and flag enums as attributes (docs/language/10-enums-and-namespaces.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Enums: eigener Typ mit Namen, Umwandeln mit !, Helfer, Flag-Enums", """
+            enum Color { Red, Green = 5, Blue }
+            flag enum Test { a = 1, b = 2, c = 4 }
+            var c = Color.Blue
+            print(c)
+            print("Farbe: " + c)
+            print(c is of Color)
+            print(c is of int)
+            print(c + 1)
+            print(c == Color.Blue)
+            print(c == 6)
+            print(c.ToString())
+            print(5!Color)
+            print(Color.Blue!int)
+            print(7!Color)
+            print(Color.Parse("Green"))
+            print(Color.IsDefined(Color.Red))
+            print(Color.IsDefined(1))
+            print(Color.Name(42))
+            foreach (x in Color.Values()) { print(x) }
+            print(Color.Values().Length)
+            switch (c) {
+                case Color.Red:
+                    print("rot")
+                case Color.Blue:
+                    print("blau")
+                case default:
+                    print("anders")
+            }
+            var t = Test.a | Test.c
+            print(t)
+            print(t is of Test)
+            print(t.HasFlag(Test.c))
+            print(t.HasFlag(Test.b))
+            print(t & Test.a)
+            print(t # Test.a)
+            print(~Test.a)
+            print(Test.a | 8)
+            class Box { Color color = Color.Green; Color Get() { return this.color } }
+            print(new Box().Get())
+            """),
+        ("Enums: Flag-Enums als Attribute an Klassen, Feldern, Methoden; Reflection mit HasFlag/Flags", """
+            #import "reflection"
+            flag enum Test { a = 1, b = 2, c = 4 }
+            [Test a]
+            [Test c]
+            class Sensor {
+                [Test b]
+                int value
+                [Test a, b]
+                int Level { get { return 1 } }
+                [Retry 3]
+                undefined Read() { }
+                construct() { }
+            }
+            class Plain { construct() { } }
+            var t = Type.Of(new Sensor())
+            print(t.HasFlag(Test.a))
+            print(t.HasFlag(Test.b))
+            print(t.Flags(Test.a))
+            print(t.Flags("Test"))
+            print(t.Attributes.Count)
+            var m = t.Find("value")
+            print(m.HasFlag(Test.b))
+            print(m.Flags(Test.a))
+            print(t.Find("Level").Flags(Test.a))
+            print(t.Find("Read").HasFlag(Test.a))
+            print(t.Find("Read").FindAttribute("Retry").Args[0])
+            print(Type.Of(new Plain()).HasFlag(Test.a))
+            print(Type.Of(new Plain()).Flags(Test.a)!int)
+            """),
+    }).ToArray();
+
+    // Named arguments (docs/language/08-classes.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Benannte Argumente: Methoden, statisch, Konstruktoren, base, Standardwerte in der Mitte, Reihenfolge der Auswertung", """
+            class Log { static string Seen = ""
+              static int Note(int v) { Log.Seen = Log.Seen + v; return v } }
+            class Shape {
+                string name
+                construct(string name, int width = 10, int height = 20, bool filled = false) {
+                    this.name = name + " " + width + "x" + height + (filled ? " filled" : "")
+                }
+                string Describe(string prefix = "<", string suffix = ">", int times = 1) { return prefix + this.name + suffix + times }
+                static int Area(int w, int h = 2, int scale = 1) { return w * h * scale }
+                int Scaled(int factor = 1, int offset = this.width()) { return factor * 100 + offset }
+                int width() { return 7 }
+            }
+            class Square : Shape {
+                construct(int side) : base("square", side, side) { }
+                string Describe(string prefix = "[", string suffix = "]", int times = 2) { return "sq " + base.Describe(suffix: suffix, prefix: prefix) }
+            }
+            print(new Shape("a").name)
+            print(new Shape("b", height: 5).name)
+            print(new Shape("c", filled: true, width: 3).name)
+            print(new Shape(name: "d").name)
+            var s = new Shape("e", 1, 2)
+            print(s.Describe(suffix: "!"))
+            print(s.Describe(times: 3, prefix: "("))
+            print(s.Describe("{", times: 4))
+            print(Shape.Area(3, scale: 10))
+            print(Shape.Area(h: 4, w: 5))
+            print(s.Scaled(offset: 1))
+            print(s.Scaled(factor: 2))
+            Shape q = new Square(4)
+            print(q.Describe(suffix: ")"))
+            any dyn = new Square(5)
+            print(dyn.Describe(times: 9, prefix: "#"))
+            print(Shape.Area(scale: Log.Note(3), w: Log.Note(1), h: Log.Note(2)))
+            print(Log.Seen)
+            class Holder { Shape kept
+              construct() { this.kept = new Shape("held", height: 1) } }
+            print(new Holder().kept.name)
+            try { dyn.Describe(nope: 1) } catch (ArgumentException e) { print("err " + e.message) }
+            print("abcdef".Substring(count: 2, start: 1))
+            try { print('a'.ToUnicode(x: 1)) } catch (ArgumentException e) { print("err " + e.message) }
+            """),
+    }).ToArray();
+
+    // Dictionary, HashSet and the ownership of containers (Owns, docs/language/07-arrays-and-lists.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Dictionary/HashSet: Index, Add, Get, TryGet, Remove, Keys, foreach in Einfuegereihenfolge, Wachsen, Einheiten und Zahlen als Schluessel", """
+            var d = new Dictionary<string, int>()
+            d["a"] = 1
+            d["b"] = 2
+            d.Add("c", 3)
+            d["a"] = 10
+            print(d["a"] + " " + d.Count)
+            print(d.ContainsKey("b") + " " + d.ContainsKey("x"))
+            print(d.Get("x", -1))
+            int v = 0
+            print(d.TryGet("c", v) + " " + v)
+            foreach (p in d) { print(p.Key + "=" + p.Value) }
+            print(d.Remove("b") + " " + d.Remove("b") + " " + d.Count)
+            foreach (k in d.Keys) { print(k) }
+            for (var i = 0; i < 100; i++) { d["k" + i] = i }
+            print(d.Count + " " + d["k57"])
+            for (var i = 0; i < 100; i += 2) { d.Remove("k" + i) }
+            print(d.Count + " " + d["k57"] + " " + d.ContainsKey("k56"))
+            try { d.Add("a", 5) } catch (ArgumentException e) { print(e.message) }
+            try { print(d["zz"]) } catch (ArgumentException e) { print(e.message) }
+            var u = new Dictionary<any, string>()
+            u[1km] = "dist"
+            print(u[1000m] + " " + u.ContainsKey(1) + " " + u.ContainsKey(1000m))
+            u[2] = "two"
+            print(u[2.0])
+            var s = new HashSet<string>()
+            print(s.Add("x") + " " + s.Add("y") + " " + s.Add("x") + " " + s.Count)
+            foreach (x in s) { print(x) }
+            print(s.Contains("y") + " " + s.Remove("y") + " " + s.Contains("y"))
+            d.Clear()
+            print(d.Count)
+            """),
+        ("Dictionary/HashSet/List mit Owns: Explicit behaelt nur Uebergebenes, Values zerstoert Herausfallendes, Take/TakeAt geben es heraus; IEquatable-Schluessel", """
+            class Node { string n
+              construct(string n) { this.n = n }
+              destruct() { print("~" + this.n) } }
+            class Pt : IEquatable { int x; int y
+              construct(int x, int y) { this.x = x; this.y = y }
+              bool Equals(any other) { return other is of Pt && other.x == this.x && other.y == this.y }
+              int GetHashCode() { return this.x * 31 + this.y } }
+            var keep = new Node("outside")
+            {
+                var plain = new Dictionary<string, Node>()
+                plain["ref"] = keep
+                plain.Add("given", new Node("given"))
+                print("plain " + plain.Count)
+            }
+            print("after plain")
+            var owning = new Dictionary<string, Node>(Owns.Values)
+            owning["a"] = new Node("a")
+            owning["b"] = new Node("b")
+            owning["a"] = new Node("a2")
+            print("replaced")
+            owning.Remove("b")
+            print("removed")
+            var t = owning.Take("a")
+            print("took " + t.n + " " + owning.Count)
+            owning["c"] = new Node("c")
+            owning.Clear()
+            print("cleared")
+            var pts = new Dictionary<Pt, string>()
+            pts[new Pt(1, 2)] = "p12"
+            print(pts[new Pt(1, 2)] + " " + pts.ContainsKey(new Pt(2, 1)))
+            var set = new HashSet<Node>(Owns.Values)
+            set.Add(new Node("s1"))
+            var s2 = new Node("s2")
+            set.Add(s2)
+            print(set.Contains(s2) + " " + set.Count)
+            set.Remove(s2)
+            print("set removed")
+            var list = new List<Node>(Owns.Values)
+            list.Add(new Node("l1"))
+            list.Add(keep)
+            list.Add(new Node("l3"))
+            list.RemoveAt(0)
+            var back = list.TakeAt(1)
+            print("list " + list.Count + " " + back.n)
+            list.Clear()
+            print("end")
+            """),
+    }).ToArray();
+
+    // Environment: arguments, environment variables, platform (docs/language/19-standard-library.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Environment: Args ohne Argumente, Get/Set/Variables, NewLine, Platform, Exit", """
+            print(Environment.Args.length)
+            print(Environment.Get("PATH") != undefined)
+            print(Environment.Get("FIRE_SURELY_NOT_SET_42") == undefined)
+            Environment.Set("FIRE_ENV_TEST", "a b ä")
+            print(Environment.Get("FIRE_ENV_TEST"))
+            print(Environment.Variables["FIRE_ENV_TEST"])
+            Environment.Set("FIRE_ENV_TEST", undefined)
+            print(Environment.Get("FIRE_ENV_TEST") == undefined)
+            print(Environment.Variables.ContainsKey("FIRE_ENV_TEST"))
+            print(Environment.Platform == "linux" || Environment.Platform == "windows" || Environment.Platform == "macos")
+            print(Environment.NewLine.Length > 0)
+            try { Environment.Get("") } catch (ArgumentException e) { print(e.message) }
+            try { Environment.Set("X", 5) } catch (ArgumentException e) { print(e.message) }
+            Environment.Exit(0)
+            print("not reached")
+            """),
+    }).ToArray();
+
+    // Processes (#import "process", docs/PROCESS.md): POSIX shells and pipes - the same in the VM and natively
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Prozesse: Run, Pipes in beide Richtungen, Zeilen-Ereignisse, Umgebung, Arbeitsordner, Fehler, Timeout, Kill, Argumente", """
+            #import "process"
+            #import "io"
+            var r = Process.Run("sh", ["-c", "echo hello; echo oops >&2; exit 3"])
+            print(r.ExitCode + " [" + r.Output.Trim() + "] [" + r.Error.Trim() + "]")
+            var o = new ProcessOptions()
+            o.RedirectInput = true
+            o.RedirectOutput = true
+            var p = Process.Start("cat", [], o)
+            var w = new IO.TextWriter(p.StandardInput)
+            w.WriteLine("line one")
+            w.WriteLine("zwei ä")
+            w.Close()
+            var reader = new IO.TextReader(p.StandardOutput)
+            foreach (line in reader) { print("cat: " + line) }
+            print(p.WaitForExit() + " " + p.ExitCode)
+            var o2 = new ProcessOptions()
+            o2.MergeError = true
+            var q = Process.Start("sh", ["-c", "echo a; echo b >&2; echo c"], o2)
+            var lines = new List<string>()
+            q.OnOutput = (string line) => lines.Add(line)
+            q.OnExit = (int code) => print("exit " + code)
+            q.WaitForExit()
+            print(lines.Count + " " + lines[0] + lines[1] + lines[2])
+            var e = new ProcessOptions()
+            e.Environment = new Dictionary<string, string>()
+            e.Environment["ONLY"] = "me"
+            e.Environment["PATH"] = Environment.Get("PATH")
+            e.WorkingDirectory = "/tmp"
+            var r2 = Process.Run("sh", ["-c", "echo $ONLY $HOME; pwd"], e)
+            print(r2.Output.Trim())
+            Environment.Set("FROM_PARENT", "yes")
+            print(Process.Run("sh", ["-c", "echo $FROM_PARENT"]).Output.Trim())
+            try { Process.Start("no-such-program-xyz") } catch (ProcessException ex) { print(ex.code + " " + ex.message) }
+            var s = Process.Start("sleep", ["5"])
+            print(s.WaitForExit(100))
+            s.Kill()
+            print(s.WaitForExit() + " " + s.ExitCode)
+            try { Process.Run("sleep", ["5"], undefined, 200) } catch (ProcessException ex) { print(ex.message) }
+            print(Process.Run("sh", ["-c", "printf 'arg:%s|' \"$@\"", "x", "a b", "c\"d"]).Output)
+            """),
+    }).ToArray();
+
+    // Hash functions (#import "hash", docs/HASH.md): the same digests in the VM and natively, errors as ArgumentException
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Hash: SHA-256/1/384/512, MD5, CRC-32, Adler-32, HMAC, Hex, Streams, Fehler", """
+            #import "hash"
+            #import "io"
+            print(Hash.Sha256.HexOf("abc"))
+            print(Hash.Sha1.HexOf("") + " " + Hash.Md5.HexOf("Grüße 😀"))
+            print(Hash.Sha384.HexOf("abc").Substring(0, 16) + " " + Hash.Sha512.HexOf("abc").Substring(0, 16))
+            var h = new Hash.Sha512()
+            var block = new byte[777]
+            for (var i = 0; i < block.length; i++) { block[i] = (i * 31) % 256 }
+            for (var i = 0; i < 50; i++) { h.Update(block, i, 777 - i) }
+            print(h.FinishHex().Substring(0, 32) + " " + h.Size)
+            print(Hash.Crc32.Of("123456789") + " " + Hash.Adler32.Of("Wikipedia") + " " + Hash.Crc32.HexOf(block))
+            print(Hash.Sha256.HexOf(new IO.MemoryStream(block)) == Hash.Sha256.HexOf(block))
+            print(Hash.Hmac.HexOf(Hash.Algorithm.Sha256, "Jefe", "what do ya want for nothing?"))
+            var mac = new Hash.Hmac(Hash.Algorithm.Sha1, Hash.Hex.Decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"))
+            print(mac.UpdateText("Hi ").UpdateText("There").FinishHex())
+            print(Hash.Bytes.Equal(Hash.Md5.Of("x"), Hash.Md5.Of("x")) + " " + Hash.Bytes.Equal(Hash.Md5.Of("x"), Hash.Md5.Of("y")))
+            try { Hash.Hex.Decode("0g") } catch (ArgumentException e) { print("hex: " + e.message) }
+            try { new Hash.Md5().Update(block, 700, 100) } catch (ArgumentException e) { print("range: " + e.message) }
+            print("end")
+            """),
+    }).ToArray();
+
+    // Compression (#import "compression", docs/COMPRESSION.md): the same bytes in the VM and natively (the Deflate is the package's own C)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Compression: Deflate/zlib/gzip in einem Rutsch und als Streams, Zip schreiben/lesen/entpacken, kaputte Daten, Zip-Slip", """
+            #import "compression"
+            #import "io"
+            #import "filesystem"
+            var data = new byte[30000]
+            for (var i = 0; i < data.length; i++) { data[i] = (i * 13 + i / 97) % 256 }
+            for (var level = 0; level <= 9; level += 3) {
+                var g = Compression.GZip.Compress(data, level)
+                var back = Compression.GZip.Decompress(g)
+                print(level + ": " + g.length + " " + Compression.ZLib.Compress(data, level).length + " " + Compression.Deflate.Compress(data, level).length + " " + (back.length == data.length && back[29999] == data[29999]))
+            }
+            var m = new IO.MemoryStream()
+            var z = new Compression.ZLibStream(m, Compression.Mode.Compress, 6, true)
+            var w = new IO.TextWriter(z, true)
+            for (var i = 0; i < 800; i++) { w.WriteLine("zeile " + i + " äöü") }
+            w.Close()
+            z.Close()
+            print("zlib stream " + m.Length)
+            m.Position = 0
+            var r = new IO.TextReader(new Compression.ZLibStream(m, Compression.Mode.Decompress, 6, true))
+            var n = 0
+            foreach (line in r) { n++ }
+            print("lines " + n)
+            var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_nat_zip")
+            if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+            IO.Directory.CreateDirectory(dir)
+            var zipPath = IO.Path.Combine(dir, "t.zip")
+            var a = Zip.Archive.Create(zipPath)
+            a.Add("a.txt", "Hallo", 6, new DateTime(2024, 2, 29, 23, 59, 58))
+            a.Add("bin/data.bin", data)
+            a.AddDirectory("leer")
+            var s = a.CreateEntry("strom.txt", 9)
+            s.Write(data, 0, 20000)
+            s.Close()
+            a.Close()
+            print("zip " + IO.File.Size(zipPath))
+            var b = Zip.Archive.Open(zipPath)
+            foreach (e in b.Entries) {
+                var t = e.LastWriteTime
+                print(e.FullName + " " + e.Length + " " + e.CompressedLength + " " + e.CompressionMethod + " " + e.Crc32 + " " + e.IsDirectory)
+            }
+            print(b.GetEntry("a.txt").LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss") + " " + b.GetEntry("a.txt").ReadAllText())
+            b.ExtractTo(IO.Path.Combine(dir, "aus"))
+            b.Close()
+            print(IO.File.Size(IO.Path.Combine(dir, "aus/bin/data.bin")) + " " + IO.Directory.Exists(IO.Path.Combine(dir, "aus/leer")))
+            var bytes = IO.File.ReadAllBytes(zipPath)
+            bytes[bytes.length - 22] = 0   // the signature of the end record
+            try { Zip.Archive.FromBytes(bytes).GetEntry("a.txt") } catch (IO.IOException e) { print("kaputt: " + e.message) }
+            var evil = new IO.MemoryStream()
+            var x = Zip.Archive.Write(evil, true)
+            x.Add("../raus.txt", "boese")
+            x.Close()
+            try { Zip.Archive.FromBytes(evil.ToBuffer()).ExtractTo(IO.Path.Combine(dir, "evil")) } catch (Zip.ZipException e) { print(e.message) }
+            try { Compression.GZip.Decompress(IO.Utf8.GetBytes("kein gzip")) } catch (Compression.InvalidDataException e) { print(e.message) }
+            IO.Directory.Delete(dir, true)
             print("end")
             """),
     }).ToArray();
@@ -19076,7 +19475,7 @@ else
             var sum = 0
             var moved = 0
             for (var i = 0; i < 20; i = i + 1) { sum = sum + shuffled[i]; if (shuffled[i] != i) { moved = moved + 1 } }
-            print("Mischen " + shuffled.count + " " + sum + " " + (moved > 5))
+            print("Mischen " + shuffled.Count + " " + sum + " " + (moved > 5))
             print(r.Pick(list) >= 0)
             print(r.Pick(new List()))
             var bools = 0
@@ -19096,7 +19495,7 @@ else
             """),
     }).ToArray();
 
-    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.hpp) write and read the same text
+    // JSON (#import "json", docs/JSON.md): the VM (JsonMethods) and the native runtime (fire_json.h) write and read the same text
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Json: Zyklen ($id/$ref), Einheiten, NonSerialized/JsonName, List, any-Werte, eingerueckt, Lesen, Parse, Fehler", """
@@ -19136,7 +19535,7 @@ else
             print(Json.Serialize(a, new JsonOptions(true)))
             Person c = Json.Deserialize<Person>(text)
             print(c.name + " " + c.age + " " + c.secret + " " + c.nickname + " " + c.friend.name + " " + (c.friend.friend == c))
-            print(c.path.count + " " + c.path[1].y + " " + c.path[0].x)
+            print(c.path.Count + " " + c.path[1].y + " " + c.path[0].x)
             print(c.extra[1] + " " + c.extra[3] + " " + c.extra[6])
             var tree = Json.Parse("{\"a\": [1, {\"b\": null}], \"c\": \"d\"}")
             print(tree.Get("c") + " " + tree.Get("a")[0] + " " + tree.Get("a")[1].Has("b"))
@@ -19305,7 +19704,7 @@ else
             DeviceManager.AddDriver(new ThermometerDriver())
             DeviceManager.AddDriver(new GpioDriver())
             foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
-            print(DeviceManager.Drivers().count)
+            print(DeviceManager.Drivers().Count)
             any port = DeviceManager.Get("gpiosim")
             print("port " + port.Identifier() + " " + port.Lines)
             Gpio.Sim.Wire(0, 8)
@@ -19434,7 +19833,7 @@ else
             vs.A.Connect(inner.PortAt("in"))
             vs.B.Connect(outer.Ground)
             outer.Step()
-            print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().count + " " + outer.Parts().count)
+            print(H.R(inner.PortAt("out").Raw()) + " " + inner.Parts().Count + " " + outer.Parts().Count)
             try { new Circuits.Resistor(3V) } catch (ArgumentException e) { print(e.message) }
             """),
         ("Circuits: Scope.Stats - Min/Max/Mittelwert/RMS ueber ganze Perioden und Frequenz (Sinus mit Offset, Leistung als Produkt zweier Kanaele)", """
@@ -19662,7 +20061,7 @@ else
                 if ((qs[i] > 2.5) != (qs[i - 1] > 2.5)) { changes++ }
             }
             print("toggle changes " + changes)
-            print(Circuits.Models.Names("NPN").count + " " + Circuits.Models.Get("1n4148").Name)
+            print(Circuits.Models.Names("NPN").Count + " " + Circuits.Models.Get("1n4148").Name)
             Circuits.Models.Add(new Circuits.Model("mydiode", "D", 0.000000001, 1.5))
             var c2 = new Circuits.Circuit()
             var d2 = c2.Add(new Circuits.Diode("mydiode"))
@@ -20092,7 +20491,7 @@ else
             c.TimeStep = 10us
             c.Run(1ms)
             var cap = s.Find("c1")
-            print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().count + " scope " + s.Elements()[5].scope.Count)
+            print("Vc " + H.R(cap.PinVoltage(0)) + " parts " + c.Parts().Count + " scope " + s.Elements()[5].scope.Count)
             var text = s.ToText()
             print(text)
             var c2 = new Circuits.Circuit("copy")
@@ -20104,7 +20503,7 @@ else
             c.Run(1ms)
             print("moved: r1 carries " + H.R(s.Find("r1").part.Current / 1mA) + " mA, version " + s.Version)
             s.Remove(s.Find("r1"))
-            print("removed: " + s.Elements().count + " elements, " + c.Parts().count + " parts")
+            print("removed: " + s.Elements().Count + " elements, " + c.Parts().Count + " parts")
             """),
         ("Circuits: Schaltplan mit Op-Amp, Transistor, LED, Gattern und 555 (Pins wie bei Falstad)", """
             #import "circuits"
@@ -21243,7 +21642,7 @@ else
             """),
     }).ToArray();
 
-    // TLS (bridges/fire_bridge_tls.hpp) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
+    // TLS (packages/tls/native/fire_bridge_tls.h) and HTTPS: a certificate for localhost is made here (the tests trust exactly it); needs the development files of OpenSSL on this machine
     {
         bool hasOpenSsl = new[] { "/usr/include/openssl/ssl.h", "/usr/local/include/openssl/ssl.h", "/opt/homebrew/include/openssl/ssl.h", "/usr/include/x86_64-linux-gnu/openssl/ssl.h" }.Any(File.Exists);
         if (!hasOpenSsl)
@@ -21355,12 +21754,12 @@ else
         }
     }
 
-    // GPIO (bridges/fire_bridge_gpio.hpp): the simulated chip "sim" - outputs, inputs, wires, pulls, edges, errors - the same in the VM and in the native build
+    // GPIO (packages/gpio/native/fire_bridge_gpio.h): the simulated chip "sim" - outputs, inputs, wires, pulls, edges, errors - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Gpio: simulierter Chip - Ausgang, Eingang, Draht, Pull, Flanken, Fehler", """
             #import "gpio"
-            print("chips " + Gpio.Board.Chips()[0] + " " + (Gpio.Board.Chips().count >= 1))
+            print("chips " + Gpio.Board.Chips()[0] + " " + (Gpio.Board.Chips().Count >= 1))
             var led = new Gpio.Pin("sim", 1).Output()
             var btn = new Gpio.Pin("sim", 2).Input(Gpio.Pull.Down, Gpio.Edge.Both)
             print("props " + led.Chip + " " + led.Line + " " + led.IsOutput + " " + btn.IsInput + " " + led.IsClosed)
@@ -21424,7 +21823,7 @@ else
             """),
     }).ToArray();
 
-    // Tracker (bridges/fire_bridge_tracker.hpp): a module built in memory, rendered, played to the simulated audio device - the same in the VM and in the native build
+    // Tracker (packages/tracker/native/fire_bridge_tracker.h): a module built in memory, rendered, played to the simulated audio device - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Tracker: Modul im Speicher - Laden, Rendern, Seek, Mute, Stereo, Player auf dem simulierten Geraet, Fehler", """
@@ -21570,13 +21969,13 @@ else
     // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
     natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
 
-    // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
+    // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Audio: simuliertes Geraet - Schreiben, Wellen, Lautstaerke, WAV, Halten/Stop, Fehler", """
             #import "audio"
 
-            print("devices " + Audio.Board.Devices()[0] + " " + (Audio.Board.Devices().count >= 1))
+            print("devices " + Audio.Board.Devices()[0] + " " + (Audio.Board.Devices().Count >= 1))
             var out = new Audio.Output("sim", 8000, 1)
             print("output " + out.Name + " " + out.Rate + " " + out.Channels + " " + out.Volume + " " + out.IsClosed)
             print("sim " + Audio.Sim.Rate() + " " + Audio.Sim.Channels())
@@ -21686,7 +22085,7 @@ else
             try { new Audio.Output(25) } catch (Audio.NotFoundException e) { print("pwm pin " + e.code) }
             var hasAlsa = false
             var names = Audio.Board.Devices()
-            for (var i = 0; i < names.count; i++) { if (names[i] == "alsa") { hasAlsa = true } }
+            for (var i = 0; i < names.Count; i++) { if (names[i] == "alsa") { hasAlsa = true } }
             if (hasAlsa) {
                 // the PCM "null" of ALSA throws the sound away: the real code path of the Linux backend without a sound card
                 try {
@@ -21702,22 +22101,22 @@ else
             """),
     }).ToArray();
 
-    // I2C (bridges/fire_bridge_i2c.hpp): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
+    // I2C (packages/i2c/native/fire_bridge_i2c.h): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("I2c: simulierter Bus - Geraete, Register, Scan, Fehler", """
             #import "i2c"
 
-            print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().count)
+            print("buses " + I2c.Board.Buses()[0] + " " + I2c.Board.Buses().Count)
             var bus = new I2c.Bus("sim")
             print("name " + bus.Name)
-            print("scan empty " + bus.Scan().count)
+            print("scan empty " + bus.Scan().Count)
             I2c.Sim.Add(0x50)
             I2c.Sim.Add(0x76)
             I2c.Sim.SetRegister(0x76, 0xD0, 0x58)
             print("probe " + bus.Probe(0x50) + " " + bus.Probe(0x51))
             var found = bus.Scan()
-            print("scan " + found.count + " " + found[0] + " " + found[1])
+            print("scan " + found.Count + " " + found[0] + " " + found[1])
             print("id " + bus.ReadRegister(0x76, 0xD0))
             bus.WriteRegister(0x76, 0xF4, 0x27)
             print("wrote " + I2c.Sim.GetRegister(0x76, 0xF4) + " " + bus.ReadRegister(0x76, 0xF4))
@@ -21756,13 +22155,13 @@ else
             """),
     }).ToArray();
 
-    // SPI (bridges/fire_bridge_spi.hpp): the simulated device "sim" (loopback, queued answers, log of what was sent) - the same in the VM and in the native build
+    // SPI (packages/spi/native/fire_bridge_spi.h): the simulated device "sim" (loopback, queued answers, log of what was sent) - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Spi: simuliertes Geraet - Loopback, Antworten, Protokoll, Einstellungen, Fehler", """
             #import "spi"
 
-            print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().count + " " + Spi.Board.Available())
+            print("devices " + Spi.Board.Devices()[0] + " " + Spi.Board.Devices().Count + " " + Spi.Board.Available())
             var chip = new Spi.Device("sim", 0, 2000000)
             print("name " + chip.Name + " " + chip.Mode + " " + chip.Speed + " " + chip.LsbFirst)
             print("sim setup " + Spi.Sim.Mode() + " " + Spi.Sim.Speed() + " " + Spi.Sim.LsbFirst())
@@ -21818,28 +22217,28 @@ else
             """),
     }).ToArray();
 
-    // WiFi (bridges/fire_bridge_wifi.hpp): the simulated radio "sim" - scan, join, failures, access point - the same in the VM and in the native build
+    // WiFi (packages/wifi/native/fire_bridge_wifi.h): the simulated radio "sim" - scan, join, failures, access point - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("WiFi: simuliertes Funkmodul - Scan, Verbinden, Fehler, Zugangspunkt", """
             #import "wifi"
 
-            print("ifaces " + WiFi.Board.Interfaces()[0] + " " + WiFi.Board.Interfaces().count + " " + WiFi.Board.Available())
+            print("ifaces " + WiFi.Board.Interfaces()[0] + " " + WiFi.Board.Interfaces().Count + " " + WiFi.Board.Available())
             var sta = new WiFi.Station()
             print("name " + sta.Name + " state " + sta.State + " ip [" + sta.Ip + "] mac " + sta.Mac + " rssi " + sta.Rssi)
-            print("empty scan " + sta.Scan().count)
+            print("empty scan " + sta.Scan().Count)
             WiFi.Sim.AddNetwork("home", "secret-pass", -55, 6)
             WiFi.Sim.AddNetwork("cafe", "", -70, 1)
             WiFi.Sim.AddNetwork("far", "farfarfar", -85, 11)
             var nets = sta.Scan()
-            print("scan " + nets.count)
-            for (var i = 0; i < nets.count; i++) {
+            print("scan " + nets.Count)
+            for (var i = 0; i < nets.Count; i++) {
                 var n = nets[i]
                 print(n.ssid + " " + n.rssi + " ch" + n.channel + " auth" + n.auth + " secure " + n.Secure + " " + n.bssid)
             }
             sta.Connect("home", "secret-pass", 2s)
             print("connected " + sta.IsConnected + " ssid " + sta.Ssid + " ip " + sta.Ip + " rssi " + sta.Rssi)
-            print("scan while connected " + sta.Scan().count)
+            print("scan while connected " + sta.Scan().Count)
             sta.Disconnect()
             print("after disconnect " + sta.State + " [" + sta.Ssid + "]")
             try { sta.Connect("home", "wrong-password", 2s) } catch (WiFi.AuthException e) { print("auth " + e.code + " " + e.message) }
@@ -21929,7 +22328,7 @@ else
             print("udp back " + u2.ReceiveFrom(buf, 0, 16, 2000))
             try { u1.ReceiveFrom(buf, 0, 16, 100) } catch (Net.TimeoutException e) { print("udp timeout") }
             var addresses = Net.Dns.Resolve("127.0.0.1")
-            print("dns " + addresses.count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").count > 0))
+            print("dns " + addresses.Count + " " + addresses[0] + " " + (Net.Dns.Resolve("localhost").Count > 0))
             try { Net.Dns.Resolve("no-such-host.invalid") } catch (Net.ResolveException e) { print("resolve " + e.code) }
             try { var bad = new Net.TcpListener("127.0.0.1", 70000) } catch (Net.NetException e) { print("port " + e.code) }
             var l2 = new Net.TcpListener("127.0.0.1", 0)
@@ -22466,11 +22865,11 @@ else
         var compiled = natCases.Select((c, index) => Task.Run(() =>
         {
             string expected = vmResults[index];
-            string cpp;
-            try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
+            fire.Native.NativeSources generated;
+            try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Source }, null, null, VmExecutionMode.Release)); }
             catch (fire.Native.NativeNotSupportedException ex) { return (c.Name, expected, $"nicht uebersetzbar: {ex.Message}"); }
-            string cppFile = Path.Combine(workDir, $"case{index}.cpp"), exeFile = Path.Combine(workDir, $"case{index}.bin");
-            File.WriteAllText(cppFile, cpp);
+            string cpp = generated.Program;
+            string exeFile = Path.Combine(workDir, $"case{index}.bin");
 
             string RunTool(string tool, string arguments, out int exit)
             {
@@ -22488,9 +22887,9 @@ else
             string build;
             int buildExit;
             buildGate.Wait();
-            try { build = RunTool(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out buildExit); }
+            try { build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"case{index}", $"-pthread -O2 -Wall -Wextra {sanitize}", exeFile, out buildExit, linkFlags); }
             finally { buildGate.Release(); }
-            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C++-Compiler: " + build);
+            if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C/C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
                 // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
@@ -22527,9 +22926,9 @@ else
                 string name = "Tls (SChannel, fuer Windows gebaut, unter Wine)";
                 try
                 {
-                    string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
-                    string cppFile = Path.Combine(workDir, "schannel.cpp"), exeFile = Path.Combine(workDir, "schannel.exe");
-                    File.WriteAllText(cppFile, cpp);
+                    var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[tlsIndex].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.Windows), TargetProfile.Windows);
+                    string cpp = generated.Program;
+                    string exeFile = Path.Combine(workDir, "schannel.exe");
                     string linkFlags = string.Concat(cpp.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
                     string Run(string tool, string arguments, out int exit)
                     {
@@ -22543,7 +22942,7 @@ else
                         exit = p.ExitCode;
                         return output + errTask.Result;
                     }
-                    string build = Run(mingw, $"-std=c++17 -O2 -Wall -Wextra -static \"{cppFile}\" -I\"{workDir}\" -o \"{exeFile}\"{linkFlags}", out int buildExit);
+                    string build = NativeTestBuild.Build((tool, arguments) => (Run(tool, arguments, out int code), code), mingw, generated, workDir, "schannel", "-O2 -Wall -Wextra -static", exeFile, out int buildExit, linkFlags);
                     if (buildExit != 0 || build.Contains("warning:")) CheckNat(name, false, "MinGW: " + build);
                     else
                     {
@@ -22587,15 +22986,15 @@ else
         CheckNat("Zielprofil: Namen und Host", TargetProfile.TryGet("ESP32", out var byName) && byName == esp && !TargetProfile.TryGet("amiga", out _) && TargetProfile.All.Contains(TargetProfile.Host));
         string espCpp = fire.Native.CppGenerator.Generate(espLinked, esp);
         CheckNat("esp32: Einstieg app_main statt main, Defines, 32-Bit-float",
-            espCpp.Contains("extern \"C\" void app_main(void)") && !espCpp.Contains("int main()") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
+            espCpp.Contains("\nvoid app_main(void)") && !espCpp.Contains("int main(") && espCpp.Contains("#define FIRE_TARGET_ESP32 1")
             && espCpp.Contains("#define FIRE_HAL_ESP32 1") && espCpp.Contains("#define FIRE_DEFAULT_STACK_BYTES 8192") && espCpp.Contains("#define FIRE_FLOAT32 1"));
         {
-            string espFile = Path.Combine(workDir, "esp.cpp");
+            string espFile = Path.Combine(workDir, "esp.c");
             File.WriteAllText(espFile, espCpp);
-            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cxx, $"-std=c++17 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
+            using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 -Wall -Wextra -c \"{espFile}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{espFile}.o\"") { RedirectStandardError = true, RedirectStandardOutput = true, UseShellExecute = false })!;
             string espBuild = p.StandardError.ReadToEnd() + p.StandardOutput.ReadToEnd();
             p.WaitForExit();
-            CheckNat("esp32: das erzeugte C++ uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
+            CheckNat("esp32: das erzeugte C uebersetzt ohne Warnung", p.ExitCode == 0 && !espBuild.Contains("warning"), espBuild);
         }
         var cliEsp = CommandLineParser.Parse(new[] { "native", "a.script", "-t", "esp32" });
         CheckNat("Befehlszeile: -t esp32 / unbekanntes Ziel / -t ausserhalb von native",
@@ -22620,13 +23019,12 @@ else
                 var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
                 if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
                 var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Defines = defines } };
-                string cpp;
-                try { cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
+                fire.Native.NativeSources generated;
+                try { generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { c.Script }, null, null, VmExecutionMode.Release, null, target), target); }
                 catch (fire.Native.NativeNotSupportedException ex) { return (c.Title, "", $"nicht uebersetzbar: {ex.Message}"); }
-                string file = Path.Combine(workDir, $"dev{index}.cpp"), exe = Path.Combine(workDir, $"dev{index}.bin");
-                File.WriteAllText(file, cpp);
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C++-Compiler: " + build);
+                string exe = Path.Combine(workDir, $"dev{index}.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"dev{index}", $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (c.Title, "", "C/C++-Compiler: " + build);
                 string actual = RunProc(exe, "", workDir, out int runExit);
                 return (c.Title, string.Concat(c.Expected.Select(l => l + "\n")), runExit == 0 ? actual : $"Exitcode {runExit}: {actual}");
             })).ToArray();
@@ -22639,7 +23037,7 @@ else
             CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
         }
 
-        // ---- Window (bridges/fire_bridge_windows.hpp): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
+        // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
         {
             string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
             File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
@@ -22761,14 +23159,15 @@ else
             var windowTarget = TargetProfile.Host;
             foreach (var wc in windowCases)
             {
-                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
-                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("fire_display.hpp"), "");
+                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
+                string cpp = generated.Program;
+                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, "");
                 if (sdlExit != 0) { Console.WriteLine("(SDL2 nicht verfuegbar: das Fenster wird nicht ausgefuehrt)"); continue; }
-                string file = Path.Combine(workDir, "window_" + Math.Abs(wc.Title.GetHashCode()) + ".cpp"), exe = file + ".bin";
-                File.WriteAllText(file, cpp);
-                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, file, workDir, exe);
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}{wc.Define}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C++-Compiler: " + build); continue; }
+                string name = "window_" + Math.Abs(wc.Title.GetHashCode()), exe = Path.Combine(workDir, name + ".bin");
+                File.WriteAllText(Path.Combine(workDir, name + ".c"), cpp);
+                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, Path.Combine(workDir, name + ".c"), workDir, exe);
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}{wc.Define}", exe, out int buildExit, " -lSDL2");
+                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C/C++-Compiler: " + build); continue; }
                 Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
                 string actual = RunProc(exe, "", workDir, out int runExit);
                 string expected = string.Concat(wc.Expected.Select(l => l + "\n"));
@@ -22783,11 +23182,10 @@ else
             if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
             else
             {
-                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
-                string file = Path.Combine(workDir, "uidraw.cpp"), exe = file + ".bin";
-                File.WriteAllText(file, cpp);
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -lSDL2 -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C++-Compiler: " + build);
+                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
+                string exe = Path.Combine(workDir, "uidraw.bin");
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL2");
+                if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C/C++-Compiler: " + build);
                 else
                 {
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
@@ -22806,12 +23204,12 @@ else
             var rtosTasks = rtosIndexes.Select(index => Task.Run(() =>
             {
                 string expected = vmResults[index];
-                string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
-                string file = Path.Combine(workDir, $"rtos{index}.cpp"), exe = Path.Combine(workDir, $"rtos{index}.bin");
+                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natCases[index].Source }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string exe = Path.Combine(workDir, $"rtos{index}.bin");
                 // the board's startup code would call the entry point from a task; here main does
-                File.WriteAllText(file, cpp + "\nint main() { fire_start(); return 0; }\n");
-                string build = RunProc(cxx, $"-std=c++17 -pthread -O2 -Wall -Wextra {sanitize}\"{file}\" -I\"{workDir}\" -I\"{Path.Combine(workDir, "sim")}\" -o \"{exe}\"", workDir, out int buildExit);
-                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C++-Compiler: " + build);
+                generated = generated with { Program = generated.Program + "\nint main(void) { fire_start(); return 0; }\n" };
+                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, $"rtos{index}", $"-pthread -O2 -Wall -Wextra {sanitize}-I\"{Path.Combine(workDir, "sim")}\"", exe, out int buildExit);
+                if (buildExit != 0 || build.Contains("warning:")) return (natCases[index].Name, expected, "C/C++-Compiler: " + build);
                 string actual = RunProc(exe, "", workDir, out _);   // (a FreeRTOS program has no exit code)
                 return (natCases[index].Name, expected, actual);
             })).ToArray();
@@ -22850,7 +23248,7 @@ else
             var roundTrip = fire.Native.NativeConfig.Parse(config.ToJson());
             CheckNat("Konfiguration: speichern und wieder lesen", roundTrip.ResolveTarget("board").Native.Defines.SequenceEqual(new[] { "BOARD_X=3", "FIRE_THREAD_PRIORITY=5" }) && roundTrip.Engine == "native");
             string boardCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, board), board);
-            int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.hpp\"", StringComparison.Ordinal);
+            int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.h\"", StringComparison.Ordinal);
             CheckNat("Konfiguration: Defines, Includes vor der Plattform und Einsprung stehen im C++", boardCpp.Contains("#define BOARD_X 3") && incAt > 0 && platAt > incAt
                 && boardCpp.Contains("void board_main(void) {") && !boardCpp.Contains("extern \"C\" void board_main") && boardCpp.IndexOf("#define BOARD_X 3", StringComparison.Ordinal) < incAt);
 
@@ -22929,9 +23327,9 @@ else
             string projectOut = Path.Combine(dir, "project");
             var out2 = new StringWriter(); var err2 = new StringWriter();
             int code2 = CommandLineRunner.Run(new[] { "build", script, "-t", "esp32", "-o", projectOut }, out2, err2);
-            CheckNat("build: Ziel esp32 schreibt die Dateien eines ESP-IDF-Komponenten", code2 == 0 && File.Exists(Path.Combine(projectOut, "fire_program.cpp")) && File.Exists(Path.Combine(projectOut, "fire_rt.hpp"))
-                && File.Exists(Path.Combine(projectOut, "platform", "esp32", "fire_platform.hpp")) && File.Exists(Path.Combine(projectOut, "platform", "freertos", "fire_platform.hpp"))
-                && File.ReadAllText(Path.Combine(projectOut, "CMakeLists.txt")).Contains("idf_component_register") && File.ReadAllText(Path.Combine(projectOut, "fire_program.cpp")).Contains("void app_main(void)"), $"{code2}\n{out2}\n{err2}");
+            CheckNat("build: Ziel esp32 schreibt die Dateien eines ESP-IDF-Komponenten", code2 == 0 && File.Exists(Path.Combine(projectOut, "fire_program.c")) && File.Exists(Path.Combine(projectOut, "fire_rt.h"))
+                && File.Exists(Path.Combine(projectOut, "platform", "esp32", "fire_platform.h")) && File.Exists(Path.Combine(projectOut, "platform", "freertos", "fire_platform.h"))
+                && File.ReadAllText(Path.Combine(projectOut, "CMakeLists.txt")).Contains("idf_component_register") && File.ReadAllText(Path.Combine(projectOut, "fire_program.c")).Contains("void app_main(void)"), $"{code2}\n{out2}\n{err2}");
             var err3 = new StringWriter();
             int code3 = CommandLineRunner.Run(new[] { "build", script, "-t", "amiga", "-o", Path.Combine(dir, "x") }, new StringWriter(), err3);
             CheckNat("build: unbekanntes Ziel ist ein Fehler der Befehlszeile", code3 == CommandLineRunner.ExitUsage && err3.ToString().Contains("amiga"), err3.ToString());
@@ -23067,14 +23465,17 @@ else
             }), Path.Combine(pkgDir, "out")).PackagePath;
             fire.Package.Manager.PackageStore.Default.Install(natFpk);
             string natScript = "#import \"pknat\"\nprint(PkgNat.Twice(21))\nvar s = PkgNat.Squares(4)\nprint(s.length)\nprint(s[3])";
-            string pkgCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
-            CheckNat("Paket: der C++-Quelltext des Natives steht im erzeugten C++", pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("= pk_squares("));
+            var pkgSources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { natScript }, null, null, VmExecutionMode.Release));
+            string pkgCpp = pkgSources.Natives ?? "";
+            CheckNat("Paket: der C++-Quelltext des Natives steht in den Natives (C++) des Programms, das Programm (C) ruft sie ueber eine C-Funktion",
+                pkgCpp.Contains("---- package pknat 1.0.0, import \"pknat\"") && pkgCpp.Contains("inline Value pk_twice") && pkgCpp.Contains("return pk_squares(a0, list); }")
+                && pkgSources.Program.Contains("Value fire_nat_1(Value a0, OwnList* list);   // pk_squares"), pkgSources.Program + pkgCpp);
             string? pkgCxx = FindCxx();
             if (pkgCxx != null)
             {
                 string run = Path.Combine(pkgDir, "run");
                 fire.Native.NativeRuntimeFiles.WriteTo(run);
-                File.WriteAllText(Path.Combine(run, "pkg.cpp"), pkgCpp);
+
                 string RunTool(string tool, string args, string? workDirectory = null)
                 {
                     using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, args) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDirectory ?? run })!;
@@ -23083,8 +23484,8 @@ else
                     p.WaitForExit();
                     return (p.ExitCode == 0 ? "" : $"[exit {p.ExitCode}] ") + output + err.Result;
                 }
-                string build = RunTool(pkgCxx, $"-std=c++17 -pthread -O1 -Wall -Wextra \"{Path.Combine(run, "pkg.cpp")}\" -I\"{run}\" -o \"{Path.Combine(run, "pkg.bin")}\"");
-                string result = build.Length == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C++-Compiler: " + build;
+                string build = NativeTestBuild.Build(NativeTestBuild.In(run), pkgCxx, pkgSources, run, "pkg", "-pthread -O1 -Wall -Wextra", Path.Combine(run, "pkg.bin"), out int pkgExit);
+                string result = pkgExit == 0 ? RunTool(Path.Combine(run, "pkg.bin"), "") : "C/C++-Compiler: " + build;
                 CheckNat("Paket: das C++-Native laeuft im uebersetzten Programm (Zahlen, ein Array aus der Scope-Liste)", result == "42\n4\n9\n", result);
 
                 // the same natives in the virtual machine: built into a shared library with the C ABI, called through it (numbers, text, arrays, buffers cross; errors are reported)
@@ -23133,8 +23534,8 @@ else
                 }), Path.Combine(pkgDir, "out")).PackagePath;
                 fire.Package.Manager.PackageStore.Default.Install(whichFpk);
                 string whichScript = "#import \"pkwhich\"\nprint(PkWhich.Which())";
-                string cppLinux = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux);
-                string cppRtos = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos);
+                string cppLinux = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.Linux), TargetProfile.Linux).Natives ?? "";
+                string cppRtos = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { whichScript }, null, null, VmExecutionMode.Release, null, TargetProfile.FreeRtos), TargetProfile.FreeRtos).Natives ?? "";
                 string vmWhich;
                 try { vmWhich = vmOutput(whichScript); } catch (Exception ex) { vmWhich = ex.Message; }
                 CheckNat("Paket: platformSources - jedes Ziel bekommt seine Quellen (Linux: posix, FreeRTOS: freertos), die VM die der eigenen Plattform",

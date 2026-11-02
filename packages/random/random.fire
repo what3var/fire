@@ -108,7 +108,7 @@ class PseudoRandom {
 
     // The number of elements of a List or an array.
     int CountOf(any list) {
-        if (list is of List) { return list.count }
+        if (list is of List) { return list.Count }
         return list.length
     }
 

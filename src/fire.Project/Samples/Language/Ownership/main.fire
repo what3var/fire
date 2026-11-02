@@ -24,6 +24,6 @@ var shelf = new Shelf()
 for (var i = 1; i <= 3; i++) {
     shelf.Put(Factory.Make(i * 10))
 }
-for (var i = 0; i < shelf.boxes.count; i++) {
+for (var i = 0; i < shelf.boxes.Count; i++) {
     print("box " + i + " = " + shelf.boxes[i].value)
 }

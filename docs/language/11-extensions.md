@@ -24,7 +24,7 @@ print(a.Describe())         // Tom (3)
 - Fields, methods and properties can be added.
 - The class must exist in the program (or its standard library). Several `class extends` blocks for the same class are merged, also from other files.
 - A member that the class already has with the same name and number of parameters is a duplicate definition, not a replacement.
-- Generic classes are extended with their raw name: `class extends List { T Last() { return this[this.count - 1] } }`.
+- Generic classes are extended with their raw name: `class extends List { T Last() { return this[this.Count - 1] } }`.
 
 ## Extending base types
 

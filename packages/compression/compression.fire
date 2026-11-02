@@ -1,0 +1,781 @@
+#import "io"
+#import "filesystem"
+#import "time"
+
+// Compression (docs/COMPRESSION.md): Deflate, zlib and gzip as streams and in one go, and Zip archives. The Deflate is the package's own C (no library), so
+// the bytes are the same in the VM, in a native build and on every target.
+namespace Compression {
+    // The framing around the Deflate data: none (raw, as in Zip), zlib (RFC 1950: a small header and Adler-32) or gzip (RFC 1952: a header and CRC-32).
+    enum Format { Raw = 0, ZLib = 1, GZip = 2 }
+    enum Mode { Compress, Decompress }
+
+    // Compressed data that is broken, incomplete or not of the expected format.
+    class InvalidDataException : IO.IOException {
+        construct(string message) : base(message, 9) { }
+    }
+
+    class Errors {
+        static undefined Throw() {
+            var code = __CmpLastError()
+            var message = __CmpLastErrorMessage()
+            if (code == 1) { throw new Compression.InvalidDataException(message) }
+            if (code == 2) { throw new IO.StreamClosedException(message) }
+            if (code == 3) { throw new ArgumentException(message) }
+            throw new IO.IOException(message, 9)
+        }
+        static int Check(int result) {
+            if (result < 0) { Compression.Errors.Throw() }
+            return result
+        }
+        static byte[] Bytes(any data) {
+            if (data is of string) { return IO.Utf8.GetBytes(data) }
+            return data
+        }
+    }
+
+    // A stream that compresses what is written to it into `inner`, or decompresses what it reads from `inner` (Mode). Close (or the destructor) finishes the
+    // compressed data; `inner` is closed with it unless `leaveOpen`.
+    class DeflateStream : IO.Stream {
+        IO.Stream inner
+        int handle = -1
+        Compression.Mode mode
+        bool leaveOpen
+        bool closed = false
+        bool innerEnded = false
+        byte chunk[]
+
+        construct(IO.Stream inner, Compression.Mode mode, int level = 6, bool leaveOpen = false, Compression.Format format = Compression.Format.Raw) {
+            this.inner = inner
+            try inner.TakeTo(this)   // (a stream that is only the result of a call passed on belongs to this one; one that belongs to somebody else stays)
+            this.mode = mode
+            this.leaveOpen = leaveOpen
+            this.chunk = new byte[16384]
+            if (mode == Compression.Mode.Compress) { this.handle = Compression.Errors.Check(__CmpDeflateNew(format, level)) }
+            else { this.handle = Compression.Errors.Check(__CmpInflateNew(format)) }
+        }
+
+        bool CanRead { get { return !this.closed && this.mode == Compression.Mode.Decompress } }
+        bool CanWrite { get { return !this.closed && this.mode == Compression.Mode.Compress } }
+
+        // The stream underneath.
+        IO.Stream BaseStream { get { return this.inner } }
+
+        undefined Check() {
+            if (this.closed) { throw new IO.StreamClosedException("The compression stream is closed.") }
+        }
+
+        int Read(byte buffer[], int offset, int count) {
+            this.Check()
+            if (this.mode != Compression.Mode.Decompress) { throw new IO.IOException("This stream compresses: it cannot be read.", 8) }
+            if (count == 0) { return 0 }
+            while (true) {
+                var n = Compression.Errors.Check(__CmpInflateRead(this.handle, buffer, offset, count))
+                if (n > 0) { return n }
+                if (__CmpInflateDone(this.handle)) { return 0 }
+                if (this.innerEnded) { Compression.Errors.Throw() }
+                var got = this.inner.Read(this.chunk, 0, this.chunk.length)
+                if (got <= 0) {
+                    this.innerEnded = true
+                    __CmpInflateEnd(this.handle)
+                } else if (!__CmpInflateFeed(this.handle, this.chunk, 0, got)) { Compression.Errors.Throw() }
+            }
+        }
+
+        int Write(byte buffer[], int offset, int count) {
+            this.Check()
+            if (this.mode != Compression.Mode.Compress) { throw new IO.IOException("This stream decompresses: it cannot be written.", 8) }
+            if (!__CmpDeflateWrite(this.handle, buffer, offset, count)) { Compression.Errors.Throw() }
+            this.Drain()
+            return count
+        }
+
+        // Writes the compressed bytes that are ready into `inner`.
+        undefined Drain() {
+            while (true) {
+                var n = Compression.Errors.Check(__CmpDeflateRead(this.handle, this.chunk, 0, this.chunk.length))
+                if (n == 0) { break }
+                this.inner.Write(this.chunk, 0, n)
+            }
+        }
+
+        // Compressing: everything written so far goes out (a sync flush), so that a reader can decompress it already.
+        undefined Flush() {
+            this.Check()
+            if (this.mode == Compression.Mode.Compress) {
+                if (!__CmpDeflateFlush(this.handle, false)) { Compression.Errors.Throw() }
+                this.Drain()
+            }
+            this.inner.Flush()
+        }
+
+        undefined Close() {
+            if (this.closed) { return }
+            if (this.mode == Compression.Mode.Compress) {
+                if (!__CmpDeflateFlush(this.handle, true)) { Compression.Errors.Throw() }
+                this.Drain()
+                this.inner.Flush()
+            }
+            this.closed = true
+            __CmpClose(this.handle)
+            if (!this.leaveOpen) { this.inner.Close() }
+        }
+
+        destruct() { try { this.Close() } catch (Exception e) { } }
+    }
+
+    // A DeflateStream with the gzip framing (.gz files): reading also takes several gzip members one after the other.
+    class GZipStream : Compression.DeflateStream {
+        construct(IO.Stream inner, Compression.Mode mode, int level = 6, bool leaveOpen = false) : base(inner, mode, level, leaveOpen, Compression.Format.GZip) { }
+    }
+
+    // A DeflateStream with the zlib framing.
+    class ZLibStream : Compression.DeflateStream {
+        construct(IO.Stream inner, Compression.Mode mode, int level = 6, bool leaveOpen = false) : base(inner, mode, level, leaveOpen, Compression.Format.ZLib) { }
+    }
+
+    // Raw Deflate in one go: `data` is bytes or a string (UTF-8); level 0 (stored) .. 9 (smallest), 6 by default.
+    class Deflate {
+        static byte[] Compress(any data, int level = 6) { return Compression.Deflate.Run(data, Compression.Format.Raw, level) }
+        static byte[] Decompress(byte data[]) { return Compression.Deflate.Undo(data, Compression.Format.Raw) }
+        static string DecompressText(byte data[]) { return IO.Utf8.GetString(Compression.Deflate.Undo(data, Compression.Format.Raw)) }
+
+        static byte[] Run(any data, Compression.Format format, int level) {
+            var result = __CmpCompress(Compression.Errors.Bytes(data), format, level)
+            if (result == undefined) { Compression.Errors.Throw() }
+            return result
+        }
+        static byte[] Undo(byte data[], Compression.Format format) {
+            var result = __CmpDecompress(data, format)
+            if (result == undefined) { Compression.Errors.Throw() }
+            return result
+        }
+    }
+
+    // gzip in one go (the format of .gz files).
+    class GZip {
+        static byte[] Compress(any data, int level = 6) { return Compression.Deflate.Run(data, Compression.Format.GZip, level) }
+        static byte[] Decompress(byte data[]) { return Compression.Deflate.Undo(data, Compression.Format.GZip) }
+        static string DecompressText(byte data[]) { return IO.Utf8.GetString(Compression.Deflate.Undo(data, Compression.Format.GZip)) }
+    }
+
+    // zlib in one go.
+    class ZLib {
+        static byte[] Compress(any data, int level = 6) { return Compression.Deflate.Run(data, Compression.Format.ZLib, level) }
+        static byte[] Decompress(byte data[]) { return Compression.Deflate.Undo(data, Compression.Format.ZLib) }
+        static string DecompressText(byte data[]) { return IO.Utf8.GetString(Compression.Deflate.Undo(data, Compression.Format.ZLib)) }
+    }
+}
+
+// Zip archives (PKWARE APPNOTE): reading (also Zip64 and archives that a stream wrote with data descriptors), writing (Deflate or stored), extracting
+// (a name that would land outside of the target folder is refused).
+namespace Zip {
+    enum Method { Stored = 0, Deflated = 8 }
+
+    // An archive that cannot be read as Zip, an entry that is not there, a feature that is not supported (encryption, other methods).
+    class ZipException : IO.IOException {
+        construct(string message) : base(message, 9) { }
+    }
+
+    class Bytes {
+        static int U16(byte b[], int at) { return __CmpGetLE(b, at, 2) }
+        static int U32(byte b[], int at) { return __CmpGetLE(b, at, 4) }
+        static int U64(byte b[], int at) { return __CmpGetLE(b, at, 8) }
+        static undefined Put(byte b[], int at, int size, int value) { __CmpPutLE(b, at, size, value) }
+
+        // A name from the archive: UTF-8 when the flag says so or when the bytes are valid UTF-8 (most tools write it without the flag), else code page 437.
+        static string Name(byte b[], int at, int length, bool utf8) {
+            var text = IO.Utf8.GetString(b, at, length)
+            if (utf8 || !text.Contains("�")) { return text }
+            var cp437 = "ÇüéâäàåçêëèïîìÄÅÉæÆôöòûùÿÖÜ¢£¥₧ƒáíóúñÑªº¿⌐¬½¼¡«»░▒▓│┤╡╢╖╕╣║╗╝╜╛┐└┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■"
+            var result = ""
+            for (var i = 0; i < length; i++) {
+                var c = b[at + i]
+                if (c < 128) { result = result + c.ToChar() }
+                else if (c == 255) { result = result + 160.ToChar() }
+                else { result = result + cp437[c - 128] }
+            }
+            return result
+        }
+
+        // The DOS date and time of Zip as a local DateTime (1980-01-01 when they are not valid).
+        static DateTime FromDos(int date, int time) {
+            var year = 1980 + (date >> 9)
+            var month = (date >> 5) & 15
+            var day = date & 31
+            var hour = time >> 11
+            var minute = (time >> 5) & 63
+            var second = (time & 31) * 2
+            if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) { return new DateTime(1980, 1, 1) }
+            try { return new DateTime(year, month, day, hour, minute, second) } catch (Exception e) { return new DateTime(1980, 1, 1) }
+        }
+        static int DosDate(DateTime t) {
+            if (t.Year < 1980) { return (1 << 5) | 1 }
+            return ((t.Year - 1980) << 9) | (t.Month << 5) | t.Day
+        }
+        static int DosTime(DateTime t) {
+            if (t.Year < 1980) { return 0 }
+            return (t.Hour << 11) | (t.Minute << 5) | (t.Second / 2)
+        }
+    }
+
+    // An entry of an archive: a file (or a folder, whose name ends with "/").
+    class Entry {
+        Zip.Archive archive
+        string fullName
+        int length
+        int compressedLength
+        int crc
+        int method
+        int flags
+        int headerOffset
+        int dosDate
+        int dosTime
+        string comment = ""
+        int externalAttributes
+
+        // The path in the archive ("docs/readme.txt"; folders end with "/").
+        string FullName { get { return this.fullName } }
+        // The last part of the path ("readme.txt"; "" for a folder).
+        string Name {
+            get {
+                var cut = this.fullName.LastIndexOf("/")
+                if (cut < 0) { return this.fullName }
+                return this.fullName.Substring(cut + 1)
+            }
+        }
+        // The size of the content, uncompressed and compressed.
+        int Length { get { return this.length } }
+        int CompressedLength { get { return this.compressedLength } }
+        int Crc32 { get { return this.crc } }
+        Zip.Method CompressionMethod { get { return this.method!Zip.Method } }
+        bool IsDirectory { get { return this.fullName.EndsWith("/") } }
+        bool IsEncrypted { get { return (this.flags & 1) != 0 } }
+        string Comment { get { return this.comment } }
+        DateTime LastWriteTime { get { return Zip.Bytes.FromDos(this.dosDate, this.dosTime) } }
+
+        // The content as a stream (decompressed; at its end the CRC-32 and the length are checked: Compression.InvalidDataException if they do not match).
+        IO.Stream Open() {
+            if (this.archive == undefined || this.archive.writing) { throw new Zip.ZipException("Only an entry of an archive that is read can be opened.") }
+            if (this.IsEncrypted) { throw new Zip.ZipException("The entry '" + this.fullName + "' is encrypted, which is not supported.") }
+            if (this.method != 0 && this.method != 8) { throw new Zip.ZipException("The entry '" + this.fullName + "' uses the compression method " + this.method + ", which is not supported (only stored and Deflate are).") }
+            var source = this.archive.source
+            var header = this.archive.ReadAt(this.headerOffset, 30)
+            if (header.length < 30 || Zip.Bytes.U32(header, 0) != 0x04034b50) { throw new Compression.InvalidDataException("The local header of the entry '" + this.fullName + "' is broken.") }
+            var start = this.headerOffset + 30 + Zip.Bytes.U16(header, 26) + Zip.Bytes.U16(header, 28)
+            IO.Stream data = new Zip.Part(source, start, this.compressedLength)
+            if (this.method == 8) { data = new Compression.DeflateStream(take data, Compression.Mode.Decompress, 6, false) }
+            return new Zip.Checked(take data, this)
+        }
+
+        byte[] ReadAllBytes() {
+            var s = this.Open()
+            var all = s.ReadAll()
+            s.Close()
+            return all
+        }
+        string ReadAllText() { return IO.Utf8.GetString(this.ReadAllBytes()) }
+
+        // Writes the entry into a file (a folder entry makes the folder); an existing file only with `overwrite`.
+        undefined ExtractToFile(string path, bool overwrite = false) {
+            if (this.IsDirectory) {
+                IO.Directory.CreateDirectory(path)
+                return
+            }
+            if (!overwrite && IO.File.Exists(path)) { throw new IO.FileExistsException("The file '" + path + "' already exists.") }
+            var parent = IO.Path.GetDirectoryName(path)
+            if (parent != undefined && parent != "") { IO.Directory.CreateDirectory(parent) }
+            var input = this.Open()
+            var output = IO.File.Create(path)
+            try { input.CopyTo(output, 65536) } finally {
+                output.Close()
+                input.Close()
+            }
+        }
+    }
+
+    // A part of a seekable stream (the compressed bytes of an entry); the position of the stream underneath is set before every read.
+    class Part : IO.Stream {
+        IO.Stream source
+        int start
+        int length
+        int at = 0
+
+        construct(IO.Stream source, int start, int length) {
+            this.source = source
+            this.start = start
+            this.length = length
+        }
+        bool CanRead { get { return true } }
+        int Read(byte buffer[], int offset, int count) {
+            var left = this.length - this.at
+            if (left <= 0 || count <= 0) { return 0 }
+            if (count > left) { count = left }
+            this.source.Position = this.start + this.at
+            var n = this.source.Read(buffer, offset, count)
+            if (n <= 0) { throw new Compression.InvalidDataException("The archive ends inside an entry.") }
+            this.at = this.at + n
+            return n
+        }
+    }
+
+    // Checks the CRC-32 and the length of an entry while it is read.
+    class Checked : IO.Stream {
+        IO.Stream inner
+        Zip.Entry entry
+        int crc = 0
+        int total = 0
+        bool checkedEnd = false
+
+        construct(IO.Stream inner, Zip.Entry entry) {
+            this.inner = inner
+            try inner.TakeTo(this)
+            this.entry = entry
+        }
+        bool CanRead { get { return true } }
+        int Read(byte buffer[], int offset, int count) {
+            var n = this.inner.Read(buffer, offset, count)
+            if (n > 0) {
+                this.crc = __CmpCrc32(this.crc, buffer, offset, n)
+                this.total = this.total + n
+                if (this.total > this.entry.length) { throw new Compression.InvalidDataException("The entry '" + this.entry.fullName + "' is longer than the archive says.") }
+            } else if (count > 0 && !this.checkedEnd) {
+                this.checkedEnd = true
+                if (this.total != this.entry.length) { throw new Compression.InvalidDataException("The entry '" + this.entry.fullName + "' is shorter than the archive says.") }
+                if (this.crc != this.entry.crc) { throw new Compression.InvalidDataException("The entry '" + this.entry.fullName + "' is broken (the CRC-32 does not match).") }
+            }
+            return n
+        }
+        undefined Close() { this.inner.Close() }
+    }
+
+    // What is written into an entry of an archive that is being written (CreateEntry): compressed into the archive; Close ends the entry.
+    class EntryStream : IO.Stream {
+        Zip.Archive archive
+        Zip.Entry entry
+        int handle
+        int crc = 0
+        bool closed = false
+        byte chunk[]
+
+        construct(Zip.Archive archive, Zip.Entry entry, int level) {
+            this.archive = archive
+            this.entry = entry
+            this.chunk = new byte[16384]
+            this.handle = Compression.Errors.Check(__CmpDeflateNew(Compression.Format.Raw, level))
+        }
+        bool CanWrite { get { return !this.closed } }
+        int Write(byte buffer[], int offset, int count) {
+            if (this.closed) { throw new IO.StreamClosedException("The entry is already closed.") }
+            if (count <= 0) { return 0 }
+            this.crc = __CmpCrc32(this.crc, buffer, offset, count)
+            this.entry.length = this.entry.length + count
+            if (!__CmpDeflateWrite(this.handle, buffer, offset, count)) { Compression.Errors.Throw() }
+            this.Drain()
+            return count
+        }
+        undefined Drain() {
+            while (true) {
+                var n = Compression.Errors.Check(__CmpDeflateRead(this.handle, this.chunk, 0, this.chunk.length))
+                if (n == 0) { break }
+                this.archive.Out(this.chunk, 0, n)
+                this.entry.compressedLength = this.entry.compressedLength + n
+            }
+        }
+        undefined Close() {
+            if (this.closed) { return }
+            this.closed = true
+            if (!__CmpDeflateFlush(this.handle, true)) { Compression.Errors.Throw() }
+            this.Drain()
+            __CmpClose(this.handle)
+            this.entry.crc = this.crc
+            if (this.entry.length > 0xFFFFFFFE || this.entry.compressedLength > 0xFFFFFFFE) { throw new Zip.ZipException("The entry '" + this.entry.fullName + "' is larger than 4 GB, which this writer does not support.") }
+            // the data descriptor: CRC-32 and the sizes (the local header could not know them)
+            var d = new byte[16]
+            Zip.Bytes.Put(d, 0, 4, 0x08074b50)
+            Zip.Bytes.Put(d, 4, 4, this.crc)
+            Zip.Bytes.Put(d, 8, 4, this.entry.compressedLength)
+            Zip.Bytes.Put(d, 12, 4, this.entry.length)
+            this.archive.Out(d, 0, 16)
+            this.archive.open = undefined
+        }
+        destruct() { try { this.Close() } catch (Exception e) { } }
+    }
+
+    // A Zip archive, either read (Open, Read) or written (Create, Write).
+    class Archive {
+        IO.Stream source
+        IO.Stream target
+        bool leaveOpen
+        bool writing = false
+        bool closed = false
+        List<Zip.Entry> entries
+        string comment = ""
+        int written = 0
+        Zip.EntryStream open
+
+        construct() { this.entries = new List<Zip.Entry>(Owns.Values) }
+
+        // ---- reading ----
+        // An archive file to read.
+        static Zip.Archive Open(string path) { return Zip.Archive.Read(IO.File.OpenRead(path)) }
+
+        // An archive in a stream that can seek (a file, a MemoryStream).
+        static Zip.Archive Read(IO.Stream stream, bool leaveOpen = false) {
+            if (!stream.CanSeek) { throw new Zip.ZipException("Reading a Zip archive needs a stream that can seek.") }
+            var a = new Zip.Archive()
+            a.source = stream
+            try stream.TakeTo(a)
+            a.leaveOpen = leaveOpen
+            a.ReadDirectory()
+            return a
+        }
+
+        // An archive in memory (the bytes of a .zip file).
+        static Zip.Archive FromBytes(byte data[]) { return Zip.Archive.Read(new IO.MemoryStream(data)) }
+
+        byte[] ReadAt(int position, int count) {
+            this.source.Position = position
+            return this.source.ReadBytes(count)
+        }
+
+        undefined ReadDirectory() {
+            var size = this.source.Length
+            var tailLength = size
+            if (tailLength > 65557) { tailLength = 65557 }
+            var tail = this.ReadAt(size - tailLength, tailLength)
+            var end = __CmpFindLast(tail, 0x06054b50)
+            if (end < 0 || end + 22 > tail.length) { throw new Zip.ZipException("This is not a Zip archive (the end of the central directory is missing).") }
+            var count = Zip.Bytes.U16(tail, end + 10)
+            var dirSize = Zip.Bytes.U32(tail, end + 12)
+            var dirOffset = Zip.Bytes.U32(tail, end + 16)
+            var commentLength = Zip.Bytes.U16(tail, end + 20)
+            if (end + 22 + commentLength <= tail.length) { this.comment = Zip.Bytes.Name(tail, end + 22, commentLength, true) }
+            // Zip64: the record before the end record says where the real numbers are
+            if (count == 0xFFFF || dirSize == 0xFFFFFFFF || dirOffset == 0xFFFFFFFF) {
+                if (end >= 20 && Zip.Bytes.U32(tail, end - 20) == 0x07064b50) {
+                    var at = Zip.Bytes.U64(tail, end - 20 + 8)
+                    var rec = this.ReadAt(at, 56)
+                    if (rec.length < 56 || Zip.Bytes.U32(rec, 0) != 0x06064b50) { throw new Compression.InvalidDataException("The Zip64 end of the central directory is broken.") }
+                    count = Zip.Bytes.U64(rec, 32)
+                    dirSize = Zip.Bytes.U64(rec, 40)
+                    dirOffset = Zip.Bytes.U64(rec, 48)
+                }
+            }
+            if (dirOffset < 0 || dirSize < 0 || dirOffset + dirSize > size) { throw new Compression.InvalidDataException("The central directory lies outside of the archive.") }
+            var dir = this.ReadAt(dirOffset, dirSize)
+            var p = 0
+            for (var i = 0; i < count; i++) {
+                if (p + 46 > dir.length || Zip.Bytes.U32(dir, p) != 0x02014b50) { throw new Compression.InvalidDataException("The central directory is broken (entry " + i + ").") }
+                var e = new Zip.Entry()
+                e.archive = this
+                e.flags = Zip.Bytes.U16(dir, p + 8)
+                e.method = Zip.Bytes.U16(dir, p + 10)
+                e.dosTime = Zip.Bytes.U16(dir, p + 12)
+                e.dosDate = Zip.Bytes.U16(dir, p + 14)
+                e.crc = Zip.Bytes.U32(dir, p + 16)
+                e.compressedLength = Zip.Bytes.U32(dir, p + 20)
+                e.length = Zip.Bytes.U32(dir, p + 24)
+                var nameLength = Zip.Bytes.U16(dir, p + 28)
+                var extraLength = Zip.Bytes.U16(dir, p + 30)
+                var commentLen = Zip.Bytes.U16(dir, p + 32)
+                e.externalAttributes = Zip.Bytes.U32(dir, p + 38)
+                e.headerOffset = Zip.Bytes.U32(dir, p + 42)
+                if (p + 46 + nameLength + extraLength + commentLen > dir.length) { throw new Compression.InvalidDataException("The central directory is broken (entry " + i + ").") }
+                e.fullName = Zip.Bytes.Name(dir, p + 46, nameLength, (e.flags & 0x800) != 0)
+                // the Zip64 field: the numbers that did not fit, in this order
+                var x = p + 46 + nameLength
+                var xEnd = x + extraLength
+                while (x + 4 <= xEnd) {
+                    var id = Zip.Bytes.U16(dir, x)
+                    var len = Zip.Bytes.U16(dir, x + 2)
+                    if (id == 1) {
+                        var q = x + 4
+                        if (e.length == 0xFFFFFFFF && q + 8 <= x + 4 + len) { e.length = Zip.Bytes.U64(dir, q); q = q + 8 }
+                        if (e.compressedLength == 0xFFFFFFFF && q + 8 <= x + 4 + len) { e.compressedLength = Zip.Bytes.U64(dir, q); q = q + 8 }
+                        if (e.headerOffset == 0xFFFFFFFF && q + 8 <= x + 4 + len) { e.headerOffset = Zip.Bytes.U64(dir, q); q = q + 8 }
+                    }
+                    x = x + 4 + len
+                }
+                if (commentLen > 0) { e.comment = Zip.Bytes.Name(dir, p + 46 + nameLength + extraLength, commentLen, (e.flags & 0x800) != 0) }
+                if (e.headerOffset < 0 || e.headerOffset >= size || e.compressedLength < 0 || e.length < 0) { throw new Compression.InvalidDataException("The entry '" + e.fullName + "' points outside of the archive.") }
+                this.entries.Add(e)
+                p = p + 46 + nameLength + extraLength + commentLen
+            }
+        }
+
+        // The entries, in the order of the archive.
+        List<Zip.Entry> Entries { get { return this.entries } }
+        int Count { get { return this.entries.Count } }
+        string Comment {
+            get { return this.comment }
+            set { this.comment = value }
+        }
+
+        // The entry with this path, or undefined.
+        Zip.Entry GetEntry(string fullName) {
+            foreach (e in this.entries) { if (e.fullName == fullName) { return e } }
+            return undefined
+        }
+
+        // Extracts all entries into `folder`. A name that would land outside of it ("../x", "/etc/x", "C:\x") is refused with a ZipException.
+        undefined ExtractTo(string folder, bool overwrite = false) {
+            var root = IO.Path.GetFullPath(folder)
+            // every name is checked before anything is written
+            var targets = new List<string>()
+            foreach (e in this.entries) { targets.Add(Zip.Archive.TargetOf(root, e.fullName)) }
+            IO.Directory.CreateDirectory(root)
+            for (var i = 0; i < this.entries.Count; i++) { this.entries[i].ExtractToFile(targets[i], overwrite) }
+        }
+
+        // Where an entry goes inside `root` (a full path); a ZipException for a name that leaves it.
+        static string TargetOf(string root, string name) {
+            var relative = name.Replace("\\", "/")
+            if (relative.StartsWith("/") || (relative.Length >= 2 && relative[1] == ':')) { throw new Zip.ZipException("The entry '" + name + "' has an absolute path: it is not extracted.") }
+            foreach (part in relative.Split("/")) {
+                if (part == "..") { throw new Zip.ZipException("The entry '" + name + "' would land outside of the target folder: it is not extracted.") }
+            }
+            var full = IO.Path.GetFullPath(IO.Path.Combine(root, relative))
+            var inside = root
+            if (!inside.EndsWith(IO.Path.DirectorySeparatorChar)) { inside = inside + IO.Path.DirectorySeparatorChar }
+            if (!full.StartsWith(inside) && full + IO.Path.DirectorySeparatorChar != inside) { throw new Zip.ZipException("The entry '" + name + "' would land outside of the target folder: it is not extracted.") }
+            return full
+        }
+
+        // ---- writing ----
+        // A new archive file (an existing one is replaced).
+        static Zip.Archive Create(string path) { return Zip.Archive.Write(IO.File.Create(path)) }
+
+        // A new archive into a stream (it need not seek: the entries carry data descriptors).
+        static Zip.Archive Write(IO.Stream stream, bool leaveOpen = false) {
+            var a = new Zip.Archive()
+            a.target = stream
+            try stream.TakeTo(a)
+            a.leaveOpen = leaveOpen
+            a.writing = true
+            return a
+        }
+
+        undefined Out(byte data[], int offset, int count) {
+            this.target.Write(data, offset, count)
+            this.written = this.written + count
+        }
+
+        undefined CheckWriting() {
+            if (!this.writing) { throw new Zip.ZipException("This archive is read: entries cannot be added.") }
+            if (this.closed) { throw new Zip.ZipException("The archive is already closed.") }
+            if (this.open != undefined) { throw new Zip.ZipException("The entry '" + this.open.entry.fullName + "' is still being written: close its stream first.") }
+        }
+
+        Zip.Entry NewEntry(string name, DateTime time) {
+            var e = new Zip.Entry()
+            e.fullName = name.Replace("\\", "/")
+            e.headerOffset = this.written
+            e.dosDate = Zip.Bytes.DosDate(time)
+            e.dosTime = Zip.Bytes.DosTime(time)
+            e.length = 0
+            e.compressedLength = 0
+            return e
+        }
+
+        // The local header of an entry (`descriptor`: the sizes follow the data).
+        undefined WriteLocalHeader(Zip.Entry e, byte name[], bool descriptor) {
+            var h = new byte[30]
+            Zip.Bytes.Put(h, 0, 4, 0x04034b50)
+            Zip.Bytes.Put(h, 4, 2, 20)
+            Zip.Bytes.Put(h, 6, 2, e.flags)
+            Zip.Bytes.Put(h, 8, 2, e.method)
+            Zip.Bytes.Put(h, 10, 2, e.dosTime)
+            Zip.Bytes.Put(h, 12, 2, e.dosDate)
+            if (!descriptor) {
+                Zip.Bytes.Put(h, 14, 4, e.crc)
+                Zip.Bytes.Put(h, 18, 4, e.compressedLength)
+                Zip.Bytes.Put(h, 22, 4, e.length)
+            }
+            Zip.Bytes.Put(h, 26, 2, name.length)
+            this.Out(h, 0, 30)
+            this.Out(name, 0, name.length)
+        }
+
+        static int NameFlags(byte name[]) {
+            for (var i = 0; i < name.length; i++) { if (name[i] >= 128) { return 0x800 } }
+            return 0
+        }
+
+        // Adds an entry with `data` (bytes or a string as UTF-8); level 0 stores it, and so does every level when Deflate would not make it smaller.
+        Zip.Entry Add(string name, any data, int level = 6, DateTime time = undefined) {
+            this.CheckWriting()
+            var bytes = Compression.Errors.Bytes(data)
+            if (time == undefined) { time = DateTime.Now }
+            var e = this.NewEntry(name, time)
+            var nameBytes = IO.Utf8.GetBytes(e.fullName)
+            e.flags = Zip.Archive.NameFlags(nameBytes)
+            e.length = bytes.length
+            e.crc = __CmpCrc32(0, bytes, 0, bytes.length)
+            var stored = bytes
+            e.method = 0
+            if (level > 0 && bytes.length > 0) {
+                var packed = Compression.Deflate.Run(bytes, Compression.Format.Raw, level)
+                if (packed.length < bytes.length) {
+                    stored = packed
+                    e.method = 8
+                }
+            }
+            e.compressedLength = stored.length
+            this.WriteLocalHeader(e, nameBytes, false)
+            this.Out(stored, 0, stored.length)
+            this.entries.Add(e)
+            return e
+        }
+
+        // Adds an empty folder entry ("name/").
+        Zip.Entry AddDirectory(string name, DateTime time = undefined) {
+            var n = name.Replace("\\", "/")
+            if (!n.EndsWith("/")) { n = n + "/" }
+            return this.Add(n, new byte[0], 0, time)
+        }
+
+        // Adds a file of the disk under `name` (its time of last change goes with it).
+        Zip.Entry AddFile(string name, string path, int level = 6) {
+            this.CheckWriting()
+            var time = IO.File.GetLastWriteTime(path)
+            if (IO.File.Size(path) <= 16777216) { return this.Add(name, IO.File.ReadAllBytes(path), level, time) }
+            var input = IO.File.OpenRead(path)
+            var output = this.CreateEntry(name, level, time)
+            try { input.CopyTo(output, 65536) } finally {
+                output.Close()
+                input.Close()
+            }
+            return output.entry
+        }
+
+        // An entry to write into piece by piece: what is written is compressed (Deflate) into the archive; Close the stream before the next entry.
+        Zip.EntryStream CreateEntry(string name, int level = 6, DateTime time = undefined) {
+            this.CheckWriting()
+            if (time == undefined) { time = DateTime.Now }
+            var e = this.NewEntry(name, time)
+            var nameBytes = IO.Utf8.GetBytes(e.fullName)
+            e.flags = Zip.Archive.NameFlags(nameBytes) | 8
+            e.method = 8
+            this.WriteLocalHeader(e, nameBytes, true)
+            this.entries.Add(e)
+            this.open = new Zip.EntryStream(this, e, level)
+            return this.open
+        }
+
+        // Writing: the central directory and the end records (Zip64 ones when the archive needs them); then the stream is closed (unless leaveOpen).
+        // Reading: closes the stream.
+        undefined Close() {
+            if (this.closed) { return }
+            if (this.writing) {
+                if (this.open != undefined) { this.open.Close() }
+                var dirOffset = this.written
+                foreach (e in this.entries) { this.WriteCentral(e) }
+                var dirSize = this.written - dirOffset
+                var count = this.entries.Count
+                var commentBytes = IO.Utf8.GetBytes(this.comment)
+                if (count >= 0xFFFF || dirOffset >= 0xFFFFFFFF || dirSize >= 0xFFFFFFFF) {
+                    var z64 = this.written
+                    var r = new byte[76]
+                    Zip.Bytes.Put(r, 0, 4, 0x06064b50)
+                    Zip.Bytes.Put(r, 4, 8, 44)
+                    Zip.Bytes.Put(r, 12, 2, 45)
+                    Zip.Bytes.Put(r, 14, 2, 45)
+                    Zip.Bytes.Put(r, 24, 8, count)
+                    Zip.Bytes.Put(r, 32, 8, count)
+                    Zip.Bytes.Put(r, 40, 8, dirSize)
+                    Zip.Bytes.Put(r, 48, 8, dirOffset)
+                    // the locator
+                    Zip.Bytes.Put(r, 56, 4, 0x07064b50)
+                    Zip.Bytes.Put(r, 64, 8, z64)
+                    Zip.Bytes.Put(r, 72, 4, 1)
+                    this.Out(r, 0, 76)
+                    if (count > 0xFFFF) { count = 0xFFFF }
+                    if (dirOffset > 0xFFFFFFFF) { dirOffset = 0xFFFFFFFF }
+                    if (dirSize > 0xFFFFFFFF) { dirSize = 0xFFFFFFFF }
+                }
+                var end = new byte[22]
+                Zip.Bytes.Put(end, 0, 4, 0x06054b50)
+                Zip.Bytes.Put(end, 8, 2, count)
+                Zip.Bytes.Put(end, 10, 2, count)
+                Zip.Bytes.Put(end, 12, 4, dirSize)
+                Zip.Bytes.Put(end, 16, 4, dirOffset)
+                Zip.Bytes.Put(end, 20, 2, commentBytes.length)
+                this.Out(end, 0, 22)
+                this.Out(commentBytes, 0, commentBytes.length)
+                this.target.Flush()
+                this.closed = true
+                if (!this.leaveOpen) { this.target.Close() }
+                return
+            }
+            this.closed = true
+            if (!this.leaveOpen) { this.source.Close() }
+        }
+
+        undefined WriteCentral(Zip.Entry e) {
+            var nameBytes = IO.Utf8.GetBytes(e.fullName)
+            var offset = e.headerOffset
+            var big = offset >= 0xFFFFFFFF
+            var extra = new byte[0]
+            if (big) {
+                extra = new byte[12]
+                Zip.Bytes.Put(extra, 0, 2, 1)
+                Zip.Bytes.Put(extra, 2, 2, 8)
+                Zip.Bytes.Put(extra, 4, 8, offset)
+                offset = 0xFFFFFFFF
+            }
+            var h = new byte[46]
+            Zip.Bytes.Put(h, 0, 4, 0x02014b50)
+            Zip.Bytes.Put(h, 4, 2, 0x031E)        // made by: UNIX, version 3.0 (the attributes below are UNIX modes)
+            var needed = 20
+            if (big) { needed = 45 }
+            Zip.Bytes.Put(h, 6, 2, needed)
+            Zip.Bytes.Put(h, 8, 2, e.flags)
+            Zip.Bytes.Put(h, 10, 2, e.method)
+            Zip.Bytes.Put(h, 12, 2, e.dosTime)
+            Zip.Bytes.Put(h, 14, 2, e.dosDate)
+            Zip.Bytes.Put(h, 16, 4, e.crc)
+            Zip.Bytes.Put(h, 20, 4, e.compressedLength)
+            Zip.Bytes.Put(h, 24, 4, e.length)
+            Zip.Bytes.Put(h, 28, 2, nameBytes.length)
+            Zip.Bytes.Put(h, 30, 2, extra.length)
+            var mode = 0x81A4                       // a file, rw-r--r--
+            if (e.IsDirectory) { mode = 0x41ED }    // a folder, rwxr-xr-x
+            Zip.Bytes.Put(h, 38, 4, (mode << 16) | (e.IsDirectory ? 0x10 : 0))
+            Zip.Bytes.Put(h, 42, 4, offset)
+            this.Out(h, 0, 46)
+            this.Out(nameBytes, 0, nameBytes.length)
+            this.Out(extra, 0, extra.length)
+        }
+
+        destruct() { try { this.Close() } catch (Exception e) { } }
+
+        // ---- whole folders ----
+        // Packs everything in `folder` (with the subfolders; empty folders as folder entries) into a new archive file.
+        static undefined CreateFromDirectory(string folder, string zipPath, int level = 6, bool includeBaseDirectory = false) {
+            var root = IO.Path.GetFullPath(folder)
+            var prefix = ""
+            if (includeBaseDirectory) { prefix = IO.Path.GetFileName(root.TrimEnd()) + "/" }
+            var a = Zip.Archive.Create(zipPath)
+            try {
+                foreach (dir in IO.Directory.GetDirectories(root, "*", true)) {
+                    if (IO.Directory.GetFileSystemEntries(dir).Count == 0) { a.AddDirectory(prefix + Zip.Archive.Relative(root, dir), IO.Directory.GetLastWriteTime(dir)) }
+                }
+                foreach (file in IO.Directory.GetFiles(root, "*", true)) { a.AddFile(prefix + Zip.Archive.Relative(root, file), file, level) }
+            } finally { a.Close() }
+        }
+
+        // Extracts an archive file into `folder`.
+        static undefined ExtractToDirectory(string zipPath, string folder, bool overwrite = false) {
+            var a = Zip.Archive.Open(zipPath)
+            try { a.ExtractTo(folder, overwrite) } finally { a.Close() }
+        }
+
+        // The path below `root` with "/" between the parts.
+        static string Relative(string root, string path) {
+            var r = path.Substring(root.Length)
+            r = r.Replace("\\", "/")
+            while (r.StartsWith("/")) { r = r.Substring(1) }
+            return r
+        }
+    }
+}

@@ -227,6 +227,11 @@ namespace fire.Bytecode
         // checker assumed of them (Bytecode.OverloadHint text): the call does not score the candidates then. Only in front of calls of methods or
         // constructors overloaded by type, before their SetTypeArgs/CopyArgs.
         OverloadHint,        // u16 hintIdx
+        // `x!Color`: a whole number (or a value of the enum) becomes a value of the enum - the constant is a value of the enum (it brings the type).
+        ToEnum,              // u16 enumConstIdx      : pop v; push v as a value of the enum (an int, the same enum, undefined; else ArgumentException)
+        // `f(1, size: 2)`: the names of the last arguments of the call that follows (the string constant "size|name"); the callee puts them at the
+        // parameters of these names and fills the others with their default values (VM.FillDefaultArgs).
+        ArgNames,            // u16 namesConstIdx
     }
 
     /// <summary>Target type for CoerceType/CoerceTypeDynamic - corresponds exactly to the

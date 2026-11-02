@@ -189,8 +189,8 @@ namespace WiFi {
                 var n = new WiFi.Network(__WiFiScanSsid(this.handle, i), __WiFiScanBssid(this.handle, i), __WiFiScanInfo(this.handle, i, 0), __WiFiScanInfo(this.handle, i, 1), __WiFiScanInfo(this.handle, i, 2))
                 n.TakeTo(list)
                 // strongest first: insert before the first weaker one
-                var at = list.count
-                for (var k = 0; k < list.count; k++) {
+                var at = list.Count
+                for (var k = 0; k < list.Count; k++) {
                     if (list[k].rssi < n.rssi) { at = k; break }
                 }
                 list.Insert(at, n)

@@ -20,12 +20,14 @@ namespace fire.Standard
         Log = 12,
         Log10 = 13,
         Exp = 14,
+        /// <summary>The hash of a key of Dictionary/HashSet (not a method of `Math`): equal values (`==`, also `1km` and `1000m`, `1` and `1.0`) have the same hash.</summary>
+        Hash = 15,
     }
 
     /// <summary>
     /// The class `Math` of the prelude (always there): `Math.Sqrt(x)`, `Math.Abs(x)`, `Math.Min(a, b)`, ..., `Math.PI`. Functions that keep the number as it is
     /// (`Abs`, `Min`, `Max`, `Clamp`, `Sign`) are written in fire; the others go through ONE native function `__MathCall(id, x[, y])`, which the native backend
-    /// implements alike (fire_rt.hpp: mathCall).
+    /// implements alike (fire_rt.h: mathCall).
     ///
     /// Units: `Sqrt` takes the root of the unit too (`Math.Sqrt(9m * 1m)` is `3m`; a unit without a root - `m` - is an `ArgumentException`), `Round`/`Floor`/
     /// `Ceiling` keep it (`Math.Round(2.6m)` is `3m`), an int stays an int. The angle and exponential functions take a number without unit (radians) and give a
@@ -86,12 +88,43 @@ namespace fire.Standard
 
             """;
 
+        /// <summary>The hash of a key (MathMethod.Hash; fire_rt.h: keyHash): numbers by their value in the base unit (an integral one like an int), strings
+        /// by their text, chars and bools by their value, everything else by identity. The values differ from the native runtime - the tables keep the
+        /// order of insertion, so nothing that a program sees depends on them.</summary>
+        public static long KeyHash(Value x)
+        {
+            static long Mix(ulong h) { h ^= h >> 33; h *= 0xff51afd7ed558ccdUL; h ^= h >> 33; return (long)h; }
+            switch (x.Kind)
+            {
+                case ValueKind.Int or ValueKind.Float:
+                {
+                    var unit = x.Unit;
+                    bool unitless = unit == null || unit.IsUnitless;
+                    if (x.Kind == ValueKind.Int && unitless) return Mix((ulong)x.AsInt());
+                    double v = x.Kind == ValueKind.Int ? x.AsInt() : x.AsFloat();
+                    double b = unitless ? v : unit!.ToBase(v);
+                    if (b == Math.Floor(b) && Math.Abs(b) < 9e15) return Mix((ulong)(long)b);
+                    return Mix((ulong)BitConverter.DoubleToInt64Bits(b));
+                }
+                case ValueKind.String:
+                {
+                    ulong h = 1469598103934665603UL;
+                    foreach (char c in x.AsString()) { h ^= c; h *= 1099511628211UL; }
+                    return (long)h;
+                }
+                case ValueKind.Undefined: return 0;
+                case ValueKind.Char or ValueKind.Bool: return Mix((ulong)x.GetHashCode());
+                default: return Mix((ulong)(uint)x.GetHashCode());
+            }
+        }
+
         /// <summary>The native function `__MathCall(id, x[, y])`.</summary>
         public static Value Call(Value[] args)
         {
             if (args.Length is < 2 or > 3) throw new InvalidOperationException($"{NativeName}(id, x[, y]) expects one or two values.");
             var method = (MathMethod)args[0].AsInt();
             var x = args[1];
+            if (method == MathMethod.Hash) return Value.MakeInt(KeyHash(x));
             if (x.Kind is not (ValueKind.Int or ValueKind.Float))
                 throw new InvalidOperationException($"Math.{method} expects a number, not a value of type '{x.Kind}'.");
             double v = x.Kind == ValueKind.Int ? x.AsInt() : x.AsFloat();

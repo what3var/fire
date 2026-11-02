@@ -42,6 +42,8 @@ namespace fire.Compiler
         public string? TestFilter { get; init; }
         /// <summary>`--config`: the native build configuration; null = the nearest fire.native.json next to the first file.</summary>
         public string? ConfigFile { get; init; }
+        /// <summary>`forge run app.fire -- a b`: what follows `--` - the arguments of the program (Environment.Args); null without `--`.</summary>
+        public IReadOnlyList<string>? ProgramArguments { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
         public bool KeepSources { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
@@ -66,12 +68,12 @@ namespace fire.Compiler
     public static class CommandLineParser
     {
         public const string DefaultOutputFile = "out.exe";
-        public const string DefaultNativeOutputFile = "out.cpp";
+        public const string DefaultNativeOutputFile = "out.c";
 
         public static string Usage =>
             """
             Usage:
-              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
               fire.Compiler ui    <file.fxml> [-o <file>]
@@ -80,11 +82,12 @@ namespace fire.Compiler
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
               fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64]
 
-            run     compiles the files into one program and runs it.
-            build   turns them into a program: a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
-                    fire.native.json - C++ built with the toolchain of the configuration for the target (-o is the program; for a toolchain that only writes files, a folder).
+            run     compiles the files into one program and runs it. What follows `--` goes to the program (Environment.Args; for a project instead of its settings.arguments).
+            build   turns them into a program (a project without -o or "output": <project>/bin/<target>-<mode>/<name>, target vm or the native one, mode dbg/rel/perf):
+                    a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
+                    fire.native.json - C (and the natives in C++) built with the toolchain of the configuration for the target (-o is the program; for a toolchain that only writes files, a folder).
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
-            native  translates the files into C++ (written next to fire_rt.hpp, the runtime it includes; default: out.cpp)
+            native  translates the files into C (written next to fire_rt.h, the runtime it includes; default: out.c - and fire_natives.cpp with natives in C++)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
             -t      Target of a native build: windows, linux, macos, esp32, freertos, wasm (a page for the browser, needs Emscripten) or one that fire.native.json defines (default: this machine). The target decides the
                     default precision of float, which libraries can be imported, which platform package of the runtime is used and how the program starts.
@@ -134,10 +137,19 @@ namespace fire.Compiler
             bool keep = false;
             string? output = null;
             var defines = new List<string>();
+            List<string>? programArguments = null;
 
             for (int i = 1; i < args.Count; i++)
             {
                 string arg = args[i];
+
+                if (arg == "--")
+                {
+                    // everything after `--` belongs to the program that runs
+                    if (command != CommandKind.Run) return Fail(command, "Arguments for the program (after --) are only available with run.");
+                    programArguments = args.Skip(i + 1).ToList();
+                    break;
+                }
 
                 if (TryOption(arg, "-m", "--mode", out var modeInline))
                 {
@@ -251,6 +263,7 @@ namespace fire.Compiler
                 TestFilter = testFilter,
                 ToolchainName = toolchainName,
                 ConfigFile = configFile,
+                ProgramArguments = programArguments,
                 KeepSources = keep,
                 ProjectName = projectName,
                 OutputGiven = output != null,
@@ -363,7 +376,7 @@ namespace fire.Compiler
             if (engine == "native") return NativeBuild(options, config, sources, stdout, stderr);
             try
             {
-                new Linker { Defines = options.Defines }.CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
+                new Linker { Defines = options.Defines, BasePath = BaseDirectory(options), SourcePaths = SourceFiles(options) }.CompileAndLink(sources, null, options.OutputFile, options.Mode, options.FloatWidth);
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -392,7 +405,7 @@ namespace fire.Compiler
                 var target = config.ResolveTarget(options.TargetName);
                 var toolchain = config.ResolveToolchain(target, options.ToolchainName);
                 string output = options.OutputGiven ? options.OutputFile : NativeBuilder.DefaultOutput(target);
-                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, defines: options.Defines);
+                var result = NativeBuilder.Build(sources, config, target, toolchain, output, options.Mode, options.FloatWidth, options.KeepSources, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options));
                 stdout.Write(result.Log);
                 if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
                 stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
@@ -409,12 +422,17 @@ namespace fire.Compiler
             {
                 var config = LoadConfig(options);
                 var target = config.ResolveTarget(options.TargetName);
-                string cpp = NativeBuilder.Generate(sources, target, options.Mode, options.FloatWidth, defines: options.Defines);
+                var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options));
+                string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
-                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path));
+                NativeBuilder.WriteFiles(Path.GetDirectoryName(full)!, cpp, target, Path.GetFileName(full), config.Path == null ? null : Path.GetDirectoryName(config.Path), program.Natives);
+                string natives = program.Natives != null ? Path.Combine(Path.GetDirectoryName(full)!, NativeBuilder.NativesName) : "";
+                string extra = string.Join(" ", target.Native.CompileArgs);
                 stdout.WriteLine(target.IsEmbedded || target.Native.Entry.Kind == fire.Runtime.EntryKind.Function
-                    ? $"{full} ({cpp.Length} characters) for {target.Name} - add it, fire_rt.hpp and platform/{target.Native.Platform}/ to your project (the entry point is {target.Native.Entry.Name})"
-                    : $"{full} ({cpp.Length} characters) - compile with: c++ -std=c++17 -O2 {string.Join(" ", target.Native.CompileArgs)} \"{full}\" -o program");
+                    ? $"{full} ({cpp.Length} characters){(natives.Length > 0 ? " and " + natives : "")} for {target.Name} - add {(natives.Length > 0 ? "them" : "it")}, fire_rt.h and platform/{target.Native.Platform}/ to your project (the entry point is {target.Native.Entry.Name})"
+                    : natives.Length == 0
+                        ? $"{full} ({cpp.Length} characters) - compile with: cc -std=c11 -O2 {extra} \"{full}\" -o program -lm"
+                        : $"{full} ({cpp.Length} characters) and {natives} - compile with: cc -std=c11 -O2 {extra} -c \"{full}\" -o program.o && c++ -std=c++17 -O2 {extra} \"{natives}\" program.o -o program");
             }
             catch (fire.Native.NativeConfigException ex)
             {
@@ -554,7 +572,8 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, defines: options.Defines, plan: plan);
+                }, floatWidth: options.FloatWidth, defines: options.Defines, plan: plan,
+                    environment: new fire.Standard.ProgramEnvironment { Args = options.ProgramArguments ?? plan.Settings.Arguments ?? new List<string>(), ProgramPath = plan.SourcePaths.LastOrDefault() ?? "" });
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -571,6 +590,22 @@ namespace fire.Compiler
             var exit = VM.ExitValue;
             return exit.Kind == ValueKind.Int ? (int)exit.AsInt() : ExitOk;
         }
+
+        /// <summary>The mode a project's program is built in (`debug`, `release`, `performance`): -m, the project's settings, the tags of its files (`#debug`), else release -
+        /// what the linker decides (a compile of the sources, without writing anything).</summary>
+        private static string EffectiveModeName(CommandLineOptions options, fire.Projects.BuildPlan plan, TargetProfile? target)
+        {
+            var linked = new Linker { Defines = options.Defines, Plan = plan, Engine = target != null ? "native" : ConditionalSymbols.DefaultEngine, SourcePaths = plan.SourcePaths.Cast<string?>().ToList() }
+                .CompileAndLink(plan.SourceTexts, null, null, options.Mode, options.FloatWidth, target);
+            return linked.ExecutionMode.ToString().ToLowerInvariant();
+        }
+
+        /// <summary>The files of the program in the order of the sources: an `#include` is relative to the file that has it (docs/language/17-preprocessor.md).</summary>
+        private static IReadOnlyList<string?> SourceFiles(CommandLineOptions options) => options.Files.Select(f => (string?)Path.GetFullPath(f)).ToList();
+
+        /// <summary>The folder of the first file (where a source without a file of its own would look).</summary>
+        private static string? BaseDirectory(CommandLineOptions options) =>
+            options.Files.Count > 0 ? Path.GetDirectoryName(Path.GetFullPath(options.Files[0])) : null;
 
         private static int BuildPlanned(CommandLineOptions options, fire.Projects.BuildPlan plan, TextWriter stdout, TextWriter stderr)
         {
@@ -589,14 +624,18 @@ namespace fire.Compiler
                 {
                     var target = config.ResolveTarget(options.TargetName ?? plan.Settings.Target);
                     var toolchain = config.ResolveToolchain(target, options.ToolchainName ?? plan.Settings.Toolchain);
-                    string out2 = output ?? NativeBuilder.DefaultOutput(target);
+                    // without -o and `output`: <project>/bin/<target>-<mode>/<name> (the mode the program gets: -m, the project, the tags of its files)
+                    string out2 = output ?? (toolchain.EffectiveKind == "files"
+                        ? fire.Projects.ProjectOutput.Folder(plan.Project.Directory, target.Name, EffectiveModeName(options, plan, target))
+                        : fire.Projects.ProjectOutput.ProgramPath(plan.Project.Directory, plan.Name, target.Name, EffectiveModeName(options, plan, target), target.Name == "windows"));
+                    Directory.CreateDirectory(toolchain.EffectiveKind == "files" ? out2 : Path.GetDirectoryName(Path.GetFullPath(out2))!);
                     var result = NativeBuilder.Build(plan.SourceTexts, config, target, toolchain, out2, options.Mode, options.FloatWidth, options.KeepSources, defines: options.Defines, plan: plan);
                     stdout.Write(result.Log);
                     if (!result.Ok) { stderr.WriteLine($"The native build for {target.Name} failed."); return ExitScriptError; }
                     stdout.WriteLine($"{result.Output} (native, target {target.Name}, toolchain {toolchain.EffectiveKind})");
                     return ExitOk;
                 }
-                output ??= Path.Combine(plan.Project.Directory, "bin", plan.Name + (OperatingSystem.IsWindows() ? ".exe" : ""));
+                output ??= fire.Projects.ProjectOutput.ProgramPath(plan.Project.Directory, plan.Name, fire.Projects.ProjectOutput.VmTarget, EffectiveModeName(options, plan, null), OperatingSystem.IsWindows());
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
                 new Linker { Defines = options.Defines, Plan = plan, SourcePaths = plan.SourcePaths.Cast<string?>().ToList() }.CompileAndLink(plan.SourceTexts, null, output, options.Mode, options.FloatWidth);
                 stdout.WriteLine($"{Path.GetFullPath(output)} ({new FileInfo(output).Length} bytes)");
@@ -619,7 +658,8 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, defines: options.Defines);
+                }, floatWidth: options.FloatWidth, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options),
+                    environment: new fire.Standard.ProgramEnvironment { Args = options.ProgramArguments ?? Array.Empty<string>(), ProgramPath = options.Files.Count > 0 ? Path.GetFullPath(options.Files[^1]) : "" });
             }
             catch (Exception ex) when (IsCompileError(ex))
             {

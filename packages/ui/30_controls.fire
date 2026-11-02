@@ -86,11 +86,11 @@ namespace UI {
             var box = UI.M.Max(g.Width(), g.Height()) + 1
             var scale = size * 1.0 / box
             var pen = new Pen(__GRPHBshGetColor(brush.id), UI.M.Max(1, size / 8))
-            for (var i = 0; i < g.figures.count; i = i + 1) {
+            for (var i = 0; i < g.figures.Count; i = i + 1) {
                 var f = g.figures[i]
                 if (f.Count() < 2) { continue }
-                var pts = new float[f.points.count]
-                for (var k = 0; k < f.points.count; k = k + 2) {
+                var pts = new float[f.points.Count]
+                for (var k = 0; k < f.points.Count; k = k + 2) {
                     pts[k] = x + f.points[k] * scale
                     pts[k + 1] = y + f.points[k + 1] * scale
                 }

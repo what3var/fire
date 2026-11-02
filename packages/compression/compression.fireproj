@@ -1,0 +1,130 @@
+{
+  "format": 1,
+  "name": "fire-compression",
+  "type": "library",
+  "import": "compression",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'compression' of fire: Deflate, zlib, gzip and Zip archives (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_cmp_deflate.h",
+      "native/fire_bridge_compression.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__CmpLastError",
+        "arguments": 0,
+        "c": "fire_compression_LastError"
+      },
+      {
+        "name": "__CmpLastErrorMessage",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_compression_LastErrorMessage"
+      },
+      {
+        "name": "__CmpOpenCount",
+        "arguments": 0,
+        "c": "fire_compression_OpenCount"
+      },
+      {
+        "name": "__CmpInflateNew",
+        "arguments": 1,
+        "c": "fire_compression_InflateNew"
+      },
+      {
+        "name": "__CmpInflateFeed",
+        "arguments": 4,
+        "c": "fire_compression_InflateFeed"
+      },
+      {
+        "name": "__CmpInflateEnd",
+        "arguments": 1,
+        "c": "fire_compression_InflateEnd"
+      },
+      {
+        "name": "__CmpInflateRead",
+        "arguments": 4,
+        "c": "fire_compression_InflateRead"
+      },
+      {
+        "name": "__CmpInflateDone",
+        "arguments": 1,
+        "c": "fire_compression_InflateDone"
+      },
+      {
+        "name": "__CmpDeflateNew",
+        "arguments": 2,
+        "c": "fire_compression_DeflateNew"
+      },
+      {
+        "name": "__CmpDeflateWrite",
+        "arguments": 4,
+        "c": "fire_compression_DeflateWrite"
+      },
+      {
+        "name": "__CmpDeflateFlush",
+        "arguments": 2,
+        "c": "fire_compression_DeflateFlush"
+      },
+      {
+        "name": "__CmpDeflateRead",
+        "arguments": 4,
+        "c": "fire_compression_DeflateRead"
+      },
+      {
+        "name": "__CmpClose",
+        "arguments": 1,
+        "c": "fire_compression_Close"
+      },
+      {
+        "name": "__CmpCompress",
+        "arguments": 3,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_compression_Compress"
+      },
+      {
+        "name": "__CmpDecompress",
+        "arguments": 2,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_compression_Decompress"
+      },
+      {
+        "name": "__CmpCrc32",
+        "arguments": 4,
+        "c": "fire_compression_Crc32"
+      },
+      {
+        "name": "__CmpGetLE",
+        "arguments": 3,
+        "c": "fire_compression_GetLE"
+      },
+      {
+        "name": "__CmpPutLE",
+        "arguments": 4,
+        "c": "fire_compression_PutLE"
+      },
+      {
+        "name": "__CmpCopy",
+        "arguments": 5,
+        "c": "fire_compression_Copy"
+      },
+      {
+        "name": "__CmpFindLast",
+        "arguments": 2,
+        "c": "fire_compression_FindLast"
+      }
+    ],
+    "reset": "fire_compression_reset",
+    "language": "c"
+  }
+}

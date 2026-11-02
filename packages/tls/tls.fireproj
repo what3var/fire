@@ -8,11 +8,11 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'tls' of fire: prelude and C++ sources."
+    "description": "The standard library 'tls' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_tls.hpp"
+      "native/fire_bridge_tls.h"
     ],
     "discover": false,
     "linkLibraries": {
@@ -31,73 +31,74 @@
       {
         "name": "__TlsLastError",
         "arguments": 0,
-        "cpp": "tls::LastError"
+        "c": "fire_tls_LastError"
       },
       {
         "name": "__TlsLastErrorMessage",
         "arguments": 0,
-        "cpp": "tls::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tls_LastErrorMessage"
       },
       {
         "name": "__TlsSupported",
         "arguments": 0,
-        "cpp": "tls::Supported"
+        "c": "fire_tls_Supported"
       },
       {
         "name": "__TlsOpen",
         "arguments": 7,
-        "cpp": "tls::Open"
+        "c": "fire_tls_Open"
       },
       {
         "name": "__TlsHandshake",
         "arguments": 1,
-        "cpp": "tls::Handshake"
+        "c": "fire_tls_Handshake"
       },
       {
         "name": "__TlsServerContext",
         "arguments": 2,
-        "cpp": "tls::ServerContext"
+        "c": "fire_tls_ServerContext"
       },
       {
         "name": "__TlsFreeContext",
         "arguments": 1,
-        "cpp": "tls::FreeContext"
+        "c": "fire_tls_FreeContext"
       },
       {
         "name": "__TlsAccept",
         "arguments": 2,
-        "cpp": "tls::Accept"
+        "c": "fire_tls_Accept"
       },
       {
         "name": "__TlsRead",
         "arguments": 5,
-        "cpp": "tls::Read"
+        "c": "fire_tls_Read"
       },
       {
         "name": "__TlsWrite",
         "arguments": 5,
-        "cpp": "tls::Write"
+        "c": "fire_tls_Write"
       },
       {
         "name": "__TlsPending",
         "arguments": 1,
-        "cpp": "tls::Pending"
+        "c": "fire_tls_Pending"
       },
       {
         "name": "__TlsInfo",
         "arguments": 1,
-        "cpp": "tls::Info",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tls_Info"
       },
       {
         "name": "__TlsClose",
         "arguments": 1,
-        "cpp": "tls::Close"
+        "c": "fire_tls_Close"
       }
     ],
-    "reset": "tls::reset"
+    "reset": "fire_tls_reset",
+    "language": "c"
   }
 }

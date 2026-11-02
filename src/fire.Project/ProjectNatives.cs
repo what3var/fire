@@ -42,7 +42,7 @@ namespace fire.Projects
             string dir = project.Directory;
             var found = new List<string>();
             var sources = ProjectFiles.Expand(dir, n.Sources ?? ProjectNative.DefaultSources.ToList(), found, n.Sources == null ? Rank : null);
-            var native = new PackageNative { Reset = n.Reset };
+            var native = new PackageNative { Reset = n.Reset, Language = n.Language };
             native.Sources.AddRange(sources);
             if (n.PlatformSources != null)
                 foreach (var (key, patterns) in n.PlatformSources) native.PlatformSources[key] = ProjectFiles.Expand(dir, patterns, found);
@@ -53,7 +53,7 @@ namespace fire.Projects
             if (sources.Count == 0 && native.PlatformSources.Count == 0) problems?.Add($"{project.Name}: the project has a native part but no C++ files (put them into the folder 'native').");
 
             // the functions: the ones named in the project, then the ones found in the files
-            var explicitCpp = new HashSet<string>(n.Functions?.Select(f => f.Cpp) ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
+            var explicitCpp = new HashSet<string>(n.Functions?.Select(f => f.Symbol) ?? Enumerable.Empty<string>(), StringComparer.Ordinal);
             if (n.Functions != null) native.Functions.AddRange(n.Functions);
             foreach (var file in n.Discover == false ? Enumerable.Empty<string>() : sources.Concat(native.PlatformSources.Values.SelectMany(v => v)))
             {
@@ -61,7 +61,10 @@ namespace fire.Projects
                 try { text = File.ReadAllText(file); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { problems?.Add($"{project.Name}: cannot read '{file}': {ex.Message}"); continue; }
                 foreach (var f in Discover(text))
-                    if (!explicitCpp.Contains(f.Cpp) && !native.Functions.Any(x => x.Name == f.Name)) native.Functions.Add(f);
+                {
+                    if (native.IsC) { f.C = f.Cpp; f.Cpp = ""; }   // (a C package: the same `static inline Value name(...)`, a C function)
+                    if (!explicitCpp.Contains(f.Symbol) && !native.Functions.Any(x => x.Name == f.Name)) native.Functions.Add(f);
+                }
             }
             return new NativePart(project.Project.ImportName, project.Name, dir, native);
         }

@@ -298,7 +298,7 @@ class WindowManager {
     bool IsRunning { get { return this.started || this.runs > 0 || this.modals > 0 || this.ticking } }
 
     // The number of attached windows that are still open
-    int Count { get { return this.windows.count } }
+    int Count { get { return this.windows.Count } }
 
     // Attaches a window (taking it from another manager). The window remembers its manager (Window.Manager). Only the first window waits for the screen
     // refresh (VSync), otherwise every cycle would take as many frame periods as there are windows.
@@ -306,7 +306,7 @@ class WindowManager {
         if (window.Manager == this) { return }
         var old = window.Manager
         if (old != undefined) { old.Detach(window) }
-        if (this.windows.count > 0) { window.VSync = false }
+        if (this.windows.Count > 0) { window.VSync = false }
         this.windows.Add(window)
         window.Manager = this
         __GRPHWinMgrAttach(this.id, window.id)
@@ -314,7 +314,7 @@ class WindowManager {
 
     // Takes a window out again: nobody cycles it any more (with a started manager its thread closes it).
     undefined Detach(Window window) {
-        for (var i = 0; i < this.windows.count; i = i + 1) {
+        for (var i = 0; i < this.windows.Count; i = i + 1) {
             if (this.windows[i] == window) {
                 this.windows.RemoveAt(i)
                 break
@@ -338,10 +338,10 @@ class WindowManager {
     // One cycle of all windows on the calling thread: each gets its events, runs its onCycle and shows its frame. Closed windows are taken out.
     // false when no window is left.
     bool Tick() {
-        if (this.ticking) { return this.windows.count > 0 }
+        if (this.ticking) { return this.windows.Count > 0 }
         this.ticking = true
         var i = 0
-        while (i < this.windows.count) {
+        while (i < this.windows.Count) {
             var window = this.windows[i]
             if (!window.Cycle()) {
                 this.Detach(window)
@@ -350,7 +350,7 @@ class WindowManager {
             i = i + 1
         }
         this.ticking = false
-        return this.windows.count > 0
+        return this.windows.Count > 0
     }
 
     // Runs until all windows are closed (blocking). Not started: the manager runs on this thread; started: this thread waits while the manager's
@@ -364,7 +364,7 @@ class WindowManager {
             return
         }
         if (this.started) {
-            while (this.windows.count > 0) { __GRPHWinMgrWait(this.id, 20) }
+            while (this.windows.Count > 0) { __GRPHWinMgrWait(this.id, 20) }
             return
         }
         this.runs = this.runs + 1
@@ -379,7 +379,7 @@ class WindowManager {
     undefined RunModal(Window modal) {
         this.modals = this.modals + 1
         var depth = this.modals
-        for (var i = 0; i < this.windows.count; i = i + 1) {
+        for (var i = 0; i < this.windows.Count; i = i + 1) {
             var other = this.windows[i]
             if (other != modal && other.blockedBy == 0) {
                 other.blockedBy = depth
@@ -390,7 +390,7 @@ class WindowManager {
         this.ticking = true   // (the cycles the manager's thread asks for run here meanwhile)
         while (!modal.IsClosed && modal.Manager == this) {
             var i = 0
-            while (i < this.windows.count) {
+            while (i < this.windows.Count) {
                 var window = this.windows[i]
                 var open = window.blockedBy > 0 ? window.Idle() : window.Cycle()
                 if (!open) {
@@ -403,7 +403,7 @@ class WindowManager {
         }
         if (modal.Manager == this) { this.Detach(modal) }
         this.ticking = wasTicking
-        for (var i = 0; i < this.windows.count; i = i + 1) {
+        for (var i = 0; i < this.windows.Count; i = i + 1) {
             var other = this.windows[i]
             if (other.blockedBy == depth) {
                 other.blockedBy = 0

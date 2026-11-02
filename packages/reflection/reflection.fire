@@ -16,6 +16,20 @@ class Attribute {
     }
 
     int ArgCount() { return this.ArgTexts.length }
+
+    // The flags that the attributes of a flag enum in `attributes` set (`[Test a]`, `[Test b]`: together a | b); `ofEnum` is a value of the enum (`Test.a`) - the
+    // result is a value of that enum - or its name ("Test" - the result is a number)
+    static any FlagsIn(List attributes, any ofEnum) {
+        bool byName = ofEnum is of string
+        string name = byName ? ofEnum : __refl_enum_name(ofEnum)
+        int value = 0
+        if (name == undefined) { return value }
+        foreach (a in attributes) {
+            if ((a.Name == name || a.Name.EndsWith("." + name)) && a.Args.length == 1 && a.Args[0] is of int) { value = value | a.Args[0] }
+        }
+        if (byName) { return value }
+        return __refl_enum_of(ofEnum, value)
+    }
 }
 
 // A declared field, property, method or constructor of a class
@@ -59,6 +73,10 @@ class Member {
     }
     bool HasAttribute(string name) { return this.FindAttribute(name) != undefined }
 
+    // A flag enum as an attribute (`flag enum Test { a = 1, b = 2 }`, `[Test a]` before the member): whether a flag is set, and all flags of the enum
+    bool HasFlag(any flag) { return this.Flags(flag).HasFlag(flag) }
+    any Flags(any ofEnum) { return Attribute.FlagsIn(this.Attributes, ofEnum) }
+
     int ParamCount() { return this.ParamNames.length }
     bool IsField() { return this.Kind == "field" }
     bool IsProperty() { return this.Kind == "property" }
@@ -80,6 +98,7 @@ class Type {
     bool IsActor
     class Interfaces
     class All
+    class Attributes
 
     construct(string name) {
         var info = __refl_class_info(name)
@@ -88,6 +107,9 @@ class Type {
         if (info[1] != undefined) { this.Base = new Type(info[1]) }
         this.IsActor = info[2]
         this.Interfaces = flat info[3]
+        this.Attributes = new List()   // (the attributes before the class)
+        var rawAttributes = info[4]
+        for (var k = 0; k < rawAttributes.length; k = k + 1) { var attribute = new Attribute(rawAttributes[k]); attribute.TakeTo(this); this.Attributes.Add(attribute) }
         this.All = new List()   // (assigned directly: the list belongs to the type)
         var raw = __refl_members(name)
         // (the members belong to the type, not to the loop body - a list does not own its elements)
@@ -128,6 +150,15 @@ class Type {
     bool Has(string name) { return this.Find(name) != undefined }
 
     bool IsSubclassOf(Type other) { return __refl_is_sub(this.Name, other.Name) }
+
+    // The attributes before the class (`[Name ...]`): the first of this name, whether there is one, and the flags of a flag enum (see Member.HasFlag)
+    Attribute FindAttribute(string name) {
+        foreach (a in this.Attributes) { if (a.Name == name) { return a } }
+        return undefined
+    }
+    bool HasAttribute(string name) { return this.FindAttribute(name) != undefined }
+    bool HasFlag(any flag) { return this.Flags(flag).HasFlag(flag) }
+    any Flags(any ofEnum) { return Attribute.FlagsIn(this.Attributes, ofEnum) }
     any New(any args) { return Reflect.New(this.Name, args) }
 }
 

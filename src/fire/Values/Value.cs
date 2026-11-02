@@ -12,7 +12,7 @@ namespace fire.Values
     /// </summary>
     public readonly struct Value : IEquatable<Value>
     {
-        // Memory layout: 24 bytes (kind 4 + width 4 + bits 8 + reference 8) - a Value is copied on EVERY
+        // Memory layout: 24 bytes (kind 1 + width 1 + enum 2 + padding 4 + bits 8 + reference 8) - a Value is copied on EVERY
         // stack access, the earlier version with a separate field per kind of value (long, double,
         // bool, char, string, object + Unit) was 64 bytes big.
         //   _bits: Int = the value, Float = the IEEE-754 bits of the double, Bool = 0/1, Char = the character code.
@@ -27,6 +27,15 @@ namespace fire.Values
 
         private readonly long _bits;
         private readonly object? _ref;
+        /// <summary>Int: the id of its enum type (EnumType.Id), 0 for a plain whole number.</summary>
+        private readonly ushort _enum;
+
+        /// <summary>The enum type of an enum value (null for anything else). An enum value is an Int that carries its type (see EnumType).</summary>
+        public EnumType? Enum => _enum == 0 ? null : EnumType.ById(_enum);
+        /// <summary>Whether this is a value of an enum.</summary>
+        public bool IsEnum => _enum != 0;
+        /// <summary>The id of the enum type (0: none) - for code that compares types quickly.</summary>
+        public ushort EnumId => _enum;
 
         /// <summary>The unit - only Int/Float/Undefined carry one (otherwise <c>null</c>).</summary>
         public Unit? Unit => Kind is ValueKind.Int or ValueKind.Float or ValueKind.Undefined
@@ -38,12 +47,13 @@ namespace fire.Values
         private bool _boolValue => _bits != 0;
         private char _charValue => (char)_bits;
 
-        private Value(ValueKind kind, long bits, object? reference, NumericWidth width = NumericWidth.W64)
+        private Value(ValueKind kind, long bits, object? reference, NumericWidth width = NumericWidth.W64, ushort enumId = 0)
         {
             Kind = kind;
             Width = width;
             _bits = bits;
             _ref = reference;
+            _enum = enumId;
         }
 
         // ---------------------------------------------------------------
@@ -65,6 +75,13 @@ namespace fire.Values
 
         public static Value MakeInt(long value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
             new(ValueKind.Int, value, unit ?? Values.Unit.Unitless, width);
+
+        /// <summary>A value of an enum: the whole number `value` that carries its type.</summary>
+        public static Value MakeEnum(long value, EnumType type) =>
+            new(ValueKind.Int, value, Values.Unit.Unitless, NumericWidth.W64, type.Id);
+
+        /// <summary>The same number without its enum type (a plain int); anything else stays as it is.</summary>
+        public Value WithoutEnum() => _enum == 0 ? this : new Value(Kind, _bits, _ref, Width);
 
         public static Value MakeFloat(double value, Unit? unit = null, NumericWidth width = NumericWidth.W64) =>
             new(ValueKind.Float, BitConverter.DoubleToInt64Bits(width == NumericWidth.W64 ? Fl(value) : value), unit ?? Values.Unit.Unitless, width);
@@ -284,7 +301,7 @@ namespace fire.Values
         /// trivial identity). Further type combinations follow with the evaluator.</summary>
         public Value CoerceType(ValueKind targetKind)
         {
-            if (Kind == targetKind) return this;
+            if (Kind == targetKind) return targetKind == ValueKind.Int ? WithoutEnum() : this;   // (`c!int`: the number of an enum value)
 
             switch (Kind, targetKind)
             {
@@ -520,7 +537,7 @@ namespace fire.Values
 
         /// <summary>A product or quotient whose units cancel but leave a factor (`5cm / 1mm`, `1km * (1/1m)`): the factor goes into the number (50), the
         /// result has no unit. Two ints stay an int when the factor is a whole number or its inverse is one (`1s / 1ms` is 1000, `1ms / 1s` is 0 like
-        /// `1 / 1000`); otherwise the result is a float. The native runtime does the same (fire_rt.hpp, foldScale).</summary>
+        /// `1 / 1000`); otherwise the result is a float. The native runtime does the same (fire_rt.h, foldScale).</summary>
         private static Value FoldScale(Value a, Value b, double scale, bool divide)
         {
             scale = Values.Unit.NiceFactor(scale);
@@ -563,6 +580,7 @@ namespace fire.Values
         {
             if (v.Kind != ValueKind.Int)
                 throw new InvalidOperationException($"'~' expects int, not {v.Kind}.");
+            if (v.Enum is { IsFlags: true } type) return MakeEnum(~v._intValue, type);   // (the complement of a flag value is one too)
             return MakeInt(~v._intValue, v.Unit);
         }
 
@@ -576,22 +594,30 @@ namespace fire.Values
         {
             RequireInt(a, "&"); RequireInt(b, "&");
             RequireSameUnit(a, b);
-            return MakeInt(a._intValue & b._intValue, a.Unit);
+            return FlagResult(a, b, a._intValue & b._intValue) ?? MakeInt(a._intValue & b._intValue, a.Unit);
         }
 
         public static Value BitOr(Value a, Value b)
         {
             RequireInt(a, "|"); RequireInt(b, "|");
             RequireSameUnit(a, b);
-            return MakeInt(a._intValue | b._intValue, a.Unit);
+            return FlagResult(a, b, a._intValue | b._intValue) ?? MakeInt(a._intValue | b._intValue, a.Unit);
         }
 
         public static Value BitXor(Value a, Value b)
         {
             RequireInt(a, "#"); RequireInt(b, "#");
             RequireSameUnit(a, b);
-            return MakeInt(a._intValue ^ b._intValue, a.Unit);
+            return FlagResult(a, b, a._intValue ^ b._intValue) ?? MakeInt(a._intValue ^ b._intValue, a.Unit);
         }
+
+        /// <summary>`&amp;`, `|`, `#` of two values of the same flag enum: a value of that enum again (`Test.a | Test.b` is a `Test`); otherwise null (a plain int).</summary>
+        private static Value? FlagResult(Value a, Value b, long result) =>
+            a._enum != 0 && a._enum == b._enum && a.Enum is { IsFlags: true } type ? MakeEnum(result, type) : null;
+
+        /// <summary>`value.HasFlag(flag)` of a flag enum: all bits of `flag` are set in `value` (a flag of 0 is always set, like .NET).</summary>
+        public static bool HasFlag(Value value, Value flag) =>
+            value.Kind == ValueKind.Int && flag.Kind == ValueKind.Int && (value._intValue & flag._intValue) == flag._intValue;
 
         /// <summary>`<<`/`>>` - the RIGHT operand (the shift amount) is deliberately
         /// exempt from ANY unit check (unlike `&`/`|`/`#`,
@@ -865,7 +891,7 @@ namespace fire.Values
         public override string ToString() => Kind switch
         {
             ValueKind.Bool => _boolValue.ToString(),
-            ValueKind.Int => Unit is { IsUnitless: false } u ? $"{_intValue}{u}" : _intValue.ToString(),
+            ValueKind.Int => _enum != 0 ? (Enum?.Format(_intValue) ?? _intValue.ToString()) : Unit is { IsUnitless: false } u ? $"{_intValue}{u}" : _intValue.ToString(),
             ValueKind.Float => Unit is { IsUnitless: false } u2 ? $"{FloatText()}{u2}" : FloatText(),
             ValueKind.Char => _charValue.ToString(),
             ValueKind.String => Unsafe.As<string>(_ref) ?? "",

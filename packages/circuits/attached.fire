@@ -34,7 +34,7 @@ namespace Circuits {
         /// <summary>A pin by name or number.</summary>
         Port Pin(any key) { return this.PortAt(key) }
 
-        int PinCount { get { return this.ports.count } }
+        int PinCount { get { return this.ports.Count } }
 
         /// <summary>The supply of the logic: high is above half of it, DriveHigh drives it.</summary>
         float:V Supply {
@@ -81,7 +81,7 @@ namespace Circuits {
         }
 
         float CurrentRaw() {
-            if (this.ports.count == 0) { return 0.0 }
+            if (this.ports.Count == 0) { return 0.0 }
             return this.CurrentAt(0)
         }
 
@@ -91,14 +91,14 @@ namespace Circuits {
 
         undefined Stamp(Circuits.Solver solver) {
             var ground = this.owner.Top().Ground
-            for (int i = 0; i < this.ports.count; i++) {
+            for (int i = 0; i < this.ports.Count; i++) {
                 if (this.driven[i]) { solver.Conductance(this.ports[i], ground, 1.0 / this.rout) }
             }
         }
 
         undefined StampStep(Circuits.Solver solver) {
             this.Update(solver.time + solver.dt)
-            for (int i = 0; i < this.ports.count; i++) {
+            for (int i = 0; i < this.ports.Count; i++) {
                 if (this.driven[i]) {
                     float level = this.levels[i]
                     solver.CurrentInto(this.ports[i], level / this.rout)
@@ -190,7 +190,7 @@ namespace Circuits {
         }
 
         undefined Update(float time) {
-            for (int ch = 0; ch < this.ports.count; ch++) {
+            for (int ch = 0; ch < this.ports.Count; ch++) {
                 var code = this.Code(ch)
                 if (code != this.codes[ch]) {
                     this.codes[ch] = code
@@ -205,7 +205,7 @@ namespace Circuits {
         }
 
         undefined Reset() {
-            for (int ch = 0; ch < this.codes.count; ch++) { this.codes[ch] = -1 }
+            for (int ch = 0; ch < this.codes.Count; ch++) { this.codes[ch] = -1 }
         }
     }
 
@@ -232,7 +232,7 @@ namespace Circuits {
         Port Out(int channel) { return this.ports[channel] }
 
         undefined Update(float time) {
-            for (int ch = 0; ch < this.ports.count; ch++) {
+            for (int ch = 0; ch < this.ports.Count; ch++) {
                 var code = I2c.Sim.GetRegister(this.address, ch)
                 this.Drive(ch, this.reference * code / 255.0)
             }

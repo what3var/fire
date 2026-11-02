@@ -130,7 +130,7 @@ namespace Gpio {
         }
 
         // Sets the line up as an input: `pull` is Gpio.Pull.None/Up/Down, `edge` which changes are reported (Gpio.Edge.None/Rising/Falling/Both). Returns the pin.
-        Gpio.Pin Input(int pull = 0, int edge = 0) {
+        Gpio.Pin Input(Gpio.Pull pull = Gpio.Pull.None, Gpio.Edge edge = Gpio.Edge.None) {
             this.Check()
             if (!__GpioConfigure(this.handle, 0, pull, edge, 0)) { Gpio.Errors.Throw() }
             this.direction = 0

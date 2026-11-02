@@ -355,8 +355,8 @@ class Query<T> : IEnumerable<T> {
     }
     T[] ToArray() {
         var l = this.ToList()
-        var result = new class[l.count]
-        for (var i = 0; i < l.count; i = i + 1) { result[i] = l[i] }
+        var result = new class[l.Count]
+        for (var i = 0; i < l.Count; i = i + 1) { result[i] = l[i] }
         return result
     }
     T First() {

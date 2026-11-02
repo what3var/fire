@@ -712,6 +712,7 @@ namespace fire.Compiler
             var name = new System.Text.StringBuilder();
             var parse = new System.Text.StringBuilder();
             var defined = new System.Text.StringBuilder();
+            var values = new List<string>();
             var seen = new HashSet<long>();
             long next = 0;
             foreach (var m in ed.Members)
@@ -722,14 +723,17 @@ namespace fire.Compiler
                 {
                     name.Append($"if (v == {value}) {{ return \"{m.Name}\" }} ");
                     defined.Append($"if (v == {value}) {{ return true }} ");
+                    values.Add($"{ed.Name}.{m.Name}");
                 }
-                parse.Append($"if (s == \"{m.Name}\") {{ return {value} }} ");
+                parse.Append($"if (s == \"{m.Name}\") {{ return {ed.Name}.{m.Name} }} ");
             }
+            // (a value of the enum or a whole number: `v == 5` compares the number; Parse gives a value of the enum, Values() all members)
             string source =
                 $"class {EnumHelperClassName(ed.Name)} {{\n" +
-                $"    static string Name(int v) {{ {name}return \"\" + v }}\n" +
-                $"    static int Parse(string s) {{ {parse}throw new ArgumentException(\"'\" + s + \"' is not a member of '{ed.Name}'.\") }}\n" +
-                $"    static bool IsDefined(int v) {{ {defined}return false }}\n" +
+                $"    static string Name(any v) {{ {name}return \"\" + (v!int) }}\n" +
+                $"    static {ed.Name} Parse(string s) {{ {parse}throw new ArgumentException(\"'\" + s + \"' is not a member of '{ed.Name}'.\") }}\n" +
+                $"    static bool IsDefined(any v) {{ {defined}return false }}\n" +
+                $"    static {ed.Name}[] Values() {{ return [{string.Join(", ", values)}] }}\n" +
                 "}";
             var parser = new Parser(new Lexer(source).Tokenize()) { _sourceIndex = _sourceIndex, _fileName = _fileName };
             return parser.ParseProgram();
@@ -849,7 +853,11 @@ namespace fire.Compiler
             if (Check(TokenType.Var)) return ParseVarDecl();
             if (Check(TokenType.Readonly)) return ParseReadonlyDecl();
             if (Check(TokenType.Enum)) return ParseEnumDecl();
+            // `flag enum Name { ... }`: `flag` is a word only in front of `enum` (no keyword)
+            if (Check(TokenType.Identifier) && Peek().Lexeme == "flag" && PeekAt(1).Type == TokenType.Enum) { Advance(); return ParseEnumDecl(isFlags: true); }
             if (Check(TokenType.Class)) return ParseClassDecl();
+            // `[Name ...]` lines before a class or an actor: its attributes (otherwise `[` starts an array as before)
+            if (Check(TokenType.LBracket) && PeekAt(1).Type == TokenType.Identifier && AttributesBeforeClass() is { } classAttributes) return classAttributes;
             if (Check(TokenType.Namespace)) return ParseNamespaceDecl();
             if (Check(TokenType.Actor)) return ParseActorDecl();
             if (Check(TokenType.Interface)) return ParseInterfaceDecl();
@@ -1750,6 +1758,10 @@ namespace fire.Compiler
         /// is an own, exclusive if condition, no jump into the next one),
         /// `break` is therefore a purely syntactic branch end (see
         /// ParseSwitchCaseBody), no real jump statement.</summary>
+        /// <summary>A `switch` without `case default`: the declaration of its subject (the first statement of what the switch becomes) -> the values of its `case x:`
+        /// (TypeChecker: a switch over an enum warns about the members it leaves out).</summary>
+        public static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Stmt, List<Expr>> Switches = new();
+
         private Stmt ParseSwitchStmt()
         {
             int line = Peek().Line;
@@ -1764,6 +1776,7 @@ namespace fire.Compiler
 
             var cases = new List<(Expr Condition, List<Stmt> Body)>();
             List<Stmt>? defaultBody = null;
+            var equalValues = new List<Expr>();   // (the values of `case x:` - an enum switch without default should name all members, TypeChecker)
 
             while (!Check(TokenType.RBrace) && !Check(TokenType.Eof))
             {
@@ -1798,6 +1811,7 @@ namespace fire.Compiler
                         };
                     }
                     var valueExpr = ParseSwitchCaseValue();
+                    if (op == BinaryOp.Eq) equalValues.Add(valueExpr);
                     var test = new BinaryExpr(line, op, new IdentifierExpr(line, tempName), valueExpr);
                     condition = condition == null ? test : new BinaryExpr(line, BinaryOp.Or, condition, test);
                 } while (Match(TokenType.Comma));
@@ -1813,10 +1827,9 @@ namespace fire.Compiler
             for (int i = cases.Count - 1; i >= 0; i--)
                 chain = new IfStmt(_sourceIndex, line, cases[i].Condition, new Stmt.BlockStmt(_sourceIndex, line, cases[i].Body), chain);
 
-            var outerStatements = new List<Stmt>
-            {
-                new VarDeclStmt(_sourceIndex, line, tempName, null, Array.Empty<Expr?>(), subject),
-            };
+            var subjectDecl = new VarDeclStmt(_sourceIndex, line, tempName, null, Array.Empty<Expr?>(), subject);
+            if (defaultBody == null) Switches.AddOrUpdate(subjectDecl, equalValues);
+            var outerStatements = new List<Stmt> { subjectDecl };
             if (chain != null) outerStatements.Add(chain);
 
             return new Stmt.BlockStmt(_sourceIndex, line, outerStatements);
@@ -2456,7 +2469,7 @@ namespace fire.Compiler
         /// (auto-increment, validation "must be an int literal") only happens
         /// in the resolver, which needs all members in declaration order
         /// for that.</summary>
-        private Stmt ParseEnumDecl()
+        private Stmt ParseEnumDecl(bool isFlags = false)
         {
             int line = Peek().Line;
             Expect(TokenType.Enum, "Expected 'enum'");
@@ -2471,13 +2484,18 @@ namespace fire.Compiler
                     string memberName = Expect(TokenType.Identifier, "Expected an enum member name").Lexeme;
                     Expr? valueExpr = null;
                     if (Match(TokenType.Assign))
+                    {
                         valueExpr = ParseExpression();
+                        // `Inherit = -1`: a negative literal is a literal too
+                        if (valueExpr is UnaryExpr { Op: UnaryOp.Negate, Operand: LiteralExpr { Value.Kind: ValueKind.Int } negated })
+                            valueExpr = new LiteralExpr(negated.Line, Value.MakeInt(-negated.Value.AsInt()));
+                    }
                     members.Add(new EnumMember(memberName, valueExpr));
                 } while (Match(TokenType.Comma));
             }
 
             Expect(TokenType.RBrace, "Expected '}' after the enum members");
-            var decl = new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members);
+            var decl = new EnumDecl(_sourceIndex, line, QualifyDeclName(name), members, isFlags);
             _enumDecls.Add(decl);
             return decl;
         }
@@ -2664,6 +2682,22 @@ namespace fire.Compiler
                 }
             }
             return result;
+        }
+
+        /// <summary>The attributes before a class or an actor and the class itself (null, nothing read: the brackets are no attributes of a class).</summary>
+        private Stmt? AttributesBeforeClass()
+        {
+            int start = _pos;
+            List<AttributeDecl> attributes;
+            try { attributes = ParseAttributes(); }
+            catch (ParseException) { _pos = start; return null; }
+            if (attributes.Count == 0 || !(Check(TokenType.Class) || Check(TokenType.Actor)))
+            {
+                _pos = start;
+                return null;
+            }
+            var decl = (ClassDecl)(Check(TokenType.Class) ? ParseClassDecl() : ParseActorDecl());
+            return decl with { Attributes = attributes };
         }
 
         /// <summary>`[Test "title"]`, `[Parameters 1..3, "x"]`: the attributes before a class member (each in its own brackets).</summary>
@@ -3061,14 +3095,48 @@ namespace fire.Compiler
             return parms;
         }
 
-        private List<Expr> ParseArgList()
+        private List<Expr> ParseArgList() => ParseArgList(out var names, allowNames: false);
+
+        /// <summary>`(a, b, size: 3, name: "x")`: the arguments, and in `names` the names of the named ones (null for a positional one; `names` is null when
+        /// none is named). Named arguments follow the positional ones, each name once (docs/language/08-classes.md).</summary>
+        /// <summary>`size: 3` at the start of an argument: a name, ':' and a value. `x:m`, `x:` and `x::m` (directly after the colon a unit, or nothing) stay
+        /// unit conversions (docs/language/05-units.md) - a named argument has a space after the colon or a value that is not a word.</summary>
+        private bool IsNamedArgumentStart()
+        {
+            if (!Check(TokenType.Identifier) || PeekAt(1).Type != TokenType.Colon || PeekAt(1).Line != Peek().Line) return false;
+            var colon = PeekAt(1);
+            var after = PeekAt(2);
+            if (after.Type is TokenType.Colon or TokenType.RParen or TokenType.Comma or TokenType.Eof) return false;
+            // `print(a: + b)`: no expression starts there - `a:` converts into the unit of the other operand
+            if (after.Type is TokenType.Plus or TokenType.Star or TokenType.Slash or TokenType.Percent or TokenType.Caret or TokenType.Pipe or TokenType.Hash
+                or TokenType.And or TokenType.Or or TokenType.Eq or TokenType.NotEq or TokenType.Lt or TokenType.LtEq or TokenType.Gt or TokenType.GtEq
+                or TokenType.Assign or TokenType.Question or TokenType.Dot or TokenType.DotDot or TokenType.Arrow or TokenType.Is
+                or TokenType.RBracket or TokenType.RBrace or TokenType.Semicolon) return false;
+            bool adjacent = after.Line == colon.Line && after.Column == colon.Column + 1 && !after.NewlineBefore;
+            return !(adjacent && (after.Type == TokenType.Identifier || IsCustomUnitWordAt(2)));
+        }
+
+        private List<Expr> ParseArgList(out List<string?>? names, bool allowNames = true)
         {
             Expect(TokenType.LParen, "Expected '('");
             var args = new List<Expr>();
+            names = null;
             if (!Check(TokenType.RParen))
             {
                 do
                 {
+                    if (IsNamedArgumentStart())
+                    {
+                        var nameTok = Advance();
+                        if (!allowNames) throw Error("Named arguments are not possible here", nameTok);
+                        Advance();   // ':'
+                        names ??= Enumerable.Repeat<string?>(null, args.Count).ToList();
+                        if (names.Contains(nameTok.Lexeme)) throw Error($"The argument '{nameTok.Lexeme}' is named twice", nameTok);
+                        names.Add(nameTok.Lexeme);
+                        args.Add(ParseExpression());
+                        continue;
+                    }
+                    if (names != null) throw Error("A positional argument cannot follow a named one", Peek());
                     args.Add(ParseExpression());
                 } while (Match(TokenType.Comma));
             }
@@ -3460,8 +3528,8 @@ namespace fire.Compiler
                 else if (Check(TokenType.LParen))
                 {
                     int line = Peek().Line;
-                    var args = ParseArgList();
-                    expr = new CallExpr(line, expr, args);
+                    var args = ParseArgList(out var argNames);
+                    expr = new CallExpr(line, expr, args, ArgNames: argNames);
                 }
                 else if (Check(TokenType.Lt) && expr is IdentifierExpr or MemberExpr && TypeArgListEnd(0) is var typeArgsEnd and > 0
                          && PeekAt(typeArgsEnd).Type == TokenType.LParen && PeekAt(typeArgsEnd).Line == Peek().Line)
@@ -3469,8 +3537,8 @@ namespace fire.Compiler
                     // `Pick<string>(a, b)`: the type arguments of a generic method, written at the call
                     int line = Peek().Line;
                     var typeArgs = ParseTypeArgRefs();
-                    var args = ParseArgList();
-                    expr = new CallExpr(line, expr, args, typeArgs);
+                    var args = ParseArgList(out var argNames);
+                    expr = new CallExpr(line, expr, args, typeArgs, argNames);
                 }
                 else if (Check(TokenType.LBracket))
                 {
@@ -3747,8 +3815,8 @@ namespace fire.Compiler
                     // '<name, name>' grammar as with the declaration).
                     var typeArgRefs = Check(TokenType.Lt) ? ParseTypeArgRefs() : null;
                     var typeArgs = typeArgRefs?.Select(TypeArgName).ToList() ?? new List<string>();
-                    var args = ParseArgList();
-                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces(), TypeArgCount: typeArgs.Count, TypeArgs: typeArgRefs), args, typeArgs);
+                    var args = ParseArgList(out var argNames);
+                    return new NewExpr(tok.Line, new TypeRef(className, null, 0, Namespaces: CurrentNamespaces(), TypeArgCount: typeArgs.Count, TypeArgs: typeArgRefs), args, typeArgs, argNames);
                 }
 
                 case TokenType.Throw:

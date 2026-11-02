@@ -21,7 +21,7 @@ namespace fire.Editor
         private readonly ComboBox _floatWidth = Choice(new[] { "32", "64" });
         private readonly ComboBox _engine = Choice(ProjectSettings.Engines);
         private readonly TextBox _name = Box(), _codename = Box(), _description = Box(), _author = Box(), _license = Box(), _comments = Box(), _icon = Box(), _version = Box(), _fileVersion = Box();
-        private readonly TextBox _defines = Box(), _target = Box(), _toolchain = Box(), _output = Box();
+        private readonly TextBox _defines = Box(), _target = Box(), _toolchain = Box(), _output = Box(), _arguments = Box();
 
         public Control View { get; }
 
@@ -35,8 +35,12 @@ namespace fire.Editor
 
         private static TextBox Box() => new() { HorizontalAlignment = HorizontalAlignment.Stretch };
 
+        /// <summary>The settings as they came in: what the fields do not show (typeChecking) is kept from here.</summary>
+        private readonly ProjectSettings _original;
+
         public SettingsEditor(ProjectSettings settings, ProjectSettings? inherited)
         {
+            _original = settings;
             var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("150,*"), Margin = new Thickness(0, 6, 0, 0) };
             int row = 0;
             void Add(string label, Control control, string? hint = null)
@@ -68,6 +72,7 @@ namespace fire.Editor
             Add("Target (native)", _target, Hint(inherited?.Target));
             Add("Toolchain (native)", _toolchain, Hint(inherited?.Toolchain));
             Add("Output", _output, Hint(inherited?.Output) ?? "bin/...");
+            Add("Arguments (Run)", _arguments, Hint(inherited?.Arguments == null ? null : ArgumentText.Join(inherited.Arguments)) ?? "a b \"with blanks\"");
             View = new ScrollViewer { Content = grid, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
             Show(settings);
         }
@@ -82,6 +87,7 @@ namespace fire.Editor
             _name.Text = s.Name; _codename.Text = s.Codename; _description.Text = s.Description; _author.Text = s.Author; _license.Text = s.License; _comments.Text = s.Comments; _icon.Text = s.Icon;
             _version.Text = s.Version; _fileVersion.Text = s.FileVersion; _defines.Text = s.Defines == null ? "" : string.Join(", ", s.Defines);
             _target.Text = s.Target; _toolchain.Text = s.Toolchain; _output.Text = s.Output;
+            _arguments.Text = s.Arguments == null ? "" : ArgumentText.Join(s.Arguments);
         }
 
         /// <summary>The settings as they are in the fields now.</summary>
@@ -94,6 +100,8 @@ namespace fire.Editor
                 Name = Read(_name), Codename = Read(_codename), Description = Read(_description), Author = Read(_author), License = Read(_license), Comments = Read(_comments), Icon = Read(_icon),
                 Version = Read(_version), FileVersion = Read(_fileVersion), Defines = defines.Count > 0 ? defines : null,
                 Target = Read(_target), Toolchain = Read(_toolchain), Output = Read(_output),
+                Arguments = Read(_arguments) is { } args ? ArgumentText.Split(args) : null,
+                TypeChecking = _original.TypeChecking,
             };
         }
     }

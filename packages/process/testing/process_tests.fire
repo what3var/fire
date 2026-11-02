@@ -1,0 +1,95 @@
+// The tests of Process: `forge test packages/process/process.fireproj` (they start `sh`, on Windows `cmd`).
+#import "testing"
+#import "io"
+
+class ProcessTests {
+    // a command line for the shell of the system: `posix` for sh, `windows` for cmd
+    static string[] ShellArgs(string posix, string windows) {
+        if (Environment.Platform == "windows") { return ["/c", windows] }
+        return ["-c", posix]
+    }
+    static string ShellName() {
+        if (Environment.Platform == "windows") { return "cmd" }
+        return "sh"
+    }
+
+    [Test "Run gives the exit code, the output and the error"]
+    undefined Run() {
+        var r = Process.Run(ProcessTests.ShellName(), ProcessTests.ShellArgs("echo out; echo err >&2; exit 3", "echo out& echo err 1>&2& exit /b 3"))
+        Testing.Assert.AreEqual(3, r.ExitCode)
+        Testing.Assert.AreEqual("out", r.Output.Trim())
+        Testing.Assert.AreEqual("err", r.Error.Trim())
+    }
+
+    [Test "The lines of the output reach OnOutput, OnExit comes last"]
+    undefined Lines() {
+        var options = new ProcessOptions()
+        options.MergeError = true
+        var p = Process.Start(ProcessTests.ShellName(), ProcessTests.ShellArgs("echo a; echo b >&2; echo c", "echo a& echo b 1>&2& echo c"), options)
+        var seen = new List<string>()
+        p.OnOutput = (string line) => seen.Add(line.Trim())
+        p.OnExit = (int code) => seen.Add("exit " + code)
+        Testing.Assert.IsTrue(p.WaitForExit(10000))
+        Testing.Assert.AreEqual("a,b,c,exit 0", ",".Join(seen))
+        p.Close()
+    }
+
+    [Test "Each argument reaches the program as it is"]
+    undefined Arguments() {
+        if (Environment.Platform == "windows") { return }
+        var r = Process.Run("sh", ["-c", "printf '%s|' \"$@\"", "zero", "a b", "c\"d", ""])
+        Testing.Assert.AreEqual("a b|c\"d||", r.Output)
+    }
+
+    [Test "The input as a stream, the output read line by line"]
+    undefined Pipes() {
+        if (Environment.Platform == "windows") { return }
+        var options = new ProcessOptions()
+        options.RedirectInput = true
+        options.RedirectOutput = true
+        var p = Process.Start("cat", [], options)
+        var writer = new IO.TextWriter(p.StandardInput)
+        writer.WriteLine("eins")
+        writer.WriteLine("zwei ä")
+        writer.Close()
+        var reader = new IO.TextReader(p.StandardOutput)
+        Testing.Assert.AreEqual("eins", reader.ReadLine())
+        Testing.Assert.AreEqual("zwei ä", reader.ReadLine())
+        Testing.Assert.IsUndefined(reader.ReadLine())
+        Testing.Assert.IsTrue(p.WaitForExit(10000))
+        Testing.Assert.AreEqual(0, p.ExitCode)
+        p.Close()
+    }
+
+    [Test "Working directory and environment"]
+    undefined Environment() {
+        if (Environment.Platform == "windows") { return }
+        var options = new ProcessOptions()
+        options.WorkingDirectory = "/"
+        options.Environment = new Dictionary<string, string>()
+        options.Environment["PATH"] = Environment.Get("PATH")
+        options.Environment["FIRE_ONLY"] = "here"
+        var r = Process.Run("sh", ["-c", "pwd; echo ${FIRE_ONLY}${HOME}"], options)
+        Testing.Assert.AreEqual("/\nhere\n", r.Output)
+    }
+
+    [Test "A program that does not exist is a ProcessException with FileNotFound"]
+    undefined NotFound() {
+        try {
+            Process.Start("no-such-program-for-fire-tests")
+            Testing.Assert.Fail("no exception")
+        } catch (ProcessException e) {
+            Testing.Assert.AreEqual(ProcessCodes.FileNotFound(), e.code)
+        }
+    }
+
+    [Test "WaitForExit with a time limit, Kill ends the process"]
+    undefined Kill() {
+        var p = Process.Start(ProcessTests.ShellName(), ProcessTests.ShellArgs("sleep 30", "ping -n 30 127.0.0.1 > nul"))
+        Testing.Assert.IsFalse(p.WaitForExit(50))
+        p.Kill()
+        Testing.Assert.IsTrue(p.WaitForExit(10000))
+        Testing.Assert.IsTrue(p.HasExited)
+        p.Close()
+    }
+}

@@ -38,10 +38,12 @@ namespace fire.Projects
         public string? Output { get; set; }
         /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
         public string? TypeChecking { get; set; }
+        /// <summary>The arguments a run of the program gets (`forge run`, *Run* in spark; `Environment.Args`); arguments after `--` on the command line replace them.</summary>
+        public List<string>? Arguments { get; set; }
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null && TypeChecking == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null && TypeChecking == null && Arguments == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
@@ -69,6 +71,7 @@ namespace fire.Projects
             r.Toolchain = high?.Toolchain ?? low?.Toolchain;
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
+            r.Arguments = high?.Arguments ?? low?.Arguments;
             var defines = new List<string>();
             foreach (var d in (high?.Defines ?? new List<string>()).Concat(low?.Defines ?? new List<string>())) if (!defines.Contains(d)) defines.Add(d);
             if (defines.Count > 0) r.Defines = defines;

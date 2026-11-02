@@ -68,7 +68,7 @@ namespace fire.Native
             if (LoadMachineToolchain() is { } chosen && ToolchainDetector.Find(chosen) is { } chosenPath) return (chosen, chosenPath);
             foreach (string dir in SearchDirectories())
                 if (File.Exists(Path.Combine(dir, ExeName("g++")))) return (Gcc(Path.Combine(dir, ExeName("g++"))), Path.Combine(dir, ExeName("g++")));
-            foreach (string kind in new[] { "gcc", "clang", "msvc" })
+            foreach (string kind in new[] { "gcc", "clang", "msvc", "tcc" })   // (TinyCC last: it compiles no C++)
                 if (ToolchainDef.BuiltIn[kind] is { } def && ToolchainDetector.Find(def) is { } path) return (def, path);
             return null;
         }

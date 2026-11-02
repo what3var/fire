@@ -72,7 +72,7 @@ namespace fire.Runtime
                     var bundle = new List<BundleWriter.BundleFile>
                     {
                         new("runtime.dll", BundleWriter.FileType.Assembly, File.ReadAllBytes(runtimeDll)),
-                        new("runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, File.ReadAllBytes(runtimeConfig)),
+                        new("runtime.runtimeconfig.json", BundleWriter.FileType.RuntimeConfigJson, FrameworkDependentConfig(File.ReadAllBytes(runtimeConfig))),
                     };
                     BundleWriter.Write(apphost, bundle, outName);
                 }
@@ -103,6 +103,20 @@ namespace fire.Runtime
                         : CompressCached(data));
 
             return plan;
+        }
+
+        /// <summary>The runtimeconfig for a bundle of the apphost and runtime.dll: such a bundle carries no .NET runtime, so it uses the installed one (framework-dependent).
+        /// The runtimeconfig of a self-contained build names the runtime as "includedFrameworks" - with it the host would look for the runtime next to the program and not
+        /// find it ("libhostpolicy.so ... was not found"): it becomes "framework" (the same name and version, rolled forward to the latest patch).</summary>
+        internal static byte[] FrameworkDependentConfig(byte[] json)
+        {
+            var root = System.Text.Json.Nodes.JsonNode.Parse(json);
+            if (root?["runtimeOptions"] is not System.Text.Json.Nodes.JsonObject options || options["includedFrameworks"] is not System.Text.Json.Nodes.JsonArray included || included.Count == 0)
+                return json;
+            options.Remove("includedFrameworks");
+            if (included.Count == 1) options["framework"] = included[0]!.DeepClone();
+            else options["frameworks"] = included.DeepClone();
+            return System.Text.Encoding.UTF8.GetBytes(root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         }
 
         /// <summary>Packs `data` with the highest Brotli level (several seconds for a large DLL) and remembers the

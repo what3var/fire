@@ -2,16 +2,16 @@
 
 A player for **tracker modules**: ProTracker `.mod` files with 4 to 32 channels - the music of the Amiga demos, games and the whole scene that followed. A module carries its own recorded instruments (8 bit
 samples) and a score; the player only mixes them. That is why it sounds the same on every machine, unlike MIDI, which leaves the voices to the sound card (and most sound cards and default synthesizers are
-bad at it). Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/tracker/native/fire_bridge_tracker.hpp`. It plays through the `audio` package
+bad at it). Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C in `packages/tracker/native/fire_bridge_tracker.h`. It plays through the `audio` package
 (docs/AUDIO.md) and so needs it, and `time`.
 
 ```
 program        #import "tracker"        Tracker.Song, Tracker.Player, Tracker.Note                (fire, package fire-tracker)
-bridge         fire_bridge_tracker.hpp  module reader, replayer, mixer (C++, the same code in the VM and in a native build)
+bridge         fire_bridge_tracker.h    module reader, replayer, mixer (C, the same code in the VM and in a native build)
 audio          #import "audio"          Audio.Output / Audio.Sound: the sound device
 ```
 
-The replayer and the mixer are native code: mixing a song is some thousand additions per output frame, which a virtual machine would not do in real time. The VM calls the C++ through the package
+The replayer and the mixer are native code: mixing a song is some thousand additions per output frame, which a virtual machine would not do in real time. The VM calls the C through the package
 ABI (docs/PACKAGE_NATIVES.md), a native build compiles it into the program; **both render exactly the same samples** (all arithmetic is integer).
 
 ## Quick start
@@ -94,6 +94,6 @@ the pin number; the PWM is mono, so open the player on a mono output: `new Track
 
 ## How it is built
 
-`fire_bridge_tracker.hpp` has two parts. `fire::tracker::Song` is plain C++ that knows nothing of fire (`#define FIRE_TRACKER_ENGINE_ONLY` before including the header gives only that part, which is how it was compared
+`fire_bridge_tracker.h` has two parts. `FireTrkSong` (with the `fire_trk_*` functions) is plain C that knows nothing of fire (`#define FIRE_TRACKER_ENGINE_ONLY` before including the header gives only that part, which is how it was compared
 with other players): the module reader, the replayer (`processTick`: rows, effects) and the mixer (`render`: 32.32 fixed point sample positions, integer volumes). The rest are the natives (`__TrackerLoad`,
 `__TrackerRender`, ...) with a table of handles, in the style of the other bridges. The ProTracker period table and the vibrato table are the standard ones.

@@ -1,5 +1,5 @@
 // The C++ side of the package ABI (native/abi/fire_pkg_abi.h): marshals fire_val <-> Value and exports the entry points. Included by the wrapper that the compiler generates
-// around the natives of a package (after fire_rt.hpp, which is compiled with FIRE_LIBRARY, and after the sources of the package).
+// around the natives of a package (after fire_rt_cpp.hpp - fire_rt.h compiled as C++ with FIRE_LIBRARY - and after the sources of the package).
 #pragma once
 
 #include "fire_pkg_abi.h"

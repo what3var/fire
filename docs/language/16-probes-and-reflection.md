@@ -91,15 +91,15 @@ try {
 
 | Class | Members |
 |---|---|
-| `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)` |
-| `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
-| `Attribute` | `Name`, `Args`, `ArgTexts`, `ArgCount()` - an attribute of a method (see [Classes](08-classes.md#attributes)) |
+| `Type` | `Type.Of(obj or name)`, `Type.Named(name)` (or `undefined`), `Type.Names()`; `Name`, `Base`, `Interfaces`, `IsActor`, `All`, `Fields()`, `Properties()`, `Methods()`, `Constructors()`, `Find(name)`, `Has(name)`, `IsSubclassOf(type)`, `New(args)`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)` |
+| `Member` | `Name`, `Kind` (`field`, `property`, `method`, `constructor`), `TypeName`, `Access`, `IsStatic`, `IsReadonly`, `CanRead`, `CanWrite`, `Unit`, `DeclaredIn`, `ParamNames`, `ParamTypes`, `ParamCount()`, `Attributes`, `FindAttribute(name)`, `HasAttribute(name)`, `HasFlag(flag)`, `Flags(enum)`, `Get(obj)`, `Set(obj, v)`, `Call(obj, args)`, `Probe(obj, kind, handler)` |
+| `Attribute` | `Name`, `Args`, `ArgTexts`, `ArgCount()` - an attribute of a class, method, field or property (see [Classes](08-classes.md#attributes)) |
 | `Reflect` | `Get`, `Set`, `Call`, `New`, `Has`, `Probe`, `ProbeAll`, `Silence`, `SilenceAll`, `SilenceHandle` |
 
 - Reflection follows the same rules as normal code: `private`/`protected` apply to the calling code, `readonly` fields cannot be set, units are checked.
 - Errors are `ReflectionException`s.
 - Static members are described but cannot be used through `Reflect`.
-- `Member.Attributes` holds the attributes of a method, in the order of the source (empty for other members). `Args` are the values of the arguments that are
+- `Member.Attributes` holds the attributes of a method, field or property, `Type.Attributes` those before the class, in the order of the source. `Args` are the values of the arguments that are
   constants - numbers (also negative ones), strings, `true`/`false`, arrays of constants and ranges of `int` constants (`1..3` gives `[1, 2, 3]`); any other
   argument (`new List<int>()`, a variable, a call) is `undefined` there. `ArgTexts` always has the source text of every argument.
 
@@ -113,6 +113,25 @@ var m = Type.Of("Job").Find("Run")
 var retry = m.FindAttribute("Retry")
 print(retry.Args[0] + " " + retry.Args[1])   // 3 network
 print(m.HasAttribute("Test"))                 // False
+```
+
+An attribute of a [flag enum](10-enums-and-namespaces.md#flag-enums-as-attributes) (`[Access Read, Write]`) has the full name of the enum as its `Name`
+and the combined value as its only argument. `HasFlag(flag)` and `Flags(enum)` on a `Type` or `Member` read them: `Flags` combines all attributes of the
+enum (given by a member, `Access.Read` - the result is a value of the enum - or by its name, `"Access"` - the result is the number) and gives `0` if
+there is none.
+
+```fire
+#import "reflection"
+flag enum Access { Read = 1, Write = 2 }
+[Access Read]
+class Doc {
+    [Access Write]
+    string text
+}
+var t = Type.Of("Doc")
+print(t.HasFlag(Access.Read))               // True
+print(t.Find("text").Flags(Access.Read))     // Write
+print(t.Find("text").Flags("Access"))       // 2
 ```
 
 ### Selectors

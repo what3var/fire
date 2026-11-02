@@ -9,13 +9,17 @@ using fire.Values;
 
 namespace fire.Native
 {
+    /// <summary>The generated sources of a native program: the program in C, and its natives in C++ (null: none).</summary>
+    public sealed record NativeSources(string Program, string? Natives);
+
     /// <summary>
-    /// Translates a linked program (bytecode) into one C++ source file that includes <c>fire_rt.hpp</c>.
+    /// Translates a linked program (bytecode) into one C source file that includes <c>fire_rt.h</c> (and, when the program calls natives written in C++ - the
+    /// natives of packages that are still C++ - a second file in C++ with them, see <see cref="NativesFileName"/>; the bridges of graphics and windows are C, part of the program).
     ///
     /// Every chunk (the top-level code and each function, method, constructor, field initializer and destructor) becomes a
-    /// C++ function. The operand stack disappears: its depth is known at every instruction, so slot <c>k</c> of the stack is
-    /// the C++ local <c>s{k}</c>, and the C++ compiler turns those into registers. Scopes disappear as far as they hold
-    /// nothing but values: a variable that lives in a scope is a C++ local (<c>B{scope}_{slot}</c>, parameters
+    /// C function. The operand stack disappears: its depth is known at every instruction, so slot <c>k</c> of the stack is
+    /// the C local <c>s{k}</c>, and the C compiler turns those into registers. Scopes disappear as far as they hold
+    /// nothing but values: a variable that lives in a scope is a C local (<c>B{scope}_{slot}</c>, parameters
     /// <c>P{slot}</c>, globals <c>G{slot}</c>). Jumps become <c>goto</c>.
     ///
     /// Objects: a class is a class id plus a field layout (base fields first, like the VM), an object is a
@@ -24,7 +28,7 @@ namespace fire.Native
     /// the caller's innermost scope. Method calls are dispatched over the classes that exist in the program (it is a closed
     /// world); field access goes through small generated helpers.
     ///
-    /// Strings, arrays and byte buffers are reference counted (see fire_rt.hpp): a variable, parameter, field or array
+    /// Strings, arrays and byte buffers are reference counted (see fire_rt.h): a variable, parameter, field or array
     /// element holds a count; a fresh value is registered on its creator's scope. To keep numeric code free of that, the
     /// generator infers for every variable and stack slot whether it can hold such a value ("may be a reference") and
     /// emits counting - and the string-capable <c>addR</c> instead of <c>add</c> - only where it can.
@@ -62,7 +66,7 @@ namespace fire.Native
             /// <summary>The HoistValue instructions seen in pass 1: the scope they hoist into and the scopes they hoist from - the target needs a list
             /// only when one of the sources has one for something else (see HoistValue).</summary>
             public readonly List<(int Target, int[] Sources)> Hoists = new();
-            /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.hpp).</summary>
+            /// <summary>A call passes the result of another call on (`f(g())`): the function has the argument list `AL` (see finishArgs in fire_rt.h).</summary>
             public bool NeedsArgList;
             /// <summary>A generic method: it takes the type arguments of its call (TakeCallTypeArgs) into `ctargs`.</summary>
             public bool HasCallTArgs;
@@ -87,9 +91,19 @@ namespace fire.Native
             public Flow?[] Entry = Array.Empty<Flow?>();
             public Out Root = new();
             public int FinSignature => FinReturn.Count + FinJumps.Values.Sum(v => v.Count);
-            public string Signature => Kind == FuncKind.Main ? "static void fire_main()"
-                : Kind == FuncKind.FireBody ? $"static void {Name}(const Value* args)"
-                : $"{(HasCallTArgs ? "[[maybe_unused]] " : "")}static Value {Name}(" + string.Join(", ", (HasSelf ? new[] { "Value self" } : Kind == FuncKind.Lambda ? new[] { "Value lam" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"Value P{i}"))) + ")";
+            public string Signature => SignatureOf(Name, "");
+            /// <summary>The C signature with the function's name `name` and `suffix` after the names of its parameters (a function with a frame copies them in).</summary>
+            public string SignatureOf(string name, string suffix) => SignatureOf(name, _ => suffix);
+            /// <summary>The C signature with `suffixOf(parameter)` after the name of each parameter.</summary>
+            public string SignatureOf(string name, System.Func<string, string> suffixOf)
+            {
+                if (Kind == FuncKind.Main) return $"static void {(name == Name ? "fire_main" : name)}(void)";
+                if (Kind == FuncKind.FireBody) return $"static void {name}(const Value* args)";   // (`args` is read at the start only: never part of a frame)
+                var ps = ParamNames.Select(n => $"Value {n}{suffixOf(n)}").ToList();
+                return $"{(HasCallTArgs ? "FIRE_MAYBE_UNUSED " : "")}static Value {name}(" + (ps.Count == 0 ? "void" : string.Join(", ", ps)) + ")";
+            }
+            /// <summary>The names of the parameters (without the thread body's `args`).</summary>
+            public IEnumerable<string> ParamNames => (HasSelf ? new[] { "self" } : Kind == FuncKind.Lambda ? new[] { "lam" } : Array.Empty<string>()).Concat(Enumerable.Range(0, ParamCount).Select(i => $"P{i}"));
             /// <summary>Lambdas are called through a pointer with a uniform signature.</summary>
             public string ThunkSignature => $"static Value {Name}_t(Value lam, const Value* a)";
         }
@@ -220,6 +234,33 @@ namespace fire.Native
         private bool _usesElementPointers;
         /// <summary>The program has `try x.Take...(...)`: every function counts the call depth (`CallDepth`), so that the callee knows which argument list is its own.</summary>
         private bool _usesTryDepth;
+        /// <summary>What runs before the program (fire_init): the tables of the runtime that C++ set with static initializers.</summary>
+        private readonly StringBuilder _initCode = new();
+        /// <summary>The enums of the program in the order of their numbers (1-based in the generated table, `Value.reserved` of a value of the enum).</summary>
+        private readonly List<EnumType> _enumList = new();
+
+        /// <summary>The number of an enum in the generated table (1-based).</summary>
+        private int EnumIndex(EnumType type)
+        {
+            int at = _enumList.IndexOf(type);
+            if (at < 0) { _enumList.Add(type); at = _enumList.Count - 1; }
+            return at + 1;
+        }
+
+        /// <summary>The number of the enum a type name means (0: no enum of the program).</summary>
+        private int EnumIndexNamed(string typeName)
+        {
+            for (int i = 0; i < _enumList.Count; i++) if (_enumList[i].Matches(typeName)) return i + 1;
+            return 0;
+        }
+        /// <summary>The factors between two units the program converts between at fixed places: one cache each (`kUF_from_to`, 0 until it is looked up).</summary>
+        private readonly SortedSet<(int, int)> _unitFactorCaches = new();
+        /// <summary>The functions that `catch threads`/`catch terminate` register (name -> body): the runtime calls them with the value.</summary>
+        private readonly SortedDictionary<string, string> _catchCallbacks = new(StringComparer.Ordinal);
+        /// <summary>The natives in C++ of the program (null: it has none).</summary>
+        private string? _nativesCode;
+        /// <summary>The name of the file with the natives in C++, next to the program.</summary>
+        public const string NativesFileName = "fire_natives.cpp";
         /// <summary>Something needs the list of the global scope from other functions (`g_globalOwn`): exceptions, TakeGlobal, TakeUpwards.</summary>
         private bool _usesGlobalOwn;
         /// <summary>Methods (name, number of arguments) that a call site passes an address to (`ref` parameters): their dispatcher hands the value to the implementations without `ref`.</summary>
@@ -237,7 +278,16 @@ namespace fire.Native
 
         /// <summary>Generates the C++ source of the program for <paramref name="target"/> (default: the machine this runs on).
         /// Link the program with the same target (<c>Linker.CompileAndLink(..., target:)</c>) so that its libraries are checked.</summary>
-        public static string Generate(LinkedProgram program, TargetProfile? target = null) => new CppGenerator(program, target ?? TargetProfile.Host).Run();
+        public static string Generate(LinkedProgram program, TargetProfile? target = null) => GenerateSources(program, target).Program;
+
+        /// <summary>The program as C (<see cref="NativeSources.Program"/>) and its natives in C++ (<see cref="NativeSources.Natives"/>, null when it has none; written as
+        /// <see cref="NativesFileName"/> next to the program, compiled with a C++ compiler and linked with it).</summary>
+        public static NativeSources GenerateSources(LinkedProgram program, TargetProfile? target = null)
+        {
+            var generator = new CppGenerator(program, target ?? TargetProfile.Host);
+            string c = generator.Run();
+            return new NativeSources(c, generator._nativesCode);
+        }
 
         // -------------------------------------------------------------------------------------------------------------
         // Registries
@@ -387,8 +437,8 @@ namespace fire.Native
                     var parts = text.Split('|');
                     if (SpecParamsFor(proto, "", parts) is not { } ps) continue;
                     var spec = SpecFunc(f, "m:" + text, text, ps);
-                    string targs = string.Concat(parts.Select((t, i) => t.Length == 0 ? "" : $" && static_cast<TArgs>(g_callTArgs)[{i}] == {TArgRef(t)}"));
-                    lines.AppendLine($"    if (g_callTArgs{targs}{ParamTests(ps)}) return {spec.Name}({args});");
+                    string targs = string.Concat(parts.Select((t, i) => t.Length == 0 ? "" : $" && ((TArgs)g_callTArgs)[{i}] == {TArgRef(t)}"));
+                    lines.AppendLine($"    if (g_callTArgs{targs}{ParamTests(ps)}) return {spec.Name}{(_usesTryDepth ? "_b" : "")}({args});");
                 }
             // the type arguments of the object (a method of a generic class, or of a class derived from one)
             if (f.HasSelf)
@@ -406,7 +456,7 @@ namespace fire.Native
                         string targs = string.Concat(parts.Select((t, k) => SpecKind(t) != null ? $" && {TArgOfExpr(owner!, k, "objAt(self)")} == {TArgRef(t)}" : ""));
                         spec.SpecClassOwner = owner;
                         spec.SpecClassArgs = parts;
-                        lines.AppendLine($"    if (self.kind == K_Class{targs}{ParamTests(ps)}) return {spec.Name}({args});");
+                        lines.AppendLine($"    if (self.kind == K_Class{targs}{ParamTests(ps)}) return {spec.Name}{(_usesTryDepth ? "_b" : "")}({args});");
                     }
                 }
             }
@@ -534,7 +584,7 @@ namespace fire.Native
                 + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "");
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
-            string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
+            string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
             // (a receiver that may be undefined: the setter reports that)
             string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) sf_{Mangle(name)}({obj}, x); else " : "";
             return $"{{ Value x = {value}; {notObject}if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); {probed}else {{ {checks}{store} }} }}";
@@ -626,7 +676,7 @@ namespace fire.Native
         /// <summary>The check of a declaration with a class, an interface or a constrained type parameter (a parameter, a field; DeclaredType, `spec` its
         /// encoded form): `undefined` or a value that fits one alternative passes (and a destroyed object: every use of it reports that), anything else
         /// is an ArgumentException.</summary>
-        private string ClassGuard(string value, string spec, string what, string ownerObj = "nullptr", string? callTArgs = null)
+        private string ClassGuard(string value, string spec, string what, string ownerObj = "NULL", string? callTArgs = null)
         {
             var parsed = DeclaredType.Parse(spec);
             string altCheck = "";
@@ -639,11 +689,11 @@ namespace fire.Native
             // a type parameter: the type argument of the object (class) or of the call (method) decides when it is known, its `where` otherwise
             int k = parsed.TypeParamIndex;
             string? typeArg = parsed.TypeParamClass!.Length > 0
-                ? (ownerObj != "nullptr" ? TArgOfExpr(parsed.TypeParamClass, k, ownerObj) : null)
-                : (callTArgs != null ? $"({callTArgs} ? {callTArgs}[{k}] : nullptr)" : null);
+                ? (ownerObj != "NULL" ? TArgOfExpr(parsed.TypeParamClass, k, ownerObj) : null)
+                : (callTArgs != null ? $"({callTArgs} ? {callTArgs}[{k}] : NULL)" : null);
             if (typeArg == null) return altCheck;
             string param = parsed.Display.Split(' ')[0];
-            return $"{{ const TArg* tga = {typeArg}; if (tga) {{ if (FIRE_UNLIKELY(!fitsTArg({value}, tga))) guardTArgFailed({value}, {CString(param)}, tga, {CString(what)}); }}"
+            return $"{{ const TArg* tga = {typeArg}; if (tga) {{ if (FIRE_UNLIKELY(!fitsTArg(&{value}, tga))) guardTArgFailed({value}, {CString(param)}, tga, {CString(what)}); }}"
                 + (altCheck.Length > 0 ? $" else {{ {altCheck} }}" : "") + " }";
         }
 
@@ -653,7 +703,7 @@ namespace fire.Native
             if (c.IsUnit) return $"(({value}.kind == K_Int || {value}.kind == K_Float) && unitCompatible(unitOf({value}), {UnitId(c.Unit)}))";
             switch (c.Name)
             {
-                case "int": return $"{value}.kind == K_Int";
+                case "int": return $"({value}.kind == K_Int && {value}.reserved == 0)";
                 case "float": return $"{value}.kind == K_Float";
                 case "bool": return $"{value}.kind == K_Bool";
                 case "char": return $"{value}.kind == K_Char";
@@ -665,10 +715,10 @@ namespace fire.Native
             return $"({enumerable}isof_{Mangle(c.Name)}({value}))";
         }
 
-        /// <summary>The TArg of a type argument text (`&amp;ta_N`; nullptr for "": not known).</summary>
+        /// <summary>The TArg of a type argument text (`&amp;ta_N`; NULL for "": not known).</summary>
         private string TArgRef(string text)
         {
-            if (text.Length == 0) return "nullptr";
+            if (text.Length == 0) return "NULL";
             if (!_targIds.TryGetValue(text, out int id))
             {
                 _targIds[text] = id = _targIds.Count;
@@ -685,7 +735,7 @@ namespace fire.Native
         }
 
         /// <summary>The object of the running method as an Obj* (null outside of a method or for an extension method's receiver that is no object).</summary>
-        private string SelfObj(Func f) => f.HasSelf ? "(self.kind == K_Class ? objAt(self) : nullptr)" : "nullptr";
+        private string SelfObj(Func f) => f.HasSelf ? "(self.kind == K_Class ? objAt(self) : NULL)" : "NULL";
 
         /// <summary>The C++ expression (TArgs) of the type arguments of a SetTypeArgs text: a constant list, or one put together at run time when it
         /// names a type parameter of the running code (`$k@Class` of the object, `$k@` of the call).</summary>
@@ -706,10 +756,10 @@ namespace fire.Native
                 if (!t.StartsWith('$')) return TArgRef(t);
                 int at = t.IndexOf('@');
                 int k = int.Parse(t.AsSpan(1, at - 1), CultureInfo.InvariantCulture);
-                if (at == t.Length - 1) return f.HasCallTArgs ? $"(ctargs ? ctargs[{k}] : nullptr)" : "nullptr";
-                return f.HasSelf ? TArgOfExpr(t.Substring(at + 1), k, SelfObj(f)) : "nullptr";
+                if (at == t.Length - 1) return f.HasCallTArgs ? $"(ctargs ? ctargs[{k}] : NULL)" : "NULL";
+                return f.HasSelf ? TArgOfExpr(t.Substring(at + 1), k, SelfObj(f)) : "NULL";
             }
-            return "internTArgs({" + string.Join(", ", parts.Select(Part)) + "})";
+            return $"internTArgsN((const TArg* const[]){{{string.Join(", ", parts.Select(Part))}}}, {parts.Length})";
         }
 
         /// <summary>The type arguments' tables: a TArg per text, the constant lists and the `targOf_` functions (declared before the helpers that check fields).</summary>
@@ -735,17 +785,17 @@ namespace fire.Native
                     }
                     if (rc == null) continue;
                     string token = args == null ? "$" + k : k < args.Length ? args[k] : "";
-                    string expr = token.Length == 0 ? "nullptr"
-                        : token.StartsWith('$') ? $"(o->targs ? o->targs[{token.Substring(1)}] : nullptr)"
+                    string expr = token.Length == 0 ? "NULL"
+                        : token.StartsWith('$') ? $"(o->targs ? o->targs[{token.Substring(1)}] : NULL)"
                         : TArgRef(token);
                     cases.Add((ci.Id, expr));
                 }
-                targOfCode.AppendLine($"[[maybe_unused]] static const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
-                targOfCode.AppendLine("    if (!o) return nullptr;");
+                targOfCode.AppendLine($"FIRE_MAYBE_UNUSED static const TArg* targOf_{Mangle(cls)}_{k}(Obj* o) {{");
+                targOfCode.AppendLine("    if (!o) return NULL;");
                 targOfCode.AppendLine("    switch (o->cls) {");
                 foreach (var group in cases.GroupBy(c => c.Expr))
                     targOfCode.AppendLine("        " + string.Concat(group.Select(c => $"case {c.Id}: ")) + $"return {group.Key};");
-                targOfCode.AppendLine("        default: return nullptr;");
+                targOfCode.AppendLine("        default: return NULL;");
                 targOfCode.AppendLine("    }");
                 targOfCode.AppendLine("}");
             }
@@ -754,7 +804,7 @@ namespace fire.Native
             {
                 var condition = DeclaredType.ConditionOf(text);
                 string holds = HoldsExpr("v", condition);
-                string kind = "0", adapt = "nullptr";
+                string kind = "0", adapt = "NULL";
                 if (DeclaredType.NumberDemand(text) is { } number)
                 {
                     // a number type argument: of its kind and in its unit already (anything else of the kind is converted: taa_)
@@ -855,7 +905,7 @@ namespace fire.Native
                 "bool" => "bool",
                 "int" => t.BitWidth switch { 8 => "int8_t", 16 => "int16_t", 32 => "int32_t", 64 => "int64_t", _ => "intptr_t" },
                 "float" => t.BitWidth == 32 ? "float" : "double",
-                "char" => "char16_t",
+                "char" => "fire_char16",
                 "string" => "const char*",
                 _ => throw new NativeNotSupportedException($"extern function '{name}': the type '{t.BaseName}' cannot be passed to C (supported: bool/int/float/char/string/pointer)"),
             };
@@ -950,10 +1000,26 @@ namespace fire.Native
         private bool AnyClassHasMethod(string name, int argc) => _classList.Any(c => c.Rc.FindMethodWithAccess(name, argc).Proto != null);
 
         /// <summary>The natives of the imports of packages (C++ source that is put into the generated file): the fire name -> argument count and the C++ function.</summary>
-        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws)> _packageNatives = new();
+        private readonly Dictionary<string, (int Argc, string Function, bool NeedsList, bool ReturnsReference, bool Host, bool Throws, bool IsC)> _packageNatives = new();
         /// <summary>The exception classes that natives of the imported packages throw (`exceptions` of the package): the runtime constructs them by name (`fireError`).</summary>
         private readonly List<string> _errorClasses = new();
         private readonly List<(InstalledImport Import, string Key)> _packageImports = new();
+
+        /// <summary>The natives in C++ (graphics, windows, the packages) that the program calls: they are in a file of their own (C++), the program (C) calls them
+        /// through a function with C linkage each - `fire_nat_N`. The C++ function -> (N, number of arguments, the list of the scope as the last argument).</summary>
+        private readonly Dictionary<string, (int Index, int Argc, bool NeedsList)> _nativeThunks = new(StringComparer.Ordinal);
+
+        /// <summary>The name of the C function that calls the C++ native <paramref name="cppFunction"/>.</summary>
+        private string NativeThunk(string cppFunction, int argc, bool needsList)
+        {
+            if (!_nativeThunks.TryGetValue(cppFunction, out var thunk))
+                _nativeThunks[cppFunction] = thunk = (_nativeThunks.Count, argc, needsList);
+            return $"fire_nat_{thunk.Index}";
+        }
+
+        /// <summary>The parameters of a thunk (`Value a0, ..., OwnList* list`).</summary>
+        private static string ThunkParams(int argc, bool needsList) =>
+            argc == 0 && !needsList ? "void" : string.Join(", ", Enumerable.Range(0, argc).Select(i => $"Value a{i}").Concat(needsList ? new[] { "OwnList* list" } : Array.Empty<string>()));
 
         /// <summary>Looks at the imports of packages the program uses: their native functions, and whether the target is one the C++ source is written for.</summary>
         private void CollectPackages()
@@ -969,7 +1035,7 @@ namespace fire.Native
                 if (native.SourcesFor(new[] { _target.Native.Platform, _target.Name }).Count == 0)
                     throw new NativeNotSupportedException($"the package '{import.Package.Name}' (import '{import.Name}') has no C++ source for the target '{_target.Name}' (platform '{_target.Native.Platform}')");
                 foreach (var fn in native.Functions)
-                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Cpp, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0));
+                    _packageNatives.TryAdd(fn.Name, (fn.Arguments, fn.Symbol, fn.NeedsList, fn.ReturnsReference, fn.Host, native.Exceptions.Count > 0, native.IsC));
                 foreach (var name in native.Exceptions) if (!_errorClasses.Contains(name)) _errorClasses.Add(name);
             }
         }
@@ -981,7 +1047,7 @@ namespace fire.Native
             return Unit.Parse(demand.StartsWith("any ", StringComparison.Ordinal) ? demand.Substring(4) : demand);
         }
 
-        /// <summary>The C++ that converts `value` into the unit a declaration demands (fire_rt.hpp adaptUnit; a leading `#`: the declaration is a float).</summary>
+        /// <summary>The C that converts `value` into the unit a declaration demands (fire_rt.h adaptUnit; a leading `#`: the declaration is a float).</summary>
         private string AdaptUnitCall(string value, string demand)
         {
             bool toFloat = demand.StartsWith('#');
@@ -1011,6 +1077,7 @@ namespace fire.Native
                 if (round > 40) throw new NativeNotSupportedException("code generation does not settle");
             }
 
+            _initCode.Clear();
             var sb = new StringBuilder();
             sb.AppendLine("// Generated by fire.Native from the bytecode - do not edit.");
             sb.AppendLine($"// target: {_target.Name}");
@@ -1034,47 +1101,76 @@ namespace fire.Native
             var dimNames = _units.SelectMany(u => u.Dimensions.Keys).Distinct().OrderBy(k => k).ToList();
             sb.AppendLine($"#define FIRE_NDIMS {Math.Max(1, dimNames.Count)}");
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
+            // what both files say first (the natives in C++ see the same configuration of the runtime as the program)
+            string prelude = sb.ToString();
             // the system libraries that packages need on this platform (`linkLibraries`): the build links them
             foreach (var (import, _) in _packageImports)
                 if (import.Import.Native is { } packageNative)
                     foreach (string lib in packageNative.LinkLibrariesFor(new[] { _target.Native.Platform, _target.Name })) sb.AppendLine($"// fire-link: {lib}");
-            sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
-            sb.AppendLine("#include \"fire_rt.hpp\"");
-            if (_packageImports.Count > 0 || _usesGraphics) sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_NET_HEADER \"platform/{_target.Native.Platform}/fire_net.hpp\"");   // (the net package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_TLS_HEADER \"platform/{_target.Native.Platform}/fire_tls.hpp\"");   // (the tls package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{_target.Native.Platform}/fire_gpio.hpp\"");   // (the gpio package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{_target.Native.Platform}/fire_i2c.hpp\"");   // (the i2c package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{_target.Native.Platform}/fire_spi.hpp\"");   // (the spi package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{_target.Native.Platform}/fire_wifi.hpp\"");   // (the wifi package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{_target.Native.Platform}/fire_audio.hpp\"");   // (the audio package)
-            if (_packageImports.Count > 0) sb.AppendLine($"#define FIRE_PLATFORM_USB_HEADER \"platform/{_target.Native.Platform}/fire_usb.hpp\"");   // (the usb package)
+            if (_usesWindows && _target.Native.Platform is "posix" or "windows") sb.AppendLine("// fire-link: SDL2");   // the display of these platforms is SDL2: the build links it
+            sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
+            sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the runtime's global state lives in this file");
+            sb.AppendLine("#include \"fire_rt.h\"");
+            // (generated code: a slot that is written and not read again, or a helper nothing calls, is no mistake)
+            sb.AppendLine("#if defined(__GNUC__) || defined(__clang__)");
+            sb.AppendLine("#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"");
+            sb.AppendLine("#pragma GCC diagnostic ignored \"-Wunused-function\"");
+            sb.AppendLine("#endif");
+
+            // The natives in C of the packages ("language": "c") and the bridges of graphics and windows: part of this file, after the runtime - a C compiler is enough
+            // (TinyCC, a board without C++). The platform layers in C for them (FIRE_PLATFORM_FS_C_HEADER, ...).
+            if (_usesGraphics || _packageImports.Any(p => p.Import.Import.Native is { IsC: true }))
+                foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) sb.AppendLine(line);
             if (_usesGraphics) AppendStandardNatives(sb, "graphics");
-            if (_usesWindows)
-            {
-                if (_target.Native.Platform is "posix" or "windows") sb.AppendLine("// fire-link: SDL2");   // the display of these platforms is SDL2: the build links it
-                sb.AppendLine($"#define FIRE_PLATFORM_DISPLAY_HEADER \"platform/{_target.Native.Platform}/fire_display.hpp\"");
-                AppendStandardNatives(sb, "windows");
-            }
-            // the C++ source of the packages the program imports: after the runtime and the bridges (graphics, windows), at the top level (the files include what they need and put their functions into namespace fire)
-            foreach (var (import, _) in _packageImports.Where(p => !_standardNativesWritten.Contains(p.Import.Name)))
+            if (_usesWindows) AppendStandardNatives(sb, "windows");
+            foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is { IsC: true } && !_standardNativesWritten.Contains(p.Import.Name)))
                 foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
                 {
-                    sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {name}");
+                    sb.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\" (C): {name}");
                     sb.AppendLine(text);
                     sb.AppendLine($"// ---- end of {name}");
                 }
-            sb.AppendLine("using namespace fire;");
+
+            // The natives in C++ (the packages that are still C++): a file of their own, built with a C++ compiler and linked with the program.
+            var nat = new StringBuilder();
+            nat.Append(prelude.Replace("// Generated by fire.Native from the bytecode - do not edit.", "// Generated by fire.Native: the natives in C++ of the program " + NativesFileName + " belongs to - do not edit."));
+            nat.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
+            nat.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
+            nat.AppendLine("#include \"fire_rt_cpp.hpp\"   // the runtime (fire_rt.h, the program has its state) and what C++ code expects of it");
+            // the platform layers in C (FIRE_PLATFORM_AUDIO_C_HEADER, ...): packages in C++ use them as well (the circuits package plays through the audio layer)
+            if (_packageImports.Count > 0) foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) nat.AppendLine(line);
+            bool natSources = false;
+            // the C++ source of the packages the program imports: after the runtime, at the top level (the files include what they need and put their functions into namespace fire)
+            foreach (var (import, _) in _packageImports.Where(p => p.Import.Import.Native is not { IsC: true } && !_standardNativesWritten.Contains(p.Import.Name)))
+                foreach (var (name, text) in import.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
+                {
+                    nat.AppendLine($"// ---- package {import.Package.Name} {import.Package.Version}, import \"{import.Name}\": {name}");
+                    nat.AppendLine(text);
+                    nat.AppendLine($"// ---- end of {name}");
+                    natSources = true;
+                }
+            if (natSources || _nativeThunks.Count > 0)
+            {
+                // the thunks: C functions that call the C++ natives (the program declares them)
+                nat.AppendLine();
+                sb.AppendLine("// the natives in C++ (" + NativesFileName + ")");
+                foreach (var (function, (index, argc, needsList)) in _nativeThunks.OrderBy(t => t.Value.Index))
+                {
+                    string ps = ThunkParams(argc, needsList);
+                    string args = string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").Concat(needsList ? new[] { "list" } : Array.Empty<string>()));
+                    sb.AppendLine($"Value fire_nat_{index}({ps});   // {function}");
+                    nat.AppendLine($"extern \"C\" fire::Value fire_nat_{index}({ps.Replace("Value", "fire::Value").Replace("OwnList", "fire::OwnList")}) {{ using namespace fire; return {function}({args}); }}");
+                }
+                _nativesCode = nat.ToString();
+            }
+            else _nativesCode = null;
             sb.AppendLine();
-            sb.AppendLine("namespace fire {");
             sb.AppendLine($"const char* const g_dimNames[] = {{{(dimNames.Count == 0 ? "\"\"" : string.Join(", ", dimNames.Select(CString)))}}};");
-            sb.AppendLine("}");
             sb.AppendLine("static const UnitInit kUnitInit[] = {");
             foreach (var u in _units)
             {
                 var dims = dimNames.Count == 0 ? "0" : string.Join(", ", dimNames.Select(n => u.Dimensions.TryGetValue(n, out int e) ? e.ToString(CultureInfo.InvariantCulture) : "0"));
-                string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "nullptr";
+                string display = u.DisplaySymbol is { } symbol ? CString(symbol) : "NULL";
                 int conv = u.Converter is { } converter ? _unitConverters[converter].Index : -1;
                 int ulconv = u.UnitlessConverter is { } plainConverter ? _unitConverters[plainConverter].Index : -1;
                 sb.AppendLine($"    {{{{{dims}}}, {DoubleLiteral(u.Scale, false)}, {display}, {DoubleLiteral(u.Offset, false)}, {conv}, {ulconv}}},");
@@ -1087,10 +1183,10 @@ namespace fire.Native
                 foreach (var (_, to, from) in converters) sb.AppendLine($"{to.Signature};\n{from.Signature};");
                 sb.AppendLine($"static const UnitConvFn kUnitTo[] = {{{string.Join(", ", converters.Select(c => c.To.Name))}}};");
                 sb.AppendLine($"static const UnitConvFn kUnitFrom[] = {{{string.Join(", ", converters.Select(c => c.From.Name))}}};");
-                sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + ", kUnitTo, kUnitFrom), true);");
+                _initCode.AppendLine("    unitsInit(kUnitInit, " + _units.Count + ", kUnitTo, kUnitFrom);");
             }
             else
-                sb.AppendLine("static const bool kUnitsReady = (unitsInit(kUnitInit, " + _units.Count + "), true);");
+                _initCode.AppendLine("    unitsInit(kUnitInit, " + _units.Count + ", NULL, NULL);");
             // the files of `new Resource("path")` are part of the binary (docs/RESOURCES.md)
             var resources = _program.Program.Resources;
             if (resources.Count > 0)
@@ -1111,7 +1207,7 @@ namespace fire.Native
                 for (int r = 0; r < resources.Count; r++)
                     sb.AppendLine($"    {{{CString(resources[r].Name)}, kRes{r}, {resources[r].Data.Length}u}},");
                 sb.AppendLine("};");
-                sb.AppendLine($"static const bool kResourcesReady = (g_resources = kResources, g_resourceCount = {resources.Count}, true);");
+                _initCode.AppendLine($"    g_resources = kResources; g_resourceCount = {resources.Count};");
             }
             if (_externDecls.Count > 0)
             {
@@ -1126,23 +1222,28 @@ namespace fire.Native
             for (int i = 0; i < _strings.Count; i++)
             {
                 string text = _strings[i];
-                bool plain = text.All(c => c >= 0x20 && c < 0x7F);
-                string data = plain ? "u" + CString(text) : "{" + string.Join(", ", text.Select(c => ((int)c).ToString(CultureInfo.InvariantCulture)).Append("0")) + "}";
-                sb.AppendLine($"static const char16_t K{i}_d[] = {data};");
+                // the code units as numbers (C99: TinyCC and older compilers know no u"..." literals); a plain text stands next to them as a comment
+                bool plain = text.All(c => c >= 0x20 && c < 0x7F) && !text.Contains("*/") && !text.Contains("/*");
+                string data = "{" + string.Join(", ", text.Select(c => ((int)c).ToString(CultureInfo.InvariantCulture)).Append("0")) + "}";
+                sb.AppendLine($"static const fire_char16 K{i}_d[] = {data};{(plain ? "   /* " + CString(text) + " */" : "")}");
                 sb.AppendLine($"static const Str K{i} = {{{{IMMORTAL, R_Str}}, {text.Length}, K{i}_d}};");
             }
             if (_strings.Count > 0) sb.AppendLine();
             if (_globals.Count > 0)
             {
-                sb.AppendLine("static Value " + string.Join(", ", _globals.OrderBy(g => g).Select(g => $"G{g} = Undef()")) + ";");
+                sb.AppendLine("static Value " + string.Join(", ", _globals.OrderBy(g => g).Select(g => $"G{g} = FIRE_UNDEF_INIT")) + ";");
                 sb.AppendLine();
             }
             foreach (var (key, index) in _staticFields.OrderBy(kv => kv.Value))
-                sb.AppendLine($"static Value SF{index} = Undef(); // {key.Class}.{key.Field}");
+                sb.AppendLine($"static Value SF{index} = FIRE_UNDEF_INIT; // {key.Class}.{key.Field}");
             if (_staticFields.Count > 0) sb.AppendLine();
 
+            foreach (var (from, to) in _unitFactorCaches) sb.AppendLine($"static double kUF_{from}_{to} = 0;   // the factor between unit {from} and unit {to}, looked up once");
             // Prototypes of everything, then the helpers (they call functions), then the functions (they call helpers).
             foreach (var f in _funcs) sb.AppendLine(f.Signature + ";");
+            foreach (var (callback, body) in _catchCallbacks) sb.AppendLine($"static Value {callback}(Value e) {{ {body} }}");
+            if (_usesTryDepth)   // (the functions proper behind the wrappers that count the call depth: the trampolines call them directly)
+                foreach (var f in _funcs.Where(f => f.Kind != FuncKind.Main)) sb.AppendLine(f.SignatureOf(f.Name + "_b", "") + ";");
             foreach (var f in _funcs.Where(f => f.Kind == FuncKind.Lambda))
                 sb.AppendLine(f.ThunkSignature + " { " + (f.ParamCount == 0 ? "(void)a; " : "") + $"return {f.Name}(lam{string.Concat(Enumerable.Range(0, f.ParamCount).Select(i => $", a[{i}]"))}); }}");
             foreach (var f in _lambdaDefaults)
@@ -1165,12 +1266,12 @@ namespace fire.Native
             var dispatcherCode = _dispatchers.Select(x => Dispatcher(x.Name, x.Argc)).ToList();
             var selectorCode = _overloadSelectors.Values.Select(SelectorFunction).ToList();
             string targTables = TArgTables();
-            foreach (var typeName in _isOfTypes) sb.AppendLine($"[[maybe_unused]] static bool isof_{Mangle(typeName)}(Value v);");
+            foreach (var typeName in _isOfTypes) sb.AppendLine($"FIRE_MAYBE_UNUSED static bool isof_{Mangle(typeName)}(Value v);");
             sb.Append(targTables);
             foreach (var name in _fieldNames)
             {
                 string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
-                sb.AppendLine($"[[maybe_unused]] static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"[[maybe_unused]] static inline void sf_{Mangle(name)}(Value v, Value x{lp});").AppendLine($"[[maybe_unused]] static inline Value fp_{Mangle(name)}(Value v);");
+                sb.AppendLine($"FIRE_MAYBE_UNUSED static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"FIRE_MAYBE_UNUSED static inline void sf_{Mangle(name)}(Value v, Value x{lp});").AppendLine($"FIRE_MAYBE_UNUSED static inline Value fp_{Mangle(name)}(Value v);");
             }
             foreach (var (name, argc) in _dispatchers)
             {
@@ -1179,8 +1280,8 @@ namespace fire.Native
                 if (_usesActors) sb.AppendLine($"static Value msg_{Mangle(name)}_{argc}(Value self, const Value* a, OwnList* list);");
             }
             foreach (var method in _operators) sb.AppendLine($"static Value {OperatorWrapper(method)}(Value a, Value b, OwnList* list);");
-            sb.AppendLine("[[maybe_unused]] static inline Value aget_g(Value a, Value i, OwnList* list);");
-            sb.AppendLine("[[maybe_unused]] static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static inline Value aget_g(Value a, Value i, OwnList* list);");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static inline void aset_g(Value a, Value i, Value v, OwnList* list);");
             sb.AppendLine();
 
             foreach (var selector in _overloadSelectors.Values) sb.AppendLine(SelectorSignature(selector) + ";");
@@ -1210,7 +1311,8 @@ namespace fire.Native
             foreach (var typeName in _isOfTypes)
             {
                 var ids = _classList.Where(c => ClassIs(c.Rc, typeName)).Select(c => c.Id).ToList();
-                sb.AppendLine($"[[maybe_unused]] static bool isof_{Mangle(typeName)}(Value v) {{");
+                sb.AppendLine($"FIRE_MAYBE_UNUSED static bool isof_{Mangle(typeName)}(Value v) {{");
+                if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
                 if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
                 sb.AppendLine("    if (v.kind != K_Class) return false;");
                 sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
@@ -1230,19 +1332,33 @@ namespace fire.Native
             // The entry point is the target configuration's: a process (`int main()`, the exit code is `terminate(n)`) or a function that the board's startup
             // code calls once the scheduler runs (`app_main` in ESP-IDF; there is no process to end).
             var entry = _target.Native.Entry;
-            string externC = entry.ExternC ? "extern \"C\" " : "";
+            string externC = "";   // (C: the name of the entry point is not mangled)
+            // what C++ did with static initializers: the tables of the runtime (units, resources, hooks), before anything runs
+            // the enums of the program: their names and members (the text of a value, `is of`)
+            if (_enumList.Count > 0)
+            {
+                for (int i = 0; i < _enumList.Count; i++)
+                    sb.AppendLine($"static const FireEnumMember kEnumM{i}[] = {{{string.Join(", ", _enumList[i].Members.Select(m => $"{{{CString(m.Name)}, {(m.Value == long.MinValue ? "INT64_MIN" : m.Value.ToString(CultureInfo.InvariantCulture) + "LL")}}}").DefaultIfEmpty("{\"\", 0}"))}}};");
+                sb.AppendLine($"static const FireEnum kEnums[] = {{{string.Join(", ", _enumList.Select((e, i) => $"{{{CString(e.Name)}, {(e.IsFlags ? 1 : 0)}, kEnumM{i}, {e.Members.Count}}}"))}}};");
+                _initCode.AppendLine($"    g_enums = kEnums; g_enumCount = {_enumList.Count};");
+            }
+            sb.AppendLine("static void fire_init(void) {");
+            if (_usesThreads) sb.AppendLine("    fire_threadsInit();   // the locks of the threads, before anything else");
+            sb.Append(_initCode);
+            sb.AppendLine("}");
             if (entry.Kind == EntryKind.Function)
             {
                 sb.AppendLine($"{externC}void {entry.Name}(void) {{");
-                sb.AppendLine("    fire_main();");
-                sb.AppendLine("    std::fflush(stdout);");
+                sb.AppendLine("    fire_init();\n    fire_main();");
+                sb.AppendLine("    fflush(stdout);");
                 sb.AppendLine("}");
             }
             else
             {
-                sb.AppendLine($"{externC}int {entry.Name}({(entry.Name == "main" ? "" : "void")}) {{");
-                sb.AppendLine("    fire_main();");
-                sb.AppendLine("    std::fflush(stdout);");
+                sb.AppendLine($"{externC}int {entry.Name}(int argc, char** argv) {{");
+                sb.AppendLine("    fire_setArgs(argc, argv);   // (Environment.Args, ProgramPath)");
+                sb.AppendLine("    fire_init();\n    fire_main();");
+                sb.AppendLine("    fflush(stdout);");
                 sb.AppendLine(_usesThreads ? "    return mainExitCode();   // `terminate(n)` gives the exit code" : _usesExceptions ? "    return g_unwind.active ? 1 : 0;   // an exception that nothing caught" : "    return 0;");
                 sb.AppendLine("}");
             }
@@ -1379,11 +1495,13 @@ namespace fire.Native
             switch ((name, argc))
             {
                 case ("ToBytes", 0): yield return ("K_String", "strToBytes(self, list)"); break;
-                case ("ToUnicode", 1): yield return ("K_String", "strToUnicode(self, a0, list)"); yield return ("K_Char", "charToUnicode(self, a0, list)"); yield return ("K_Buffer", "bufToUnicode(self, a0, list)"); break;
-                case ("ToUnicode", 0): yield return ("K_Buffer", "bufToUnicode(self, Int(2), list)"); break;
+                case ("ToUnicode", 1): yield return ("K_String", "strToUnicode(self, a0, list)"); yield return ("K_Char", "charToUnicode(self, a0, list)"); yield return ("K_Buffer", "retainedV(bufToUnicode(self, a0, list))"); break;
+                case ("ToUnicode", 0): yield return ("K_Buffer", "retainedV(bufToUnicode(self, Int(2), list))"); break;
                 case ("ToByte", 0): yield return ("K_Char", "charToByte(self)"); break;
                 case ("ToChar", 0): yield return ("K_Int", "byteToChar(self)"); break;
-                case ("ToString", 0): yield return ("K_Buffer", "bufToString(self, list)"); break;
+                // (a string made in the pool goes to the caller with a count of its own: retainedV; an enum value gives its name)
+                case ("ToString", 0): yield return ("K_Buffer", "retainedV(bufToString(self, list))"); yield return ("K_Int", "retainedV(toStringValue(self, list))"); break;
+                case ("HasFlag", 1): yield return ("K_Int", "enumHasFlag(self, a0)"); break;
                 case ("ToUnicodeChar", 0): yield return ("K_Buffer", "bufToUnicodeChar(self, Int(2))"); break;
                 case ("ToUnicodeChar", 1): yield return ("K_Buffer", "bufToUnicodeChar(self, a0)"); break;
                 case ("ToLittleEndian", 0): yield return ("K_Buffer", "bufToEndian(self, true, list)"); break;
@@ -1404,7 +1522,7 @@ namespace fire.Native
             parameters.AddRange(Enumerable.Range(0, argc).Select(i => $"Value a{i}"));
             if (DispatchNeedsList(name, argc)) parameters.Add("OwnList* list");
             if (RestrictedMethodName(name)) parameters.Add("uint32_t caller");
-            return $"[[maybe_unused]] static Value {prefix}{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";   // (direct calls can leave a dispatcher unused)
+            return $"FIRE_MAYBE_UNUSED static Value {prefix}{Mangle(name)}_{argc}(" + string.Join(", ", parameters) + ")";   // (direct calls can leave a dispatcher unused)
         }
 
         /// <summary>The program has actors: a call of a method on one is a message (SPEC / THREADING_DESIGN 2). The dispatcher that runs the method is then
@@ -1421,14 +1539,21 @@ namespace fire.Native
             sb.AppendLine("{");
             if (_usesActors)
             {
-                sb.AppendLine("    if (self.kind == K_Class && FIRE_LIKELY(leafAlive(self)) && (asObj(self)->flags & 8)) {");
+                sb.AppendLine("    if (self.kind == K_Class && FIRE_LIKELY(leafAlive(self)) && (asObj(self)->h.flags & 8)) {");
                 sb.AppendLine($"        Value av[{Math.Max(1, argc)}] = {{{string.Join(", ", Enumerable.Range(0, argc).Select(i => $"a{i}").DefaultIfEmpty("Undef()"))}}};");
                 sb.AppendLine($"        actorSend(self, msg_{m}, av, {argc});");
                 sb.AppendLine("        return Undef();");
                 sb.AppendLine("    }");
             }
-            if (_usesThreads) sb.AppendLine("    SectionScope ss_(self);   // a call on an object of the shared domain is one section");
-            sb.AppendLine($"    return direct_{m}(self{argList}{tail});");
+            if (_usesThreads)
+            {
+                // a call on an object of the shared domain is one section
+                sb.AppendLine("    bool ss_ = sectionScopeEnterV(self);");
+                sb.AppendLine($"    Value r_ = direct_{m}(self{argList}{tail});");
+                sb.AppendLine("    sectionScopeExit(ss_);");
+                sb.AppendLine("    return r_;");
+            }
+            else sb.AppendLine($"    return direct_{m}(self{argList}{tail});");
             sb.AppendLine("}");
             if (!_usesActors) return sb.ToString();
             string msgArgs = string.Concat(Enumerable.Range(0, argc).Select(i => $", a[{i}]")) + (DispatchNeedsList(name, argc) ? ", list" : "") + (RestrictedMethodName(name) ? ", asObj(self)->cls" : "");
@@ -1522,7 +1647,7 @@ namespace fire.Native
                     // a base-type extension with overloads by type: the values decide, like for objects
                     var set = extensionRc.Candidates(name, argc);
                     sb.AppendLine($"        case {cpp}: {{");
-                    sb.Append(OverloadChoice(set.Protos, argc, "nullptr", c => CallImpl(_funcByProto[set.Protos[c]].Name, set.Protos[c], extensionRc, true, set.Declaring[c]), "            ", ScoredArg));
+                    sb.Append(OverloadChoice(set.Protos, argc, "NULL", c => CallImpl(_funcByProto[set.Protos[c]].Name, set.Protos[c], extensionRc, true, set.Declaring[c]), "            ", ScoredArg));
                     sb.AppendLine("        }");
                 }
                 else sb.AppendLine($"        case {cpp}: {CallImpl(_funcByProto[proto].Name, proto, extensionRc, true)}");
@@ -1627,7 +1752,7 @@ namespace fire.Native
                 sb.AppendLine("    return true;");
                 sb.AppendLine("}");
             }
-            sb.AppendLine("[[maybe_unused]] static const bool fire_enumerateHook_ = (g_enumerateItems = fire_enumerateItems, true);");
+            _initCode.AppendLine("    g_enumerateItems = fire_enumerateItems;");
             return sb.ToString();
         }
 
@@ -1687,9 +1812,10 @@ namespace fire.Native
             // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
-            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return o->fields()[idx];\n}}\n"
-                 + $"static inline void sf_{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}{voidIndex}\n{unitCode}    Value old = o->fields()[idx];\n    o->fields()[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
-                 + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&o->fields()[idx]);\n}}\n";
+            return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return objFields(o)[idx];\n}}\n"
+                 + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
+                 + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
+                 + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n";
         }
 
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
@@ -1728,7 +1854,7 @@ namespace fire.Native
                         fieldGuard = $"if (!{cond}) return accessDenied({text}); ";
                         fieldGuardSet = $"if (!{cond}) {{ accessDenied({text}); return; }} ";
                     }
-                    get.AppendLine($"{label}{{ {fieldGuard}return o->fields()[{index}]; }}");
+                    get.AppendLine($"{label}{{ {fieldGuard}return objFields(o)[{index}]; }}");
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
@@ -1736,8 +1862,8 @@ namespace fire.Native
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
-                    set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = o->fields()[{index}]; o->fields()[{index}] = x; retain(x); release(old); return; }}");
-                    ptr.AppendLine($"{label}return PtrV(&o->fields()[{index}]);");
+                    set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = objFields(o)[{index}]; objFields(o)[{index}] = x; retain(x); release(old); return; }}");
+                    ptr.AppendLine($"{label}return PtrV(&objFields(o)[{index}]);");
                     continue;
                 }
                 var (getter, getterDecl, getterAccess) = cls.Rc.FindMethodWithAccess("get_" + name, 0);
@@ -1764,7 +1890,10 @@ namespace fire.Native
             string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
             string unusedLp = (HasProperty(name) ? "(void)list; " : "") + (RestrictedField(name) ? "(void)caller; " : "");
             sb.AppendLine($"static inline Value gf_{m}(Value v{lp}) {{\n{lengthCode}    {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{get}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
-            sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{(_usesThreads ? "    SectionScope ss_(v);\n" : "")}    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
+            string lpArgs = (HasProperty(name) ? ", list" : "") + (RestrictedField(name) ? ", caller" : "");
+            if (_usesThreads)   // (a change of an object of the shared domain is one section)
+                sb.AppendLine($"static inline void sfb_{m}(Value v, Value x{lp});\nstatic inline void sf_{m}(Value v, Value x{lp}) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x{lpArgs}); sectionScopeExit(ss_); }}");
+            sb.AppendLine($"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
             sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
             return sb.ToString();
         }
@@ -1782,11 +1911,12 @@ namespace fire.Native
             sb.AppendLine("    return arrayGet(a, i);");
             sb.AppendLine("}");
             sb.AppendLine("static inline void aset_g(Value a, Value i, Value v, OwnList* list) {");
-            if (_usesThreads) sb.AppendLine("    SectionScope ss_(a);");
+            string secEnd = _usesThreads ? " sectionScopeExit(ss_);" : "";
+            if (_usesThreads) sb.AppendLine("    bool ss_ = sectionScopeEnterV(a);");
             if (_dispatchers.Contains(("SetIndex", 2)))
-                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = call_SetIndex_2(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list); return; }}");
+                sb.AppendLine($"    if (a.kind == K_Class) {{ Value r = call_SetIndex_2(a, i, v{DispatchTail("SetIndex", 2, "list", "0xFFFFFFFFu")}); adopt(r, list);{secEnd} return; }}");
             else sb.AppendLine("    (void)list;");
-            sb.AppendLine("    arraySet(a, i, v);");
+            sb.AppendLine("    arraySet(a, i, v);" + secEnd);
             sb.AppendLine("}");
             return sb.ToString();
         }
@@ -1795,7 +1925,6 @@ namespace fire.Native
         private string RuntimeHooks()
         {
             var sb = new StringBuilder();
-            sb.AppendLine("namespace fire {");
             sb.AppendLine("void runDestructors(Obj* o) {");
             var cases = new StringBuilder();
             foreach (var cls in _classList)
@@ -1858,6 +1987,11 @@ namespace fire.Native
                     sb.AppendLine("    return o;");
                     sb.AppendLine("}");
                 }
+                else if (_usesReflection)
+                {
+                    // (the runtime's reflection calls it; a program without the class ReflectionException ends with the message)
+                    sb.AppendLine("Value makeReflectError(Value message) { char t[500]; strToUtf8(message, t, sizeof t); fatal(t); }");
+                }
                 var accessClass = _classes.GetValueOrDefault("AccessDeniedException") ?? throw new NativeNotSupportedException("exceptions need the prelude class AccessDeniedException");
                 sb.AppendLine("Value makeAccessError(Value message) {");
                 sb.AppendLine($"    Value o = newObject({accessClass.Id}, {accessClass.Fields.Count}, g_globalOwn);");
@@ -1882,7 +2016,7 @@ namespace fire.Native
                 {
                     var errorClass = _classes.GetValueOrDefault(name);
                     if (errorClass == null || errorClass.Rc.FindConstructor(1) is not { ParamCount: 1 } ctor) continue;
-                    sb.AppendLine($"    if (std::strcmp(cls, {CString(name)}) == 0) {{");
+                    sb.AppendLine($"    if (strcmp(cls, {CString(name)}) == 0) {{");
                     sb.AppendLine($"        Value o = newObject({errorClass.Id}, {errorClass.Fields.Count}, g_globalOwn);");
                     sb.AppendLine($"        {_funcByProto[ctor].Name}(o, message);");
                     sb.AppendLine("        return o;");
@@ -1891,14 +2025,14 @@ namespace fire.Native
                 sb.AppendLine("    return Undef();");
                 sb.AppendLine("}");
             }
-            if (_needsTimeObj)
+            // (always: a compiler that keeps unused static functions - TinyCC - still links `timeTicksOf`, which calls it)
             {
                 // a TimeSpan is any class with a whole number field `ticks` (like the VM looks at the field, not at the class name)
-                sb.AppendLine("bool timeObjTicks(Value v, int64_t& ticks) {");
+                sb.AppendLine("bool timeObjTicks(Value v, int64_t* ticks) {");
                 var tick = new StringBuilder();
                 foreach (var cls in _classList)
-                    if (cls.Rc.FieldIndex.TryGetValue("ticks", out int index)) tick.AppendLine($"        case {cls.Id}: if (o->fields()[{index}].kind == K_Int) {{ ticks = o->fields()[{index}].i; return true; }} return false;");
-                if (tick.Length > 0)
+                    if (cls.Rc.FieldIndex.TryGetValue("ticks", out int index)) tick.AppendLine($"        case {cls.Id}: if (objFields(o)[{index}].kind == K_Int) {{ *ticks = objFields(o)[{index}].i; return true; }} return false;");
+                if (tick.Length > 0 && _needsTimeObj)
                 {
                     sb.AppendLine("    Obj* o = asObj(v);");
                     sb.AppendLine("    switch (o->cls) {");
@@ -1923,7 +2057,6 @@ namespace fire.Native
             }
             else sb.AppendLine("    (void)object; (void)list; (void)result;");
             sb.AppendLine("    return false;");
-            sb.AppendLine("}");
             sb.AppendLine("}");
             return sb.ToString();
         }
@@ -2007,6 +2140,13 @@ namespace fire.Native
             _version++;
         }
 
+        /// <summary>The parts of the platform layer in C that the packages in C include (`#include FIRE_PLATFORM_NET_C_HEADER`): the file system (io), the sockets (net), TLS (tls), the devices (dev, gpio, i2c, spi, usb, wifi), sound (audio), the window (display).</summary>
+        public static readonly string[] CPlatformLayers = { "fs", "net", "tls", "dev", "gpio", "i2c", "spi", "usb", "wifi", "audio", "display" };
+
+        /// <summary>`#define FIRE_PLATFORM_<PART>_C_HEADER "platform/<platform>/fire_<part>.h"` for every part of <see cref="CPlatformLayers"/>.</summary>
+        public static IEnumerable<string> CPlatformHeaderDefines(string platform) =>
+            CPlatformLayers.Select(part => $"#define FIRE_PLATFORM_{part.ToUpperInvariant()}_C_HEADER \"platform/{platform}/fire_{part}.h\"");
+
         private void NeedTimeObj()
         {
             if (_needsTimeObj) return;
@@ -2043,7 +2183,9 @@ namespace fire.Native
         /// <summary>The C++ variable of a global slot in the code that is being generated: the globals of the program are shared; a fire body
         /// keeps its own slots (behind the shared ones) in variables of the thread.</summary>
         /// <summary>A write to a global of the main program or a static field from a fire thread is a section (see the shared domain in the runtime).</summary>
-        private string SectionFor(string variable) => _usesThreads && (variable.StartsWith("G", StringComparison.Ordinal) || variable.StartsWith("SF", StringComparison.Ordinal)) ? "SectionScope ss_(true); " : "";
+        private string SectionFor(string variable) => _usesThreads && (variable.StartsWith("G", StringComparison.Ordinal) || variable.StartsWith("SF", StringComparison.Ordinal)) ? "bool ss_ = sectionScopeEnter(true); " : "";
+        /// <summary>The end of the section that <see cref="SectionFor"/> began (before the end of its block).</summary>
+        private string SectionEnd(string variable) => SectionFor(variable).Length > 0 ? "sectionScopeExit(ss_); " : "";
 
         private string GlobalVar(int slot, ISet<string> locals)
         {
@@ -2186,6 +2328,76 @@ namespace fire.Native
             }
             foreach (var region in f.Regions.Values.OrderBy(r => r.Template)) Landing(f, region, locals);
 
+            // A function with catch blocks keeps its variables in a frame (a struct): the catch blocks are functions of their own that run on top of the
+            // throw site (so that `resume` can continue there) and reach the variables through the frame. In the code the names stay the same - a macro
+            // per variable turns `s0` into `(FR->s0)`, in the function and in its catch blocks.
+            var catchRegions = f.Regions.Values.Where(r => r.Catches.Count > 0).OrderBy(r => r.Template).ToList();
+            bool framed = catchRegions.Count > 0;
+            var members = new List<(string Decl, string Name, string? Init)>();   // (declaration in the frame, name, initial value)
+            void Var(string type, string varName, string? init) => members.Add(($"{type} {varName}", varName, init));
+            // the function proper is `name_b` when a wrapper counts the call depth (`try x.Take...`)
+            string defName = _usesTryDepth && f.Kind != FuncKind.Main ? f.Name + "_b" : f.Name;
+            if (framed)
+            {
+                foreach (var p in f.ParamNames) Var("Value", p, p + "_in");
+            }
+
+            var pre = new StringBuilder();     // what comes before the declarations
+            var decl = new StringBuilder();    // the declarations (not framed) - or nothing, the frame holds them
+            var post = new StringBuilder();    // the rest of the start of the function
+            if (_usesTryDepth && f.Kind == FuncKind.Main) pre.AppendLine("    ++g_callDepth;");
+            pre.Append(Trampoline(f));
+            if (f.HasSelf) pre.AppendLine("    (void)self;");
+            if (f.Kind == FuncKind.FireBody) pre.AppendLine("    (void)args;");
+            if (!f.IsTop && _usesThreads) pre.AppendLine("    if (FIRE_UNLIKELY(pollSignals())) return Undef();");
+            if (f.Kind == FuncKind.Lambda)
+            {
+                if (framed) Var("Value", "self", "lamOn(lam)"); else decl.AppendLine("    Value self = lamOn(lam); (void)self;");
+                for (int i = 0; i < f.CaptureCount; i++)
+                    if (framed) Var("Value", $"P{f.ParamCount + i}", $"lamCapture(lam, {i})"); else decl.AppendLine($"    Value P{f.ParamCount + i} = lamCapture(lam, {i}); (void)P{f.ParamCount + i};");
+            }
+            for (int i = 0; i < f.ParamCount; i++) pre.AppendLine($"    (void)P{i};");
+            if (f.Root.MaxDepth > 0)
+            {
+                if (framed) foreach (int i in Enumerable.Range(0, f.Root.MaxDepth)) Var("Value", $"s{i}", null);
+                else decl.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
+            }
+            var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
+            if (localsToDeclare.Count > 0)
+            {
+                if (framed) foreach (var l in localsToDeclare) Var("Value", l, "Undef()");
+                else decl.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
+            }
+            string ListInit(int i) => i < 0 ? "{NULL, NULL, poolMark(), 0, NULL, NULL}" : i >= f.Chunk.Code.Count ? "{NULL, NULL, 0xFFFFFFFFu, 0, NULL, NULL}" : "{NULL, NULL, 0, 0, NULL, NULL}";   // (the list of a catch block that never ran: leaving it is a no-op)
+            if (f.NeedsList.Count > 0)
+            {
+                if (framed) foreach (int i in f.NeedsList.OrderBy(i => i)) Var("OwnList", ListName(i), "(OwnList)" + ListInit(i));
+                else decl.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + " = " + ListInit(i))) + ";");
+            }
+            if (f.NeedsArgList)
+            {
+                if (framed) Var("OwnList", "AL", "(OwnList){NULL, NULL, 0, 0, NULL, NULL}"); else decl.AppendLine("    OwnList AL = {NULL, NULL, 0, 0, NULL, NULL};");
+            }
+            // the handlers of the `try` statements, and the operand stack slots of the catch blocks
+            foreach (var region in f.Regions.Values.OrderBy(r => r.Template))
+            {
+                if (framed) Var("Handler", $"H{region.Template}", null); else decl.AppendLine($"    Handler H{region.Template};");
+                if (region.Catches.Count > 0)
+                    for (int k = region.DepthBase; k < region.Out.MaxDepth; k++) Var("Value", $"c{region.Template}_{k}", null);
+            }
+            if (f.Kind == FuncKind.Main && _usesThreads) post.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;");
+            if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) post.AppendLine("    g_globalOwn = &OG;");
+            if (f.Kind == FuncKind.FireBody)
+            {
+                post.AppendLine("    adoptTravel(&OG);");
+                for (int i = 0; i < f.ThreadArgs; i++)
+                    post.AppendLine(VarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")) ? $"    T{f.GlobalSlotCount + i} = args[{i}]; retain(T{f.GlobalSlotCount + i});" : $"    T{f.GlobalSlotCount + i} = args[{i}];");
+            }
+            if (!f.IsTop && _usesTakeUpwards && f.NeedsList.Contains(FunctionScope)) post.AppendLine("    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope");
+            // Parameters are variables: they hold what was passed.
+            for (int i = 0; i < f.ParamLike; i++)
+                if (VarRef(VarKey(f, $"P{i}"))) post.AppendLine($"    retain(P{i});");
+
             var sb = new StringBuilder();
             foreach (var region in f.Regions.Values.OrderBy(r => r.Template))
             {
@@ -2193,73 +2405,78 @@ namespace fire.Native
                 sb.AppendLine($"static const int32_t HT_{name}_{region.Template}[] = {{{(types.Count == 0 ? "0" : string.Join(", ", types))}}};");
                 sb.AppendLine($"static const HandlerInfo HI_{name}_{region.Template} = {{{region.Catches.Count}, HT_{name}_{region.Template}, {(region.HasFinally ? 1 : 0)}}};");
             }
-            sb.AppendLine(f.Signature);
-            sb.AppendLine("{");
-            sb.Append(Trampoline(f));
-            if (_usesTryDepth) sb.AppendLine("    CallDepth cd_;");
-            if (f.HasSelf) sb.AppendLine("    (void)self;");
-            if (f.Kind == FuncKind.FireBody) sb.AppendLine("    (void)args;");
-            if (!f.IsTop && _usesThreads) sb.AppendLine("    if (FIRE_UNLIKELY(pollSignals())) return Undef();");
-            if (f.Kind == FuncKind.Lambda)
+            string frame = $"FR_{f.Name}";
+            // the catch blocks: one function each, with the frame of the function as its context
+            var catchCode = new StringBuilder();
+            foreach (var region in catchRegions)
             {
-                sb.AppendLine("    Value self = lamOn(lam); (void)self;");
-                for (int i = 0; i < f.CaptureCount; i++) sb.AppendLine($"    Value P{f.ParamCount + i} = lamCapture(lam, {i});");
-            }
-            for (int i = 0; i < f.ParamCount; i++) sb.AppendLine($"    (void)P{i};");
-            if (f.Root.MaxDepth > 0) sb.AppendLine("    Value " + string.Join(", ", Enumerable.Range(0, f.Root.MaxDepth).Select(i => $"s{i}")) + ";");
-            var localsToDeclare = locals.Where(l => !(l.StartsWith("P") && int.Parse(l.AsSpan(1)) < f.ParamLike)).ToList();
-            if (localsToDeclare.Count > 0) sb.AppendLine("    Value " + string.Join(", ", localsToDeclare.Select(l => l + " = Undef()")) + ";");
-            if (f.NeedsList.Count > 0) sb.AppendLine("    OwnList " + string.Join(", ", f.NeedsList.OrderBy(i => i).Select(i => ListName(i) + (i < 0 ? " = {nullptr, nullptr, poolMark(), 0, nullptr, nullptr}" : i >= f.Chunk.Code.Count ? " = {nullptr, nullptr, 0xFFFFFFFFu, 0, nullptr, nullptr}" : " = {nullptr, nullptr, 0, 0, nullptr, nullptr}"))) + ";");   // (the list of a catch block that never ran: leaving it is a no-op)
-            if (f.NeedsArgList) sb.AppendLine("    OwnList AL = {nullptr, nullptr, 0, 0, nullptr, nullptr};");
-            if (f.Kind == FuncKind.Main && _usesThreads) sb.AppendLine("    gilAcquire();\n    g_domainRoot = &OG;");
-            if (f.IsTop && (_usesGlobalOwn || f.Kind == FuncKind.FireBody)) sb.AppendLine("    g_globalOwn = &OG;");
-            if (f.Kind == FuncKind.FireBody)
-            {
-                sb.AppendLine("    adoptTravel(&OG);");
-                for (int i = 0; i < f.ThreadArgs; i++)
-                    sb.AppendLine(VarRef(VarKey(f, $"T{f.GlobalSlotCount + i}")) ? $"    T{f.GlobalSlotCount + i} = args[{i}]; retain(T{f.GlobalSlotCount + i});" : $"    T{f.GlobalSlotCount + i} = args[{i}];");
-            }
-            if (!f.IsTop && _usesTakeUpwards && f.NeedsList.Contains(FunctionScope)) sb.AppendLine("    OP.parent = g_globalOwn;   // the parent scope of a function scope is the global scope");
-            // Parameters are variables: they hold what was passed.
-            for (int i = 0; i < f.ParamLike; i++)
-                if (VarRef(VarKey(f, $"P{i}"))) sb.AppendLine($"    retain(P{i});");
-            EmitHandlers(f, null, sb, locals, "    ");
-
-            sb.Append(f.Root.Code);
-            sb.Append(f.Root.Tail);
-            if (!f.IsTop) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
-            sb.AppendLine("}");
-            f.Code = sb.ToString();
-        }
-
-        /// <summary>Declares the handlers of the `try` statements that sit directly in <paramref name="outer"/>, and defines their catch lambdas.</summary>
-        private void EmitHandlers(Func f, Region? outer, StringBuilder sb, ISet<string> locals, string indent)
-        {
-            foreach (var region in f.Regions.Values.Where(r => r.Outer == outer).OrderBy(r => r.Template))
-            {
-                sb.AppendLine($"{indent}Handler H{region.Template};");
-                if (region.Catches.Count == 0) continue;
-                int t = region.Template;
-                sb.AppendLine($"{indent}auto C{t} = [&](uint32_t ci, Value e) {{");
-                string inner = indent + "    ";
-                int top = region.Out.MaxDepth;
-                if (top > region.DepthBase) sb.AppendLine($"{inner}Value " + string.Join(", ", Enumerable.Range(region.DepthBase, top - region.DepthBase).Select(k => $"c{t}_{k}")) + ";");
-                EmitHandlers(f, region, sb, locals, inner);
-                sb.AppendLine($"{inner}switch (ci) {{");
+                catchCode.AppendLine($"static void {CatchName(f, region)}(void* ctx_, uint32_t ci, Value e)");
+                catchCode.AppendLine("{");
+                catchCode.AppendLine($"    {frame}* FR = ({frame}*)ctx_;");
+                catchCode.AppendLine("    switch (ci) {");
                 string catchVar = $"B{region.CatchScopeId}_0";
                 for (int i = 0; i < region.Catches.Count; i++)
                 {
                     string init = (locals.Contains(catchVar) ? $"{catchVar} = e; " : "(void)e; ") + (f.NeedsList.Contains(region.CatchScopeId) ? $"{ListName(region.CatchScopeId)}.mark = poolMark(); " + (_usesTakeUpwards ? $"{ListName(region.CatchScopeId)}.parent = &{ListName(region.Reg.Scopes[^1].Id)}; " : "") : "");
-                    sb.AppendLine($"{inner}case {i}: {{ {init}goto L{region.Catches[i].Addr}; }}");
+                    catchCode.AppendLine($"    case {i}: {{ {init}goto L{region.Catches[i].Addr}; }}");
                 }
-                sb.AppendLine($"{inner}default: break;");
-                sb.AppendLine($"{inner}}}");
-                sb.Append(region.Out.Code);
-                sb.Append(region.Out.Tail);
-                sb.AppendLine($"{inner}fatal(\"control flow fell off the end of a catch block\");");
-                sb.AppendLine($"{indent}}};");
+                catchCode.AppendLine("    default: break;");
+                catchCode.AppendLine("    }");
+                catchCode.Append(region.Out.Code);
+                catchCode.Append(region.Out.Tail);
+                catchCode.AppendLine("    fatal(\"control flow fell off the end of a catch block\");");
+                catchCode.AppendLine("}");
             }
+            // Only what the catch blocks use lives in the frame (and the handlers, which the frame gives to the runtime); everything else stays a plain
+            // variable of the function, which the C compiler can keep in a register.
+            var plain = new List<(string Decl, string Name, string? Init)>();
+            if (framed)
+            {
+                var used = new HashSet<string>(System.Text.RegularExpressions.Regex.Matches(catchCode.ToString(), @"\b[A-Za-z_][A-Za-z0-9_]*\b").Select(m => m.Value), StringComparer.Ordinal);
+                plain = members.Where(m => !used.Contains(m.Name) && !m.Decl.StartsWith("Handler ", StringComparison.Ordinal)).ToList();
+                members = members.Except(plain).ToList();
+            }
+            var inFrame = new HashSet<string>(members.Select(m => m.Name), StringComparer.Ordinal);
+            string defSignature = f.SignatureOf(defName, p => framed && inFrame.Contains(p) ? "_in" : "");
+            if (framed)
+            {
+                sb.AppendLine($"typedef struct {frame} {{ {string.Join(" ", members.Select(m => m.Decl + ";"))} }} {frame};");
+                foreach (var region in catchRegions) sb.AppendLine($"static void {CatchName(f, region)}(void* ctx_, uint32_t ci, Value e);");
+                foreach (var m in members) sb.AppendLine($"#define {m.Name} (FR->{m.Name})");
+            }
+            sb.AppendLine(defSignature);
+            sb.AppendLine("{");
+            if (framed)
+            {
+                sb.AppendLine($"    {frame} FRv; {frame}* FR = &FRv;");
+                foreach (var m in members.Where(m => m.Init != null)) sb.AppendLine($"    {m.Name} = {m.Init};");
+                // the variables of the function that no catch block uses (parameters stay the parameters)
+                foreach (var m in plain.Where(m => !f.ParamNames.Contains(m.Name)))
+                    sb.AppendLine((m.Init == null ? $"    {m.Decl};" : $"    {m.Decl} = {m.Init};") + (m.Decl.StartsWith("Value ", StringComparison.Ordinal) ? $" (void){m.Name};" : ""));
+            }
+            sb.Append(pre);
+            sb.Append(decl);
+            sb.Append(post);
+            sb.Append(f.Root.Code);
+            sb.Append(f.Root.Tail);
+            if (!f.IsTop) sb.AppendLine("    fatal(\"control flow fell off the end of a function\");");
+            sb.AppendLine("}");
+            sb.Append(catchCode);
+            if (framed) foreach (var m in members) sb.AppendLine($"#undef {m.Name}");
+            // `try x.Take...`: every function counts the call depth (the callee knows which argument list is its own)
+            if (defName != f.Name)
+            {
+                string call = $"{defName}({string.Join(", ", (f.Kind == FuncKind.FireBody ? new[] { "args" } : Array.Empty<string>()).Concat(f.ParamNames))})";
+                sb.AppendLine(f.Signature);
+                sb.AppendLine(f.Kind == FuncKind.FireBody
+                    ? $"{{ ++g_callDepth; {call}; --g_callDepth; }}"
+                    : $"{{ ++g_callDepth; Value r_ = {call}; --g_callDepth; return r_; }}");
+            }
+            f.Code = sb.ToString();
         }
+
+        /// <summary>The function of the catch blocks of a `try` statement.</summary>
+        private static string CatchName(Func f, Region region) => $"C_{f.Name}_{region.Template}";
 
         // -------------------------------------------------------------------------------------------------------------
         // Exceptions: unwinding, landing sites, return through `finally`
@@ -2601,10 +2818,71 @@ namespace fire.Native
             long ArgMask()
             {
                 int at = f.IndexOf[ins.Addr];
+                if (at > 0 && f.Decoded[at - 1].Op == OpCode.ArgNames) at--;
                 if (at == 0 || f.Decoded[at - 1].Op != OpCode.CopyArgs) return 0;
                 long mask = (long)f.Decoded[at - 1].A[0] | ((long)f.Decoded[at - 1].A[1] << 16) | ((long)f.Decoded[at - 1].A[2] << 32) | ((long)f.Decoded[at - 1].A[3] << 48);
                 return mask;
             }
+            // `f(1, size: 2)`: the names of the last arguments (OpCode.ArgNames right in front of the call), null without.
+            string[]? NamesBefore()
+            {
+                int at = f.IndexOf[ins.Addr];
+                return at > 0 && f.Decoded[at - 1] is { Op: OpCode.ArgNames } named ? Str(named.A[0]).Split('|') : null;
+            }
+            // A call with named arguments of a callee that is known (docs/language/08-classes.md): every parameter gets its argument - the positional
+            // ones in order, a named one by its name - or its default value (`Pre` evaluates those). Null when the names do not fit the callee.
+            (string Pre, string Args)? NamedCallArgs(FunctionProto proto, int first, int argc, string[] names, long mask, string self)
+            {
+                if (proto.ParamNames is not { } paramNames) return null;
+                int positional = argc - names.Length;
+                if (positional > proto.ParamCount) return null;
+                var argOf = Enumerable.Repeat(-1, proto.ParamCount).ToArray();
+                for (int i = 0; i < positional; i++) argOf[i] = i;
+                for (int k = 0; k < names.Length; k++)
+                {
+                    int at = Array.IndexOf(paramNames, names[k]);
+                    if (at < 0 || argOf[at] >= 0) return null;
+                    argOf[at] = positional + k;
+                }
+                var pre = new StringBuilder();
+                var args = new StringBuilder();
+                for (int p = 0; p < proto.ParamCount; p++)
+                {
+                    int j = argOf[p];
+                    if (j >= 0)
+                    {
+                        args.Append(", ").Append((mask >> (4 * j) & 15) == 3 && (proto.RefMask >> p & 1) == 0 ? $"ptrRead({S(first + j)})" : S(first + j));
+                        continue;
+                    }
+                    var defaultProto = p < proto.ParamDefaults.Count ? proto.ParamDefaults[p] : null;
+                    if (defaultProto == null) return null;
+                    pre.Append($"Value dv{p} = adoptV({GetFunc(defaultProto, FuncKind.Init).Name}({self}), &{OwnerList()}); ");
+                    args.Append($", dv{p}");
+                }
+                return (pre.ToString(), args.ToString());
+            }
+            // The ArgumentException of VM.FillNamedArgs when the names do not fit the callee.
+            static string NamedMismatch(FunctionProto proto, int argc, string[] names)
+            {
+                var paramNames = proto.ParamNames ?? Array.Empty<string>();
+                int positional = argc - names.Length;
+                if (positional > proto.ParamCount) return $"Wrong number of arguments: expected {proto.ParamCount}, got {argc}.";
+                var given = new bool[proto.ParamCount];
+                for (int i = 0; i < positional; i++) given[i] = true;
+                foreach (var name in names)
+                {
+                    int at = Array.IndexOf(paramNames, name);
+                    if (at < 0) return $"There is no parameter '{name}'.";
+                    if (given[at]) return $"The parameter '{name}' is given twice.";
+                    given[at] = true;
+                }
+                for (int i = 0; i < proto.ParamCount; i++)
+                    if (!given[i] && (i >= proto.ParamDefaults.Count || proto.ParamDefaults[i] == null)) return $"The parameter '{paramNames[i]}' has no value (and no default value).";
+                return "Named arguments do not fit.";
+            }
+            (string Pre, string Args) NamedCallArgsOrFail(FunctionProto proto, int first, int argc, string[] names, long mask, string self, string what) =>
+                NamedCallArgs(proto, first, argc, names, mask, self)
+                ?? throw new NativeNotSupportedException($"the named arguments {string.Join(", ", names)} do not fit {what}");
             // The arguments for a callee that is known: an address goes to a `ref` parameter, the others get the value.
             string CallArgs(int first, int count, long mask, uint calleeRefs) => string.Concat(Enumerable.Range(0, count).Select(i =>
                 ", " + ((mask >> (4 * i) & 15) == 3 && (calleeRefs >> i & 1) == 0 ? $"ptrRead({S(first + i)})" : S(first + i))));
@@ -2673,7 +2951,8 @@ namespace fire.Native
             {
                 Unit a = UnitById(from), b = UnitById(to);
                 if (from == 0 || to == 0 || !a.IsLinear || !b.IsLinear || !a.IsCompatibleWith(b)) return null;
-                return $"unitFactorConst<{from}, {to}>()";
+                _unitFactorCaches.Add((from, to));
+                return $"unitFactorCached(&kUF_{from}_{to}, {from}, {to})";
             }
             // After a call: whatever came back belongs to the innermost scope now - unless it is certainly a number or a bool (the static return type).
             void AdoptResult(int slot, int type = TypeUnknown)
@@ -2692,9 +2971,10 @@ namespace fire.Native
                 if (valueRef) MarkVarRef(key);
                 bool varRef = VarRef(key);
                 string sec = SectionFor(variable);
-                if (valueRef) E($"{{ {sec}Value n = {S(slot)}; Value o = {variable}; {variable} = n; retain(n); release(o); }}");
-                else if (varRef) E($"{{ {sec}Value o = {variable}; {variable} = {S(slot)}; release(o); }}");
-                else E(sec.Length > 0 ? $"{{ {sec}{variable} = {S(slot)}; }}" : $"{variable} = {S(slot)};");
+                string secEnd = SectionEnd(variable);
+                if (valueRef) E($"{{ {sec}Value n = {S(slot)}; Value o = {variable}; {variable} = n; retain(n); release(o); {secEnd}}}");
+                else if (varRef) E($"{{ {sec}Value o = {variable}; {variable} = {S(slot)}; release(o); {secEnd}}}");
+                else E(sec.Length > 0 ? $"{{ {sec}{variable} = {S(slot)}; {secEnd}}}" : $"{variable} = {S(slot)};");
             }
             // The variables of a scope let go of their values when the scope is left.
             void ReleaseScopeVariables(int scopeId, bool reset)
@@ -2812,11 +3092,11 @@ namespace fire.Native
                         string kc = Constant(constant);
                         bool ints = varKind == KindInt && constKind == KindInt;
                         if (ints)
-                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Int((int64_t)((uint64_t){v}.i {op} (uint64_t){kc}.i){unitArg});{(sec.Length > 0 ? " }" : "")}");
+                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Int((int64_t)((uint64_t){v}.i {op} (uint64_t){kc}.i){unitArg});{(sec.Length > 0 ? " " + SectionEnd(v) + "}" : "")}");
                         else
                         {
                             string x = varKind == KindFloat ? $"{v}.f" : $"(Real){v}.i", y = constKind == KindFloat ? $"{kc}.f" : $"(Real){kc}.i";
-                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Float({x} {op} {y}{unitArg});{(sec.Length > 0 ? " }" : "")}");
+                            E($"{(sec.Length > 0 ? "{ " + sec : "")}{v} = Float({x} {op} {y}{unitArg});{(sec.Length > 0 ? " " + SectionEnd(v) + "}" : "")}");
                         }
                         JoinVarType(key, TypeOf(ints ? KindInt : KindFloat, varUnit));
                         return Next();
@@ -2826,12 +3106,12 @@ namespace fire.Native
                     if (stepMode) k = $"stepOf({v}, {k})";
                     if (!subtract && VarRef(key))
                     {
-                        E($"{{ {SectionFor(v)}Value o = {v}; {v} = addR(o, {k}, &{OwnerList()}); retain({v}); release(o); }}");
+                        E($"{{ {SectionFor(v)}Value o = {v}; {v} = addR(o, {k}, &{OwnerList()}); retain({v}); release(o); {SectionEnd(v)}}}");
                         Check();
                     }
                     else
                     {
-                        E(SectionFor(v).Length > 0 ? $"{{ {SectionFor(v)}{v} = {(subtract ? "sub" : "add")}({v}, {k}); }}" : $"{v} = {(subtract ? "sub" : "add")}({v}, {k});");
+                        E(SectionFor(v).Length > 0 ? $"{{ {SectionFor(v)}{v} = {(subtract ? "sub" : "add")}({v}, {k}); {SectionEnd(v)}}}" : $"{v} = {(subtract ? "sub" : "add")}({v}, {k});");
                         CheckIf($"{v}.kind == K_Undefined");
                     }
                     return Next();
@@ -2929,7 +3209,8 @@ namespace fire.Native
                     {
                         "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
                     };
-                    string test = castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"isof_{Mangle(castName)}({S(d - 1)})";
+                    string test = castTest == "K_Int" ? $"{S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0"
+                        : castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"isof_{Mangle(castName)}({S(d - 1)})";
                     if (castTest.Length == 0) _isOfTypes.Add(castName);
                     E($"if (FIRE_UNLIKELY({S(d - 1)}.kind != K_Undefined && !({test}))) castFailed({S(d - 1)}, {CString(castName)});");
                     Check();
@@ -2955,6 +3236,14 @@ namespace fire.Native
                     Need(2); E($"{S(d - 1)} = coerceType({S(d - 1)}, {S(d - 2)}.kind);"); return Next();
                 case OpCode.IsInUnit:
                     Need(1); E($"{S(d - 1)} = Bool(unitCompatible(unitOf({S(d - 1)}), {UnitId(chunk.Units[ins.A[0]])}));"); SetR(d - 1, false); return Next();
+                case OpCode.ToEnum:
+                {
+                    // `x!Color`: the number as a value of the enum
+                    Need(1);
+                    E($"{S(d - 1)} = toEnum({S(d - 1)}, {EnumIndex(chunk.Constants[ins.A[0]].Enum!)});");
+                    Check();
+                    SetR(d - 1, false); return Next();
+                }
                 case OpCode.IsOfType:
                 {
                     Need(1);
@@ -2963,7 +3252,8 @@ namespace fire.Native
                     {
                         "bool" => "K_Bool", "int" => "K_Int", "float" => "K_Float", "char" => "K_Char", "string" => "K_String", "undefined" => "K_Undefined", "class" => "K_Class", _ => "",
                     };
-                    if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
+                    if (test == "K_Int") E($"{S(d - 1)} = Bool({S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0);");   // (an enum is not an int)
+                    else if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
                     else { _isOfTypes.Add(typeName); E($"{S(d - 1)} = Bool(isof_{Mangle(typeName)}({S(d - 1)}));"); }
                     SetR(d - 1, false); return Next();
                 }
@@ -3090,6 +3380,14 @@ namespace fire.Native
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
+                    if (native == EnvironmentMethods.NativeName && argc is >= 1 and <= 3)
+                    {
+                        // Environment (fire_rt.h: envCall; the system's part in the platform layer)
+                        int first = d - argc;
+                        E($"{S(first)} = envCall({S(first)}.i, {(argc > 1 ? S(first + 1) : "Undef()")}, {(argc > 2 ? S(first + 2) : "Undef()")}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
                     if (native == MathMethods.NativeName && argc is 2 or 3)
                     {
                         int first = d - argc;
@@ -3101,7 +3399,7 @@ namespace fire.Native
                     {
                         UseJson();
                         int first = d - argc;
-                        E($"{S(first)} = jsonCall({argc}, {S(first)}, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")}, {JsonCallType(f)}, &{OwnerList()});");
+                        E($"{S(first)} = fire_jsonCall({argc}, {S(first)}, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")}, {JsonCallType(f)}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
@@ -3135,6 +3433,8 @@ namespace fire.Native
                             "__refl_probe" when argc == 4 => $"rf_probe({S(first)}, {S(first + 1)}, {S(first + 2)}, {S(first + 3)}, {list}, {callerArg})",
                             "__refl_silence" when argc == 2 => $"rf_silence({S(first)}, {S(first + 1)})",
                             "__refl_silence_handle" when argc == 1 => $"rf_silence_handle({S(first)})",
+                            "__refl_enum_name" when argc == 1 => $"rf_enum_name({S(first)}, {list})",
+                            "__refl_enum_of" when argc == 2 => $"rf_enum_of({S(first)}, {S(first + 1)})",
                             _ => throw new NativeNotSupportedException($"native function '{native}' with {argc} argument(s) (called in {fn})"),
                         };
                         E($"{S(first)} = {call};");
@@ -3158,7 +3458,7 @@ namespace fire.Native
                             UseThreads();
                         }
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name is "WinNextEvent" or "WinSystemTheme" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
-                        E($"{S(first)} = win::{name}({args});");
+                        E($"{S(first)} = fire_win_{name}({args});");   // (fire_bridge_windows.h, part of this file)
                         Check();
                         d = first + 1; SetR(first, winNative.Reference); return Next();
                     }
@@ -3168,7 +3468,7 @@ namespace fire.Native
                         string name = native.Substring(6);
                         int first = d - argc;
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(GraphicsNeedsList.Contains(name) ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
-                        E($"{S(first)} = gfx::{name}({args});");
+                        E($"{S(first)} = fire_gfx_{name}({args});");   // (fire_bridge_graphics.h, part of this file)
                         Check();
                         d = first + 1; SetR(first, grphNative.Reference); return Next();
                     }
@@ -3179,7 +3479,8 @@ namespace fire.Native
                         string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(packageNative.NeedsList ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         if (packageNative.Throws) UseExceptions();   // its exception classes (`fireError`) need the exceptions of the runtime
                         if (packageNative.Host) NeedTimeObj();        // a function the VM runs itself waits and takes times: a TimeSpan is read from its `ticks`
-                        E($"{S(first)} = {packageNative.Function}({args});");
+                        // (a package in C: its function is part of this file; in C++: through the thunk into fire_natives.cpp)
+                        E($"{S(first)} = {(packageNative.IsC ? packageNative.Function : NativeThunk(packageNative.Function, argc, packageNative.NeedsList))}({args});");
                         Check();
                         // a function of the host (`Sleep`) ends at terminate: leave now, not at the next loop
                         if (packageNative.Host && _usesThreads && sb != null) E($"if (FIRE_UNLIKELY(pollSignals())) goto {ExitLabel(f, st, locals)};");
@@ -3198,6 +3499,7 @@ namespace fire.Native
                     if (sig.ParamTypes.Count != argc) throw new NativeNotSupportedException($"extern function '{externName}': {sig.ParamTypes.Count} parameter(s) declared, called with {argc}");
                     int first = d - argc;
                     var locals2 = new StringBuilder();
+                    var frees = new List<string>();   // (after the call, in reverse order: a pointer writes its value back, a string is freed)
                     var args2 = new List<string>();
                     var ctypes = new List<string>();
                     for (int i = 0; i < argc; i++)
@@ -3206,17 +3508,18 @@ namespace fire.Native
                         string ctype = ExternCType(t, externName);
                         ctypes.Add(ctype);
                         string v = S(first + i);
-                        if (t.PointerDepth > 0) { locals2.Append($"ExternPtr p{i}({v}); "); args2.Add($"p{i}.get()"); }
-                        else if (t.BaseName == "string") { locals2.Append($"ExternString p{i}({v}); "); args2.Add($"p{i}.p"); }
+                        if (t.PointerDepth > 0) { locals2.Append($"ExternPtr p{i}; externPtrInit(&p{i}, {v}); "); args2.Add($"p{i}.raw"); frees.Insert(0, $"externPtrFree(&p{i}); "); }
+                        else if (t.BaseName == "string") { locals2.Append($"ExternString p{i}; externStringInit(&p{i}, {v}); "); args2.Add($"p{i}.p"); frees.Insert(0, $"externStringFree(&p{i}); "); }
                         else if (t.BaseName == "float") args2.Add($"({ctype})externFloat({v})");
                         else args2.Add($"({ctype})externInt({v})");
                     }
                     string retC = sig.ReturnType == null ? "void" : ExternCType(sig.ReturnType, externName);
-                    _externDecls[externName] = $"extern \"C\" {retC} fire_ext_{Mangle(externName)}({string.Join(", ", ctypes)}) __asm__(FIRE_SYM({CString(externName)}));   // library: {sig.LibName}";
+                    _externDecls[externName] = $"extern {retC} fire_ext_{Mangle(externName)}({string.Join(", ", ctypes)}) __asm__(FIRE_SYM({CString(externName)}));   // library: {sig.LibName}";
                     string call = $"fire_ext_{Mangle(externName)}({string.Join(", ", args2)})";
                     string result;
-                    if (sig.ReturnType == null) { E($"{{ {locals2}{call}; }}"); result = "Undef()"; }
-                    else if (sig.ReturnType.PointerDepth > 0) { E($"{{ {locals2}{S(first)} = Int((int64_t)(intptr_t){call}); }}"); result = ""; }
+                    string freeAll = string.Concat(frees);
+                    if (sig.ReturnType == null) { E($"{{ {locals2}{call}; {freeAll}}}"); result = "Undef()"; }
+                    else if (sig.ReturnType.PointerDepth > 0) { E($"{{ {locals2}{S(first)} = Int((int64_t)(intptr_t){call}); {freeAll}}}"); result = ""; }
                     else
                     {
                         string conv = sig.ReturnType.BaseName switch
@@ -3227,7 +3530,7 @@ namespace fire.Native
                             "string" => $"externResultString({call}, &{OwnerList()})",
                             _ => $"Int((int64_t){call})",
                         };
-                        E($"{{ {locals2}{S(first)} = {conv}; }}");
+                        E($"{{ {locals2}{S(first)} = {conv}; {freeAll}}}");
                         result = "";
                     }
                     if (result.Length > 0) E($"{S(first)} = {result};");
@@ -3239,8 +3542,10 @@ namespace fire.Native
                     Need(argc);
                     string cls = Str(ins.A[0]), method = Str(ins.A[1]);
                     var rc = FindClass(cls);
+                    var staticNames = NamesBefore();
                     if (rc.IsTypeOverloaded(method, argc))
                     {
+                        if (staticNames != null) throw new NativeNotSupportedException($"named arguments for {cls}.{method}, which is overloaded by type");
                         if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                         return OverloadedCall(rc, method, argc, FuncKind.Static, d - argc, "Undef()", "Static method");
                     }
@@ -3250,13 +3555,18 @@ namespace fire.Native
                     if (rc.FindMethodWithAccess(method, argc) is { } staticFound)
                         AccessCheck(staticFound.DeclaringClass!, staticFound.Access, $"Static method '{method}' of '{staticFound.DeclaringClass!.Name}' is {DescribeAccess(staticFound.Access)} and cannot be called from here.");
                     var target = GetFunc(proto, FuncKind.Static);
-                    var (callee, specCondition) = Specialize(f, ins, target, d - argc, argc, S, Ty);
+                    var (callee, specCondition) = staticNames != null ? (target, null) : Specialize(f, ins, target, d - argc, argc, S, Ty);
                     if (ReflectionPrelude.HelperClasses.Contains(cls)) E(ReflectionCallerAssign(f).TrimEnd());
                     long mask = ArgMask();
                     string specTest = specCondition != null ? $"({specCondition}) ? {callee.Name}(" : "";
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
+                    var (dpre, dargs) = staticNames != null ? ("", "") : DefaultArgs(proto, argc, "Undef()", DefaultsList(proto, argc));
                     string staticArgs = (CallArgs(d - argc, argc, mask, proto.RefMask) + dargs).TrimStart(',', ' ');
+                    if (staticNames != null)
+                    {
+                        (dpre, staticArgs) = NamedCallArgsOrFail(proto, d - argc, argc, staticNames, mask, "Undef()", $"{cls}.{method}");
+                        staticArgs = staticArgs.TrimStart(',', ' ');
+                    }
                     string staticCall = specCondition != null ? $"{specTest}{staticArgs}) : {target.Name}({staticArgs})" : $"{callee.Name}({staticArgs})";
                     E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {staticCall};{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
@@ -3314,8 +3624,8 @@ namespace fire.Native
                     if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field) is int fieldIndex)
                     {
                         // an object of a known class: the field by its index (a destroyed object throws, like gf_; undefined goes to gf_, which reports it)
-                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? objAt({S(d - 1)})->fields()[{fieldIndex}] : gf_{Mangle(field)}({S(d - 1)});");
-                        else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objAt({S(d - 1)})->fields()[{fieldIndex}] : destroyedError({S(d - 1)});");
+                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : gf_{Mangle(field)}({S(d - 1)});");
+                        else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : destroyedError({S(d - 1)});");
                         Check();
                     }
                     else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
@@ -3355,6 +3665,8 @@ namespace fire.Native
                     bool owned = ins.Op == OpCode.NewObjectOwned;
                     Need(argc + (owned ? 1 : 0));
                     var cls = RegisterClass(Str(ins.A[0]));
+                    var newNames = NamesBefore();
+                    if (newNames != null && cls.Rc.IsConstructorTypeOverloaded(argc)) throw new NativeNotSupportedException($"named arguments for the constructors of {cls.Rc.Name}, which are overloaded by type");
                     if (cls.Rc.IsConstructorTypeOverloaded(argc)) return OverloadedCall(cls.Rc, "new", argc, FuncKind.Ctor, d - argc - (owned ? 1 : 0), "", "", owned, cls);
                     var ctor = cls.Rc.FindConstructor(argc);
                     if (ctor == null)
@@ -3372,10 +3684,11 @@ namespace fire.Native
                     string ownerExpr = owned ? $"&asObj({S(slot)})->owned" : "&" + OwnerList();
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(ctor, argc, "o", "&" + OwnerList());
+                    var (dpre, dargs) = newNames != null ? NamedCallArgsOrFail(ctor, d - argc, argc, newNames, mask, "o", "new " + cls.Rc.Name) : DefaultArgs(ctor, argc, "o", "&" + OwnerList());
+                    string ctorArgs = newNames != null ? "" : CallArgs(d - argc, argc, mask, ctor.RefMask);
                     string typeArgsSet = _pendingNewTArgs != null ? $"asObj(o)->targs = {_pendingNewTArgs}; " : "";
                     _pendingNewTArgs = null;
-                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{CallArgs(d - argc, argc, mask, ctor.RefMask)}{dargs}); {S(slot)} = o; }}");
+                    E($"{{ Value o = newObject({cls.Id}, {cls.Fields.Count}, {ownerExpr}); {typeArgsSet}{(cls.Rc.IsActor ? "markActor(o); " : "")}{dpre}{target.Name}(o{ctorArgs}{dargs}); {S(slot)} = o; }}");
                     ArgsAfter(argc, mask, S(slot));
                     Check();
                     SetR(slot, false);
@@ -3420,6 +3733,41 @@ namespace fire.Native
                     Need(argc + 1);
                     string method = Str(ins.A[0]);
                     int slot = d - argc - 1;
+                    if (NamesBefore() is { } methodNames)
+                    {
+                        // named arguments: per class of the receiver its method with the arguments in the order of its parameters (no dispatcher - its
+                        // arguments are positional); a class whose method does not have these parameters, and any other receiver, is an ArgumentException
+                        var classes = (ObjSlot(slot) ? InstancesOf(ObjClass(Ty(slot))) : _classList).ToList();
+                        long nmask = ArgMask();
+                        ArgsBefore(d - argc, argc, nmask);
+                        var line = new StringBuilder($"if ({S(slot)}.kind == K_Class && leafAlive({S(slot)})) {{ switch (objAt({S(slot)})->cls) {{ ");
+                        foreach (var c in classes)
+                        {
+                            if (c.Rc.IsTypeOverloaded(method, argc) || c.Rc.FindMethodWithAccess(method, argc).Proto is not { IsStatic: false } proto) continue;
+                            if (NamedCallArgs(proto, d - argc, argc, methodNames, nmask, S(slot)) is not { } fitting) continue;
+                            var (npre, nargs) = fitting;
+                            line.Append($"case {c.Id}: {{ {npre}{ClearCallTArgs(proto)}{S(slot)} = {GetFunc(proto, FuncKind.Method).Name}({S(slot)}{nargs}); break; }} ");
+                        }
+                        var anyProto = classes.Select(c => c.Rc.FindMethodWithAccess(method, argc).Proto).FirstOrDefault(p => p is { IsStatic: false });
+                        string noFit = CString(anyProto != null ? NamedMismatch(anyProto, argc, methodNames) : $"Named arguments do not fit '{method}'.");
+                        string notObject = CString($"Named arguments are not possible for the built-in method '{method}'.");
+                        line.Append($"default: {S(slot)} = fireError(\"ArgumentException\", {noFit}); break; }} }} else if ({S(slot)}.kind == K_Class) {S(slot)} = destroyedError({S(slot)}); else ");
+                        // a base-type extension (`class extends string`): its method by the kind of the receiver
+                        foreach (var (kindCpp, extProto, extRc) in ExtensionMethods(method, argc))
+                        {
+                            if (extRc.IsTypeOverloaded(method, argc)) continue;
+                            string fits = NamedCallArgs(extProto, d - argc, argc, methodNames, nmask, S(slot)) is { } extArgs
+                                ? $"{{ {extArgs.Pre}{S(slot)} = {GetFunc(extProto, FuncKind.Method).Name}({S(slot)}{extArgs.Args}); }}"
+                                : $"{S(slot)} = fireError(\"ArgumentException\", {CString(NamedMismatch(extProto, argc, methodNames))});";
+                            line.Append($"if ({S(slot)}.kind == {kindCpp}) {fits} else ");
+                        }
+                        line.Append($"{S(slot)} = fireError(\"ArgumentException\", {notObject});");
+                        E(line.ToString());
+                        ArgsAfter(argc, nmask, S(slot));
+                        Check();
+                        AdoptResult(slot);
+                        d = slot + 1; return Next();
+                    }
                     if (OwnMethodId(method, argc) is { } ownMethodId && !AnyClassHasMethod(method, argc))
                     {
                         string owner = OwnerList();
@@ -3439,8 +3787,8 @@ namespace fire.Native
                             string modeArg = argc > baseArgs ? S(slot + 1 + baseArgs) : "Int(0)";
                             if (argc > baseArgs && !_usesTakeEnumerate) { _usesTakeEnumerate = true; _version++; }
                             string call = isTry
-                                ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "nullptr" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}));"
-                                : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "nullptr" : "L_")}, {scopeLists.Count});";
+                                ? $"{S(slot)} = Bool(ownMethodTry({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count}, {(f.HasSelf ? "self" : "Undef()")}));"
+                                : $"ownMethodT({ownMethodId}, {S(slot)}, {targetArg}, {modeArg}, &{owner}, {(scopeLists.Count == 0 ? "NULL" : "L_")}, {scopeLists.Count});";
                             E($"{{ {localsDecl}{call} }}");
                             if (isTry) { SetR(slot, false); d = slot + 1; return Next(); }
                         }
@@ -3515,7 +3863,7 @@ namespace fire.Native
                         if (dispatchScopes.Count > 0)
                             E($"{{ OwnList* const L_[] = {{{string.Join(", ", dispatchScopes)}}}; g_scopeLists = L_; g_scopeCount = {dispatchScopes.Count};");
                         E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
-                        if (dispatchScopes.Count > 0) E("g_scopeLists = nullptr; g_scopeCount = 0; }");
+                        if (dispatchScopes.Count > 0) E("g_scopeLists = NULL; g_scopeCount = 0; }");
                     }
                     else
                     E($"{S(slot)} = call_{Mangle(method)}_{argc}({S(slot)}{Args(d - argc, argc)}{extra});");
@@ -3530,6 +3878,8 @@ namespace fire.Native
                     Need(argc); RequireSelf();
                     var rc = FindClass(Str(ins.A[0]));
                     string method = Str(ins.A[1]);
+                    var baseNames = NamesBefore();
+                    if (baseNames != null && rc.IsTypeOverloaded(method, argc)) throw new NativeNotSupportedException($"named arguments for base.{method}, which is overloaded by type");
                     if (rc.IsTypeOverloaded(method, argc)) return OverloadedCall(rc, method, argc, FuncKind.Method, d - argc, "self", "Method");
                     var proto = rc.FindMethodWithAccess(method, argc).Proto ?? throw new NativeNotSupportedException($"{rc.Name}.{method} with {argc} argument(s) not found");
                     if (rc.FindMethodWithAccess(method, argc) is { Proto: not null } baseFound)
@@ -3537,8 +3887,9 @@ namespace fire.Native
                     var target = GetFunc(proto, FuncKind.Method);
                     long mask = ArgMask();
                     ArgsBefore(d - argc, argc, mask);
-                    var (dpre, dargs) = DefaultArgs(proto, argc, "self", DefaultsList(proto, argc));
-                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}(self{CallArgs(d - argc, argc, mask, proto.RefMask)}{dargs});{(dpre.Length > 0 ? " }" : "")}");
+                    var (dpre, dargs) = baseNames != null ? NamedCallArgsOrFail(proto, d - argc, argc, baseNames, mask, "self", "base." + method) : DefaultArgs(proto, argc, "self", DefaultsList(proto, argc));
+                    string baseArgs = baseNames != null ? "" : CallArgs(d - argc, argc, mask, proto.RefMask);
+                    E($"{(dpre.Length > 0 ? "{ " + dpre : "")}{S(d - argc)} = {target.Name}(self{baseArgs}{dargs});{(dpre.Length > 0 ? " }" : "")}");
                     ArgsAfter(argc, mask, S(d - argc));
                     Check();
                     AdoptResult(d - argc, ReturnType(target));
@@ -3621,7 +3972,7 @@ namespace fire.Native
                     }
                     int first = d - captures - (hasOn ? 1 : 0);
                     var sbCaps = new StringBuilder();
-                    for (int i = 0; i < captures; i++) sbCaps.Append($" l->caps()[{i}] = {S(first + i)}; retain({S(first + i)});");
+                    for (int i = 0; i < captures; i++) sbCaps.Append($" lamCaps(l)[{i}] = {S(first + i)}; retain({S(first + i)});");
                     string lambdaTArgs = _pendingLambdaTArgs != null ? $" l->targs = {_pendingLambdaTArgs};" : "";
                     _pendingLambdaTArgs = null;
                     E($"{{ Lam* l = allocLam({proto.ParamCount}, {captures}, {target.Name}_t, &{OwnerList()}); l->on = {(hasOn ? S(d - 1) : "Undef()")};{defaultsInit}{lambdaTArgs}{sbCaps} {S(first)} = LamV(l); }}");
@@ -3666,10 +4017,13 @@ namespace fire.Native
                 case OpCode.OverloadHint:
                     // (read by the call it stands in front of: OverloadHintBefore)
                     return Next();
+                case OpCode.ArgNames:
+                    // (read by the call it stands in front of: NamesBefore)
+                    return Next();
                 case OpCode.TakeCallTypeArgs:
                     // (a specialised copy knows its type arguments; the caller set them for the generic method all the same)
                     if (f.Kind == FuncKind.Lambda) E("TArgs ctargs = lamOf(lam)->targs; (void)ctargs;");   // (what the lambda took along)
-                    else E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "static_cast<TArgs>(g_callTArgs)")}; g_callTArgs = nullptr; g_explicitTArgs = 0; (void)ctargs;");
+                    else E($"TArgs ctargs = {(f.SpecTArgs != null ? TArgsExpr(f, f.SpecTArgs) : "((TArgs)g_callTArgs)")}; g_callTArgs = NULL; g_explicitTArgs = 0; (void)ctargs;");
                     _kindsKept = true;
                     return Next();
                 case OpCode.GuardTop:
@@ -3746,7 +4100,7 @@ namespace fire.Native
                     Need(count);
                     int first = d - count;
                     var sbItems = new StringBuilder();
-                    for (int i = 0; i < count; i++) sbItems.Append($" a->items()[{i}] = {S(first + i)}; retain({S(first + i)});");
+                    for (int i = 0; i < count; i++) sbItems.Append($" arrItems(a)[{i}] = {S(first + i)}; retain({S(first + i)});");
                     E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems} {S(first)} = ArrV(a); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
@@ -3757,11 +4111,11 @@ namespace fire.Native
                     Need(count);
                     int first = d - count;
                     var sbItems = new StringBuilder();
-                    for (int i = 0; i < count; i++) sbItems.Append($" a->items()[{i}] = {S(first + i)}; retain({S(first + i)});");
+                    for (int i = 0; i < count; i++) sbItems.Append($" arrItems(a)[{i}] = {S(first + i)}; retain({S(first + i)});");
                     // an array made inside the literal belongs to the outer array
                     var parts = new StringBuilder();
                     for (int i = 0; i < count; i++)
-                        if ((mask >> i & 1) != 0) parts.Append($" attachPart(ArrV(a), a->items()[{i}]);");
+                        if ((mask >> i & 1) != 0) parts.Append($" attachPart(ArrV(a), arrItems(a)[{i}]);");
                     E($"{{ Arr* a = allocArr({count}, &{OwnerList()});{sbItems}{parts} {S(first)} = ArrV(a); }}");
                     d = first + 1; SetR(first, true); return Next();
                 }
@@ -3820,7 +4174,8 @@ namespace fire.Native
                 case OpCode.OwnValue:
                     Need(2);
                     foreach (var sc in st.Scopes) f.NeedsList.Add(sc.Id);
-                    E($"{S(d - 2)} = ownValue({S(d - 2)}, {S(d - 1)}{string.Concat(st.Scopes.Select(sc => ", &" + ListName(sc.Id)))});");
+                    E(st.Scopes.Count == 0 ? $"{S(d - 2)} = ownValueN({S(d - 2)}, {S(d - 1)}, NULL, 0);"
+                        : $"{S(d - 2)} = ownValueN({S(d - 2)}, {S(d - 1)}, (OwnList* const[]){{{string.Join(", ", st.Scopes.Select(sc => "&" + ListName(sc.Id)))}}}, {st.Scopes.Count});");
                     SetR(d - 2, true);
                     d--; return Next();
                 case OpCode.Delete:
@@ -3848,15 +4203,15 @@ namespace fire.Native
                 case OpCode.Probe:
                 {
                     Need(2); UseProbes();
-                    string member = (ins.A[1] & 2) != 0 ? "nullptr" : CString(Str(ins.A[0]));
-                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id == -2) {{ }} else if (id < 0) {{ fireError(std::strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
+                    string member = (ins.A[1] & 2) != 0 ? "NULL" : CString(Str(ins.A[0]));
+                    E($"{{ char err[500]; int64_t id = rf_probeAdd({S(d - 2)}, {member}, {((ins.A[1] & 1) != 0 ? "true" : "false")}, {S(d - 1)}, err, sizeof err); if (id == -2) {{ }} else if (id < 0) {{ fireError(strstr(err, \"has no member\") ? \"MissingMemberException\" : \"ArgumentException\", err); }} else {S(d - 2)} = Int(id); }}");
                     Check();
                     d--; SetR(d - 1, false); return Next();
                 }
                 case OpCode.SilenceMember:
                 {
                     Need(1); UseProbes();
-                    string member = ins.A[1] != 0 ? "nullptr" : CString(Str(ins.A[0]));
+                    string member = ins.A[1] != 0 ? "NULL" : CString(Str(ins.A[0]));
                     E($"{{ char err[500]; if (!rf_silenceCore({S(d - 1)}, {member}, err, sizeof err)) fireError(\"ArgumentException\", err); }}");
                     Check();
                     d--; return Next();
@@ -3929,7 +4284,7 @@ namespace fire.Native
                     int t = ins.A[0];
                     var region = GetRegion(f, t, st);
                     if (_usesTakeUpwards && region.Catches.Count > 0) { f.NeedsList.Add(region.CatchScopeId); f.NeedsList.Add(st.Scopes[^1].Id); }
-                    E(region.Catches.Count > 0 ? $"H{t}.fn = handlerTrampoline<decltype(C{t})>; H{t}.ctx = &C{t};" : $"H{t}.fn = nullptr; H{t}.ctx = nullptr;");
+                    E(region.Catches.Count > 0 ? $"H{t}.fn = {CatchName(f, region)}; H{t}.ctx = FR;" : $"H{t}.fn = NULL; H{t}.ctx = NULL;");
                     E($"H{t}.info = &HI_{fn}_{t}; pushHandler(&H{t});");
                     var edges = new List<(int, Flow)>();
                     foreach (var (_, addr) in region.Catches)
@@ -4088,8 +4443,9 @@ namespace fire.Native
                 {
                     UseThreads();
                     var handler = GetFunc(chunk.Functions[ins.A[0]], FuncKind.Static);
-                    string call = handler.ParamCount >= 1 ? $"{handler.Name}(e)" : $"(void)e, {handler.Name}()";
-                    string lambda = $"+[](Value e) -> Value {{ return {call}; }}";
+                    // (a function the runtime calls with the exception or the value of terminate)
+                    string lambda = $"cb_{handler.Name}";
+                    _catchCallbacks[lambda] = handler.ParamCount >= 1 ? $"return {handler.Name}(e);" : $"(void)e; return {handler.Name}();";
                     if (ins.Op == OpCode.RegisterThreadsCatch) E($"registerThreadsCatch({(ins.A[1] != 0 ? ExcTypeId(Str(ins.A[2])) : -1)}, {lambda});");
                     else E($"registerTerminateCatch({lambda});");
                     return Next();
@@ -4213,7 +4569,7 @@ namespace fire.Native
                         default: Emit($"Int((int64_t)((uint64_t){a}.i {op} (uint64_t){b}.i){unitArg})"); break;
                     }
                 }
-                else if (op == "%") Emit($"Float(std::fmod({Num(d - 2)}, {Num(d - 1)}){unitArg})");
+                else if (op == "%") Emit($"Float(fmod({Num(d - 2)}, {Num(d - 1)}){unitArg})");
                 else Emit($"Float({Num(d - 2)} {op} {Num(d - 1)}{unitArg})");
                 d--;
                 SetR(d - 1, false); SetT(d - 1, TypeOf(ints ? KindInt : KindFloat, unit)); _kindsKept = true;
@@ -4328,6 +4684,7 @@ namespace fire.Native
                 {
                     long i = v.AsInt();
                     string lit = i == long.MinValue ? "INT64_MIN" : i.ToString(CultureInfo.InvariantCulture) + "LL";
+                    if (v.Enum is { } enumType) return $"EnumV({lit}, {EnumIndex(enumType)})";   // (a value of an enum carries its type)
                     int unit = UnitId(v.Unit);
                     return unit == 0 ? $"Int({lit})" : $"Int({lit}, {unit})";
                 }
@@ -4353,7 +4710,7 @@ namespace fire.Native
 
         private static string DoubleLiteral(double d, bool single)
         {
-            if (double.IsNaN(d)) return single ? "std::nanf(\"\")" : "std::nan(\"\")";
+            if (double.IsNaN(d)) return single ? "nanf(\"\")" : "nan(\"\")";
             if (double.IsPositiveInfinity(d)) return single ? "HUGE_VALF" : "HUGE_VAL";
             if (double.IsNegativeInfinity(d)) return single ? "-HUGE_VALF" : "-HUGE_VAL";
             if (d == 0 && double.IsNegative(d)) return single ? "-0.0f" : "-0.0";
@@ -4362,16 +4719,16 @@ namespace fire.Native
             return single ? text + "f" : text;
         }
 
-        /// <summary>The C++ of an import the compiler knows itself (`graphics`, `windows`): its natives in the virtual machine are C#, its C++ is the source of the standard package
+        /// <summary>The C of an import the compiler knows itself (`graphics`, `windows`): its natives in the virtual machine are C#, its C is the source of the standard package
         /// (`Source/graphics/native/`, docs/PACKAGES.md), put into the generated file like that of any package.</summary>
         private readonly HashSet<string> _standardNativesWritten = new(StringComparer.OrdinalIgnoreCase);
 
         private void AppendStandardNatives(StringBuilder sb, string import)
         {
-            _standardNativesWritten.Add(import);   // (the project of the library itself has the same C++ as its own natives: it is written once)
+            _standardNativesWritten.Add(import);   // (the project of the library itself has the same C as its own natives: it is written once)
             var found = PackageStore.Default.Installed().SelectMany(p => p.Manifest.Imports.Select(i => new InstalledImport(p, i)))
                 .FirstOrDefault(i => string.Equals(i.Name, import, StringComparison.OrdinalIgnoreCase) && i.Import.Native != null)
-                ?? throw new NativeNotSupportedException($"the standard package 'fire-{import}' with the C++ of `#import \"{import}\"` is not installed (start ember or spark once)");
+                ?? throw new NativeNotSupportedException($"the standard package 'fire-{import}' with the C of `#import \"{import}\"` is not installed (start ember or spark once)");
             foreach (var (name, text) in found.ReadNativeSources(new[] { _target.Native.Platform, _target.Name }))
             {
                 sb.AppendLine($"// ---- {found.Package.Name} {found.Package.Version}, import \"{import}\": {name}");

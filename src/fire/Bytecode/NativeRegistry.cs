@@ -134,13 +134,16 @@ namespace fire.Bytecode
         /// the same position in the order as when compiling (native functions are jumped to via their
         /// index) - hence everywhere directly after `print`.</summary>
         /// <param name="resources">The files embedded in the program that runs (<c>CompiledProgram.Resources</c>); null while compiling.</param>
-        public void RegisterBaseTypeNatives(System.Collections.Generic.IReadOnlyList<fire.Runtime.ResourceEntry>? resources = null)
+        /// <param name="environment">The arguments, path and environment variables of the program that runs (Environment); null while compiling.</param>
+        public void RegisterBaseTypeNatives(System.Collections.Generic.IReadOnlyList<fire.Runtime.ResourceEntry>? resources = null, fire.Standard.ProgramEnvironment? environment = null)
         {
             Register(fire.Standard.StringMethods.NativeName, fire.Standard.StringMethods.Call);
             Register(fire.Standard.CharMethods.NativeName, fire.Standard.CharMethods.Call);
             Register(fire.Standard.ResourceMethods.NativeName, args => fire.Standard.ResourceMethods.Call(args, resources));
             Register(fire.Standard.MathMethods.NativeName, fire.Standard.MathMethods.Call);
             Register(fire.Standard.JsonMethods.NativeName, fire.Standard.JsonMethods.Call);
+            var env = environment ?? new fire.Standard.ProgramEnvironment();
+            Register(fire.Standard.EnvironmentMethods.NativeName, args => fire.Standard.EnvironmentMethods.Call(args, env));
         }
     }
 }

@@ -2001,7 +2001,7 @@ here, `BinaryNumericOrOperator` there).
 
 ### 8.11 Streams (`#import "io"`) and files (`#import "filesystem"`)
 
-`#import "io"` unlocks the namespace `IO` with the streams (the package `fire-io`: its prelude and the C++ of `packages/io/native/fire_bridge_io.hpp`; in the VM a library built
+`#import "io"` unlocks the namespace `IO` with the streams (the package `fire-io`: its prelude and the C of `packages/io/native/fire_bridge_io.h`; in the VM a library built
 from it, like `graphics`/`devices`: native functions `__IO...` plus a fire prelude). `#import "filesystem"` (the package `fire-filesystem`, fire only, on the natives of `io`)
 adds the file system to the same namespace: `IO.FileStream`, `IO.File`, `IO.Directory`, `IO.Path`, `IO.FileMode`, `IO.FileAccess`, `IO.SearchOption` - named like
 System.IO in .NET (docs/FILESYSTEM.md). Everything lives in `namespace IO`, so that it does not collide with your own classes such as `File` or `Stream`; an enum in a
@@ -2050,7 +2050,7 @@ name). The names are those of .NET (docs/FILESYSTEM.md has the full list).
 var f = IO.Path.Combine("data", "notes.txt")
 IO.Directory.CreateDirectory("data")
 IO.File.WriteAllText(f, "Greetings\nsecond line")
-foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // a List of strings (.count, [i])
+foreach (line in IO.File.ReadAllLines(f)) { print(line) }   // a List of strings (.Count, [i])
 print(IO.File.Size(f) + " bytes, modified " + IO.File.GetLastWriteTime(f))   // a DateTime (local time)
 IO.File.Copy(f, "backup.txt", true)
 foreach (name in IO.Directory.GetFiles("data", "*.txt")) { print(IO.Path.GetFileName(name)) }
@@ -2335,7 +2335,7 @@ int levels = port.Read()                           // all lines of the port at o
 foreach (d in DeviceManager.Devices()) { print(d.Identifier()) }
 ```
 
-Drivers of the standard libraries: `SerialDriver` (`serial:COM3`, `loopback:echo`; the C++ of `packages/devices/native/fire_bridge_devices.hpp`, which in the VM asks the host's device
+Drivers of the standard libraries: `SerialDriver` (`serial:COM3`, `loopback:echo`; the C of `packages/devices/native/fire_bridge_devices.h`, which in the VM asks the host's device
 manager through the callbacks of the package ABI), `GpioDriver` (`gpio:gpioa`, `gpio:gpiosim`; Read/Write the whole port as an int, `PinAt(n)` for one line), `I2cDriver` (the buses `i2c:i2c-1`,
 `i2c:sim` - Read/Write are NotSupported - and the devices on them `i2c:i2c-1/0x48`, made with `bus.At(0x48)` or by `Get`), `SpiDriver` (`spi:spidev0.0`, `spi:sim`; `Transfer`, `WriteRead`).
 A driver of your own derives from `Driver` (`Refresh` adds its devices with `Add`, `Find` may make one on demand) and its devices from `Device`.

@@ -32,7 +32,7 @@ namespace fire.Editor
             }
 
             var buildSettings = new AssemblyInfoDialog();
-            var model = Linker.ExtractAssemblyInfo(new[] { script.GetText() });
+            var model = Linker.ExtractAssemblyInfo(new[] { script.GetText() }, basePath: script.BaseDirectory);
             buildSettings.DataContext = model;
 
             if (await buildSettings.ShowDialog<bool?>(this) != true) return;
@@ -319,6 +319,13 @@ namespace fire.Editor
 
             string output;
             if (plan?.Settings.Output is { } fixedOutput && toolchain.EffectiveKind != "files") output = fixedOutput;
+            else if (project != null)
+            {
+                // a project builds into its folder, without asking: bin/<target>-<mode>/ (a toolchain that only writes files: that folder)
+                string folder = ProjectOutput.Folder(project.Directory, target.Name, RunModeName);
+                Directory.CreateDirectory(folder);
+                output = toolchain.EffectiveKind == "files" ? folder : ProjectOutput.ProgramPath(project.Directory, project.Name, target.Name, RunModeName, target.Name == "windows");
+            }
             else if (toolchain.EffectiveKind == "files")
             {
                 var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = $"Folder for the project files ({target.Name})" });
@@ -356,6 +363,9 @@ namespace fire.Editor
             await Dialogs.Message(this, result.Log, "Build Native");
         }
 
+        /// <summary>The name of the mode of the run (`debug`, `release`, `performance`).</summary>
+        private string RunModeName => _session.ExecutionMode.ToString().ToLowerInvariant();
+
         private async void Build_Click(object? sender, RoutedEventArgs e)
         {
             var project = ContextProject();
@@ -375,7 +385,9 @@ namespace fire.Editor
             string? output = null;
             if (project != null && ProjectSettings.Merge(project.Project.Settings, _workspace.Solution?.Settings).Output is { } configured)
                 output = Path.GetFullPath(configured, _workspace.Solution?.Directory ?? project.Directory);
-            output ??= await PickSavePath("Build standalone", (project?.Name ?? "program") + (windows ? ".exe" : ""), windows ? "exe" : "");
+            // a project builds into its folder, without asking: bin/vm-<mode>/ (the program carries the virtual machine); a single file asks where to
+            else if (project != null) output = ProjectOutput.ProgramPath(project.Directory, project.Name, ProjectOutput.VmTarget, RunModeName, windows);
+            output ??= await PickSavePath("Build standalone", "program" + (windows ? ".exe" : ""), windows ? "exe" : "");
             if (output == null) return;
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
             CompileAndPrepare(output);

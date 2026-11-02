@@ -90,7 +90,7 @@ static class DockingTests
             ui.MouseDown(1, 50, 20)
             ui.MouseUp(1, 50, 20)
             ui.Draw()
-            print("offen " + combo.IsDropDownOpen() + " " + ui.popups.count + " " + combo.popupList.ay)
+            print("offen " + combo.IsDropDownOpen() + " " + ui.popups.Count + " " + combo.popupList.ay)
             var row = combo.popupList.RowHeight(ui)
             ui.MouseMove(50, 34 + row + row / 2)
             ui.Draw()
@@ -149,7 +149,7 @@ static class DockingTests
             combo.SelectedIndex = 1
             ui.Add(combo)
             ui.Draw()
-            print(combo.Text + " " + combo.count + " " + combo.selectedItem.name)
+            print(combo.Text + " " + combo.Count + " " + combo.selectedItem.name)
             // the arrow on the right is drawn in the colour of the text
             print(Px.Get(ui.renderer, 10 + 120 - 9, 10 + 12) == (ui.theme.text.Color & 16777215))
             var auto = new UI.ComboBox(10, 50, -1, -1)
@@ -184,25 +184,25 @@ static class DockingTests
             bar.value = 50
             dm.SetStatusBar(sb)
             ui.Draw()
-            print("strip " + strip.actualWidth + " shown " + strip.shown.count + " overflow " + strip.overflowItems.count)
+            print("strip " + strip.actualWidth + " shown " + strip.shown.Count + " overflow " + strip.overflowItems.Count)
             print("first " + strip.shown.IndexOf(first) + " last " + strip.overflowItems.IndexOf(last) + " always " + strip.overflowItems.IndexOf(always))
             print("spring " + (ready.actualWidth + pos.actualWidth + bar.actualWidth + 4 >= 390) + " " + ready.rx)
             ui.MouseDown(1, strip.ax + strip.actualWidth - 7, strip.ay + 10)
             ui.MouseUp(1, strip.ax + strip.actualWidth - 7, strip.ay + 10)
             ui.Draw()
-            print("menu " + ui.popups.count + " " + last.inOverflow + " " + last.ax + "," + last.ay + " " + last.actualWidth)
+            print("menu " + ui.popups.Count + " " + last.inOverflow + " " + last.ax + "," + last.ay + " " + last.actualWidth)
             __Shot(fb.id, "overflow")
             ui.MouseMove(last.ax + 10, last.ay + 5)
             ui.MouseDown(1, last.ax + 10, last.ay + 5)
             ui.MouseUp(1, last.ax + 10, last.ay + 5)
             ui.Draw()
-            print("clicked " + hits + " menu " + ui.popups.count)
+            print("clicked " + hits + " menu " + ui.popups.Count)
             ui.MouseDown(1, strip.ax + strip.actualWidth - 7, strip.ay + 10)
             ui.MouseUp(1, strip.ax + strip.actualWidth - 7, strip.ay + 10)
             ui.MouseDown(1, strip.ax + strip.actualWidth - 7, strip.ay + 10)
             ui.MouseUp(1, strip.ax + strip.actualWidth - 7, strip.ay + 10)
             ui.Draw()
-            print("toggle " + ui.popups.count)
+            print("toggle " + ui.popups.Count)
             """, new[] { "strip 400 shown 6 overflow 3", "first 0 last 1 always 2", "spring True 2", "menu 1 True 282,50 116", "clicked 1 menu 0", "toggle 0" });
 
         Check("Leisten: Reihen, Ziehen am Griff, an andere Kanten, schwebend und zurueck", """
@@ -230,11 +230,11 @@ static class DockingTests
             print("row " + b.row + " rows " + dm.topStrips.RowCount() + " h " + dm.topStrips.actualHeight + " " + b.ry)
             ui.MouseMove(6, 150)
             ui.Draw()
-            print("left " + dm.leftStrips.strips.count + " " + b.Horizontal + " " + b.actualWidth + "x" + b.actualHeight + " top " + dm.topStrips.strips.count + " h " + dm.topStrips.actualHeight)
+            print("left " + dm.leftStrips.strips.Count + " " + b.Horizontal + " " + b.actualWidth + "x" + b.actualHeight + " top " + dm.topStrips.strips.Count + " h " + dm.topStrips.actualHeight)
             ui.MouseMove(200, 150)
             ui.Draw()
             var f = b.parent
-            print("float " + b.floating + " " + dm.floats.count + " " + f.Left + "," + f.Top + " " + b.Horizontal)
+            print("float " + b.floating + " " + dm.floats.Count + " " + f.Left + "," + f.Top + " " + b.Horizontal)
             ui.MouseUp(1, 200, 150)
             ui.Draw()
             __Shot(fb.id, "floatstrip")
@@ -243,10 +243,10 @@ static class DockingTests
             ui.MouseMove(150, 8)
             ui.MouseUp(1, 150, 8)
             ui.Draw()
-            print("docked " + b.floating + " " + dm.floats.count + " top " + dm.topStrips.strips.count + " row " + b.row + " " + b.rx)
+            print("docked " + b.floating + " " + dm.floats.Count + " top " + dm.topStrips.strips.Count + " row " + b.row + " " + b.rx)
             b.Visible = false
             ui.Draw()
-            print("hidden " + dm.topStrips.RowStrips(0).count)
+            print("hidden " + dm.topStrips.RowStrips(0).Count)
             """, new[] { "row0 0 84=84 h 26", "along 144 row 0", "row 1 rows 2 h 52 26", "left 1 False 54x60 top 1 h 26", "float True 1 194,144 True", "docked False 0 top 2 row 0 145", "hidden 1" });
 
         Check("Leisten: SplitButton, ComboBox und TextBox in der Leiste", """
@@ -269,18 +269,18 @@ static class DockingTests
             ui.MouseDown(1, split.ax + 5, split.ay + 5)
             ui.MouseUp(1, split.ax + 5, split.ay + 5)
             ui.Draw()
-            print("main " + log + " " + ui.popups.count)
+            print("main " + log + " " + ui.popups.Count)
             ui.MouseDown(1, split.ax + split.actualWidth - 4, split.ay + 5)
             ui.MouseUp(1, split.ax + split.actualWidth - 4, split.ay + 5)
             ui.Draw()
             var menu = ui.popups[0]
-            print("arrow " + ui.popups.count + " " + menu.ay + "=" + (split.ay + split.actualHeight))
+            print("arrow " + ui.popups.Count + " " + menu.ay + "=" + (split.ay + split.actualHeight))
             var mx = menu.ax + 10
             var my = menu.RowTop(ui, 1) + 3
             ui.MouseDown(1, mx, my)
             ui.MouseUp(1, mx, my)
             ui.Draw()
-            print("chosen " + log + " " + ui.popups.count)
+            print("chosen " + log + " " + ui.popups.Count)
             ui.MouseDown(1, combo.ax + 10, combo.ay + 5)
             ui.MouseUp(1, combo.ax + 10, combo.ay + 5)
             ui.KeyDown(1073741905, 0)
@@ -313,8 +313,8 @@ static class DockingTests
         Check("Toolfenster: Anordnung, Tabs, Splitter an der Kante und zwischen Panes", Tools + """
             var pe = explorer.Pane()
             var pc = classes.Pane()
-            print("left " + dm.leftPanes.count + " " + pe.rx + "," + pe.ry + " " + pe.actualWidth + "x" + pe.actualHeight + " / " + pc.ry + " " + pc.actualHeight)
-            print("tabs " + pc.windows.count + " active " + pc.ActiveWindow().title + " same " + (props.Pane() == pc))
+            print("left " + dm.leftPanes.Count + " " + pe.rx + "," + pe.ry + " " + pe.actualWidth + "x" + pe.actualHeight + " / " + pc.ry + " " + pc.actualHeight)
+            print("tabs " + pc.windows.Count + " active " + pc.ActiveWindow().title + " same " + (props.Pane() == pc))
             print("center " + dm.centerX + "," + dm.centerY + " " + dm.centerW + "x" + dm.centerH + " content " + dm.content.actualWidth + "x" + dm.content.actualHeight)
             var tabY = pc.ay + pc.actualHeight - 5
             ui.MouseDown(1, pc.TabLeft(ui, 0) + 5, tabY)
@@ -348,16 +348,16 @@ static class DockingTests
             ui.MouseDown(1, cx, pc.ay + 6)
             ui.MouseUp(1, cx, pc.ay + 6)
             ui.Draw()
-            print("closed " + closes + " hidden " + props.isHidden + " tabs " + pc.windows.count + " " + dm.hidden.count)
+            print("closed " + closes + " hidden " + props.isHidden + " tabs " + pc.windows.Count + " " + dm.hidden.Count)
             props.Show()
             ui.Draw()
-            print("shown " + props.isDocked + " same pane " + (props.Pane() == pc) + " tabs " + pc.windows.count + " " + dm.hidden.count)
+            print("shown " + props.isDocked + " same pane " + (props.Pane() == pc) + " tabs " + pc.windows.Count + " " + dm.hidden.Count)
             explorer.Hide()
             ui.Draw()
-            print("hide explorer " + dm.leftPanes.count + " " + dm.sparePanes.count)
+            print("hide explorer " + dm.leftPanes.Count + " " + dm.sparePanes.Count)
             explorer.Show()
             ui.Draw()
-            print("show explorer " + dm.leftPanes.count + " side " + explorer.side + " at " + dm.leftPanes.IndexOf(explorer.Pane()) + " " + dm.sparePanes.count)
+            print("show explorer " + dm.leftPanes.Count + " side " + explorer.side + " at " + dm.leftPanes.IndexOf(explorer.Pane()) + " " + dm.sparePanes.Count)
             // double click on the caption: floats, again: docks
             var po = output.Pane()
             ui.MouseDown(1, po.ax + 30, po.ay + 6)
@@ -366,7 +366,7 @@ static class DockingTests
             ui.MouseUp(1, po.ax + 30, po.ay + 6)
             ui.Draw()
             var f = po.parent
-            print("float " + output.isFloating + " " + dm.floats.count + " " + dm.bottomPanes.count + " " + f.Width + "x" + f.Height)
+            print("float " + output.isFloating + " " + dm.floats.Count + " " + dm.bottomPanes.Count + " " + f.Width + "x" + f.Height)
             // resize at the right bottom corner
             var w0 = f.Width
             var h0 = f.Height
@@ -382,15 +382,15 @@ static class DockingTests
             ui.MouseDown(1, po.ax + 30, po.ay + 6)
             ui.MouseUp(1, po.ax + 30, po.ay + 6)
             ui.Draw()
-            print("docked " + output.isDocked + " side " + output.side + " " + dm.floats.count)
+            print("docked " + output.isDocked + " side " + output.side + " " + dm.floats.Count)
             output.Float(50, 60)
             ui.Draw()
             print("Float() " + output.isFloating + " " + po.parent.Left + "," + po.parent.Top)
             output.DockTo(UI.Dock.Right)
             ui.Draw()
-            print("DockTo " + output.side + " " + dm.rightPanes.count + " " + dm.floats.count + " " + dm.ToolWindows().count + " " + dm.FindToolWindow("Output").title)
-            """, new[] { "closed 1 hidden True tabs 1 1", "shown True same pane True tabs 2 0", "hide explorer 1 1", "show explorer 2 side 0 at 0 0", "float True 1 0 196x140", "resized 20 10",
-                "docked True side 3 0", "Float() True 50,60", "DockTo 2 1 0 4 Output" });
+            print("DockTo " + output.side + " " + dm.rightPanes.Count + " " + dm.floats.Count + " " + dm.ToolWindows().Count + " " + dm.FindToolWindow("Output").title)
+            """, new[] { "closed 1 hidden True tabs 1 1", "shown True same pane True tabs 2 0", "hide explorer 1 1", "show explorer 2 side Left at 0 0", "float True 1 0 196x140", "resized 20 10",
+                "docked True side Bottom 0", "Float() True 50,60", "DockTo Right 1 0 4 Output" });
 
         Check("Toolfenster: Ziehen mit Vorschau - an eine Kante, als Tab, vor/nach eine Pane, schwebend lassen", Tools + """
             var po = output.Pane()
@@ -405,7 +405,7 @@ static class DockingTests
             __Shot(fb.id, "dragside")
             ui.MouseUp(1, gx, gy)
             ui.Draw()
-            print("right " + output.side + " " + dm.rightPanes.count + " " + dm.bottomPanes.count + " " + dm.floats.count)
+            print("right " + output.side + " " + dm.rightPanes.Count + " " + dm.bottomPanes.Count + " " + dm.floats.Count)
             // drag it onto the centre guide of the Explorer pane: becomes a tab there
             po = output.Pane()
             var pe = explorer.Pane()
@@ -422,7 +422,7 @@ static class DockingTests
             __Shot(fb.id, "dragtab")
             ui.MouseUp(1, cx, cy)
             ui.Draw()
-            print("tab " + (output.Pane() == pe) + " " + pe.windows.count + " active " + pe.ActiveWindow().title + " right " + dm.rightPanes.count + " spare " + dm.sparePanes.count)
+            print("tab " + (output.Pane() == pe) + " " + pe.windows.Count + " active " + pe.ActiveWindow().title + " right " + dm.rightPanes.Count + " spare " + dm.sparePanes.Count)
             // drag the Output tab out again and drop it after the Classes pane
             ui.cycles = ui.cycles + 100
             var tx = pe.TabLeft(ui, 1) + 5
@@ -436,10 +436,10 @@ static class DockingTests
             var ay = dm.ay + dm.GuideY(6) + 10
             ui.MouseMove(ax, ay)
             ui.Draw()
-            print("after drop " + dm.dropKind + " explorer tabs " + pe.windows.count)
+            print("after drop " + dm.dropKind + " explorer tabs " + pe.windows.Count)
             ui.MouseUp(1, ax, ay)
             ui.Draw()
-            print("after " + dm.leftPanes.count + " " + dm.leftPanes.IndexOf(output.Pane()) + " " + output.side)
+            print("after " + dm.leftPanes.Count + " " + dm.leftPanes.IndexOf(output.Pane()) + " " + output.side)
             // released over nothing: stays floating where it was dropped
             po = output.Pane()
             ui.cycles = ui.cycles + 100
@@ -448,9 +448,9 @@ static class DockingTests
             ui.MouseMove(300, 120)
             ui.MouseUp(1, 300, 120)
             ui.Draw()
-            print("floating " + output.isFloating + " " + dm.leftPanes.count + " at " + (po.parent.Left + 30 - 10) + "," + po.parent.Top)
-            """, new[] { "drag True drop 1 side 2 preview 200,0 200x300", "right 2 1 0 0", "compass True drop 2", "tab True 2 active Output right 0 spare 1", "after drop 4 explorer tabs 1",
-                "after 3 2 0", "floating True 2 at 220,114" });
+            print("floating " + output.isFloating + " " + dm.leftPanes.Count + " at " + (po.parent.Left + 30 - 10) + "," + po.parent.Top)
+            """, new[] { "drag True drop Side side Right preview 200,0 200x300", "right Right 1 0 0", "compass True drop Tab", "tab True 2 active Output right 0 spare 1", "after drop After explorer tabs 1",
+                "after 3 2 Left", "floating True 2 at 220,114" });
 
         Check("Beispiel wie in docs/DOCKING.md: Symbole aus dem Aufruf und geteilte, alles zusammen gezeichnet", """
             var dock = new UI.Docking.DockManager()
@@ -480,7 +480,7 @@ static class DockingTests
             dock.SetStatusBar(status)
             ui.Draw()
             ui.Draw()
-            print("windows " + dock.ToolWindows().count + " shown " + tools.shown.count + " overflow " + tools.overflowItems.count + " shared " + (shared is from ui))
+            print("windows " + dock.ToolWindows().Count + " shown " + tools.shown.Count + " overflow " + tools.overflowItems.Count + " shared " + (shared is from ui))
             __Shot(fb.id, "example")
             """, new[] { "windows 3 shown 7 overflow 0 shared False" });
 
@@ -507,7 +507,7 @@ static class DockingTests
                 }
                 var app = new PickApp()
                 app.ui.Draw()
-                print(app.choice.count + " " + app.choice.Text)
+                print(app.choice.Count + " " + app.choice.Text)
                 app.choice.Select(2)
                 """, new[] { "picked Two", "3 Two", "picked Three" }, docking: false);
         }

@@ -148,6 +148,19 @@ static class DiagnosticTests
             Check("Describe nennt den Text zu einem Code", ErrorCatalog.Describe("E1003") == "Unterminated string literal" && ErrorCatalog.Describe("E1004") == "String literals must not span multiple lines" && ErrorCatalog.Describe("W1") == null);
         }
 
+        // ---- named arguments: the syntax (docs/language/08-classes.md) ----
+        {
+            const string decl = "class C { static int F(int a, int b = 2) { return a * 10 + b } }\n";
+            var (twice, _) = Compile(decl + "print(C.F(a: 1, a: 2))");
+            Check("Benannte Argumente: ein doppelter Name ist ein Syntaxfehler", twice.Count == 1 && twice[0].Message.Contains("named twice") && twice[0].Line == 2, string.Join("\n", twice.Select(d => d.ToLogLine())));
+            var (order, _) = Compile(decl + "print(C.F(b: 1, 2))");
+            Check("Benannte Argumente: ein positionales Argument nach einem benannten ist ein Syntaxfehler", order.Count == 1 && order[0].Message.Contains("positional argument cannot follow"), string.Join("\n", order.Select(d => d.ToLogLine())));
+            var (units, unitsOut) = Compile("var a = 2km\nclass U { static string S(any v) { return \"\" + v } }\nprint(U.S(a:m))\nprint(U.S(v: a))");
+            Check("Benannte Argumente: `a:m` ohne Leerzeichen bleibt die Umrechnung in eine Einheit", units.Count == 0 && unitsOut == "2000m\n2km", string.Join("\n", units.Select(d => d.ToLogLine())) + unitsOut);
+            var (lambda, _) = Compile("var f = (int x) => x\nprint(f(x: 1))");
+            Check("Benannte Argumente: beim Aufruf eines Lambdas nicht moeglich", lambda.Count >= 1 && lambda.Any(d => d.Message.Contains("not possible for a lambda")), string.Join("\n", lambda.Select(d => d.ToLogLine())));
+        }
+
         // ---- a member of a class that is not there is found when the program is compiled ----
         {
             var (misspelled, _) = Compile("#import \"time\"\nvar t = DateTime.Nowx");
@@ -155,9 +168,32 @@ static class DiagnosticTests
             var (instance, _) = Compile("class Box {\n int size\n Grow() { return 1 }\n}\nvar x = Box.Grow()");
             Check("ClassName.Member: ein Instanzmitglied braucht ein Objekt (E4057)", instance.Count == 1 && instance[0].Code == "E4057", string.Join("\n", instance.Select(d => d.ToLogLine())));
             var (fine, fineOut) = Compile("class Base { static int Count = 3\n static Twice(int x) { return x * 2 } }\nclass Derived : Base { }\nenum Kind { A, B }\nprint(Derived.Count + \" \" + Base.Twice(4) + \" \" + Kind.B)");
-            Check("ClassName.Member: statische Felder, Methoden (auch geerbte) und Enum-Werte bleiben erlaubt", fine.Count == 0 && fineOut == "3 8 1", string.Join("\n", fine.Select(d => d.ToLogLine())) + fineOut);
+            Check("ClassName.Member: statische Felder, Methoden (auch geerbte) und Enum-Werte bleiben erlaubt", fine.Count == 0 && fineOut == "3 8 B", string.Join("\n", fine.Select(d => d.ToLogLine())) + fineOut);
             var (clock, clockOut) = Compile("#import \"time\"\nprint((DateTime.Now.Year > 2000) + \" \" + DateTime.UtcNow.Kind + \" \" + DateTime.Now.Kind + \" \" + (DateTime.Today.Hour == 0))");
             Check("DateTime.Now, UtcNow und Today sind Eigenschaften (wie in .NET)", clock.Count == 0 && clockOut == "True utc local True", string.Join("\n", clock.Select(d => d.ToLogLine())) + clockOut);
+        }
+
+        // ---- the arguments of the program (Environment.Args): after `--` on the command line, else settings.arguments of the project ----
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "fire-args-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                const string program = "var a = Environment.Args\nif (a.length == 2 && a[0] == \"x\" && a[1] == \"b c\" && Environment.ProgramPath.EndsWith(\"main.fire\")) { terminate(7) }\nterminate(1)\n";
+                string file = Path.Combine(dir, "main.fire");
+                File.WriteAllText(file, program);
+                var outW = new StringWriter(); var errW = new StringWriter();
+                int withArgs = CommandLineRunner.Run(new[] { "run", file, "--", "x", "b c" }, outW, errW);
+                int without = CommandLineRunner.Run(new[] { "run", file }, outW, errW);
+                Check("Befehlszeile: was nach -- steht, bekommt das Programm (Environment.Args), ProgramPath ist die Datei", withArgs == 7 && without == 1, $"{withArgs} {without} {errW}");
+                File.WriteAllText(Path.Combine(dir, "App.fireproj"), "{ \"format\": 1, \"name\": \"App\", \"type\": \"exe\", \"settings\": { \"arguments\": [\"x\", \"b c\"] } }");
+                int fromProject = CommandLineRunner.Run(new[] { "run", Path.Combine(dir, "App.fireproj") }, outW, errW);
+                int replaced = CommandLineRunner.Run(new[] { "run", Path.Combine(dir, "App.fireproj"), "--", "other" }, outW, errW);
+                Check("Befehlszeile: ein Projekt gibt settings.arguments mit, -- ersetzt sie", fromProject == 7 && replaced == 1, $"{fromProject} {replaced} {errW}");
+                var buildArgs = CommandLineParser.Parse(new[] { "build", file, "--", "x" });
+                Check("Befehlszeile: Argumente nach -- gibt es nur bei run", buildArgs.Error?.Contains("only available with run") == true, buildArgs.Error);
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
         }
 
         // ---- the command line prints them ----
@@ -170,7 +206,7 @@ static class DiagnosticTests
                 File.WriteAllText(warnFile, "print(\"hi\")\nwarn 42: \"check this\"\nprint(\"there\")\n");
                 var outW = new StringWriter(); var errW = new StringWriter();
                 int code = CommandLineRunner.Run(new[] { "run", warnFile }, outW, errW);
-                Check("Befehlszeile: eine Warnung steht auf stderr (mit Code und Zeile), das Programm laeuft und endet mit 0", code == 0 && errW.ToString().Contains("warning W42: check this (line 2)") && !outW.ToString().Contains("W42"), errW.ToString());
+                Check("Befehlszeile: eine Warnung steht auf stderr (mit Datei, Zeile und Code), das Programm laeuft und endet mit 0", code == 0 && errW.ToString().Contains("w.fire(2): warning W42: check this") && !outW.ToString().Contains("W42"), errW.ToString());   // (the file of the warning and its line)
                 string errFile = Path.Combine(dir, "e.fire");
                 File.WriteAllText(errFile, "print(nothing)\n");
                 var outE = new StringWriter(); var errE = new StringWriter();

@@ -121,7 +121,8 @@ namespace fire.Editor
         /// <summary>The errors (when the compile failed) and warnings of the last <see cref="Compile"/>, with their codes; a file is set when the compiler knows it.</summary>
         public IReadOnlyList<Diagnostic> LastDiagnostics { get; private set; } = Array.Empty<Diagnostic>();
 
-        public bool Compile(string[] sources, string? outname = null, string? basePath = null, fire.Projects.BuildPlan? plan = null)
+        /// <param name="environment">The arguments and the path the program gets (Environment.Args/ProgramPath); none without.</param>
+        public bool Compile(string[] sources, string? outname = null, string? basePath = null, fire.Projects.BuildPlan? plan = null, fire.Standard.ProgramEnvironment? environment = null)
         {
             Reset();
             LastDiagnostics = Array.Empty<Diagnostic>();
@@ -145,7 +146,7 @@ namespace fire.Editor
                     string? threadName = FindContextFor(VM.CurrentThreadVm)?.Name;
                     OutputWritten?.Invoke(threadName != null && threadName != "Main" ? $"[{threadName}] {line}" : line);
                 }),
-                basePath: basePath, deviceManager: DeviceManager, plan: plan);
+                basePath: basePath, deviceManager: DeviceManager, plan: plan, environment: environment);
 
                 ActiveExecutionMode = ExecutionMode;
                 _session = session;

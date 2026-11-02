@@ -44,7 +44,7 @@ static class Scene3DTests
         print("sizes " + box.Width + " " + ball.Width + " " + (ball.Height / 1cm) + " " + floor.Depth)
         print("pos " + box.X + " " + box.Y + " " + ball.X)
         print("rot " + box.RotationY + " " + (box.RotationY is in deg))
-        print("counts " + scene.Objects.count + " " + scene.Lights.count + " " + scene.Cameras.count + " " + scene.Textures.count)
+        print("counts " + scene.Objects.Count + " " + scene.Lights.Count + " " + scene.Cameras.Count + " " + scene.Textures.Count)
         print("keys " + (scene.Get("ball") == ball) + " " + (scene.Get("nothing") == undefined))
         print("triangles " + box.Triangles + " " + floor.Triangles)
 
@@ -87,7 +87,7 @@ static class Scene3DTests
         cam.Render()
         print("anchored " + H.Sum(frame))
         scene.Remove(ball)
-        print("removed " + scene.Objects.count + " " + (scene.Get("ball") == undefined))
+        print("removed " + scene.Objects.Count + " " + (scene.Get("ball") == undefined))
 
         // an object from triangles and from an OBJ text
         var tri = new Object()
@@ -190,8 +190,7 @@ static class Scene3DTests
         Console.WriteLine("--- VM ---\n" + vm);
         string work = Path.Combine(Path.GetTempPath(), "fire-scene3d-" + Guid.NewGuid().ToString("N"));
         fire.Native.NativeRuntimeFiles.WriteTo(work);
-        string cpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { Script }, null, null, VmExecutionMode.Release));
-        File.WriteAllText(Path.Combine(work, "case.cpp"), cpp);
+        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { Script }, null, null, VmExecutionMode.Release));
         string Tool(string tool, string arguments)
         {
             using var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = work })!;
@@ -200,7 +199,7 @@ static class Scene3DTests
             p.WaitForExit();
             return o + err.Result;
         }
-        string build = Tool("g++", $"-std=c++17 -pthread -O2 -Wall -Wextra \"{Path.Combine(work, "case.cpp")}\" -I\"{work}\" -o \"{Path.Combine(work, "case.bin")}\"");
+        string build = NativeTestBuild.Build(NativeTestBuild.In(work), "g++", generated, work, "case", "-pthread -O2 -Wall -Wextra", Path.Combine(work, "case.bin"), out _);
         if (build.Length > 0) Console.WriteLine("--- build ---\n" + build);
         string native = File.Exists(Path.Combine(work, "case.bin")) ? Tool(Path.Combine(work, "case.bin"), "") : "(no binary)";
         Console.WriteLine("--- C++ ---\n" + native);

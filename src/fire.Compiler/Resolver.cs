@@ -176,6 +176,8 @@ namespace fire.Compiler
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
         private readonly Dictionary<string, ExternDecl> _externs = new();
         private readonly Dictionary<string, Dictionary<string, long>> _enums = new();
+        /// <summary>The run-time type of each enum (its values carry it, see Values.EnumType).</summary>
+        private readonly Dictionary<string, fire.Values.EnumType> _enumTypes = new();
         private readonly HashSet<string> _nativeNames;
         private readonly HashSet<string> _tryableNativeNames;
         private readonly ResolverScope _globalScope = new(parent: null, isGlobal: true);
@@ -348,6 +350,22 @@ namespace fire.Compiler
         /// value MUST be an int literal (real compile-time constant
         /// evaluation of arbitrary expressions does not exist in this language),
         /// otherwise auto-increment from the predecessor + 1 (0 for the first member).</summary>
+        /// <summary>The run-time type of an enum declaration (Values.EnumType): its members with their values - an int literal, or the one before + 1 (a faulty
+        /// member is reported by CollectEnums; here it just counts on).</summary>
+        public static fire.Values.EnumType EnumTypeOf(EnumDecl ed)
+        {
+            var members = new List<(string, long)>();
+            var seen = new HashSet<string>();
+            long next = 0;
+            foreach (var m in ed.Members)
+            {
+                long value = m.ValueExpr is LiteralExpr { Value.Kind: ValueKind.Int } lit ? lit.Value.AsInt() : next;
+                next = value + 1;
+                if (seen.Add(m.Name)) members.Add((m.Name, value));
+            }
+            return fire.Values.EnumType.Intern(ed.Name, ed.IsFlags, members);
+        }
+
         private void CollectEnums(IReadOnlyList<Stmt> statements)
         {
             foreach (var stmt in statements)
@@ -401,6 +419,7 @@ namespace fire.Compiler
                     members[m.Name] = value;
                     next = value + 1;
                 }
+                _enumTypes[ed.Name] = EnumTypeOf(ed);
             }
         }
 
@@ -845,6 +864,10 @@ namespace fire.Compiler
             return false;
         }
 
+        /// <summary>Whether a type name means an enum: its full name, or the name in the namespace of the current class.</summary>
+        private bool IsEnumTypeName(string name) =>
+            _enums.ContainsKey(name) || (NamespaceOf(_currentClass?.Name) is { Length: > 0 } ns && _enums.ContainsKey(ns + "." + name));   // (`#using` qualified the name already in the parser)
+
         private void ValidateTypeName(TypeRef tr, int line)
         {
             // 'var' + only a unit (SPEC "Unit declarations") - no
@@ -862,6 +885,7 @@ namespace fire.Compiler
             }
             if (PrimitiveTypeNames.Contains(tr.BaseName)) return;
             if (_currentTypeParamNames.ContainsKey(tr.BaseName)) return;
+            if (IsEnumTypeName(tr.BaseName)) return;   // (an enum is a type: `Color c`, `is of Color`)
             CheckAmbiguous(tr, line, n => IsKnownClassName(n) || _interfaces.ContainsKey(n), NamespaceOf(_currentClass?.Name));
             if (!IsKnownClassName(ResolveTypeRef(tr)) && !_interfaces.ContainsKey(ResolveBaseRef(tr)))
                 throw new ResolverException($"Unknown type '{tr.BaseName}'", line);
@@ -1778,7 +1802,7 @@ namespace fire.Compiler
                     string? enumName = DottedName(me.Target);
                     if (enumName != null && _enums.TryGetValue(enumName, out var enumMembers))
                     {
-                        if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
+                        if (!enumMembers.ContainsKey(me.Name) && me.Name is "Name" or "Parse" or "IsDefined" or "Values" && IsKnownClassName(Parser.EnumHelperClassName(enumName)))
                         {
                             // `Color.Name(c)`, `Color.Parse("Red")`: the hidden helper class of the enum (see Parser.EnumHelperClass)
                             _refs[me] = new ResolvedRef.StaticMember(Parser.EnumHelperClassName(enumName));
@@ -1786,7 +1810,7 @@ namespace fire.Compiler
                         }
                         if (!enumMembers.TryGetValue(me.Name, out long enumValue))
                             throw new ResolverException($"'{enumName}' has no member '{me.Name}'", me.Line);
-                        _refs[me] = new ResolvedRef.EnumMember(enumValue);
+                        _refs[me] = new ResolvedRef.EnumMember(enumValue, _enumTypes.GetValueOrDefault(enumName));
                         break;
                     }
                     // 'ClassName.Member' (SPEC "Static members") - as

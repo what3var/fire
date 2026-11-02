@@ -22,7 +22,7 @@ class Cat : Animal {
 var animals = new List()
 animals.Add(new Dog("Rex"))
 animals.Add(new Cat("Tom"))
-for (var i = 0; i < animals.count; i++) {
+for (var i = 0; i < animals.Count; i++) {
     print(animals[i])
 }
 
