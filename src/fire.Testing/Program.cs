@@ -24434,7 +24434,7 @@ else
             #import "windows"
             #import "time"
             var t = 0
-            while (!Clipboard.HasText && t < 400) { Sleep(20ms); t++ }
+            while (!Clipboard.HasText && t < 1500) { Sleep(20ms); t++ }   // (up to 30 s: the writer may be the VM, whose first start installs the standard packages)
             print("text [" + Clipboard.GetText() + "]")
             t = 0
             while (!Clipboard.HasImage && t < 120) { Sleep(20ms); t++ }
