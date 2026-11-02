@@ -2318,6 +2318,155 @@ FIRE_FN Value newStrFromUtf8(const uint8_t* p, size_t n, OwnList* list) {
     return StrV(s);
 }
 
+/* UTF-16 -> UTF-8 into `out` (cut when it does not fit). */
+FIRE_FN void strToUtf8(Value v, char* out, uint32_t cap) {
+    uint32_t n = 0, i;
+    if (v.kind == K_String) {
+        const Str* s = strOf(v);
+        for (i = 0; i < s->length && n + 4 < cap; i++) {
+            uint32_t c = s->data[i];
+            if (c >= 0xD800 && c < 0xDC00 && i + 1 < s->length) { c = 0x10000 + ((c - 0xD800) << 10) + (s->data[i + 1] - 0xDC00); i++; }
+            if (c < 0x80) out[n++] = (char)c;
+            else if (c < 0x800) { out[n++] = (char)(0xC0 | (c >> 6)); out[n++] = (char)(0x80 | (c & 0x3F)); }
+            else if (c < 0x10000) { out[n++] = (char)(0xE0 | (c >> 12)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
+            else { out[n++] = (char)(0xF0 | (c >> 18)); out[n++] = (char)(0x80 | ((c >> 12) & 0x3F)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
+        }
+    }
+    out[n] = 0;
+}
+/* ---- `__EnvCall(id[, a[, b]])` (EnvironmentMethods): the process - arguments, path, environment variables, line break, platform. What depends on the
+ * system is the platform layer's (fire_plat_eachArg, fire_plat_programPath, fire_plat_getenv/setenv/envEach, fire_plat_name). ---- */
+extern int g_argc;
+extern char** g_argv;
+/* The entry point of a process hands over its arguments (before fire_init). */
+FIRE_FN void fire_setArgs(int argc, char** argv) { g_argc = argc; g_argv = argv; }
+
+typedef struct FireEnvPair { char* name; char* value; } FireEnvPair;
+typedef struct FireEnvList { FireEnvPair* items; uint32_t count, cap; char** args; uint32_t argCount, argCap; } FireEnvList;
+FIRE_FN void fire_envAddArg(const char* utf8, void* ctx) {
+    FireEnvList* l = (FireEnvList*)ctx;
+    size_t n = strlen(utf8);
+    char* copy = (char*)malloc(n + 1);
+    if (copy == NULL) return;
+    memcpy(copy, utf8, n + 1);
+    if (l->argCount == l->argCap) {
+        uint32_t cap = l->argCap ? l->argCap * 2 : 8;
+        char** grown = (char**)realloc(l->args, sizeof(char*) * cap);
+        if (grown == NULL) { free(copy); return; }
+        l->args = grown;
+        l->argCap = cap;
+    }
+    l->args[l->argCount++] = copy;
+}
+FIRE_FN void fire_envAddVar(const char* name, size_t nameLen, const char* value, void* ctx) {
+    FireEnvList* l = (FireEnvList*)ctx;
+    size_t vn = strlen(value);
+    FireEnvPair p;
+    p.name = (char*)malloc(nameLen + 1);
+    p.value = (char*)malloc(vn + 1);
+    if (p.name == NULL || p.value == NULL) { free(p.name); free(p.value); return; }
+    memcpy(p.name, name, nameLen); p.name[nameLen] = 0;
+    memcpy(p.value, value, vn + 1);
+    if (l->count == l->cap) {
+        uint32_t cap = l->cap ? l->cap * 2 : 32;
+        FireEnvPair* grown = (FireEnvPair*)realloc(l->items, sizeof(FireEnvPair) * cap);
+        if (grown == NULL) { free(p.name); free(p.value); return; }
+        l->items = grown;
+        l->cap = cap;
+    }
+    l->items[l->count++] = p;
+}
+FIRE_FN int fire_envPairCmp(const void* a, const void* b) { return strcmp(((const FireEnvPair*)a)->name, ((const FireEnvPair*)b)->name); }
+
+/* The name of a variable as UTF-8 (false: not a name - empty, or with '='). */
+FIRE_FN bool fire_envName(Value v, char* out, uint32_t cap) {
+    out[0] = 0;
+    if (v.kind != K_String || strOf(v)->length == 0) return false;
+    strToUtf8(v, out, cap);
+    return out[0] != 0 && strchr(out, '=') == NULL;
+}
+
+FIRE_FN Value envCall(int64_t id, Value a, Value b, OwnList* list) {
+    char name[1024];
+    char text[1200];
+    switch (id) {
+        case 1: {   /* Args */
+            FireEnvList l;
+            Arr* arr;
+            uint32_t i;
+            memset(&l, 0, sizeof l);
+            fire_plat_eachArg(g_argc, g_argv, fire_envAddArg, &l);
+            arr = allocArr(l.argCount, list);
+            for (i = 0; i < l.argCount; i++) {
+                arrItems(arr)[i] = newStrFromUtf8((const uint8_t*)l.args[i], strlen(l.args[i]), list);
+                retain(arrItems(arr)[i]);
+                free(l.args[i]);
+            }
+            free(l.args);
+            return ArrV(arr);
+        }
+        case 2: {   /* ProgramPath: what the system tells, else argv[0] */
+            char path[4096];
+            int n = fire_plat_programPath(path, sizeof path);
+            if (n <= 0 && g_argc > 0 && g_argv != NULL && g_argv[0] != NULL) { strncpy(path, g_argv[0], sizeof path - 1); path[sizeof path - 1] = 0; n = (int)strlen(path); }
+            return newStrFromUtf8((const uint8_t*)path, n > 0 ? (size_t)n : 0, list);
+        }
+        case 3: {   /* Get */
+            int n;
+            char* value;
+            Value r;
+            if (!fire_envName(a, name, sizeof name)) { snprintf(text, sizeof text, "Environment.Get: '%s' is not a name of an environment variable.", name); return fireError("ArgumentException", text); }
+            value = (char*)malloc(65536);
+            if (value == NULL) return Undef();
+            n = fire_plat_getenv(name, value, 65536);
+            r = n < 0 ? Undef() : newStrFromUtf8((const uint8_t*)value, (size_t)n, list);
+            free(value);
+            return r;
+        }
+        case 4: {   /* Set (undefined removes) */
+            if (!fire_envName(a, name, sizeof name)) { snprintf(text, sizeof text, "Environment.Set: '%s' is not a name of an environment variable.", name); return fireError("ArgumentException", text); }
+            if (b.kind == K_Undefined) { fire_plat_setenv(name, NULL); return Undef(); }
+            if (b.kind != K_String) return fireError("ArgumentException", "Environment.Set: the value must be a string (or undefined to remove the variable).");
+            {
+                uint32_t cap = strOf(b)->length * 4 + 4;
+                char* value = (char*)malloc(cap);
+                if (value == NULL) return Undef();
+                strToUtf8(b, value, cap);
+                fire_plat_setenv(name, value);
+                free(value);
+            }
+            return Undef();
+        }
+        case 5: {   /* Variables: name, value, name, value, ... sorted by name */
+            FireEnvList l;
+            Arr* arr;
+            uint32_t i;
+            memset(&l, 0, sizeof l);
+            fire_plat_envEach(fire_envAddVar, &l);
+            if (l.count > 1) qsort(l.items, l.count, sizeof(FireEnvPair), fire_envPairCmp);
+            arr = allocArr(l.count * 2, list);
+            for (i = 0; i < l.count; i++) {
+                arrItems(arr)[2 * i] = newStrFromUtf8((const uint8_t*)l.items[i].name, strlen(l.items[i].name), list);
+                arrItems(arr)[2 * i + 1] = newStrFromUtf8((const uint8_t*)l.items[i].value, strlen(l.items[i].value), list);
+                retain(arrItems(arr)[2 * i]);
+                retain(arrItems(arr)[2 * i + 1]);
+                free(l.items[i].name);
+                free(l.items[i].value);
+            }
+            free(l.items);
+            return ArrV(arr);
+        }
+#if defined(_WIN32)
+        case 6: return newStrFromUtf8((const uint8_t*)"\r\n", 2, list);
+#else
+        case 6: return newStrFromUtf8((const uint8_t*)"\n", 1, list);
+#endif
+        case 7: return newStrFromUtf8((const uint8_t*)fire_plat_name(), strlen(fire_plat_name()), list);
+    }
+    fatal("Unknown Environment function.");
+    return Undef();
+}
+
 /* `__ResourceCall(op, id)`: 0 count, 1 length, 2 bytes (a buffer), 3 name, 4 text (UTF-8). */
 FIRE_FN Value resourceCall(int64_t op, Value id, OwnList* list) {
     const ResEntry* r;
@@ -2467,22 +2616,6 @@ FIRE_FN Value strFromUtf8(const char* utf8, OwnList* list) {
     fire_char16 buf[400];
     uint32_t n = utf8ToUtf16(utf8, buf, 400);
     return newStrFrom(buf, n, list);
-}
-/* UTF-16 -> UTF-8 into `out` (cut when it does not fit). */
-FIRE_FN void strToUtf8(Value v, char* out, uint32_t cap) {
-    uint32_t n = 0, i;
-    if (v.kind == K_String) {
-        const Str* s = strOf(v);
-        for (i = 0; i < s->length && n + 4 < cap; i++) {
-            uint32_t c = s->data[i];
-            if (c >= 0xD800 && c < 0xDC00 && i + 1 < s->length) { c = 0x10000 + ((c - 0xD800) << 10) + (s->data[i + 1] - 0xDC00); i++; }
-            if (c < 0x80) out[n++] = (char)c;
-            else if (c < 0x800) { out[n++] = (char)(0xC0 | (c >> 6)); out[n++] = (char)(0x80 | (c & 0x3F)); }
-            else if (c < 0x10000) { out[n++] = (char)(0xE0 | (c >> 12)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
-            else { out[n++] = (char)(0xF0 | (c >> 18)); out[n++] = (char)(0x80 | ((c >> 12) & 0x3F)); out[n++] = (char)(0x80 | ((c >> 6) & 0x3F)); out[n++] = (char)(0x80 | (c & 0x3F)); }
-        }
-    }
-    out[n] = 0;
 }
 /* An array of strings. */
 FIRE_FN Value strArrayOf(const char* const* items, uint32_t n, OwnList* list) {
@@ -5148,6 +5281,8 @@ const ResEntry* g_resources = NULL;
 const FireEnum* g_enums = NULL;
 uint32_t g_enumCount = 0;
 int g_resourceCount = 0;
+int g_argc = 0;
+char** g_argv = NULL;
 fire_TArgsEntry* g_targsHead = NULL;
 #ifdef FIRE_REFLECTION
 ProbeNode* g_probeNodes = NULL;

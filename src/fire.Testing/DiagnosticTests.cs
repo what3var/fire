@@ -173,6 +173,29 @@ static class DiagnosticTests
             Check("DateTime.Now, UtcNow und Today sind Eigenschaften (wie in .NET)", clock.Count == 0 && clockOut == "True utc local True", string.Join("\n", clock.Select(d => d.ToLogLine())) + clockOut);
         }
 
+        // ---- the arguments of the program (Environment.Args): after `--` on the command line, else settings.arguments of the project ----
+        {
+            string dir = Path.Combine(Path.GetTempPath(), "fire-args-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                const string program = "var a = Environment.Args\nif (a.length == 2 && a[0] == \"x\" && a[1] == \"b c\" && Environment.ProgramPath.EndsWith(\"main.fire\")) { terminate(7) }\nterminate(1)\n";
+                string file = Path.Combine(dir, "main.fire");
+                File.WriteAllText(file, program);
+                var outW = new StringWriter(); var errW = new StringWriter();
+                int withArgs = CommandLineRunner.Run(new[] { "run", file, "--", "x", "b c" }, outW, errW);
+                int without = CommandLineRunner.Run(new[] { "run", file }, outW, errW);
+                Check("Befehlszeile: was nach -- steht, bekommt das Programm (Environment.Args), ProgramPath ist die Datei", withArgs == 7 && without == 1, $"{withArgs} {without} {errW}");
+                File.WriteAllText(Path.Combine(dir, "App.fireproj"), "{ \"format\": 1, \"name\": \"App\", \"type\": \"exe\", \"settings\": { \"arguments\": [\"x\", \"b c\"] } }");
+                int fromProject = CommandLineRunner.Run(new[] { "run", Path.Combine(dir, "App.fireproj") }, outW, errW);
+                int replaced = CommandLineRunner.Run(new[] { "run", Path.Combine(dir, "App.fireproj"), "--", "other" }, outW, errW);
+                Check("Befehlszeile: ein Projekt gibt settings.arguments mit, -- ersetzt sie", fromProject == 7 && replaced == 1, $"{fromProject} {replaced} {errW}");
+                var buildArgs = CommandLineParser.Parse(new[] { "build", file, "--", "x" });
+                Check("Befehlszeile: Argumente nach -- gibt es nur bei run", buildArgs.Error?.Contains("only available with run") == true, buildArgs.Error);
+            }
+            finally { try { Directory.Delete(dir, true); } catch (IOException) { } }
+        }
+
         // ---- the command line prints them ----
         {
             string dir = Path.Combine(Path.GetTempPath(), "fire-diag-" + Guid.NewGuid().ToString("N"));

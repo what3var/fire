@@ -42,6 +42,8 @@ namespace fire.Compiler
         public string? TestFilter { get; init; }
         /// <summary>`--config`: the native build configuration; null = the nearest fire.native.json next to the first file.</summary>
         public string? ConfigFile { get; init; }
+        /// <summary>`forge run app.fire -- a b`: what follows `--` - the arguments of the program (Environment.Args); null without `--`.</summary>
+        public IReadOnlyList<string>? ProgramArguments { get; init; }
         /// <summary>`--keep`: keep the generated C++ next to the program.</summary>
         public bool KeepSources { get; init; }
         /// <summary>`-p`: the project of a solution to run or build (default: the startup project).</summary>
@@ -71,7 +73,7 @@ namespace fire.Compiler
         public static string Usage =>
             """
             Usage:
-              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64]
+              fire.Compiler run   <file>... [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [-- <arguments of the program>...]
               fire.Compiler build <file>... [-o <target.exe>] [-m DEBUG|RELEASE|PERFORMANCE] [-f 32|64] [--engine vm|native] [-t <target>] [--toolchain <name>] [--config <file>] [--keep]
               fire.Compiler native <file>... [-o <target.cpp>] [-t <target>] [-f 32|64] [--config <file>]
               fire.Compiler ui    <file.fxml> [-o <file>]
@@ -80,7 +82,7 @@ namespace fire.Compiler
               fire.Compiler run|build <project.fireproj | solution.firesln> [-p <project>] [...]
               fire.Compiler test  [<file>... | <project.fireproj> | <solution.firesln>] [-p <project>] [--engine vm|native] [-m ...] [-f 32|64]
 
-            run     compiles the files into one program and runs it.
+            run     compiles the files into one program and runs it. What follows `--` goes to the program (Environment.Args; for a project instead of its settings.arguments).
             build   turns them into a program (a project without -o or "output": <project>/bin/<target>-<mode>/<name>, target vm or the native one, mode dbg/rel/perf):
                     a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
                     fire.native.json - C (and the natives in C++) built with the toolchain of the configuration for the target (-o is the program; for a toolchain that only writes files, a folder).
@@ -135,10 +137,19 @@ namespace fire.Compiler
             bool keep = false;
             string? output = null;
             var defines = new List<string>();
+            List<string>? programArguments = null;
 
             for (int i = 1; i < args.Count; i++)
             {
                 string arg = args[i];
+
+                if (arg == "--")
+                {
+                    // everything after `--` belongs to the program that runs
+                    if (command != CommandKind.Run) return Fail(command, "Arguments for the program (after --) are only available with run.");
+                    programArguments = args.Skip(i + 1).ToList();
+                    break;
+                }
 
                 if (TryOption(arg, "-m", "--mode", out var modeInline))
                 {
@@ -252,6 +263,7 @@ namespace fire.Compiler
                 TestFilter = testFilter,
                 ToolchainName = toolchainName,
                 ConfigFile = configFile,
+                ProgramArguments = programArguments,
                 KeepSources = keep,
                 ProjectName = projectName,
                 OutputGiven = output != null,
@@ -560,7 +572,8 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, defines: options.Defines, plan: plan);
+                }, floatWidth: options.FloatWidth, defines: options.Defines, plan: plan,
+                    environment: new fire.Standard.ProgramEnvironment { Args = options.ProgramArguments ?? plan.Settings.Arguments ?? new List<string>(), ProgramPath = plan.SourcePaths.LastOrDefault() ?? "" });
             }
             catch (Exception ex) when (IsCompileError(ex))
             {
@@ -645,7 +658,8 @@ namespace fire.Compiler
                 {
                     if (args.Length > 0) Console.WriteLine(args[0].ToString());
                     return Value.MakeUndefined();
-                }, floatWidth: options.FloatWidth, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options));
+                }, floatWidth: options.FloatWidth, basePath: BaseDirectory(options), defines: options.Defines, sourcePaths: SourceFiles(options),
+                    environment: new fire.Standard.ProgramEnvironment { Args = options.ProgramArguments ?? Array.Empty<string>(), ProgramPath = options.Files.Count > 0 ? Path.GetFullPath(options.Files[^1]) : "" });
             }
             catch (Exception ex) when (IsCompileError(ex))
             {

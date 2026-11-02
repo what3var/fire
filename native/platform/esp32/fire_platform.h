@@ -5,5 +5,6 @@
 #ifndef FIRE_FREERTOS_STACK_BYTES
 #define FIRE_FREERTOS_STACK_BYTES 1
 #endif
+#define FIRE_PLAT_NAME "esp32"
 #include "../freertos/fire_platform.h"
 #endif

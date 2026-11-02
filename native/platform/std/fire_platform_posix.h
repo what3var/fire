@@ -89,4 +89,6 @@ static inline fire_thread* fire_thread_start(fire_thread_fn fn, void* arg, uint3
 static inline void fire_thread_join(fire_thread* t) { pthread_join(t->t, NULL); free(t); }
 #endif
 
+#include "fire_env_posix.h"   /* (the process: arguments, path, environment variables) */
+
 #endif

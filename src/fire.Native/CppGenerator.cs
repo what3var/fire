@@ -1355,7 +1355,8 @@ namespace fire.Native
             }
             else
             {
-                sb.AppendLine($"{externC}int {entry.Name}(void) {{");
+                sb.AppendLine($"{externC}int {entry.Name}(int argc, char** argv) {{");
+                sb.AppendLine("    fire_setArgs(argc, argv);   // (Environment.Args, ProgramPath)");
                 sb.AppendLine("    fire_init();\n    fire_main();");
                 sb.AppendLine("    fflush(stdout);");
                 sb.AppendLine(_usesThreads ? "    return mainExitCode();   // `terminate(n)` gives the exit code" : _usesExceptions ? "    return g_unwind.active ? 1 : 0;   // an exception that nothing caught" : "    return 0;");
@@ -3369,6 +3370,14 @@ namespace fire.Native
                     {
                         int first = d - 2;
                         E($"{S(first)} = resourceCall({S(first)}.i, {S(first + 1)}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
+                    if (native == EnvironmentMethods.NativeName && argc is >= 1 and <= 3)
+                    {
+                        // Environment (fire_rt.h: envCall; the system's part in the platform layer)
+                        int first = d - argc;
+                        E($"{S(first)} = envCall({S(first)}.i, {(argc > 1 ? S(first + 1) : "Undef()")}, {(argc > 2 ? S(first + 2) : "Undef()")}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }

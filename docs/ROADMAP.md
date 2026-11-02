@@ -117,6 +117,10 @@ read-only Property `Count` (auf ein privates Feld); die Tabellen behalten die Re
 * Nativ: `int main(int argc, char** argv)` im Generator, an die Runtime weitergereicht; auf Zielen ohne Prozess (ESP32) leere Argumente.
 * VM: `forge run x.fire -- a b c` und ein Feld für Argumente in den Run-Einstellungen von spark (und im Projekt: `settings.arguments`).
 
+Stand: umgesetzt - `Environment` im Prelude (VM und nativ; das Betriebssystem in der Plattformschicht: `fire_plat_eachArg`, `fire_plat_programPath`,
+`fire_plat_getenv`/`setenv`/`envEach`, `fire_plat_name`), `forge run ... -- a b`, `settings.arguments`, *Run > Program Arguments...* in spark. In der VM
+wirkt `Set` nur auf die Sicht des Programms (nicht auf spark/forge). Unter Windows kommen die Argumente aus `GetCommandLineW` (UTF-8, nicht die ANSI-Codepage).
+
 ## 5. Prozesse starten, Pipes, Exitcodes
 
 * `Process.Start(file, args[], options)` mit `WorkingDirectory`, `Environment`, Umleitung von stdin/stdout/stderr (als `IO`-Streams), `WaitForExit()`

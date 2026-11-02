@@ -19099,6 +19099,28 @@ else
             """),
     }).ToArray();
 
+    // Environment: arguments, environment variables, platform (docs/language/19-standard-library.md)
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Environment: Args ohne Argumente, Get/Set/Variables, NewLine, Platform, Exit", """
+            print(Environment.Args.length)
+            print(Environment.Get("PATH") != undefined)
+            print(Environment.Get("FIRE_SURELY_NOT_SET_42") == undefined)
+            Environment.Set("FIRE_ENV_TEST", "a b ä")
+            print(Environment.Get("FIRE_ENV_TEST"))
+            print(Environment.Variables["FIRE_ENV_TEST"])
+            Environment.Set("FIRE_ENV_TEST", undefined)
+            print(Environment.Get("FIRE_ENV_TEST") == undefined)
+            print(Environment.Variables.ContainsKey("FIRE_ENV_TEST"))
+            print(Environment.Platform == "linux" || Environment.Platform == "windows" || Environment.Platform == "macos")
+            print(Environment.NewLine.Length > 0)
+            try { Environment.Get("") } catch (ArgumentException e) { print(e.message) }
+            try { Environment.Set("X", 5) } catch (ArgumentException e) { print(e.message) }
+            Environment.Exit(0)
+            print("not reached")
+            """),
+    }).ToArray();
+
     // Differences that were aligned
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

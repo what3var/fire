@@ -270,6 +270,7 @@
 					<MenuItem Header="Debug" ToggleType="CheckBox" x:Name="mnuRunDebug" Click="mnuRunDebug_Click"/>
 					<MenuItem Header="Release" ToggleType="CheckBox" x:Name="mnuRunRelease" Click="mnuRunRelease_Click"/>
 					<MenuItem Header="Performance" ToggleType="CheckBox" x:Name="mnuRunPerformance" Click="mnuRunPerformance_Click"/>
+					<MenuItem Header="Program _Arguments..." Click="ProgramArguments_Click"/>
 					<Separator/>
 					<MenuItem Header="Toggle _Breakpoint (current line)" Click="ToggleBreakpoint_Click" InputGesture="F9"/>
 				</MenuItem>

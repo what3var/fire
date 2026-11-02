@@ -5,6 +5,7 @@
 #define FIRE_PLATFORM_H
 #include <emscripten.h>
 #define FIRE_PLAT_SLEEP_CUSTOM 1
+#define FIRE_PLAT_NAME "wasm"
 #include "../std/fire_platform_posix.h"
 static inline void fire_plat_sleepMs(int64_t ms) { emscripten_sleep(ms < 0 ? 0 : (unsigned)ms); }
 #endif

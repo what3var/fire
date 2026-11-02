@@ -9,7 +9,8 @@ Every program has, without an import:
 | `print(value)` | writes a value and a line break |
 | `Math` | `Sqrt`, `Abs`, `Min`, `Max`, `Clamp`, `Sign`, `Round`, `Floor`, `Ceiling`, `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Log`, `Log10`, `Exp`, `PI`, `E` - see below |
 | `StringBuilder` | collects text: `Append`, `AppendLine`, `Length`, `Clear`, `ToString` - see [Strings](06-strings.md#joining) |
-| `List<T>` | a growing list - see [Arrays and lists](07-arrays-and-lists.md#lists-listt) |
+| `List<T>`, `Dictionary<K, V>`, `HashSet<T>`, `Owns` | lists, dictionaries and sets - see [Arrays and lists](07-arrays-and-lists.md#lists-listt) |
+| `Environment` | the arguments of the program, environment variables, `Exit` - see below |
 | `IEnumerable<T>`, `IEnumerator<T>` | the interfaces of `foreach` - see [Interfaces and generics](09-interfaces-and-generics.md#ienumerable) |
 | `Exception` and the runtime exceptions | see [Exceptions](14-exceptions.md#errors-of-the-runtime) |
 | `Takes` | what travels along with `TakeTo` & co. - see [Ownership](13-ownership.md) |
@@ -67,6 +68,35 @@ print(Math.Atan2(1m, 1m) * 4)       // 3.141592653589793
 - `Sqrt` takes the root of the unit as well; a unit without a root (`m`) is an `ArgumentException`.
 - `Sin`, `Cos`, `Tan` take radians; the angle and exponential functions take a number without unit and give a `float`. `Atan2(y, x)` takes two
   values of the same dimension.
+
+### Environment
+
+`Environment` describes the process the program runs in:
+
+| Member | What |
+|---|---|
+| `Environment.Args` | the arguments of the program as a `string[]`, without the program's name |
+| `Environment.ProgramPath` | the path of the running program (the executable; for `forge run` and *Run* in spark the main source file) |
+| `Environment.Get(name)` | the value of an environment variable, `undefined` if it is not set |
+| `Environment.Set(name, value)` | sets a variable for the program and the processes it starts; `undefined` removes it |
+| `Environment.Variables` | all variables as a `Dictionary<string, string>` (sorted by name) |
+| `Environment.Exit(code)` | ends the program with an exit code (like `terminate(code)`) |
+| `Environment.NewLine` | `"\r\n"` on Windows, `"\n"` elsewhere |
+| `Environment.Platform` | `"windows"`, `"linux"`, `"macos"`, `"wasm"`, `"esp32"`, `"freertos"`, ... |
+
+```fire
+if (Environment.Args.length == 0) {
+    print("usage: greet <name>")
+    Environment.Exit(2)
+}
+var greeting = Environment.Get("GREETING")
+if (greeting == undefined) { greeting = "Hello" }
+print(greeting + ", " + Environment.Args[0])
+```
+
+The arguments come from the command line: `forge run greet.fire -- Ada` (everything after `--`), a built program `greet Ada`, in spark *Run > Program
+Arguments...*, in a project `settings.arguments` (docs/PROJECTS.md). A program on a board (ESP32, FreeRTOS) has no arguments. In the virtual machine
+`Set` changes only the program's view of the variables (not the environment of spark or `forge`); a native program changes its process's environment.
 
 ### Time
 

@@ -157,4 +157,10 @@ static inline void* fire_tls_get(void) { return pvTaskGetThreadLocalStoragePoint
 static inline void fire_tls_set(void* p) { vTaskSetThreadLocalStoragePointer(NULL, FIRE_TLS_INDEX, p); }
 #endif
 
+/* the process (Environment): newlib has the environment variables; there are no arguments and no program path */
+#ifndef FIRE_PLAT_NAME
+#define FIRE_PLAT_NAME "freertos"
+#endif
+#include "../std/fire_env_posix.h"
+
 #endif

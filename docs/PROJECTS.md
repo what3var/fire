@@ -52,7 +52,8 @@ like `returnsReference`) - the same as in a package. `"discover": false` takes o
 level of the project) is for the standard libraries of `Source/Packages.firesln` (docs/PACKAGES.md): their import names are those of the compiler.
 
 **Settings** (all optional): `subsystem` (`console`/`gui`), `mode` (`debug`/`release`/`performance`), `floatWidth` (32/64), `name`, `codename`, `description`, `author`, `license`
-(a library that is packed), `comments`, `icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `output`. Paths are relative to the
+(a library that is packed), `comments`, `icon`, `version`, `fileVersion` (the assembly information), `defines` (symbols for `#if`), `engine` (`vm`/`native`), `target`, `toolchain`, `output`, `arguments` (what a run of the program gets as
+`Environment.Args`, e.g. `["input.txt", "--verbose"]`; `forge run app.fireproj -- a b` replaces them). Paths are relative to the
 file that holds them.
 
 ### Precedence
