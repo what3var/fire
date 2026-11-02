@@ -90,6 +90,8 @@ namespace fire.Projects
         /// <summary>A library with device drivers (docs/DEVICES.md): the classes of the device framework it offers (`UsbDriver`, `Gpio.MyDriver`), each made with
         /// `new Class()`. The IDE loads the drivers of the installed packages and lists their devices in its device manager. null: none.</summary>
         public List<string>? Drivers { get; set; }
+        /// <summary>The folder of the notes (docs/NOTES.md), relative to the project file; null: `notes/`.</summary>
+        public string? Notes { get; set; }
 
         /// <summary>Where the project was read from (null: not saved yet); not part of the file.</summary>
         [JsonIgnore] public string? FilePath { get; set; }
@@ -132,7 +134,7 @@ namespace fire.Projects
             var copy = new FireProject
             {
                 Format = Format, Name = Name, Type = Type, Import = Import, Entry = Entry,
-                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers,
+                Files = Files, Exclude = Exclude, References = References, Settings = Settings, Native = Native, Standard = Standard, Drivers = Drivers, Notes = Notes,
             };
             return JsonSerializer.Serialize(new SaveShape(copy), Options);
         }
@@ -159,6 +161,7 @@ namespace fire.Projects
                 Native = p.Native;
                 Standard = p.Standard ? true : null;
                 Drivers = p.Drivers is { Count: > 0 } ? p.Drivers : null;
+                Notes = string.IsNullOrWhiteSpace(p.Notes) ? null : p.Notes;
             }
             public int Format { get; }
             public string Name { get; }
@@ -172,6 +175,7 @@ namespace fire.Projects
             public ProjectNative? Native { get; }
             public bool? Standard { get; }
             public List<string>? Drivers { get; }
+            public string? Notes { get; }
         }
 
         /// <summary>The name a library is imported by: `import`, else the name of the project with every character that a name cannot have replaced by `_`.</summary>

@@ -164,6 +164,7 @@ namespace fire.Editor
             // what belongs to which project (and the libraries) may have changed: check the open scripts again
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
             ScheduleTestDiscovery();
+            RefreshTodo();
         }
 
         /// <summary>The explorer and the status bar follow the workspace and the active document.</summary>

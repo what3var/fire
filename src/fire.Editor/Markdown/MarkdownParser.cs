@@ -27,8 +27,15 @@ namespace fire.Editor
     public sealed record MdCodeBlock(string? Language, string Code) : MdBlock;
     public sealed record MdQuote(IReadOnlyList<MdBlock> Blocks) : MdBlock;
     public sealed record MdRule : MdBlock;
-    /// <summary>`Checked`: null = no task entry, otherwise `- [ ]`/`- [x]`.</summary>
-    public sealed record MdListItem(IReadOnlyList<MdBlock> Blocks, bool? Checked);
+    /// <summary>The state of a task entry (docs/NOTES.md): `[ ]` open, `[/]` in progress, `[#]` blocked, `[x]` done.</summary>
+    public enum MdTaskState { Open, InProgress, Blocked, Done }
+
+    /// <summary>`Task`: null = no task entry, otherwise its state (`- [ ]`, `- [/]`, `- [#]`, `- [x]`).</summary>
+    public sealed record MdListItem(IReadOnlyList<MdBlock> Blocks, MdTaskState? Task)
+    {
+        /// <summary>null = no task entry, otherwise done or not.</summary>
+        public bool? Checked => Task == null ? null : Task == MdTaskState.Done;
+    }
     public sealed record MdList(bool Ordered, int Start, IReadOnlyList<MdListItem> Items) : MdBlock;
     public enum MdAlign { Left, Center, Right }
     public sealed record MdTable(IReadOnlyList<IReadOnlyList<MdInline>> Header, IReadOnlyList<MdAlign> Aligns,
@@ -71,7 +78,7 @@ namespace fire.Editor
         private static readonly Regex SetextH1 = new(@"^ {0,3}=+\s*$", RegexOptions.Compiled);
         private static readonly Regex SetextH2 = new(@"^ {0,3}-+\s*$", RegexOptions.Compiled);
         private static readonly Regex TableSeparator = new(@"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$", RegexOptions.Compiled);
-        private static readonly Regex TaskBox = new(@"^\[([ xX])\]\s+", RegexOptions.Compiled);
+        private static readonly Regex TaskBox = new(@"^\[([ xX/#])\](?:\s+|$)", RegexOptions.Compiled);
 
         private static bool IsBlank(string line) => line.Trim().Length == 0;
 
@@ -319,13 +326,16 @@ namespace fire.Editor
                 }
                 while (itemLines.Count > 0 && IsBlank(itemLines[^1])) itemLines.RemoveAt(itemLines.Count - 1);
 
-                bool? check = null;
+                MdTaskState? check = null;
                 if (itemLines.Count > 0)
                 {
                     var tb = TaskBox.Match(itemLines[0]);
                     if (tb.Success)
                     {
-                        check = tb.Groups[1].Value != " ";
+                        check = tb.Groups[1].Value switch
+                        {
+                            "/" => MdTaskState.InProgress, "#" => MdTaskState.Blocked, " " => MdTaskState.Open, _ => MdTaskState.Done,
+                        };
                         itemLines[0] = itemLines[0].Substring(tb.Length);
                     }
                 }

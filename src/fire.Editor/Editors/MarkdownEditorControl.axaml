@@ -5,20 +5,32 @@
     <DockPanel>
         <Border x:Name="FormatBar" DockPanel.Dock="Top" BorderBrush="#3C3544" BorderThickness="0,0,0,1" Padding="4,2">
             <StackPanel x:Name="FormatPanel" Orientation="Horizontal" Spacing="2">
-                <Button Classes="tool" Click="Bold_Click" ToolTip.Tip="Bold (Ctrl+B)"><TextBlock FontWeight="Bold" Text="F"/></Button>
-                <Button Classes="tool" Click="Italic_Click" ToolTip.Tip="Italic (Ctrl+I)"><TextBlock FontStyle="Italic" Text="K"/></Button>
-                <Button Classes="tool" Click="Strike_Click" ToolTip.Tip="Strikethrough"><TextBlock TextDecorations="Strikethrough" Text="D"/></Button>
-                <Button Classes="tool" Click="InlineCode_Click" ToolTip.Tip="Code (Ctrl+E)"><TextBlock FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" Text="&lt;/&gt;"/></Button>
-                <Border Width="1" Background="#3C3544" Margin="4,2"/>
-                <Button Classes="tool" Click="Heading_Click" ToolTip.Tip="Heading: change level (Ctrl+H)"><TextBlock FontWeight="Bold" Text="H"/></Button>
-                <Button Classes="tool" Click="BulletList_Click" ToolTip.Tip="Bulleted list"><TextBlock Text="&#x2022;&#x2261;"/></Button>
-                <Button Classes="tool" Click="NumberedList_Click" ToolTip.Tip="Numbered list"><TextBlock Text="1."/></Button>
-                <Button Classes="tool" Click="Quote_Click" ToolTip.Tip="Quote"><TextBlock Text="&#x201C;"/></Button>
-                <Button Classes="tool" Click="CodeBlock_Click" ToolTip.Tip="Code block"><TextBlock FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" Text="{}{ }"/></Button>
-                <Button Classes="tool" Click="Link_Click" ToolTip.Tip="Link (Ctrl+K)"><TextBlock Text="Link"/></Button>
-                <Button Classes="tool" Click="Table_Click" ToolTip.Tip="Insert table"><TextBlock Text="Table"/></Button>
-                <Border Width="1" Background="#3C3544" Margin="4,2"/>
-                <ToggleButton x:Name="PreviewToggle" Classes="tool" IsChecked="True" Click="PreviewToggle_Click" ToolTip.Tip="Show or hide the preview (Ctrl+Shift+V)"><TextBlock Text="Preview"/></ToggleButton>
+                <!-- Markdown formatting: acts on the text (Split, Code) -->
+                <StackPanel x:Name="TextTools" Orientation="Horizontal" Spacing="2">
+                    <Button Classes="tool" Click="Bold_Click" ToolTip.Tip="Bold (Ctrl+B)"><TextBlock FontWeight="Bold" Text="F"/></Button>
+                    <Button Classes="tool" Click="Italic_Click" ToolTip.Tip="Italic (Ctrl+I)"><TextBlock FontStyle="Italic" Text="K"/></Button>
+                    <Button Classes="tool" Click="Strike_Click" ToolTip.Tip="Strikethrough"><TextBlock TextDecorations="Strikethrough" Text="D"/></Button>
+                    <Button Classes="tool" Click="InlineCode_Click" ToolTip.Tip="Code (Ctrl+E)"><TextBlock FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" Text="&lt;/&gt;"/></Button>
+                    <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                    <Button Classes="tool" Click="Heading_Click" ToolTip.Tip="Heading: change level (Ctrl+H)"><TextBlock FontWeight="Bold" Text="H"/></Button>
+                    <Button Classes="tool" Click="BulletList_Click" ToolTip.Tip="Bulleted list"><TextBlock Text="&#x2022;&#x2261;"/></Button>
+                    <Button Classes="tool" Click="NumberedList_Click" ToolTip.Tip="Numbered list"><TextBlock Text="1."/></Button>
+                    <Button Classes="tool" Click="Quote_Click" ToolTip.Tip="Quote"><TextBlock Text="&#x201C;"/></Button>
+                    <Button Classes="tool" Click="CodeBlock_Click" ToolTip.Tip="Code block"><TextBlock FontFamily="Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace" Text="{}{ }"/></Button>
+                    <Button Classes="tool" Click="Link_Click" ToolTip.Tip="Link (Ctrl+K)"><TextBlock Text="Link"/></Button>
+                    <Button Classes="tool" Click="Table_Click" ToolTip.Tip="Insert table"><TextBlock Text="Table"/></Button>
+                    <Border Width="1" Background="#3C3544" Margin="4,2"/>
+                </StackPanel>
+                <!-- the tools of a canvas (docs/NOTES.md): filled in the code -->
+                <StackPanel x:Name="CanvasTools" Orientation="Horizontal" Spacing="2"/>
+                <!-- the view: Surface (default), Split, Code, View -->
+                <ComboBox x:Name="LayoutBox" FontSize="12" MinWidth="86" VerticalAlignment="Center" SelectionChanged="LayoutBox_SelectionChanged" ToolTip.Tip="How the document is shown">
+                    <ComboBoxItem>Surface</ComboBoxItem>
+                    <ComboBoxItem>Split</ComboBoxItem>
+                    <ComboBoxItem>Code</ComboBoxItem>
+                    <ComboBoxItem>View</ComboBoxItem>
+                </ComboBox>
+                <Button x:Name="PreviewButton" Classes="tool" Click="PreviewButton_Click" ToolTip.Tip="Code: show the view - View: show the code - Surface: leave the editor of a container (Ctrl+Shift+V)"><TextBlock x:Name="PreviewButtonText" Text="Preview"/></Button>
             </StackPanel>
         </Border>
 
