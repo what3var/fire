@@ -44,6 +44,8 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { Dialog
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
+// FIRE_TESTS_ONLY=ui: only the UI library in the VM (fake renderer: text fields, clipboard, drag & drop, touch, joystick, markup, ...)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 // the prelude of a standard library (from its installed package)
@@ -9214,6 +9216,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
+uiTests:
 string uiDrawScript = """
     var fb = new Framebuffer(640, 300)
     var win = new Window(fb, "Test")
@@ -9477,6 +9480,168 @@ string[] uiDrawExpected = Array.Empty<string>();
         print(win.RegisterJoystickAdded(func (int j) => { }))
         print(win.RegisterJoystickRemoved(func (int j) => { }))
         """, new[] { "True", "False", "16 3 10 20 1 ", "17 3 12 22 1 ", "18 3 12 22 1 ", "32 7 1 -0.5 ", "33 7 2 ", "34 7 2 ", "35 7 0 5 ", "36 7 ", "37 7 ", "True", "True", "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckUi("Textfeld: Auswahl mit Shift und der Maus, Ctrl+A/C/X/V und Shift+Insert ueber die Zwischenablage, Tippen ersetzt die Auswahl, MaxLength", uiHead + """
+        var tb = new UI.TextBox("Hallo Welt", 10, 10, 200, 24)
+        ui.Add(tb)
+        ui.Draw()
+        ui.SetFocus(tb)
+        print(Clipboard.HasText)
+        __TestEvent(24, UI.Keys.Home(), 1)
+        __TestEvent(24, UI.Keys.C(), 64)
+        ui.Tick()
+        print("[" + tb.SelectedText + "] " + Clipboard.GetText() + " " + Clipboard.HasText)
+        __TestEvent(24, UI.Keys.End(), 0)
+        for (var i = 0; i < 4; i++) { __TestEvent(24, UI.Keys.Left(), 2) }
+        ui.Tick()
+        print("[" + tb.SelectedText + "] " + tb.SelectionStart + " " + tb.SelectionLength)
+        __TestEvent(24, UI.Keys.X(), 128)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + Clipboard.GetText() + "]")
+        __TestEvent(3, "fire")
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Left(), 1)
+        __TestEvent(24, UI.Keys.Left(), 1)
+        __TestEvent(24, UI.Keys.Left(), 0)
+        ui.Tick()
+        print(tb.caret + " " + tb.SelectionLength)
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(tb.Text)
+        Clipboard.SetText("eins\nzwei")
+        __TestEvent(24, UI.Keys.Insert(), 1)
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Home(), 0)
+        __TestEvent(24, UI.Keys.Right(), 1)
+        __TestEvent(24, UI.Keys.Right(), 1)
+        __TestEvent(24, UI.Keys.Delete(), 0)
+        ui.Tick()
+        print(tb.Text)
+        // the mouse: press at the 2nd character, drag to the 6th
+        var x0 = tb.ax + 4 + 2 * ui.cw
+        __TestEvent(8, 1, x0 * 1.0, 20.0)
+        __TestEvent(9, x0 + 4.0 * ui.cw, 20.0)
+        __TestEvent(11, 1, x0 + 4.0 * ui.cw, 20.0)
+        ui.Tick()
+        print("[" + tb.SelectedText + "]")
+        tb.MaxLength = 12
+        Clipboard.SetText("ABCDEFGHIJ")
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(tb.Text + " " + tb.Text.Length)
+        tb.Text = "kurz"
+        ui.Draw()
+        print(tb.caret + " " + tb.HasSelection())
+        """, new[] { "False", "[Hallo Welt] Hallo Welt True", "[Welt] 6 4", "[Hallo ] [Welt]", "Hallo fire", "8 0", "Welt", "Welteins zwei", "lteins zwei", "[eins]", "ltABCDE zwei 12", "4 False" });
+
+    CheckUi("Drag & Drop zwischen Elementen: Start nach 4 Pixeln, DragOver/Drop/DragLeave/DragDone, Zeiger, Escape bricht ab, der Knopf klickt nicht", uiHead + """
+        var log = ""
+        var src = new UI.Button("Quelle", 10, 10, 80, 24)
+        src.OnClick = func () => { log = log + "click " }
+        src.OnDragStart = func (int x, int y) => { return new UI.DragData("Daten", 42, "zahl") }
+        src.OnDragDone = func (UI.DragData d, UI.DropEffect e) => { log = log + "done " + e!int + " " }
+        var target = new UI.Panel(120, 10, 80, 60)
+        target.AllowDrop = true
+        target.OnDragOver = func (UI.DragData d, int x, int y) => {
+            log = log + "over "
+            if (d.Kind == "zahl") { return UI.DropEffect.Move }
+            return UI.DropEffect.None
+        }
+        target.OnDrop = func (UI.DragData d, int x, int y) => {
+            log = log + "drop " + d.Text + " " + d.Value + " " + (d.Source == src) + " "
+            return UI.DropEffect.Move
+        }
+        target.OnDragLeave = func () => { log = log + "leave " }
+        ui.Add(src)
+        ui.Add(target)
+        ui.Draw()
+        // a click without moving clicks
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 22.0, 21.0)
+        __TestEvent(11, 1, 22.0, 21.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        log = ""
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging + " " + ui.shownCursor!int)
+        __TestEvent(9, 130.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.shownCursor!int)
+        __TestEvent(11, 1, 130.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // cancelled with Escape over the target
+        log = ""
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 130.0, 30.0)
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 130.0, 30.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // a target that refuses: the source hears None, nothing is dropped
+        log = ""
+        src.OnDragStart = func (int x, int y) => { return new UI.DragData("Text") }
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 130.0, 30.0)
+        __TestEvent(11, 1, 130.0, 30.0)
+        ui.Tick()
+        print(log)
+        // into a text field (it takes text by itself)
+        var tb = new UI.TextBox("", 10, 100, 200, 24)
+        ui.Add(tb)
+        ui.Draw()
+        log = ""
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 50.0, 110.0)
+        __TestEvent(11, 1, 50.0, 110.0)
+        ui.Tick()
+        print(log + "| [" + tb.Text + "] " + (ui.focusElement == tb))
+        // a text field keeps the held button for selecting: no drag from a panel around it
+        var holder = new UI.Panel(0, 140, 300, 40)
+        holder.OnDragStart = func (int x, int y) => { return new UI.DragData("panel") }
+        var inner = new UI.TextBox("abcdef", 10, 8, 120, 24)
+        holder.Add(inner)
+        ui.Add(holder)
+        ui.Draw()
+        __TestEvent(8, 1, inner.ax + 6.0, 156.0)
+        __TestEvent(9, inner.ax + 40.0, 156.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + inner.HasSelection())
+        __TestEvent(11, 1, inner.ax + 40.0, 156.0)
+        ui.Tick()
+        """, new[] { "click | False", "| True 10", "over | 11", "over over drop Daten 42 True done 2 | False", "over leave done 0 | False", "over over done 0 ", "done 1 | [Text] True", "False True" });
+
+    CheckUi("Drop aus einem anderen Programm: Dateien und Text gehen an das Element darunter (ein Textfeld nimmt sie), sonst an onDrop", uiHead + """
+        var tb = new UI.TextBox("", 10, 10, 200, 24)
+        var area = new UI.Panel(10, 50, 200, 50)
+        area.AllowDrop = true
+        area.OnDrop = func (UI.DragData d, int x, int y) => {
+            print("area " + d.Files.Count + " [" + d.Files[0] + "] [" + d.Files[1] + "] " + d.External + " " + x + " " + y)
+            return UI.DropEffect.Copy
+        }
+        var picky = new UI.Panel(220, 50, 80, 50)
+        picky.AllowDrop = true
+        picky.OnDragOver = func (UI.DragData d, int x, int y) => { if (d.HasFiles) { return UI.DropEffect.Copy } return UI.DropEffect.None }
+        picky.OnDrop = func (UI.DragData d, int x, int y) => { print("picky " + d.Files[0]) }
+        ui.onDrop = func (UI.DragData d, int x, int y) => { print("root [" + d.Text + "] " + d.Files.Count + " " + x + " " + y) }
+        ui.Add(tb)
+        ui.Add(area)
+        ui.Add(picky)
+        ui.Draw()
+        __TestEvent(41, "Hallo", 20.0, 20.0)
+        __TestEvent(40, "/a/b.txt\n/c d.png", 20.0, 60.0)
+        __TestEvent(41, "frei", 300.0, 150.0)
+        __TestEvent(41, "Text", 230.0, 60.0)
+        __TestEvent(40, "/x.y", 230.0, 60.0)
+        __TestEvent(40, "/p", 200.0, 20.0)
+        ui.Tick()
+        print(tb.Text)
+        """, new[] { "area 2 [/a/b.txt] [/c d.png] True 20 60", "root [frei] 0 300 150", "root [Text] 0 230 60", "picky /x.y", "Hallo/p" });
 
     CheckUi("Touch: UI.Root fuehrt die Oberflaeche mit dem Finger (Antippen, Abheben daneben, zweiter Finger, kein Hover danach)", uiHead + """
         print(win.TouchMouse)
@@ -11303,6 +11468,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 
 // ---------------------------------------------------------------------------
 // Native callbacks (window events) run nested on the VM of the thread: real globals, no copying
@@ -23102,6 +23268,52 @@ else
                 e = win.NextEvent()
             }
             """, new[] { "True", "False", "down 5 32 12 1", "axis 7 1 -1", "button 7 3", "hat 7 0 3", "removed 7", "True", "queued 16 5 32 12 1 ", "queued 17 5 48 24 0.5 ", "queued 18 5 48 24 0 ", "queued 32 7 1 -1 ", "queued 33 7 3 ", "queued 34 7 3 ", "queued 35 7 0 3 ", "queued 37 7 " }, "-DFIRE_DISPLAY_SELFTEST_INPUT "),
+                ("Fenster: Drop von Dateien und Text aus einem anderen Programm (Callbacks, Warteschlange, Position), die Zwischenablage", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "drop")
+            win.RegisterDropFiles(func(any files, float x, float y) => {
+                var line = "files"
+                foreach (f in files) { line = line + " [" + f + "]" }
+                print(line + " at " + x + " " + y)
+            })
+            win.RegisterDropText(func(string text, float x, float y) => { print("text [" + text + "] at " + x + " " + y) })
+            win.EnableEvents()
+            print(win.Tick())
+            var e = win.NextEvent()
+            while (e != undefined) {
+                if (e[0] == 40) { print("queued 40 " + e[1].length + " " + e[1][0] + " " + e[2] + " " + e[3]) }
+                if (e[0] == 41) { print("queued 41 " + e[1] + " " + e[2] + " " + e[3]) }
+                e = win.NextEvent()
+            }
+            print(Clipboard.HasText)
+            print(Clipboard.SetText("Grüße aus fire 😀"))
+            print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
+            """, new[] { "files [/tmp/eins.txt] [/tmp/zwei ä.png] at 40 30", "text [gezogener Text] at 40 30", "files [/tmp/allein.txt] at 40 30", "False", "queued 40 2 /tmp/eins.txt 40 30", "queued 41 gezogener Text 40 30", "queued 40 1 /tmp/allein.txt 40 30", "False", "True", "True Grüße aus fire 😀 17" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
+                ("UI: ein Drop aus einem anderen Programm erreicht das Element darunter, ein Textfeld kopiert und fuegt ueber die Zwischenablage ein", """
+            #import "ui"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "ui drop")
+            var ui = new UI.Root(fb, win)
+            var area = new UI.Panel(0, 0, 60, 40)
+            area.AllowDrop = true
+            area.OnDrop = func (UI.DragData d, int x, int y) => {
+                print("area " + d.Files.Count + " [" + d.Text + "] " + d.External + " " + x + " " + y)
+                return UI.DropEffect.Copy
+            }
+            ui.Add(area)
+            var tb = new UI.TextBox("kopier mich", 0, 0, 10, 10)
+            tb.Visible = false
+            ui.Add(tb)
+            ui.Draw()
+            ui.Tick()
+            tb.SelectAll()
+            tb.Copy()
+            print(Clipboard.GetText())
+            tb.Select(0, 6)
+            tb.Paste()
+            print(tb.Text)
+            """, new[] { "area 2 [] True 40 30", "area 0 [gezogener Text] True 40 30", "area 1 [] True 40 30", "kopier mich", "kopier mich mich" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
                 ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
             #import "windows"
             var fb = new Framebuffer(64, 48)
@@ -23823,6 +24035,12 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
             case fire.Terminal.Event.EventType.JoystickAdded:
             case fire.Terminal.Event.EventType.JoystickRemoved:
                 _pending.Add(new fire.Terminal.Event.JoystickEvent { Type = kind, Joystick = (int)args[1].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.DropFiles:   // (paths separated by "\n", x, y)
+                _pending.Add(new fire.Terminal.Event.DropEvent { Type = kind, Files = args[1].AsString().Split('\n'), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.DropText:
+                _pending.Add(new fire.Terminal.Event.DropEvent { Type = kind, Text = args[1].AsString(), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat() });
                 break;
         }
     }

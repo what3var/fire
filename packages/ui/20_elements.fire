@@ -453,6 +453,51 @@ namespace UI {
         bool CanPan() { return false }
         bool Dragging() { return false }
         bool PanBy(Root root, int dx, int dy) { return false }
+
+        // ---- Drag & drop (docs/UI.md) ----
+        // A drag starts when the left mouse button is held on the element and the pointer moves a few pixels: OnDragStart (x, y of the press) gives what
+        // is dragged (a UI.DragData; undefined: no drag from here - the element around it is asked next). AllowDrop makes the element a target:
+        // OnDragOver (data, x, y) says what a drop would do (a UI.DropEffect; undefined: Copy), OnDrop (data, x, y) takes it, OnDragLeave when the pointer
+        // leaves it. The source hears with OnDragDone (data, effect) how it ended: UI.DropEffect.None when it was cancelled (Escape) or refused, Move
+        // when it should remove what it gave. A drop from another program (files, text) goes to the same targets.
+        lambda<int, int> OnDragStart
+        bool AllowDrop = false
+        lambda<UI.DragData, int, int> OnDragOver
+        lambda<UI.DragData, int, int> OnDrop
+        lambda OnDragLeave
+        lambda<UI.DragData, UI.DropEffect> OnDragDone
+
+        // The methods behind them; a control overrides them (a TextBox takes text).
+        UI.DragData DragStart(Root root, int px, int py) {
+            var callback = this.OnDragStart
+            if (callback == undefined) { return undefined }
+            return callback(px, py)
+        }
+        bool AcceptsDrops() { return this.AllowDrop }
+        UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
+            var callback = this.OnDragOver
+            if (callback == undefined) { return UI.DropEffect.Copy }
+            var effect = callback(data, px, py)
+            if (effect == undefined) { return UI.DropEffect.Copy }
+            return effect
+        }
+        UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
+            var callback = this.OnDrop
+            if (callback == undefined) { return UI.DropEffect.None }
+            var effect = callback(data, px, py)
+            if (effect == undefined) { return UI.DropEffect.Copy }
+            return effect
+        }
+        undefined DragLeave(Root root) {
+            var callback = this.OnDragLeave
+            if (callback != undefined) { callback() }
+        }
+        undefined DragDone(Root root, UI.DragData data, UI.DropEffect effect) {
+            var callback = this.OnDragDone
+            if (callback != undefined) { callback(data, effect) }
+        }
+        // Does the element use a held mouse button itself (a text field selects with it)? Then no drag starts from the elements around it.
+        bool KeepsMouseDrag() { return false }
     }
 
     // Container with children. This panel arranges them at their x/y (like a Canvas) and can draw background and frame; the other containers

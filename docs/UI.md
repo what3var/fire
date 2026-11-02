@@ -166,6 +166,36 @@ Die Oberfläche lässt sich mit allen vier Eingaben bedienen; sie laufen in dies
 
 Das `UI.Root` schaltet dafür `window.TouchMouse` aus (siehe docs/CONSOLE.md "Touchscreen und Joystick"), damit ein Finger nicht zweimal ankommt.
 
+## Textfeld: Auswahl, Kopieren, Einfügen
+
+Das `TextBox` markiert mit Umschalt + Pfeil/Pos1/Ende und mit gedrückter Maustaste; `Ctrl+A` markiert alles, `Ctrl+C`/`Ctrl+Einfg` kopiert, `Ctrl+X`/`Umschalt+Entf` schneidet aus, `Ctrl+V`/`Umschalt+Einfg`
+fügt ein (auf dem Mac auch mit Cmd). Getippter Text und Eingefügtes ersetzen die Markierung; Zeilenumbrüche werden beim Einfügen zu Leerzeichen (das Feld hat eine Zeile). `MaxLength`: Getipptes, das nicht
+ganz passt, wird nicht genommen, Eingefügtes wird abgeschnitten. Aus dem Programm: `SelectionStart`, `SelectionLength`, `SelectedText`, `Select(start, länge)`, `SelectAll()`, `ReplaceSelection(text)`,
+`Copy()`, `Cut()`, `Paste()` (über `Clipboard` von `#import "windows"`, docs/CONSOLE.md).
+
+## Drag & Drop
+
+Ein Element wird zur **Quelle**, wenn es `OnDragStart` hat: hält der Nutzer die linke Maustaste darauf und bewegt den Zeiger um 4 Pixel, fragt die Wurzel `OnDragStart(x, y)` (die Stelle des Drückens) -
+gibt es ein `UI.DragData` zurück, beginnt das Ziehen (`undefined`: das Element darum herum wird gefragt). Das gedrückte Element bekommt dann kein `MouseUp` (ein Knopf klickt nicht). Ein Element, das die
+gehaltene Taste selbst braucht (`KeepsMouseDrag()`: das Textfeld markiert; ein gezogener Griff einer Bildlaufleiste), behält sie.
+
+Ein Element wird zum **Ziel** mit `AllowDrop = true`: `OnDragOver(daten, x, y)` sagt, was ein Loslassen hier täte (`UI.DropEffect.None`, `Copy`, `Move`, `Link`; ohne Rückgabe `Copy`), `OnDrop(daten, x, y)`
+nimmt die Daten, `OnDragLeave()` meldet, dass der Zeiger das Ziel verlassen hat. Die Quelle erfährt mit `OnDragDone(daten, effekt)`, wie es ausging (`None`: abgebrochen mit Escape oder abgelehnt;
+`Move`: sie soll entfernen, was sie hergegeben hat). Der Zeiger zeigt während des Ziehens eine Hand über einem Ziel, das annimmt, sonst "nicht erlaubt". `ui.IsDragging` sagt, ob gerade gezogen wird.
+
+```
+list.OnDragStart = func (int x, int y) => { return new UI.DragData(list.SelectedItem, list.SelectedItem, "eintrag") }
+korb.AllowDrop = true
+korb.OnDragOver = func (UI.DragData d, int x, int y) => { if (d.Kind == "eintrag") { return UI.DropEffect.Move } return UI.DropEffect.None }
+korb.OnDrop = func (UI.DragData d, int x, int y) => { korb.Add(new UI.Label(d.Text)); return UI.DropEffect.Move }
+list.OnDragDone = func (UI.DragData d, UI.DropEffect e) => { if (e == UI.DropEffect.Move) { list.Remove(d.Value) } }
+```
+
+`UI.DragData` trägt `Text`, `Files` (Pfade), `Value` (ein beliebiger Wert des Programms), `Kind` (frei wählbar, damit Ziele unterscheiden können), `Source` (das Element, von dem es kommt; `undefined`
+bei einem Drop aus einem anderen Programm, `External`), `HasText`, `HasFiles`. **Drops aus anderen Programmen** (Dateien, Text; docs/CONSOLE.md) gehen an dieselben Ziele: an das Element unter der
+Stelle, das annimmt, sonst an `ui.onDrop(daten, x, y)`. Das Textfeld nimmt Text und Dateien (die Pfade, durch Leerzeichen getrennt) von selbst an der Stelle des Loslassens; `AllowDrop = false` schaltet
+das ab. Eigene Elemente überschreiben statt der Lambdas `DragStart`, `AcceptsDrops`, `DragOver`, `Drop`, `DragLeave`, `DragDone`.
+
 ## Fenstergröße
 
 Ein `UI.Root` schaltet `window.AutoResize` ein: zieht der Nutzer das Fenster auf eine andere Größe, bekommt der Framebuffer sie (sofern sie gültig ist, siehe docs/CONSOLE.md "Fenstergröße ändern") und die Oberfläche

@@ -34,6 +34,10 @@ namespace fire.Terminal.Event
         JoystickHat = 35,
         JoystickAdded = 36,
         JoystickRemoved = 37,
+        /// <summary>The user dropped files onto the window (from another program): their paths, at a position (see <see cref="DropEvent"/>).</summary>
+        DropFiles = 40,
+        /// <summary>The user dropped text onto the window.</summary>
+        DropText = 41,
     }
 
 }

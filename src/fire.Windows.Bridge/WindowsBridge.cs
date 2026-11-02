@@ -103,6 +103,10 @@ namespace fire.Windows.Bridge
                 ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
                 // Window.Cursor: the system cursor over the window
                 ["SetCursor"] = args => { mgr.SetCursor((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
+                // Clipboard: the text on the clipboard of the desktop
+                ["ClipboardSetText"] = args => Value.MakeBool(args[0].Kind == ValueKind.String && mgr.Clipboard.SetText(args[0].AsString())),
+                ["ClipboardGetText"] = args => mgr.Clipboard.GetText() is string text ? Value.MakeString(text) : Value.MakeUndefined(),
+                ["ClipboardHasText"] = args => Value.MakeBool(mgr.Clipboard.HasText),
             };
         }
         
@@ -136,6 +140,9 @@ namespace fire.Windows.Bridge
                 ["SetSize"] = args => Value.MakeBool(false) /*STUB*/,
                 ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
                 ["SetCursor"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ClipboardSetText"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardGetText"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ClipboardHasText"] = args => Value.MakeBool(false) /*STUB*/,
             };
         }
 

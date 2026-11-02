@@ -213,6 +213,32 @@ static Value fire_winb_utf8Str(const char* text, OwnList* list) {
     return StrV(s);
 }
 
+/* The paths of a drop (one per line in `data`) as an array of strings. */
+static Value fire_winb_paths(const char* data, OwnList* list) {
+    size_t count = 0, i = 0;
+    const char* p;
+    Arr* a;
+    if (data == NULL || data[0] == 0) return ArrV(allocArr(0, list));
+    for (p = data; *p; p++) if (*p == '\n') count++;
+    count++;
+    a = allocArr((uint32_t)count, list);
+    p = data;
+    while (i < count) {
+        const char* end = strchr(p, '\n');
+        size_t n = end ? (size_t)(end - p) : strlen(p);
+        char* line = (char*)malloc(n + 1);
+        if (line == NULL) fatal("Out of memory.");
+        memcpy(line, p, n);
+        line[n] = 0;
+        arrItems(a)[i] = fire_winb_utf8Str(line, list);
+        retain(arrItems(a)[i]);
+        free(line);
+        i++;
+        p = end ? end + 1 : p + n;
+    }
+    return ArrV(a);
+}
+
 /* The number of parameters a callback for this event type must have (EventCallback.CheckParameters). */
 static uint32_t fire_winb_callbackParams(int type) {
     switch (type) {
@@ -223,6 +249,7 @@ static uint32_t fire_winb_callbackParams(int type) {
         case FIRE_EV_JOY_AXIS: case FIRE_EV_JOY_HAT: return 3;
         case FIRE_EV_TOUCH_DOWN: case FIRE_EV_TOUCH_MOVE: case FIRE_EV_TOUCH_UP: return 4;
         case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: return 1;
+        case FIRE_EV_DROP_FILES: case FIRE_EV_DROP_TEXT: return 3;
         default: return 0;
     }
 }
@@ -268,6 +295,8 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
             case FIRE_EV_JOY_HAT: a[0] = Int(e->joystick); a[1] = Int(e->index); a[2] = Int((int64_t)e->value); n = 3; break;
             case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: a[0] = Int(e->joystick); a[1] = Int(e->index); n = 2; break;
             case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: a[0] = Int(e->joystick); n = 1; break;
+            case FIRE_EV_DROP_FILES: a[0] = fire_winb_paths(e->data, &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
+            case FIRE_EV_DROP_TEXT: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
             default: break;
         }
         fire_winb_runCallback(mine[i].lam, n, a);
@@ -301,7 +330,10 @@ static void fire_winb_dropBlocked(FireWinState* w, FireDisplayEvents* events) {
             for (i = 0; i < events->count; i++) if (events->items[i].type == FIRE_EV_CLOSE_REQUEST) w->closeRequested = 1;
         return;
     }
-    for (i = 0; i < events->count; i++) if (events->items[i].type == FIRE_EV_RESIZE || events->items[i].type == FIRE_EV_CLOSE) events->items[k++] = events->items[i];
+    for (i = 0; i < events->count; i++) {
+        if (events->items[i].type == FIRE_EV_RESIZE || events->items[i].type == FIRE_EV_CLOSE) events->items[k++] = events->items[i];
+        else { free(events->items[i].data); events->items[i].data = NULL; }
+    }
     events->count = k;
 }
 
@@ -396,7 +428,7 @@ static void fire_winb_pumpThread(void* arg) {
             if (s->touchReq >= 0) { fire_display_setTouchMouse(&s->display, s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { fire_display_setSize(&s->display, s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             if (s->cursorReq >= 0) { fire_display_setCursor(&s->display, s->cursorReq); s->cursorReq = -1; }
-            events.count = 0;
+            fire_display_eventsClear(&events);
             w = s->frontW > 0 ? s->frontW : s->width; h = s->frontH > 0 ? s->frontH : s->height;
             open = fire_display_pump(&s->display, &events, w, h);
             for (e = 0; e < events.count; e++) if (s->inbox.count < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&s->inbox, &events.items[e]);
@@ -731,7 +763,8 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
     uint32_t n = 0, k;
     Arr* a;
     if (!w->queueOn || w->queueHead >= w->queue.count) return Undef();
-    e = w->queue.items[w->queueHead++];
+    e = w->queue.items[w->queueHead];
+    w->queue.items[w->queueHead++].data = NULL;   /* (the event's text is this function's now) */
     if (w->queueHead == w->queue.count) { w->queue.count = 0; w->queueHead = 0; }
     items[n++] = Int(e.type);
     switch (e.type) {
@@ -747,12 +780,37 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
         case FIRE_EV_JOY_HAT: items[n++] = Int(e.joystick); items[n++] = Int(e.index); items[n++] = Int((int64_t)e.value); break;
         case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: items[n++] = Int(e.joystick); items[n++] = Int(e.index); break;
         case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: items[n++] = Int(e.joystick); break;
+        case FIRE_EV_DROP_FILES: items[n++] = fire_winb_paths(e.data, list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_DROP_TEXT: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         default: break;
     }
+    free(e.data);
     a = allocArr(n, list);
     for (k = 0; k < n; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
     return ArrV(a);
 }
+/* ---- the clipboard (text) of the desktop - Clipboard of the prelude ---- */
+static Value fire_win_WinClipboardSetText(Value text) {
+    char* utf8;
+    int ok;
+    if (text.kind != K_String) return Bool(false);
+    utf8 = fire_winb_toUtf8(text);
+    if (utf8 == NULL) fatal("Out of memory.");
+    ok = fire_display_clipboardSet(utf8);
+    free(utf8);
+    return Bool(ok != 0);
+}
+/* The text on the clipboard, undefined when there is none. */
+static Value fire_win_WinClipboardGetText(OwnList* list) {
+    char* text = fire_display_clipboardGet();
+    Value v;
+    if (text == NULL) return Undef();
+    v = fire_winb_utf8Str(text, list);
+    free(text);
+    return v;
+}
+static Value fire_win_WinClipboardHasText(void) { return Bool(fire_display_clipboardHas() != 0); }
+
 static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
     FireWinState* w = fire_winb_windowOf(id);
     int t;

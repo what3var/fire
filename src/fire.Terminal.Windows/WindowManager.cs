@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using static SDL3.SDL;
+using DropEvent = fire.Terminal.Event.DropEvent;
 
 namespace fire.Terminal.Windows
 {
@@ -27,6 +28,9 @@ namespace fire.Terminal.Windows
         private Action<LambdaValue, Value[]> Callback;
 
         private readonly Func<IFramebufferRenderer>? _rendererFactory;
+
+        /// <summary>The clipboard (text) that `Clipboard` of the windows prelude uses.</summary>
+        public IClipboard Clipboard { get; set; }
 
         private readonly Action<int>? _hold;
 
@@ -78,6 +82,8 @@ namespace fire.Terminal.Windows
             _framebuffers = framebuffers ?? throw new ArgumentNullException(nameof(framebuffers));
             _callbacks = new List<EventCallback>();
             _rendererFactory = rendererFactory;
+            // the clipboard of the desktop when the windows are SDL's; a renderer of a test (or another backend) gets one of the program's own
+            Clipboard = rendererFactory == null ? new fire.Terminal.Sdl.SdlClipboard() : new MemoryClipboard();
 
             Callback = callbackRunner;
         }
@@ -106,7 +112,16 @@ namespace fire.Terminal.Windows
         /// repeated]; TextInput [type, text]; Resize [type, width, height] (the size of the window); Close/CloseRequest [type];
         /// TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer, pressure 0 to 1 as floating point);
         /// JoystickAxis [type, joystick, axis, position] (position -1 to 1 as floating point); JoystickButtonDown/Up [type, joystick, button];
-        /// JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre); JoystickAdded/Removed [type, joystick].</summary>
+        /// JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre); JoystickAdded/Removed [type, joystick];
+        /// DropFiles [type, paths (string[]), x, y]; DropText [type, text, x, y].</summary>
+        /// <summary>The paths of a drop as an array of strings.</summary>
+        private static Value Paths(string[] files)
+        {
+            var array = new ScriptArray(files.Length);
+            for (int i = 0; i < files.Length; i++) array.Items[i] = Value.MakeString(files[i]);
+            return Value.MakeArray(array);
+        }
+
         public static Value EncodeEvent(IEvent evnt)
         {
             static long Px(float v) => (long)Math.Floor(v);
@@ -148,6 +163,12 @@ namespace fire.Terminal.Windows
                     break;
                 case JoystickEvent joy:
                     items = new[] { Value.MakeInt((int)joy.Type), Value.MakeInt(joy.Joystick) };
+                    break;
+                case DropEvent drop when drop.Type == Event.EventType.DropFiles:
+                    items = new[] { Value.MakeInt((int)drop.Type), Paths(drop.Files), Value.MakeInt(Px(drop.X)), Value.MakeInt(Px(drop.Y)) };
+                    break;
+                case DropEvent drop:
+                    items = new[] { Value.MakeInt((int)drop.Type), Value.MakeString(drop.Text), Value.MakeInt(Px(drop.X)), Value.MakeInt(Px(drop.Y)) };
                     break;
                 default:
                     items = new[] { Value.MakeInt((int)evnt.Type) };
@@ -375,6 +396,14 @@ namespace fire.Terminal.Windows
                             case Event.EventType.JoystickAdded:
                             case Event.EventType.JoystickRemoved:
                                 Callback(hndlr.Callback, new[] { Value.MakeInt(((JoystickEvent)evnt).Joystick) });
+                                break;
+                            case Event.EventType.DropFiles:
+                                var filesevent = (DropEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Paths(filesevent.Files), Value.MakeFloat(filesevent.X), Value.MakeFloat(filesevent.Y) });
+                                break;
+                            case Event.EventType.DropText:
+                                var dropevent = (DropEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeString(dropevent.Text), Value.MakeFloat(dropevent.X), Value.MakeFloat(dropevent.Y) });
                                 break;
                             case Event.EventType.TextInput:
                                 var textevent = (TextEvent)evnt;

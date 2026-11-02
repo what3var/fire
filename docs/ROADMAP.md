@@ -215,6 +215,20 @@ Dynamisches Laden:
 
 ## 10. Clipboard, Drag & Drop
 
+Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld" und "Drag & Drop"):
+`Clipboard.GetText`/`SetText`/`HasText` (VM: SDL3, nativ: SDL2, ohne Desktop eine eigene Zwischenablage des Programms), die Ereignisse `DropFiles`/`DropText` mit Position, im `ui` die Auswahl im
+Textfeld mit Kopieren/Ausschneiden/Einfügen, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`, `OnDragDone`, `UI.DropEffect`) und Drops aus anderen
+Programmen an das Element darunter.
+
+**Offen:**
+- Bilder und Dateilisten in der Zwischenablage (`GetImage`/`SetImage`, `GetFiles`): SDL2 kennt nur Text - nativ erst mit SDL3 (oder eigenen Plattformteilen); in der VM ginge es über
+  `SDL_GetClipboardData` mit MIME-Typen.
+- Ziehen aus dem Programm heraus in andere Programme; eine Rückmeldung, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3 `DROP_POSITION`, SDL2 hat nichts dafür);
+  ein Bild des gezogenen Inhalts am Zeiger.
+- Doppelklick markiert ein Wort; mehrzeiliges Textfeld.
+
+Ursprünglicher Plan:
+
 * `Clipboard.GetText`/`SetText`, `GetImage`/`SetImage` (`graphics.Image`), `GetFiles`; im `ui`: Kopieren/Einfügen in `TextBox` und eigenen Elementen.
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
   `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später.

@@ -33,4 +33,26 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
 static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 static void fire_display_close(FireDisplayWindow* w) { (void)w; }
 
+/* No desktop: the clipboard is the program's own (Clipboard.SetText and GetText work within it). */
+static char* fire_display_clipboardText = NULL;
+static int fire_display_clipboardSet(const char* text) {
+    size_t n = strlen(text);
+    char* copy = (char*)malloc(n + 1);
+    if (copy == NULL) return 0;
+    memcpy(copy, text, n + 1);
+    free(fire_display_clipboardText);
+    fire_display_clipboardText = copy;
+    return 1;
+}
+static char* fire_display_clipboardGet(void) {
+    size_t n;
+    char* copy;
+    if (fire_display_clipboardText == NULL || fire_display_clipboardText[0] == 0) return NULL;
+    n = strlen(fire_display_clipboardText);
+    copy = (char*)malloc(n + 1);
+    if (copy != NULL) memcpy(copy, fire_display_clipboardText, n + 1);
+    return copy;
+}
+static int fire_display_clipboardHas(void) { return fire_display_clipboardText != NULL && fire_display_clipboardText[0] != 0; }
+
 #endif

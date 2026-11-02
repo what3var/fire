@@ -138,6 +138,7 @@ class Window {
     // framebuffer already has it if it is valid), Close [type]. Touchscreen: TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer; finger
     // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
     // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
+    // Dropped from another program (the file manager, a browser): DropFiles [type, paths (string[]), x, y], DropText [type, text, x, y].
     // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
     // Callbacks.
     bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
@@ -196,6 +197,11 @@ class Window {
     bool RegisterJoystickHat(lambda<int,int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickHat!, fn); }
     bool RegisterJoystickAdded(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAdded!, fn); }
     bool RegisterJoystickRemoved(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickRemoved!, fn); }
+
+    // Files dropped onto the window from another program (a file manager): (paths as string[], x, y in framebuffer pixels).
+    bool RegisterDropFiles(lambda<any,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.DropFiles!, fn); }
+    // Text dropped onto the window from another program: (text, x, y).
+    bool RegisterDropText(lambda<string,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.DropText!, fn); }
 
     bool RegisterTextInput(lambda<string> fn)
     {
@@ -438,5 +444,24 @@ enum EventType
     JoystickButtonUp = 34,
     JoystickHat = 35,
     JoystickAdded = 36,
-    JoystickRemoved = 37
+    JoystickRemoved = 37,
+    DropFiles = 40,
+    DropText = 41
+}
+
+// The clipboard of the desktop (text): what the user copies in other programs, and what the program puts there for them. Without a desktop (a board,
+// a test) the program has a clipboard of its own.
+class Clipboard {
+    // The text on the clipboard, "" when there is none (or the clipboard holds something else, e.g. a picture).
+    static string GetText() {
+        var text = __GRPHWinClipboardGetText()
+        if (text == undefined) { return "" }
+        return text
+    }
+
+    // Puts the text on the clipboard; false when the desktop refuses.
+    static bool SetText(string text) { return __GRPHWinClipboardSetText(text) }
+
+    // Is there text on the clipboard?
+    static bool HasText { get { return __GRPHWinClipboardHasText() } }
 }

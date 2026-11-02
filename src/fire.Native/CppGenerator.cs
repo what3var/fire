@@ -219,7 +219,7 @@ namespace fire.Native
             ["SetVSync"] = (2, false), ["GetVSync"] = (1, false), ["SetAutoResize"] = (2, false), ["GetAutoResize"] = (1, false), ["SetTouchMouse"] = (2, false), ["GetTouchMouse"] = (1, false),
             ["Pump"] = (1, false), ["Present"] = (1, false), ["MgrCreate"] = (0, false), ["MgrAttach"] = (2, false), ["MgrDetach"] = (2, false), ["MgrStart"] = (2, false), ["MgrWait"] = (2, false),
             ["SetBlocked"] = (2, false), ["MgrServed"] = (1, false), ["SetAutoClose"] = (2, false), ["GetAutoClose"] = (1, false), ["SetSize"] = (3, false), ["SystemTheme"] = (0, true),
-            ["SetCursor"] = (2, false),
+            ["SetCursor"] = (2, false), ["ClipboardSetText"] = (1, false), ["ClipboardGetText"] = (0, true), ["ClipboardHasText"] = (0, false),
         };
 
         private static readonly HashSet<string> GraphicsNeedsList = new() { "FbReadBytes", "FbReadPalette", "FbLastError", "SlcSlice", "FntName" };
@@ -3457,7 +3457,7 @@ namespace fire.Native
                             }
                             UseThreads();
                         }
-                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name is "WinNextEvent" or "WinSystemTheme" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
+                        string args = string.Join(", ", Enumerable.Range(first, argc).Select(S).Concat(name is "WinNextEvent" or "WinSystemTheme" or "WinClipboardGetText" ? new[] { "&" + OwnerList() } : Array.Empty<string>()));
                         E($"{S(first)} = fire_win_{name}({args});");   // (fire_bridge_windows.h, part of this file)
                         Check();
                         d = first + 1; SetR(first, winNative.Reference); return Next();

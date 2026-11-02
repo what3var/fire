@@ -44,6 +44,9 @@ namespace fire.Terminal.Event
                 case EventType.JoystickAdded:
                 case EventType.JoystickRemoved:
                     return callback.Proto.ParamCount == 1;
+                case EventType.DropFiles:
+                case EventType.DropText:
+                    return callback.Proto.ParamCount == 3;
                 default:
                     return callback.Proto.ParamCount == 0;
             }
