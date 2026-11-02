@@ -39,6 +39,8 @@
 #define IconFireSln    IconId(105)
 #define IconFireXml    IconId(106)
 #define IconBiscuit    IconId(107)
+#define IconMarkdown   IconId(108)
+#define IconCanvas     IconId(109)
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -120,7 +122,7 @@ Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\shell\open\command"; Valu
 ; xmd (canvas: extended Markdown, docs/NOTES.md)
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc6Key}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc6Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFire}"
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconCanvas}"
 Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Icons]
