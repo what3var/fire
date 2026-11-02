@@ -362,4 +362,5 @@ MigrationBackup/
 .ionide/
 
 # Fody - auto-generated XML schema
-FodyWeavers.xsd.claude/worktrees/
+FodyWeavers.xsd
+.claude/worktrees/
