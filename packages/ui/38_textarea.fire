@@ -1,0 +1,1040 @@
+namespace UI {
+    // A text field with several lines: `Text` holds them separated by "\n" ("\r\n" and "\r" become "\n"). The caret and the other end of the selection (`anchor`)
+    // are offsets into the text. Scroll bars appear when the text does not fit (horizontally only without `WordWrap`); the mouse wheel scrolls.
+    // Keys: arrows (Up/Down keep the column), Home/End (with Ctrl: the start/end of the text), PageUp/PageDown, Ctrl+Left/Right by words, with Shift they select;
+    // Enter inserts a line break (`AcceptsReturn`), Tab a tab only with `AcceptsTab` (otherwise it moves the focus); Ctrl+A/C/X/V, Ctrl/Shift+Insert and
+    // Shift+Delete use the clipboard. The mouse selects by dragging, a double click selects a word, a triple click the line.
+    //
+    // Long texts stay fast: the area keeps an index of where each line starts (and with WordWrap where each row on the screen starts), an edit only updates it,
+    // and only the rows that can be seen are drawn.
+    class TextArea : Element {
+        string Text
+        int caret = 0
+        // the other end of the selection (-1 or equal to caret: nothing is selected)
+        int anchor = -1
+        // long lines are broken at the width of the area (at spaces where possible) instead of scrolling sideways
+        bool WordWrap = false
+        // Enter inserts a line break; Tab inserts a tab only with AcceptsTab (Shift+Tab and Ctrl+Tab always move the focus)
+        bool AcceptsReturn = true
+        bool AcceptsTab = false
+        // the user can select and copy, but not change the text (the program still can)
+        bool ReadOnly = false
+        // at most this many characters (0: no limit); typed text that does not fit is not taken, pasted text is cut
+        int MaxLength = 0
+        // a tab reaches the next column that is a multiple of TabSize
+        int TabSize = 4
+        lambda OnChange
+        bool changed = false
+        Scroller vbar
+        Scroller hbar
+        // at the last layout: the bars that are shown and the size of the visible section (inside the frame, without the bars)
+        bool showV = false
+        bool showH = false
+        int viewW = 0
+        int viewH = 0
+        // the space between the frame and the text
+        int padding = 3
+        // the font at the last layout: the renderer's own (columns are counted, not measured), the width of its cells, the height of a line
+        bool mono = true
+        int cellW = 8
+        int lineH = 14
+        string measuredKey = ""
+
+        // The line index for the text `indexed`: where each line starts (lineStart[0] = 0) and how wide it is in pixels (-1: not measured yet), `widest` the widest line (-1: unknown).
+        int lineStart[]
+        int lineWidth[]
+        int lineCount = 1
+        string indexed = ""
+        bool hasTabs = false
+        int widest = -1
+        // With WordWrap: where each row on the screen starts, for the width `wrapWidth` (-1: not built; the rows are then the lines).
+        int rowStart[]
+        int rowCount = 0
+        int wrapWidth = -1
+
+        // Up/Down keep this x position (-1: that of the caret)
+        int goalX = -1
+        // the caret is scrolled into view at the next layout
+        bool reveal = false
+        // the held mouse button selects: 1 characters, 2 words (after a double click), 3 lines (after a triple click); the first word or line stays selected
+        bool selecting = false
+        int selectMode = 1
+        int wordStart = 0
+        int wordEnd = 0
+
+        construct(string text = "", int x = 0, int y = 0, int width = 240, int height = 120) : base(x, y, width, height) {
+            this.cursor = UI.Cursor.IBeam
+            this.vbar = new Scroller(false)
+            this.hbar = new Scroller(true)
+            this.vbar.owner = this
+            this.hbar.owner = this
+            this.lineStart = new int[16]
+            this.lineWidth = new int[16]
+            this.rowStart = new int[16]
+            // text and files can be dropped into the area (Drop); AllowDrop = false switches it off
+            this.AllowDrop = true
+            this.Text = UI.TextArea.Normalize(text)
+            this.Reindex()
+        }
+
+        bool Focusable() { return true }
+
+        string StyleKey() { return "TextArea" }
+
+        bool TakeChanged() {
+            var was = this.changed
+            this.changed = false
+            return was
+        }
+
+        undefined Changed() {
+            this.changed = true
+            var callback = this.OnChange
+            if (callback != undefined) { callback() }
+        }
+
+        // Line breaks as "\n".
+        static string Normalize(string text) {
+            if (text == undefined) { return "" }
+            if (text.IndexOf("\r") < 0) { return text }
+            return text.Replace("\r\n", "\n").Replace("\r", "\n")
+        }
+
+        // Replaces the text; the caret goes to the start.
+        undefined SetText(string value) {
+            // (the old text is held until the field has its new value: see Reindex)
+            var previous = this.Text
+            this.Text = UI.TextArea.Normalize(value)
+            this.Reindex()
+            this.caret = 0
+            this.anchor = -1
+            this.goalX = -1
+            this.vbar.Set(0)
+            this.hbar.Set(0)
+        }
+
+        // Appends text at the end (a log): the caret goes there and is scrolled into view.
+        undefined AppendText(string value) {
+            this.EnsureIndex()
+            var end = this.Text.Length
+            this.Splice(end, 0, UI.TextArea.Normalize(value))
+            this.caret = this.Text.Length
+            this.anchor = -1
+            this.reveal = true
+            this.Changed()
+        }
+
+        // ---- the line index ----
+
+        // Was `Text` set from outside since the index was built? Then it is built anew.
+        undefined EnsureIndex() {
+            if (this.Text == undefined) { this.Text = "" }
+            var current = this.Text
+            if (current == this.indexed) { return }
+            if (current.IndexOf("\r") >= 0) { this.Text = UI.TextArea.Normalize(current) }
+            this.Reindex()
+        }
+
+        // Builds the line index for the whole text.
+        undefined Reindex() {
+            var text = this.Text
+            var n = 1
+            var p = text.IndexOf("\n")
+            while (p >= 0) {
+                n = n + 1
+                p = text.IndexOf("\n", p + 1)
+            }
+            var starts = new int[n + 16]
+            var widths = new int[n + 16]
+            starts[0] = 0
+            widths[0] = -1
+            var i = 1
+            p = text.IndexOf("\n")
+            while (p >= 0) {
+                starts[i] = p + 1
+                widths[i] = -1
+                i = i + 1
+                p = text.IndexOf("\n", p + 1)
+            }
+            this.SetLines(starts, widths, n)
+            // the old value stays referenced by a local until the field has the new one (a native program compares the two after the assignment)
+            var previous = this.indexed
+            this.indexed = text
+            this.hasTabs = text.IndexOf("\t") >= 0
+            this.widest = -1
+            this.wrapWidth = -1
+            this.Clamp()
+        }
+
+        undefined SetLines(int starts[], int widths[], int count) {
+            var oldStarts = this.lineStart
+            var oldWidths = this.lineWidth
+            this.lineStart = starts
+            starts.TakeTo(this)
+            this.lineWidth = widths
+            widths.TakeTo(this)
+            this.lineCount = count
+            delete oldStarts
+            delete oldWidths
+        }
+
+        undefined SetRows(int rows[], int count) {
+            var old = this.rowStart
+            this.rowStart = rows
+            rows.TakeTo(this)
+            this.rowCount = count
+            if (old != rows) { delete old }
+        }
+
+        // The number of lines, the text of one (without the line break), the line of an offset and where a line starts and ends (before its line break).
+        int LineCount { get { this.EnsureIndex(); return this.lineCount } }
+        string GetLine(int index) {
+            this.EnsureIndex()
+            if (index < 0 || index >= this.lineCount) { return "" }
+            var start = this.lineStart[index]
+            return this.Text.Substring(start, this.LineEnd(index) - start)
+        }
+        int LineOf(int offset) {
+            var starts = this.lineStart
+            var lo = 0
+            var hi = this.lineCount - 1
+            while (lo < hi) {
+                var mid = (lo + hi + 1) / 2
+                if (starts[mid] <= offset) { lo = mid } else { hi = mid - 1 }
+            }
+            return lo
+        }
+        int LineStartOf(int line) { return this.lineStart[line] }
+        int LineEnd(int line) {
+            if (line + 1 < this.lineCount) { return this.lineStart[line + 1] - 1 }
+            return this.Text.Length
+        }
+        // The line and the column (in characters) of the caret, both from 0.
+        int CaretLine { get { this.EnsureIndex(); return this.LineOf(this.caret) } }
+        int CaretColumn { get { this.EnsureIndex(); return this.caret - this.lineStart[this.LineOf(this.caret)] } }
+
+        // ---- rows: the lines as they are shown (with WordWrap a line can take several rows) ----
+
+        bool Wrapped() { return this.WordWrap && this.wrapWidth >= 0 }
+        int RowCount() {
+            if (this.Wrapped()) { return this.rowCount }
+            return this.lineCount
+        }
+        int RowStart(int row) {
+            if (this.Wrapped()) { return this.rowStart[row] }
+            return this.lineStart[row]
+        }
+        int RowOf(int offset) {
+            if (!this.Wrapped()) { return this.LineOf(offset) }
+            return UI.TextArea.Search(this.rowStart, this.rowCount, offset)
+        }
+        // The index of the last entry <= value in the sorted array (its first `count` entries).
+        static int Search(int a[], int count, int value) {
+            var lo = 0
+            var hi = count - 1
+            while (lo < hi) {
+                var mid = (lo + hi + 1) / 2
+                if (a[mid] <= value) { lo = mid } else { hi = mid - 1 }
+            }
+            return lo
+        }
+        // Is the row the last one of its line (and not broken off by WordWrap)?
+        bool RowEndsLine(int row) {
+            if (row + 1 >= this.RowCount()) { return true }
+            var next = this.RowStart(row + 1)
+            return this.Text.CharAt(next - 1).ToInt() == 10
+        }
+        // Where the characters of the row end (exclusive; without the line break).
+        int RowTextEnd(int row) {
+            if (row + 1 >= this.RowCount()) { return this.Text.Length }
+            var next = this.RowStart(row + 1)
+            if (this.Text.CharAt(next - 1).ToInt() == 10) { return next - 1 }
+            return next
+        }
+        // The last offset the caret can have in the row: the end of the line, or before the last character of a row that WordWrap broke off (its end is the start of the next row).
+        int RowLimit(int row) {
+            var end = this.RowTextEnd(row)
+            if (!this.RowEndsLine(row) && end > this.RowStart(row)) { return end - 1 }
+            return end
+        }
+
+        // ---- measuring (tabs reach the next multiple of TabSize columns, counted from the start of the row) ----
+
+        // The column of `offset` in the row that starts at `rs`.
+        int ColumnOf(int rs, int offset) {
+            if (!this.hasTabs || offset <= rs) { return offset - rs }
+            var piece = this.Text.Substring(rs, offset - rs)
+            var column = 0
+            var p = 0
+            var t = piece.IndexOf("\t")
+            while (t >= 0) {
+                column = column + t - p
+                column = column + this.TabSize - column % this.TabSize
+                p = t + 1
+                t = piece.IndexOf("\t", p)
+            }
+            return column + piece.Length - p
+        }
+
+        // The characters [begin, finish) of the row that starts at `rs` as they are shown (tabs as spaces).
+        string Shown(int rs, int begin, int finish) {
+            if (finish <= begin) { return "" }
+            var piece = this.Text.Substring(begin, finish - begin)
+            if (!this.hasTabs || piece.IndexOf("\t") < 0) { return piece }
+            var column = this.ColumnOf(rs, begin)
+            var result = ""
+            var p = 0
+            var t = piece.IndexOf("\t")
+            while (t >= 0) {
+                result = result + piece.Substring(p, t - p)
+                column = column + t - p
+                var spaces = this.TabSize - column % this.TabSize
+                result = result + "".PadRight(spaces)
+                column = column + spaces
+                p = t + 1
+                t = piece.IndexOf("\t", p)
+            }
+            return result + piece.Substring(p)
+        }
+
+        // The x position (from the start of the text) of `offset` in the row that starts at `rs`.
+        int XOf(Root root, int rs, int offset) {
+            if (offset <= rs) { return 0 }
+            if (this.mono) { return this.ColumnOf(rs, offset) * this.cellW }
+            return this.TextWidth(root, this.Shown(rs, rs, offset))
+        }
+
+        // The offset in the row nearest to x (`nearest`: the boundary between two characters; otherwise the character under x).
+        int OffsetAtX(Root root, int row, int x, bool nearest = true) {
+            var rs = this.RowStart(row)
+            var limit = this.RowLimit(row)
+            if (x <= 0 || limit <= rs) { return rs }
+            if (this.mono && !this.hasTabs) {
+                var column = x / this.cellW
+                if (nearest) { column = (x + this.cellW / 2) / this.cellW }
+                return UI.M.Min(rs + column, limit)
+            }
+            // the last offset whose x is not beyond the point (binary search: x grows with the offset)
+            var lo = rs
+            var hi = limit
+            while (lo < hi) {
+                var mid = (lo + hi + 1) / 2
+                if (this.XOf(root, rs, mid) <= x) { lo = mid } else { hi = mid - 1 }
+            }
+            if (nearest && lo < limit) {
+                var a = this.XOf(root, rs, lo)
+                var b = this.XOf(root, rs, lo + 1)
+                if (x - a > b - x) { lo = lo + 1 }
+            }
+            return lo
+        }
+
+        // The width of a line in pixels (for the horizontal scroll bar).
+        int MeasureLine(Root root, int line) {
+            var start = this.lineStart[line]
+            return this.XOf(root, start, this.LineEnd(line))
+        }
+
+        // The widest line (measures the lines that are not measured yet).
+        int Widest(Root root) {
+            if (this.widest >= 0) { return this.widest }
+            var widths = this.lineWidth
+            var n = this.lineCount
+            var most = 0
+            for (var i = 0; i < n; i = i + 1) {
+                var w = widths[i]
+                if (w < 0) {
+                    w = this.MeasureLine(root, i)
+                    widths[i] = w
+                }
+                if (w > most) { most = w }
+            }
+            this.widest = most
+            return most
+        }
+
+        // ---- WordWrap: the rows of a line ----
+
+        // Appends to `rows` where the rows of the line [ls, le) start, for rows at most `room` pixels wide: a row breaks after the last space that fits
+        // (spaces at the break stay at the end of the row), a word longer than the row is broken where the row is full.
+        undefined WrapLine(Root root, List<int> rows, int ls, int le, int room) {
+            rows.Add(ls)
+            var pos = ls
+            var simple = this.mono && !this.hasTabs
+            var perRow = UI.M.Max(1, room / this.cellW)
+            while (true) {
+                if (simple) {
+                    if (le - pos <= perRow) { return }
+                } else if (this.XOf(root, pos, le) <= room) { return }
+                // as far as fits (at least one character)
+                var end = pos + 1
+                if (simple) { end = pos + perRow }
+                else {
+                    var lo = pos + 1
+                    var hi = le
+                    while (lo < hi) {
+                        var mid = (lo + hi + 1) / 2
+                        if (this.XOf(root, pos, mid) <= room) { lo = mid } else { hi = mid - 1 }
+                    }
+                    end = lo
+                }
+                if (this.Text.CharAt(end).ToInt() == 32) {
+                    // the row is full at a space: the spaces stay at its end
+                    while (end < le && this.Text.CharAt(end).ToInt() == 32) { end = end + 1 }
+                } else {
+                    var space = this.Text.Substring(pos, end - pos).LastIndexOf(" ")
+                    if (space > 0) { end = pos + space + 1 }
+                }
+                if (end >= le) { return }
+                rows.Add(end)
+                pos = end
+            }
+        }
+
+        // Builds the rows for the width `room` (if they are not built for it yet).
+        undefined EnsureRows(Root root, int room) {
+            if (this.wrapWidth == room) { return }
+            var rows = new List<int>()
+            var n = this.lineCount
+            for (var i = 0; i < n; i = i + 1) { this.WrapLine(root, rows, this.lineStart[i], this.LineEnd(i), room) }
+            var count = rows.Count
+            var a = new int[count + 16]
+            for (var k = 0; k < count; k = k + 1) { a[k] = rows[k] }
+            this.SetRows(a, count)
+            this.wrapWidth = room
+        }
+
+        // ---- editing ----
+
+        // Replaces `count` characters from `start` by `value` (with "\n" line breaks) and brings the line index (and the rows) up to date: the lines in between
+        // are measured anew, the starts behind them move.
+        undefined Splice(int start, int count, string value) {
+            this.EnsureIndex()
+            var text = this.Text
+            var l0 = this.LineOf(start)
+            var l1 = this.LineOf(start + count)
+            var oldCount = this.lineCount
+            var delta = value.Length - count
+            var breaks = 0
+            var p = value.IndexOf("\n")
+            while (p >= 0) {
+                breaks = breaks + 1
+                p = value.IndexOf("\n", p + 1)
+            }
+            var root = this.host
+            // the rows of the old lines l0..l1 (WordWrap)
+            var wrapped = this.Wrapped() && root != undefined
+            var r0 = 0
+            var r1 = 0
+            if (wrapped) {
+                r0 = UI.TextArea.Search(this.rowStart, this.rowCount, this.lineStart[l0])
+                r1 = this.rowCount
+                if (l1 + 1 < oldCount) { r1 = UI.TextArea.Search(this.rowStart, this.rowCount, this.lineStart[l1 + 1]) }
+            }
+            // was the widest line among the old ones?
+            var widths = this.lineWidth
+            var lostWidest = this.widest < 0
+            for (var i = l0; i <= l1 && !lostWidest; i = i + 1) {
+                if (widths[i] >= this.widest) { lostWidest = true }
+            }
+
+            var updated = text.Substring(0, start) + value + text.Substring(start + count)
+            this.Text = updated
+            this.indexed = updated
+            if (value.IndexOf("\t") >= 0) { this.hasTabs = true }
+
+            var starts = this.lineStart
+            if (l1 == l0 && breaks == 0) {
+                // within one line: only the starts behind it move
+                for (var j = l0 + 1; j < oldCount; j = j + 1) { starts[j] = starts[j] + delta }
+                widths[l0] = -1
+            } else {
+                var n = oldCount - (l1 - l0) + breaks
+                var ns = new int[n + 16]
+                var nw = new int[n + 16]
+                for (var a = 0; a <= l0; a = a + 1) {
+                    ns[a] = starts[a]
+                    nw[a] = widths[a]
+                }
+                nw[l0] = -1
+                var k = l0 + 1
+                p = value.IndexOf("\n")
+                while (p >= 0) {
+                    ns[k] = start + p + 1
+                    nw[k] = -1
+                    k = k + 1
+                    p = value.IndexOf("\n", p + 1)
+                }
+                for (var b = l1 + 1; b < oldCount; b = b + 1) {
+                    ns[k] = starts[b] + delta
+                    nw[k] = widths[b]
+                    k = k + 1
+                }
+                this.SetLines(ns, nw, n)
+                widths = nw
+            }
+
+            // the new lines are measured now (the widest stays known), unless the widest one is gone
+            if (lostWidest || root == undefined) { this.widest = -1 }
+            else {
+                var most = this.widest
+                for (var m = l0; m <= l0 + breaks; m = m + 1) {
+                    var w = this.MeasureLine(root, m)
+                    widths[m] = w
+                    if (w > most) { most = w }
+                }
+                this.widest = most
+            }
+
+            if (wrapped) {
+                var rows = new List<int>()
+                for (var q = l0; q <= l0 + breaks; q = q + 1) { this.WrapLine(root, rows, this.lineStart[q], this.LineEnd(q), this.wrapWidth) }
+                var added = rows.Count
+                var old = this.rowStart
+                var oldRows = this.rowCount
+                var total = oldRows - (r1 - r0) + added
+                if (added == r1 - r0) {
+                    for (var c = 0; c < added; c = c + 1) { old[r0 + c] = rows[c] }
+                    for (var d = r1; d < oldRows; d = d + 1) { old[d] = old[d] + delta }
+                } else {
+                    var nr = new int[total + 16]
+                    for (var e = 0; e < r0; e = e + 1) { nr[e] = old[e] }
+                    for (var f = 0; f < added; f = f + 1) { nr[r0 + f] = rows[f] }
+                    for (var g = r1; g < oldRows; g = g + 1) { nr[g - r1 + r0 + added] = old[g] + delta }
+                    this.SetRows(nr, total)
+                }
+            } else {
+                this.wrapWidth = -1
+            }
+        }
+
+        // ---- the selection ----
+
+        undefined Clamp() {
+            var length = this.Text.Length
+            if (this.caret > length) { this.caret = length }
+            if (this.caret < 0) { this.caret = 0 }
+            if (this.anchor > length) { this.anchor = length }
+        }
+        bool HasSelection() {
+            this.Clamp()
+            return this.anchor >= 0 && this.anchor != this.caret
+        }
+        int SelectionStart {
+            get {
+                if (!this.HasSelection()) { return this.caret }
+                return UI.M.Min(this.anchor, this.caret)
+            }
+        }
+        int SelectionLength {
+            get {
+                if (!this.HasSelection()) { return 0 }
+                return UI.M.Abs(this.caret - this.anchor)
+            }
+        }
+        string SelectedText { get { return this.Text.Substring(this.SelectionStart, this.SelectionLength) } }
+
+        // Selects `length` characters from `start` (the caret goes to the end and is scrolled into view).
+        undefined Select(int start, int length) {
+            var total = this.Text.Length
+            start = UI.M.Clamp(start, 0, total)
+            length = UI.M.Clamp(length, 0, total - start)
+            this.anchor = start
+            this.caret = start + length
+            this.goalX = -1
+            this.reveal = true
+        }
+        undefined SelectAll() { this.Select(0, this.Text.Length) }
+
+        // Replaces the selection (or inserts at the caret) with `value`; MaxLength cuts what does not fit. The caret goes behind it.
+        undefined ReplaceSelection(string value) {
+            this.EnsureIndex()
+            this.Clamp()
+            value = UI.TextArea.Normalize(value)
+            var start = this.SelectionStart
+            var count = this.SelectionLength
+            var rest = this.Text.Length - count
+            if (this.MaxLength > 0 && rest + value.Length > this.MaxLength) {
+                var room = this.MaxLength - rest
+                if (room < 0) { room = 0 }
+                value = value.Substring(0, room)
+            }
+            if (value == "" && count == 0) { return }
+            this.Splice(start, count, value)
+            this.caret = start + value.Length
+            this.anchor = -1
+            this.goalX = -1
+            this.reveal = true
+            this.Changed()
+        }
+
+        // The clipboard (line breaks are kept; "\r\n" from another program becomes "\n").
+        undefined Copy() { if (this.HasSelection()) { Clipboard.SetText(this.SelectedText) } }
+        undefined Cut() {
+            if (!this.HasSelection()) { return }
+            Clipboard.SetText(this.SelectedText)
+            if (!this.ReadOnly) { this.ReplaceSelection("") }
+        }
+        undefined Paste() {
+            if (this.ReadOnly) { return }
+            var text = Clipboard.GetText()
+            if (text == "") { return }
+            this.ReplaceSelection(text)
+        }
+
+        // The caret goes to `position`: with `extend` the selection grows or shrinks, without it the selection goes. `keepGoal`: Up/Down keep their x position.
+        undefined MoveCaret(int position, bool extend, bool keepGoal = false) {
+            this.Clamp()
+            if (extend) {
+                if (this.anchor < 0) { this.anchor = this.caret }
+            } else {
+                this.anchor = -1
+            }
+            this.caret = UI.M.Clamp(position, 0, this.Text.Length)
+            if (!keepGoal) { this.goalX = -1 }
+            this.reveal = true
+        }
+
+        // Up/Down/PageUp/PageDown: `rows` rows further, at the x position the caret had when the moving began.
+        undefined MoveRows(Root root, int rows, bool extend) {
+            this.EnsureIndex()
+            var row = this.RowOf(this.caret)
+            if (this.goalX < 0) { this.goalX = this.XOf(root, this.RowStart(row), this.caret) }
+            var target = row + rows
+            var position = 0
+            if (target < 0) { position = 0 }
+            else if (target >= this.RowCount()) { position = this.Text.Length }
+            else { position = this.OffsetAtX(root, target, this.goalX) }
+            this.MoveCaret(position, extend, true)
+        }
+
+        // The rows that fit into the visible section (PageUp/PageDown).
+        int PageRows() { return UI.M.Max(1, this.viewH / UI.M.Max(1, this.lineH) - 1) }
+
+        // ---- layout and drawing ----
+
+        // Without a fixed size: a few lines.
+        undefined MeasureCore(Root root, int aw, int ah) {
+            this.cw = 160
+            this.ch = 4 * this.TextHeight(root) + 2 * this.padding + 2
+        }
+
+        undefined Poll(Root root) {
+            base.Poll(root)
+            this.EnsureIndex()
+        }
+
+        undefined ArrangeCore(Root root, int w, int h) {
+            this.EnsureIndex()
+            this.lineH = UI.M.Max(1, this.TextHeight(root))
+            this.mono = this.FontName(root) == ""
+            this.cellW = UI.M.Max(1, root.cw)
+            // another font or tab size: everything is measured anew
+            var key = this.FontName(root) + "/" + this.FontPixels(root) + "/" + this.TabSize + "/" + root.cw
+            if (key != this.measuredKey) {
+                var previousKey = this.measuredKey
+                this.measuredKey = key
+                var widths = this.lineWidth
+                for (var i = 0; i < this.lineCount; i = i + 1) { widths[i] = -1 }
+                this.widest = -1
+                this.wrapWidth = -1
+            }
+            if (!this.WordWrap) { this.wrapWidth = -1 }
+            var bar = this.vbar.size
+            var pad = this.padding
+            var innerW = UI.M.Max(0, w - 2)
+            var innerH = UI.M.Max(0, h - 2)
+            // the bars of the last layout first (with WordWrap every other width means wrapping anew)
+            var sv = this.showV
+            var sh = this.showH
+            var vw = innerW
+            var vh = innerH
+            var contentW = 0
+            var contentH = 0
+            for (var pass = 0; pass < 5; pass = pass + 1) {
+                vw = UI.M.Max(0, innerW - (sv ? bar : 0))
+                vh = UI.M.Max(0, innerH - (sh ? bar : 0))
+                if (this.WordWrap) { this.EnsureRows(root, UI.M.Max(this.cellW, vw - 2 * pad)) }
+                contentH = this.RowCount() * this.lineH + 2 * pad
+                if (this.WordWrap) { contentW = vw } else { contentW = this.Widest(root) + 2 * pad + 2 }
+                var nv = contentH > vh
+                var nh = !this.WordWrap && contentW > vw
+                if (nv == sv && nh == sh) { break }
+                if (pass < 2) {
+                    sv = nv
+                    sh = nh
+                } else {
+                    // it would go back and forth: the bars stay
+                    sv = sv || nv
+                    sh = sh || nh
+                }
+            }
+            this.showV = sv
+            this.showH = sh
+            this.viewW = vw
+            this.viewH = vh
+            this.vbar.extent = contentH
+            this.vbar.viewport = vh
+            this.hbar.extent = contentW
+            this.hbar.viewport = vw
+            this.vbar.Set(this.vbar.offset)
+            this.hbar.Set(this.hbar.offset)
+            if (this.reveal) {
+                this.reveal = false
+                this.ScrollToCaret(root)
+            }
+        }
+
+        // Scrolls so that the caret can be seen.
+        undefined ScrollToCaret(Root root) {
+            var pad = this.padding
+            var row = this.RowOf(this.caret)
+            var y = row * this.lineH
+            if (y < this.vbar.offset) { this.vbar.Set(y) }
+            else if (y + this.lineH + 2 * pad > this.vbar.offset + this.viewH) { this.vbar.Set(y + this.lineH + 2 * pad - this.viewH) }
+            if (this.WordWrap) {
+                this.hbar.Set(0)
+                return
+            }
+            var x = this.XOf(root, this.RowStart(row), this.caret)
+            if (x < this.hbar.offset) { this.hbar.Set(x) }
+            else if (x + 2 + 2 * pad > this.hbar.offset + this.viewW) { this.hbar.Set(x + 2 + 2 * pad - this.viewW) }
+        }
+
+        undefined Draw(Root root, int ax, int ay) {
+            if (!this.NeedsDraw(root, ax, ay)) { return }
+            this.Clamp()
+            var theme = root.theme
+            var r = root.renderer
+            var back = theme.inputBack
+            if (!this.Enabled) { back = theme.faceDisabled }
+            else if (this.Background != undefined) { back = this.Background }
+            r.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
+
+            var color = theme.text
+            if (this.Foreground != undefined) { color = this.Foreground }
+            if (!this.Enabled) { color = theme.textDisabled }
+            var lh = this.lineH
+            var pad = this.padding
+            var left = ax + 1 + pad - this.hbar.offset
+            var top = ay + 1 + pad - this.vbar.offset
+            var selStart = this.SelectionStart
+            var selEnd = selStart + this.SelectionLength
+            if (!this.Enabled) { selEnd = selStart }
+            root.PushClip(ax + 1, ay + 1, this.viewW, this.viewH)
+            var rows = this.RowCount()
+            var first = UI.M.Max(0, (this.vbar.offset - pad) / lh)
+            var last = UI.M.Min(rows - 1, (this.vbar.offset + this.viewH) / lh)
+            for (var row = first; row <= last; row = row + 1) {
+                var y = top + row * lh
+                if (!root.Needs(ax, y, this.actualWidth, lh)) { continue }
+                this.DrawRow(root, row, left, y, selStart, selEnd, color)
+            }
+            if (this.Focused) {
+                var cr = this.RowOf(this.caret)
+                var cx = left + this.XOf(root, this.RowStart(cr), this.caret)
+                var cy = top + cr * lh
+                r.DrawLine(cx, cy, cx, cy + lh - 1, theme.caret)
+            }
+            root.PopClip()
+            if (this.showV) { this.vbar.Draw(root, ax + 1 + this.viewW, ay + 1, this.viewH) }
+            if (this.showH) { this.hbar.Draw(root, ax + 1, ay + 1 + this.viewH, this.viewW) }
+            if (this.showV && this.showH) { r.FillRect(ax + 1 + this.viewW, ay + 1 + this.viewH, this.vbar.size, this.hbar.size, theme.scrollTrack) }
+            var border = theme.border
+            if (this.Pen != undefined) { border = this.Pen }
+            if (this.Focused) { border = theme.borderFocus }
+            r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
+        }
+
+        // One row at (left, y): the part that can be seen, the selection on its own background (a selected line break as a small box behind the text).
+        undefined DrawRow(Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
+            var theme = root.theme
+            var rs = this.RowStart(row)
+            var re = this.RowTextEnd(row)
+            // what lies in the visible section (with the renderer's font: by columns; otherwise the whole row, the clip cuts it)
+            var vs = rs
+            var ve = re
+            if (this.mono && !this.hasTabs) {
+                vs = UI.M.Min(re, rs + this.hbar.offset / this.cellW)
+                ve = UI.M.Min(re, rs + (this.hbar.offset + this.viewW) / this.cellW + 2)
+            }
+            var s0 = UI.M.Clamp(selStart, vs, ve)
+            var s1 = UI.M.Clamp(selEnd, vs, ve)
+            var lh = this.lineH
+            if (selEnd > selStart) {
+                var x0 = left + this.XOf(root, rs, s0)
+                var x1 = left + this.XOf(root, rs, s1)
+                // the line break at the end of the row is selected
+                if (selStart <= re && selEnd > re && re < this.Text.Length && this.RowEndsLine(row) && ve == re) { x1 = x1 + UI.M.Max(4, this.cellW / 2) }
+                if (x1 > x0) { root.renderer.FillRect(x0, y, x1 - x0, lh, theme.selection) }
+            }
+            if (s1 > s0) {
+                if (s0 > vs) { this.DrawString(root, left + this.XOf(root, rs, vs), y, this.Shown(rs, vs, s0), color) }
+                this.DrawString(root, left + this.XOf(root, rs, s0), y, this.Shown(rs, s0, s1), theme.selectionText)
+                if (ve > s1) { this.DrawString(root, left + this.XOf(root, rs, s1), y, this.Shown(rs, s1, ve), color) }
+            } else if (ve > vs) {
+                this.DrawString(root, left + this.XOf(root, rs, vs), y, this.Shown(rs, vs, ve), color)
+            }
+        }
+
+        // ---- the mouse ----
+
+        bool OverVBar(int px, int py) { return this.showV && px >= this.ax + 1 + this.viewW && py >= this.ay + 1 && py < this.ay + 1 + this.viewH }
+        bool OverHBar(int px, int py) { return this.showH && py >= this.ay + 1 + this.viewH && px >= this.ax + 1 && px < this.ax + 1 + this.viewW }
+
+        // The row under the point (above or below the area: the row there, beyond the first or last: that one).
+        int RowAtPoint(int py) {
+            var y = py - (this.ay + 1 + this.padding) + this.vbar.offset
+            if (y < 0) { return 0 }
+            return UI.M.Clamp(y / this.lineH, 0, this.RowCount() - 1)
+        }
+        // The offset at the point: the boundary between two characters nearest to it (`nearest`) or the character under it.
+        int OffsetAt(Root root, int px, int py, bool nearest = true) {
+            this.EnsureIndex()
+            var row = this.RowAtPoint(py)
+            var x = px - (this.ax + 1 + this.padding) + this.hbar.offset
+            return this.OffsetAtX(root, row, x, nearest)
+        }
+
+        // A click puts the caret there, dragging selects; a double click selects the word under the pointer (letters, digits and _; on spaces or punctuation
+        // the run of them), a triple click the line (with its line break). Dragging after a double/triple click selects whole words/lines.
+        undefined MouseDown(Root root, int button, int px, int py) {
+            if (button != 1) { return }
+            if (this.OverVBar(px, py)) {
+                this.vbar.Press(py - (this.ay + 1), this.viewH)
+                return
+            }
+            if (this.OverHBar(px, py)) {
+                this.hbar.Press(px - (this.ax + 1), this.viewW)
+                return
+            }
+            this.selecting = true
+            this.goalX = -1
+            this.reveal = true
+            var clicks = root.clickCount
+            if (clicks >= 3) {
+                var line = this.LineOf(this.OffsetAt(root, px, py))
+                this.selectMode = 3
+                this.wordStart = this.lineStart[line]
+                this.wordEnd = this.Text.Length
+                if (line + 1 < this.lineCount) { this.wordEnd = this.lineStart[line + 1] }
+                this.anchor = this.wordStart
+                this.caret = this.wordEnd
+                return
+            }
+            if (clicks == 2) {
+                var at = this.OffsetAt(root, px, py, false)
+                this.selectMode = 2
+                if (at >= this.Text.Length || this.Text.CharAt(at).ToInt() == 10) {
+                    // nothing to select at the end of a line
+                    this.wordStart = at
+                    this.wordEnd = at
+                } else {
+                    this.wordStart = UI.Words.RunStart(this.Text, at)
+                    this.wordEnd = UI.Words.RunEnd(this.Text, at)
+                }
+                this.anchor = this.wordStart
+                this.caret = this.wordEnd
+                return
+            }
+            this.selectMode = 1
+            this.caret = this.OffsetAt(root, px, py)
+            this.anchor = this.caret
+        }
+
+        undefined MouseMove(Root root, int px, int py) {
+            if (this.vbar.dragging) {
+                this.vbar.Drag(py - (this.ay + 1), this.viewH)
+                return
+            }
+            if (this.hbar.dragging) {
+                this.hbar.Drag(px - (this.ax + 1), this.viewW)
+                return
+            }
+            if (!this.selecting) { return }
+            var position = this.OffsetAt(root, px, py)
+            if (this.selectMode == 2) {
+                if (position < this.wordStart) {
+                    this.anchor = this.wordEnd
+                    position = UI.Words.RunStart(this.Text, position)
+                } else if (position > this.wordEnd) {
+                    this.anchor = this.wordStart
+                    position = UI.Words.RunEnd(this.Text, position - 1)
+                } else {
+                    this.anchor = this.wordStart
+                    position = this.wordEnd
+                }
+            } else if (this.selectMode == 3) {
+                var line = this.LineOf(position)
+                if (position < this.wordStart) {
+                    this.anchor = this.wordEnd
+                    position = this.lineStart[line]
+                } else if (position >= this.wordEnd) {
+                    this.anchor = this.wordStart
+                    position = this.Text.Length
+                    if (line + 1 < this.lineCount) { position = this.lineStart[line + 1] }
+                } else {
+                    this.anchor = this.wordStart
+                    position = this.wordEnd
+                }
+            }
+            if (position != this.caret) {
+                this.caret = position
+                this.reveal = true
+            }
+        }
+
+        undefined MouseUp(Root root, int button, int px, int py) {
+            this.selecting = false
+            this.vbar.Release()
+            this.hbar.Release()
+        }
+
+        undefined Hover(Root root, int px, int py) {
+            this.vbar.SetHover(this.OverVBar(px, py))
+            this.hbar.SetHover(this.OverHBar(px, py))
+        }
+
+        // an I-beam over the text, the arrow over the bars
+        UI.Cursor CursorAt(Root root, int px, int py) {
+            if (this.OverVBar(px, py) || this.OverHBar(px, py)) { return UI.Cursor.Arrow }
+            return this.cursor
+        }
+
+        bool MouseWheel(Root root, int dx, int dy) {
+            var step = 3 * this.lineH
+            if (dx != 0 && this.showH) {
+                this.hbar.By(-dx * step)
+                return true
+            }
+            if (dy != 0 && this.showV) {
+                this.vbar.By(-dy * step)
+                return true
+            }
+            if (dy != 0 && this.showH) {
+                this.hbar.By(-dy * step)
+                return true
+            }
+            return false
+        }
+
+        bool CanPan() { return this.showV || this.showH }
+        bool Dragging() { return this.vbar.dragging || this.hbar.dragging }
+        bool PanBy(Root root, int dx, int dy) {
+            if (!this.showV && !this.showH) { return false }
+            if (this.showH) { this.hbar.By(-dx) }
+            if (this.showV) { this.vbar.By(-dy) }
+            return true
+        }
+
+        // the held button selects: no drag starts from the elements around it
+        bool KeepsMouseDrag() { return true }
+
+        // ---- the keyboard ----
+
+        // Tab is typed into the area only with AcceptsTab (and not ReadOnly); otherwise it moves the focus.
+        bool TakesTab() { return this.AcceptsTab && !this.ReadOnly }
+
+        // The area keeps all arrows and the keys that move in the text; Tab only with AcceptsTab.
+        bool WantsKey(int key) {
+            if (key == UI.Keys.Tab()) { return this.TakesTab() }
+            return key == UI.Keys.Left() || key == UI.Keys.Right() || key == UI.Keys.Up() || key == UI.Keys.Down() || key == UI.Keys.Home() || key == UI.Keys.End() ||
+                key == UI.Keys.PageUp() || key == UI.Keys.PageDown()
+        }
+
+        undefined KeyDown(Root root, int key, int mod) {
+            this.EnsureIndex()
+            this.Clamp()
+            var length = this.Text.Length
+            var shift = UI.Keys.Shift(mod)
+            var shortcut = UI.Keys.Shortcut(mod)
+            if (shortcut && key == UI.Keys.A()) { this.SelectAll() }
+            else if (shortcut && (key == UI.Keys.C() || key == UI.Keys.Insert())) { this.Copy() }
+            else if ((shortcut && key == UI.Keys.X()) || (shift && key == UI.Keys.Delete())) { this.Cut() }
+            else if ((shortcut && key == UI.Keys.V()) || (shift && key == UI.Keys.Insert())) { this.Paste() }
+            else if (key == UI.Keys.Left()) {
+                if (shortcut) { this.MoveCaret(UI.Words.Previous(this.Text, this.caret), shift) }
+                else if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart, false) }
+                else { this.MoveCaret(this.caret - 1, shift) }
+            } else if (key == UI.Keys.Right()) {
+                if (shortcut) { this.MoveCaret(UI.Words.Next(this.Text, this.caret), shift) }
+                else if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart + this.SelectionLength, false) }
+                else { this.MoveCaret(this.caret + 1, shift) }
+            } else if (key == UI.Keys.Up()) {
+                this.MoveRows(root, -1, shift)
+            } else if (key == UI.Keys.Down()) {
+                this.MoveRows(root, 1, shift)
+            } else if (key == UI.Keys.PageUp()) {
+                var up = this.PageRows()
+                this.vbar.By(-up * this.lineH)
+                this.MoveRows(root, -up, shift)
+            } else if (key == UI.Keys.PageDown()) {
+                var down = this.PageRows()
+                this.vbar.By(down * this.lineH)
+                this.MoveRows(root, down, shift)
+            } else if (key == UI.Keys.Home()) {
+                if (shortcut) { this.MoveCaret(0, shift) }
+                else { this.MoveCaret(this.RowStart(this.RowOf(this.caret)), shift) }
+            } else if (key == UI.Keys.End()) {
+                if (shortcut) { this.MoveCaret(length, shift) }
+                else { this.MoveCaret(this.RowLimit(this.RowOf(this.caret)), shift) }
+            } else if (this.ReadOnly) {
+                return
+            } else if (key == UI.Keys.Backspace()) {
+                if (this.HasSelection()) { this.ReplaceSelection("") }
+                else if (this.caret > 0) {
+                    var back = this.caret - 1
+                    if (shortcut) { back = UI.Words.Previous(this.Text, this.caret) }
+                    this.anchor = back
+                    this.ReplaceSelection("")
+                }
+            } else if (key == UI.Keys.Delete()) {
+                if (this.HasSelection()) { this.ReplaceSelection("") }
+                else if (this.caret < length) {
+                    var ahead = this.caret + 1
+                    if (shortcut) { ahead = UI.Words.Next(this.Text, this.caret) }
+                    this.anchor = ahead
+                    this.ReplaceSelection("")
+                }
+            } else if (key == UI.Keys.Enter()) {
+                if (this.AcceptsReturn) { this.TextInput(root, "\n") }
+            } else if (key == UI.Keys.Tab()) {
+                if (this.AcceptsTab) { this.TextInput(root, "\t") }
+            }
+        }
+
+        // Typed text replaces the selection; what does not fit as a whole (MaxLength) is not taken (pasting cuts instead).
+        undefined TextInput(Root root, string value) {
+            if (this.ReadOnly) { return }
+            value = UI.TextArea.Normalize(value)
+            if (this.MaxLength > 0 && this.Text.Length - this.SelectionLength + value.Length > this.MaxLength) { return }
+            this.ReplaceSelection(value)
+        }
+
+        // ---- a drop target for text and files (the paths, one per line); OnDragOver/OnDrop of the program decide first ----
+        UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
+            if (this.OnDragOver != undefined) { return base.DragOver(root, data, px, py) }
+            if (data.Source == this || this.ReadOnly) { return UI.DropEffect.None }
+            if (data.HasText || data.HasFiles) { return UI.DropEffect.Copy }
+            return UI.DropEffect.None
+        }
+        UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
+            if (this.OnDrop != undefined) { return base.Drop(root, data, px, py) }
+            if (this.ReadOnly) { return UI.DropEffect.None }
+            var text = data.Text
+            if (!data.HasText) {
+                text = ""
+                foreach (f in data.Files) {
+                    if (text != "") { text = text + "\n" }
+                    text = text + f
+                }
+            }
+            if (text == "") { return UI.DropEffect.None }
+            this.caret = this.OffsetAt(root, px, py)
+            this.anchor = -1
+            this.ReplaceSelection(text)
+            root.SetFocus(this)
+            return UI.DropEffect.Copy
+        }
+    }
+}

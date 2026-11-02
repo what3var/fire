@@ -448,6 +448,9 @@ namespace UI {
         // (keyboard, joystick operation). A list releases the key at its edge so that you can get out of it.
         bool WantsKey(int key) { return false }
 
+        // Does the element take Tab itself (a TextArea with AcceptsTab)? Otherwise Tab moves the focus. Shift+Tab and Ctrl+Tab always move it.
+        bool TakesTab() { return false }
+
         // Touch (finger): can the element be moved by swiping (a list, a ScrollViewer), and is one of its handles being dragged right now? PanBy moves the content by (dx, dy) pixels
         // in the direction of the finger and returns true if the element has taken over the swipe.
         bool CanPan() { return false }

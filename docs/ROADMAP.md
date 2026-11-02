@@ -217,15 +217,16 @@ Dynamisches Laden:
 
 Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld" und "Drag & Drop"):
 `Clipboard.GetText`/`SetText`/`HasText` (VM: SDL3, nativ: SDL2, ohne Desktop eine eigene Zwischenablage des Programms), die Ereignisse `DropFiles`/`DropText` mit Position, im `ui` die Auswahl im
-Textfeld mit Kopieren/Ausschneiden/Einfügen, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`, `OnDragDone`, `UI.DropEffect`) und Drops aus anderen
-Programmen an das Element darunter.
+Textfeld mit Kopieren/Ausschneiden/Einfügen, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`, `OnDragDone`, `UI.DropEffect`) mit einem
+Schild am Zeiger (`DragData.ShowImage`) und Drops aus anderen Programmen an das Element darunter; Doppelklick markiert ein Wort, Dreifachklick alles bzw. die Zeile (`root.clickCount`), und das
+mehrzeilige Textfeld `UI.TextArea` (docs/UI.md "Mehrzeiliges Textfeld").
 
 **Offen:**
 - Bilder und Dateilisten in der Zwischenablage (`GetImage`/`SetImage`, `GetFiles`): SDL2 kennt nur Text - nativ erst mit SDL3 (oder eigenen Plattformteilen); in der VM ginge es über
   `SDL_GetClipboardData` mit MIME-Typen.
 - Ziehen aus dem Programm heraus in andere Programme; eine Rückmeldung, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3 `DROP_POSITION`, SDL2 hat nichts dafür);
-  ein Bild des gezogenen Inhalts am Zeiger.
-- Doppelklick markiert ein Wort; mehrzeiliges Textfeld.
+  ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text).
+- `TextArea`: Rückgängig/Wiederholen, Markierung im Text ziehen (Drag & Drop aus dem Feld heraus).
 
 Ursprünglicher Plan:
 

@@ -360,6 +360,7 @@ namespace fire.Editor
             ("Button", "<Button Name=\"ok\" Text=\"OK\" OnClick=\"Ok\"/>"),
             ("CheckBox", "<CheckBox Name=\"flag\" Text=\"Option\" IsChecked=\"{Binding Flag, Mode=TwoWay}\"/>"),
             ("TextBox", "<TextBox Name=\"name\" Width=\"200\" Text=\"{Binding Name, Mode=TwoWay}\"/>"),
+            ("TextArea", "<TextArea Name=\"notes\" Width=\"300\" Height=\"120\" WordWrap=\"true\" Text=\"{Binding Notes, Mode=TwoWay}\"/>"),
             ("Stack", "<Stack Width=\"200\" Height=\"100\" Orientation=\"Vertical\" Spacing=\"6\">\n  \n</Stack>"),
             ("Panel", "<Panel Left=\"0\" Top=\"0\" Width=\"200\" Height=\"100\" ShowBorder=\"true\">\n  \n</Panel>"),
             ("StackPanel", "<StackPanel Spacing=\"6\" Padding=\"4\">\n  \n</StackPanel>"),

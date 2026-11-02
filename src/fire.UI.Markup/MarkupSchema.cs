@@ -189,8 +189,13 @@ namespace fire.UI.Markup
             }, "OnChange"),
             Define("TextBox", false, "new UI.TextBox(\"\", 0, 0)", new PropertyDef[]
             {
-                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int),
+                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("ReadOnly", PropertyKind.Bool),
             }, "OnChange", "OnEnter"),
+            Define("TextArea", false, "new UI.TextArea(\"\", 0, 0)", new PropertyDef[]
+            {
+                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("ReadOnly", PropertyKind.Bool), new("WordWrap", PropertyKind.Bool),
+                new("AcceptsReturn", PropertyKind.Bool), new("AcceptsTab", PropertyKind.Bool), new("TabSize", PropertyKind.Int),
+            }, "OnChange"),
             Define("AutoSuggestBox", ChildMode.Parts, "new UI.AutoSuggestBox(\"\", 0, 0, 160, 24)", new PropertyDef[]
             {
                 new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("MaxSuggestions", PropertyKind.Int), new("DisplayMember", PropertyKind.Text),
