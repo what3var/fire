@@ -444,6 +444,32 @@ Was der Nutzer aus einem anderen Programm auf das Fenster zieht (Dateien aus dem
   gelassen zu werden. Was gezogen wird, sagt das Betriebssystem erst beim Drop. Ein nativer Build mit SDL2 meldet beides nicht.
 - Die UI-Bibliothek reicht die Drops an das Element darunter weiter (docs/UI.md "Drag & Drop").
 
+**Aus dem Fenster heraus** zieht `window.StartDrag(text, dateien)` einen Text und/oder Dateien (ihre Pfade: `string[]` oder eine `List`; `undefined`: keine) in ein anderes Programm - einen
+Dateimanager, einen Editor, einen Browser. Das Programm ruft es auf, während eine Maustaste gehalten wird (typisch: der Zeiger verlässt bei einem eigenen Ziehen das Fenster - SDL meldet die Maus
+außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das von selbst, docs/UI.md "Drag & Drop"). Der Aufruf kehrt zurück, wenn der Nutzer loslässt:
+
+| Rückgabe | |
+|---|---|
+| `0` | nichts geschah: kein Programm nahm es, der Nutzer brach mit Escape ab, keine Taste war gedrückt - oder die Plattform kann es nicht |
+| `1` | das andere Programm hat es kopiert |
+| `2` | es hat es verschoben (ein Dateimanager hat die Dateien verschoben: das Programm kann sie vergessen) |
+
+- **Windows**: OLE (`DoDragDrop`) mit einem eigenen `IDataObject` - der Text als `CF_UNICODETEXT`, die Dateien als `CF_HDROP` - und einer `IDropSource`; nativ in C (die COM-Objekte als
+  Strukturen mit ihren Funktionstabellen, `ole32.dll` wird beim ersten Ziehen geladen), in der VM genauso über Funktionszeiger (`src/fire.Terminal.Sdl/SdlDragOut.cs`). `DoDragDrop` ist modal und
+  holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).
+- **X11**: das XDND-Protokoll als Quelle (Version 5: `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` an das Fenster mit `XdndAware` unter dem Zeiger, `XdndStatus`/`XdndFinished` zurück; die
+  Auswahl `XdndSelection` gehört dem Fenster und liefert `text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING` und `text/plain`). Kopieren, mit Umschalt Verschieben. libX11 wird zur Laufzeit
+  geladen (ohne X11 - nur Wayland, ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
+  nimmt nur die Antworten des Ziels und die Anfragen nach den Daten aus der Warteschlange, alles andere bleibt für SDL. Den Zeiger hält der Druck, mit dem das Ziehen begann (der implizite Grab der
+  Taste bzw. das Festhalten der Maus durch SDL; ein eigener Grab scheitert, solange SDL3 die Maus über XInput2 hält): die Schleife fragt den Server, wo der Zeiger ist und welche Tasten gedrückt
+  sind, bis losgelassen wird; Escape bricht ab.
+- **Wayland, macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
+- Ein Fenster, das der Thread seines Managers zeigt (`Show`), zieht auf diesem Thread - dem, dem das Fenster des Betriebssystems gehört; das Programm wartet auf die Antwort (nativ ohne die GIL,
+  die anderen Threads des Programms laufen weiter).
+- Im nativen Backend: `fire_display_startDrag(fenster, text, pfade)` der Anzeige (`fire_display_c.h`; die Pfade zeilenweise), umgesetzt in `platform/std/fire_dragout.h` für SDL3 und SDL2
+  (das Fenster des Betriebssystems: SDL3 über die Eigenschaften des Fensters, SDL2 über `SDL_GetWindowWMInfo`); eine Anzeige ohne Desktop sagt `0`. Ein eigenes Board-Paket, das die Funktion
+  nicht hat, bekommt ebenfalls `0`.
+
 Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import "windows"`. Sie hält eine Sache zur Zeit: ein Bild hineinlegen nimmt den Text heraus.
 
 | | |

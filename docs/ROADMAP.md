@@ -24,6 +24,7 @@ Leitlinien:
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
+| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein leeres `ui`-Programm: ~7,4 MB C) |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -216,21 +217,46 @@ Dynamisches Laden:
 
 ## 10. Clipboard, Drag & Drop
 
-Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
+Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
 Windows `CF_HDROP` nativ) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms; die Ereignisse `DropFiles`/`DropText` mit Position
-und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Drag & Drop zwischen Elementen
-(`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`, `OnDragDone`, `UI.DropEffect`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`).
+und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
+Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
+`OnDragDone`, `UI.DropEffect`) mit einem Schild am Zeiger (`DragData.ShowImage`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`);
+Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und Dateien, die Antwort Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11
+(XDND), in der VM und nativ mit SDL3 und SDL2 - das `ui` übergibt ein Ziehen mit Text oder Dateien, sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`).
 
 **Offen:**
-- Ziehen aus dem Programm heraus in andere Programme (`Window.StartDrag`); ein Bild des gezogenen Inhalts am Zeiger.
+- Ziehen aus dem Fenster heraus unter Wayland (`wl_data_source`/`start_drag`; SDL gibt die Verbindung nicht so heraus, dass das neben SDL ginge) und macOS (`NSDraggingSession`); bis dahin endet dort
+  ein Ziehen im `ui` beim Verlassen des Fensters mit `None` - besser wäre, es dann im Fenster weiterlaufen zu lassen (die Plattform müsste sagen, ob sie Drag-out kann).
+- Ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text, und nur im Fenster).
+- Drag-out in der VM unter echtem Windows prüfen (OLE-Pfad nur unter Wine nativ getestet; die VM läuft dort nicht).
 - SDL 3.2 unter X11 sieht nicht, was ein anderes Programm vor seinem Start kopiert hat (es fragt nach den Arten nur, wenn der Besitzer wechselt); Dateien in der Zwischenablage unter Windows
   in der VM (SDL3 hat kein `CF_HDROP`, die VM bleibt dort bei ihrer eigenen).
-- Doppelklick markiert ein Wort; mehrzeiliges Textfeld.
+- `TextArea`: Rückgängig/Wiederholen, Markierung im Text ziehen (Drag & Drop aus dem Feld heraus).
 
 Ursprünglicher Plan:
 
 * `Clipboard.GetText`/`SetText`, `GetImage`/`SetImage` (`graphics.Image`), `GetFiles`; im `ui`: Kopieren/Einfügen in `TextBox` und eigenen Elementen.
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
-  `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später.
+  `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später (jetzt: Windows und X11).
 * Nativ über SDL (Clipboard, `SDL_EVENT_DROP_*`), in der VM über die C#-Natives von `windows`/`ui`.
+
+## 11. Ungenutzten Code weglassen
+
+Anlass: Der Generator übersetzt heute alles, was importiert ist - ein minimales Programm mit `#import "ui"` ergibt rund 207.000 Zeilen bzw. 7,4 MB C, und
+`gcc -O2` braucht dafür über eine Minute (TinyCC ist schnell, das Programm wird aber trotzdem groß). Ziel: nur übersetzen, was das Programm erreichen kann -
+ungenutzte Methoden, Funktionen, Felder-Initialisierer und **ganze Klassen** fallen weg.
+
+* **Erreichbarkeit** vom Einstieg (`Main`, Tests, statische Initialisierer der erreichten Klassen) über Aufrufe, `new`, Basisklassen, Interfaces und Lambdas.
+  Virtuelle Aufrufe: eine Überschreibung bleibt, wenn die Methode der Basis erreicht **und** die Klasse instanziiert wird (Rapid Type Analysis).
+* **Dynamische Zugriffe** halten Code fest: `Reflect.New`/`Reflect.*`, JSON (`Json.Read<T>`), Markup des `ui` (Elemente nach Namen), Treiber und Plugins
+  (Abschnitt 9), Debugger (Abschnitt 8, Ausdrücke im Haltepunkt). Dafür ein Attribut zum Behalten (z. B. `[Keep]`) und ein Schalter, der alles behält
+  (Debug-Builds, Live-Sitzungen).
+* **Natives**: nur die Natives erreichter Methoden einbinden; die C-Bridges der Packages so schneiden, dass ungenutzte Teile (z. B. Zwischenablage,
+  Drag & Drop) gar nicht erst mitkompiliert werden.
+* Tabellen (Klassen-IDs, Methoden-Verteiler, Ausnahmen, Reflection, internierte Namen) nur für das, was bleibt.
+* Mit Abschnitt 9 abstimmen: Eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre öffentliche Schnittstelle vollständig; das Weglassen
+  wirkt dort nur auf Internes bzw. beim Linken des Programms (`"source"`).
+* Optional auch für die VM (kleinere Images, schnellerer Start).
+* Prüfen: die Testsuite mit und ohne Weglassen gleich; Messung von Codegröße und Bauzeit (`ui`, `graphics`, `scene3d`) vorher/nachher.

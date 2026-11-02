@@ -29,6 +29,7 @@
 #include <string.h>
 #include "fire_display_c.h"
 #include "fire_systheme.h"
+#include "fire_dragout.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
 
@@ -439,32 +440,38 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
 #endif
 }
 
-/* ---- a presenter draws into the window itself (fire_display_c.h: fire_display_native) ----
- * The native handles come from SDL_GetWindowWMInfo. Its header (SDL_syswm.h) would bring the headers of the window system into the program - X11 defines `Bool`, `None`,
- * `Status`, ... - so the structure is mirrored here: it is part of SDL2's stable ABI (the version, the subsystem, a union of 64 bytes at pointer alignment). */
+/* ---- the native handles of the window come from SDL_GetWindowWMInfo. Its header (SDL_syswm.h) would bring the headers of the window system into the program - X11
+ * defines `Bool`, `None`, `Status`, ... - so the structure is mirrored here: it is part of SDL2's stable ABI (the version, the subsystem, a union of 64 bytes at pointer
+ * alignment). Used by the presenters (fire_display_native) and by dragging out of the window (fire_display_startDrag). ---- */
+struct SDL_SysWMinfo;
+extern DECLSPEC SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window* window, struct SDL_SysWMinfo* info);
 typedef struct FireSdlWmInfo {
     SDL_version version;
     int subsystem;                                   /* SDL_SYSWM_TYPE: 1 Windows, 2 X11, 4 Cocoa, 6 Wayland */
     union {
-        struct { void* a; void* b; void* c; } p;     /* Windows: HWND, HDC, HINSTANCE; Wayland: wl_display*, wl_surface* */
+        struct { void* window; void* hdc; void* hinstance; } win;
         struct { void* display; unsigned long window; } x11;
+        struct { void* display; void* surface; } wl;
         Uint8 dummy[64];
     } info;
 } FireSdlWmInfo;
-extern DECLSPEC SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window* window, FireSdlWmInfo* info);
 
+static int fire_display_wmInfo(FireDisplayWindow* w, FireSdlWmInfo* info) {
+    memset(info, 0, sizeof *info);
+    SDL_VERSION(&info->version);
+    return w->window && SDL_GetWindowWMInfo(w->window, (struct SDL_SysWMinfo*)(void*)info);
+}
+
+/* ---- a presenter draws into the window itself (fire_display_c.h: fire_display_native) ---- */
 static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) {
     FireSdlWmInfo info;
     int pw = 0, ph = 0;
     memset(out, 0, sizeof *out);
-    if (!w->window) return 0;
-    memset(&info, 0, sizeof info);
-    SDL_VERSION(&info.version);
-    if (!SDL_GetWindowWMInfo(w->window, &info)) return 0;
+    if (!fire_display_wmInfo(w, &info)) return 0;
     switch (info.subsystem) {
-        case 1: out->kind = FIRE_NATIVE_WIN32; out->a = info.info.p.c; out->b = info.info.p.a; break;
+        case 1: out->kind = FIRE_NATIVE_WIN32; out->a = info.info.win.hinstance; out->b = info.info.win.window; break;
         case 2: out->kind = FIRE_NATIVE_X11; out->a = info.info.x11.display; out->id = (uint64_t)info.info.x11.window; break;
-        case 6: out->kind = FIRE_NATIVE_WAYLAND; out->a = info.info.p.a; out->b = info.info.p.b; break;
+        case 6: out->kind = FIRE_NATIVE_WAYLAND; out->a = info.info.wl.display; out->b = info.info.wl.surface; break;
 #if SDL_VERSION_ATLEAST(2, 0, 12)
         case 4:
             if (!w->metalView) w->metalView = SDL_Metal_CreateView(w->window);
@@ -500,6 +507,33 @@ static void fire_display_restore(FireDisplayWindow* w) {
         w->renderer = SDL_CreateRenderer(w->window, -1, w->vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
         if (!w->renderer) w->renderer = SDL_CreateRenderer(w->window, -1, SDL_RENDERER_SOFTWARE);
     }
+}
+
+/* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL2 cannot start such a drag: fire_dragout.h does it for the
+ * window of the platform, see fire_display_sdl3.h) - 0 nothing, 1 copied, 2 moved. ---- */
+#define FIRE_DISPLAY_START_DRAG 1
+static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) {
+    int result = 0;
+    if (!w->window) return 0;
+#if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
+    {
+        FireSdlWmInfo wm;
+        if (fire_display_wmInfo(w, &wm)) {
+#if defined(_WIN32)
+            if (wm.subsystem == 1 && wm.info.win.window != NULL) result = fire_dragout_win32((HWND)wm.info.win.window, text, files);
+#else
+            if (wm.subsystem == 2 && wm.info.x11.display != NULL && wm.info.x11.window != 0) {
+                fire_display_lockSdl();
+                result = fire_dragout_x11(wm.info.x11.display, wm.info.x11.window, text, files);
+                fire_display_unlockSdl();
+            }
+#endif
+        }
+    }
+#else
+    (void)text; (void)files;
+#endif
+    return result;
 }
 
 #endif

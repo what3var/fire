@@ -208,6 +208,20 @@ class Window {
     // It left the window without being dropped.
     bool RegisterDragLeave(lambda fn) { return __GRPHWinRegisterEvent(this.id, EventType.DragLeave!, fn); }
 
+    // Drags a text and/or files (their paths: a string[] or a List) out of this window into other programs - a file manager, an editor, a browser - while a
+    // mouse button is held (call it when the pointer leaves the window during a drag of your own; UI.Root does that by itself). It returns when the user lets
+    // go: 0 nothing happened (no program took it, the user pressed Escape, no button was held), 1 the other program copied it, 2 it moved it (a file manager
+    // moved the files: the program may forget them). Windows (OLE) and X11 (XDND); elsewhere (Wayland, macOS, a board) there is no such drag: 0.
+    int StartDrag(string text, any files = undefined) {
+        var list = new List<string>()
+        if (files != undefined) { foreach (f in files) { list.Add(f) } }
+        var array = new string[list.Count]
+        for (int i = 0; i < list.Count; i++) { array[i] = list[i] }
+        var t = text
+        if (t == undefined) { t = "" }
+        return __GRPHWinStartDrag(this.id, t, array)
+    }
+
     bool RegisterTextInput(lambda<string> fn)
     {
         return __GRPHWinRegisterEvent(this.id, EventType.TextInput!, fn);

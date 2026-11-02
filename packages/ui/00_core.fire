@@ -249,6 +249,53 @@ namespace UI {
         static bool Shortcut(int mod) { return (mod & 0xC0) != 0 || (mod & 0xC00) != 0 }
     }
 
+    // Words in a text, for a double click and Ctrl+Left/Right: letters, digits and _ make a word; a run of spaces and tabs and a run of other characters
+    // (punctuation) count the same way; a line break stands alone.
+    class Words {
+        // 0 a line break, 1 a character of a word, 2 a space or tab, 3 anything else
+        static int Kind(char c) {
+            var code = c.ToInt()
+            if (code == 10 || code == 13) { return 0 }
+            if (code == 95 || c.IsLetterOrDigit()) { return 1 }
+            if (code == 32 || code == 9 || c.IsWhiteSpace()) { return 2 }
+            return 3
+        }
+
+        // Where the run of characters of the same kind as the one at `index` starts, and where it ends (exclusive).
+        static int RunStart(string text, int index) {
+            if (index <= 0 || index >= text.Length) { return UI.M.Clamp(index, 0, text.Length) }
+            var kind = UI.Words.Kind(text.CharAt(index))
+            if (kind == 0) { return index }
+            var i = index
+            while (i > 0 && UI.Words.Kind(text.CharAt(i - 1)) == kind) { i = i - 1 }
+            return i
+        }
+        static int RunEnd(string text, int index) {
+            if (index < 0) { return 0 }
+            if (index >= text.Length) { return text.Length }
+            var kind = UI.Words.Kind(text.CharAt(index))
+            if (kind == 0) { return index + 1 }
+            var i = index + 1
+            while (i < text.Length && UI.Words.Kind(text.CharAt(i)) == kind) { i = i + 1 }
+            return i
+        }
+
+        // Ctrl+Left: the start of the word before `pos` (spaces in between are skipped). Ctrl+Right: the start of the next word.
+        static int Previous(string text, int pos) {
+            var i = UI.M.Clamp(pos, 0, text.Length)
+            while (i > 0 && UI.Words.Kind(text.CharAt(i - 1)) == 2) { i = i - 1 }
+            if (i == 0) { return 0 }
+            return UI.Words.RunStart(text, i - 1)
+        }
+        static int Next(string text, int pos) {
+            var i = UI.M.Clamp(pos, 0, text.Length)
+            if (i >= text.Length) { return i }
+            if (UI.Words.Kind(text.CharAt(i)) != 2) { i = UI.Words.RunEnd(text, i) }
+            while (i < text.Length && UI.Words.Kind(text.CharAt(i)) == 2) { i = i + 1 }
+            return i
+        }
+    }
+
     // What a drop does with what is dragged (Element.OnDragOver/OnDrop/OnDragDone): nothing (refused or cancelled), a copy, a move (the source removes
     // what it gave), a link.
     enum DropEffect { None = 0, Copy = 1, Move = 2, Link = 3 }
@@ -263,6 +310,11 @@ namespace UI {
         string Kind = ""
         UI.Element Source
         bool Pending = false
+        // While it is dragged in the interface, the root shows a small label at the pointer (the text, the files or the kind); false: none
+        bool ShowImage = true
+        // May the drag leave the window? With Text or Files, a drag whose pointer leaves the window goes on in the desktop: other programs (a file manager,
+        // an editor) can take it, and the source hears in OnDragDone what they did (Window.StartDrag). false keeps it inside the program.
+        bool AllowExternal = true
 
         construct(string text = "", any value = undefined, string kind = "") {
             this.Text = text
