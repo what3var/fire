@@ -242,10 +242,16 @@ namespace UI {
         int anchor = -1
         int scroll = 0
         int MaxLength = 0
+        // the user can select and copy, but not change the text (the program still can)
+        bool ReadOnly = false
         lambda OnChange
         lambda OnEnter
         bool changed = false
         bool entered = false
+        // what dragging with the held button selects (1 characters, 2 words after a double click, 3 everything after a triple click) and the word of the double click
+        int selectMode = 1
+        int wordStart = 0
+        int wordEnd = 0
 
         construct(string text, int x = 0, int y = 0, int width = 160, int height = 24) : base(x, y, width, height) {
             this.cursor = UI.Cursor.IBeam
@@ -272,6 +278,8 @@ namespace UI {
         }
 
         undefined SetText(string value) {
+            // (a local holds the old text until the field has the new one: a native program compares the two after the assignment, see ReplaceSelection)
+            var previous = this.Text
             this.Text = value
             this.caret = value.Length
             this.anchor = -1
@@ -333,7 +341,10 @@ namespace UI {
                 value = value.Substring(0, room)
             }
             if (value == "" && count == 0) { return }
-            this.Text = this.Text.Substring(0, start) + value + this.Text.Substring(start + count)
+            // the old text stays referenced by this local until the field has the new one (a watched field compares old and new after the assignment;
+            // natively the old text must still be alive then)
+            var previous = this.Text
+            this.Text = previous.Substring(0, start) + value + previous.Substring(start + count)
             this.caret = start + value.Length
             this.anchor = -1
             this.Changed()
@@ -344,9 +355,10 @@ namespace UI {
         undefined Cut() {
             if (!this.HasSelection()) { return }
             Clipboard.SetText(this.SelectedText)
-            this.ReplaceSelection("")
+            if (!this.ReadOnly) { this.ReplaceSelection("") }
         }
         undefined Paste() {
+            if (this.ReadOnly) { return }
             var text = Clipboard.GetText()
             if (text == "") { return }
             this.ReplaceSelection(UI.TextBox.OneLine(text))
@@ -444,15 +456,59 @@ namespace UI {
             return UI.M.Clamp(this.scroll + column, 0, this.Text.Length)
         }
 
-        // A click puts the caret there; dragging with the button held selects (see MouseMove).
+        // The character under the point (not the boundary next to it, see ColumnAt); the last one beyond the end of the text.
+        int CharIndexAt(Root root, int px) {
+            var x = px - (this.ax + 4)
+            if (x < 0) { return UI.M.Clamp(this.scroll - 1, 0, UI.M.Max(0, this.Text.Length - 1)) }
+            var index = 0
+            if (this.Plain(root)) {
+                index = this.scroll + x / root.cw
+            } else {
+                index = this.scroll
+                while (index < this.Text.Length && this.Span(root, this.scroll, index + 1 - this.scroll) <= x) { index = index + 1 }
+            }
+            return UI.M.Clamp(index, 0, UI.M.Max(0, this.Text.Length - 1))
+        }
+
+        // A click puts the caret there; dragging with the button held selects (see MouseMove). A double click selects the word under the pointer
+        // (letters, digits and _; on spaces or punctuation the run of them), a triple click everything (Root.clickCount).
         undefined MouseDown(Root root, int button, int px, int py) {
             if (button != 1) { return }
+            var clicks = root.clickCount
+            if (clicks >= 3) {
+                this.selectMode = 3
+                this.SelectAll()
+                return
+            }
+            if (clicks == 2 && this.Text.Length > 0) {
+                var at = this.CharIndexAt(root, px)
+                this.selectMode = 2
+                this.wordStart = UI.Words.RunStart(this.Text, at)
+                this.wordEnd = UI.Words.RunEnd(this.Text, at)
+                this.anchor = this.wordStart
+                this.caret = this.wordEnd
+                return
+            }
+            this.selectMode = 1
             this.caret = this.ColumnAt(root, px)
             this.anchor = this.caret
         }
         undefined MouseMove(Root root, int px, int py) {
-            if (this.anchor < 0) { return }
+            if (this.anchor < 0 || this.selectMode == 3) { return }
             var column = this.ColumnAt(root, px)
+            if (this.selectMode == 2) {
+                // after a double click the selection grows by whole words, the first word stays selected
+                if (column < this.wordStart) {
+                    this.anchor = this.wordEnd
+                    column = UI.Words.RunStart(this.Text, column)
+                } else if (column > this.wordEnd) {
+                    this.anchor = this.wordStart
+                    column = UI.Words.RunEnd(this.Text, column - 1)
+                } else {
+                    this.anchor = this.wordStart
+                    column = this.wordEnd
+                }
+            }
             if (column != this.caret) {
                 this.caret = column
                 this.Invalidate()
@@ -486,20 +542,25 @@ namespace UI {
             else if ((shortcut && key == UI.Keys.X()) || (shift && key == UI.Keys.Delete())) { this.Cut() }
             else if ((shortcut && key == UI.Keys.V()) || (shift && key == UI.Keys.Insert())) { this.Paste() }
             else if (key == UI.Keys.Left()) {
-                // without Shift a selection collapses to its start
-                if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart, false) }
+                // without Shift a selection collapses to its start; with Ctrl the caret jumps by words
+                if (shortcut) { this.MoveCaret(UI.Words.Previous(this.Text, this.caret), shift) }
+                else if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart, false) }
                 else { this.MoveCaret(this.caret - 1, shift) }
             } else if (key == UI.Keys.Right()) {
-                if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart + this.SelectionLength, false) }
+                if (shortcut) { this.MoveCaret(UI.Words.Next(this.Text, this.caret), shift) }
+                else if (!shift && this.HasSelection()) { this.MoveCaret(this.SelectionStart + this.SelectionLength, false) }
                 else { this.MoveCaret(this.caret + 1, shift) }
             } else if (key == UI.Keys.Home()) {
                 this.MoveCaret(0, shift)
             } else if (key == UI.Keys.End()) {
                 this.MoveCaret(length, shift)
+            } else if ((key == UI.Keys.Backspace() || key == UI.Keys.Delete()) && this.ReadOnly) {
+                return
             } else if (key == UI.Keys.Backspace()) {
                 if (this.HasSelection()) { this.ReplaceSelection("") }
                 else if (this.caret > 0) {
-                    this.Text = this.Text.Substring(0, this.caret - 1) + this.Text.Substring(this.caret, length - this.caret)
+                    var before = this.Text
+                    this.Text = before.Substring(0, this.caret - 1) + before.Substring(this.caret, length - this.caret)
                     this.caret = this.caret - 1
                     this.anchor = -1
                     this.Changed()
@@ -507,7 +568,8 @@ namespace UI {
             } else if (key == UI.Keys.Delete()) {
                 if (this.HasSelection()) { this.ReplaceSelection("") }
                 else if (this.caret < length) {
-                    this.Text = this.Text.Substring(0, this.caret) + this.Text.Substring(this.caret + 1, length - this.caret - 1)
+                    var before = this.Text
+                    this.Text = before.Substring(0, this.caret) + before.Substring(this.caret + 1, length - this.caret - 1)
                     this.anchor = -1
                     this.Changed()
                 }
@@ -520,6 +582,7 @@ namespace UI {
 
         // Typed text replaces the selection; what does not fit as a whole (MaxLength) is not taken (pasting cuts instead).
         undefined TextInput(Root root, string value) {
+            if (this.ReadOnly) { return }
             if (this.MaxLength > 0 && this.Text.Length - this.SelectionLength + value.Length > this.MaxLength) { return }
             this.ReplaceSelection(value)
         }
@@ -527,12 +590,13 @@ namespace UI {
         // ---- a drop target for text and files (the paths, separated by spaces); OnDragOver/OnDrop of the program decide first ----
         UI.DropEffect DragOver(Root root, UI.DragData data, int px, int py) {
             if (this.OnDragOver != undefined) { return base.DragOver(root, data, px, py) }
-            if (data.Source == this) { return UI.DropEffect.None }
+            if (data.Source == this || this.ReadOnly) { return UI.DropEffect.None }
             if (data.HasText || data.HasFiles || data.Pending) { return UI.DropEffect.Copy }
             return UI.DropEffect.None
         }
         UI.DropEffect Drop(Root root, UI.DragData data, int px, int py) {
             if (this.OnDrop != undefined) { return base.Drop(root, data, px, py) }
+            if (this.ReadOnly) { return UI.DropEffect.None }
             var text = data.Text
             if (!data.HasText) {
                 text = ""

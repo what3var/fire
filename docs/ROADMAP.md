@@ -215,17 +215,18 @@ Dynamisches Laden:
 
 ## 10. Clipboard, Drag & Drop
 
-Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
+Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwischenablage", docs/UI.md "Textfeld", "Mehrzeiliges Textfeld" und "Drag & Drop", docs/NATIVE_BACKEND.md "SDL3 oder SDL2"):
 `Clipboard.GetText`/`SetText`/`HasText`, `GetImage`/`SetImage`/`HasImage` (PNG über `Framebuffer.ToPng`, unter Windows auch `CF_DIB`) und `GetFiles`/`SetFiles`/`HasFiles` (`text/uri-list`, unter
 Windows `CF_HDROP` nativ) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms; die Ereignisse `DropFiles`/`DropText` mit Position
-und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Drag & Drop zwischen Elementen
-(`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`, `OnDragDone`, `UI.DropEffect`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`).
+und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
+Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
+`OnDragDone`, `UI.DropEffect`) mit einem Schild am Zeiger (`DragData.ShowImage`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`).
 
 **Offen:**
-- Ziehen aus dem Programm heraus in andere Programme (`Window.StartDrag`); ein Bild des gezogenen Inhalts am Zeiger.
+- Ziehen aus dem Programm heraus in andere Programme (`Window.StartDrag`; in Arbeit für Windows und X11, Wayland und macOS danach); ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text).
 - SDL 3.2 unter X11 sieht nicht, was ein anderes Programm vor seinem Start kopiert hat (es fragt nach den Arten nur, wenn der Besitzer wechselt); Dateien in der Zwischenablage unter Windows
   in der VM (SDL3 hat kein `CF_HDROP`, die VM bleibt dort bei ihrer eigenen).
-- Doppelklick markiert ein Wort; mehrzeiliges Textfeld.
+- `TextArea`: Rückgängig/Wiederholen, Markierung im Text ziehen (Drag & Drop aus dem Feld heraus).
 
 Ursprünglicher Plan:
 

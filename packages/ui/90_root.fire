@@ -49,8 +49,24 @@ namespace UI {
         // Something of another program dragged over the window (DragHover): the element under it that takes drops, and what it is told (Pending: not known yet)
         Element hoverTarget
         UI.DragData hoverData
+        // The label at the pointer while a drag goes on (see MoveDragImage): where it is drawn (dragImageW = 0: nowhere)
+        int dragImageX = 0
+        int dragImageY = 0
+        int dragImageW = 0
+        int dragImageH = 0
         // Counts the cycles of this root (Tick, Cycle): elements measure short intervals with it (a double click)
         int cycles = 0
+        // Clicks in a row, for Element.MouseDown: 1 a single click, 2 a double click, 3 a triple click, ... A press counts on when it is the same button as the one
+        // before, within `doubleClickTime` milliseconds and `doubleClickDistance` pixels of it. The time comes from `clock` (a lambda that gives milliseconds, for
+        // example `func () => { return DateTime.Now.Ticks / 10000 }` with #import "time"); without it the cycles of the root count (one is about 1/60 s with VSync).
+        int clickCount = 0
+        int doubleClickTime = 400
+        int doubleClickDistance = 4
+        int lambda clock
+        int lastClickButton = -1
+        int lastClickX = 0
+        int lastClickY = 0
+        int lastClickTime = 0
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
         bool dirty = true
         bool fullRedraw = true
@@ -351,6 +367,7 @@ namespace UI {
                 var popup = this.popups[i]
                 popup.Draw(this, popup.rx, popup.ry)
             }
+            this.DrawDragImage()
             if (!this.fullRedraw) { this.PopClip() }
         }
 
@@ -879,9 +896,29 @@ namespace UI {
             this.UpdateCursor(px, py)
         }
 
+        // The time for counting clicks, in milliseconds: from `clock`, otherwise from the cycles (60 per second).
+        int ClickTime() {
+            var c = this.clock
+            if (c != undefined) { return c() }
+            return this.cycles * 1000 / 60
+        }
+
+        // Counts the press into clickCount: the same button, soon enough and near enough to the one before makes it a double (triple, ...) click.
+        undefined CountClick(int button, int px, int py) {
+            var now = this.ClickTime()
+            var near = UI.M.Abs(px - this.lastClickX) <= this.doubleClickDistance && UI.M.Abs(py - this.lastClickY) <= this.doubleClickDistance
+            if (button == this.lastClickButton && near && now - this.lastClickTime <= this.doubleClickTime) { this.clickCount = this.clickCount + 1 }
+            else { this.clickCount = 1 }
+            this.lastClickButton = button
+            this.lastClickX = px
+            this.lastClickY = py
+            this.lastClickTime = now
+        }
+
         undefined MouseDownCore(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
+            this.CountClick(button, px, py)
             // a click next to the floating elements: the topmost says whether it closes and whether the click is thereby consumed
             if (this.popups.Count > 0 && !this.InsidePopup(px, py)) {
                 var consumed = false
@@ -958,12 +995,14 @@ namespace UI {
             }
             if (this.dragging) {
                 this.DragMove(px, py)
+                this.MoveDragImage(px, py)
                 this.UpdateCursor(px, py)
                 return
             }
             if (this.dragFrom != undefined && this.pressedElement != undefined && UI.M.Abs(px - this.dragX0) + UI.M.Abs(py - this.dragY0) >= 4) {
                 if (this.TryStartDrag()) {
                     this.DragMove(px, py)
+                    this.MoveDragImage(px, py)
                     this.UpdateCursor(px, py)
                     return
                 }
@@ -1044,6 +1083,7 @@ namespace UI {
             this.dragTarget = undefined
             this.dragSource = undefined
             this.dragEffect = UI.DropEffect.None
+            this.dragImageW = 0
             if (source != undefined) { source.DragDone(this, data, effect) }
             this.dragData = undefined
             this.Invalidate()
@@ -1076,6 +1116,62 @@ namespace UI {
             this.hoverTarget = undefined
             this.hoverData = undefined
             if (old != undefined) { old.DragLeave(this) }
+        }
+
+        // ---- the drag image: a small label at the pointer while a drag goes on (DragData.ShowImage = false switches it off) ----
+
+        // What the label shows: the text (one line, at most 30 characters), the name of the file or "n files", else the kind of the data; "" shows nothing.
+        string DragImageText(UI.DragData data) {
+            if (data == undefined || !data.ShowImage) { return "" }
+            if (data.HasText) {
+                var text = data.Text.Replace("\r\n", " ").Replace("\n", " ").Replace("\r", " ").Replace("\t", " ")
+                if (text.Length > 30) { text = text.Substring(0, 29) + "..." }
+                return text
+            }
+            if (data.HasFiles) {
+                if (data.Files.Count > 1) { return data.Files.Count + " files" }
+                var path = data.Files[0]
+                var cut = UI.M.Max(path.LastIndexOf("/"), path.LastIndexOf("\\"))
+                if (cut >= 0 && cut < path.Length - 1) { path = path.Substring(cut + 1) }
+                if (path.Length > 30) { path = path.Substring(0, 29) + "..." }
+                return path
+            }
+            return data.Kind
+        }
+
+        // The label follows the pointer (px, py): only its old and its new place are repainted.
+        undefined MoveDragImage(int px, int py) {
+            if (this.dragImageW > 0) { this.InvalidateRect(this.dragImageX, this.dragImageY, this.dragImageW, this.dragImageH) }
+            var text = this.DragImageText(this.dragData)
+            if (text == "") {
+                this.dragImageW = 0
+                return
+            }
+            var font = this.FontFor(this.theme.font)
+            var w = this.renderer.TextWidth(text, font, this.theme.fontSize) + 8
+            var h = this.renderer.TextHeight(font, this.theme.fontSize) + 6
+            // below and to the right of the pointer, inside the window
+            var x = px + 12
+            var y = py + 16
+            if (x + w > this.width) { x = UI.M.Max(0, this.width - w) }
+            if (y + h > this.height) { y = UI.M.Max(0, py - h - 4) }
+            this.dragImageX = x
+            this.dragImageY = y
+            this.dragImageW = w
+            this.dragImageH = h
+            this.InvalidateRect(x, y, w, h)
+        }
+
+        // Paints the label (after the floating elements: it lies above everything).
+        undefined DrawDragImage() {
+            if (!this.dragging || this.dragImageW <= 0) { return }
+            if (!this.Needs(this.dragImageX, this.dragImageY, this.dragImageW, this.dragImageH)) { return }
+            var text = this.DragImageText(this.dragData)
+            if (text == "") { return }
+            var font = this.FontFor(this.theme.font)
+            this.renderer.FillRect(this.dragImageX, this.dragImageY, this.dragImageW, this.dragImageH, this.theme.menuBack)
+            this.renderer.DrawRect(this.dragImageX, this.dragImageY, this.dragImageW, this.dragImageH, this.theme.border)
+            this.renderer.DrawText(this.dragImageX + 4, this.dragImageY + 3, text, this.theme.text, undefined, font, this.theme.fontSize)
         }
 
         // Something another program dropped onto the window (an event DropFiles/DropText): the element under it that takes drops gets it, else onDrop.
@@ -1138,6 +1234,12 @@ namespace UI {
             var preview = this.onKeyPreview
             if (preview != undefined && preview(key, mod) == true) { return }
             if (key == UI.Keys.Tab()) {
+                // an element that takes Tab itself (a TextArea with AcceptsTab) gets it without Shift and Ctrl; those still move the focus
+                var holder = this.focusElement
+                if (holder != undefined && holder.Enabled && !UI.Keys.Shift(mod) && !UI.Keys.Shortcut(mod) && holder.TakesTab()) {
+                    holder.KeyDown(this, key, mod)
+                    return
+                }
                 // the shift keys are bits 1 and 2 of mod
                 this.FocusStep(mod % 4 != 0)
                 return

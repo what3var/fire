@@ -9377,6 +9377,8 @@ uiDrawScript = """
         ReflectionNatives.Register(natives);
 
         natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
+        var testClock = System.Diagnostics.Stopwatch.StartNew();
+        natives.Register("__TestMillis", args => Value.MakeInt(testClock.ElapsedMilliseconds));
         natives.Register("__TestEvent", args =>
         {
             renderer.Push((int)args[0].AsInt(), args);
@@ -9748,6 +9750,633 @@ uiDrawScript = """
         print(Clipboard.HasFiles + " " + Clipboard.GetFiles().length + " " + Clipboard.HasText + " " + (Clipboard.GetImage() == undefined))
         print(Clipboard.SetFiles(new List<string>()) + " " + Clipboard.SetImage(undefined))
         """, new[] { "True", "3x2 True", "False False True 0", "True True False False", "3x2 True", "True True False", "2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "True 2", "False 0 True True", "False False" });
+    CheckUi("Doppelklick: root.clickCount zaehlt Klicks (Taste, Zeit, Abstand, eigene Uhr); TextBox markiert Wort/Lauf, Dreifachklick alles, Ziehen wortweise, Ctrl+Pfeile, ReadOnly", uiHead + """
+        var tb = new UI.TextBox("foo_bar1, baz  qux", 10, 10, 250, 24)
+        ui.Add(tb)
+        ui.Draw()
+        var y = 20.0
+        var cx = tb.ax + 4 + 2
+        // a double click on "bar": the word with letters, digits and _
+        var x = cx + 5 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x + 1.0, y + 1.0)
+        __TestEvent(11, 1, x + 1.0, y + 1.0)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        // on the comma (the run of punctuation), then on the two spaces: another place counts anew
+        x = cx + 8 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        x = cx + 14 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        // a third click: everything
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        // too late (30 cycles = 500 ms), another button, too far away: a single click again
+        for (var i = 0; i < 30; i++) { ui.Tick() }
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " " + tb.SelectionLength)
+        __TestEvent(8, 3, x * 1.0, y)
+        __TestEvent(11, 3, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x + 5.0, y)
+        __TestEvent(11, 1, x + 5.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        // a clock of the program decides instead of the cycles
+        var now = 1000
+        ui.clock = func () => { return now }
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        now = 1500
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        now = 1700
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        ui.clock = undefined
+        for (var i = 0; i < 30; i++) { ui.Tick() }
+        // dragging after a double click selects whole words
+        x = cx + 11 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(9, cx + 16.0 * ui.cw, y)
+        ui.Tick()
+        print("[" + tb.SelectedText + "]")
+        __TestEvent(9, cx + 1.0 * ui.cw, y)
+        __TestEvent(11, 1, cx + 1.0 * ui.cw, y)
+        ui.Tick()
+        print("[" + tb.SelectedText + "]")
+        // Ctrl+Left/Right jump by words
+        ui.SetFocus(tb)
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Left(), 64)
+        ui.Tick()
+        var trail = "" + tb.caret
+        __TestEvent(24, UI.Keys.Left(), 64)
+        ui.Tick()
+        trail = trail + " " + tb.caret
+        __TestEvent(24, UI.Keys.Left(), 64)
+        ui.Tick()
+        trail = trail + " " + tb.caret
+        __TestEvent(24, UI.Keys.Right(), 65)
+        ui.Tick()
+        print(trail + " " + tb.caret + " [" + tb.SelectedText + "]")
+        // ReadOnly: selecting and copying work, changing does not; Enter still reports
+        tb.ReadOnly = true
+        var entered = 0
+        tb.OnEnter = func () => { entered++ }
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.X(), 64)
+        __TestEvent(3, "z")
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.V(), 64)
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        print(tb.Text + " | " + Clipboard.GetText() + " | " + entered + " " + tb.SelectionLength)
+        """, new[] { "2 [foo_bar1]", "2 [,]", "2 [  ]", "3 [foo_bar1, baz  qux]", "1 0", "1", "1", "1", "2", "[baz  qux]", "[foo_bar1, baz]", "15 10 8 10 [, ]", "foo_bar1, baz  qux | foo_bar1, baz  qux | 1 18" });
+
+    CheckUi("TextArea: Zeilen, Auf/Ab behalten die Spalte, Pos1/Ende, Ctrl+Pos1/Ende, Enter, Rueck/Entf ueber Zeilen, Tab nur mit AcceptsTab, AcceptsReturn, Bild auf/ab, MaxLength, ReadOnly", uiHead + """
+        var ta = new UI.TextArea("erste Zeile\r\nzwei\rdritte Zeile hier", 10, 10, 220, 120)
+        var changes = 0
+        ta.OnChange = func () => { changes++ }
+        var other = new UI.Button("B", 10, 150, 40, 20)
+        ui.Add(ta)
+        ui.Add(other)
+        ui.Draw()
+        print(ta.LineCount + " [" + ta.GetLine(1) + "] " + ta.Text.Length + " " + ta.caret)
+        ui.SetFocus(ta)
+        // End of the first line, Down: the column stays (as far as the line goes), Down again: back to column 11
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Down(), 0)
+        ui.Tick()
+        var trail = ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Down(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Down(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.Up(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Up(), 0)
+        ui.Tick()
+        print(trail + " " + ta.caret)
+        // Ctrl+End, Home, Ctrl+Home; Right at the end of a line goes to the next one
+        __TestEvent(24, UI.Keys.End(), 64)
+        ui.Tick()
+        trail = "" + ta.caret
+        __TestEvent(24, UI.Keys.Home(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.caret
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Right(), 0)
+        ui.Tick()
+        print(trail + " " + ta.CaretLine + ":" + ta.CaretColumn)
+        // Enter splits the line, Backspace joins it again, Delete at the end of a line joins the next one
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        __TestEvent(3, "neu")
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(1) + "] [" + ta.GetLine(2) + "] " + changes)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(0) + "] " + ta.CaretLine + ":" + ta.CaretColumn)
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Delete(), 0)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(0) + "] " + ta.caret)
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        // Tab moves the focus; with AcceptsTab it is typed (Shift+Tab still moves the focus)
+        __TestEvent(24, UI.Keys.Tab(), 0)
+        ui.Tick()
+        print((ui.focusElement == other) + " " + ta.Text.IndexOf("\t"))
+        ui.SetFocus(ta)
+        ta.AcceptsTab = true
+        __TestEvent(24, UI.Keys.Tab(), 0)
+        ui.Tick()
+        print((ui.focusElement == ta) + " " + ta.Text.IndexOf("\t") + " " + ta.CaretColumn)
+        __TestEvent(24, UI.Keys.Tab(), 1)
+        ui.Tick()
+        print(ui.focusElement == other)
+        ui.SetFocus(ta)
+        // AcceptsReturn = false: Enter does nothing
+        ta.AcceptsReturn = false
+        var lines = ta.LineCount
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        print(lines == ta.LineCount)
+        // PageDown/PageUp in a long text
+        ta.SetText("")
+        var long = ""
+        for (var i = 0; i < 40; i++) { long = long + "Zeile " + i + "\n" }
+        ta.Text = long
+        ui.Tick()
+        print(ta.LineCount + " " + ta.caret + " " + ta.vbar.offset)
+        __TestEvent(24, UI.Keys.PageDown(), 0)
+        ui.Tick()
+        var page = ta.CaretLine
+        __TestEvent(24, UI.Keys.PageDown(), 0)
+        ui.Tick()
+        print(page + " " + ta.CaretLine + " " + (ta.vbar.offset > 0))
+        __TestEvent(24, UI.Keys.PageUp(), 2)
+        ui.Tick()
+        print(ta.CaretLine + " " + ta.SelectionLength + " " + ta.SelectedText.Split("\n").length)
+        // MaxLength: typing that does not fit is not taken, pasting is cut
+        ta.SetText("abc")
+        ta.MaxLength = 6
+        __TestEvent(24, UI.Keys.End(), 64)
+        __TestEvent(3, "defg")
+        __TestEvent(3, "de")
+        ui.Tick()
+        Clipboard.SetText("XYZ")
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(ta.Text)
+        // ReadOnly: no changes, but selecting and copying
+        ta.ReadOnly = true
+        changes = 0
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.End(), 65)
+        __TestEvent(24, UI.Keys.C(), 64)
+        __TestEvent(24, UI.Keys.X(), 64)
+        __TestEvent(3, "q")
+        __TestEvent(24, UI.Keys.Delete(), 0)
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        print(ta.Text + " " + Clipboard.GetText() + " " + changes + " " + ta.SelectionLength)
+        """, new[] { "3 [zwei] 34 0", "1:4 2:11 2:17 0:0 0", "34 17 1:0", "4 [] [neuzwei] 2", "3 [erste Zeile] 1:0", "2 [erste Zeilezwei] 11", "True -1", "True 12 1", "True", "True", "41 0 0", "7 14 True", "7 60 8", "abcdeX", "abcdeX abcdeX 0 6" });
+
+    CheckUi("TextArea: Auswahl ueber Zeilen mit Maus und Shift, Doppel-/Dreifachklick, Zwischenablage behaelt Zeilenumbrueche (\\r\\n wird \\n), Drop von Text und Dateien", uiHead + """
+        class S { static string V(string s) { return s.Replace("\n", "|") } }
+        var ta = new UI.TextArea("alpha beta\ngamma, delta\n\nepsilon", 10, 10, 220, 120)
+        ui.Add(ta)
+        ui.Draw()
+        // the position of a character: 1 frame pixel and 3 of padding, ui.ch per row
+        var left = ta.ax + 4
+        var top = ta.ay + 4
+        // drag from "beta" (line 0, column 6) to line 1, column 5
+        __TestEvent(8, 1, left + 6.0 * ui.cw, top + 3.0)
+        __TestEvent(9, left + 5.0 * ui.cw, top + ui.ch + 3.0)
+        __TestEvent(11, 1, left + 5.0 * ui.cw, top + ui.ch + 3.0)
+        ui.Tick()
+        print((ui.focusElement == ta) + " [" + S.V(ta.SelectedText) + "]")
+        // Shift+Down and Shift+End grow it
+        __TestEvent(24, UI.Keys.Down(), 1)
+        __TestEvent(24, UI.Keys.End(), 1)
+        ui.Tick()
+        print("[" + S.V(ta.SelectedText) + "]")
+        // a double click on "delta", on ", " (the run of punctuation; then the space alone), on the empty line (nothing)
+        for (var i = 0; i < 30; i++) { ui.Tick() }
+        var dx = left + 8.0 * ui.cw + 2
+        var dy = top + ui.ch + 3.0
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        ui.Tick()
+        var words = "[" + S.V(ta.SelectedText) + "]"
+        dx = left + 5.0 * ui.cw + 2
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        ui.Tick()
+        words = words + " [" + S.V(ta.SelectedText) + "]"
+        dx = left + 2.0
+        dy = top + 2.0 * ui.ch + 3.0
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        ui.Tick()
+        words = words + " [" + S.V(ta.SelectedText) + "] " + ta.CaretLine
+        // a triple click selects the line with its line break; dragging on goes by lines
+        dx = left + 3.0 * ui.cw
+        dy = top + 3.0
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        ui.Tick()
+        words = words + " [" + S.V(ta.SelectedText) + "]"
+        __TestEvent(9, dx, top + ui.ch + 3.0)
+        __TestEvent(11, 1, dx, top + ui.ch + 3.0)
+        ui.Tick()
+        print(words + " [" + S.V(ta.SelectedText) + "]")
+        // the clipboard keeps line breaks ("\r\n" from another program becomes "\n")
+        ui.SetFocus(ta)
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.Down(), 1)
+        __TestEvent(24, UI.Keys.C(), 64)
+        ui.Tick()
+        print("[" + S.V(Clipboard.GetText()) + "]")
+        Clipboard.SetText("eins\r\nzwei\rdrei")
+        __TestEvent(24, UI.Keys.End(), 64)
+        __TestEvent(24, UI.Keys.Insert(), 1)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(3) + "] [" + ta.GetLine(5) + "] " + ta.Text.IndexOf("\r"))
+        __TestEvent(24, UI.Keys.Up(), 3)
+        __TestEvent(24, UI.Keys.Delete(), 1)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(3) + "] [" + S.V(Clipboard.GetText()) + "]")
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.X(), 64)
+        ui.Tick()
+        print("[" + S.V(ta.Text) + "] " + ta.LineCount + " " + Clipboard.GetText().Length)
+        // drops: text keeps its lines, files come one per line
+        ta.SetText("ab\ncd")
+        ui.Draw()
+        __TestEvent(41, "X\r\nY", left + 1.0 * ui.cw, top + ui.ch + 3.0)
+        ui.Tick()
+        print("[" + S.V(ta.Text) + "]")
+        __TestEvent(40, "/a.txt\n/b c.png", left + 0.0, top + 3.0)
+        ui.Tick()
+        print("[" + S.V(ta.Text) + "] " + ta.LineCount)
+        ta.ReadOnly = true
+        __TestEvent(41, "nein", left + 0.0, top + 3.0)
+        ui.Tick()
+        print(ta.LineCount)
+        """, new[] { "True [beta|gamma]", "[beta|gamma, delta|]", "[delta] [,] [] 2 [alpha beta|] [alpha beta|gamma, delta|]", "[alpha beta|]", "6 [epsiloneins] [drei] -1", "5 [epsiloneins] [|drei]", "[] 1 41", "[ab|cX|Yd]", "[/a.txt|/b c.pngab|cX|Yd] 4", "4" });
+
+    CheckUi("TextArea: Bildlaufleisten, Mausrad, die Einfuegemarke bleibt sichtbar, WordWrap bricht an Leerzeichen um, Proportionalschrift und Tabs, Zeichnen", uiHead + """
+        var text = ""
+        for (var i = 0; i < 30; i++) { text = text + "Zeile " + i + " " + "".PadRight(i * 2, "x") + "\n" }
+        var ta = new UI.TextArea(text, 10, 10, 200, 100)
+        ui.Add(ta)
+        ui.Draw()
+        print(ta.showV + " " + ta.showH + " " + ta.vbar.extent + " " + ta.hbar.extent + " " + ta.viewW + " " + ta.viewH)
+        // the wheel scrolls three rows a notch, sideways with the horizontal wheel
+        ui.MouseWheel(0, -1, 50, 50)
+        ui.Tick()
+        var trail = "" + ta.vbar.offset
+        ui.MouseWheel(-1, 0, 50, 50)
+        ui.Tick()
+        print(trail + " " + ta.hbar.offset + " " + ta.caret)
+        // the caret stays in view (at the next layout): Ctrl+End scrolls to the end, Ctrl+Home back
+        ui.SetFocus(ta)
+        __TestEvent(24, UI.Keys.End(), 64)
+        ui.Tick()
+        ui.Tick()
+        trail = ta.vbar.offset + " " + ta.vbar.Max() + " " + ta.hbar.offset
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.End(), 0)
+        ui.Tick()
+        ui.Tick()
+        trail = trail + " | " + ta.hbar.offset + " " + (ta.hbar.offset > 0)
+        __TestEvent(24, UI.Keys.Home(), 64)
+        ui.Tick()
+        ui.Tick()
+        print(trail + " | " + ta.vbar.offset + " " + ta.hbar.offset)
+        // dragging the vertical thumb, a click on the track pages
+        var barX = ta.ax + 1 + ta.viewW + 4.0
+        __TestEvent(8, 1, barX, ta.ay + 4.0)
+        __TestEvent(9, barX, ta.ay + 40.0)
+        __TestEvent(11, 1, barX, ta.ay + 40.0)
+        ui.Tick()
+        trail = "" + (ta.vbar.offset > 0) + " " + ta.caret + " " + ui.shownCursor!int
+        __TestEvent(9, ta.ax + 30.0, ta.ay + 30.0)
+        ui.Tick()
+        print(trail + " " + ui.shownCursor!int)
+        // WordWrap: no horizontal bar, long lines are broken at spaces
+        ta.SetText("Ein langer Satz mit vielen kurzen Woertern, der in der schmalen Flaeche umgebrochen werden muss.\nkurz\nlangeswortohneleerzeichenimmernochweiter")
+        ta.WordWrap = true
+        ui.Tick()
+        var rows = ""
+        for (var r = 0; r < ta.RowCount(); r++) { rows = rows + "[" + ta.Text.Substring(ta.RowStart(r), ta.RowTextEnd(r) - ta.RowStart(r)) + "]" }
+        print(ta.showH + " " + ta.RowCount() + " " + rows)
+        // Down walks the rows, End goes to the end of the row (before the space it was broken at)
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.Down(), 0)
+        __TestEvent(24, UI.Keys.End(), 0)
+        ui.Tick()
+        print(ta.caret + " " + ta.RowOf(ta.caret) + " " + ta.Text.Substring(0, ta.caret))
+        // typing in a broken line breaks it anew
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(3, "Hier ist noch mehr Text: ")
+        ui.Tick()
+        var rows2 = ta.RowCount()
+        ta.WordWrap = false
+        ui.Tick()
+        print(rows2 + " " + ta.RowCount() + " " + ta.showH)
+        // a proportional font and tabs (a tab reaches the next multiple of TabSize columns)
+        var pa = new UI.TextArea("A\tB\nAVAV\tHO\n\tii", 10, 120, 200, 70)
+        pa.Font = "firesans"
+        pa.FontSize = 16
+        ui.Add(pa)
+        ui.Draw()
+        print(pa.mono + " " + pa.ColumnOf(pa.lineStart[1], pa.lineStart[1] + 5) + " [" + pa.Shown(pa.lineStart[0], 0, 3) + "] " + (pa.XOf(ui, 0, 2) == pa.TextWidth(ui, "A   ")) + " " + (pa.lineH == pa.TextHeight(ui)))
+        // a click lands at the nearest boundary, also behind a tab
+        __TestEvent(8, 1, pa.ax + 4.0 + pa.TextWidth(ui, "A   ") + 1, pa.ay + 6.0)
+        __TestEvent(11, 1, pa.ax + 4.0 + pa.TextWidth(ui, "A   ") + 1, pa.ay + 6.0)
+        ui.Tick()
+        print(pa.caret)
+        // drawing: the selection in the selection colour, the text of the next line in the text colour
+        var da = new UI.TextArea("aaaa\nbbbb", 220, 10, 90, 60)
+        ui.Add(da)
+        ui.Draw()
+        ui.SetFocus(da)
+        da.Select(0, 2)
+        ui.Tick()
+        var t = ui.theme
+        var sel = 0
+        var txt = 0
+        for (var yy = da.ay + 4; yy < da.ay + 4 + ui.ch; yy++) {
+            for (var xx = da.ax + 4; xx < da.ax + 4 + 2 * ui.cw; xx++) { if (Px.Get(ui.renderer, xx, yy) == t.selection.Color) { sel++ } }
+        }
+        for (var yy = da.ay + 4 + ui.ch; yy < da.ay + 4 + 2 * ui.ch; yy++) {
+            for (var xx = da.ax + 4; xx < da.ax + 4 + 4 * ui.cw; xx++) { if (Px.Get(ui.renderer, xx, yy) == t.text.Color) { txt++ } }
+        }
+        print((sel > 60) + " " + (txt > 10) + " " + (Px.Get(ui.renderer, da.ax, da.ay + 20) == t.borderFocus.Color))
+        """, new[] { "True True 440 544 186 86", "42 42 0", "354 354 0 | 358 True | 0 0", "True 0 0 1", "False 9 [Ein langer Satz mit ][vielen kurzen ][Woertern, der in der ][schmalen Flaeche ][umgebrochen werden ][muss.][kurz][langeswortohneleerzeic][henimmernochweiter]", "33 1 Ein langer Satz mit vielen kurzen", "10 3 True", "False 8 [A   B] True True", "2", "True True True" });
+
+    CheckUi("TextArea: 5000 Zeilen - nur sichtbare Zeilen werden gezeichnet, Tippen, Enter, Mausrad, Bild ab und WordWrap bleiben schnell", uiHead + """
+        class CountingArea : UI.TextArea {
+            int drawn = 0
+            construct(string text, int x, int y, int w, int h) : base(text, x, y, w, h) { }
+            undefined DrawRow(UI.Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
+                this.drawn = this.drawn + 1
+                base.DrawRow(root, row, left, y, selStart, selEnd, color)
+            }
+        }
+        var sb = ""
+        var chunk = ""
+        for (var i = 0; i < 5000; i++) {
+            chunk = chunk + "Zeile " + i + " mit etwas Text, damit sie nicht zu kurz ist: abcdefghijklmnopqrstuvwxyz\n"
+            if (i % 100 == 99) {
+                sb = sb + chunk
+                chunk = ""
+            }
+        }
+        var ta = new CountingArea(sb + chunk, 10, 10, 300, 180)
+        ui.Add(ta)
+        var t0 = __TestMillis()
+        ui.Draw()
+        var visible = ta.viewH / ta.lineH + 2
+        print(ta.LineCount + " " + (ta.drawn <= visible))
+        ui.SetFocus(ta)
+        ta.Select(ta.Text.Length / 2, 0)
+        ui.Tick()
+        ui.Tick()
+        var line = ta.CaretLine
+        ta.drawn = 0
+        var t = __TestMillis()
+        for (var k = 0; k < 20; k++) {
+            __TestEvent(3, "q")
+            ui.Tick()
+        }
+        for (var k = 0; k < 10; k++) {
+            __TestEvent(24, UI.Keys.Enter(), 0)
+            ui.Tick()
+        }
+        var typing = __TestMillis() - t
+        print(ta.LineCount + " " + ta.CaretLine + " " + (ta.CaretLine == line + 10) + " " + (ta.drawn <= 31 * visible))
+        t = __TestMillis()
+        ta.drawn = 0
+        for (var k = 0; k < 20; k++) {
+            ui.MouseWheel(0, -1, 100, 100)
+            ui.Tick()
+        }
+        for (var k = 0; k < 10; k++) {
+            __TestEvent(24, UI.Keys.PageDown(), 0)
+            ui.Tick()
+        }
+        var scrolling = __TestMillis() - t
+        print((ta.drawn <= 31 * visible) + " " + (ta.CaretLine > line + 10))
+        t = __TestMillis()
+        ta.WordWrap = true
+        ui.Tick()
+        for (var k = 0; k < 20; k++) {
+            __TestEvent(3, "w")
+            ui.Tick()
+        }
+        var wrapped = __TestMillis() - t
+        print(ta.RowCount() > ta.LineCount)
+        // generous limits (the debug VM is slower): 30 keys, 30 scroll steps and 20 keys with WordWrap in a 400 KB text
+        print("fast " + (typing < 6000) + " " + (scrolling < 3000) + " " + (wrapped < 8000))
+        """, new[] { "5001 True", "5011 2516 True True", "True True", "True", "fast True True True" });
+
+    CheckUi("TextArea: Zeilen- und Umbruch-Index bleiben nach vielen Aenderungen gleich einem Neuaufbau (Proportionalschrift, Tabs, WordWrap)", uiHead + """
+        class Check {
+            static string Rows(UI.TextArea ta) {
+                var s = ""
+                for (var i = 0; i < ta.RowCount(); i++) { s = s + ta.RowStart(i) + "," }
+                return s
+            }
+            static string Lines(UI.TextArea ta) {
+                var s = ""
+                for (var i = 0; i < ta.lineCount; i++) { s = s + ta.lineStart[i] + ":" + ta.lineWidth[i] + "," }
+                return s + " w" + ta.widest
+            }
+        }
+        var ta = new UI.TextArea("Das ist ein Text mit einigen Woertern, der umbrechen soll.\nKurz\n\nNoch eine lange Zeile mit vielen Woertern darin, ja wirklich viele.", 10, 10, 200, 150)
+        ta.WordWrap = true
+        ta.Font = "firesans"
+        ta.FontSize = 16
+        ui.Add(ta)
+        ui.Draw()
+        ui.SetFocus(ta)
+        var seed = 7
+        var words = ["a\tb", "\t", "bb ", "ccc ddd ", "\n", "eeee\nff", " ", "langeswortohneleerzeichen", "x y z "]
+        var bad = 0
+        for (var step = 0; step < 60; step++) {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var len = ta.Text.Length
+            var pos = seed % (len + 1)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var cut = seed % 4
+            if (pos + cut > len) { cut = len - pos }
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var w = words[seed % words.length]
+            if (step % 5 == 0) { w = "" }
+            ta.Select(pos, cut)
+            ta.ReplaceSelection(w)
+            ui.Tick()
+            var inc = Check.Rows(ta)
+            var incLines = Check.Lines(ta)
+            // full rebuild
+            var saved = ta.Text
+            ta.indexed = ""
+            ta.EnsureIndex()
+            ta.Invalidate()
+            ui.Draw()
+            var full = Check.Rows(ta)
+            var fullLines = Check.Lines(ta)
+            if (inc != full || incLines != fullLines) {
+                bad++
+                if (bad < 3) {
+                    print("MISMATCH at " + step + " [" + saved + "]")
+                    print(" inc  " + inc + " | " + incLines)
+                    print(" full " + full + " | " + fullLines)
+                }
+            }
+        }
+        print("bad " + bad + " len " + ta.Text.Length + " rows " + ta.RowCount())
+        // the same without wrapping
+        ta.WordWrap = false
+        ta.Font = ""
+        ui.Draw()
+        bad = 0
+        for (var step = 0; step < 60; step++) {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var len = ta.Text.Length
+            var pos = seed % (len + 1)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var cut = seed % 6
+            if (pos + cut > len) { cut = len - pos }
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var w = words[seed % words.length]
+            ta.Select(pos, cut)
+            ta.ReplaceSelection(w)
+            ui.Tick()
+            var incLines = Check.Lines(ta)
+            ta.indexed = ""
+            ta.EnsureIndex()
+            ta.Invalidate()
+            ui.Draw()
+            var fullLines = Check.Lines(ta)
+            if (incLines != fullLines) {
+                bad++
+                if (bad < 3) {
+                    print("MISMATCH2 at " + step)
+                    print(" inc  " + incLines)
+                    print(" full " + fullLines)
+                }
+            }
+        }
+        print("bad " + bad + " len " + ta.Text.Length + " lines " + ta.lineCount)
+        """, new[] { "bad 0 len 310 rows 23", "bad 0 len 585 lines 15" });
+
+    CheckUi("Drag-Bild: ein Schild am Zeiger (Text gekuerzt, Datei, n files, Kind), nur alter und neuer Bereich neu gemalt, im Fenster, ShowImage = false", uiHead + """
+        class Counter : UI.Element {
+            int painted = 0
+            construct(int x, int y) : base(x, y, 40, 40) { }
+            undefined Draw(UI.Root root, int ax, int ay) {
+                if (!this.NeedsDraw(root, ax, ay)) { return }
+                this.painted = this.painted + 1
+            }
+        }
+        var src = new UI.Button("Quelle", 10, 10, 120, 30)
+        var data = new UI.DragData("Kurz")
+        src.OnDragStart = func (int x, int y) => { return data }
+        var far = new Counter(270, 150)
+        ui.Add(src)
+        ui.Add(far)
+        ui.Draw()
+        var t = ui.theme
+        var painted = far.painted
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        ui.Tick()
+        // a label below and to the right of the pointer: the text in a box
+        print(ui.IsDragging + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH)
+        print((Px.Get(ui.renderer, 72, 36) == t.border.Color) + " " + (Px.Get(ui.renderer, 73, 37) == t.menuBack.Color))
+        // it follows the pointer: the old place is painted over, nothing else is painted again
+        __TestEvent(9, 80.0, 30.0)
+        ui.Tick()
+        ui.Tick()
+        print((Px.Get(ui.renderer, 73, 47) == t.back.Color) + " " + (Px.Get(ui.renderer, 93, 47) == t.menuBack.Color) + " " + (far.painted == painted))
+        // near the edge it stays inside the window
+        __TestEvent(9, 310.0, 195.0)
+        ui.Tick()
+        print((ui.dragImageX + ui.dragImageW <= 320) + " " + (ui.dragImageY + ui.dragImageH <= 200))
+        __TestEvent(11, 1, 310.0, 195.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragImageW + " " + (Px.Get(ui.renderer, 93, 47) == t.back.Color))
+        // what it shows: a text shortened to 30 characters on one line, the file or the number of files, else the kind
+        var many = new UI.DragData()
+        many.Files.Add("/a/x.txt")
+        many.Files.Add("/a/y.txt")
+        many.Files.Add("/a/z.txt")
+        var one = new UI.DragData()
+        one.Files.Add("C:\\daten\\bild.png")
+        print(ui.DragImageText(new UI.DragData("Ein sehr langer gezogener Text, der gekuerzt wird")) + " | " + ui.DragImageText(new UI.DragData("zwei\nZeilen")))
+        print(ui.DragImageText(many) + " | " + ui.DragImageText(one) + " | " + ui.DragImageText(new UI.DragData("", 42, "eintrag")))
+        // ShowImage = false: no label
+        data.ShowImage = false
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragImageW + " " + (Px.Get(ui.renderer, 73, 47) == t.back.Color))
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 60.0, 20.0)
+        ui.Tick()
+        """, new[] { "True 72 36 40 20", "True True", "True True True", "True True", "False 0 True", "Ein sehr langer gezogener Tex... | zwei Zeilen", "3 files | bild.png | eintrag", "True 0 True" });
 
     CheckUi("Touch: UI.Root fuehrt die Oberflaeche mit dem Finger (Antippen, Abheben daneben, zweiter Finger, kein Hover danach)", uiHead + """
         print(win.TouchMouse)
@@ -11101,6 +11730,42 @@ uiDrawScript = """
                 print("field " + f.field.Text)
                 f.flag.Toggle()
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
+
+            File.WriteAllText(P("Notes.fxml"), """
+                <Window Class="Notes" Title="Notes" Width="320" Height="200">
+                  <Panel Width="320" Height="200">
+                    <TextArea Name="notes" Left="5" Top="5" Width="300" Height="120" WordWrap="true" AcceptsTab="true" MaxLength="100" TabSize="2" Text="{Binding Body, Mode=TwoWay}" OnChange="Edited"/>
+                    <TextBox Name="locked" Left="5" Top="140" Width="100" ReadOnly="true" Text="fest"/>
+                  </Panel>
+                </Window>
+                """);
+            CheckUi("Markup: TextArea (WordWrap, AcceptsTab, MaxLength, TabSize, TwoWay-Text, OnChange) und TextBox mit ReadOnly", $$"""
+                #include "{{P("Notes.fxml")}}"
+                class Doc { string Body = "erste\nzweite" }
+                class MyNotes : NotesBase {
+                    int edits = 0
+                    Edited(sender) { this.edits = this.edits + 1 }
+                }
+                var f = new MyNotes()
+                var doc = new Doc()
+                f.SetDataContext(doc)
+                f.ui.Draw()
+                print(f.notes.WordWrap + " " + f.notes.AcceptsTab + " " + f.notes.MaxLength + " " + f.notes.TabSize + " " + f.notes.LineCount + " " + f.locked.ReadOnly)
+                f.ui.SetFocus(f.notes)
+                __TestEvent(24, UI.Keys.End(), 64)
+                __TestEvent(24, UI.Keys.Enter(), 0)
+                __TestEvent(24, UI.Keys.Tab(), 0)
+                __TestEvent(3, "dritte")
+                f.ui.Tick()
+                print(f.notes.LineCount + " " + f.edits + " [" + doc.Body.Replace("\n", "|").Replace("\t", "~") + "] " + (f.ui.focusElement == f.notes))
+                doc.Body = "neu"
+                f.ui.Tick()
+                print(f.notes.LineCount + " [" + f.notes.Text + "]")
+                f.ui.SetFocus(f.locked)
+                __TestEvent(3, "x")
+                f.ui.Tick()
+                print(f.locked.Text)
+                """, new[] { "True True 100 2 2 True", "3 3 [erste|zweite|~dritte] True", "1 [neu]", "fest" });
 
             File.WriteAllText(P("Panel.fxml"), """
                 <View Class="Panel1" Width="300" Height="200">
@@ -19964,6 +20629,63 @@ else
             root.Scaling = 1.0
             root.Draw()
             print("back " + fb.Width() + "x" + fb.Height())
+            """),
+        ("UI: TextArea (Zeilenindex, Tippen, Auf/Ab, WordWrap, Auswahl), Doppel-/Dreifachklick, Text des Drag-Bilds", """
+            #import "ui"
+            var fb = new Framebuffer(320, 200)
+            var win = new Window(fb, "t")
+            var ui = new UI.Root(fb, win)
+            var ta = new UI.TextArea("eins zwei\r\ndrei\n\tvier fuenf", 10, 10, 200, 100)
+            ui.Add(ta)
+            ui.Draw()
+            print(ta.LineCount + " [" + ta.GetLine(1) + "] " + ta.Text.Length)
+            ui.SetFocus(ta)
+            ui.KeyDown(UI.Keys.End(), 0)
+            ui.TextInput("!")
+            ui.KeyDown(UI.Keys.Down(), 0)
+            ui.KeyDown(UI.Keys.Enter(), 0)
+            ui.TextInput("neu")
+            ui.KeyDown(UI.Keys.Home(), 64)
+            ui.KeyDown(UI.Keys.Down(), 1)
+            ui.KeyDown(UI.Keys.End(), 1)
+            ui.Draw()
+            print(ta.LineCount + " " + ta.CaretLine + ":" + ta.CaretColumn + " [" + ta.Text.Replace("\n", "|").Replace("\t", "~") + "] " + ta.SelectionLength)
+            var x = ta.ax + 4 + 6 * ui.cw + 2
+            var y = ta.ay + 6
+            ui.MouseDown(1, x, y)
+            ui.MouseUp(1, x, y)
+            ui.MouseDown(1, x, y)
+            ui.MouseUp(1, x, y)
+            print(ui.clickCount + " [" + ta.SelectedText + "]")
+            ui.MouseDown(1, x, y)
+            ui.MouseUp(1, x, y)
+            print(ui.clickCount + " " + ta.SelectionLength)
+            var big = ""
+            for (var i = 0; i < 300; i++) { big = big + "Zeile " + i + " mit ein paar Woertern zum Umbrechen\n" }
+            ta.SetText(big)
+            ta.WordWrap = true
+            ui.Draw()
+            ta.Select(big.Length / 2, 0)
+            ui.TextInput("x y z ")
+            ui.KeyDown(UI.Keys.Enter(), 0)
+            ui.KeyDown(UI.Keys.PageDown(), 0)
+            ui.Draw()
+            print(ta.LineCount + " " + ta.RowCount() + " " + ta.CaretLine + " " + ta.showV + " " + ta.showH + " " + ta.vbar.offset)
+            var tb = new UI.TextBox("abc_d, ef", 10, 150, 150, 24)
+            ui.Add(tb)
+            ui.Draw()
+            var bx = tb.ax + 4 + 2 * ui.cw + 2
+            ui.MouseDown(1, bx, 160)
+            ui.MouseUp(1, bx, 160)
+            ui.MouseDown(1, bx, 160)
+            ui.MouseUp(1, bx, 160)
+            print("[" + tb.SelectedText + "]")
+            ui.TextInput("x")
+            ui.TextInput("y")
+            ui.KeyDown(UI.Keys.Backspace(), 0)
+            ui.Draw()
+            print(tb.Text)
+            print(ui.DragImageText(new UI.DragData("Ein sehr langer gezogener Text, der gekuerzt wird")) + " | " + ui.DragImageText(new UI.DragData("", 1, "kind")))
             """),
     }).ToArray();
 

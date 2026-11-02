@@ -40,6 +40,7 @@ Neben `Label`, `Button`, `CheckBox` und `TextBox` (siehe Aufbau) bringt die Bibl
 
 - **`ScrollViewer(x, y, w, h)`**: zeigt EIN Kind (`SetContent(element)`) in einem Ausschnitt; Bildlaufleisten erscheinen, wenn es nicht hineinpasst (`VerticalScrollMode`/`HorizontalScrollMode` = `UI.ScrollMode.Disabled/Auto/Visible`, senkrecht Auto, waagerecht Disabled: dann wird das Kind auf die Breite des Ausschnitts begrenzt, ein WrapPanel bricht um).
   Mausrad (mit waagerechtem Rad seitlich), Ziehen am Griff, Klick neben den Griff blättert eine Seite; `ScrollIntoView(x, y, w, h)`. Dahinter steckt `UI.Scroller` (Versatz, Inhalts- und Ausschnittsgröße, Griff), den die Listen mitbenutzen.
+- **`TextArea(text, x, y, w, h)`**: ein Textfeld mit mehreren Zeilen, Bildlaufleisten und `WordWrap` (siehe *Mehrzeiliges Textfeld*).
 - **`ListBox(x, y, w, h)`**: `Add(item)` (Text, Zahl oder Objekt; ein Objekt gehört danach der Liste), `SetItems(liste)`, `Remove`, `Clear`; `DisplayMember = "name"` zeigt diese Eigenschaft der Objekte; `SelectedIndex`/`selectedItem`, `Select(i)`, `OnSelect`/`TakeChanged()`,
   Enter oder ein Doppelklick auf eine Zeile (zweiter Klick auf dieselbe Zeile innerhalb von `doubleClickCycles` = 24 Zyklen) meldet `OnActivate`/`TakeActivated()`; Pfeile, Pos1/Ende, Bild auf/ab, Mausrad, Klick. `ItemTemplate = new UI.DataTemplate(func (item) => element)` baut jede Zeile als eigenes Element (nur zum Anzeigen). Nach einer Änderung in den Objekten selbst: `Refresh()`.
 - **`ListView`**: wie die ListBox, mit Spalten und Kopfzeile: `AddColumn("Name", "name", 100)` (Breite -1: der Rest); ein Klick auf den Titel sortiert (noch einmal: umgekehrt).
@@ -102,7 +103,7 @@ Die **Eigenschaften** der Elemente sind ihre Felder; Styles und Trigger setzen s
 Allen Elementen gemeinsam: `Background` und `Foreground` (Brush), `Pen` (Stift des Rahmens), `name`; `undefined` heißt: das Steuerelement nimmt die Farben des Themes (und
 färbt Hover/Druck selbst; ein gesetztes `Background` gilt in jedem Zustand, bis ein Trigger es ändert). Bei `Label` gilt `Color`, dann `Foreground`.
 
-- **`UI.Style(target)`** sammelt `Set("eigenschaft", wert)` und Trigger. `target` ist der Stil-Schlüssel der Art Element (`element.StyleKey()`: `"Button"`, `"Label"`, `"CheckBox"`, `"TextBox"`,
+- **`UI.Style(target)`** sammelt `Set("eigenschaft", wert)` und Trigger. `target` ist der Stil-Schlüssel der Art Element (`element.StyleKey()`: `"Button"`, `"Label"`, `"CheckBox"`, `"TextBox"`, `"TextArea"`,
   `"Panel"`, `"StackPanel"`, `"DockPanel"`, `"WrapPanel"`, `"Grid"`, `"Border"`, `"Canvas"`, `"Element"`; eine abgeleitete Klasse erbt den Schlüssel oder überschreibt `StyleKey`).
   `style.basedOn = anderer` baut auf einem Style auf.
 - **Impliziter Style:** `root.resources.AddStyle(style)` (oder `panel.Resources().AddStyle(style)`) - gilt für alle Elemente dieser Art darunter; der nächste Style nach oben gewinnt, zuletzt der des Roots.
@@ -156,7 +157,8 @@ Die Oberfläche lässt sich mit allen vier Eingaben bedienen; sie laufen in dies
 - **Maus**: Klicken, Ziehen, Mausrad, rechte Taste für das Kontextmenü.
 - **Tastatur**: Tab / Umschalt-Tab wandert durch die fokussierbaren Elemente, die **Pfeiltasten** bewegen den Fokus zum nächsten Element in dieser Richtung (nach Lage auf dem Bildschirm; in einem `ScrollViewer` wird das Element
   sichtbar gerollt, und gibt es in der Richtung keins mehr, rollt der Pfeil den ScrollViewer wie das Mausrad). Enter/Leertaste löst aus. Ein Element behält die Pfeile, die es selbst braucht: das Textfeld Links/Rechts/Pos1/Ende,
-  die Liste und der Baum Auf/Ab (am ersten und letzten Eintrag gibt sie die Taste frei, damit man aus ihr herauskommt), `RadioButtons` die Pfeile zwischen den Optionen. Eigene Elemente überschreiben `bool WantsKey(int key)`.
+  die Liste und der Baum Auf/Ab (am ersten und letzten Eintrag gibt sie die Taste frei, damit man aus ihr herauskommt), `RadioButtons` die Pfeile zwischen den Optionen, die `TextArea` alle Pfeile, Pos1/Ende und Bild auf/ab. Eigene Elemente überschreiben `bool WantsKey(int key)`;
+  Tab bekommt ein Element nur, wenn `bool TakesTab()` true sagt (die `TextArea` mit `AcceptsTab`) - Umschalt+Tab und Ctrl+Tab wechseln immer den Fokus.
 - **Touchscreen**: Ein Finger setzt auf wie eine gedrückte linke Maustaste und löst beim Abheben auf dem Element einen Klick aus; hebt er daneben ab, passiert nichts. Zieht er über 10 Pixel (`ui.touchSlop`) über einen
   `ScrollViewer`, eine Liste oder einen Baum, wird daraus **Wischen**: der Inhalt folgt dem Finger, ohne dass das Element unter dem Finger auslöst; ein Griff einer Bildlaufleiste wird dagegen gezogen. Nur ein Finger zählt,
   weitere werden ignoriert. Nach dem Abheben bleibt keine Hover-Hervorhebung. (Eigene Elemente, die sich wischen lassen, überschreiben `CanPan()`, `Dragging()` und `PanBy(root, dx, dy)`.)
@@ -172,6 +174,48 @@ Das `TextBox` markiert mit Umschalt + Pfeil/Pos1/Ende und mit gedrückter Mausta
 fügt ein (auf dem Mac auch mit Cmd). Getippter Text und Eingefügtes ersetzen die Markierung; Zeilenumbrüche werden beim Einfügen zu Leerzeichen (das Feld hat eine Zeile). `MaxLength`: Getipptes, das nicht
 ganz passt, wird nicht genommen, Eingefügtes wird abgeschnitten. Aus dem Programm: `SelectionStart`, `SelectionLength`, `SelectedText`, `Select(start, länge)`, `SelectAll()`, `ReplaceSelection(text)`,
 `Copy()`, `Cut()`, `Paste()` (über `Clipboard` von `#import "windows"`, docs/CONSOLE.md).
+
+Ein **Doppelklick** markiert das Wort unter dem Zeiger (Buchstaben, Ziffern und `_`; auf Leerzeichen oder Satzzeichen die Folge davon), ein **Dreifachklick** alles; wird nach dem
+Doppelklick mit gehaltener Taste gezogen, wächst die Markierung wortweise. `Ctrl+Links`/`Ctrl+Rechts` springen wortweise (mit Umschalt markierend). Mit `ReadOnly = true` lässt sich der
+Text markieren und kopieren, aber nicht ändern (Tippen, Rücktaste/Entf, Ausschneiden, Einfügen und Drops tun nichts; Enter meldet weiter `OnEnter`); das Programm kann ihn weiter setzen.
+
+## Doppelklick
+
+Der Root zählt die Klicks: `root.clickCount` ist beim `MouseDown` eines Elements 1 für einen einfachen Klick, 2 für einen Doppelklick, 3 für einen Dreifachklick und so weiter.
+Ein Druck zählt weiter, wenn es dieselbe Taste ist wie beim Druck davor, höchstens `root.doubleClickTime` Millisekunden (400) danach und höchstens `root.doubleClickDistance`
+Pixel (4) davon entfernt; sonst beginnt er wieder bei 1. Die Zeit kommt aus `root.clock` (ein Lambda, das Millisekunden liefert, etwa `func () => { return DateTime.Now.Ticks / 10000 }`
+mit `#import "time"`); ohne es zählen die Zyklen des Roots (60 je Sekunde gerechnet, mit VSync ist ein Zyklus ein Bild) - so geht es in der VM und nativ ohne weiteres Paket.
+Eigene Elemente lesen den Wert in `MouseDown(root, button, x, y)`. (`ListBox`, `ListView` und `TreeView` erkennen ihren Doppelklick weiter selbst, siehe `doubleClickCycles`.)
+
+## Mehrzeiliges Textfeld (`TextArea`)
+
+```
+var notes = new UI.TextArea("erste Zeile\nzweite Zeile", 10, 10, 300, 160)
+notes.WordWrap = true                 // lange Zeilen umbrechen statt seitlich zu rollen
+notes.AcceptsTab = true               // Tab schreibt einen Tabulator (sonst wechselt er den Fokus)
+notes.OnChange = func () => { print(notes.LineCount + " Zeilen") }
+ui.Add(notes)
+```
+
+`Text` hält die Zeilen mit `"\n"` getrennt (`"\r\n"` und `"\r"` werden beim Setzen, Tippen, Einfügen und Ablegen zu `"\n"`); Einfügemarke und Markierung sind Positionen im Text
+(`caret`, `anchor`, `SelectionStart`, `SelectionLength`, `SelectedText`, `Select`, `SelectAll`, `ReplaceSelection`, `Copy`, `Cut`, `Paste` wie beim `TextBox`), dazu `LineCount`,
+`GetLine(i)`, `CaretLine`, `CaretColumn`, `SetText(text)` (Einfügemarke an den Anfang) und `AppendText(text)` (hängt an und rollt ans Ende - für ein Protokoll).
+
+- **Tasten:** Pfeile; Auf/Ab behalten die Spalte (auch über kürzere Zeilen hinweg); Pos1/Ende springen an den Anfang/das Ende der Zeile, mit Ctrl an den Anfang/das Ende des Texts;
+  Bild auf/ab blättern eine Seite; Ctrl+Links/Rechts wortweise; mit Umschalt wird jeweils markiert. Enter fügt einen Zeilenumbruch ein (`AcceptsReturn`, Vorgabe true), Tab einen
+  Tabulator nur mit `AcceptsTab` (Vorgabe false). Rücktaste/Entf (mit Ctrl wortweise), `Ctrl+A`, `Ctrl+C`/`Ctrl+Einfg`, `Ctrl+X`/`Umschalt+Entf`, `Ctrl+V`/`Umschalt+Einfg` wie beim
+  `TextBox` - Eingefügtes behält seine Zeilenumbrüche.
+- **Maus:** Klick setzt die Einfügemarke, Ziehen markiert (auch über Zeilen und über den Rand hinaus, der Ausschnitt rollt mit), Doppelklick markiert ein Wort, Dreifachklick die Zeile samt
+  Umbruch; danach markiert Ziehen wort- bzw. zeilenweise. Mausrad (seitlich mit dem waagerechten Rad), Ziehen an den Griffen und Klick neben den Griff wie beim `ScrollViewer`; mit dem Finger
+  wischt man den Inhalt.
+- **Bildlauf:** die Leisten erscheinen, wenn der Text nicht hineinpasst (`vbar`/`hbar` sind `UI.Scroller`); die Einfügemarke bleibt beim Tippen und mit den Tasten sichtbar. Mit `WordWrap`
+  gibt es keine waagerechte Leiste: eine Zeile bricht nach dem letzten Leerzeichen um, das noch passt (die Leerzeichen bleiben am Ende der Zeile), ein zu langes Wort dort, wo die Zeile voll ist.
+- `MaxLength` (0 = ohne Grenze; Getipptes, das nicht ganz passt, wird nicht genommen, Eingefügtes abgeschnitten), `ReadOnly`, `TabSize` (4: ein Tabulator reicht bis zur nächsten
+  Spalte, die ein Vielfaches davon ist), `OnChange`/`TakeChanged()`. Das Feld nimmt Text und Dateien (die Pfade, eine Zeile je Datei) als Drop an der Stelle des Loslassens; `AllowDrop = false` schaltet das ab.
+- **Schriften:** wie das `TextBox` mit der Schrift des Elements; mit der Konsolenschrift (dicktengleich) werden Spalten gezählt, mit einer Proportionalschrift gemessen.
+- **Lange Texte** bleiben schnell: das Feld hält einen Index, wo jede Zeile (und mit `WordWrap` jede Bildschirmzeile) beginnt; eine Änderung passt nur die betroffenen Zeilen an und
+  verschiebt die Anfänge dahinter, gezeichnet werden nur die sichtbaren Zeilen. Gemessen in der VM mit 5000 Zeilen (400 KB): ein Tastendruck etwa 10 ms, ein Bildlaufschritt etwa 1 ms,
+  das erste Umbrechen etwa 150 ms.
 
 ## Drag & Drop
 
@@ -201,6 +245,10 @@ in der VM und in nativen Builds mit SDL3), bekommt das Ziel darunter schon `OnDr
 `Pending` ist `true`, `Text` und `Files` sind leer (was gezogen wird, sagt das Betriebssystem erst beim Loslassen). So kann ein Ziel sich schon hervorheben. Zieht der Zeiger weiter auf ein anderes Ziel
 oder verlässt das Gezogene das Fenster, hört das alte `OnDragLeave()`. Der Drop selbst kommt wie bisher: das Ziel darunter bekommt `OnDragOver` mit den echten Daten (`Pending` falsch) und `OnDrop`;
 ein anderes Ziel, über dem es zuletzt schwebte, hört `OnDragLeave()`. Das Textfeld nimmt einen schwebenden Zug an (`Copy`). Ein nativer Build mit SDL2 meldet kein Schweben, nur den Drop.
+
+**Das Schild am Zeiger.** Solange gezogen wird, zeichnet der Root rechts unter dem Zeiger ein kleines Schild über allem (auch über Menüs): den Text der Daten (eine Zeile, auf 30
+Zeichen gekürzt), den Namen der Datei bzw. "n files", sonst `Kind`; ohne all das kein Schild. Es folgt dem Zeiger, bleibt im Fenster und malt dabei nur seinen alten und seinen neuen
+Bereich neu, nicht die ganze Oberfläche. `data.ShowImage = false` schaltet es für diese Daten ab; `root.DragImageText(data)` sagt, was es zeigen würde.
 
 ## Fenstergröße
 
@@ -263,7 +311,8 @@ Die Oberfläche lässt sich auch in einer Markup-Datei (`.fxml`, XML wie XAML) e
 
 ## Grenzen
 
-- Keine Mehrzeilen-Textfelder, kein Drag & Drop, keine Animationen; Listenzeilen mit `ItemTemplate` sind nur zum Anzeigen (sie nehmen keine Eingaben an).
+- Keine Animationen; Listenzeilen mit `ItemTemplate` sind nur zum Anzeigen (sie nehmen keine Eingaben an). Drag & Drop nur innerhalb des Programms und von anderen Programmen herein
+  (nicht hinaus); das Schild am Zeiger ist Text, kein Bild. Die `TextArea` kennt kein Rückgängig und lässt markierten Text nicht ziehen.
 - Text ist dicktengleich (eine Schrift, eine Größe).
 - Touch kennt nur einen Finger (kein Zoomen, kein Zwei-Finger-Rollen, kein langes Drücken für das Kontextmenü, kein Schwung nach dem Wischen); die Menüleiste ist nur mit Maus und Finger zu öffnen. Der Joystick-Wiederholtakt zählt Zyklen, nicht Zeit.
 - Die Elemente zeichnen sich in den Framebuffer des Roots; mehrere Roots auf demselben Framebuffer übermalen einander.
@@ -286,6 +335,6 @@ var hint = new UI.Label("Esc closes", 8, 40)
 hint.Font = "8x8"                         // eine Bitmap-Schrift
 ```
 
-`Label`, `Button`, `CheckBox`, `TextBox`, `ListBox`/`ListView`, `TreeView`, `RadioButtons` und Menüs messen und zeichnen ihren Text mit der Schrift des Elements (`element.TextWidth(root, text)`, `element.TextHeight(root)` und
+`Label`, `Button`, `CheckBox`, `TextBox`, `TextArea`, `ListBox`/`ListView`, `TreeView`, `RadioButtons` und Menüs messen und zeichnen ihren Text mit der Schrift des Elements (`element.TextWidth(root, text)`, `element.TextHeight(root)` und
 `element.DrawString(root, x, y, text, brush)` sind die Hilfen dafür, auch für eigene Elemente; `root.cw`/`root.ch` bleiben die Zellgröße der Konsolenschrift). Ein `TextBox` mit Proportionalschrift misst den Text bis zur Einfügemarke
 und unter der Maus.

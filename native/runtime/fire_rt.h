@@ -3245,6 +3245,7 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
     if (!node || nested || node->nrunning >= 8) { raw(obj, value, &local, caller); leave(&local); return; }
     node->running[node->nrunning++] = name;
     oldValue = get(obj, &local);
+    retain(oldValue);   /* (the assignment below may drop the last reference of the old value: the probes still compare with it and get it) */
     for (i = 0; i < node->n && !g_unwind.active; i++) {
         ProbeEntry e = node->entries[i];
         Value verdict;
@@ -3285,6 +3286,7 @@ FIRE_FN void probedSet(Value obj, const char* name, Value value, ProbeRawSet raw
         }
     }
     fire_probeDone(node, name);
+    release(oldValue);
     leave(&local);
 }
 #endif
