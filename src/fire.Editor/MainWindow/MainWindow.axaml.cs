@@ -56,7 +56,7 @@ namespace fire.Editor
 
         private static readonly Dictionary<string, string> PanelTitles = new()
         {
-            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["properties"] = "Properties",
+            ["output"] = "Output", ["buildlog"] = "Build Log", ["errors"] = "Error List", ["threads"] = "Threads", ["scope"] = "Scope", ["stack"] = "Stack", ["devices"] = "Devices", ["solution"] = "Solution Explorer", ["tests"] = "Test Explorer", ["todo"] = "Todo", ["properties"] = "Properties",
             ["toolbox"] = "Toolbox",
         };
 
@@ -180,7 +180,7 @@ namespace fire.Editor
                     ("scope", PanelTitles["scope"], _scopePanel),
                     ("stack", PanelTitles["stack"], _stackPanel),
                 },
-                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("devices", PanelTitles["devices"], _devicesPanel) },
+                new() { ("solution", PanelTitles["solution"], _solutionPanel), ("tests", PanelTitles["tests"], _testExplorer), ("todo", PanelTitles["todo"], _todoPanel), ("devices", PanelTitles["devices"], _devicesPanel) },
                 new() { ("properties", PanelTitles["properties"], _propertiesPanel) },
                 new() { ("toolbox", PanelTitles["toolbox"], _toolboxPanel) });
             var layout = _factory.CreateLayout();
@@ -216,6 +216,7 @@ namespace fire.Editor
             InitProjects();
             InitGit();
             InitTests();
+            InitNotes();
 
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
@@ -268,8 +269,8 @@ namespace fire.Editor
 
         private void OnFirstShown()
         {
-            // The solution explorer and the devices start collapsed (pinned to the right edge; the explorer opens when a project is opened) - before the default layout is saved.
-            foreach (var id in new[] { "solution", "tests", "devices" })
+            // The solution explorer, the test explorer, the todo list and the devices start collapsed (pinned to the right edge; the explorer opens when a project is opened) - before the default layout is saved.
+            foreach (var id in new[] { "solution", "tests", "todo", "devices" })
                 if (_tools.TryGetValue(id, out var collapsed))
                 {
                     try { _factory.PinDockable(collapsed); }
@@ -399,7 +400,7 @@ namespace fire.Editor
             // the panels get their content again by id (a layout stores only the ids), the documents go back into the document area
             var contents = new Dictionary<string, Control>
             {
-                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["properties"] = _propertiesPanel,
+                ["output"] = _output, ["buildlog"] = _buildLog, ["errors"] = _errorList, ["threads"] = _threadsPanel, ["scope"] = _scopePanel, ["stack"] = _stackPanel, ["devices"] = _devicesPanel, ["solution"] = _solutionPanel, ["tests"] = _testExplorer, ["todo"] = _todoPanel, ["properties"] = _propertiesPanel,
                 ["toolbox"] = _toolboxPanel,
             };
             MakeObservable(layout, new HashSet<IDockable>());
@@ -414,6 +415,7 @@ namespace fire.Editor
             }
             EnsureBuildLogTool(layout, contents["buildlog"]);
             EnsureTool(layout, "tests", contents["tests"], "solution");
+            EnsureTool(layout, "todo", contents["todo"], "solution");
             EnsureTool(layout, "properties", contents["properties"], "solution");
             EnsureLeftTool(layout, "toolbox", contents["toolbox"]);
             DockHost.Layout = layout;
@@ -844,6 +846,7 @@ namespace fire.Editor
             RefreshTargetCombo();
             _debugger.Refresh(BreakpointDescriptions());
             if (!ReferenceEquals(doc, _testsActiveDocument)) { _testsActiveDocument = doc; ScheduleTestDiscovery(activeDocumentChanged: true); }
+            RefreshTodo();
         }
 
         // the document the tests were last looked for with (the explorer follows the active document)

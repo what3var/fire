@@ -39,6 +39,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { Di
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
@@ -14367,6 +14368,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+NotesTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();

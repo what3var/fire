@@ -41,7 +41,7 @@ last**: what the other files declare is known by then.
 (markup files come first, so that their classes are there before the scripts use them). An `#include` of a file that is part of the project adds nothing (it is there anyway), so nothing
 is declared twice. Files that are not code - pictures, data, C++ sources - are the **content** of the project: they live in its folder (shown by the editor, not compiled), see below.
 
-**Content.** Everything else in the project folder is content: resources, the C++ of the natives, notes. `new Resource("images/logo.png")` takes a file of the folder into the program when
+**Content.** Everything else in the project folder is content: resources, the C++ of the natives, notes (the folder `notes/` holds the todo list and the overview of the project, docs/NOTES.md; `"notes"` in the project or solution file puts it elsewhere). `new Resource("images/logo.png")` takes a file of the folder into the program when
 it is compiled (docs/RESOURCES.md: the path is relative to the file that writes it); the editor copies files in (*Add Resource*) into a folder you choose.
 
 **Natives.** A project with `"native": {}` has C++ natives in its folder `native/` (docs/PACKAGE_NATIVES.md): every `inline Value name(Value a, ...)` in a file there is the fire function
