@@ -156,6 +156,9 @@ Strömen unter ASan geprüft; Größe wie zlib), `DeflateStream`/`GZipStream`/`Z
 CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 wird beim Schreiben für die Endsätze erzeugt; ein
 einzelner Eintrag über 4 GB wird beim Schreiben abgelehnt.
 
+**Offen:** Schreiben von Einträgen über 4 GB (Zip64 auch in den lokalen Headern bzw. Datendeskriptoren mit 8-Byte-Größen und im Zip64-Extra-Feld des
+zentralen Verzeichnisses); heute lehnt `EntryStream.Close` einen solchen Eintrag mit einer `ZipException` ab.
+
 Ursprünglicher Plan:
 
 * `Compression.Deflate`/`Inflate` (Bytes und Streams), `GZip`.
