@@ -55,7 +55,7 @@ static int fire_net_wouldBlock(int e) { return e == EAGAIN || e == EWOULDBLOCK |
 static int fire_net_inProgress(int e) { return e == EINPROGRESS || e == EINTR; }
 static void fire_net_closeFd(FireNetSock s) { close((int)s); }
 #define FIRE_NET_FD(s) ((int)(s))
-static void fire_net_errorText(int e, char* out, size_t size) { snprintf(out, size, "%s", strerror(e)); }
+static void fire_net_errorText(int e, char* out, size_t size) { fire_net_copy(out, size, strerror(e)); }
 #endif
 
 static int fire_net_mapError(int e) {
@@ -186,9 +186,9 @@ static void fire_net_describe(const struct sockaddr* sa, char* host, size_t size
         inet_ntop(AF_INET6, (void*)&in6->sin6_addr, buf, sizeof buf);
         *port = ntohs(in6->sin6_port);
         /* an IPv4 client of a dual-stack socket: ::ffff:a.b.c.d -> a.b.c.d */
-        if (strncmp(buf, "::ffff:", 7) == 0 && strchr(buf, '.') != NULL) { snprintf(host, size, "%s", buf + 7); return; }
+        if (strncmp(buf, "::ffff:", 7) == 0 && strchr(buf, '.') != NULL) { fire_net_copy(host, size, buf + 7); return; }
     }
-    snprintf(host, size, "%s", buf);
+    fire_net_copy(host, size, buf);
 }
 
 /* The addresses of a host name (or the literal address itself), stream or datagram (freeaddrinfo frees them). */
@@ -309,7 +309,7 @@ static FireNetConnect* fire_net_connectBegin(const char* host, int port, FireNet
         return NULL;
     }
     c->fd = FIRE_NET_INVALID;
-    snprintf(c->host, sizeof c->host, "%s", host);
+    fire_net_copy(c->host, sizeof c->host, host);
     c->port = port;
     fire_net_fail(&c->last, FIRE_NET_E_UNREACHABLE, "No address of '%s' could be reached.", host);
     for (ai = head; ai != NULL; ai = ai->ai_next) {

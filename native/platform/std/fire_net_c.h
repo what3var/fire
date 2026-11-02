@@ -50,6 +50,15 @@ static int fire_net_fail(FireNetStatus* st, int code, const char* format, ...) {
     return 0;
 }
 
+/* Copies a text into `out` (room for `size` bytes), cut when it is longer. */
+static void fire_net_copy(char* out, size_t size, const char* text) {
+    size_t n = strlen(text);
+    if (size == 0) return;
+    if (n >= size) n = size - 1;
+    memcpy(out, text, n);
+    out[n] = 0;
+}
+
 /* ---- a list of addresses (text) ---- */
 typedef struct FireNetList { char** items; size_t count, cap; } FireNetList;
 static void fire_net_listAdd(FireNetList* l, const char* s) {
