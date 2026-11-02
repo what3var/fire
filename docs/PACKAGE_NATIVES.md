@@ -217,7 +217,7 @@ C++ ...") and offered:
 
 * **Install the toolchain automatically** (Windows x64): the portable w64devkit (a GCC, about 80 MB) is downloaded from its GitHub release and unpacked to `Toolchain\w64devkit\` next to the
   program. Nothing is installed on the system; it is configured automatically (the machine toolchain is set to it).
-* **Change the toolchain...** (editor): the toolchain settings open (*File > Native Build Settings > Toolchain*); afterwards the operation is tried again, and the question comes again if there is still none.
+* **Change the toolchain...** (editor): the toolchain settings open (*Tools > Toolchain Settings > Toolchain*); afterwards the operation is tried again, and the question comes again if there is still none.
   The settings have **Detect** (finds a toolchain on the machine, w64devkit first) and **Test** (compiles and runs a small program with the toolchain as set up).
 * **Cancel**: stops the operation.
 

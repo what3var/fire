@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
 using Avalonia.Data;
 using Avalonia.Input;
@@ -35,6 +36,10 @@ namespace fire.Editor
         public LoadedProject? Project { get; init; }
         public ProjectReference? Reference { get; init; }
         public bool IsBold { get; init; }
+        /// <summary>The notes folder of a project (docs/NOTES.md): a double click opens its overview.</summary>
+        public bool IsNotes { get; init; }
+        /// <summary>A row for something that does not exist yet (the notes folder before its first use): shown pale, made when it is used.</summary>
+        public bool IsVirtual { get; init; }
         /// <summary>The git state of a file (null: none), and for a folder, project or solution whether something below it is changed.</summary>
         public GitFileState? GitState { get; set; }
         public bool GitChangedBelow { get; set; }
@@ -83,10 +88,19 @@ namespace fire.Editor
             _tree.ContextMenu = _menu;
             _menu.Opening += (_, e) => { if (!FillMenu()) e.Cancel = true; };
             _tree.AddHandler(PointerPressedEvent, OnPointerPressed, RoutingStrategies.Tunnel);
-            _tree.DoubleTapped += (_, e) => { if (_tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content or ExplorerKind.Designer, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; } };
+            // a double click opens: a file, the designer of a markup (instead of folding it), the properties of a project or the solution, the overview of the notes;
+            // the tree has already folded the row when the event arrives, so the row gets back the state it had at the first click
+            _tree.AddHandler(DoubleTappedEvent, (_, e) =>
+            {
+                if ((e.Source as Visual)?.FindAncestorOfType<ToggleButton>() != null) return;   // the arrow of the row: folds, as always
+                if (_tree.SelectedItem is not ExplorerNode node || !Opens(node)) return;
+                if (_expandedAtPress is { } press && ReferenceEquals(press.Node, node)) node.IsExpanded = press.Expanded;   // before opening: that may build the tree anew
+                Open(node);
+                e.Handled = true;
+            }, RoutingStrategies.Bubble, handledEventsToo: true);
             _tree.KeyDown += (_, e) =>
             {
-                if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode { Kind: ExplorerKind.File or ExplorerKind.Content or ExplorerKind.Designer, Path: { } p }) { FileOpenRequested?.Invoke(p); e.Handled = true; }
+                if (e.Key == Key.Enter && _tree.SelectedItem is ExplorerNode selected && Open(selected)) e.Handled = true;
                 else if (e.Key == Key.Delete && _tree.SelectedItem is ExplorerNode { Kind: not ExplorerKind.Designer } node) { CommandRequested?.Invoke("remove", node); e.Handled = true; }
             };
 
@@ -115,10 +129,12 @@ namespace fire.Editor
 
         private static Control Row(ExplorerNode node)
         {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            var panel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Opacity = node.IsVirtual ? 0.55 : 1 };
+            panel.Children.Add(TreeIcons.Image(TreeIcons.NameFor(node)));
             panel.Children.Add(new TextBlock
             {
                 Text = node.Text,
+                FontStyle = node.IsVirtual ? FontStyle.Italic : FontStyle.Normal,
                 FontWeight = node.IsBold ? FontWeight.Bold : FontWeight.Normal,
                 Foreground = node.IsActive ? EditorTheme.Solid(EditorTheme.AccentTextColor) : node.Kind == ExplorerKind.References ? EditorTheme.TextDim : EditorTheme.Text,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -253,6 +269,22 @@ namespace fire.Editor
                 }
                 return parent;
             }
+            // the notes folder is always there: before its first use as a pale row (a double click makes it, with the overview)
+            string notesDir = ProjectNotes.Folder(project.Project);
+            string notesRel = ProjectFiles.Relative(project.Directory, notesDir);
+            if (!notesRel.StartsWith("..") && !Path.IsPathRooted(notesRel) && notesRel != ".")
+            {
+                var parts = notesRel.Split('/');
+                FolderOf(parts, parts.Length - 1);
+                string notesKey = project.FilePath + "|" + notesRel + "/";
+                var parent = parts.Length == 1 ? node : folders[project.FilePath + "|" + string.Join("/", parts[..^1]) + "/"];
+                var notes = new ExplorerNode
+                {
+                    Kind = ExplorerKind.Folder, Text = parts[^1], Project = project, Key = "dir:" + notesKey, Path = notesDir, IsNotes = true, IsVirtual = !Directory.Exists(notesDir),
+                };
+                folders[notesKey] = notes;
+                parent.Children.Add(notes);
+            }
             foreach (var folder in project.Folders) { var parts = folder.Split('/'); FolderOf(parts, parts.Length); }
             foreach (var file in project.Files)
             {
@@ -325,8 +357,28 @@ namespace fire.Editor
         }
 
         // ---- context menu ----------------------------------------------------------------------------------------------------------------------
+        private (ExplorerNode Node, bool Expanded)? _expandedAtPress;
+
+        /// <summary>Whether a double click opens the row (else it only folds: a folder, the references).</summary>
+        private static bool Opens(ExplorerNode node) =>
+            node is { Kind: ExplorerKind.File or ExplorerKind.Content or ExplorerKind.Designer, Path: not null } or { Kind: ExplorerKind.Project or ExplorerKind.Solution } or { IsNotes: true };
+
+        /// <summary>Opens what the row stands for; false: the row only folds (a folder, the references).</summary>
+        private bool Open(ExplorerNode node)
+        {
+            switch (node)
+            {
+                case { Kind: ExplorerKind.File or ExplorerKind.Content or ExplorerKind.Designer, Path: { } path }: FileOpenRequested?.Invoke(path); return true;
+                case { Kind: ExplorerKind.Project }: CommandRequested?.Invoke("properties", node); return true;
+                case { Kind: ExplorerKind.Solution }: CommandRequested?.Invoke("solution-properties", node); return true;
+                case { IsNotes: true }: CommandRequested?.Invoke("open-notes", node); return true;
+                default: return false;
+            }
+        }
+
         private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
         {
+            if (e.ClickCount == 1 && (e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode pressed) _expandedAtPress = (pressed, pressed.IsExpanded);
             if (!e.GetCurrentPoint(_tree).Properties.IsRightButtonPressed) return;
             if ((e.Source as Visual)?.FindAncestorOfType<TreeViewItem>()?.DataContext is ExplorerNode node) _tree.SelectedItem = node;
         }
@@ -427,6 +479,14 @@ namespace fire.Editor
                     break;
                 case ExplorerKind.Reference:
                     Add("Remove Reference", "remove");
+                    break;
+                case ExplorerKind.Folder when node.IsNotes:
+                    Add("Open Overview", "open-notes");
+                    Add("Todo List", "open-todo");
+                    if (node.IsVirtual) break;
+                    _menu.Items.Add(new Separator());
+                    _menu.Items.Add(AddNewMenu(node));
+                    Add("Open Folder", "reveal");
                     break;
                 case ExplorerKind.Folder:
                     _menu.Items.Add(AddNewMenu(node));

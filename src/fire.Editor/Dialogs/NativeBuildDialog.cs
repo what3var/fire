@@ -68,7 +68,7 @@ namespace fire.Editor
             _config = NativeConfig.Parse(config.ToJson());   // a copy
             _config.Path = config.Path ?? saveTo;
 
-            Title = "Native Build Settings";
+            Title = "Toolchain Settings";
             Width = 840; Height = 600; MinWidth = 720; MinHeight = 480;
             WindowStartupLocation = WindowStartupLocation.CenterOwner;
             ShowInTaskbar = false;

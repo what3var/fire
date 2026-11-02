@@ -594,6 +594,8 @@ namespace fire.Editor
                 case "install-library": await InstallLibrary(project); break;
                 case "refresh": project?.Refresh(); _workspace.Refresh(); break;
                 case "properties": await ShowProjectProperties(project); break;
+                case "open-notes": await OpenOverview(project); break;
+                case "open-todo": TodoOpen_Click(this, new RoutedEventArgs()); break;
                 case "solution-properties": await ShowProjectProperties(_workspace.Projects.FirstOrDefault(), solutionTab: true); break;
                 case "run-project": await RunProject(project); break;
                 case "reveal": Reveal(node); break;
