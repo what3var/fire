@@ -14961,7 +14961,7 @@ else
               undefined Tick() { this.count = this.count + 1 } }
             Counter c = new Counter()
             for (int i = 0; i < 1000; i++) { c.Tick() }
-            print(c.Count)
+            print(c.count)
             class Holder { Box inner
               construct() { this.inner = new Box() } }
             Holder h = new Holder()
@@ -16098,7 +16098,7 @@ else
                 }
                 print("tail " + i)
             }
-            print("sum " + sum + " count " + w.Count)
+            print("sum " + sum + " count " + w.count)
             // nested try in catch, rethrow from nested
             try {
                 try {

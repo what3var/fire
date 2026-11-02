@@ -2650,7 +2650,7 @@ namespace fire.Runtime
             {
                 if (ExecutionMode != VmExecutionMode.Performance && !IsMemberAccessAllowed(plainGetter.DeclaringClass!, plainGetter.Access))
                 {
-                    ThrowAccessDenied($"Property '{fieldName}' of '{plainGetter.DeclaringClass!.Name}' is {DescribeAccess(plainGetter.Access)} and cannot be accessed from here.");
+                    ThrowAccessDenied($"'get_{fieldName}' of '{plainGetter.DeclaringClass!.Name}' is {DescribeAccess(plainGetter.Access)} and cannot be accessed from here.");
                     return false;
                 }
                 if (site >= 0 && plainGetter.Access == AccessModifier.Public) StoreSite(site, new SiteCache(obj.RtClass, null, backingIndex));
