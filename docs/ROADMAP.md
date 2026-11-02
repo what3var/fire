@@ -55,8 +55,10 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 6. ~~`fire_rt.hpp` entfernen~~.
 
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
-auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Offen: ein echter ESP32-Build (ESP-IDF), MSVC, macOS und Emscripten sind hier nicht installiert; die
-Benchmarks vorher/nachher.
+auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher (docs/NATIVE_BACKEND.md, "Benchmarks vor und nach dem C-Port"): der Programmstart
+ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser - bis auf `method`, das ein späterer Generatorstand (Zugriffsschutz: `this.count` geht
+über `gf_count`/`sf_count`, weil `List` ein privates Feld `count` hat) knapp 4x langsamer macht. Offen: ein echter ESP32-Build (ESP-IDF), MSVC, macOS und
+Emscripten sind hier nicht installiert; der direkte Feldzugriff in diesem Fall (Typ des Objekts bekannt).
 
 Danach: ~~die Natives der Standard-Packages in C~~ - **umgesetzt**: process, time, io, net, tls (OpenSSL, mbedTLS, SChannel), gpio, i2c, spi, usb, wifi,
 devices, audio, tracker, graphics und windows sind C99 (`"language": "c"` im Manifest), ihre Plattformschichten ebenso (`native/platform/std/fire_<teil>_c.h`).
@@ -155,11 +157,10 @@ Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTL
 
 Stand: **umgesetzt** (docs/COMPRESSION.md) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
 Strömen unter ASan geprüft; Größe wie zlib), `DeflateStream`/`GZipStream`/`ZLibStream`, Einmal-Funktionen, `Zip.Archive` lesen (Zip64, Datendeskriptoren,
-CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 wird beim Schreiben für die Endsätze erzeugt; ein
-einzelner Eintrag über 4 GB wird beim Schreiben abgelehnt.
-
-**Offen:** Schreiben von Einträgen über 4 GB (Zip64 auch in den lokalen Headern bzw. Datendeskriptoren mit 8-Byte-Größen und im Zip64-Extra-Feld des
-zentralen Verzeichnisses); heute lehnt `EntryStream.Close` einen solchen Eintrag mit einer `ZipException` ab.
+CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 auch beim Schreiben: Einträge über 4 GB (Zip64-Extra-Feld
+im zentralen Verzeichnis, im lokalen Header bei bekannter Größe bzw. mit dem Parameter `zip64` von `CreateEntry` und bei `AddFile` großer Dateien, Datendeskriptoren mit
+8-Byte-Größen), mehr als 65534 Einträge und ein zentrales Verzeichnis jenseits von 4 GB (Zip64-Endsatz mit Locator). Nur wo eine Zahl nicht passt - Archive
+unter 4 GB bleiben bytegleich. Geprüft mit gesenkten Grenzen (Tests, VM == nativ) und einmal echt mit 4,3 GB (VM und nativ; `zipfile`, `unzip -t`).
 
 Ursprünglicher Plan:
 

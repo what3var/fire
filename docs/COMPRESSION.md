@@ -53,15 +53,34 @@ nothing; zlib data with a preset dictionary is not supported.
 | `Zip.Archive.Create(path)`, `Zip.Archive.Write(stream, leaveOpen = false)` | an archive to write (the stream need not seek) |
 | `archive.Add(name, data, level = 6, time = now)` | an entry from bytes or a string (UTF-8); stored instead of deflated when that is not smaller |
 | `archive.AddFile(name, path, level = 6)`, `archive.AddDirectory(name)` | a file of the disk (with its time of last change), an empty folder entry (`name/`) |
-| `archive.CreateEntry(name, level = 6, time = now)` | a stream to write an entry piece by piece (Deflate, with a data descriptor); close it before the next entry |
-| `archive.Close()` | writing: the central directory and the end record; then the stream is closed (unless `leaveOpen`) |
+| `archive.CreateEntry(name, level = 6, time = now, zip64 = false)` | a stream to write an entry piece by piece (Deflate, with a data descriptor); close it before the next entry. It may grow beyond 4 GB; `zip64` announces that in the local header already (see below) |
+| `archive.Close()` | writing: the central directory and the end record (Zip64 end records when needed); then the stream is closed (unless `leaveOpen`) |
 | `Zip.Archive.CreateFromDirectory(folder, zipPath, level = 6, includeBaseDirectory = false)` | a whole folder (empty subfolders as folder entries) |
 | `Zip.Entry` | `FullName` ("docs/readme.txt"; folders end with "/"), `Name` ("readme.txt"), `Length`, `CompressedLength`, `Crc32`, `CompressionMethod` (`Zip.Method.Stored`/`Deflated`), `IsDirectory`, `IsEncrypted`, `LastWriteTime` (local `DateTime`), `Comment`; `Open()` (a stream: at its end the CRC-32 and the length are checked), `ReadAllBytes()`, `ReadAllText()`, `ExtractToFile(path, overwrite = false)` |
-| `Zip.ZipException` | (an `IO.IOException`) not a Zip archive, a name outside of the target folder, an encrypted entry or another method than stored/Deflate, an entry above 4 GB when writing |
+| `Zip.ZipException` | (an `IO.IOException`) not a Zip archive, a name outside of the target folder, an encrypted entry or another method than stored/Deflate |
 
 Reading understands Zip64 (more than 65535 entries, archives and entries above 4 GB), entries with data descriptors (written by streaming tools) and names
-in UTF-8 - with or without the flag - or in code page 437. Writing uses UTF-8 names (flagged), UNIX file modes, the DOS time of the entry and Zip64 end records when an
-archive needs them; an entry itself must stay below 4 GB.
+in UTF-8 - with or without the flag - or in code page 437. Writing uses UTF-8 names (flagged), UNIX file modes and the DOS time of the entry.
+
+### Zip64 when writing
+
+Zip64 is written only where a number does not fit, so an archive below 4 GB with fewer than 65535 entries has exactly the bytes it had before Zip64 writing:
+
+* **Central directory:** an uncompressed size, compressed size or local header offset of 4 GB or more (0xFFFFFFFF or more) is written as 0xFFFFFFFF, and the
+  Zip64 extra field (id 1) holds the real numbers, 8 bytes each, in that order (only the ones that did not fit); such an entry needs version 4.5.
+* **End:** 65535 entries or more, a central directory at or beyond 4 GB or one of 4 GB or more add the Zip64 end of central directory record and its locator
+  before the classic end record, whose fields then say 0xFFFF / 0xFFFFFFFF.
+* **`Add`** (sizes known before the data): an entry of 4 GB or more gets a local header with version 4.5, 0xFFFFFFFF in both size fields and the Zip64 field with
+  both sizes.
+* **Streamed entries** (`CreateEntry`, and `AddFile` for files above 16 MB): the sizes follow the data in the data descriptor. Without `zip64` the local header is
+  the classic one; if the entry still reaches 4 GB, its descriptor gets 8-byte sizes and the central directory the Zip64 field (readers that use the central
+  directory - Python's `zipfile`, `unzip`, 7-Zip, .NET, this package - read it; a reader that only walks the local headers would have to guess the descriptor
+  size, as Java's `ZipInputStream` does from the bytes it read). With `zip64 = true` the local header carries the Zip64 field (sizes 0, as the APPNOTE asks
+  for an entry whose size is not known) and the descriptor always has 8-byte sizes, so every reader knows its layout. `AddFile` sets it by itself for a file
+  that could reach 4 GB compressed.
+
+`Zip.Archive.TestZip64Limits(size, count)` lowers the limits (Zip64 from `size` bytes and `count` entries on) so that tests take these paths with a few bytes;
+`TestZip64Limits(0, 0)` restores 4 GB / 65535.
 
 ## Implementation
 
@@ -73,4 +92,7 @@ CRC-32, the search for the end record). The Zip format itself is fire code in th
 
 Checked: round trips through Python's `zlib` for every level, framing and piece size, both ways (1504 cases); 1500 damaged streams under AddressSanitizer/UBSan
 (no crash, an error every time the data is wrong); archives of Python's `zipfile` (Zip64, data descriptors, code page 437) read, archives written by fire
-accepted by `zipfile` and `unzip -t`; the same output in the VM, with gcc, with TinyCC and for Windows (MinGW, Wine).
+accepted by `zipfile` and `unzip -t`; the same output in the VM, with gcc, with TinyCC and for Windows (MinGW, Wine). Zip64 writing: with lowered limits in the
+tests of the package and a native case (VM == native), and once for real (VM and native) - an archive of 4.3 GB with a sparse 5 GiB file through `AddFile`
+(Zip64 local header, 24-byte descriptor), a streamed stored entry of 4.3 GB without `zip64` (8-byte descriptor, Zip64 field in the central directory), a small
+entry and the central directory behind 4 GB (Zip64 end records); read back by this package, by `zipfile` (every byte, CRC checked) and by `unzip -t`.
