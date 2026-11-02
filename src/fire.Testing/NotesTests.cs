@@ -29,6 +29,7 @@ static class NotesTests
         Overview();
         OverviewEdits();
         OverviewTools();
+        OverviewShapes();
         Console.WriteLine(_failures == 0 ? "Notes: alle Tests bestanden" : $"Notes: {_failures} FEHLER");
     }
 
@@ -324,6 +325,35 @@ static class NotesTests
         string text5 = Apply(lines, fire.Editor.OverviewSource.Remove(lines, inner));
         var parsed5 = fire.Editor.OverviewParser.Parse(text5);
         Check("Container loeschen", parsed5.Problems.Count == 0 && !parsed5.AllContainers().Any(c => c.Name == "inner") && !text5.Contains("Nested text") && !text5.Contains("\n\n\n"), text5);
+    }
+
+    private static void OverviewShapes()
+    {
+        Check("Pfad verschieben: absolut", fire.Editor.OverviewSource.TranslatePath("M 20 120 L 280 120", 10, -20) == "M 30 100 L 290 100");
+        Check("Pfad verschieben: H, V, C, A, relative bleiben",
+            fire.Editor.OverviewSource.TranslatePath("M0 0 H10 V20 C1 2 3 4 5 6 l5 5 A 5 5 0 0 1 10 10 Z", 1, 2) == "M 1 2 H 11 V 22 C 2 4 4 6 6 8 l 5 5 A 5 5 0 0 1 11 12 Z",
+            fire.Editor.OverviewSource.TranslatePath("M0 0 H10 V20 C1 2 3 4 5 6 l5 5 A 5 5 0 0 1 10 10 Z", 1, 2));
+        Check("Pfad verschieben: erstes m relativ", fire.Editor.OverviewSource.TranslatePath("m 5 5 l 10 0", 1, 1) == "m 6 6 l 10 0");
+
+        Check("Form verschieben: Rechteck mit Zahlen ohne Schluessel", fire.Editor.OverviewSource.MoveShape("[rect]: <10 150 90 40 stroke=#147AD0>", "rect", 5, -10) == "[rect]: <15 140 90 40 stroke=#147AD0>");
+        Check("Form verschieben: mit Schluesseln", fire.Editor.OverviewSource.MoveShape("[ellipse]: <x=1 y=2 w=3 h=4>", "ellipse", 1, 1) == "[ellipse]: <x=2 y=3 w=3 h=4>");
+        Check("Form verschieben: Text behaelt Titel", fire.Editor.OverviewSource.MoveShape("[text]: <26 161 size=14> \"Clipper\"", "text", 4, 4) == "[text]: <30 165 size=14> \"Clipper\"");
+        Check("Form verschieben: Pfad", fire.Editor.OverviewSource.MoveShape("[path]: <M 100 170 L 140 170 stroke=#ff4070 width=2 arrow=end>", "path", 10, 10)
+            == "[path]: <M 110 180 L 150 180 stroke=#ff4070 width=2 arrow=end>");
+        Check("Form vergroessern", fire.Editor.OverviewSource.ResizeShape("[rect]: <10 150 90 40>", 120, 60) == "[rect]: <10 150 120 60>");
+        Check("Attribut entfernen", fire.Editor.OverviewSource.RemoveAttribute("[rect]: <1 2 3 4 stroke=#fff dash=true>", "stroke") == "[rect]: <1 2 3 4 dash=true>");
+
+        string[] lines = OverviewSample.Replace("\r\n", "\n").Split('\n');
+        var doc = fire.Editor.OverviewParser.Parse(OverviewSample);
+        var sketch = fire.Editor.OverviewSource.AllSketches(doc.Children).Single();
+        var one = Apply(lines, fire.Editor.OverviewSource.RemoveShape(lines, doc, sketch.Shapes[1]));
+        var parsedOne = fire.Editor.OverviewParser.Parse(one);
+        Check("Form loeschen", fire.Editor.OverviewSource.AllSketches(parsedOne.Children).Single().Shapes.Count == 2 && parsedOne.Problems.Count == 0);
+        var single = "[sketch]: <>\n[rect]: <1 2 3 4>\n[/]: <>\n\nText\n";
+        var singleLines = single.Split('\n');
+        var singleDoc = fire.Editor.OverviewParser.Parse(single);
+        var gone = Apply(singleLines, fire.Editor.OverviewSource.RemoveShape(singleLines, singleDoc, fire.Editor.OverviewSource.AllSketches(singleDoc.Children).Single().Shapes[0]));
+        Check("letzte Form loescht den Sketch", gone == "Text\n", gone);
     }
 
     private static void Folders()

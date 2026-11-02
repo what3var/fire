@@ -354,6 +354,126 @@ namespace fire.Editor
             return (element.Line, count, new List<string>());
         }
 
+        private static string Quote(string value) =>
+            value.Length == 0 || value.Any(char.IsWhiteSpace) || value.Contains('"') ? "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"" : value;
+
+        /// <summary>The definition with these attributes: the words without a key first, then the keys in their order; the label and the title stay.</summary>
+        public static string Rewrite(string line, OvAttributes attributes)
+        {
+            var m = Definition.Match(line);
+            if (!m.Success) return line;
+            string dest = string.Join(" ", attributes.Positional.Select(Quote).Concat(attributes.Named.Select(kv => kv.Key + "=" + Quote(kv.Value))));
+            return m.Groups["head"].Value + dest + m.Groups["tail"].Value;
+        }
+
+        /// <summary>The attributes of a definition line (empty if it is none).</summary>
+        public static OvAttributes AttributesOf(string line)
+        {
+            var m = Definition.Match(line);
+            return m.Success ? OvAttributes.Parse(Regex.Replace(m.Groups["dest"].Value, @"\\(.)", "$1")) : new OvAttributes();
+        }
+
+        /// <summary>The line without the attribute `key`.</summary>
+        public static string RemoveAttribute(string line, string key)
+        {
+            var attributes = AttributesOf(line);
+            return attributes.Named.Remove(key) ? Rewrite(line, attributes) : line;
+        }
+
+        /// <summary>Sets a number of a shape: the key when it is written with its key, else the word at `index` (if there are enough words), else the key.</summary>
+        private static void SetNumber(OvAttributes a, string key, int index, double value)
+        {
+            if (a.Named.ContainsKey(key) || index >= a.Positional.Count) a.Named[key] = Number(value);
+            else a.Positional[index] = Number(value);
+        }
+
+        private static readonly Regex PathToken = new(@"[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", RegexOptions.Compiled);
+
+        /// <summary>Path data (SVG) moved by dx/dy: the coordinates of absolute commands move, relative ones stay (but a relative first `m`).</summary>
+        public static string TranslatePath(string data, double dx, double dy)
+        {
+            var output = new List<string>();
+            char command = 'M';
+            int index = 0;
+            bool first = true;
+            foreach (Match t in PathToken.Matches(data))
+            {
+                if (char.IsLetter(t.Value[0]))
+                {
+                    command = t.Value[0];
+                    index = 0;
+                    output.Add(t.Value);
+                    continue;
+                }
+                double v = double.Parse(t.Value, CultureInfo.InvariantCulture);
+                bool absolute = char.IsUpper(command) || (first && command == 'm' && index < 2);
+                char upper = char.ToUpperInvariant(command);
+                int group = upper switch { 'H' or 'V' => 1, 'C' => 6, 'S' or 'Q' => 4, 'A' => 7, _ => 2 };
+                int i = index % group;
+                if (absolute)
+                {
+                    bool isX = upper switch { 'H' => true, 'V' => false, 'A' => i == 5, _ => i % 2 == 0 };
+                    bool isY = upper switch { 'H' => false, 'V' => true, 'A' => i == 6, _ => i % 2 == 1 };
+                    if (isX) v += dx;
+                    else if (isY) v += dy;
+                }
+                output.Add(Number(v));
+                index++;
+                if (index >= 2 && command is 'm' or 'M') first = false;
+                if (command is not ('m' or 'M')) first = false;
+            }
+            return string.Join(" ", output);
+        }
+
+        /// <summary>A shape moved by dx/dy (rect, ellipse, text: their position; path: its data).</summary>
+        public static string MoveShape(string line, string kind, double dx, double dy)
+        {
+            var a = AttributesOf(line);
+            if (kind == "path")
+            {
+                if (a.Get("d") is { } d) a.Named["d"] = TranslatePath(d, dx, dy);
+                else
+                {
+                    string moved = TranslatePath(string.Join(" ", a.Positional), dx, dy);
+                    a.Positional.Clear();
+                    a.Positional.AddRange(moved.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+                }
+            }
+            else
+            {
+                SetNumber(a, "x", 0, (a.Number("x", 0) ?? 0) + dx);
+                SetNumber(a, "y", 1, (a.Number("y", 1) ?? 0) + dy);
+            }
+            return Rewrite(line, a);
+        }
+
+        /// <summary>A rect or ellipse with a new size.</summary>
+        public static string ResizeShape(string line, double w, double h)
+        {
+            var a = AttributesOf(line);
+            SetNumber(a, "w", 2, w);
+            SetNumber(a, "h", 3, h);
+            return Rewrite(line, a);
+        }
+
+        /// <summary>Removes a shape; the last shape of a sketch takes the sketch with it.</summary>
+        public static (int First, int Count, List<string> Lines) RemoveShape(string[] lines, OverviewDocument doc, OvShape shape)
+        {
+            var sketch = AllSketches(doc.Children).FirstOrDefault(s => s.Shapes.Contains(shape));
+            if (sketch != null && sketch.Shapes.Count == 1 && sketch.EndLine >= 0) return Remove(lines, sketch);
+            return (shape.Line, 1, new List<string>());
+        }
+
+        /// <summary>Every sketch, also those in containers.</summary>
+        public static IEnumerable<OvSketch> AllSketches(IEnumerable<OvElement> elements)
+        {
+            foreach (var e in elements)
+            {
+                if (e is OvSketch s) yield return s;
+                else if (e is OvContainer c) foreach (var inner in AllSketches(c.Children)) yield return inner;
+            }
+        }
+
         /// <summary>A number as it is written into an attribute.</summary>
         public static string Number(double value) => Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
 

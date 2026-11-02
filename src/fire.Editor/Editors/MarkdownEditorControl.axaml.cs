@@ -8,6 +8,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
@@ -72,6 +73,7 @@ namespace fire.Editor
             public int? SelectedLine { get; set; }
             public int? PendingEditLine { get; set; }
             public OverviewTool Tool => _owner._tool;
+            public string? Color => _owner._color;
             public void ToolDone() { if (_owner._tool != OverviewTool.Pen) _owner.SetTool(OverviewTool.Select); }
             public void Batch(Action changes)
             {
@@ -97,6 +99,14 @@ namespace fire.Editor
                     return;
                 }
                 int last = Math.Min(first + count, doc.LineCount);
+                if (lines.Count == 0)
+                {
+                    // removing lines takes their line breaks with them (no empty line is left)
+                    if (last < doc.LineCount) doc.Remove(start, doc.GetLineByNumber(last + 1).Offset - start);
+                    else if (first > 0) { int from = doc.GetLineByNumber(first).EndOffset; doc.Remove(from, doc.TextLength - from); }
+                    else doc.Remove(0, doc.TextLength);
+                    return;
+                }
                 int end = doc.GetLineByNumber(last).EndOffset;
                 doc.Replace(start, end - start, text);
             }
@@ -467,9 +477,54 @@ namespace fire.Editor
             Tool(OverviewTool.Text, "Text", "Write a text on the surface");
             Tool(OverviewTool.Connect, "Connect", "Draw a line from one container to another");
             Command("Embed...", "A container that shows a file: a todo list, another canvas, Markdown, a picture", () => _ = Embed());
+            CanvasTools.Children.Add(ColorButton());
             Command("Fit", "Fit the whole canvas into the window", FitToView);
             CanvasTools.Children.Add(new Border { Width = 1, Background = EditorTheme.Border, Margin = new Thickness(4, 2) });
         }
+
+        private string? _color;
+        private readonly Border _colorSwatch = new() { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), BorderThickness = new Thickness(1), BorderBrush = EditorTheme.TextDim };
+
+        /// <summary>The colours of the tool bar: for what is drawn next, and for the selected shape or line.</summary>
+        private static readonly (string Name, string? Value)[] Colors =
+        {
+            ("Default", null), ("Pink", "#FF479A"), ("Red", "#FF523B"), ("Orange", "#FF9142"), ("Yellow", "#F9CB5C"),
+            ("Green", "#5CCB7A"), ("Blue", "#147AD0"), ("Violet", "#C06ADE"), ("White", "#ECE8F3"),
+        };
+
+        private Control ColorButton()
+        {
+            UpdateSwatch();
+            var button = new Button { Content = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5, Children = { _colorSwatch, new TextBlock { Text = "Color" } } } };
+            button.Classes.Add("tool");
+            ToolTip.SetTip(button, "The colour of what is drawn next - and of the selected shape or line");
+            var panel = new WrapPanel { MaxWidth = 170, Margin = new Thickness(4) };
+            var flyout = new Flyout { Content = panel, Placement = PlacementMode.BottomEdgeAlignedLeft };
+            foreach (var (name, value) in Colors)
+            {
+                var swatch = new Button
+                {
+                    Width = 30, Height = 30, Margin = new Thickness(2), Padding = new Thickness(0),
+                    Content = value == null
+                        ? new TextBlock { Text = "∅", HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center }
+                        : new Border { Width = 20, Height = 20, CornerRadius = new CornerRadius(4), Background = new SolidColorBrush(Color.Parse(value)) },
+                };
+                ToolTip.SetTip(swatch, name);
+                swatch.Click += (_, _) =>
+                {
+                    _color = value;
+                    UpdateSwatch();
+                    flyout.Hide();
+                    if (Preview.Content is OverviewView view) view.ApplyColor(value);
+                };
+                panel.Children.Add(swatch);
+            }
+            button.Flyout = flyout;
+            return button;
+        }
+
+        private void UpdateSwatch() =>
+            _colorSwatch.Background = _color == null ? Brushes.Transparent : new SolidColorBrush(Color.Parse(_color));
 
         /// <summary>Chooses a tool; the first tool of a canvas makes a Markdown document a canvas (after asking).</summary>
         private async System.Threading.Tasks.Task ChooseTool(OverviewTool tool)

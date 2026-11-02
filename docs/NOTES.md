@@ -242,15 +242,32 @@ container it starts in - a container that shows a document does not count - or i
 | **Embed...** | choose a file | a container showing it, in the visible part of the surface |
 | **Fit** | | zooms the whole canvas into the window |
 
-Rectangles and positions of containers snap to the raster of 10 (Alt: free). Changing a drawn shape is done in the text for now.
+Rectangles and positions of containers snap to the raster of 10 (Alt: free).
+
+**Color** in the tool bar chooses the colour of what is drawn next (`stroke=`, for a text `color=`, for a line `stroke=`); *Default* (∅) leaves it out.
+
+### Changing shapes and lines
+
+With **Select**, a click on a shape selects it - a shape without filling is hit at its outline, a path near its stroke, a text anywhere on it. It gets a dashed frame;
+a rect or an ellipse also gets a handle at its lower right corner.
+
+- **Dragging** a shape moves it (on the raster of 10, Alt: free): a rect, an ellipse or a text gets its new `x y`, a path gets all its absolute coordinates moved.
+- The **handle** changes the size of a rect or an ellipse (`w h`).
+- **Delete** deletes the shape; the last shape of a sketch takes the sketch with it.
+- **Color** gives the selected shape its colour (*Default* takes the colour out again).
+
+A line between containers is selected by a click near it (it is drawn thicker, in the accent colour): **Delete** deletes it, **Color** colours it.
+
+Every change goes into the line of the shape or line only, as one undo step.
 
 ## Steps
 
 1. **Todo** (built): the folder `notes/`, the format with four states, writing back only what changed, the Todo window for projects and solutions.
 2. **Overview, viewing** (built): reading containers, sketches and lines; showing them in the preview; containers with documents, todo lists with ticking off; zoom.
 3. **Overview, editing** (built): selecting, moving and resizing on a raster, the editor in a container (with the inner containers at half opacity), undo, the surface alone.
-4. **Drawing** (built): the tool bar of a canvas, `.xmd`, the four views; containers, shapes, pen, text, lines between containers, embedding.
+4. **Drawing** (built): the tool bar of a canvas, `.xmd`, the four views; containers, shapes, pen, text, lines between containers, embedding; selecting, moving,
+   sizing, deleting and colouring shapes and lines.
 5. **Fit to View** (built).
 
-Next ideas: selecting and moving drawn shapes, colours in the tool bar, deleting lines on the surface; showing `.xmd` as Markdown on GitHub (it shows the
-extension as plain text).
+Next ideas: showing `.xmd` as Markdown on GitHub (it shows the extension as plain text); editing the text of a drawn `[text]` with a double click; a filling in
+the tool bar.

@@ -49,6 +49,8 @@ namespace fire.Editor
         void ToolDone();
         /// <summary>Several changes as one undo step.</summary>
         void Batch(Action changes);
+        /// <summary>The colour of the tool bar for what is drawn next (`#rrggbb`); null: the default colours.</summary>
+        string? Color { get; }
     }
 
     /// <summary>The tools of a canvas (docs/NOTES.md).</summary>
@@ -84,6 +86,11 @@ namespace fire.Editor
         private double _zoom = 1;
 
         private ContainerCell? _selected;
+        private readonly List<SketchView> _sketches = new();
+        private ConnectorLayer _connectors = null!;
+        /// <summary>The selected shape (in its sketch) or line; at most one thing is selected.</summary>
+        private (SketchView View, OvShape Shape)? _shape;
+        private OvLine? _line;
         private Edit? _edit;
         private Drag? _drag;
 
@@ -98,11 +105,12 @@ namespace fire.Editor
             public Border? Edge { get; set; }
         }
 
-        private enum DragKind { Move, Resize, ResizeWidth }
+        private enum DragKind { Move, Resize, ResizeWidth, MoveShape, ResizeShape }
 
         private sealed class Drag
         {
-            public required ContainerCell Cell { get; init; }
+            public ContainerCell? Cell { get; init; }
+            public (SketchView View, OvShape Shape)? Shape { get; init; }
             public required DragKind Kind { get; init; }
             public required Point Start { get; init; }
             public required Point Origin { get; init; }
@@ -131,7 +139,8 @@ namespace fire.Editor
             if (host != null && _rootText is Panel { Width: 0 }) _rootText = EmptyText(TextWidth, "Double click to write the text of the overview.");
             _root.Children.Add(_rootText);
             foreach (var element in doc.Children) _root.Children.Add(Build(element, _context));
-            _root.Children.Add(new ConnectorLayer(doc.Lines, _named, _root) { IsHitTestVisible = false });
+            _connectors = new ConnectorLayer(doc.Lines, _named, _root) { IsHitTestVisible = host != null, Editable = host != null };
+            _root.Children.Add(_connectors);
 
             _zoomHost.Child = _root;
             var stack = new StackPanel();
@@ -161,9 +170,11 @@ namespace fire.Editor
                     if (!e.GetCurrentPoint(_rootText).Properties.IsLeftButtonPressed || _edit?.Cell == null && _edit != null) return;
                     if (e.ClickCount == 2) { Commit(); Select(null); BeginEdit(null); e.Handled = true; }
                 }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
-                _root.AddHandler(PointerPressedEvent, (_, e) =>
+                // a click on the empty surface (also below and beside what is on it) clears the selection
+                AddHandler(PointerPressedEvent, (_, e) =>
                 {
-                    if (CellOf(e.Source) == null && !IsInside(e.Source, _rootText) && !IsInside(e.Source, _edit?.Editor)) { Commit(); Select(null); }
+                    if (CellOf(e.Source) == null && !IsInside(e.Source, _rootText) && !IsInside(e.Source, _edit?.Editor) && !IsInside(e.Source, typeof(SketchView)) && !IsInside(e.Source, _connectors))
+                    { Commit(); Select(null); }
                 }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
                 AddHandler(PointerMovedEvent, OnDragMove, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
                 AddHandler(PointerReleasedEvent, OnDragEnd, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
@@ -171,12 +182,23 @@ namespace fire.Editor
                 {
                     if (_edit != null) return;   // the editor in a container has its own undo
                     bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
-                    if (e.Key == Key.Escape && _selected != null) { Select(null); e.Handled = true; }
-                    else if (e.Key == Key.Delete && _selected != null) { DeleteSelected(); e.Handled = true; }
+                    bool any = _selected != null || _shape != null || _line != null;
+                    if (e.Key == Key.Escape && any) { Select(null); e.Handled = true; }
+                    else if (e.Key == Key.Delete && any) { DeleteSelected(); e.Handled = true; }
                     else if (ctrl && e.Key == Key.Z && !e.KeyModifiers.HasFlag(KeyModifiers.Shift)) { host.Undo(); e.Handled = true; }
                     else if (ctrl && (e.Key == Key.Y || e.Key == Key.Z)) { host.Redo(); e.Handled = true; }
                 };
-                if (host.SelectedLine is { } line && _cells.FirstOrDefault(c => c.Model.Line == line) is { } keep) Select(keep);
+                if (host.SelectedLine is { } line)
+                {
+                    if (_cells.FirstOrDefault(c => c.Model.Line == line) is { } keep) Select(keep);
+                    else if (_sketches.SelectMany(v => v.Sketch.Shapes.Select(sh => (v, sh))).FirstOrDefault(x => x.sh.Line == line) is { v: not null } shape) SelectShape(shape.v, shape.sh);
+                    else if (doc.Lines.FirstOrDefault(l => l.Line == line) is { } kept) SelectLine(kept);
+                }
+                _connectors.AddHandler(PointerPressedEvent, (_, e) =>
+                {
+                    if (host.Tool != OverviewTool.Select || !e.GetCurrentPoint(_connectors).Properties.IsLeftButtonPressed) return;
+                    if (_connectors.LineAt(e.GetPosition(_connectors)) is { } hit) { Commit(); SelectLine(hit); e.Handled = true; }
+                });
                 if (host.PendingEditLine is { } edit)
                 {
                     host.PendingEditLine = null;
@@ -244,7 +266,7 @@ namespace fire.Editor
         private Control Build(OvElement element, OverviewContext context) => element switch
         {
             OvContainer c => Container(c, context),
-            OvSketch s => Place(new SketchView(s), 0, 0),
+            OvSketch s => Place(Sketch(s), 0, 0),
             _ => new Panel(),
         };
 
@@ -313,6 +335,7 @@ namespace fire.Editor
             {
                 if (_host!.Tool != OverviewTool.Select || _stroke != null) return;   // a drawing tool has the mouse
                 if (CellOf(e.Source) != cell || IsInside(e.Source, _edit?.Editor)) return;   // a container inside it, or its own editor
+                if (IsInside(e.Source, typeof(SketchView)) || IsInside(e.Source, _connectors)) return;   // a shape or a line in it
                 if (!e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed) return;
                 if (IsInside(e.Source, cell.Corner) || IsInside(e.Source, cell.Edge)) return;
                 if (e.ClickCount == 2)
@@ -329,6 +352,66 @@ namespace fire.Editor
                 if (!taken) StartDrag(cell, DragKind.Move, e);
             }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
         }
+
+        /// <summary>A sketch on the surface; on an editable one its shapes are selected, moved and sized with the mouse.</summary>
+        private SketchView Sketch(OvSketch sketch)
+        {
+            var view = new SketchView(sketch, _host != null);
+            _sketches.Add(view);
+            if (_host == null) return view;
+            view.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                if (_host.Tool != OverviewTool.Select || !e.GetCurrentPoint(view).Properties.IsLeftButtonPressed) return;
+                var p = e.GetPosition(view);
+                Commit();
+                if (_shape is { } current && current.View == view && view.Handle is { } handle && handle.Inflate(2).Contains(p))
+                {
+                    _drag = new Drag { Shape = current, Kind = DragKind.ResizeShape, Start = e.GetPosition(_root), Origin = default, Size = SketchView.BoundsOf(current.Shape).Size };
+                    e.Handled = true;
+                    return;
+                }
+                if (view.ShapeAt(p) is not { } shape) return;
+                SelectShape(view, shape);
+                _drag = new Drag { Shape = (view, shape), Kind = DragKind.MoveShape, Start = e.GetPosition(_root), Origin = default, Size = SketchView.BoundsOf(shape).Size };
+                e.Handled = true;
+            });
+            return view;
+        }
+
+        private void SelectShape(SketchView view, OvShape shape)
+        {
+            Select(null);
+            _shape = (view, shape);
+            view.Select(shape);
+            if (_host != null) _host.SelectedLine = shape.Line;
+        }
+
+        private void SelectLine(OvLine line)
+        {
+            Select(null);
+            _line = line;
+            _connectors.Selected = line;
+            _connectors.InvalidateVisual();
+            if (_host != null) _host.SelectedLine = line.Line;
+        }
+
+        /// <summary>Gives the selected shape or line a colour (null: its default colour): `stroke`, for a text `color`.</summary>
+        public void ApplyColor(string? color)
+        {
+            if (_host == null) return;
+            int line;
+            string key;
+            if (_shape is { } shape) { line = shape.Shape.Line; key = shape.Shape.Kind == "text" ? "color" : "stroke"; }
+            else if (_line != null) { line = _line.Line; key = "stroke"; }
+            else return;
+            var lines = _host.Lines;
+            if (line >= lines.Length) return;
+            string changed = color == null ? OverviewSource.RemoveAttribute(lines[line], key) : OverviewSource.SetAttributes(lines[line], new[] { (key, color) });
+            if (changed != lines[line]) _host.Replace(line, 1, new[] { changed });
+        }
+
+        /// <summary>The colour of the tool bar for a new shape: ` stroke=…` (a text: ` color=…`), or nothing.</summary>
+        private string ColorOf(string kind) => _host?.Color is { } c ? (kind == "text" ? " color=" : " stroke=") + c : "";
 
         private static bool IsInside(object? source, Control? control)
         {
@@ -352,6 +435,8 @@ namespace fire.Editor
 
         private void Select(ContainerCell? cell)
         {
+            if (_shape is { } shape) { shape.View.Select(null); _shape = null; }
+            if (_line != null) { _line = null; _connectors.Selected = null; _connectors.InvalidateVisual(); }
             if (_selected != null)
             {
                 _selected.Box.BorderBrush = ContainerBorder;
@@ -391,7 +476,15 @@ namespace fire.Editor
             if (!drag.Moving && Math.Abs(dx) + Math.Abs(dy) < 4) return;
             if (!drag.Moving) { drag.Moving = true; e.Pointer.Capture(this); }
             bool free = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
-            var cell = drag.Cell;
+            if (drag.Shape is { } dragged)
+            {
+                if (drag.Kind == DragKind.MoveShape) dragged.View.Offset = new Vector(Snap(dx, free), Snap(dy, free));
+                else dragged.View.NewSize = new Size(Math.Max(Raster, Snap(drag.Size.Width + dx, free)), Math.Max(Raster, Snap(drag.Size.Height + dy, free)));
+                dragged.View.InvalidateVisual();
+                e.Handled = true;
+                return;
+            }
+            var cell = drag.Cell!;
             switch (drag.Kind)
             {
                 case DragKind.Move:
@@ -420,7 +513,21 @@ namespace fire.Editor
             _drag = null;
             if (!drag.Moving) return;
             e.Pointer.Capture(null);
-            var cell = drag.Cell;
+            if (drag.Shape is { } dragged)
+            {
+                var lines0 = _host!.Lines;
+                var (view, shape) = dragged;
+                if (shape.Line >= lines0.Length) return;
+                string changed = drag.Kind == DragKind.MoveShape
+                    ? OverviewSource.MoveShape(lines0[shape.Line], shape.Kind, view.Offset.X, view.Offset.Y)
+                    : OverviewSource.ResizeShape(lines0[shape.Line], view.NewSize?.Width ?? drag.Size.Width, view.NewSize?.Height ?? drag.Size.Height);
+                _host.SelectedLine = shape.Line;
+                if (changed != lines0[shape.Line]) _host.Replace(shape.Line, 1, new[] { changed });
+                else view.Select(shape);
+                e.Handled = true;
+                return;
+            }
+            var cell = drag.Cell!;
             var values = drag.Kind switch
             {
                 DragKind.Move => new[] { ("x", OverviewSource.Number(AbsolutePanel.GetPosition(cell).X)), ("y", OverviewSource.Number(AbsolutePanel.GetPosition(cell).Y)) },
@@ -587,16 +694,16 @@ namespace fire.Editor
                     double x = Math.Min(start.X, end.X), y = Math.Min(start.Y, end.Y), w = Math.Abs(end.X - start.X), h = Math.Abs(end.Y - start.Y);
                     if (w < 3 && h < 3) break;
                     string kind = stroke.Tool == OverviewTool.Rect ? "rect" : "ellipse";
-                    AddShape(scope, $"[{kind}]: <{N(Snap(x, free))} {N(Snap(y, free))} {N(Math.Max(Raster, Snap(w, free)))} {N(Math.Max(Raster, Snap(h, free)))}>");
+                    AddShape(scope, $"[{kind}]: <{N(Snap(x, free))} {N(Snap(y, free))} {N(Math.Max(Raster, Snap(w, free)))} {N(Math.Max(Raster, Snap(h, free)))}{ColorOf(kind)}>");
                     break;
                 }
                 case OverviewTool.Arrow:
                     if (Distance(start, end) < 5) break;
-                    AddShape(scope, $"[path]: <M {N(Math.Round(start.X))} {N(Math.Round(start.Y))} L {N(Math.Round(end.X))} {N(Math.Round(end.Y))} arrow=end>");
+                    AddShape(scope, $"[path]: <M {N(Math.Round(start.X))} {N(Math.Round(start.Y))} L {N(Math.Round(end.X))} {N(Math.Round(end.Y))} arrow=end{ColorOf("path")}>");
                     break;
                 case OverviewTool.Pen:
                     if (stroke.Points.Count < 2) break;
-                    AddShape(scope, "[path]: <M " + string.Join(" L ", stroke.Points.Select(p => $"{N(Math.Round(p.X))} {N(Math.Round(p.Y))}")) + ">");
+                    AddShape(scope, "[path]: <M " + string.Join(" L ", stroke.Points.Select(p => $"{N(Math.Round(p.X))} {N(Math.Round(p.Y))}")) + ColorOf("path") + ">");
                     break;
                 case OverviewTool.Connect:
                     Connect(stroke.Scope, e);
@@ -625,7 +732,7 @@ namespace fire.Editor
             {
                 if (fromLine != null) _host.Replace(from.Model.Line, 1, new[] { fromLine });
                 if (toLine != null) _host.Replace(to.Model.Line, 1, new[] { toLine });
-                var (change, _) = OverviewSource.Insert(_host.Lines, null, new[] { $"[line]: <from={a} to={b} arrow=end>" });
+                var (change, _) = OverviewSource.Insert(_host.Lines, null, new[] { $"[line]: <from={a} to={b} arrow=end{ColorOf("line")}>" });
                 _host.Replace(change.First, change.Count, change.Lines);
             });
         }
@@ -644,7 +751,7 @@ namespace fire.Editor
                 _root.Children.Remove(box);
                 string text = (box.Text ?? "").Trim();
                 if (keep && text.Length > 0)
-                    AddShape(scope?.Model, $"[text]: <{OverviewSource.Number(Math.Round(at.X))} {OverviewSource.Number(Math.Round(at.Y))}> \"{text.Replace("\"", "\\\"")}\"");
+                    AddShape(scope?.Model, $"[text]: <{OverviewSource.Number(Math.Round(at.X))} {OverviewSource.Number(Math.Round(at.Y))}{ColorOf("text")}> \"{text.Replace("\"", "\\\"")}\"");
                 _host!.ToolDone();
             }
             box.KeyDown += (_, e) =>
@@ -659,7 +766,22 @@ namespace fire.Editor
         /// <summary>Deletes the selected container with everything in it.</summary>
         private void DeleteSelected()
         {
-            if (_selected == null || _host == null) return;
+            if (_host == null) return;
+            if (_shape is { } shape)
+            {
+                var removed = OverviewSource.RemoveShape(_host.Lines, _doc, shape.Shape);
+                _host.SelectedLine = null;
+                _host.Replace(removed.First, removed.Count, removed.Lines);
+                return;
+            }
+            if (_line != null)
+            {
+                int at = _line.Line;
+                _host.SelectedLine = null;
+                _host.Replace(at, 1, Array.Empty<string>());
+                return;
+            }
+            if (_selected == null) return;
             var change = OverviewSource.Remove(_host.Lines, _selected.Model);
             _host.SelectedLine = null;
             _host.Replace(change.First, change.Count, change.Lines);
@@ -786,16 +908,39 @@ namespace fire.Editor
         }
     }
 
-    /// <summary>The shapes of a sketch, relative to the container it is in.</summary>
-    internal sealed class SketchView : Control
+    /// <summary>
+    /// The shapes of a sketch, relative to the container it is in. On an editable surface a shape is hit where it is drawn (the outline of a shape without filling, near
+    /// a path); the selected shape gets a dashed frame (and a handle for its size, for a rect or an ellipse), and while it is dragged it is drawn where it will be.
+    /// </summary>
+    internal sealed class SketchView : Control, Avalonia.Rendering.ICustomHitTest
     {
         private readonly OvSketch _sketch;
+        private readonly bool _editable;
         private static readonly IBrush DefaultStroke = new SolidColorBrush(Color.FromRgb(0xA0, 0x94, 0xA8));
+        private static readonly IPen SelectionPen = new Pen(new SolidColorBrush(EditorTheme.AccentTextColor), 1) { DashStyle = new DashStyle(new double[] { 3, 3 }, 0) };
+        private static readonly IBrush HandleBrush = new SolidColorBrush(EditorTheme.AccentTextColor);
+        public const double HandleSize = 9;
 
-        public SketchView(OvSketch sketch)
+        public OvSketch Sketch => _sketch;
+        /// <summary>The selected shape; null: none.</summary>
+        public OvShape? Selected { get; private set; }
+        /// <summary>While dragging: how far the selected shape moves, and its new size (rect, ellipse).</summary>
+        public Vector Offset { get; set; }
+        public Size? NewSize { get; set; }
+
+        public SketchView(OvSketch sketch, bool editable = false)
         {
             _sketch = sketch;
-            IsHitTestVisible = false;
+            _editable = editable;
+            IsHitTestVisible = editable;
+        }
+
+        public void Select(OvShape? shape)
+        {
+            Selected = shape;
+            Offset = default;
+            NewSize = null;
+            InvalidateVisual();
         }
 
         private static IBrush? Brush(string? color)
@@ -813,20 +958,72 @@ namespace fire.Editor
             try { return Geometry.Parse(data); } catch (Exception) { return null; }
         }
 
+        private static FormattedText TextOf(OvShape s, IBrush? fill) =>
+            new(s.Name ?? "", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default, s.Attributes.Number("size") ?? 13,
+                Brush(s.Attributes.Get("color")) ?? fill ?? EditorTheme.Text);
+
+        /// <summary>Where a shape is (without the stroke).</summary>
+        public static Rect BoundsOf(OvShape s) => s.Kind switch
+        {
+            "path" => PathOf(s)?.Bounds ?? default,
+            "text" => new Rect(Box(s).X, Box(s).Y, TextOf(s, null).Width, TextOf(s, null).Height),
+            _ => new Rect(Box(s).X, Box(s).Y, Box(s).W, Box(s).H),
+        };
+
+        public static bool CanResize(OvShape s) => s.Kind is "rect" or "ellipse";
+
+        /// <summary>The handle of the size of the selected shape, where it is drawn now.</summary>
+        public Rect? Handle => Selected is { } s && CanResize(s) ? HandleAt(ShownBounds(s)) : null;
+
+        private static Rect HandleAt(Rect bounds) => new(bounds.Right - HandleSize / 2, bounds.Bottom - HandleSize / 2, HandleSize, HandleSize);
+
+        private Rect ShownBounds(OvShape s)
+        {
+            var r = BoundsOf(s);
+            if (s != Selected) return r;
+            if (NewSize is { } size) r = new Rect(r.Position, size);
+            return r.Translate(Offset);
+        }
+
+        /// <summary>The shape at a point (the topmost one); null: none.</summary>
+        public OvShape? ShapeAt(Point p)
+        {
+            for (int i = _sketch.Shapes.Count - 1; i >= 0; i--)
+            {
+                var s = _sketch.Shapes[i];
+                bool filled = Brush(s.Attributes.Get("fill")) != null;
+                var r = BoundsOf(s);
+                switch (s.Kind)
+                {
+                    case "path":
+                        if (PathOf(s) is { } g && (g.StrokeContains(new Pen(Brushes.Black, Math.Max(8, (s.Attributes.Number("width") ?? 1.5) + 6)), p) || filled && g.FillContains(p))) return s;
+                        break;
+                    case "text":
+                        if (r.Inflate(3).Contains(p)) return s;
+                        break;
+                    case "ellipse":
+                    {
+                        double rx = r.Width / 2, ry = r.Height / 2;
+                        if (rx <= 0 || ry <= 0) break;
+                        double d = Math.Sqrt(Math.Pow((p.X - r.Center.X) / rx, 2) + Math.Pow((p.Y - r.Center.Y) / ry, 2));
+                        if (filled ? d <= 1.05 : Math.Abs(d - 1) * Math.Min(rx, ry) <= 5) return s;
+                        break;
+                    }
+                    default:
+                        if (filled ? r.Inflate(3).Contains(p) : r.Inflate(5).Contains(p) && !r.Deflate(5).Contains(p)) return s;
+                        break;
+                }
+            }
+            return null;
+        }
+
+        public bool HitTest(Point point) => _editable && (ShapeAt(point) != null || Handle is { } h && h.Inflate(2).Contains(point));
+
         private Rect Extent()
         {
             Rect? all = null;
-            foreach (var s in _sketch.Shapes)
-            {
-                Rect r = s.Kind switch
-                {
-                    "path" => PathOf(s)?.Bounds ?? default,
-                    "text" => new Rect(Box(s).X, Box(s).Y, 8 * (s.Name?.Length ?? 0), 20),
-                    _ => new Rect(Box(s).X, Box(s).Y, Box(s).W, Box(s).H),
-                };
-                all = all == null ? r : all.Value.Union(r);
-            }
-            return (all ?? default).Inflate(4);
+            foreach (var s in _sketch.Shapes) all = all == null ? BoundsOf(s) : all.Value.Union(BoundsOf(s));
+            return (all ?? default).Inflate(6);
         }
 
         protected override Size MeasureOverride(Size availableSize)
@@ -846,7 +1043,10 @@ namespace fire.Editor
                 {
                     DashStyle = s.Attributes.Get("dash") is "true" or "yes" ? new DashStyle(new double[] { 4, 3 }, 0) : null,
                 };
+                bool moving = s == Selected && Offset != default;
+                using var _ = moving ? context.PushTransform(Matrix.CreateTranslation(Offset.X, Offset.Y)) : default(DrawingContext.PushedState?);
                 var (x, y, w, h) = Box(s);
+                if (s == Selected && NewSize is { } size) { w = size.Width; h = size.Height; }
                 switch (s.Kind)
                 {
                     case "rect":
@@ -860,19 +1060,23 @@ namespace fire.Editor
                         if (PathOf(s) is { } geometry)
                         {
                             context.DrawGeometry(fill, pen, geometry);
-                            if (pen != null) Arrows(context, geometry, pen, stroke!, s.Attributes.Get("arrow"));
+                            if (pen != null) Arrows(context, geometry, stroke!, s.Attributes.Get("arrow"));
                         }
                         break;
                     case "text":
-                        var formatted = new FormattedText(s.Name ?? "", CultureInfo.CurrentCulture, FlowDirection.LeftToRight, Typeface.Default,
-                            s.Attributes.Number("size") ?? 13, Brush(s.Attributes.Get("color")) ?? fill ?? EditorTheme.Text);
-                        context.DrawText(formatted, new Point(x, y));
+                        context.DrawText(TextOf(s, fill), new Point(x, y));
                         break;
                 }
             }
+            if (Selected is { } selected)
+            {
+                var bounds = ShownBounds(selected);
+                context.DrawRectangle(null, SelectionPen, bounds.Inflate(4));
+                if (CanResize(selected)) context.DrawRectangle(HandleBrush, null, HandleAt(bounds), 2, 2);
+            }
         }
 
-        private static void Arrows(DrawingContext context, Geometry geometry, IPen pen, IBrush brush, string? arrow)
+        private static void Arrows(DrawingContext context, Geometry geometry, IBrush brush, string? arrow)
         {
             if (arrow is not ("end" or "start" or "both")) return;
             double length = geometry.ContourLength;
@@ -905,8 +1109,29 @@ namespace fire.Editor
     }
 
     /// <summary>The lines between named containers, drawn over everything; they are drawn again whenever the layout changes, so they follow the containers.</summary>
-    internal sealed class ConnectorLayer : Control, IFillLayer
+    internal sealed class ConnectorLayer : Control, IFillLayer, Avalonia.Rendering.ICustomHitTest
     {
+        /// <summary>The selected line; null: none. On an editable surface a line is hit near it.</summary>
+        public OvLine? Selected { get; set; }
+        public bool Editable { get; set; }
+        private readonly Dictionary<OvLine, (Point Start, Point End)> _drawn = new();
+        private static readonly IBrush SelectedBrush = new SolidColorBrush(EditorTheme.AccentTextColor);
+
+        public bool HitTest(Point point) => Editable && LineAt(point) != null;
+
+        /// <summary>The line near a point; null: none.</summary>
+        public OvLine? LineAt(Point p)
+        {
+            foreach (var (line, (a, b)) in _drawn)
+            {
+                double dx = b.X - a.X, dy = b.Y - a.Y, len2 = dx * dx + dy * dy;
+                double t = len2 == 0 ? 0 : Math.Clamp(((p.X - a.X) * dx + (p.Y - a.Y) * dy) / len2, 0, 1);
+                double qx = a.X + t * dx - p.X, qy = a.Y + t * dy - p.Y;
+                if (qx * qx + qy * qy <= 36) return line;
+            }
+            return null;
+        }
+
         private readonly List<OvLine> _lines;
         private readonly Dictionary<string, Control> _named;
         private readonly Visual _root;
@@ -942,13 +1167,15 @@ namespace fire.Editor
 
         public override void Render(DrawingContext context)
         {
+            _drawn.Clear();
             foreach (var line in _lines)
             {
                 if (BoundsOf(line.From) is not { } a || BoundsOf(line.To) is not { } b) continue;
                 var start = Edge(a.Inflate(4), b.Center);
                 var end = Edge(b.Inflate(4), a.Center);
-                var brush = line.Attributes.Get("stroke") is { } s && Color.TryParse(s, out var color) ? new SolidColorBrush(color) : Stroke;
-                var pen = new Pen(brush, line.Attributes.Number("width") ?? 1.5, lineCap: PenLineCap.Round)
+                _drawn[line] = (start, end);
+                IBrush brush = line == Selected ? SelectedBrush : line.Attributes.Get("stroke") is { } s && Color.TryParse(s, out var color) ? new SolidColorBrush(color) : Stroke;
+                var pen = new Pen(brush, (line.Attributes.Number("width") ?? 1.5) + (line == Selected ? 1.5 : 0), lineCap: PenLineCap.Round)
                 {
                     DashStyle = line.Attributes.Get("dash") is "true" or "yes" ? new DashStyle(new double[] { 4, 3 }, 0) : null,
                 };
