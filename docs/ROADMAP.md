@@ -57,7 +57,11 @@ Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native F�
 auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Offen: ein echter ESP32-Build (ESP-IDF), MSVC, macOS und Emscripten sind hier nicht installiert; die
 Benchmarks vorher/nachher.
 
-Danach (eigene Schritte): die C++-Natives der Packages nach und nach in C (dann fällt `fire_rt_cpp.hpp` weg und ein Programm mit Packages ist reines C).
+Danach: ~~die Natives der Standard-Packages in C~~ - **umgesetzt**: process, time, io, net, tls (OpenSSL, mbedTLS, SChannel), gpio, i2c, spi, usb, wifi,
+devices, audio, tracker, graphics und windows sind C99 (`"language": "c"` im Manifest), ihre Plattformschichten ebenso (`native/platform/std/fire_<teil>_c.h`).
+Ein Programm mit diesen Packages ist reines C und lässt sich mit TinyCC bauen (`--toolchain tcc`). C++ bleiben bewusst der Simulator `circuits` und die
+3D-Engine `scene3d` (mit ihrer Brücke); `fire_rt_cpp.hpp` und `fire_platform.hpp` gibt es nur noch für sie. Geprüft: die Testsuite (VM == nativ, ASan/UBSan),
+die Fälle der Packages zusätzlich mit TinyCC und - wo möglich - für Windows (MinGW) unter Wine; ESP32/FreeRTOS nur mit Ersatz-Headern übersetzt.
 
 ## 1. Echte Enums
 

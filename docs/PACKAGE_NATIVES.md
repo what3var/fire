@@ -1,4 +1,4 @@
-# Writing the natives of a package (C++) and connecting them to the prelude
+# Writing the natives of a package (C or C++) and connecting them to the prelude
 
 A package (docs/PACKAGES.md) can bring **natives**: functions written in C++ that fire code calls. This is how a package reaches an operating system API, a sensor, a
 protocol stack or a fast algorithm. You write the C++ **once**; the compiler uses it in both engines:
@@ -9,6 +9,23 @@ protocol stack or a fast algorithm. You write the C++ **once**; the compiler use
 | virtual machine (`fire.Compiler run`, the editor, a packed standalone program) | the compiler builds your sources into a **shared library** (`.dll`, `.so`, `.dylib`) for the machine, with a generated wrapper that exports a small C interface (`native/abi/fire_pkg_abi.h`); the VM loads it and calls it |
 
 So the C# VM never needs to know your functions: it only knows the C ABI, and the wrapper is generated for you.
+
+## 0. C or C++
+
+A package says in its manifest which language its natives are in: `"native": { "language": "c", ... }` or `"c++"` (the default). **C (C99) is the recommended
+choice** and what all standard packages use except the simulator `circuits` and the 3D engine `scene3d`:
+
+* a C package goes straight into the generated program (`fire_program.c`), so a C compiler is enough - TinyCC (`--toolchain tcc`), a board without C++;
+* a function is named with `"c": "fire_sensor_Read"` (instead of `"cpp": "sensor::Read"`), `"reset"` names a C function, too; every function in the sources is
+  `static` and gets a prefix of its own (several packages share the one file);
+* the runtime is the same (`native/runtime/fire_rt.h`: `Value`, `Int()`, `strOf(v)->data`, `bufOf(v)->data`, `allocStr`, ...); the platform layers in C are
+  included with `#include FIRE_PLATFORM_<PART>_C_HEADER` (`FS`, `NET`, `TLS`, `DEV`, `GPIO`, `I2C`, `SPI`, `USB`, `WIFI`, `AUDIO`, `DISPLAY`; the interface of each
+  is described in `native/platform/std/fire_<part>_c.h`);
+* in the VM the library is built from a generated `wrapper.c` (`native/abi/fire_pkg_wrapper.h`): one call at a time, `fatal`/`fireError` return to the wrapper
+  with `longjmp`, and the error slots of the bridges (`g_ioError`, `g_deviceError`, `g_gfxError`) are kept per calling thread.
+
+The examples in `packages/*/native/fire_bridge_*.h` (process, time, io, net, tls, gpio, ...) show the pattern. The rest of this document describes the C++ route;
+what it says about the prelude, the manifest, the platforms and the VM boundary holds for C as well.
 
 ## 1. The three parts
 
@@ -150,7 +167,7 @@ In the VM your functions run in a shared library, so values are **copied** at th
   (`fire_io_allowed()` and the console functions in `packages/io/native/fire_bridge_io.h`). When a program ends the VM calls `fire_pkg_reset` - the function named by `native.reset` in the manifest (`"reset": "fire_io_reset"`): forget what the program
   left behind (open streams), the library stays loaded for the next program;
 * **the network**: `net_allow(host, port, access, ...)` asks whether a script may connect to, listen on or resolve a host (`NetPolicy` of the host); the net package is the example (`fire_net_allowed()` in `packages/net/native/fire_bridge_net.h`, its sockets come from
-  `FIRE_PLATFORM_NET_C_HEADER`: `fire_net_*`, `native/platform/std/fire_net_sockets.h`; the C++ layer `plat::net` stays for the tls package until it is in C, too);
+  `FIRE_PLATFORM_NET_C_HEADER`: `fire_net_*`, `native/platform/std/fire_net_sockets.h`);
 * **devices**: the `dev_*` callbacks of `fire_host` give a library the device manager of the host (its drivers, handles, the shared devices of the editor, the packet trace). The devices package
   uses them through a driver "host" (the devices of kind `FIRE_DEVB_HOST` in `packages/devices/native/fire_bridge_devices.h`); a native build uses the serial and loopback drivers in C instead. Waiting that must be abortable
   and know the program's `#timeout` is a `host` function (`WaitFor`): the VM waits and asks the library once per step (`__DEVWaitStep`);
