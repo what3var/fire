@@ -8,85 +8,86 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'time' of fire: prelude and C++ sources."
+    "description": "The standard library 'time' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_time.hpp"
+      "native/fire_bridge_time.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "Sleep",
         "arguments": 1,
-        "cpp": "sleepNative",
-        "host": true
+        "host": true,
+        "c": "fire_tm_sleep"
       },
       {
         "name": "__time_now",
         "arguments": 0,
-        "cpp": "tm_now"
+        "c": "fire_tm_now"
       },
       {
         "name": "__time_local_offset",
         "arguments": 1,
-        "cpp": "tm_localOffset"
+        "c": "fire_tm_localOffset"
       },
       {
         "name": "__time_parts",
         "arguments": 1,
-        "cpp": "tm_parts",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tm_parts"
       },
       {
         "name": "__time_make",
         "arguments": 7,
-        "cpp": "tm_make"
+        "c": "fire_tm_make"
       },
       {
         "name": "__time_parse",
         "arguments": 1,
-        "cpp": "tm_parse"
+        "c": "fire_tm_parse"
       },
       {
         "name": "__time_format",
         "arguments": 2,
-        "cpp": "tm_format",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tm_format"
       },
       {
         "name": "__time_add_months",
         "arguments": 2,
-        "cpp": "tm_addMonths"
+        "c": "fire_tm_addMonths"
       },
       {
         "name": "__time_days_in_month",
         "arguments": 2,
-        "cpp": "tm_daysInMonth"
+        "c": "fire_tm_daysInMonth"
       },
       {
         "name": "__time_to_ticks",
         "arguments": 2,
-        "cpp": "tm_toTicks"
+        "c": "fire_tm_toTicks"
       },
       {
         "name": "__time_unit_ticks",
         "arguments": 1,
-        "cpp": "tm_unitTicks",
-        "host": true
+        "host": true,
+        "c": "fire_tm_unitTicks"
       },
       {
         "name": "__time_span_text",
         "arguments": 1,
-        "cpp": "tm_spanText",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tm_spanText"
       }
     ],
     "exceptions": [
       "TimeException"
-    ]
+    ],
+    "language": "c"
   }
 }
