@@ -109,6 +109,9 @@ class Framebuffer {
     int ReadByte(int offset) { return __GRPHFbReadByte(this.id, offset) }
     undefined WriteByte(int offset, int value) { __GRPHFbWriteByte(this.id, offset, value) }
     byte[] ReadBytes() { return __GRPHFbReadBytes(this.id) }
+    // The framebuffer as the bytes of a PNG file (RGBA, 8 bits per channel): to save it (IO.File.WriteAllBytes) or to put it on the clipboard. A palette framebuffer
+    // is resolved through its palette (its transparent index becomes transparent); Framebuffer.FromImage reads it back.
+    byte[] ToPng() { return __GRPHFbToPng(this.id) }
     undefined WriteBytes(byte data[]) {
         if (!__GRPHFbWriteBytes(this.id, data)) {
             throw new GraphicsException(__GRPHFbLastError())

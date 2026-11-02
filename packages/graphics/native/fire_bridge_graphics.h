@@ -236,6 +236,30 @@ static Value fire_gfx_FbReadBytes(Value id, OwnList* list) {
     }
     return BufV(b);
 }
+/* The framebuffer as a PNG file (RGBA, 8 bits): Framebuffer.ToPng - to save it, or to put it on the clipboard. A palette framebuffer is resolved through its palette;
+ * its transparent index becomes transparent. */
+static uint32_t* fire_gfxb_rgbaOf(const FireGfxFramebuffer* fb) {
+    size_t n = fire_gfx_fbPixelCount(fb), i;
+    uint32_t* rgba = (uint32_t*)malloc(n * 4 + 4);
+    if (rgba == NULL) fire_gfxb_outOfMemory();
+    fire_gfx_fbResolveTo(fb, rgba);
+    if (fb->indices && fb->transparentIndex >= 0)
+        for (i = 0; i < n; i++) if (fb->indices[i] == fb->transparentIndex) rgba[i] &= 0x00FFFFFFu;
+    return rgba;
+}
+static Value fire_gfx_FbToPng(Value id, OwnList* list) {
+    FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
+    uint32_t* rgba = fire_gfxb_rgbaOf(fb);
+    size_t size = 0;
+    uint8_t* png = fire_gfx_encodePng(rgba, fb->width, fb->height, &size);
+    Buf* b;
+    free(rgba);
+    if (png == NULL || size > 0x7FFFFFFFu) { free(png); fire_gfxb_outOfMemory(); }
+    b = allocBuf((uint32_t)size, list);
+    memcpy(bufBytes(b), png, size);
+    free(png);
+    return BufV(b);
+}
 static Value fire_gfx_FbWriteBytes(Value id, Value data) {
     FireGfxFramebuffer* fb;
     Buf* b;

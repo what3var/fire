@@ -236,7 +236,8 @@ X11, Wayland, or a `CAMetalLayer` on macOS), and `Render` does not wait for the 
   texture, and the CPU and the GPU work at the same time; it costs the copy of the overlay to the GPU (skipped when nothing is drawn into the framebuffer). The sample
   **Scene3D Benchmark** (Help > Samples) measures the three ways on a machine: software, hardware with the picture read back, and DirectDrawing.
 * **In the VM** the host shows the windows (src/fire.Terminal.Sdl): the package library gets them through `fire_host.win_attach` (native/abi/fire_pkg_abi.h, `fire_present_fn`); in a
-  native build the windows bridge does the same through the graphics bridge (`fire_gfx_attachPresenter`; the display layer gives the native handles: `fire_display_native`).
+  native build the windows bridge does the same through the graphics bridge (`fire_gfx_attachPresenter`; the display layer gives the native handles: `fire_display_native`, with SDL2
+  and with SDL3).
 
 Why Vulkan: it is the GPU API with a future on all desktop systems and Android, has a C interface (it fits a C package) and a loader on every machine with a GPU driver; OpenGL is frozen and
 deprecated on macOS, Direct3D is Windows only. Further backends can sit behind the same queue (`s3d_gpu_flush`): WebGPU for the browser (through `webgpu.h`) or Metal directly are the candidates.

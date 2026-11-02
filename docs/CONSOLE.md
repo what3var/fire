@@ -13,6 +13,7 @@ fire.Terminal                  (net10.0, plattformunabhängig)
 
 fire.Terminal.Sdl              (net10.0, referenziert nur .Terminal)
   SdlFramebufferRenderer         – IFramebufferRenderer über SDL3-CS
+  SdlClipboard                   – IClipboard über SDL3-CS (Text, image/png, image/bmp, text/uri-list)
 
 fire.Terminal.Windows          (net10.0, referenziert .Terminal + .Sdl)
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
@@ -243,6 +244,8 @@ Aus fire (`#import "graphics"`):
   indiziert (PNG mit Palette, GIF, BMP bis 8 Bit) wird ein **Palette-Framebuffer mit der Palette der Datei**, alles andere **RGBA**. `ColorMode.Rgba`/`ColorMode.Palette` erzwingt einen Modus: ein indiziertes Bild in einen RGBA-Framebuffer wird über seine Palette aufgelöst, ein Truecolor-Bild in einen
   Palette-Framebuffer je Pixel auf den nächsten Eintrag der Standard-Palette abgebildet (ohne eigene Palette zu berechnen, Alpha geht dabei verloren).
 - `FromFile` liest nur, was die **`IoPolicy` des Hosts** (`IoPolicy`, siehe `docs/BYTECODE.md` Abschnitt 23) zum Lesen erlaubt, wie `IO.File`; `GraphicsBridge.RegisterAll(..., readFile)` nimmt dafür eine Lesefunktion entgegen (Vorgabe: die Datei einfach lesen). Das Bild muss nicht per `#import "filesystem"` geladen werden.
+- `framebuffer.ToPng()`: der Framebuffer als Bytes einer PNG-Datei (RGBA, 8 Bit je Kanal; ein Palette-Framebuffer über seine Palette, sein durchsichtiger Index wird durchsichtig) - zum Speichern
+  (`IO.File.WriteAllBytes`) oder für die Zwischenablage; `Framebuffer.FromImage` liest es zurück. VM: `ImageEncoder.EncodePng`, nativ: `fire_gfx_encodePng` (Deflate mit den festen Huffman-Codes und LZ77).
 - `Framebuffer.FromPixels(breite, hoehe, puffer, modus = 0, palette = undefined)`: ein Framebuffer aus rohen Pixeln, zeilenweise von oben nach unten - `Rgba` `breite*hoehe*4` Byte (R, G, B, A je Pixel), `Palette` `breite*hoehe` Byte (je Pixel ein Index) und optional eine Palette (768 oder 1024 Byte).
   `ReadBytes()`/`WriteBytes(puffer)` lesen und schreiben den ganzen Inhalt im selben Format (siehe "Byteweiser Framebuffer-Zugriff").
 - Fehler sind `ImageException` (eine `GraphicsException`): unbekanntes Format, beschädigt, Datei nicht lesbar oder nicht erlaubt, falsche Pufferlänge.
@@ -423,3 +426,45 @@ Das Fenster meldet neben Maus und Tastatur auch Finger und Joysticks (SDL; VM un
 - `window.TouchMouse` (Vorgabe `true`): SDL macht aus einem Finger zusätzlich Mausereignisse, ein Programm, das nur auf die Maus hört, ist so auch mit dem Finger bedienbar. Mit `false` kommen nur die Touch-Ereignisse
   (die UI-Bibliothek schaltet es aus und wertet die Finger selbst aus, siehe docs/UI.md "Bedienung").
 - Im nativen Backend liefert die Anzeige `EV_TOUCH_*` und `EV_JOY_*` (Felder `finger`, `pressure`, `joystick`, `index`, `value`, `x`, `y`); ein Board-Paket ohne Touchscreen oder Joystick meldet sie einfach nicht.
+
+## Drag & Drop aus anderen Programmen, Zwischenablage
+
+Was der Nutzer aus einem anderen Programm auf das Fenster zieht (Dateien aus dem Dateimanager, Text aus einem Browser), kommt als Ereignis an - in der Warteschlange oder als Callback:
+
+| Ereignis | `EventType` | Warteschlange | Callback |
+|---|---|---|---|
+| Dateien fallen gelassen | `DropFiles` 40 | `[typ, pfade (string[]), x, y]` | `window.RegisterDropFiles(func (any pfade, float x, float y) => ...)` |
+| Text fallen gelassen | `DropText` 41 | `[typ, text, x, y]` | `window.RegisterDropText(func (string text, float x, float y) => ...)` |
+| etwas wird über das Fenster gezogen | `DragHover` 42 | `[typ, x, y]` | `window.RegisterDragHover(func (float x, float y) => ...)` |
+| es verlässt das Fenster, ohne fallen gelassen zu werden | `DragLeave` 43 | `[typ]` | `window.RegisterDragLeave(func () => ...)` |
+
+- Mehrere Dateien eines Zugs kommen in einem Ereignis (SDL: `DROPBEGIN` .. `DROPCOMPLETE`); die Position ist in Pixeln des Framebuffers. SDL3 (die VM, native Builds mit SDL3) nennt sie selbst,
+  SDL2 (native Builds ohne SDL3) nicht: dort ist es die Stelle des Mauszeigers beim Loslassen.
+- `DragHover` kommt, solange etwas aus einem anderen Programm über dem Fenster ist (bei jeder Bewegung; SDL3: `SDL_EVENT_DROP_POSITION`), `DragLeave`, wenn es das Fenster wieder verlässt, ohne fallen
+  gelassen zu werden. Was gezogen wird, sagt das Betriebssystem erst beim Drop. Ein nativer Build mit SDL2 meldet beides nicht.
+- Die UI-Bibliothek reicht die Drops an das Element darunter weiter (docs/UI.md "Drag & Drop").
+
+Die **Zwischenablage** des Desktops (Text, Bilder, Dateien) gehört zu `#import "windows"`. Sie hält eine Sache zur Zeit: ein Bild hineinlegen nimmt den Text heraus.
+
+| | |
+|---|---|
+| `Clipboard.GetText()` | der Text in der Zwischenablage, `""` wenn keiner da ist (oder etwas anderes, etwa ein Bild) |
+| `Clipboard.SetText(text)` | legt Text hinein; `false`, wenn der Desktop ablehnt |
+| `Clipboard.HasText` | liegt Text darin? |
+| `Clipboard.GetImage()` | das Bild darin als neuer Framebuffer (RGBA, oder mit der Palette der Datei), `undefined`, wenn keins da ist |
+| `Clipboard.SetImage(fb)` | legt den Framebuffer als Bild hinein (als PNG, unter Windows auch als BMP/`CF_DIB`); `false`, wenn der Desktop ablehnt - oder ein nativer Build mit SDL2 (nur Text) |
+| `Clipboard.HasImage` | liegt ein Bild darin? |
+| `Clipboard.GetFiles()` | die Pfade der Dateien darin (was ein Dateimanager kopiert; `text/uri-list`, unter Windows `CF_HDROP`), ein leeres Array, wenn keine da sind |
+| `Clipboard.SetFiles(pfade)` | legt Pfade hinein (`string[]` oder eine `List`), zum Einfügen in einem Dateimanager |
+| `Clipboard.HasFiles` | liegen Dateien darin? |
+
+Sie braucht kein offenes Fenster (SDL startet seinen Video-Teil dafür einmal). Ohne Desktop - ein Board, die Tests mit einem Ersatz-Renderer - hat das Programm eine eigene Zwischenablage,
+die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet SDL auf die Antwort des
+Besitzers der Zwischenablage, indem es selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
+aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 sieht nur, was kopiert wurde, während das Programm lief (es fragt nach den Arten, wenn der Besitzer wechselt) - was vor dem
+Start kopiert wurde, sieht ein SDL3-Programm nicht (SDL2 fragt jedes Mal). Unter Windows hat SDL3 keine Dateilisten: die VM hält Dateien dort in ihrer eigenen Zwischenablage, ein nativer Build spricht
+selbst mit `CF_HDROP`.
+
+Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht
+vorhanden", ohne Desktop die eigene des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`
+(siehe docs/NATIVE_BACKEND.md "SDL3 oder SDL2").

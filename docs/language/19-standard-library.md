@@ -45,7 +45,7 @@ A library is switched on with `#import "name"` at the top of a file. The standar
 | `"devices"` | the device framework: `Device`, `Driver`, `DeviceManager` (`AddDriver`, `Get`), serial ports (`SerialDriver`) - see docs/DEVICES.md |
 | `"gpio"`, `"i2c"`, `"spi"`, `"wifi"` | hardware access on boards like the Raspberry Pi and the ESP32; `GpioDriver`, `I2cDriver`, `SpiDriver` make them devices of the device framework |
 | `"graphics"` | framebuffers, drawing, images, fonts |
-| `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events; `WindowManager` cycles windows (`window.Show()` goes on - a manager nobody runs gets a thread of its own; `window.Show(true)` is modal; `window.Run()` is the start of the program, on this thread) |
+| `"windows"` | a window for a framebuffer, keyboard, mouse, touch and joystick events, files and text dropped from other programs, `Clipboard` (text); `WindowManager` cycles windows (`window.Show()` goes on - a manager nobody runs gets a thread of its own; `window.Show(true)` is modal; `window.Run()` is the start of the program, on this thread) |
 | `"ui"` | the UI library (controls, layout, styles, data binding, `.fxml` markup) |
 | `"audio"` | sound output |
 | `"usb"` | USB devices (libusb, WinUSB): control, bulk and interrupt transfers, bulk endpoints as a stream |

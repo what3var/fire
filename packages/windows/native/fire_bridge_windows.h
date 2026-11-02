@@ -1,7 +1,7 @@
 /* fire native bridge "windows" (C): the natives behind `#import "windows"` - a window that shows a framebuffer of the graphics bridge, and the events of that window.
  * The fire side (Window, EventType - fire source) is the same as in the VM; this file is what its `__GRPHWin...` functions do (the generator calls `__GRPHWinName` as
  * fire_win_WinName). Putting the pixels on the screen and collecting the events is the display of the platform (FIRE_PLATFORM_DISPLAY_C_HEADER: FireDisplayWindow and the
- * fire_display_* functions; SDL2 on the desktop, see platform/std/fire_display_sdl.h).
+ * fire_display_* functions; SDL3 or SDL2 on the desktop, see platform/std/fire_display_sdl3.h and fire_display_sdl.h).
  *
  * C99, part of the generated file after fire_bridge_graphics.h when the program imports "windows". As in the VM, `Tick` collects the events, shows the framebuffer and then
  * runs the callbacks (registered lambdas) on the calling thread with the real global variables; an exception that a callback does not catch is reported and ends only the callback.
@@ -247,6 +247,32 @@ static Value fire_winb_utf8Str(const char* text, OwnList* list) {
     return StrV(s);
 }
 
+/* The paths of a drop (one per line in `data`) as an array of strings. */
+static Value fire_winb_paths(const char* data, OwnList* list) {
+    size_t count = 0, i = 0;
+    const char* p;
+    Arr* a;
+    if (data == NULL || data[0] == 0) return ArrV(allocArr(0, list));
+    for (p = data; *p; p++) if (*p == '\n') count++;
+    count++;
+    a = allocArr((uint32_t)count, list);
+    p = data;
+    while (i < count) {
+        const char* end = strchr(p, '\n');
+        size_t n = end ? (size_t)(end - p) : strlen(p);
+        char* line = (char*)malloc(n + 1);
+        if (line == NULL) fatal("Out of memory.");
+        memcpy(line, p, n);
+        line[n] = 0;
+        arrItems(a)[i] = fire_winb_utf8Str(line, list);
+        retain(arrItems(a)[i]);
+        free(line);
+        i++;
+        p = end ? end + 1 : p + n;
+    }
+    return ArrV(a);
+}
+
 /* The number of parameters a callback for this event type must have (EventCallback.CheckParameters). */
 static uint32_t fire_winb_callbackParams(int type) {
     switch (type) {
@@ -257,6 +283,9 @@ static uint32_t fire_winb_callbackParams(int type) {
         case FIRE_EV_JOY_AXIS: case FIRE_EV_JOY_HAT: return 3;
         case FIRE_EV_TOUCH_DOWN: case FIRE_EV_TOUCH_MOVE: case FIRE_EV_TOUCH_UP: return 4;
         case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: return 1;
+        case FIRE_EV_DROP_FILES: case FIRE_EV_DROP_TEXT: return 3;
+        case FIRE_EV_DRAG_HOVER: return 2;
+        case FIRE_EV_DRAG_LEAVE: return 0;
         default: return 0;
     }
 }
@@ -302,6 +331,9 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
             case FIRE_EV_JOY_HAT: a[0] = Int(e->joystick); a[1] = Int(e->index); a[2] = Int((int64_t)e->value); n = 3; break;
             case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: a[0] = Int(e->joystick); a[1] = Int(e->index); n = 2; break;
             case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: a[0] = Int(e->joystick); n = 1; break;
+            case FIRE_EV_DROP_FILES: a[0] = fire_winb_paths(e->data, &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
+            case FIRE_EV_DROP_TEXT: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
+            case FIRE_EV_DRAG_HOVER: a[0] = Float(e->x); a[1] = Float(e->y); n = 2; break;
             default: break;
         }
         fire_winb_runCallback(mine[i].lam, n, a);
@@ -335,7 +367,10 @@ static void fire_winb_dropBlocked(FireWinState* w, FireDisplayEvents* events) {
             for (i = 0; i < events->count; i++) if (events->items[i].type == FIRE_EV_CLOSE_REQUEST) w->closeRequested = 1;
         return;
     }
-    for (i = 0; i < events->count; i++) if (events->items[i].type == FIRE_EV_RESIZE || events->items[i].type == FIRE_EV_CLOSE) events->items[k++] = events->items[i];
+    for (i = 0; i < events->count; i++) {
+        if (events->items[i].type == FIRE_EV_RESIZE || events->items[i].type == FIRE_EV_CLOSE) events->items[k++] = events->items[i];
+        else { free(events->items[i].data); events->items[i].data = NULL; }
+    }
     events->count = k;
 }
 
@@ -430,7 +465,7 @@ static void fire_winb_pumpThread(void* arg) {
             if (s->touchReq >= 0) { fire_display_setTouchMouse(&s->display, s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { fire_display_setSize(&s->display, s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             if (s->cursorReq >= 0) { fire_display_setCursor(&s->display, s->cursorReq); s->cursorReq = -1; }
-            events.count = 0;
+            fire_display_eventsClear(&events);
             w = s->frontW > 0 ? s->frontW : s->width; h = s->frontH > 0 ? s->frontH : s->height;
             open = fire_display_pump(&s->display, &events, w, h);
             for (e = 0; e < events.count; e++) if (s->inbox.count < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&s->inbox, &events.items[e]);
@@ -770,7 +805,8 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
     uint32_t n = 0, k;
     Arr* a;
     if (!w->queueOn || w->queueHead >= w->queue.count) return Undef();
-    e = w->queue.items[w->queueHead++];
+    e = w->queue.items[w->queueHead];
+    w->queue.items[w->queueHead++].data = NULL;   /* (the event's text is this function's now) */
     if (w->queueHead == w->queue.count) { w->queue.count = 0; w->queueHead = 0; }
     items[n++] = Int(e.type);
     switch (e.type) {
@@ -786,12 +822,121 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
         case FIRE_EV_JOY_HAT: items[n++] = Int(e.joystick); items[n++] = Int(e.index); items[n++] = Int((int64_t)e.value); break;
         case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: items[n++] = Int(e.joystick); items[n++] = Int(e.index); break;
         case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: items[n++] = Int(e.joystick); break;
+        case FIRE_EV_DROP_FILES: items[n++] = fire_winb_paths(e.data, list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_DROP_TEXT: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_DRAG_HOVER: items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         default: break;
     }
+    free(e.data);
     a = allocArr(n, list);
     for (k = 0; k < n; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
     return ArrV(a);
 }
+/* ---- the clipboard (text) of the desktop - Clipboard of the prelude ---- */
+static Value fire_win_WinClipboardSetText(Value text) {
+    char* utf8;
+    int ok;
+    if (text.kind != K_String) return Bool(false);
+    utf8 = fire_winb_toUtf8(text);
+    if (utf8 == NULL) fatal("Out of memory.");
+    ok = fire_display_clipboardSet(utf8);
+    free(utf8);
+    return Bool(ok != 0);
+}
+/* The text on the clipboard, undefined when there is none. */
+static Value fire_win_WinClipboardGetText(OwnList* list) {
+    char* text = fire_display_clipboardGet();
+    Value v;
+    if (text == NULL) return Undef();
+    v = fire_winb_utf8Str(text, list);
+    free(text);
+    return v;
+}
+static Value fire_win_WinClipboardHasText(void) { return Bool(fire_display_clipboardHas() != 0); }
+
+/* ---- pictures and files on the clipboard: Clipboard.GetImage/SetImage/HasImage, GetFiles/SetFiles/HasFiles ---- */
+/* The picture on the clipboard: the bytes of its PNG or BMP file (the prelude decodes them), undefined when there is none. */
+static Value fire_win_WinClipboardGetImage(OwnList* list) {
+    size_t size = 0;
+    unsigned char* image = fire_display_clipboardGetImage(&size);
+    Buf* b;
+    if (image == NULL || size == 0 || size > 0x7FFFFFFFu) { free(image); return Undef(); }
+    b = allocBuf((uint32_t)size, list);
+    memcpy(bufBytes(b), image, size);
+    free(image);
+    return BufV(b);
+}
+/* Puts a picture there (`png`: the PNG file that Framebuffer.ToPng made); the desktops that want a BMP (Windows: CF_DIB) get one made from it too. */
+static Value fire_win_WinClipboardSetImage(Value png) {
+    Buf* b;
+    FireGfxImage image;
+    char err[FIRE_GFX_ERR_SIZE];
+    uint8_t* bmp = NULL;
+    size_t bmpSize = 0;
+    int ok;
+    if (png.kind != K_Buffer) return Bool(false);
+    if (!leafAlive(png)) return destroyedError(png);
+    b = bufOf(png);
+    fire_gfx_imageInit(&image);
+    err[0] = 0;
+    if (!fire_gfx_decodeImage(bufBytes(b), b->length, &image, err)) { fire_gfx_imageFree(&image); return Bool(false); }
+    {
+        size_t n = fire_gfx_imageCount(&image), i;
+        uint32_t* rgba = (uint32_t*)calloc(n + 1, sizeof(uint32_t));
+        if (rgba == NULL) { fire_gfx_imageFree(&image); return Bool(false); }
+        if (image.indexed) { for (i = 0; i < n; i++) rgba[i] = image.indices[i] == image.transparentIndex ? image.palette[image.indices[i]] & 0x00FFFFFFu : image.palette[image.indices[i]]; }
+        else if (n) memcpy(rgba, image.pixels, n * sizeof(uint32_t));
+        bmp = fire_gfx_encodeBmp(rgba, image.width, image.height, &bmpSize);
+        free(rgba);
+    }
+    fire_gfx_imageFree(&image);
+    ok = fire_display_clipboardSetImage(bufBytes(b), b->length, bmp, bmpSize);
+    free(bmp);
+    return Bool(ok != 0);
+}
+static Value fire_win_WinClipboardHasImage(void) { return Bool(fire_display_clipboardHasImage() != 0); }
+/* The paths on the clipboard (string[]; empty: none). */
+static Value fire_win_WinClipboardGetFiles(OwnList* list) {
+    char* paths = fire_display_clipboardGetFiles();
+    Value v = fire_winb_paths(paths, list);
+    free(paths);
+    return v;
+}
+/* Puts paths there (string[]; the prelude makes an array of a List). */
+static Value fire_win_WinClipboardSetFiles(Value paths) {
+    Arr* a;
+    char* all = NULL;
+    size_t total = 0, used = 0;
+    uint32_t i;
+    int ok;
+    if (paths.kind != K_Array) return Bool(false);
+    if (!leafAlive(paths)) return destroyedError(paths);
+    a = arrOf(paths);
+    for (i = 0; i < a->length; i++) {
+        Value item = arrItems(a)[i];
+        char* utf8;
+        size_t n;
+        char* grown;
+        if (item.kind != K_String) continue;
+        utf8 = fire_winb_toUtf8(item);
+        n = strlen(utf8);
+        if (n == 0 || strchr(utf8, '\n') != NULL) { free(utf8); continue; }
+        grown = (char*)realloc(all, total + n + 2);
+        if (grown == NULL) { free(utf8); free(all); fatal("Out of memory."); }
+        all = grown;
+        total += n + 2;
+        if (used > 0) all[used++] = '\n';
+        memcpy(all + used, utf8, n + 1);
+        used += n;
+        free(utf8);
+    }
+    if (all == NULL) return Bool(false);
+    ok = fire_display_clipboardSetFiles(all);
+    free(all);
+    return Bool(ok != 0);
+}
+static Value fire_win_WinClipboardHasFiles(void) { return Bool(fire_display_clipboardHasFiles() != 0); }
+
 static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
     FireWinState* w = fire_winb_windowOf(id);
     int t;

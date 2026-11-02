@@ -238,6 +238,43 @@ namespace UI {
         static int PageDown() { return 1073741902 }
         static int End() { return 1073741901 }
         static int F4() { return 1073741885 }
+        static int Insert() { return 1073741897 }
+        static int A() { return 97 }
+        static int C() { return 99 }
+        static int V() { return 118 }
+        static int X() { return 120 }
+
+        // The modifier keys of a KeyDown (`mod`): a shift key, and the key of the shortcuts - Ctrl, or Cmd on a Mac (both count everywhere).
+        static bool Shift(int mod) { return (mod & 3) != 0 }
+        static bool Shortcut(int mod) { return (mod & 0xC0) != 0 || (mod & 0xC00) != 0 }
+    }
+
+    // What a drop does with what is dragged (Element.OnDragOver/OnDrop/OnDragDone): nothing (refused or cancelled), a copy, a move (the source removes
+    // what it gave), a link.
+    enum DropEffect { None = 0, Copy = 1, Move = 2, Link = 3 }
+
+    // What is dragged: a text, files (their paths - a drop from the file manager), or any value of the program (`Value`, with a `Kind` the targets can
+    // ask for). `Source` is the element the drag started from; undefined for a drop from another program. `Pending`: something of another program is still being
+    // dragged over the window (OnDragOver while it hovers) - what it is comes only with the drop, Text and Files are empty until then.
+    class DragData {
+        string Text = ""
+        List<string> Files
+        any Value
+        string Kind = ""
+        UI.Element Source
+        bool Pending = false
+
+        construct(string text = "", any value = undefined, string kind = "") {
+            this.Text = text
+            this.Files = new List<string>()
+            this.Value = value
+            this.Kind = kind
+        }
+
+        bool HasText { get { return this.Text != "" } }
+        bool HasFiles { get { return this.Files.Count > 0 } }
+        // Does it come from another program?
+        bool External { get { return this.Source == undefined } }
     }
 
     // Converters of the data bindings of the markup (docs/UI_MARKUP.md): Convert goes from the source to the property of the element, ConvertBack the other

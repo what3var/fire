@@ -34,6 +34,21 @@ namespace UI {
         lambda<int, int> onResize
         // Sees every key first (key, modifier): when it returns true, the key is used up and no element gets it (a dialog takes Escape this way)
         lambda<int, int> onKeyPreview
+        // Drag & drop between the elements (docs/UI.md): the press a drag may start from, what is dragged, its source, the element under the pointer that
+        // takes it and what it would do
+        Element dragFrom
+        int dragX0 = 0
+        int dragY0 = 0
+        bool dragging = false
+        UI.DragData dragData
+        Element dragSource
+        Element dragTarget
+        UI.DropEffect dragEffect = UI.DropEffect.None
+        // A lambda (data, x, y) for what another program drops onto the window (files, text) where no element takes it
+        lambda<UI.DragData, int, int> onDrop
+        // Something of another program dragged over the window (DragHover): the element under it that takes drops, and what it is told (Pending: not known yet)
+        Element hoverTarget
+        UI.DragData hoverData
         // Counts the cycles of this root (Tick, Cycle): elements measure short intervals with it (a double click)
         int cycles = 0
         // Invalidate: if something has changed, Update arranges anew and repaints - only the area that has changed, as long as no element has moved elsewhere.
@@ -533,6 +548,9 @@ namespace UI {
             else if (type == 33) { this.JoyButton(e[2]) }
             else if (type == 35) { this.JoyHat(e[3]) }
             else if (type == 37) { this.JoyReset() }
+            else if (type == 40 || type == 41) { this.ExternalDrop(e) }
+            else if (type == 42) { this.ExternalHover(this.ToLogical(e[1]), this.ToLogical(e[2])) }
+            else if (type == 43) { this.ExternalLeave() }
             else if (type == 1) { this.closed = true }
         }
 
@@ -891,6 +909,12 @@ namespace UI {
                 if (hit.Focusable()) { this.SetFocus(hit) } else { this.SetFocus(undefined) }
                 this.pressedElement = hit
                 hit.MouseDown(this, button, px, py)
+                // a drag may start from here when the pointer moves on with the button held (see MouseMove)
+                if (button == 1) {
+                    this.dragFrom = hit
+                    this.dragX0 = px
+                    this.dragY0 = py
+                }
             } else {
                 this.SetFocus(undefined)
             }
@@ -912,6 +936,11 @@ namespace UI {
         undefined MouseUpCore(int button, int px, int py) {
             this.mouseX = px
             this.mouseY = py
+            this.dragFrom = undefined
+            if (this.dragging) {
+                if (button == 1) { this.FinishDrag(px, py) }
+                return
+            }
             var target = this.pressedElement
             this.pressedElement = undefined
             if (target != undefined) { target.MouseUp(this, button, px, py) }
@@ -927,10 +956,151 @@ namespace UI {
                 this.hoverElement = hit
                 if (hit != undefined) { hit.Hover = true }
             }
+            if (this.dragging) {
+                this.DragMove(px, py)
+                this.UpdateCursor(px, py)
+                return
+            }
+            if (this.dragFrom != undefined && this.pressedElement != undefined && UI.M.Abs(px - this.dragX0) + UI.M.Abs(py - this.dragY0) >= 4) {
+                if (this.TryStartDrag()) {
+                    this.DragMove(px, py)
+                    this.UpdateCursor(px, py)
+                    return
+                }
+            }
             var target = this.pressedElement
             if (target != undefined) { target.MouseMove(this, px, py) }
             else if (hit != undefined) { hit.Hover(this, px, py) }
             this.UpdateCursor(px, py)
+        }
+
+        // ---- drag & drop ----
+        // The pointer moved far enough with the button held: the pressed element - or the next one around it - that gives data (DragStart) starts a drag.
+        // An element that uses the held button itself (KeepsMouseDrag: a text field selects, a scroll bar is dragged) keeps it.
+        bool TryStartDrag() {
+            var e = this.dragFrom
+            this.dragFrom = undefined
+            while (e != undefined) {
+                if (e.Enabled) {
+                    var data = e.DragStart(this, this.dragX0, this.dragY0)
+                    if (data != undefined) {
+                        if (data.Source == undefined) { data.Source = e }
+                        this.dragData = take data
+                        this.dragSource = e
+                        this.dragging = true
+                        // the press is over: the element does not get its MouseUp (a button does not click)
+                        var pressed = this.pressedElement
+                        this.pressedElement = undefined
+                        if (pressed != undefined) {
+                            pressed.Pressed = false
+                            pressed.Invalidate()
+                        }
+                        return true
+                    }
+                }
+                if (e.Dragging() || e.KeepsMouseDrag()) { return false }
+                e = e.parent
+            }
+            return false
+        }
+
+        // The element under the point that takes drops (AllowDrop), or undefined.
+        UI.Element DropTargetAt(int px, int py) {
+            var target = this.Hit(px, py)
+            while (target != undefined && !(target.Enabled && target.AcceptsDrops())) { target = target.parent }
+            return target
+        }
+
+        // The pointer moves during a drag: the target under it says what a drop would do.
+        undefined DragMove(int px, int py) {
+            var target = this.DropTargetAt(px, py)
+            var old = this.dragTarget
+            if (old != undefined && old != target) { old.DragLeave(this) }
+            this.dragTarget = target
+            if (target == undefined) { this.dragEffect = UI.DropEffect.None }
+            else { this.dragEffect = target.DragOver(this, this.dragData, px, py) }
+        }
+
+        // The button was let go: the target takes the data (if it wants it), the source hears how it ended.
+        undefined FinishDrag(int px, int py) {
+            this.DragMove(px, py)
+            var effect = UI.DropEffect.None
+            var target = this.dragTarget
+            if (target != undefined && this.dragEffect != UI.DropEffect.None) { effect = target.Drop(this, this.dragData, px, py) }
+            this.EndDrag(effect)
+        }
+
+        // Cancels a drag (Escape): the target is left, the source hears None.
+        undefined CancelDrag() {
+            var target = this.dragTarget
+            if (target != undefined) { target.DragLeave(this) }
+            this.EndDrag(UI.DropEffect.None)
+        }
+
+        undefined EndDrag(UI.DropEffect effect) {
+            var source = this.dragSource
+            var data = this.dragData
+            this.dragging = false
+            this.dragTarget = undefined
+            this.dragSource = undefined
+            this.dragEffect = UI.DropEffect.None
+            if (source != undefined) { source.DragDone(this, data, effect) }
+            this.dragData = undefined
+            this.Invalidate()
+        }
+
+        // Is a drag going on?
+        bool IsDragging { get { return this.dragging } }
+
+        // Something of another program is dragged over the window (an event DragHover): the element under it that takes drops hears OnDragOver with a DragData whose
+        // content is not known yet (Pending, External); the element it leaves hears OnDragLeave.
+        undefined ExternalHover(int px, int py) {
+            this.mouseX = px
+            this.mouseY = py
+            var target = this.DropTargetAt(px, py)
+            var old = this.hoverTarget
+            if (old != undefined && old != target) { old.DragLeave(this) }
+            this.hoverTarget = target
+            if (target == undefined) { return }
+            if (this.hoverData == undefined) {
+                var data = new UI.DragData()
+                data.Pending = true
+                this.hoverData = take data
+            }
+            target.DragOver(this, this.hoverData, px, py)
+        }
+
+        // It left the window without being dropped (DragLeave): the element under it hears OnDragLeave.
+        undefined ExternalLeave() {
+            var old = this.hoverTarget
+            this.hoverTarget = undefined
+            this.hoverData = undefined
+            if (old != undefined) { old.DragLeave(this) }
+        }
+
+        // Something another program dropped onto the window (an event DropFiles/DropText): the element under it that takes drops gets it, else onDrop.
+        undefined ExternalDrop(any e) {
+            var data = new UI.DragData()
+            if (e[0] == 40) { foreach (f in e[1]) { data.Files.Add(f) } }
+            else { data.Text = e[1] }
+            var px = this.ToLogical(e[2])
+            var py = this.ToLogical(e[3])
+            this.mouseX = px
+            this.mouseY = py
+            var target = this.DropTargetAt(px, py)
+            // the hover ends with the drop: an element it was over that does not get the drop is left
+            var hovered = this.hoverTarget
+            this.hoverTarget = undefined
+            this.hoverData = undefined
+            if (hovered != undefined && hovered != target) { hovered.DragLeave(this) }
+            if (target != undefined && target.DragOver(this, data, px, py) != UI.DropEffect.None) {
+                target.Drop(this, data, px, py)
+                this.Invalidate()
+                return
+            }
+            var fallback = this.onDrop
+            if (fallback != undefined) { fallback(data, px, py) }
+            this.Invalidate()
         }
 
         // the cursor the window shows now (Inherit: not set yet)
@@ -938,6 +1108,11 @@ namespace UI {
 
         /// <summary>The mouse pointer at (px, py): the element that holds the mouse, else the one below it, asks itself and the elements around it (CursorAt).</summary>
         UI.Cursor CursorFor(int px, int py) {
+            // a drag: a hand over a target that takes it, "not allowed" elsewhere
+            if (this.dragging) {
+                if (this.dragEffect == UI.DropEffect.None) { return UI.Cursor.No }
+                return UI.Cursor.Hand
+            }
             Element e = this.pressedElement
             if (e == undefined) { e = this.Hit(px, py) }
             while (e != undefined) {
@@ -956,6 +1131,10 @@ namespace UI {
         }
 
         undefined KeyDown(int key, int mod) {
+            if (this.dragging) {
+                if (key == UI.Keys.Escape()) { this.CancelDrag() }
+                return
+            }
             var preview = this.onKeyPreview
             if (preview != undefined && preview(key, mod) == true) { return }
             if (key == UI.Keys.Tab()) {

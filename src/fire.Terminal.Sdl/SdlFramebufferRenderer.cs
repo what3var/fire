@@ -54,6 +54,13 @@ namespace fire.Terminal.Sdl
         private bool _touchMouse = true;
         // the opened joysticks (instance ID -> handle); a joystick only sends events once it is opened
         private readonly Dictionary<uint, IntPtr> _joysticks = new();
+        // a drop that is going on (DropBegin .. DropComplete): the paths and the text so far
+        private readonly List<string> _dropFiles = new();
+        private readonly System.Text.StringBuilder _dropText = new();
+        private bool _dropping;
+        // something of another program is over the window (a DragHover went out) and where
+        private bool _hovering;
+        private float _hoverX, _hoverY;
 
         /// <inheritdoc/>
         public bool TouchMouse
@@ -83,6 +90,20 @@ namespace fire.Terminal.Sdl
         // (the framebuffer is stretched) - scripts therefore get the position in framebuffer pixels.
         private int _fbWidth;
         private int _fbHeight;
+
+        /// <summary>The drop that was collected goes out: a DropFiles event with the paths, a DropText event with the text (SDL3 says where it landed).</summary>
+        private void DropDone(List<IEvent> events, float x, float y)
+        {
+            var at = ToFramebuffer(x, y);
+            if (_dropFiles.Count > 0) events.Add(new fire.Terminal.Event.DropEvent { Type = Event.EventType.DropFiles, Files = _dropFiles.ToArray(), X = at.X, Y = at.Y, SourceHandle = _internalHandle });
+            if (_dropText.Length > 0) events.Add(new fire.Terminal.Event.DropEvent { Type = Event.EventType.DropText, Text = _dropText.ToString(), X = at.X, Y = at.Y, SourceHandle = _internalHandle });
+            // a drag that brought nothing left the window
+            if (_dropFiles.Count == 0 && _dropText.Length == 0 && _hovering) events.Add(new Terminal.Event.Event { Type = Event.EventType.DragLeave, SourceHandle = _internalHandle });
+            _hovering = false;
+            _dropFiles.Clear();
+            _dropText.Clear();
+            _dropping = false;
+        }
 
         private (float X, float Y) ToFramebuffer(float x, float y)
         {
@@ -149,6 +170,7 @@ namespace fire.Terminal.Sdl
         public WindowPumpResult PumpEvents()
         {
             var resultEvents = new List<IEvent>();
+            lock (SdlGate.Lock)   // (the clipboard waits for its answer by pumping events: one at a time)
             while (SDL.PollEvent(out SDL.Event ev))
             {
                 // Two slightly different spellings circulate in
@@ -305,6 +327,34 @@ namespace fire.Terminal.Sdl
                         break;
                     case SDL.EventType.JoystickHatMotion:
                         resultEvents.Add(new JoystickEvent() { Type = Event.EventType.JoystickHat, Joystick = (int)ev.JHat.Which, Index = ev.JHat.Hat, Value = ev.JHat.Value, SourceHandle = _internalHandle });
+                        break;
+                    case SDL.EventType.DropBegin:
+                        _dropping = true;
+                        break;
+                    case SDL.EventType.DropPosition:
+                        // something of another program is over the window: where (only when it moved)
+                        _dropping = true;
+                        if (!_hovering || ev.Drop.X != _hoverX || ev.Drop.Y != _hoverY)
+                        {
+                            _hovering = true; _hoverX = ev.Drop.X; _hoverY = ev.Drop.Y;
+                            var hoverAt = ToFramebuffer(ev.Drop.X, ev.Drop.Y);
+                            resultEvents.Add(new DragHoverEvent { Type = Event.EventType.DragHover, X = hoverAt.X, Y = hoverAt.Y, SourceHandle = _internalHandle });
+                        }
+                        break;
+                    case SDL.EventType.DropFile:
+                    case SDL.EventType.DropText:
+                        {
+                            string? data = Marshal.PtrToStringUTF8(ev.Drop.Data);
+                            if (data != null)
+                            {
+                                if ((SDL.EventType)ev.Type == SDL.EventType.DropFile) _dropFiles.Add(data);
+                                else { if (_dropText.Length > 0) _dropText.Append('\n'); _dropText.Append(data); }
+                            }
+                            if (!_dropping) DropDone(resultEvents, ev.Drop.X, ev.Drop.Y);
+                        }
+                        break;
+                    case SDL.EventType.DropComplete:
+                        DropDone(resultEvents, ev.Drop.X, ev.Drop.Y);
                         break;
                     case SDL.EventType.TextInput:
                         eventType = Event.EventType.TextInput;

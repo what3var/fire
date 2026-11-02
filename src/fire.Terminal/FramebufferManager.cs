@@ -141,6 +141,17 @@ namespace fire.Terminal
         // raw memory copy instead of a loop with bit operations.
         // -----------------------------------------------------------
 
+        /// <summary>The framebuffer as a PNG file (RGBA, 8 bits): a palette framebuffer is resolved through its palette, its transparent index becomes transparent.</summary>
+        public byte[] ToPng(int id)
+        {
+            var fb = _framebuffers.Get(id);
+            fb.Resolve();
+            var pixels = (uint[])fb.Pixels.Clone();
+            if (fb.Indices != null && fb.TransparentIndex >= 0)
+                for (int i = 0; i < pixels.Length; i++) if (fb.Indices[i] == fb.TransparentIndex) pixels[i] &= 0x00FFFFFFu;
+            return ImageEncoder.EncodePng(ImageData.CreateTruecolor(fb.Width, fb.Height, pixels, "PNG"));
+        }
+
         public byte[] ReadBytes(int id)
         {
             var fb = _framebuffers.Get(id);

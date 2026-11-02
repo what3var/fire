@@ -713,6 +713,164 @@ static int fire_gfx_decodeImage(const uint8_t* d, size_t n, FireGfxImage* out, c
     FIRE_IMG_FAIL("Unknown image format (expected: PNG, BMP or GIF).");
 }
 
+/* ---- writing: PNG (RGBA, 8 bits; deflate with the fixed Huffman codes and LZ77) and BMP (32 bits) - Framebuffer.ToPng and the clipboard ---------- */
+typedef struct FireGfxOut { uint8_t* data; size_t n, cap; int failed; uint32_t bits; int count; } FireGfxOut;
+static void fire_gfx_outByte(FireGfxOut* o, uint8_t b) {
+    if (o->failed) return;
+    if (o->n == o->cap) {
+        size_t cap = o->cap ? o->cap * 2 : 4096;
+        uint8_t* grown = (uint8_t*)realloc(o->data, cap);
+        if (grown == NULL) { o->failed = 1; return; }
+        o->data = grown; o->cap = cap;
+    }
+    o->data[o->n++] = b;
+}
+static void fire_gfx_outBytes(FireGfxOut* o, const void* p, size_t n) { size_t i; for (i = 0; i < n; i++) fire_gfx_outByte(o, ((const uint8_t*)p)[i]); }
+static void fire_gfx_outBe32(FireGfxOut* o, uint32_t v) { fire_gfx_outByte(o, (uint8_t)(v >> 24)); fire_gfx_outByte(o, (uint8_t)(v >> 16)); fire_gfx_outByte(o, (uint8_t)(v >> 8)); fire_gfx_outByte(o, (uint8_t)v); }
+static void fire_gfx_outLe32(FireGfxOut* o, uint32_t v) { fire_gfx_outByte(o, (uint8_t)v); fire_gfx_outByte(o, (uint8_t)(v >> 8)); fire_gfx_outByte(o, (uint8_t)(v >> 16)); fire_gfx_outByte(o, (uint8_t)(v >> 24)); }
+/* bits, the lowest first (as deflate packs them) */
+static void fire_gfx_outBits(FireGfxOut* o, uint32_t value, int n) {
+    o->bits |= value << o->count;
+    o->count += n;
+    while (o->count >= 8) { fire_gfx_outByte(o, (uint8_t)o->bits); o->bits >>= 8; o->count -= 8; }
+}
+/* a Huffman code: its bits from the highest (deflate stores codes the other way round) */
+static void fire_gfx_outCode(FireGfxOut* o, uint32_t code, int n) {
+    uint32_t reversed = 0;
+    int i;
+    for (i = 0; i < n; i++) reversed |= ((code >> i) & 1u) << (n - 1 - i);
+    fire_gfx_outBits(o, reversed, n);
+}
+static void fire_gfx_outLiteral(FireGfxOut* o, int symbol) {
+    if (symbol < 144) fire_gfx_outCode(o, 0x30u + (uint32_t)symbol, 8);
+    else if (symbol < 256) fire_gfx_outCode(o, 0x190u + (uint32_t)(symbol - 144), 9);
+    else if (symbol < 280) fire_gfx_outCode(o, (uint32_t)(symbol - 256), 7);
+    else fire_gfx_outCode(o, 0xC0u + (uint32_t)(symbol - 280), 8);
+}
+static void fire_gfx_outMatch(FireGfxOut* o, int length, int distance) {
+    static const int lengthBase[29] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227, 258};
+    static const int lengthExtra[29] = {0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0};
+    static const int distBase[30] = {1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577};
+    static const int distExtra[30] = {0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13};
+    int l = 28, d = 29;
+    while (lengthBase[l] > length) l--;
+    while (distBase[d] > distance) d--;
+    fire_gfx_outLiteral(o, 257 + l);
+    if (lengthExtra[l]) fire_gfx_outBits(o, (uint32_t)(length - lengthBase[l]), lengthExtra[l]);
+    fire_gfx_outCode(o, (uint32_t)d, 5);
+    if (distExtra[d]) fire_gfx_outBits(o, (uint32_t)(distance - distBase[d]), distExtra[d]);
+}
+/* zlib around one deflate block with the fixed codes: greedy LZ77 over a window of 32 KB (a few candidates per position). 0 without memory. */
+#define FIRE_GFX_LZ_WINDOW 32768
+#define FIRE_GFX_LZ_HASH 32768
+static int fire_gfx_zlibDeflate(const uint8_t* in, size_t n, FireGfxOut* o) {
+    int32_t* head = (int32_t*)malloc(sizeof(int32_t) * FIRE_GFX_LZ_HASH);
+    int32_t* prev = (int32_t*)malloc(sizeof(int32_t) * FIRE_GFX_LZ_WINDOW);
+    uint32_t a = 1, b = 0;
+    size_t i = 0, k;
+    if (head == NULL || prev == NULL) { free(head); free(prev); return 0; }
+    for (k = 0; k < FIRE_GFX_LZ_HASH; k++) head[k] = -1;
+    fire_gfx_outByte(o, 0x78); fire_gfx_outByte(o, 0x01);
+    fire_gfx_outBits(o, 1, 1);   /* the last block */
+    fire_gfx_outBits(o, 1, 2);   /* fixed Huffman codes */
+    while (i < n) {
+        int bestLength = 0, bestDistance = 0;
+        if (i + 3 <= n) {
+            uint32_t h = ((uint32_t)in[i] << 16 | (uint32_t)in[i + 1] << 8 | in[i + 2]) * 2654435761u >> 17;
+            int32_t candidate = head[h];
+            int tries = 32;
+            size_t limit = n - i < 258 ? n - i : 258;
+            while (candidate >= 0 && i - (size_t)candidate <= FIRE_GFX_LZ_WINDOW && tries-- > 0) {
+                size_t len = 0;
+                while (len < limit && in[(size_t)candidate + len] == in[i + len]) len++;
+                if ((int)len > bestLength) { bestLength = (int)len; bestDistance = (int)(i - (size_t)candidate); if (len == limit) break; }
+                candidate = prev[(size_t)candidate % FIRE_GFX_LZ_WINDOW];
+            }
+            prev[i % FIRE_GFX_LZ_WINDOW] = head[h];
+            head[h] = (int32_t)i;
+        }
+        if (bestLength >= 3) {
+            fire_gfx_outMatch(o, bestLength, bestDistance);
+            /* the positions inside the match go into the hash too */
+            for (k = 1; k < (size_t)bestLength; k++) {
+                size_t p = i + k;
+                if (p + 3 <= n) {
+                    uint32_t h = ((uint32_t)in[p] << 16 | (uint32_t)in[p + 1] << 8 | in[p + 2]) * 2654435761u >> 17;
+                    prev[p % FIRE_GFX_LZ_WINDOW] = head[h];
+                    head[h] = (int32_t)p;
+                }
+            }
+            i += (size_t)bestLength;
+        } else fire_gfx_outLiteral(o, in[i++]);
+    }
+    fire_gfx_outLiteral(o, 256);   /* end of the block */
+    if (o->count > 0) fire_gfx_outBits(o, 0, 8 - o->count);
+    for (k = 0; k < n; k++) { a = (a + in[k]) % 65521u; b = (b + a) % 65521u; }
+    fire_gfx_outBe32(o, (b << 16) | a);
+    free(head);
+    free(prev);
+    return !o->failed;
+}
+static void fire_gfx_outChunk(FireGfxOut* o, const char* type, const uint8_t* data, size_t n) {
+    size_t start;
+    fire_gfx_outBe32(o, (uint32_t)n);
+    start = o->n;
+    fire_gfx_outBytes(o, type, 4);
+    fire_gfx_outBytes(o, data, n);
+    if (!o->failed) fire_gfx_outBe32(o, fire_gfx_crc(o->data + start, n + 4));
+}
+/* A PNG file of the pixels (R,G,B,A per 32-bit word, width*height): color type 6 (RGBA), 8 bits, no interlacing. malloc; NULL without memory. */
+static uint8_t* fire_gfx_encodePng(const uint32_t* rgba, int width, int height, size_t* size) {
+    static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    FireGfxOut out, z;
+    uint8_t header[13];
+    size_t rowBytes = (size_t)width * 4 + 1, x, y;
+    uint8_t* raw = (uint8_t*)malloc(rowBytes * (size_t)height + 1);
+    *size = 0;
+    if (raw == NULL) return NULL;
+    for (y = 0; y < (size_t)height; y++) {
+        uint8_t* row = raw + y * rowBytes;
+        row[0] = 0;   /* filter: none */
+        for (x = 0; x < (size_t)width; x++) {
+            uint32_t p = rgba[y * (size_t)width + x];
+            row[1 + x * 4] = (uint8_t)p; row[2 + x * 4] = (uint8_t)(p >> 8); row[3 + x * 4] = (uint8_t)(p >> 16); row[4 + x * 4] = (uint8_t)(p >> 24);
+        }
+    }
+    memset(&out, 0, sizeof out);
+    memset(&z, 0, sizeof z);
+    if (!fire_gfx_zlibDeflate(raw, rowBytes * (size_t)height, &z)) { free(raw); free(z.data); return NULL; }
+    free(raw);
+    header[0] = (uint8_t)(width >> 24); header[1] = (uint8_t)(width >> 16); header[2] = (uint8_t)(width >> 8); header[3] = (uint8_t)width;
+    header[4] = (uint8_t)(height >> 24); header[5] = (uint8_t)(height >> 16); header[6] = (uint8_t)(height >> 8); header[7] = (uint8_t)height;
+    header[8] = 8; header[9] = 6; header[10] = 0; header[11] = 0; header[12] = 0;
+    fire_gfx_outBytes(&out, signature, 8);
+    fire_gfx_outChunk(&out, "IHDR", header, 13);
+    fire_gfx_outChunk(&out, "IDAT", z.data, z.n);
+    fire_gfx_outChunk(&out, "IEND", NULL, 0);
+    free(z.data);
+    if (out.failed) { free(out.data); return NULL; }
+    *size = out.n;
+    return out.data;
+}
+/* A BMP file of the pixels: 32 bits (B, G, R, A), from the bottom row up, BITMAPINFOHEADER - what the clipboard of Windows takes (CF_DIB). malloc; NULL without memory. */
+static uint8_t* fire_gfx_encodeBmp(const uint32_t* rgba, int width, int height, size_t* size) {
+    size_t pixels = (size_t)width * (size_t)height * 4, total = 54 + pixels, i, x, y;
+    uint8_t* d = (uint8_t*)calloc(total, 1);
+    *size = 0;
+    if (d == NULL) return NULL;
+    d[0] = 'B'; d[1] = 'M';
+    for (i = 0; i < 4; i++) { d[2 + i] = (uint8_t)(total >> (8 * i)); d[10 + i] = (uint8_t)(54 >> (8 * i)); d[14 + i] = (uint8_t)(40 >> (8 * i));
+        d[18 + i] = (uint8_t)((uint32_t)width >> (8 * i)); d[22 + i] = (uint8_t)((uint32_t)height >> (8 * i)); d[34 + i] = (uint8_t)(pixels >> (8 * i)); }
+    d[26] = 1; d[28] = 32;
+    for (y = 0; y < (size_t)height; y++) {
+        const uint32_t* row = rgba + ((size_t)height - 1 - y) * (size_t)width;
+        uint8_t* o = d + 54 + y * (size_t)width * 4;
+        for (x = 0; x < (size_t)width; x++) { uint32_t p = row[x]; o[x * 4] = (uint8_t)(p >> 16); o[x * 4 + 1] = (uint8_t)(p >> 8); o[x * 4 + 2] = (uint8_t)p; o[x * 4 + 3] = (uint8_t)(p >> 24); }
+    }
+    *size = total;
+    return d;
+}
+
 #undef FIRE_IMG_FAIL
 
 #endif

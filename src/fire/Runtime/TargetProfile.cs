@@ -159,6 +159,10 @@ namespace fire.Runtime
         /// <summary>The platform package implements fire threads.</summary>
         public bool SupportsThreads { get; init; } = true;
 
+        /// <summary>The SDL a window on the desktop (`#import "windows"` on posix and windows) is built with: 2 or 3; null: the build decides - SDL3 when the toolchain
+        /// can compile and link it (a probe that is remembered), else SDL2 (an environment variable FIRE_SDL=2|3 decides first, see docs/NATIVE_BACKEND.md).</summary>
+        public int? Sdl { get; init; }
+
         /// <summary>The name of the toolchain that builds for this target (a key of the configuration's `toolchains`, or `files`: only write the sources);
         /// null: the toolchain of the machine.</summary>
         public string? Toolchain { get; init; }
