@@ -59,6 +59,38 @@ namespace fire.Editor
         private readonly HighlightingColorizer _fireColorizer = new();
         private readonly MarkdownRenderer _renderer = new();
         private double _overviewZoom = 1;
+        private bool _isOverview;
+        private OverviewHost? _overviewHost;
+
+        /// <summary>What the surface of an overview changes goes into this document: as one undo step, so Ctrl+Z takes it back and Ctrl+S saves it.</summary>
+        private sealed class OverviewHost : IOverviewHost
+        {
+            private readonly MarkdownEditorControl _owner;
+            public OverviewHost(MarkdownEditorControl owner) => _owner = owner;
+
+            public string[] Lines => _owner.Editor.Text.Replace("\r\n", "\n").Split('\n');
+            public int? SelectedLine { get; set; }
+            public void Undo() { if (_owner.Editor.Document.UndoStack.CanUndo) _owner.Editor.Undo(); }
+            public void Redo() { if (_owner.Editor.Document.UndoStack.CanRedo) _owner.Editor.Redo(); }
+
+            public void Replace(int first, int count, IReadOnlyList<string> lines)
+            {
+                var doc = _owner.Editor.Document;
+                string newline = doc.Text.Contains("\r\n") ? "\r\n" : "\n";
+                int start = first < doc.LineCount ? doc.GetLineByNumber(first + 1).Offset : doc.TextLength;
+                string text = string.Join(newline, lines);
+                if (count == 0)
+                {
+                    if (lines.Count == 0) return;
+                    if (first < doc.LineCount) doc.Insert(start, text + newline);
+                    else doc.Insert(doc.TextLength, (doc.TextLength > 0 && !doc.Text.EndsWith('\n') ? newline : "") + text);
+                    return;
+                }
+                int last = Math.Min(first + count, doc.LineCount);
+                int end = doc.GetLineByNumber(last).EndOffset;
+                doc.Replace(start, end - start, text);
+            }
+        }
         private readonly DispatcherTimer _previewTimer;
         private readonly DispatcherTimer _highlightTimer;
         private List<(int Start, int End)> _fireBlocks = new();
@@ -276,9 +308,12 @@ namespace fire.Editor
 
         private void PreviewToggle_Click(object? sender, RoutedEventArgs e) => ApplyPreviewVisibility();
 
+        /// <summary>The text is a project overview and only its surface is shown.</summary>
+        private bool SurfaceOnly => _isOverview && SurfaceToggle.IsChecked == true && !ViewerOnly;
+
         private void ApplyPreviewVisibility()
         {
-            if (ViewerOnly)
+            if (ViewerOnly || SurfaceOnly)
             {
                 // only the rendered page: no editor, no splitter
                 Editor.IsVisible = false;
@@ -320,16 +355,26 @@ namespace fire.Editor
             var offset = keepScroll ? Preview.Offset : default;
 
             string text = Editor.Text;
-            if (OverviewParser.IsOverview(text))
+            bool overview = OverviewParser.IsOverview(text);
+            if (overview != _isOverview)
+            {
+                _isOverview = overview;
+                SurfaceToggle.IsVisible = overview && !ViewerOnly;
+                if (!overview && SurfaceToggle.IsChecked == true) { SurfaceToggle.IsChecked = false; ApplyPreviewVisibility(); return; }
+            }
+            if (overview)
             {
                 // a project overview (docs/NOTES.md): the surface with its containers instead of the flowing page; it scrolls both ways and keeps its zoom
-                if (Preview.Content is OverviewView old) _overviewZoom = old.Zoom;
+                bool hadFocus = false;
+                if (Preview.Content is OverviewView old) { _overviewZoom = old.Zoom; hadFocus = old.IsKeyboardFocusWithin; }
                 var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (FilePath != null) visited.Add(Path.GetFullPath(FilePath));
-                var view = new OverviewView(OverviewParser.Parse(text), new OverviewContext { BaseDirectory = BaseDirectory, LinkClicked = HandleLink, Visited = visited });
+                var view = new OverviewView(OverviewParser.Parse(text), new OverviewContext { BaseDirectory = BaseDirectory, LinkClicked = HandleLink, Visited = visited },
+                    IsReadOnly ? null : _overviewHost ??= new OverviewHost(this));
                 view.SetZoom(_overviewZoom);
                 Preview.HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
                 Preview.Content = view;
+                if (hadFocus) Dispatcher.UIThread.Post(() => view.Focus(), DispatcherPriority.Loaded);   // the keys (Ctrl+Z, Esc) stay with the surface
             }
             else
             {

@@ -19,6 +19,8 @@
                 <Button Classes="tool" Click="Table_Click" ToolTip.Tip="Insert table"><TextBlock Text="Table"/></Button>
                 <Border Width="1" Background="#3C3544" Margin="4,2"/>
                 <ToggleButton x:Name="PreviewToggle" Classes="tool" IsChecked="True" Click="PreviewToggle_Click" ToolTip.Tip="Show or hide the preview (Ctrl+Shift+V)"><TextBlock Text="Preview"/></ToggleButton>
+                <!-- a project overview (docs/NOTES.md): only the surface, without the text -->
+                <ToggleButton x:Name="SurfaceToggle" Classes="tool" IsVisible="False" Click="PreviewToggle_Click" ToolTip.Tip="Show only the surface of the overview (it is edited there)"><TextBlock Text="Surface"/></ToggleButton>
             </StackPanel>
         </Border>
 

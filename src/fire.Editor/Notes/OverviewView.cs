@@ -31,42 +31,104 @@ namespace fire.Editor
         public string Resolve(string path) => Path.GetFullPath(Path.Combine(BaseDirectory ?? Directory.GetCurrentDirectory(), path.Replace('/', Path.DirectorySeparatorChar)));
     }
 
+    /// <summary>What the surface changes in the text of the overview (the open document): its lines, replacing some of them (one undo step), and which container is selected.</summary>
+    internal interface IOverviewHost
+    {
+        string[] Lines { get; }
+        void Replace(int first, int count, IReadOnlyList<string> lines);
+        /// <summary>The line of the definition of the selected container (kept when the surface is built again after a change); null: none.</summary>
+        int? SelectedLine { get; set; }
+        /// <summary>Undo and redo of the document (the surface has the keyboard, not the text editor).</summary>
+        void Undo();
+        void Redo();
+    }
+
     /// <summary>
     /// A project overview (docs/NOTES.md), shown: the text at the top left, the containers at their places (their text, sketches and containers in them, or the document they show),
     /// the lines between containers on top. Ctrl+mouse wheel zooms. A todo list in a container is a working list: its tasks are ticked off there.
+    /// With a host (an editable document) the surface edits the overview: a click selects a container, dragging moves it, its handles resize it (on a raster of 10, Alt: free);
+    /// a double click edits its text in place - the containers in it stay visible at half opacity. Every change goes into the text of the document, only to the lines concerned.
     /// </summary>
     internal sealed class OverviewView : UserControl
     {
         private static readonly IBrush Surface = new SolidColorBrush(Color.FromRgb(0x2A, 0x25, 0x31));
         private static readonly IBrush ContainerBorder = new SolidColorBrush(Color.FromRgb(0x4A, 0x42, 0x55));
+        private static readonly IBrush SelectedBorder = new SolidColorBrush(EditorTheme.AccentTextColor);
         private static readonly IBrush Page = new SolidColorBrush(Color.FromRgb(0x24, 0x20, 0x28));
+        private static readonly IBrush EditorBack = EditorTheme.CodeBlockBackground;
         public const double TextWidth = 680;
+        private const double Padding = 12;
+        private const double Raster = 10;
 
         private readonly LayoutTransformControl _zoomHost = new();
+        private readonly OverviewDocument _doc;
+        private readonly OverviewContext _context;
+        private readonly IOverviewHost? _host;
+        private readonly AbsolutePanel _root = new() { Margin = new Thickness(24), Background = Brushes.Transparent };
+        private readonly Dictionary<string, Control> _named = new(StringComparer.Ordinal);
+        private readonly List<ContainerCell> _cells = new();
+        private Control _rootText;
         private double _zoom = 1;
 
-        public OverviewView(OverviewDocument doc, OverviewContext context)
+        private ContainerCell? _selected;
+        private Edit? _edit;
+        private Drag? _drag;
+
+        /// <summary>A container on the surface: its model, its box (with the text or document), the panel of the elements in it, its handles.</summary>
+        private sealed class ContainerCell : Grid
         {
-            var root = new AbsolutePanel { Margin = new Thickness(24) };
-            root.Children.Add(new DotLayer());
-            var named = new Dictionary<string, Control>(StringComparer.Ordinal);
+            public required OvContainer Model { get; init; }
+            public required Border Box { get; init; }
+            public required AbsolutePanel Inner { get; init; }
+            public required Control Body { get; set; }
+            public Border? Corner { get; set; }
+            public Border? Edge { get; set; }
+        }
 
-            var text = MarkdownText(doc.Markdown, context, TextWidth);
-            root.Children.Add(text);
-            foreach (var element in doc.Children) root.Children.Add(Build(element, context, named));
-            var lines = new ConnectorLayer(doc.Lines, named, root) { IsHitTestVisible = false };
-            root.Children.Add(lines);
+        private enum DragKind { Move, Resize, ResizeWidth }
 
-            _zoomHost.Child = root;
+        private sealed class Drag
+        {
+            public required ContainerCell Cell { get; init; }
+            public required DragKind Kind { get; init; }
+            public required Point Start { get; init; }
+            public required Point Origin { get; init; }
+            public required Size Size { get; init; }
+            public bool Moving { get; set; }
+        }
+
+        /// <summary>The text of a container (Cell) or of the overview (Cell null) being edited in place.</summary>
+        private sealed class Edit
+        {
+            public ContainerCell? Cell { get; init; }
+            public required AvaloniaEdit.TextEditor Editor { get; init; }
+            public required string Original { get; init; }
+            public required Control Shown { get; init; }
+            public bool Done { get; set; }
+        }
+
+        public OverviewView(OverviewDocument doc, OverviewContext context, IOverviewHost? host = null)
+        {
+            _doc = doc;
+            _context = context;
+            _host = host;
+            Focusable = host != null;
+            _root.Children.Add(new DotLayer());
+            _rootText = MarkdownText(doc.Markdown, context, TextWidth);
+            if (host != null && _rootText is Panel { Width: 0 }) _rootText = EmptyText(TextWidth, "Double click to write the text of the overview.");
+            _root.Children.Add(_rootText);
+            foreach (var element in doc.Children) _root.Children.Add(Build(element, _context));
+            _root.Children.Add(new ConnectorLayer(doc.Lines, _named, _root) { IsHitTestVisible = false });
+
+            _zoomHost.Child = _root;
             var stack = new StackPanel();
             if (doc.Problems.Count > 0)
             {
-                var problems = new TextBlock
+                stack.Children.Add(new TextBlock
                 {
                     Text = "Problems in the file:\n" + string.Join("\n", doc.Problems.Select(p => "  line " + p)), FontSize = 12, Foreground = EditorTheme.Yellow,
                     TextWrapping = TextWrapping.Wrap, Margin = new Thickness(24, 12, 24, 0),
-                };
-                stack.Children.Add(problems);
+                });
             }
             stack.Children.Add(_zoomHost);
             Content = stack;
@@ -78,6 +140,30 @@ namespace fire.Editor
                 SetZoom(_zoom * (e.Delta.Y > 0 ? 1.1 : 1 / 1.1));
                 e.Handled = true;
             }, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+
+            if (host != null)
+            {
+                _rootText.AddHandler(PointerPressedEvent, (_, e) =>
+                {
+                    if (!e.GetCurrentPoint(_rootText).Properties.IsLeftButtonPressed || _edit?.Cell == null && _edit != null) return;
+                    if (e.ClickCount == 2) { Commit(); Select(null); BeginEdit(null); e.Handled = true; }
+                }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                _root.AddHandler(PointerPressedEvent, (_, e) =>
+                {
+                    if (CellOf(e.Source) == null && !IsInside(e.Source, _rootText) && !IsInside(e.Source, _edit?.Editor)) { Commit(); Select(null); }
+                }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                AddHandler(PointerMovedEvent, OnDragMove, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                AddHandler(PointerReleasedEvent, OnDragEnd, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+                KeyDown += (_, e) =>
+                {
+                    if (_edit != null) return;   // the editor in a container has its own undo
+                    bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+                    if (e.Key == Key.Escape && _selected != null) { Select(null); e.Handled = true; }
+                    else if (ctrl && e.Key == Key.Z && !e.KeyModifiers.HasFlag(KeyModifiers.Shift)) { host.Undo(); e.Handled = true; }
+                    else if (ctrl && (e.Key == Key.Y || e.Key == Key.Z)) { host.Redo(); e.Handled = true; }
+                };
+                if (host.SelectedLine is { } line && _cells.FirstOrDefault(c => c.Model.Line == line) is { } keep) Select(keep);
+            }
         }
 
         public double Zoom => _zoom;
@@ -88,7 +174,7 @@ namespace fire.Editor
             _zoomHost.LayoutTransform = new ScaleTransform(_zoom, _zoom);
         }
 
-        // ---------------------------------------------------------------- elements
+        // ---------------------------------------------------------------- building
 
         private static Control MarkdownText(string markdown, OverviewContext context, double width)
         {
@@ -100,9 +186,12 @@ namespace fire.Editor
             return page;
         }
 
-        private static Control Build(OvElement element, OverviewContext context, Dictionary<string, Control> named) => element switch
+        private static Control EmptyText(double width, string hint) =>
+            new TextBlock { Text = hint, Width = width, FontSize = 12, FontStyle = FontStyle.Italic, Foreground = EditorTheme.TextDim, Background = Brushes.Transparent };
+
+        private Control Build(OvElement element, OverviewContext context) => element switch
         {
-            OvContainer c => Container(c, context, named),
+            OvContainer c => Container(c, context),
             OvSketch s => Place(new SketchView(s), 0, 0),
             _ => new Panel(),
         };
@@ -113,26 +202,23 @@ namespace fire.Editor
             return control;
         }
 
-        private static Control Container(OvContainer c, OverviewContext context, Dictionary<string, Control> named)
+        private Control Container(OvContainer c, OverviewContext context)
         {
-            const double padding = 12;
-            Control body;
-            if (c.Src != null) body = Document(c.Src, context, c.W - 2 * padding);
-            else body = MarkdownText(c.Markdown, context, c.W - 2 * padding);
+            Control body = c.Src != null ? Document(c.Src, context, c.W - 2 * Padding) : MarkdownText(c.Markdown, context, c.W - 2 * Padding);
+            if (_host != null && c.Src == null && body is Panel { Width: 0 }) body = EmptyText(c.W - 2 * Padding, "Double click to write.");
 
             var box = new Border
             {
                 Background = Surface, BorderBrush = ContainerBorder, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(padding, padding + (c.Name != null ? 4 : 0), padding, padding), Child = body,
+                Padding = new Thickness(Padding, Padding + (c.Name != null ? 4 : 0), Padding, Padding), Child = body,
                 Width = c.W, MinHeight = 24,
             };
             if (c.H is { } h) { box.Height = h; box.ClipToBounds = true; }
 
-            // the elements in the container: positioned from its top left corner
             var inner = new AbsolutePanel();
-            foreach (var child in c.Children) inner.Children.Add(Build(child, context, named));
+            foreach (var child in c.Children) inner.Children.Add(Build(child, context));
 
-            var cell = new Grid { Width = c.W };
+            var cell = new ContainerCell { Model = c, Box = box, Inner = inner, Body = body, Width = c.W };
             cell.Children.Add(box);
             cell.Children.Add(inner);
             if (c.Name != null)
@@ -140,13 +226,226 @@ namespace fire.Editor
                 cell.Children.Add(new Border
                 {
                     Background = Page, CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 0), Margin = new Thickness(10, -9, 0, 0),
-                    HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                    HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top, IsHitTestVisible = false,
                     Child = new TextBlock { Text = c.Name, FontSize = 11, Foreground = EditorTheme.TextDim },
                 });
-                named.TryAdd(c.Name, box);
+                _named.TryAdd(c.Name, box);
             }
+            _cells.Add(cell);
+            if (_host != null) Editable(cell);
             return Place(cell, c.X, c.Y);
         }
+
+        // ---------------------------------------------------------------- editing
+
+        private void Editable(ContainerCell cell)
+        {
+            // the handles of a selected container: the corner sizes it, the right edge only its width
+            cell.Corner = new Border
+            {
+                Width = 10, Height = 10, Background = SelectedBorder, CornerRadius = new CornerRadius(2), IsVisible = false,
+                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, -5, -5),
+                Cursor = new Cursor(StandardCursorType.BottomRightCorner),
+            };
+            cell.Edge = new Border
+            {
+                Width = 8, Background = Brushes.Transparent, IsVisible = false, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 12, -4, 12),
+                Cursor = new Cursor(StandardCursorType.SizeWestEast),
+            };
+            cell.Children.Add(cell.Edge);
+            cell.Children.Add(cell.Corner);
+            cell.Corner.PointerPressed += (_, e) => { StartDrag(cell, DragKind.Resize, e); e.Handled = true; };
+            cell.Edge.PointerPressed += (_, e) => { StartDrag(cell, DragKind.ResizeWidth, e); e.Handled = true; };
+
+            cell.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                if (CellOf(e.Source) != cell || IsInside(e.Source, _edit?.Editor)) return;   // a container inside it, or its own editor
+                if (!e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed) return;
+                if (IsInside(e.Source, cell.Corner) || IsInside(e.Source, cell.Edge)) return;
+                if (e.ClickCount == 2)
+                {
+                    if (cell.Model.Src != null) OverviewContext.OpenFile?.Invoke(_context.Resolve(cell.Model.Src));
+                    else { Commit(); BeginEdit(cell); }
+                    e.Handled = true;
+                    return;
+                }
+                if (_edit != null && _edit.Cell != cell) Commit();
+                Select(cell);
+                // a click that a mark of a task or a link took does not move the container
+                bool taken = e.Handled && !IsInside(e.Source, typeof(SelectableTextBlock));
+                if (!taken) StartDrag(cell, DragKind.Move, e);
+            }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        }
+
+        private static bool IsInside(object? source, Control? control)
+        {
+            if (control == null) return false;
+            for (var v = source as Visual; v != null; v = v.GetVisualParent()) if (ReferenceEquals(v, control)) return true;
+            return false;
+        }
+
+        private static bool IsInside(object? source, Type type)
+        {
+            for (var v = source as Visual; v != null; v = v.GetVisualParent()) if (type.IsInstanceOfType(v)) return true;
+            return false;
+        }
+
+        /// <summary>The innermost container a visual is in.</summary>
+        private static ContainerCell? CellOf(object? source)
+        {
+            for (var v = source as Visual; v != null; v = v.GetVisualParent()) if (v is ContainerCell c) return c;
+            return null;
+        }
+
+        private void Select(ContainerCell? cell)
+        {
+            if (_selected != null)
+            {
+                _selected.Box.BorderBrush = ContainerBorder;
+                _selected.Box.BorderThickness = new Thickness(1);
+                if (_selected.Corner != null) _selected.Corner.IsVisible = false;
+                if (_selected.Edge != null) _selected.Edge.IsVisible = false;
+            }
+            _selected = cell;
+            if (_host != null) _host.SelectedLine = cell?.Model.Line;
+            Focus();   // the keys (Esc, Ctrl+Z) go to the surface
+            if (cell == null) return;
+            cell.Box.BorderBrush = SelectedBorder;
+            cell.Box.BorderThickness = new Thickness(1.5);
+            if (cell.Corner != null) cell.Corner.IsVisible = true;
+            if (cell.Edge != null) cell.Edge.IsVisible = true;
+        }
+
+        private void StartDrag(ContainerCell cell, DragKind kind, PointerPressedEventArgs e)
+        {
+            if (_edit?.Cell == cell) return;
+            Select(cell);
+            _drag = new Drag
+            {
+                Cell = cell, Kind = kind, Start = e.GetPosition(_root), Origin = AbsolutePanel.GetPosition(cell),
+                Size = new Size(cell.Box.Bounds.Width > 0 ? cell.Box.Bounds.Width : cell.Model.W, cell.Box.Bounds.Height),
+            };
+        }
+
+        private static double Snap(double value, bool free) => free ? Math.Round(value) : Math.Round(value / Raster) * Raster;
+
+        private void OnDragMove(object? sender, PointerEventArgs e)
+        {
+            if (_drag is not { } drag) return;
+            if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) { _drag = null; return; }
+            var p = e.GetPosition(_root);
+            double dx = p.X - drag.Start.X, dy = p.Y - drag.Start.Y;
+            if (!drag.Moving && Math.Abs(dx) + Math.Abs(dy) < 4) return;
+            if (!drag.Moving) { drag.Moving = true; e.Pointer.Capture(this); }
+            bool free = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+            var cell = drag.Cell;
+            switch (drag.Kind)
+            {
+                case DragKind.Move:
+                    AbsolutePanel.SetPosition(cell, new Point(Math.Max(0, Snap(drag.Origin.X + dx, free)), Math.Max(0, Snap(drag.Origin.Y + dy, free))));
+                    (cell.Parent as Control)?.InvalidateMeasure();
+                    break;
+                case DragKind.Resize:
+                case DragKind.ResizeWidth:
+                    double w = Math.Max(60, Snap(drag.Size.Width + dx, free));
+                    cell.Width = w;
+                    cell.Box.Width = w;
+                    if (cell.Body is Control body && body.Width > 0) body.Width = w - 2 * Padding;
+                    if (drag.Kind == DragKind.Resize)
+                    {
+                        cell.Box.Height = Math.Max(30, Snap(drag.Size.Height + dy, free));
+                        cell.Box.ClipToBounds = true;
+                    }
+                    break;
+            }
+            e.Handled = true;
+        }
+
+        private void OnDragEnd(object? sender, PointerReleasedEventArgs e)
+        {
+            if (_drag is not { } drag) return;
+            _drag = null;
+            if (!drag.Moving) return;
+            e.Pointer.Capture(null);
+            var cell = drag.Cell;
+            var values = drag.Kind switch
+            {
+                DragKind.Move => new[] { ("x", OverviewSource.Number(AbsolutePanel.GetPosition(cell).X)), ("y", OverviewSource.Number(AbsolutePanel.GetPosition(cell).Y)) },
+                DragKind.ResizeWidth => new[] { ("w", OverviewSource.Number(cell.Box.Width)) },
+                _ => new[] { ("w", OverviewSource.Number(cell.Box.Width)), ("h", OverviewSource.Number(cell.Box.Height)) },
+            };
+            var lines = _host!.Lines;
+            int line = cell.Model.Line;
+            if (line < lines.Length) _host.Replace(line, 1, new[] { OverviewSource.SetAttributes(lines[line], values) });
+            e.Handled = true;
+        }
+
+        /// <summary>Edits the own text of a container (null: of the overview) in place; the containers in it stay visible at half opacity.</summary>
+        private void BeginEdit(ContainerCell? cell)
+        {
+            if (_host == null) return;
+            string original = OverviewSource.OwnText(_host.Lines, _doc, cell?.Model);
+            double width = cell == null ? TextWidth : cell.Box.Width - 2 * Padding;
+            var shown = cell?.Body ?? _rootText;
+            var editor = new AvaloniaEdit.TextEditor
+            {
+                Text = original, WordWrap = true, ShowLineNumbers = false, FontSize = 13, Width = width, Background = EditorBack, Foreground = EditorTheme.Text,
+                FontFamily = new FontFamily("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace"),
+                MinHeight = Math.Max(60, shown.Bounds.Height), Padding = new Thickness(4),
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            };
+            editor.TextArea.TextView.LineTransformers.Add(new MarkdownColorizer());
+            var edit = new Edit { Cell = cell, Editor = editor, Original = original, Shown = shown };
+            _edit = edit;
+            if (cell != null)
+            {
+                cell.Box.Child = editor;
+                cell.Box.Height = double.NaN;   // the editor may need more room than the container had
+                cell.Box.ClipToBounds = false;
+                cell.Inner.Opacity = 0.5;
+            }
+            else
+            {
+                int index = _root.Children.IndexOf(_rootText);
+                AbsolutePanel.SetPosition(editor, new Point(0, 0));
+                _root.Children[index] = editor;
+                foreach (var c in _root.Children.Where(c => c is ContainerCell or SketchView)) c.Opacity = 0.5;
+            }
+            editor.KeyDown += (_, e) => { if (e.Key == Key.Escape) { Commit(); e.Handled = true; } };
+            editor.LostFocus += (_, _) => Dispatcher.UIThread.Post(() =>
+            {
+                // the focus went somewhere else (not into the editor's own parts): the text is done
+                if (_edit == edit && !editor.IsKeyboardFocusWithin) Commit();
+            }, DispatcherPriority.Background);
+            Dispatcher.UIThread.Post(() => { editor.Focus(); editor.TextArea.Focus(); }, DispatcherPriority.Loaded);
+        }
+
+        /// <summary>Ends editing in place: a changed text goes into the document (the surface is built again from it), else the text is shown as it was.</summary>
+        private void Commit()
+        {
+            if (_edit is not { Done: false } edit || _host == null) return;
+            edit.Done = true;
+            _edit = null;
+            string text = edit.Editor.Text;
+            if (edit.Cell != null)
+            {
+                edit.Cell.Box.Child = edit.Shown;
+                edit.Cell.Inner.Opacity = 1;
+                if (edit.Cell.Model.H is { } h) { edit.Cell.Box.Height = h; edit.Cell.Box.ClipToBounds = true; }
+            }
+            else
+            {
+                int index = _root.Children.IndexOf(edit.Editor);
+                if (index >= 0) _root.Children[index] = edit.Shown;
+                foreach (var c in _root.Children.Where(c => c is ContainerCell or SketchView)) c.Opacity = 1;
+            }
+            if (text.Replace("\r\n", "\n").TrimEnd() == edit.Original.TrimEnd()) return;
+            var (first, count, lines) = OverviewSource.ReplaceOwnText(_host.Lines, _doc, edit.Cell?.Model, text);
+            _host.Replace(first, count, lines);
+        }
+
+        // ---------------------------------------------------------------- documents in containers
 
         /// <summary>The document a container shows: a todo list (to tick off), another overview, Markdown, a picture - or a link to open it.</summary>
         private static Control Document(string src, OverviewContext context, double width)

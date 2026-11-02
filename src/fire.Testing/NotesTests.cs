@@ -27,6 +27,7 @@ static class NotesTests
         Folders();
         Preview();
         Overview();
+        OverviewEdits();
         Console.WriteLine(_failures == 0 ? "Notes: alle Tests bestanden" : $"Notes: {_failures} FEHLER");
     }
 
@@ -240,6 +241,45 @@ static class NotesTests
             && bad.Problems.Any(p => p.Contains("'b'")) && bad.Problems.Any(p => p.StartsWith("8:") && p.Contains("ends nothing")), string.Join("\n", bad.Problems));
         var open = fire.Editor.OverviewParser.Parse("[container]: <x=0 y=0 w=10>\ntext\n");
         Check("Problem: nicht beendet", open.Problems.Single().Contains("not ended") && ((fire.Editor.OvContainer)open.Children[0]).Markdown == "text");
+    }
+
+    private static string Apply(string[] lines, (int First, int Count, List<string> Lines) change)
+    {
+        var list = lines.ToList();
+        list.RemoveRange(change.First, change.Count);
+        list.InsertRange(change.First, change.Lines);
+        return string.Join("\n", list);
+    }
+
+    private static void OverviewEdits()
+    {
+        Check("Attribute: Wert an seiner Stelle", fire.Editor.OverviewSource.SetAttributes("[container]: <x=40 y=180 w=340> \"signal\"", new[] { ("x", "50"), ("y", "200") })
+            == "[container]: <x=50 y=200 w=340> \"signal\"");
+        Check("Attribute: neues hinten, Anfuehrungszeichen bleiben", fire.Editor.OverviewSource.SetAttributes("[container]: <x=1 src=\"a b.md\" w=3>", new[] { ("h", "120"), ("w", "40") })
+            == "[container]: <x=1 src=\"a b.md\" w=40 h=120>");
+        Check("Attribute: leeres <>", fire.Editor.OverviewSource.SetAttributes("[sketch]: <>", new[] { ("x", "1") }) == "[sketch]: <x=1>");
+        Check("Zahl", fire.Editor.OverviewSource.Number(12.3456) == "12.35" && fire.Editor.OverviewSource.Number(40) == "40");
+
+        string[] lines = OverviewSample.Replace("\r\n", "\n").Split('\n');
+        var doc = fire.Editor.OverviewParser.Parse(OverviewSample);
+        var signal = (fire.Editor.OvContainer)doc.Children[1];
+        Same("eigener Text eines Containers", fire.Editor.OverviewSource.OwnText(lines, doc, signal), "## Signal path\nInput → Out");
+        Same("eigener Text der Uebersicht", fire.Editor.OverviewSource.OwnText(lines, doc, null), "# Fuzz pedal\n\nGoal: a distortion.\n\n[other]: <https://example.com> \"a link of the author\"");
+
+        string changed = Apply(lines, fire.Editor.OverviewSource.ReplaceOwnText(lines, doc, signal, "## New title\n\nMore text."));
+        var again = fire.Editor.OverviewParser.Parse(changed);
+        var signal2 = (fire.Editor.OvContainer)again.Children[1];
+        Check("Text ersetzen: neuer Text, innere Elemente bleiben, keine Probleme",
+            signal2.Markdown == "## New title\n\nMore text." && signal2.Children.Count == 2 && signal2.Children.OfType<fire.Editor.OvContainer>().Single().Markdown == "Nested text"
+            && again.Problems.Count == 0 && again.Lines.Count == 1, changed + "\n" + string.Join("\n", again.Problems));
+        Check("Text ersetzen: alles ausserhalb bleibt", changed.StartsWith("# Fuzz pedal\n\nGoal: a distortion.\n\n[container]: <x=420 y=180 w=300 src=\"todo.md\"> \"todos\"\n\n[container]: <x=40 y=180 w=340 h=200> \"signal\"\n## New title")
+            && changed.EndsWith("[/container]: <>\n\n[line]: <from=signal to=todos arrow=end> \"open\"\n\n[other]: <https://example.com> \"a link of the author\""), changed);
+
+        string root = Apply(lines, fire.Editor.OverviewSource.ReplaceOwnText(lines, doc, null, "# Pedal\n\nShort."));
+        var rootDoc = fire.Editor.OverviewParser.Parse(root);
+        Check("Text der Uebersicht ersetzen: Text zuerst, dann die Container, dann die Linien",
+            rootDoc.Markdown == "# Pedal\n\nShort." && rootDoc.Children.Count == 2 && rootDoc.Lines.Count == 1 && rootDoc.Problems.Count == 0 && root.TrimEnd().EndsWith("[line]: <from=signal to=todos arrow=end> \"open\""),
+            root + "\n" + string.Join("\n", rootDoc.Problems));
     }
 
     private static void Folders()

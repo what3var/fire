@@ -263,3 +263,120 @@ namespace fire.Editor
         private static string Unescape(string text) => Regex.Replace(text, @"\\(.)", "$1");
     }
 }
+
+namespace fire.Editor
+{
+    /// <summary>
+    /// Changes to the text of an overview that the surface makes (docs/NOTES.md): only the lines concerned - the attributes of one definition (a container moved or resized),
+    /// or the own text of a container (or of the overview), the elements in it kept after the text.
+    /// </summary>
+    public static class OverviewSource
+    {
+        private static readonly Regex Definition = new(@"^(?<head> {0,3}\[[^\]\r\n]+\]:[ \t]*<)(?<dest>(?:\\.|[^<>\\\r\n])*)(?<tail>>.*)$", RegexOptions.Compiled);
+
+        /// <summary>The line with the attributes `values` set: an attribute that is there gets the new value in its place, a new one is added at the end; the rest stays as written.</summary>
+        public static string SetAttributes(string line, IReadOnlyList<(string Key, string Value)> values)
+        {
+            var m = Definition.Match(line);
+            if (!m.Success) return line;
+            string dest = m.Groups["dest"].Value;
+            foreach (var (key, raw) in values)
+            {
+                string value = raw.Any(char.IsWhiteSpace) || raw.Length == 0 ? "\"" + raw.Replace("\"", "\\\"") + "\"" : raw;
+                var token = Regex.Match(dest, @"(?<=^|\s)" + Regex.Escape(key) + @"=(?:""(?:\\.|[^""\\])*""|'(?:\\.|[^'\\])*'|\S*)", RegexOptions.IgnoreCase);
+                dest = token.Success
+                    ? dest.Substring(0, token.Index) + key + "=" + value + dest.Substring(token.Index + token.Length)
+                    : (dest.TrimEnd().Length > 0 ? dest.TrimEnd() + " " : "") + key + "=" + value;
+            }
+            return m.Groups["head"].Value + dest + m.Groups["tail"].Value;
+        }
+
+        /// <summary>A number as it is written into an attribute.</summary>
+        public static string Number(double value) => Math.Round(value, 2).ToString(CultureInfo.InvariantCulture);
+
+        /// <summary>The lines between the definition and the end of a container (null: of the overview itself): first and count.</summary>
+        private static (int First, int Count) Inside(string[] lines, OvContainer? container)
+        {
+            if (container == null) return (0, lines.Length);
+            int first = container.Line + 1;
+            int end = container.EndLine >= 0 ? container.EndLine : lines.Length;
+            return (first, Math.Max(0, end - first));
+        }
+
+        private static int EndOf(OvElement e, int limit) => e switch
+        {
+            OvContainer { Src: null, EndLine: >= 0 } c => c.EndLine,
+            OvContainer { Src: null } => limit - 1,
+            OvSketch { EndLine: >= 0 } s => s.EndLine,
+            OvSketch => limit - 1,
+            _ => e.Line,
+        };
+
+        /// <summary>The own text of a container (null: of the overview): its lines without the elements in it and without lines between containers.</summary>
+        public static string OwnText(string[] lines, OverviewDocument doc, OvContainer? container)
+        {
+            var (own, _, _) = Split(lines, doc, container);
+            return string.Join("\n", own);
+        }
+
+        private static (List<string> Own, List<List<string>> Blocks, List<string> LineDefinitions) Split(string[] lines, OverviewDocument doc, OvContainer? container)
+        {
+            var (first, count) = Inside(lines, container);
+            int limit = first + count;
+            var children = (container?.Children ?? doc.Children).OrderBy(c => c.Line).ToList();
+            var lineDefs = doc.Lines.Where(l => l.Line >= first && l.Line < limit).Select(l => l.Line).ToHashSet();
+            var own = new List<string>();
+            var blocks = new List<List<string>>();
+            var defs = new List<string>();
+            for (int i = first; i < limit; i++)
+            {
+                var child = children.FirstOrDefault(c => c.Line == i);
+                if (child != null)
+                {
+                    int end = Math.Min(EndOf(child, limit), limit - 1);
+                    blocks.Add(lines.Skip(i).Take(end - i + 1).ToList());
+                    i = end;
+                    continue;
+                }
+                if (lineDefs.Contains(i)) { defs.Add(lines[i]); continue; }
+                // lines of a line definition inside a child belong to the child; here only own lines
+                own.Add(lines[i]);
+            }
+            while (own.Count > 0 && own[0].Trim().Length == 0) own.RemoveAt(0);
+            while (own.Count > 0 && own[^1].Trim().Length == 0) own.RemoveAt(own.Count - 1);
+            // where elements were taken out, their empty lines stay: one empty line is enough (Markdown does not tell them apart)
+            for (int k = own.Count - 1; k > 0; k--)
+                if (own[k].Trim().Length == 0 && own[k - 1].Trim().Length == 0) own.RemoveAt(k);
+            return (own, blocks, defs);
+        }
+
+        /// <summary>
+        /// Replaces the own text of a container (null: of the overview) by `text`: the text comes first, the elements in it follow (each after an empty line, in their order),
+        /// then the lines between containers that stood there. Returns the lines to replace (first, count) and their new lines.
+        /// </summary>
+        public static (int First, int Count, List<string> Lines) ReplaceOwnText(string[] lines, OverviewDocument doc, OvContainer? container, string text)
+        {
+            var (first, count) = Inside(lines, container);
+            var (_, blocks, defs) = Split(lines, doc, container);
+            var result = new List<string>();
+            var own = text.Replace("\r\n", "\n").Split('\n').ToList();
+            while (own.Count > 0 && own[0].Trim().Length == 0) own.RemoveAt(0);
+            while (own.Count > 0 && own[^1].Trim().Length == 0) own.RemoveAt(own.Count - 1);
+            result.AddRange(own);
+            foreach (var block in blocks)
+            {
+                if (result.Count > 0) result.Add("");
+                result.AddRange(block);
+            }
+            if (defs.Count > 0)
+            {
+                if (result.Count > 0) result.Add("");
+                result.AddRange(defs);
+            }
+            // the end of a container is a definition: it must not stick to a paragraph
+            if (container != null && container.EndLine >= 0 && result.Count > 0) result.Add("");
+            if (container == null && first + count == lines.Length && lines.Length > 0 && lines[^1].Length == 0) result.Add("");   // keep the final line break
+            return (first, count, result);
+        }
+    }
+}

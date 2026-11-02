@@ -8,8 +8,8 @@ live in the repository with the code:
 
 Both are Markdown that any other program shows sensibly: what spark needs on top of Markdown is written so that other renderers (GitHub, other editors) hide it.
 
-Status: the todo list is built (format, reading and writing back, the tool window). Overviews are shown (step 2); editing them on the surface comes next - see the
-steps at the end.
+Status: the todo list is built (format, reading and writing back, the tool window). Overviews are shown and edited on the surface (steps 2 and 3); drawing on it comes
+next - see the steps at the end.
 
 ## The folder `notes/`
 
@@ -191,14 +191,19 @@ A container with `src=` shows its document:
 
 ### Editing
 
-Until editing on the surface is built (step 3), an overview is edited as text, with the preview beside it.
+The surface edits the overview; every change goes into the text of the document - only into the lines it concerns - as one step that **Ctrl+Z** takes back (and
+**Ctrl+Y** brings again); **Ctrl+S** saves it, as any other change. **Surface** in the tool bar of the document shows only the surface, without the text beside it.
 
-
-- A click selects a container; it is moved by dragging and resized by its handles.
-- A **double click** edits the container in place: it turns into a Markdown editor of the same place and size, with the colours of the Markdown editor. Its own text is edited
-  there; the definitions of position and size are kept by the surface. The containers it holds stay visible above the editor at **half opacity** - clearly visible, but not
-  in the way - and are edited themselves by a double click. A click outside or Esc shows the text rendered again.
-- The text of the overview itself is edited the same way.
+- A click selects a container: its outline turns to the accent colour and it gets its handles. **Dragging** it moves it; the handle at the lower right corner changes its size
+  (width and height: a container with a height cuts off what does not fit), its right edge only its width. Positions and sizes snap to a raster of 10; with **Alt** held down
+  they do not. The line of the container gets the new `x`/`y` or `w`/`h` - in their place, a new attribute at the end. Lines between containers follow at once.
+- A **double click** edits the text of the container in place: it turns into a Markdown editor of the same place and width, with the colours of the Markdown editor. The
+  containers and sketches in it stay visible above it at **half opacity** - clearly visible, but not in the way; a double click on one of them edits that one. A click
+  outside or **Esc** ends editing. A changed text replaces the own text of the container; the elements in it follow after the text (in their order), then the lines between
+  containers that stood there.
+- A double click on the text of the overview edits that text the same way (the containers then come after it in the file).
+- A double click on a container that shows a document (`src=`) opens the document.
+- **Esc** clears the selection; a click on the empty surface does, too.
 - A todo list shown in a container is a working list: a click on the mark of a task moves it on, as in the Todo window. The change is written the same way (only that line, an
   open document of the list is kept in step), and the Todo window and the overview pick up changes of the file from the other within a second.
 - A document that shows itself (directly or through others) is shown once and then as a link, not again.
@@ -207,6 +212,6 @@ Until editing on the surface is built (step 3), an overview is edited as text, w
 
 1. **Todo** (built): the folder `notes/`, the format with four states, writing back only what changed, the Todo window for projects and solutions.
 2. **Overview, viewing** (built): reading containers, sketches and lines; showing them in the preview; containers with documents, todo lists with ticking off; zoom.
-3. **Overview, editing**: moving and resizing, the editor in a container (with the inner containers at half opacity).
+3. **Overview, editing** (built): selecting, moving and resizing on a raster, the editor in a container (with the inner containers at half opacity), undo, the surface alone.
 4. **Drawing**: shapes, pen, lines between containers.
 5. **Fit to View** and finishing.
