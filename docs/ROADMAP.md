@@ -135,7 +135,7 @@ wirkt `Set` nur auf die Sicht des Programms (nicht auf spark/forge). Unter Windo
 
 Stand: umgesetzt (docs/PROCESS.md) - `Process.Run`/`Start`, `ProcessOptions` (Arbeitsordner, Umgebung, Umleitungen, `MergeError`), `ProcessStream` als
 `IO.Stream`, `WaitForExit(timeout)`, `Kill`, `ExitCode`, `Id`, Zeilen als Ereignisse (`OnOutput`/`OnError`/`OnExit`, ausgeliefert von `Pump()`, ohne zu
-blockieren). Die Natives sind - wie bei den anderen Standardpaketen - C++ (`fire_bridge_process.hpp`), in der VM als Shared Library; POSIX mit `fork`/`execvp`
+blockieren). Die Natives sind - wie bei den anderen Standardpaketen - C99 (`fire_bridge_process.h`, `"language": "c"`; auch mit TinyCC), in der VM als Shared Library; POSIX mit `fork`/`execvp`
 statt `posix_spawn` (der Arbeitsordner braucht sonst `posix_spawn_file_actions_addchdir_np`); Windows unter Wine geprüft.
 
 ## 6. SHA-256

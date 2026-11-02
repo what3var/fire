@@ -108,7 +108,7 @@ Everything that goes wrong is a `ProcessException` with `code`:
 
 ## How it works
 
-`packages/process/native/fire_bridge_process.hpp` is the one implementation (in the VM a shared library built from it, natively part of the program). POSIX:
+`packages/process/native/fire_bridge_process.h` (C99, also with TinyCC) is the one implementation (in the VM a shared library built from it, natively part of the program). POSIX:
 `fork` and `execvp` (an error of `exec` comes back through a pipe, so `Start` reports "not found" at once), pipes that do not block. Windows: `CreateProcessW`
 with anonymous pipes (the ends of this program do not wait), the command line quoted by the rules of the C runtime (each argument arrives as it was given),
 a Unicode environment block. The tests: `forge test packages/process/process.fireproj` (also with `--engine native`).
