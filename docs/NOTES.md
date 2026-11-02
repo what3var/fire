@@ -252,4 +252,5 @@ Rectangles and positions of containers snap to the raster of 10 (Alt: free). Cha
 4. **Drawing** (built): the tool bar of a canvas, `.xmd`, the four views; containers, shapes, pen, text, lines between containers, embedding.
 5. **Fit to View** (built).
 
-Next ideas: selecting and moving drawn shapes, colours in the tool bar, deleting lines on the surface.
+Next ideas: selecting and moving drawn shapes, colours in the tool bar, deleting lines on the surface; showing `.xmd` as Markdown on GitHub (it shows the
+extension as plain text).
