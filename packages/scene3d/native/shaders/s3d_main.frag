@@ -4,7 +4,7 @@
 #include "s3d_common.glsl"
 #include "s3d_object.glsl"
 
-layout(set = 0, binding = 1) uniform sampler2DArray shadowMaps;   // the distance to the light (R32F), read texel by texel
+layout(set = 0, binding = 1) uniform sampler2DArray shadowMaps;   // the atlas of the shadow maps: the distance to the light (R32F), read texel by texel
 layout(set = 1, binding = 0) uniform sampler2D tex;                // the colours (repeat, bilinear)
 layout(set = 1, binding = 1) uniform sampler2D bumpMap;            // the heights
 
@@ -25,15 +25,13 @@ bool shadowProject(Map m, vec3 p, out float u, out float v, out float d) {
 }
 
 // How much of the light reaches p (0 = in the shadow, 1 = lit): the depth in the shadow map, compared at the four texels around the point and weighted bilinearly (a soft edge).
-float shadowFactor(int setIndex, vec3 lightPos, bool directional, vec3 p, vec3 n) {
-    int mi = fr.sets[setIndex].x;
-    if (mi < 0) return 1.0;
+float shadowFactor(int mi, vec3 lightPos, bool directional, vec3 p, vec3 n) {
     if (!directional) {
         vec3 dd = p - lightPos;
         float ax = abs(dd.x), ay = abs(dd.y), az = abs(dd.z);
         mi += ax >= ay && ax >= az ? (dd.x >= 0.0 ? 0 : 1) : ay >= az ? (dd.y >= 0.0 ? 2 : 3) : (dd.z >= 0.0 ? 4 : 5);
     }
-    Map m = fr.maps[mi];
+    Map m = mb.maps[mi];
     float res = m.q.y;
     float u, v, depth, texel;
     if (m.q.z != 0.0) texel = 1.0 / (m.p.x * res);
@@ -52,12 +50,12 @@ float shadowFactor(int setIndex, vec3 lightPos, bool directional, vec3 p, vec3 n
     int last = int(res) - 1;
     int x1 = min(last, x0 + 1), y1 = min(last, y0 + 1);
     x0 = max(0, x0); y0 = max(0, y0);
-    int layer = int(m.q.w);
+    ivec3 at = m.t.xyz;   // the corner of the map in the atlas
     float limit = depth - bias;
-    float s00 = limit <= texelFetch(shadowMaps, ivec3(x0, y0, layer), 0).r ? 1.0 : 0.0;
-    float s10 = limit <= texelFetch(shadowMaps, ivec3(x1, y0, layer), 0).r ? 1.0 : 0.0;
-    float s01 = limit <= texelFetch(shadowMaps, ivec3(x0, y1, layer), 0).r ? 1.0 : 0.0;
-    float s11 = limit <= texelFetch(shadowMaps, ivec3(x1, y1, layer), 0).r ? 1.0 : 0.0;
+    float s00 = limit <= texelFetch(shadowMaps, at + ivec3(x0, y0, 0), 0).r ? 1.0 : 0.0;
+    float s10 = limit <= texelFetch(shadowMaps, at + ivec3(x1, y0, 0), 0).r ? 1.0 : 0.0;
+    float s01 = limit <= texelFetch(shadowMaps, at + ivec3(x0, y1, 0), 0).r ? 1.0 : 0.0;
+    float s11 = limit <= texelFetch(shadowMaps, at + ivec3(x1, y1, 0), 0).r ? 1.0 : 0.0;
     return (s00 * (1.0 - tx) + s10 * tx) * (1.0 - ty) + (s01 * (1.0 - tx) + s11 * tx) * ty;
 }
 
@@ -105,7 +103,7 @@ void main() {
         vec3 diffuse = fr.ambient.rgb, spec = vec3(0.0), viewDir = vec3(0.0);
         bool haveView = false;
         for (int i = 0; i < fr.counts.x; i++) {
-            Light L = fr.lights[i];
+            Light L = lb.lights[i];
             if ((L.info.y & ob.flags2.x) == 0) continue;
             vec3 toLight;
             float atten = 1.0;

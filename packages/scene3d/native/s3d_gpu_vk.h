@@ -65,19 +65,14 @@ static const char* s3d_gpu_error(void) { return "This target has no hardware ren
     X(vkCmdBeginRenderPass) X(vkCmdEndRenderPass) X(vkCmdBindPipeline) X(vkCmdBindDescriptorSets) X(vkCmdBindVertexBuffers) X(vkCmdBindIndexBuffer) X(vkCmdDrawIndexed) \
     X(vkCmdSetViewport) X(vkCmdSetScissor) X(vkCmdPushConstants) X(vkCmdPipelineBarrier) X(vkCmdCopyBufferToImage) X(vkCmdCopyImageToBuffer) X(vkCmdCopyBuffer)
 
-/* The uniform blocks of the shaders (std140; matrices row major, as the engine keeps them). Keep in step with shaders/s3d_common.glsl. */
-#define S3D_GPU_MAX_LIGHTS 16
-#define S3D_GPU_MAX_SETS 16
-#define S3D_GPU_MAX_MAPS 32
-typedef struct S3dGpuLightU { int32_t info[4]; float color[4]; float pos[4]; float toLight[4]; } S3dGpuLightU;   /* info: kind, mask, shadow set (-1: none) */
-typedef struct S3dGpuMapU { float view[16]; float p[4]; float q[4]; float r[4]; } S3dGpuMapU;                  /* p: sx sy ox oy; q: f res ortho layer; r: dmin 1/range far */
+/* What the shaders read (matrices row major, as the engine keeps them). Keep in step with shaders/s3d_common.glsl. The frame is a uniform block (std140); the lights and the
+ * shadow maps are storage buffers (std430) of any length - there is no limit on their number but the memory of the GPU. */
+typedef struct S3dGpuLightU { int32_t info[4]; float color[4]; float pos[4]; float toLight[4]; } S3dGpuLightU;   /* info: kind, mask, first shadow map (-1: none) */
+typedef struct S3dGpuMapU { float view[16]; float p[4]; float q[4]; float r[4]; int32_t t[4]; } S3dGpuMapU;     /* p: sx sy ox oy; q: f res ortho; r: dmin 1/range far; t: x y layer */
 typedef struct S3dGpuFrameU {
     float vp[16];
     float eye[4], ambient[4];
     int32_t counts[4];                         /* the lights */
-    S3dGpuLightU lights[S3D_GPU_MAX_LIGHTS];
-    int32_t sets[S3D_GPU_MAX_SETS][4];         /* the first map of a shadow set */
-    S3dGpuMapU maps[S3D_GPU_MAX_MAPS];
 } S3dGpuFrameU;
 typedef struct S3dGpuObjectU {
     float model[16], normalM[16];
@@ -96,6 +91,8 @@ typedef struct S3dVkImage { VkImage img; VkDeviceMemory mem; VkImageView view; }
 typedef struct S3dGpuMesh { S3dVkBuffer vb, ib; uint32_t indexCount; } S3dGpuMesh;
 typedef struct S3dGpuTex { S3dVkImage color, bump; int ownBump; VkDescriptorSet set; VkDescriptorPool pool; uint32_t version; } S3dGpuTex;
 typedef struct S3dGpuFrame { int w, h; S3dVkImage color, depth; VkFramebuffer fb; S3dVkBuffer readback; } S3dGpuFrame;
+/* A shadow map in the atlas: its size, its corner, its layer (layer -1: it did not fit, the light casts no shadow). */
+typedef struct S3dGpuTile { int res, x, y, layer, order; } S3dGpuTile;
 
 #define S3D_GPU_PIPELINES 12   /* cull (none, back, front) x blend x depth write */
 
@@ -135,10 +132,13 @@ static struct {
     VkSampler sampler, nearest;
     S3dGpuTex dummy;           /* a white texture with a flat bump map: for the objects without one */
     S3dVkImage flatBump;       /* the bump map of the textures without one (flat) */
-    S3dVkBuffer frameUbo, objectUbo, staging;
+    S3dVkBuffer frameUbo, objectUbo, lightBuf, mapBuf, staging;
+    /* the atlas of the shadow maps: `shadowLayers` layers of shadowSize x shadowSize; the maps of a picture are packed into it (S3dGpuTile) */
     S3dVkImage shadowColor, shadowDepth;
     VkImageView* layerViews; VkFramebuffer* layerFbs;
-    int shadowRes, shadowLayers;
+    int shadowSize, shadowLayers;
+    VkDeviceSize shadowBudget;   /* the most memory the shadow maps take (a part of the GPU's memory) */
+    S3dGpuMapU* mapData; struct S3dGpuTile* tiles; size_t mapCap;
     S3dGpuFrameU frameData;
     int* order; size_t orderCap;
 } g_s3dVk;
@@ -589,22 +589,24 @@ static int s3d_gpu_sampler(VkFilter filter, VkSamplerAddressMode mode, VkSampler
 }
 
 static int s3d_gpu_layouts(void) {
-    VkDescriptorSetLayoutBinding b[3];
+    VkDescriptorSetLayoutBinding b[5];
     VkDescriptorSetLayoutCreateInfo li;
     VkPipelineLayoutCreateInfo pi;
     VkDescriptorSetLayout sets[2];
     VkPushConstantRange pc;
-    VkDescriptorPoolSize sizes[3];
+    VkDescriptorPoolSize sizes[4];
     VkDescriptorPoolCreateInfo dp;
     VkDescriptorSetAllocateInfo ai;
-    /* set 0, the picture: the uniforms of the frame (lights, shadow maps, camera), the shadow maps, the uniforms of the object (dynamic offset) */
+    /* set 0, the picture: the uniforms of the frame (camera), the atlas of the shadow maps, the uniforms of the object (dynamic offset), the lights, the shadow maps */
     memset(b, 0, sizeof b);
     b[0].binding = 0; b[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; b[0].descriptorCount = 1; b[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     b[1].binding = 1; b[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; b[1].descriptorCount = 1; b[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     b[2].binding = 2; b[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; b[2].descriptorCount = 1; b[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[3].binding = 3; b[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; b[3].descriptorCount = 1; b[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    b[4].binding = 4; b[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; b[4].descriptorCount = 1; b[4].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
     memset(&li, 0, sizeof li);
     li.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    li.bindingCount = 3;
+    li.bindingCount = 5;
     li.pBindings = b;
     if (!s3d_gpu_check(g_s3dVk.vkCreateDescriptorSetLayout(g_s3dVk.device, &li, NULL, &g_s3dVk.setFrame), "vkCreateDescriptorSetLayout")) return 0;
     /* set 1, the texture: the colours and the bump map */
@@ -632,10 +634,11 @@ static int s3d_gpu_layouts(void) {
     sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER; sizes[0].descriptorCount = 1;
     sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; sizes[1].descriptorCount = 1;
     sizes[2].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; sizes[2].descriptorCount = 1;
+    sizes[3].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; sizes[3].descriptorCount = 2;
     memset(&dp, 0, sizeof dp);
     dp.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     dp.maxSets = 1;
-    dp.poolSizeCount = 3;
+    dp.poolSizeCount = 4;
     dp.pPoolSizes = sizes;
     if (!s3d_gpu_check(g_s3dVk.vkCreateDescriptorPool(g_s3dVk.device, &dp, NULL, &g_s3dVk.framePool), "vkCreateDescriptorPool")) return 0;
     memset(&ai, 0, sizeof ai);
@@ -648,9 +651,9 @@ static int s3d_gpu_layouts(void) {
 
 /* Writes the buffers and the shadow maps into set 0 (after one of them was made again). */
 static void s3d_gpu_writeFrameSet(void) {
-    VkDescriptorBufferInfo frameInfo, objectInfo;
+    VkDescriptorBufferInfo frameInfo, objectInfo, lightInfo, mapInfo;
     VkDescriptorImageInfo shadowInfo;
-    VkWriteDescriptorSet w[3];
+    VkWriteDescriptorSet w[5];
     memset(w, 0, sizeof w);
     frameInfo.buffer = g_s3dVk.frameUbo.buf; frameInfo.offset = 0; frameInfo.range = sizeof(S3dGpuFrameU);
     objectInfo.buffer = g_s3dVk.objectUbo.buf; objectInfo.offset = 0; objectInfo.range = sizeof(S3dGpuObjectU);
@@ -661,7 +664,13 @@ static void s3d_gpu_writeFrameSet(void) {
     w[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER; w[1].pImageInfo = &shadowInfo;
     w[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[2].dstSet = g_s3dVk.frameSet; w[2].dstBinding = 2; w[2].descriptorCount = 1;
     w[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC; w[2].pBufferInfo = &objectInfo;
-    g_s3dVk.vkUpdateDescriptorSets(g_s3dVk.device, 3, w, 0, NULL);
+    lightInfo.buffer = g_s3dVk.lightBuf.buf; lightInfo.offset = 0; lightInfo.range = VK_WHOLE_SIZE;
+    mapInfo.buffer = g_s3dVk.mapBuf.buf; mapInfo.offset = 0; mapInfo.range = VK_WHOLE_SIZE;
+    w[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[3].dstSet = g_s3dVk.frameSet; w[3].dstBinding = 3; w[3].descriptorCount = 1;
+    w[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[3].pBufferInfo = &lightInfo;
+    w[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET; w[4].dstSet = g_s3dVk.frameSet; w[4].dstBinding = 4; w[4].descriptorCount = 1;
+    w[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; w[4].pBufferInfo = &mapInfo;
+    g_s3dVk.vkUpdateDescriptorSets(g_s3dVk.device, 5, w, 0, NULL);
 }
 
 /* A pipeline: the main one (cull: 0 none, 1 back faces, 2 front faces; blend; depth write), or the one of the shadow maps (shadow != 0). */
@@ -893,7 +902,7 @@ static S3dGpuFrame* s3d_gpu_frameFor(S3dFrame* f) {
     return g;
 }
 
-/* ---- the shadow maps: one array of R32F layers (the distance to the light) and a depth buffer; a framebuffer per layer ---- */
+/* ---- the atlas of the shadow maps: an array of R32F layers (the distance to the light) and a depth buffer; a framebuffer per layer ---- */
 static void s3d_gpu_freeShadows(void) {
     int i;
     for (i = 0; i < g_s3dVk.shadowLayers; i++) {
@@ -904,12 +913,13 @@ static void s3d_gpu_freeShadows(void) {
     g_s3dVk.layerFbs = NULL; g_s3dVk.layerViews = NULL;
     s3d_gpu_freeImage(&g_s3dVk.shadowColor);
     s3d_gpu_freeImage(&g_s3dVk.shadowDepth);
-    g_s3dVk.shadowRes = 0; g_s3dVk.shadowLayers = 0;
+    g_s3dVk.shadowSize = 0; g_s3dVk.shadowLayers = 0;
 }
 
+/* An atlas of `layers` layers of res x res (kept when it is big enough). */
 static int s3d_gpu_shadows(int res, int layers) {
     int i;
-    if (g_s3dVk.shadowRes == res && g_s3dVk.shadowLayers == layers) return 1;
+    if (g_s3dVk.shadowSize == res && g_s3dVk.shadowLayers >= layers) return 1;
     s3d_gpu_freeShadows();
     if (!s3d_gpu_imageArray(&g_s3dVk.shadowColor, (uint32_t)res, (uint32_t)res, (uint32_t)layers, VK_FORMAT_R32_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 1)
         || !s3d_gpu_image(&g_s3dVk.shadowDepth, (uint32_t)res, (uint32_t)res, 1, g_s3dVk.depthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT)) {
@@ -918,7 +928,7 @@ static int s3d_gpu_shadows(int res, int layers) {
     }
     g_s3dVk.layerViews = (VkImageView*)calloc((size_t)layers, sizeof(VkImageView));
     g_s3dVk.layerFbs = (VkFramebuffer*)calloc((size_t)layers, sizeof(VkFramebuffer));
-    g_s3dVk.shadowRes = res; g_s3dVk.shadowLayers = layers;
+    g_s3dVk.shadowSize = res; g_s3dVk.shadowLayers = layers;
     if (g_s3dVk.layerViews == NULL || g_s3dVk.layerFbs == NULL) { s3d_gpu_freeShadows(); return 0; }
     for (i = 0; i < layers; i++) {
         VkImageViewCreateInfo vi;
@@ -986,7 +996,19 @@ static int s3d_gpu_start(void) {
         || !s3d_gpu_shader(s3d_spv_shadow_vert, sizeof s3d_spv_shadow_vert, &g_s3dVk.shadowVert) || !s3d_gpu_shader(s3d_spv_shadow_frag, sizeof s3d_spv_shadow_frag, &g_s3dVk.shadowFrag)) return 0;
     if (!s3d_gpu_sampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT, &g_s3dVk.sampler) || !s3d_gpu_sampler(VK_FILTER_NEAREST, VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE, &g_s3dVk.nearest)) return 0;
     if (!s3d_gpu_hostBuffer(&g_s3dVk.frameUbo, sizeof(S3dGpuFrameU), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
-        || !s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
+        || !s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * 16, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)
+        || !s3d_gpu_hostBuffer(&g_s3dVk.lightBuf, sizeof(S3dGpuLightU) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
+        || !s3d_gpu_hostBuffer(&g_s3dVk.mapBuf, sizeof(S3dGpuMapU) * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) return 0;
+    {
+        /* the shadow maps may take a quarter of the biggest memory of the GPU, at least 64 MB and at most 1 GB */
+        VkDeviceSize biggest = 0;
+        uint32_t h;
+        for (h = 0; h < g_s3dVk.memProps.memoryHeapCount; h++)
+            if ((g_s3dVk.memProps.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) && g_s3dVk.memProps.memoryHeaps[h].size > biggest) biggest = g_s3dVk.memProps.memoryHeaps[h].size;
+        g_s3dVk.shadowBudget = biggest / 4;
+        if (g_s3dVk.shadowBudget < (VkDeviceSize)64 << 20) g_s3dVk.shadowBudget = (VkDeviceSize)64 << 20;
+        if (g_s3dVk.shadowBudget > (VkDeviceSize)1 << 30) g_s3dVk.shadowBudget = (VkDeviceSize)1 << 30;
+    }
     /* the texture of the objects without one: white, and flat */
     if (!s3d_gpu_image(&g_s3dVk.flatBump, 1, 1, 1, VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_IMAGE_ASPECT_COLOR_BIT)
         || !s3d_gpu_upload(g_s3dVk.flatBump.img, 1, 1, flat, 1)
@@ -1029,68 +1051,138 @@ static void s3d_gpu_draw(const S3dBatch* b, size_t objectIndex, int cull, int bl
     g_s3dVk.vkCmdDrawIndexed(g_s3dVk.cmd, m->indexCount, 1, 0, 0, 0);
 }
 
-static void s3d_gpu_viewport(uint32_t w, uint32_t h) {
+static void s3d_gpu_viewportAt(int x, int y, uint32_t w, uint32_t h) {
     VkViewport vp;
     VkRect2D sc;
-    vp.x = 0; vp.y = 0; vp.width = (float)w; vp.height = (float)h; vp.minDepth = 0; vp.maxDepth = 1;
-    sc.offset.x = 0; sc.offset.y = 0; sc.extent.width = w; sc.extent.height = h;
+    vp.x = (float)x; vp.y = (float)y; vp.width = (float)w; vp.height = (float)h; vp.minDepth = 0; vp.maxDepth = 1;
+    sc.offset.x = x; sc.offset.y = y; sc.extent.width = w; sc.extent.height = h;
     g_s3dVk.vkCmdSetViewport(g_s3dVk.cmd, 0, 1, &vp);
     g_s3dVk.vkCmdSetScissor(g_s3dVk.cmd, 0, 1, &sc);
 }
+static void s3d_gpu_viewport(uint32_t w, uint32_t h) { s3d_gpu_viewportAt(0, 0, w, h); }
 
-/* Fills the uniforms of the picture: camera, lights, shadow maps. Returns the number of shadow maps to draw. */
-static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, const S3dFlushSettings* st, int layerRes, S3dVec3 lo, S3dVec3 hi) {
+/* Packs the shadow maps into an atlas of layers of `size` x `size`: the biggest first, in rows (shelves). Returns the number of layers, or -1 when that is more than `maxLayers`. */
+static int s3d_gpu_pack(S3dGpuTile* tiles, size_t n, int size, int maxLayers) {
+    size_t i, k;
+    int layer = 0, x = 0, y = 0, rowH = 0, used = 0;
+    /* the order: by size, the biggest first (stable) */
+    for (i = 0; i < n; i++) tiles[i].order = (int)i;
+    for (i = 1; i < n; i++) {
+        int o = tiles[i].order;
+        k = i;
+        while (k > 0 && tiles[tiles[k - 1].order].res < tiles[o].res) { tiles[k].order = tiles[k - 1].order; k--; }
+        tiles[k].order = o;
+    }
+    for (i = 0; i < n; i++) {
+        S3dGpuTile* t = &tiles[tiles[i].order];
+        if (x + t->res > size) { x = 0; y += rowH; rowH = 0; }
+        if (y + t->res > size) { layer++; x = 0; y = 0; rowH = 0; }
+        if (layer >= maxLayers) return -1;
+        t->x = x; t->y = y; t->layer = layer;
+        x += t->res;
+        if (t->res > rowH) rowH = t->res;
+        used = layer + 1;
+    }
+    return used;
+}
+
+/* Fills the uniforms of the picture (camera, lights) and plans the shadow maps: every map gets its place in the atlas. When the maps do not fit into the memory for them, all
+ * of them are made smaller (half the size, again and again) - a light never loses its shadow for that. Returns the number of maps; *layersOut and *sizeOut: the atlas. */
+static int s3d_gpu_frameUniforms(S3dFrame* f, const S3dCamera* cam, S3dVec3 lo, S3dVec3 hi, int* layersOut, int* sizeOut) {
     S3dGpuFrameU* u = &g_s3dVk.frameData;
     S3dContext* ctx = &f->ctx;
     /* the projection of the engine (OpenGL clip space) for Vulkan: y down, z from 0 to w */
     S3dMat4 vk = s3d_identity(), vp;
-    int maps = 0, k, i;
-    size_t li, n = 0;
-    (void)st;
+    size_t nMaps = 0, li, n = 0, i;
+    int k, m, size = 64, layers = 1, shift;
+    S3dGpuLightU* lightOut;
+    int* firstMap;
     S3D_AT(vk, 1, 1) = -1; S3D_AT(vk, 2, 2) = 0.5f; S3D_AT(vk, 2, 3) = 0.5f;
     vp = s3d_mul(vk, s3d_viewProjection(cam, f->w, f->h));
     memset(u, 0, sizeof *u);
     s3d_gpu_copyMat(u->vp, &vp);
     u->eye[0] = ctx->eye.x; u->eye[1] = ctx->eye.y; u->eye[2] = ctx->eye.z;
     u->ambient[0] = ctx->ambient.x; u->ambient[1] = ctx->ambient.y; u->ambient[2] = ctx->ambient.z;
-    /* the shadow maps of the sets; a set that does not fit any more casts no shadow */
-    for (k = 0; k < ctx->shadowN && k < S3D_GPU_MAX_SETS; k++) {
-        const S3dShadowSet* set = &ctx->shadows[k];
-        if (maps + set->count > S3D_GPU_MAX_MAPS || maps + set->count > g_s3dVk.shadowLayers) { u->sets[k][0] = -1; continue; }
-        u->sets[k][0] = maps;
-        for (i = 0; i < set->count; i++, maps++) {
-            const S3dShadowMap* m = &set->maps[i];
-            S3dGpuMapU* g = &u->maps[maps];
-            int res = s3d_mini(m->res, layerRes);
-            s3d_gpu_copyMat(g->view, &m->view);
-            g->p[0] = m->sx; g->p[1] = m->sy; g->p[2] = m->ox; g->p[3] = m->oy;
-            g->q[0] = m->f; g->q[1] = (float)res; g->q[2] = m->ortho ? 1.0f : 0.0f; g->q[3] = (float)maps;
-            {
-                /* the depth range of the casters in the view of the light (orthographic) or how far they are (perspective) */
-                float dmin = 1e30f, dmax = -1e30f, farthest = 1.0f;
-                int c;
-                for (c = 0; c < 8; c++) {
-                    S3dVec3 corner = s3d_v3((c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z);
-                    S3dVec3 q = s3d_transformPoint(&m->view, corner);
-                    dmin = s3d_minf(dmin, -q.z); dmax = s3d_maxf(dmax, -q.z);
-                    farthest = s3d_maxf(farthest, s3d_length(q));
-                }
-                dmin -= 0.01f + 0.01f * (dmax - dmin); dmax += 0.01f + 0.01f * (dmax - dmin);
-                g->r[0] = dmin; g->r[1] = 1.0f / s3d_maxf(dmax - dmin, 1e-6f); g->r[2] = farthest * 1.5f + 1.0f;
-            }
+    for (k = 0; k < ctx->shadowN; k++) nMaps += (size_t)ctx->shadows[k].count;
+    if (nMaps + 1 > g_s3dVk.mapCap) {
+        S3dGpuMapU* md = (S3dGpuMapU*)realloc(g_s3dVk.mapData, sizeof(S3dGpuMapU) * (nMaps + 1));
+        S3dGpuTile* td;
+        if (md == NULL) return -1;
+        g_s3dVk.mapData = md;
+        td = (S3dGpuTile*)realloc(g_s3dVk.tiles, sizeof(S3dGpuTile) * (nMaps + 1));
+        if (td == NULL) return -1;
+        g_s3dVk.tiles = td;
+        g_s3dVk.mapCap = nMaps + 1;
+    }
+    firstMap = (int*)malloc(sizeof(int) * ((size_t)ctx->shadowN + 1));
+    if (firstMap == NULL) return -1;
+    /* the maps of the shadow sets in order; the atlas is as big as the biggest map */
+    nMaps = 0;
+    for (k = 0; k < ctx->shadowN; k++) {
+        firstMap[k] = (int)nMaps;
+        for (m = 0; m < ctx->shadows[k].count; m++) {
+            int res = s3d_mini(ctx->shadows[k].maps[m].res, (int)g_s3dVk.maxImageDim);
+            g_s3dVk.tiles[nMaps++].res = res;
+            size = s3d_maxi(size, res);
         }
     }
-    for (li = 0; li < ctx->lightN && n < S3D_GPU_MAX_LIGHTS; li++) {
+    for (shift = 0; nMaps > 0; shift++) {
+        int maxLayers = (int)g_s3dVk.maxLayers;
+        VkDeviceSize perLayer = (VkDeviceSize)size * (VkDeviceSize)size * 8;   /* (R32F, and the depth buffer once) */
+        if ((VkDeviceSize)maxLayers * perLayer > g_s3dVk.shadowBudget) maxLayers = (int)(g_s3dVk.shadowBudget / perLayer);
+        if (maxLayers < 1) maxLayers = 1;
+        for (i = 0; i < nMaps; i++) g_s3dVk.tiles[i].res = s3d_maxi(16, g_s3dVk.tiles[i].res >> (shift > 0 ? 1 : 0));
+        layers = s3d_gpu_pack(g_s3dVk.tiles, nMaps, size, maxLayers);
+        if (layers > 0) break;
+        if (shift > 24) { for (i = 0; i < nMaps; i++) g_s3dVk.tiles[i].layer = -1; layers = 1; break; }
+    }
+    /* the maps */
+    nMaps = 0;
+    for (k = 0; k < ctx->shadowN; k++) {
+        const S3dShadowSet* set = &ctx->shadows[k];
+        for (m = 0; m < set->count; m++, nMaps++) {
+            const S3dShadowMap* sm = &set->maps[m];
+            S3dGpuMapU* g = &g_s3dVk.mapData[nMaps];
+            const S3dGpuTile* t = &g_s3dVk.tiles[nMaps];
+            float dmin = 1e30f, dmax = -1e30f, farthest = 1.0f;
+            int c;
+            memset(g, 0, sizeof *g);
+            s3d_gpu_copyMat(g->view, &sm->view);
+            g->p[0] = sm->sx; g->p[1] = sm->sy; g->p[2] = sm->ox; g->p[3] = sm->oy;
+            g->q[0] = sm->f; g->q[1] = (float)t->res; g->q[2] = sm->ortho ? 1.0f : 0.0f;
+            g->t[0] = t->x; g->t[1] = t->y; g->t[2] = t->layer;
+            /* the depth range of the casters in the view of the light (orthographic) or how far they are (perspective) */
+            for (c = 0; c < 8; c++) {
+                S3dVec3 corner = s3d_v3((c & 1) ? hi.x : lo.x, (c & 2) ? hi.y : lo.y, (c & 4) ? hi.z : lo.z);
+                S3dVec3 q = s3d_transformPoint(&sm->view, corner);
+                dmin = s3d_minf(dmin, -q.z); dmax = s3d_maxf(dmax, -q.z);
+                farthest = s3d_maxf(farthest, s3d_length(q));
+            }
+            dmin -= 0.01f + 0.01f * (dmax - dmin); dmax += 0.01f + 0.01f * (dmax - dmin);
+            g->r[0] = dmin; g->r[1] = 1.0f / s3d_maxf(dmax - dmin, 1e-6f); g->r[2] = farthest * 1.5f + 1.0f;
+        }
+    }
+    /* the lights */
+    if (!s3d_gpu_hostBuffer(&g_s3dVk.lightBuf, sizeof(S3dGpuLightU) * (ctx->lightN + 1), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)
+        || !s3d_gpu_hostBuffer(&g_s3dVk.mapBuf, sizeof(S3dGpuMapU) * (nMaps + 1), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT)) { free(firstMap); return -1; }
+    lightOut = (S3dGpuLightU*)g_s3dVk.lightBuf.map;
+    for (li = 0; li < ctx->lightN; li++) {
         const S3dPreparedLight* L = &ctx->lights[li];
-        S3dGpuLightU* g = &u->lights[n++];
-        g->info[0] = L->kind; g->info[1] = L->mask; g->info[2] = L->shadow >= 0 && L->shadow < S3D_GPU_MAX_SETS ? L->shadow : -1;
+        S3dGpuLightU* g = &lightOut[n++];
+        memset(g, 0, sizeof *g);
+        g->info[0] = L->kind; g->info[1] = L->mask;
+        g->info[2] = L->shadow >= 0 && L->shadow < ctx->shadowN && g_s3dVk.tiles[firstMap[L->shadow]].layer >= 0 ? firstMap[L->shadow] : -1;
         g->color[0] = L->color.x; g->color[1] = L->color.y; g->color[2] = L->color.z;
         g->pos[0] = L->pos.x; g->pos[1] = L->pos.y; g->pos[2] = L->pos.z; g->pos[3] = L->invRange;
         g->toLight[0] = L->toLight.x; g->toLight[1] = L->toLight.y; g->toLight[2] = L->toLight.z;
     }
+    free(firstMap);
     u->counts[0] = (int32_t)n;
     memcpy(g_s3dVk.frameUbo.map, u, sizeof *u);
-    return maps;
+    memcpy(g_s3dVk.mapBuf.map, g_s3dVk.mapData, sizeof(S3dGpuMapU) * nMaps);
+    *layersOut = layers;
+    *sizeOut = size;
+    return (int)nMaps;
 }
 
 static void s3d_gpu_objectUniforms(const S3dBatch* b, S3dGpuObjectU* o) {
@@ -1112,7 +1204,7 @@ static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const
     S3dGpuFrame* target;
     size_t i, nb = f->batchN, k;
     S3dVec3 lo = s3d_v3(1e30f, 1e30f, 1e30f), hi = s3d_v3(-1e30f, -1e30f, -1e30f);
-    int anyCaster = 0, maps = 0, layerRes = 64, layers = 1, m, nblended = 0;
+    int anyCaster = 0, maps = 0, atlas = 64, layers = 1, m, nblended = 0, layer;
     VkRenderPassBeginInfo rp;
     VkClearValue clear[2];
     VkBufferImageCopy region;
@@ -1132,16 +1224,8 @@ static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const
     f->ctx.shadowN = 0;
     if (st->shadows && anyCaster) s3d_planShadows(&f->ctx, lights, lightCount, st, lo, hi);
     s3d_prepareLights(&f->ctx, cam, lights, lightCount, st);
-    for (k = 0; k < (size_t)f->ctx.shadowN; k++) for (m = 0; m < f->ctx.shadows[k].count; m++) {
-        layerRes = s3d_maxi(layerRes, f->ctx.shadows[k].maps[m].res);
-        if (++maps > 1) layers = maps;
-    }
-    if (layers > S3D_GPU_MAX_MAPS) layers = S3D_GPU_MAX_MAPS;
-    if ((uint32_t)layers > g_s3dVk.maxLayers) layers = (int)g_s3dVk.maxLayers;
-    if ((uint32_t)layerRes > g_s3dVk.maxImageDim) layerRes = (int)g_s3dVk.maxImageDim;
-    while ((double)layerRes * layerRes * 4.0 * layers > 256.0 * 1024 * 1024 && layerRes > 64) layerRes /= 2;   /* at most 256 MB of shadow maps */
-    if (!s3d_gpu_shadows(layerRes, layers)) return 0;
-    maps = s3d_gpu_frameUniforms(f, cam, st, layerRes, lo, hi);
+    maps = s3d_gpu_frameUniforms(f, cam, lo, hi, &layers, &atlas);
+    if (maps < 0 || !s3d_gpu_shadows(atlas, layers)) return 0;
     /* the uniforms of the objects */
     if (!s3d_gpu_hostBuffer(&g_s3dVk.objectUbo, g_s3dVk.objectStride * (nb + 1), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) return 0;
     s3d_gpu_writeFrameSet();
@@ -1154,36 +1238,39 @@ static int s3d_gpu_flush(uint8_t* rgba, S3dFrame* f, const S3dCamera* cam, const
         g_s3dVk.order[j] = (int)i;
     }
     if (!s3d_gpu_begin()) return 0;
-    /* the shadow maps */
+    /* the shadow maps: a render pass per layer of the atlas, every map in its place */
     if (maps > 0 && s3d_gpu_pipeline(1, 0, 0, 1)) {
-        for (m = 0; m < maps; m++) {
-            int res = (int)g_s3dVk.frameData.maps[m].q[1];
+        for (layer = 0; layer < layers; layer++) {
             uint32_t dynamicZero = 0;
             memset(&rp, 0, sizeof rp);
             rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             rp.renderPass = g_s3dVk.passShadow;
-            rp.framebuffer = g_s3dVk.layerFbs[m];
-            rp.renderArea.extent.width = (uint32_t)layerRes; rp.renderArea.extent.height = (uint32_t)layerRes;
+            rp.framebuffer = g_s3dVk.layerFbs[layer];
+            rp.renderArea.extent.width = (uint32_t)atlas; rp.renderArea.extent.height = (uint32_t)atlas;
             memset(clear, 0, sizeof clear);
             clear[0].color.float32[0] = 1e30f;
             clear[1].depthStencil.depth = 1.0f;
             rp.clearValueCount = 2; rp.pClearValues = clear;
             g_s3dVk.vkCmdBeginRenderPass(g_s3dVk.cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
-            s3d_gpu_viewport((uint32_t)res, (uint32_t)res);
             g_s3dVk.vkCmdBindPipeline(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.shadowPipe);
             g_s3dVk.vkCmdBindDescriptorSets(g_s3dVk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, g_s3dVk.layoutShadow, 0, 1, &g_s3dVk.frameSet, 1, &dynamicZero);
-            for (i = 0; i < nb; i++) {
-                const S3dBatch* b = &f->batches[i];
-                const S3dGpuMesh* gm = (const S3dGpuMesh*)b->mesh->gpu;
-                S3dGpuShadowPush push;
-                VkDeviceSize zero = 0;
-                if (!b->s.castShadows || b->blended) continue;   /* transparent objects cast no shadow */
-                s3d_gpu_copyMat(push.model, &b->model);
-                push.map = m;
-                g_s3dVk.vkCmdPushConstants(g_s3dVk.cmd, g_s3dVk.layoutShadow, VK_SHADER_STAGE_VERTEX_BIT, 0, (uint32_t)sizeof push, &push);
-                g_s3dVk.vkCmdBindVertexBuffers(g_s3dVk.cmd, 0, 1, &gm->vb.buf, &zero);
-                g_s3dVk.vkCmdBindIndexBuffer(g_s3dVk.cmd, gm->ib.buf, 0, VK_INDEX_TYPE_UINT32);
-                g_s3dVk.vkCmdDrawIndexed(g_s3dVk.cmd, gm->indexCount, 1, 0, 0, 0);
+            for (m = 0; m < maps; m++) {
+                const S3dGpuTile* t = &g_s3dVk.tiles[m];
+                if (t->layer != layer) continue;
+                s3d_gpu_viewportAt(t->x, t->y, (uint32_t)t->res, (uint32_t)t->res);
+                for (i = 0; i < nb; i++) {
+                    const S3dBatch* b = &f->batches[i];
+                    const S3dGpuMesh* gm = (const S3dGpuMesh*)b->mesh->gpu;
+                    S3dGpuShadowPush push;
+                    VkDeviceSize zero = 0;
+                    if (!b->s.castShadows || b->blended) continue;   /* transparent objects cast no shadow */
+                    s3d_gpu_copyMat(push.model, &b->model);
+                    push.map = m;
+                    g_s3dVk.vkCmdPushConstants(g_s3dVk.cmd, g_s3dVk.layoutShadow, VK_SHADER_STAGE_VERTEX_BIT, 0, (uint32_t)sizeof push, &push);
+                    g_s3dVk.vkCmdBindVertexBuffers(g_s3dVk.cmd, 0, 1, &gm->vb.buf, &zero);
+                    g_s3dVk.vkCmdBindIndexBuffer(g_s3dVk.cmd, gm->ib.buf, 0, VK_INDEX_TYPE_UINT32);
+                    g_s3dVk.vkCmdDrawIndexed(g_s3dVk.cmd, gm->indexCount, 1, 0, 0, 0);
+                }
             }
             g_s3dVk.vkCmdEndRenderPass(g_s3dVk.cmd);
         }
@@ -1256,7 +1343,7 @@ static void s3d_gpu_releaseFrame(S3dFrame* f) {
 }
 /* The end of a program (the VM keeps the library): the shadow maps go back to their smallest size; the device stays for the next program. */
 static void s3d_gpu_shutdown(void) {
-    if (g_s3dVk.state == 1 && g_s3dVk.shadowRes != 64) s3d_gpu_shadows(64, 1);
+    if (g_s3dVk.state == 1 && (g_s3dVk.shadowSize != 64 || g_s3dVk.shadowLayers != 1)) { s3d_gpu_freeShadows(); s3d_gpu_shadows(64, 1); }
 }
 static const char* s3d_gpu_deviceName(void) { return s3d_gpu_ready() ? g_s3dVk.deviceName : ""; }
 static const char* s3d_gpu_error(void) { return g_s3dVk.state == -1 ? g_s3dVk.error : ""; }

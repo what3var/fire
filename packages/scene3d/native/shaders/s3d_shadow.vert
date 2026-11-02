@@ -8,7 +8,7 @@ layout(push_constant, row_major) uniform Push { mat4 model; int map; } pc;
 layout(location = 0) out float vDepth;
 
 void main() {
-    Map m = fr.maps[pc.map];
+    Map m = mb.maps[pc.map];   // (the viewport is the map's place in the atlas)
     vec3 q = (m.view * (pc.model * vec4(inPos, 1.0))).xyz;
     float d = -q.z;
     if (m.q.z != 0.0) {

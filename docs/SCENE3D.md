@@ -196,8 +196,9 @@ print(S3D.HardwareError())               // why there is none ("" when there is 
   reference, and only it gives the same pixels everywhere.
 * **How.** A picture is drawn into an image on the GPU and read back into the camera's framebuffer, so everything else stays as it is (a window shows it, `new Texture(cameraFramebuffer)` takes it).
   Meshes and textures are copied to the GPU when they are first drawn, and again when a texture gets another bump map. One picture at a time: `Render` waits for the GPU.
-* **Limits** of the hardware renderer: 16 lights per scene (more are left out), 32 shadow maps (a directional light needs one, a point light six; more lights cast no shadow), shadow maps of
-  at most 256 MB together (a big `ShadowResolution` with many lights is made smaller).
+* **No limits** on lights and shadows (as in the software renderer): the lights and the shadow maps are storage buffers of any length, and the shadow maps are packed into an atlas
+  (an array of layers, several maps per layer). The shadow maps may take a quarter of the GPU's memory (64 MB to 1 GB): when a scene has more of them than fit, all of them are made
+  smaller (half the size, again if needed) - a light never loses its shadow for that; it gets softer. Checked with 250 lights and 1250 shadow maps.
 * **Switches** (environment variables): `FIRE_S3D_GPU=0` never uses the GPU; `FIRE_S3D_GPU=cpu` also takes a Vulkan device that is a CPU (Mesa's lavapipe, SwiftShader) - slower than the
   software renderer, but it lets a machine without a GPU test the hardware renderer (the tests of fire do so).
 * **For the developers of the package**: `native/shaders/` holds the GLSL (`build.sh` compiles it with `glslangValidator` into `s3d_shaders.h`), `native/tools/make_s3d_vk.py` makes `s3d_vk.h`

@@ -390,12 +390,11 @@ typedef struct S3dPreparedLight {
     int shadow;          /* index into the shadow sets, -1: casts none */
 } S3dPreparedLight;
 
-#define S3D_MAX_SHADOW_SETS 64
 typedef struct S3dContext {
     S3dVec3 eye;
     S3dVec3 ambient;
     S3dPreparedLight* lights; size_t lightN, lightCap;
-    S3dShadowSet shadows[S3D_MAX_SHADOW_SETS];   /* the depth buffers are kept from frame to frame */
+    S3dShadowSet* shadows; size_t shadowCap, shadowInit;   /* the depth buffers are kept from frame to frame (shadowInit: the sets that were ever used) */
     int shadowN;
 } S3dContext;
 
@@ -453,7 +452,8 @@ static void s3d_frameFree(S3dFrame* f) {
     for (i = 0; i < f->batchInit; i++) free(f->batches[i].cv);
     free(f->batches); free(f->opaque); free(f->blended); free(f->order); free(f->orderTmp); free(f->depth);
     free(f->ctx.lights);
-    for (k = 0; k < S3D_MAX_SHADOW_SETS; k++) for (j = 0; j < 6; j++) free(f->ctx.shadows[k].maps[j].depth);
+    for (k = 0; k < (int)f->ctx.shadowInit; k++) for (j = 0; j < 6; j++) free(f->ctx.shadows[k].maps[j].depth);
+    free(f->ctx.shadows);
     free(f);
 }
 
@@ -1082,7 +1082,7 @@ static void s3d_renderShadowMap(S3dShadowMap* m, const S3dFrame* f, float nearPl
     free(view);
 }
 
-typedef struct S3dShadowJob { S3dShadowMap* maps[S3D_MAX_SHADOW_SETS * 6]; const S3dFrame* f; } S3dShadowJob;
+typedef struct S3dShadowJob { S3dShadowMap** maps; const S3dFrame* f; } S3dShadowJob;
 static void s3d_shadowTask(void* arg, int i) { S3dShadowJob* j = (S3dShadowJob*)arg; s3d_renderShadowMap(j->maps[i], j->f, 0.05f); }
 
 /* The shadow maps of the lights that cast shadows, around the casters whose bounds are lo..hi (world): one orthographic map for a directional light, six for a point light. Sets their
@@ -1095,7 +1095,8 @@ static void s3d_planShadows(S3dContext* ctx, const S3dLight* lights, size_t ligh
         const S3dLight* l = &lights[li];
         S3dShadowSet* set;
         if (!l->castShadows || l->kind == S3D_LIGHT_AMBIENT) continue;
-        if (ctx->shadowN >= S3D_MAX_SHADOW_SETS) break;
+        if (!S3D_GROW(ctx->shadows, ctx->shadowCap, (size_t)ctx->shadowN + 1)) break;
+        if ((size_t)ctx->shadowN >= ctx->shadowInit) { memset(&ctx->shadows[ctx->shadowN], 0, sizeof(S3dShadowSet)); ctx->shadowInit = (size_t)ctx->shadowN + 1; }
         set = &ctx->shadows[ctx->shadowN];
         if (l->kind == S3D_LIGHT_DIRECTIONAL) {
             S3dVec3 forward = s3d_normalize(l->dir);
@@ -1159,6 +1160,8 @@ static void s3d_buildShadows(S3dContext* ctx, const S3dFrame* f, const S3dLight*
     }
     if (!any) return;
     s3d_planShadows(ctx, lights, lightCount, st, lo, hi);
+    job.maps = (S3dShadowMap**)malloc(sizeof(S3dShadowMap*) * ((size_t)ctx->shadowN * 6 + 1));
+    if (job.maps == NULL) { ctx->shadowN = 0; return; }
     for (k = 0; k < ctx->shadowN; k++)
         for (i = 0; i < ctx->shadows[k].count; i++) {
             S3dShadowMap* m = &ctx->shadows[k].maps[i];
@@ -1168,6 +1171,7 @@ static void s3d_buildShadows(S3dContext* ctx, const S3dFrame* f, const S3dLight*
 draw:
     job.f = f;
     s3d_parallelFor(count, s3d_workerCount(st, (size_t)count), s3d_shadowTask, &job);
+    free(job.maps);
 }
 
 /* The lights as the pixels use them (the ambient ones summed up); the n-th light that casts shadows gets the n-th shadow set, when there is one. */
