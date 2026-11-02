@@ -513,7 +513,7 @@ namespace fire.Editor
         private async Task ShowProjectProperties(LoadedProject? project, bool solutionTab = false, int tab = -1)
         {
             if (project == null) return;
-            var dialog = new ProjectPropertiesDialog(_workspace, project);
+            var dialog = new ProjectPropertiesDialog(_workspace, project) { EditToolchains = owner => ShowNativeBuildSettings(toolchainPage: true, owner) };
             if (solutionTab) dialog.SelectSolutionTab();
             else if (tab >= 0) dialog.SelectTab(tab);
             if (await dialog.ShowDialog<bool?>(this) != true) return;

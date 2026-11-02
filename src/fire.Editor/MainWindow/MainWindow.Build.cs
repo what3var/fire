@@ -156,15 +156,15 @@ namespace fire.Editor
 
         /// <summary>Shows the native build settings (on the toolchain page when a toolchain is needed) and saves them; true when they were saved. A toolchain that works is also
         /// remembered for the whole machine (the natives of packages are compiled with it, too).</summary>
-        private async Task<bool> ShowNativeBuildSettings(bool toolchainPage)
+        private async Task<bool> ShowNativeBuildSettings(bool toolchainPage, Window? owner = null)
         {
             fire.Native.NativeConfig config;
             string savePath;
             try { config = LoadNativeConfig(out savePath); }
-            catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(this, ex.Message, "Native Build Settings"); return false; }
+            catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Native Build Settings"); return false; }
             var dialog = new NativeBuildDialog(config, savePath);
             if (toolchainPage) dialog.SelectToolchainTab();
-            if (await dialog.ShowDialog<bool?>(this) != true) return false;
+            if (await dialog.ShowDialog<bool?>(owner ?? this) != true) return false;
             try
             {
                 var chosen = dialog.Result.ResolveToolchain(dialog.Result.ResolveTarget());
@@ -178,7 +178,7 @@ namespace fire.Editor
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                await Dialogs.Message(this, ex.Message, "Native Build Settings");
+                await Dialogs.Message(owner ?? this, ex.Message, "Native Build Settings");
                 return false;
             }
         }
