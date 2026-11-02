@@ -16,6 +16,7 @@
     "random/random.fireproj",
     "testing/testing.fireproj",
     "net/net.fireproj",
+    "process/process.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
     "gpio/gpio.fireproj",

@@ -129,6 +129,11 @@ wirkt `Set` nur auf die Sicht des Programms (nicht auf spark/forge). Unter Windo
 * POSIX: `posix_spawn` + `pipe`/`poll`; Windows: `CreateProcessW` + Pipes; kein Prozess auf Embedded-Zielen (`NotSupportedException`).
 * Ein Paket `process` (Import `"process"`), Natives in C.
 
+Stand: umgesetzt (docs/PROCESS.md) - `Process.Run`/`Start`, `ProcessOptions` (Arbeitsordner, Umgebung, Umleitungen, `MergeError`), `ProcessStream` als
+`IO.Stream`, `WaitForExit(timeout)`, `Kill`, `ExitCode`, `Id`, Zeilen als Ereignisse (`OnOutput`/`OnError`/`OnExit`, ausgeliefert von `Pump()`, ohne zu
+blockieren). Die Natives sind - wie bei den anderen Standardpaketen - C++ (`fire_bridge_process.hpp`), in der VM als Shared Library; POSIX mit `fork`/`execvp`
+statt `posix_spawn` (der Arbeitsordner braucht sonst `posix_spawn_file_actions_addchdir_np`); Windows unter Wine geprüft.
+
 ## 6. SHA-256
 
 `Hash.Sha256(bytes | string | stream)` -> Bytes, `.ToHex()`; dazu `Crc32` (für Zip) und gleich `Sha1`/`Md5` für git und alte Formate.

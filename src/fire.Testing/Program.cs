@@ -19121,6 +19121,52 @@ else
             """),
     }).ToArray();
 
+    // Processes (#import "process", docs/PROCESS.md): POSIX shells and pipes - the same in the VM and natively
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Prozesse: Run, Pipes in beide Richtungen, Zeilen-Ereignisse, Umgebung, Arbeitsordner, Fehler, Timeout, Kill, Argumente", """
+            #import "process"
+            #import "io"
+            var r = Process.Run("sh", ["-c", "echo hello; echo oops >&2; exit 3"])
+            print(r.ExitCode + " [" + r.Output.Trim() + "] [" + r.Error.Trim() + "]")
+            var o = new ProcessOptions()
+            o.RedirectInput = true
+            o.RedirectOutput = true
+            var p = Process.Start("cat", [], o)
+            var w = new IO.TextWriter(p.StandardInput)
+            w.WriteLine("line one")
+            w.WriteLine("zwei ä")
+            w.Close()
+            var reader = new IO.TextReader(p.StandardOutput)
+            foreach (line in reader) { print("cat: " + line) }
+            print(p.WaitForExit() + " " + p.ExitCode)
+            var o2 = new ProcessOptions()
+            o2.MergeError = true
+            var q = Process.Start("sh", ["-c", "echo a; echo b >&2; echo c"], o2)
+            var lines = new List<string>()
+            q.OnOutput = (string line) => lines.Add(line)
+            q.OnExit = (int code) => print("exit " + code)
+            q.WaitForExit()
+            print(lines.Count + " " + lines[0] + lines[1] + lines[2])
+            var e = new ProcessOptions()
+            e.Environment = new Dictionary<string, string>()
+            e.Environment["ONLY"] = "me"
+            e.Environment["PATH"] = Environment.Get("PATH")
+            e.WorkingDirectory = "/tmp"
+            var r2 = Process.Run("sh", ["-c", "echo $ONLY $HOME; pwd"], e)
+            print(r2.Output.Trim())
+            Environment.Set("FROM_PARENT", "yes")
+            print(Process.Run("sh", ["-c", "echo $FROM_PARENT"]).Output.Trim())
+            try { Process.Start("no-such-program-xyz") } catch (ProcessException ex) { print(ex.code + " " + ex.message) }
+            var s = Process.Start("sleep", ["5"])
+            print(s.WaitForExit(100))
+            s.Kill()
+            print(s.WaitForExit() + " " + s.ExitCode)
+            try { Process.Run("sleep", ["5"], undefined, 200) } catch (ProcessException ex) { print(ex.message) }
+            print(Process.Run("sh", ["-c", "printf 'arg:%s|' \"$@\"", "x", "a b", "c\"d"]).Output)
+            """),
+    }).ToArray();
+
     // Differences that were aligned
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
