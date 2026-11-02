@@ -406,6 +406,13 @@ mit der Zwischenablage von Windows). Die SDL2-Anzeige sagt dort "nicht vorhanden
 Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. Grenze von SDL 3.2 unter X11: es kennt die Arten in der Zwischenablage
 erst, wenn ihr Besitzer wechselt, während es läuft - was ein anderes Programm vor dem Start kopiert hat, sieht ein SDL3-Programm (nativ wie die VM) nicht; SDL2 fragt jedes Mal neu.
 
+**Ziehen aus dem Fenster** (`Window.StartDrag`) können weder SDL2 noch SDL3 beginnen: `fire_display_startDrag` beider Anzeigen holt sich das Fenster des Betriebssystems (SDL3: die Eigenschaften
+`SDL_PROP_WINDOW_WIN32_HWND_POINTER` bzw. `..._X11_DISPLAY_POINTER`/`..._X11_WINDOW_NUMBER`; SDL2: `SDL_GetWindowWMInfo`, dessen Struktur `fire_display_sdl.h` selbst beschreibt, damit
+`SDL_syswm.h` nicht die Header von X11 verlangt) und gibt es an `std/fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C,
+`ole32.dll` zur Laufzeit), unter X11 die Quelle von XDND (libX11 per `dlopen`, die Typen von Xlib selbst beschrieben - kein Header, keine Link-Bibliothek; die Schleife hält `fire_display_lockSdl`).
+Wayland, macOS, der Browser und `fire_display_none.h` sagen 0. Zeigt der Thread eines Managers das Fenster, bekommt er den Auftrag (`FireWinShared.dragReq`) und zieht dort; das Programm wartet
+ohne die GIL. Die Tests ziehen unter Xvfb mit einer "Hand" aus XTest aus einem Fenster (SDL2, SDL3, `Window.Show`, die VM) in ein natives SDL3-Programm und unter Wine (OLE, zwei Prozesse) genauso.
+
 **SDL finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL3 oder SDL2 übersetzt (`SDL3/SDL.h` bzw. `SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
 die Umgebungsvariable `SDL3_DIR` bzw. `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL3-3.2.26\x86_64-w64-mingw32` oder `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL3`
 bzw. `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers (MSYS2: `ucrt64\include\SDL3`), das System (`/usr/include/SDL3`, `/usr/local`, Homebrew) und `pkg-config sdl3`/`sdl2`. Für einen

@@ -51,5 +51,10 @@ namespace fire.Terminal
         /// <summary>The mouse pointer over the window: a system cursor in the numbering of SDL (0 arrow, 1 text, 2 wait, 3 crosshair, 4 progress,
         /// 5 NW-SE, 6 NE-SW, 7 W-E, 8 N-S, 9 move, 10 not allowed, 11 hand); a renderer without a pointer ignores it.</summary>
         void SetCursor(int cursor) { }
+
+        /// <summary>Window.StartDrag: drags the text and/or the files (paths) out of the window into other programs while a mouse button is held, until the user
+        /// lets go - on the thread that owns the window. 0 nothing happened (no target, cancelled, no button held), 1 the other program copied, 2 it moved. A renderer
+        /// without a desktop to drag into says 0.</summary>
+        int StartDrag(string text, string[] files) => 0;
     }
 }

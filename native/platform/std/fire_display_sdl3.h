@@ -20,6 +20,7 @@
 #endif
 #include "fire_display_c.h"
 #include "fire_systheme.h"
+#include "fire_dragout.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
 
@@ -640,6 +641,38 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
     SDL_RenderClear(w->renderer);
     SDL_RenderTexture(w->renderer, w->texture, NULL, NULL);
     SDL_RenderPresent(w->renderer);
+}
+
+/* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL3 cannot start such a drag: fire_dragout.h does it for the
+ * window of the platform) - runs until the user lets go: 0 nothing, 1 copied, 2 moved. Windows: OLE (the HWND of the window); X11: XDND (the Display and the
+ * Window of SDL, with the lock of SDL's events held, so that nobody else takes the events of the connection meanwhile); elsewhere (Wayland, macOS) 0. ---- */
+#define FIRE_DISPLAY_START_DRAG 1
+static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) {
+    int result = 0;
+    if (!w->window) return 0;
+#if defined(_WIN32)
+    {
+        HWND hwnd = (HWND)SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        if (hwnd != NULL) result = fire_dragout_win32(hwnd, text, files);
+    }
+#elif defined(FIRE_DRAGOUT_X11)
+    {
+        const char* driver = SDL_GetCurrentVideoDriver();
+        if (driver != NULL && strcmp(driver, "x11") == 0) {
+            SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+            void* display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+            Sint64 xwindow = SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+            if (display != NULL && xwindow != 0) {
+                fire_display_lockSdl();
+                result = fire_dragout_x11(display, (unsigned long)xwindow, text, files);
+                fire_display_unlockSdl();
+            }
+        }
+    }
+#else
+    (void)text; (void)files;
+#endif
+    return result;
 }
 
 #endif

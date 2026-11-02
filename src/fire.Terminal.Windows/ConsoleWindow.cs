@@ -92,6 +92,9 @@ namespace fire.Terminal.Windows
             if (_realized && !_failed) _renderer.SetCursor(cursor);
         }
 
+        /// <summary>Window.StartDrag: the drag of the renderer (see IFramebufferRenderer.StartDrag); 0 while the window is not open.</summary>
+        public int StartDrag(string text, string[] files) => _realized && !_failed ? _renderer.StartDrag(text, files) : 0;
+
         /// <summary>Opens the OS window now, on the calling thread (once).</summary>
         public void Realize()
         {

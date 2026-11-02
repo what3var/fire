@@ -162,6 +162,9 @@ namespace fire.Terminal.Sdl
             _cursor = cursor;
         }
 
+        /// <inheritdoc/>
+        public int StartDrag(string text, string[] files) => SdlDragOut.Start(_window, text, files);
+
         public void SetSize(int width, int height)
         {
             if (_window != IntPtr.Zero && width > 0 && height > 0) SDL.SetWindowSize(_window, width, height);
