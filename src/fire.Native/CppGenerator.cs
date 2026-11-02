@@ -1139,9 +1139,6 @@ namespace fire.Native
             if (_packageImports.Count > 0) foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) nat.AppendLine(line);
             bool natSources = false;
             if (_packageImports.Count > 0 || _usesGraphics) nat.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
-            if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
-            if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{_target.Native.Platform}/fire_wifi.hpp\"");   // (the wifi package)
-            if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_USB_HEADER \"platform/{_target.Native.Platform}/fire_usb.hpp\"");   // (the usb package)
             if (_usesGraphics) { AppendStandardNatives(nat, "graphics"); natSources = true; }
             if (_usesWindows)
             {

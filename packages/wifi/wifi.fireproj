@@ -8,172 +8,173 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'wifi' of fire: prelude and C++ sources."
+    "description": "The standard library 'wifi' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_wifi.hpp"
+      "native/fire_bridge_wifi.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__WiFiLastError",
         "arguments": 0,
-        "cpp": "wifi::LastError"
+        "c": "fire_wifi_LastError"
       },
       {
         "name": "__WiFiLastErrorMessage",
         "arguments": 0,
-        "cpp": "wifi::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_wifi_LastErrorMessage"
       },
       {
         "name": "__WiFiOpenCount",
         "arguments": 0,
-        "cpp": "wifi::OpenCount"
+        "c": "fire_wifi_OpenCount"
       },
       {
         "name": "__WiFiSupported",
         "arguments": 0,
-        "cpp": "wifi::Supported"
+        "c": "fire_wifi_Supported"
       },
       {
         "name": "__WiFiInterfaces",
         "arguments": 0,
-        "cpp": "wifi::Interfaces",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_wifi_Interfaces"
       },
       {
         "name": "__WiFiOpen",
         "arguments": 1,
-        "cpp": "wifi::Open"
+        "c": "fire_wifi_Open"
       },
       {
         "name": "__WiFiClose",
         "arguments": 1,
-        "cpp": "wifi::Close"
+        "c": "fire_wifi_Close"
       },
       {
         "name": "__WiFiScanBegin",
         "arguments": 1,
-        "cpp": "wifi::ScanBegin"
+        "c": "fire_wifi_ScanBegin"
       },
       {
         "name": "__WiFiScanStep",
         "arguments": 1,
-        "cpp": "wifi::ScanStep"
+        "c": "fire_wifi_ScanStep"
       },
       {
         "name": "__WiFiScanCount",
         "arguments": 1,
-        "cpp": "wifi::ScanCount"
+        "c": "fire_wifi_ScanCount"
       },
       {
         "name": "__WiFiScanSsid",
         "arguments": 2,
-        "cpp": "wifi::ScanSsid",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_wifi_ScanSsid"
       },
       {
         "name": "__WiFiScanBssid",
         "arguments": 2,
-        "cpp": "wifi::ScanBssid",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_wifi_ScanBssid"
       },
       {
         "name": "__WiFiScanInfo",
         "arguments": 3,
-        "cpp": "wifi::ScanInfo"
+        "c": "fire_wifi_ScanInfo"
       },
       {
         "name": "__WiFiConnectBegin",
         "arguments": 3,
-        "cpp": "wifi::ConnectBegin"
+        "c": "fire_wifi_ConnectBegin"
       },
       {
         "name": "__WiFiConnectState",
         "arguments": 1,
-        "cpp": "wifi::ConnectState"
+        "c": "fire_wifi_ConnectState"
       },
       {
         "name": "__WiFiDisconnect",
         "arguments": 1,
-        "cpp": "wifi::Disconnect"
+        "c": "fire_wifi_Disconnect"
       },
       {
         "name": "__WiFiStationText",
         "arguments": 2,
-        "cpp": "wifi::StationText",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_wifi_StationText"
       },
       {
         "name": "__WiFiStationRssi",
         "arguments": 1,
-        "cpp": "wifi::StationRssi"
+        "c": "fire_wifi_StationRssi"
       },
       {
         "name": "__WiFiApStart",
         "arguments": 5,
-        "cpp": "wifi::ApStart"
+        "c": "fire_wifi_ApStart"
       },
       {
         "name": "__WiFiApStop",
         "arguments": 1,
-        "cpp": "wifi::ApStop"
+        "c": "fire_wifi_ApStop"
       },
       {
         "name": "__WiFiApRunning",
         "arguments": 1,
-        "cpp": "wifi::ApRunning"
+        "c": "fire_wifi_ApRunning"
       },
       {
         "name": "__WiFiApText",
         "arguments": 2,
-        "cpp": "wifi::ApText",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_wifi_ApText"
       },
       {
         "name": "__WiFiApClients",
         "arguments": 1,
-        "cpp": "wifi::ApClients"
+        "c": "fire_wifi_ApClients"
       },
       {
         "name": "__WiFiSimAddNetwork",
         "arguments": 4,
-        "cpp": "wifi::SimAddNetwork"
+        "c": "fire_wifi_SimAddNetwork"
       },
       {
         "name": "__WiFiSimRemoveNetwork",
         "arguments": 1,
-        "cpp": "wifi::SimRemoveNetwork"
+        "c": "fire_wifi_SimRemoveNetwork"
       },
       {
         "name": "__WiFiSimDrop",
         "arguments": 0,
-        "cpp": "wifi::SimDrop"
+        "c": "fire_wifi_SimDrop"
       },
       {
         "name": "__WiFiSimDelays",
         "arguments": 2,
-        "cpp": "wifi::SimDelays"
+        "c": "fire_wifi_SimDelays"
       },
       {
         "name": "__WiFiSimApClients",
         "arguments": 1,
-        "cpp": "wifi::SimApClients"
+        "c": "fire_wifi_SimApClients"
       },
       {
         "name": "__WiFiSimReset",
         "arguments": 0,
-        "cpp": "wifi::SimReset"
+        "c": "fire_wifi_SimReset"
       }
     ],
-    "reset": "wifi::reset"
+    "reset": "fire_wifi_reset",
+    "language": "c"
   }
 }

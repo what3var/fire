@@ -365,12 +365,12 @@ Includes in der Zielkonfiguration), Standard: alles erlaubt.
 Abweichungen: Standardeingabe wartet bei `Read` auf die verlangte Byteanzahl oder das Ende; `IO.Stdio` schreibt direkt auf `stdout`/`stderr` (gemeinsame Pufferung mit `print`);
 was ein Skript offen lässt, wird am Programmende geschlossen (statisches Destruktor-Netz).
 
-**`devices`** (`fire_bridge_devices.hpp`): Geräteverwaltung (Handles, Kennungen `treiber:port`, Standardgerät), Empfangspuffer mit Paketgrenzen und `WaitFor`/`WaitForString`. Welche Geräte
+**`devices`** (`fire_bridge_devices.h`, C): Geräteverwaltung (Handles, Kennungen `treiber:port`, Standardgerät), Empfangspuffer mit Paketgrenzen und `WaitFor`/`WaitForString`. Welche Geräte
 es gibt, bestimmen **Treiber**: `FIRE_DEVICES` (Komma-Liste in der Reihenfolge der Anmeldung, Standard `"serial"`; `"loopback"` ist ein simuliertes Gerät `loopback:echo`, das nach 5 ms zurücksendet,
 was es bekommt) und `FIRE_DEFAULT_DEVICE` (Kennung des Standardgeräts, `Device.Default`) - beides als `defines` im Ziel. Die seriellen Ports liefert das Plattformpaket
-(`platform/<name>/fire_dev.hpp`, vom Generator als `FIRE_PLATFORM_DEV_HEADER` eingebunden): `plat::dev::serialNames()` und `plat::dev::SerialPort` (115200 Baud 8N1, `open/close/read/write`, Lesen ohne
-Blockieren). Mitgeliefert: `std/fire_dev_posix.hpp` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `std/fire_dev_win32.hpp` (Win32-Kommunikations-API, Ports aus der Registry),
-`std/fire_dev_esp32.hpp` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `std/fire_dev_none.hpp` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
+(`platform/<name>/fire_dev.h`, vom Generator als `FIRE_PLATFORM_DEV_C_HEADER` eingebunden, Schnittstelle in `std/fire_dev_c.h`): `fire_dev_serialNames()` und `FireDevSerialPort` (115200 Baud 8N1, `fire_dev_serialOpen/Close/Read/Write`, Lesen ohne
+Blockieren). Mitgeliefert: `std/fire_dev_posix.h` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `std/fire_dev_win32.h` (Win32-Kommunikations-API, Ports aus der Registry),
+`std/fire_dev_esp32.h` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `std/fire_dev_none.h` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
 **Es gibt keine Hintergrund-Threads**: Empfangenes wird eingesammelt, wenn das Programm fragt (`HasData`, `Read...`, die Warte-Funktionen, `Connect`) - bis dahin hält es der Puffer des Betriebssystems bzw. des
 UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
 benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.

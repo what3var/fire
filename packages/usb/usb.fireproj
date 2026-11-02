@@ -15,7 +15,7 @@
   },
   "native": {
     "sources": [
-      "native/fire_bridge_usb.hpp"
+      "native/fire_bridge_usb.h"
     ],
     "discover": false,
     "linkLibraries": {
@@ -27,80 +27,81 @@
       {
         "name": "__UsbLastError",
         "arguments": 0,
-        "cpp": "usb::LastError"
+        "c": "fire_usb_LastError"
       },
       {
         "name": "__UsbLastErrorMessage",
         "arguments": 0,
-        "cpp": "usb::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_usb_LastErrorMessage"
       },
       {
         "name": "__UsbOpenCount",
         "arguments": 0,
-        "cpp": "usb::OpenCount"
+        "c": "fire_usb_OpenCount"
       },
       {
         "name": "__UsbSupported",
         "arguments": 0,
-        "cpp": "usb::Supported"
+        "c": "fire_usb_Supported"
       },
       {
         "name": "__UsbDevices",
         "arguments": 0,
-        "cpp": "usb::Devices",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_usb_Devices"
       },
       {
         "name": "__UsbOpen",
         "arguments": 1,
-        "cpp": "usb::Open"
+        "c": "fire_usb_Open"
       },
       {
         "name": "__UsbEndpoints",
         "arguments": 1,
-        "cpp": "usb::Endpoints",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_usb_Endpoints"
       },
       {
         "name": "__UsbInterface",
         "arguments": 4,
-        "cpp": "usb::Interface"
+        "c": "fire_usb_Interface"
       },
       {
         "name": "__UsbControl",
         "arguments": 9,
-        "cpp": "usb::Control"
+        "c": "fire_usb_Control"
       },
       {
         "name": "__UsbTransfer",
         "arguments": 7,
-        "cpp": "usb::Transfer"
+        "c": "fire_usb_Transfer"
       },
       {
         "name": "__UsbClearHalt",
         "arguments": 2,
-        "cpp": "usb::ClearHalt"
+        "c": "fire_usb_ClearHalt"
       },
       {
         "name": "__UsbClose",
         "arguments": 1,
-        "cpp": "usb::Close"
+        "c": "fire_usb_Close"
       },
       {
         "name": "__UsbSimInfo",
         "arguments": 1,
-        "cpp": "usb::SimInfo"
+        "c": "fire_usb_SimInfo"
       },
       {
         "name": "__UsbSimClear",
         "arguments": 0,
-        "cpp": "usb::SimClear"
+        "c": "fire_usb_SimClear"
       }
     ],
-    "reset": "usb::reset"
+    "reset": "fire_usb_reset",
+    "language": "c"
   }
 }
