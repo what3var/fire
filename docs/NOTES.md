@@ -215,7 +215,8 @@ The surface edits the overview; every change goes into the text of the document 
 - A click selects a container: its outline turns to the accent colour and it gets its handles. **Dragging** it moves it; the handle at the lower right corner changes its size
   (width and height: a container with a height cuts off what does not fit), its right edge only its width. Positions and sizes snap to a raster of 10; with **Alt** held down
   they do not. The line of the container gets the new `x`/`y` or `w`/`h` - in their place, a new attribute at the end. Lines between containers follow at once.
-- A **double click** edits the text of the container in place: it turns into a Markdown editor of the same place and width, with the colours of the Markdown editor. The
+- A **double click** edits the text of the container in place: it turns into a Markdown editor of the same place and width, with the colours of the Markdown editor; the
+  cursor stands at the end of the line of the element that was double clicked (a heading, a paragraph, an item of a list). The
   containers and sketches in it stay visible above it at **half opacity** - clearly visible, but not in the way; a double click on one of them edits that one. A click
   outside or **Esc** ends editing. A changed text replaces the own text of the container; the elements in it follow after the text (in their order), then the lines between
   containers that stood there.
@@ -244,7 +245,8 @@ container it starts in - a container that shows a document does not count - or i
 
 Rectangles and positions of containers snap to the raster of 10 (Alt: free).
 
-**Color** in the tool bar chooses the colour of what is drawn next (`stroke=`, for a text `color=`, for a line `stroke=`); *Default* (∅) leaves it out.
+**Color** in the tool bar chooses the colour of what is drawn next (`stroke=`, for a text `color=`, for a line `stroke=`); *Default* (∅) leaves it out. **Fill** chooses
+the filling of the next rect or ellipse (`fill=`); *Default* means none.
 
 ### Changing shapes and lines
 
@@ -254,7 +256,8 @@ a rect or an ellipse also gets a handle at its lower right corner.
 - **Dragging** a shape moves it (on the raster of 10, Alt: free): a rect, an ellipse or a text gets its new `x y`, a path gets all its absolute coordinates moved.
 - The **handle** changes the size of a rect or an ellipse (`w h`).
 - **Delete** deletes the shape; the last shape of a sketch takes the sketch with it.
-- **Color** gives the selected shape its colour (*Default* takes the colour out again).
+- **Color** gives the selected shape its colour, **Fill** its filling (*Default* takes them out again; a text has no filling).
+- A **double click** on a text edits it in place: Enter keeps it, Esc drops the change; an empty text deletes it.
 
 A line between containers is selected by a click near it (it is drawn thicker, in the accent colour): **Delete** deletes it, **Color** colours it.
 
@@ -269,5 +272,4 @@ Every change goes into the line of the shape or line only, as one undo step.
    sizing, deleting and colouring shapes and lines.
 5. **Fit to View** (built).
 
-Next ideas: showing `.xmd` as Markdown on GitHub (it shows the extension as plain text); editing the text of a drawn `[text]` with a double click; a filling in
-the tool bar.
+Next ideas: showing `.xmd` as Markdown on GitHub (it shows the extension as plain text).

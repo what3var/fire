@@ -74,6 +74,7 @@ namespace fire.Editor
             public int? PendingEditLine { get; set; }
             public OverviewTool Tool => _owner._tool;
             public string? Color => _owner._color;
+            public string? Fill => _owner._fill;
             public void ToolDone() { if (_owner._tool != OverviewTool.Pen) _owner.SetTool(OverviewTool.Select); }
             public void Batch(Action changes)
             {
@@ -477,7 +478,10 @@ namespace fire.Editor
             Tool(OverviewTool.Text, "Text", "Write a text on the surface");
             Tool(OverviewTool.Connect, "Connect", "Draw a line from one container to another");
             Command("Embed...", "A container that shows a file: a todo list, another canvas, Markdown, a picture", () => _ = Embed());
-            CanvasTools.Children.Add(ColorButton());
+            CanvasTools.Children.Add(ColorButton("Color", "The colour of what is drawn next - and of the selected shape or line", _colorSwatch,
+                value => { _color = value; if (Preview.Content is OverviewView v) v.ApplyColor(value); }));
+            CanvasTools.Children.Add(ColorButton("Fill", "The filling of the next rect or ellipse - and of the selected shape", _fillSwatch,
+                value => { _fill = value; if (Preview.Content is OverviewView v) v.ApplyFill(value); }));
             Command("Fit", "Fit the whole canvas into the window", FitToView);
             CanvasTools.Children.Add(new Border { Width = 1, Background = EditorTheme.Border, Margin = new Thickness(4, 2) });
         }
@@ -492,12 +496,16 @@ namespace fire.Editor
             ("Green", "#5CCB7A"), ("Blue", "#147AD0"), ("Violet", "#C06ADE"), ("White", "#ECE8F3"),
         };
 
-        private Control ColorButton()
+        private string? _fill;
+        private readonly Border _fillSwatch = new() { Width = 12, Height = 12, CornerRadius = new CornerRadius(3), BorderThickness = new Thickness(1), BorderBrush = EditorTheme.TextDim };
+
+        /// <summary>A button with a swatch and a flyout of the colours; `chosen` gets the colour (null: Default).</summary>
+        private Control ColorButton(string label, string tip, Border swatchOfButton, Action<string?> chosen)
         {
-            UpdateSwatch();
-            var button = new Button { Content = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5, Children = { _colorSwatch, new TextBlock { Text = "Color" } } } };
+            swatchOfButton.Background = Brushes.Transparent;
+            var button = new Button { Content = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5, Children = { swatchOfButton, new TextBlock { Text = label } } } };
             button.Classes.Add("tool");
-            ToolTip.SetTip(button, "The colour of what is drawn next - and of the selected shape or line");
+            ToolTip.SetTip(button, tip);
             var panel = new WrapPanel { MaxWidth = 170, Margin = new Thickness(4) };
             var flyout = new Flyout { Content = panel, Placement = PlacementMode.BottomEdgeAlignedLeft };
             foreach (var (name, value) in Colors)
@@ -512,19 +520,15 @@ namespace fire.Editor
                 ToolTip.SetTip(swatch, name);
                 swatch.Click += (_, _) =>
                 {
-                    _color = value;
-                    UpdateSwatch();
+                    swatchOfButton.Background = value == null ? Brushes.Transparent : new SolidColorBrush(Color.Parse(value));
                     flyout.Hide();
-                    if (Preview.Content is OverviewView view) view.ApplyColor(value);
+                    chosen(value);
                 };
                 panel.Children.Add(swatch);
             }
             button.Flyout = flyout;
             return button;
         }
-
-        private void UpdateSwatch() =>
-            _colorSwatch.Background = _color == null ? Brushes.Transparent : new SolidColorBrush(Color.Parse(_color));
 
         /// <summary>Chooses a tool; the first tool of a canvas makes a Markdown document a canvas (after asking).</summary>
         private async System.Threading.Tasks.Task ChooseTool(OverviewTool tool)

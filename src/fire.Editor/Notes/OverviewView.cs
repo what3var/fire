@@ -51,6 +51,8 @@ namespace fire.Editor
         void Batch(Action changes);
         /// <summary>The colour of the tool bar for what is drawn next (`#rrggbb`); null: the default colours.</summary>
         string? Color { get; }
+        /// <summary>The filling of the tool bar for the next rect or ellipse; null: none.</summary>
+        string? Fill { get; }
     }
 
     /// <summary>The tools of a canvas (docs/NOTES.md).</summary>
@@ -168,11 +170,13 @@ namespace fire.Editor
                 _rootText.AddHandler(PointerPressedEvent, (_, e) =>
                 {
                     if (!e.GetCurrentPoint(_rootText).Properties.IsLeftButtonPressed || _edit?.Cell == null && _edit != null) return;
-                    if (e.ClickCount == 2) { Commit(); Select(null); BeginEdit(null); e.Handled = true; }
+                    if (e.ClickCount == 2) { Commit(); Select(null); BeginEdit(null, ClickedText(e.Source)); e.Handled = true; }
                 }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
                 // a click on the empty surface (also below and beside what is on it) clears the selection
                 AddHandler(PointerPressedEvent, (_, e) =>
                 {
+                    // a click that something on the surface took (a double click that opened an editor, a shape, a line) is no click on the empty surface
+                    if (e.Handled) return;
                     if (CellOf(e.Source) == null && !IsInside(e.Source, _rootText) && !IsInside(e.Source, _edit?.Editor) && !IsInside(e.Source, typeof(SketchView)) && !IsInside(e.Source, _connectors))
                     { Commit(); Select(null); }
                 }, Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
@@ -341,7 +345,7 @@ namespace fire.Editor
                 if (e.ClickCount == 2)
                 {
                     if (cell.Model.Src != null) OverviewContext.OpenFile?.Invoke(_context.Resolve(cell.Model.Src));
-                    else { Commit(); BeginEdit(cell); }
+                    else { Commit(); BeginEdit(cell, ClickedText(e.Source)); }
                     e.Handled = true;
                     return;
                 }
@@ -371,11 +375,53 @@ namespace fire.Editor
                     return;
                 }
                 if (view.ShapeAt(p) is not { } shape) return;
+                if (e.ClickCount == 2 && shape.Kind == "text") { _drag = null; EditTextShape(view, shape); e.Handled = true; return; }
                 SelectShape(view, shape);
                 _drag = new Drag { Shape = (view, shape), Kind = DragKind.MoveShape, Start = e.GetPosition(_root), Origin = default, Size = SketchView.BoundsOf(shape).Size };
                 e.Handled = true;
             });
             return view;
+        }
+
+        /// <summary>Edits the text of a drawn `[text]` in place: Enter keeps it, Esc drops the change; an empty text deletes the shape.</summary>
+        private void EditTextShape(SketchView view, OvShape shape)
+        {
+            if (_host == null) return;
+            SelectShape(view, shape);
+            var bounds = SketchView.BoundsOf(shape);
+            var at = view.TranslatePoint(bounds.TopLeft, _root) ?? bounds.TopLeft;
+            var box = new TextBox
+            {
+                Text = shape.Name ?? "", MinWidth = Math.Max(160, bounds.Width + 30), FontSize = shape.Attributes.Number("size") ?? 13,
+                Padding = new Thickness(3, 1), Margin = new Thickness(-4, -3, 0, 0),
+            };
+            AbsolutePanel.SetPosition(box, at);
+            _root.Children.Add(box);
+            bool done = false;
+            void Finish(bool keep)
+            {
+                if (done) return;
+                done = true;
+                _root.Children.Remove(box);
+                string text = (box.Text ?? "").Replace("\r", " ").Replace("\n", " ").Trim();
+                if (!keep || text == (shape.Name ?? "")) { Focus(); return; }
+                var lines = _host.Lines;
+                if (shape.Line >= lines.Length) return;
+                if (text.Length == 0)
+                {
+                    var removed = OverviewSource.RemoveShape(lines, _doc, shape);
+                    _host.SelectedLine = null;
+                    _host.Replace(removed.First, removed.Count, removed.Lines);
+                }
+                else _host.Replace(shape.Line, 1, new[] { OverviewSource.SetTitle(lines[shape.Line], text) });
+            }
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter) { Finish(true); e.Handled = true; }
+                else if (e.Key == Key.Escape) { Finish(false); e.Handled = true; }
+            };
+            box.LostFocus += (_, _) => Finish(true);
+            Dispatcher.UIThread.Post(() => { box.Focus(); box.SelectAll(); }, DispatcherPriority.Loaded);
         }
 
         private void SelectShape(SketchView view, OvShape shape)
@@ -409,6 +455,20 @@ namespace fire.Editor
             string changed = color == null ? OverviewSource.RemoveAttribute(lines[line], key) : OverviewSource.SetAttributes(lines[line], new[] { (key, color) });
             if (changed != lines[line]) _host.Replace(line, 1, new[] { changed });
         }
+
+        /// <summary>Gives the selected shape a filling (null: none) - a text and a line have none.</summary>
+        public void ApplyFill(string? color)
+        {
+            if (_host == null || _shape is not { } shape || shape.Shape.Kind == "text") return;
+            var lines = _host.Lines;
+            int line = shape.Shape.Line;
+            if (line >= lines.Length) return;
+            string changed = color == null ? OverviewSource.RemoveAttribute(lines[line], "fill") : OverviewSource.SetAttributes(lines[line], new[] { ("fill", color) });
+            if (changed != lines[line]) _host.Replace(line, 1, new[] { changed });
+        }
+
+        /// <summary>The filling of the tool bar for a new rect or ellipse: ` fill=…`, or nothing.</summary>
+        private string FillOf(string kind) => _host?.Fill is { } f && kind is "rect" or "ellipse" ? " fill=" + f : "";
 
         /// <summary>The colour of the tool bar for a new shape: ` stroke=…` (a text: ` color=…`), or nothing.</summary>
         private string ColorOf(string kind) => _host?.Color is { } c ? (kind == "text" ? " color=" : " stroke=") + c : "";
@@ -541,7 +601,31 @@ namespace fire.Editor
         }
 
         /// <summary>Edits the own text of a container (null: of the overview) in place; the containers in it stay visible at half opacity.</summary>
-        private void BeginEdit(ContainerCell? cell)
+        /// <summary>The text of the element that was clicked (a heading, a paragraph, an item of a list); null: none.</summary>
+        private static string? ClickedText(object? source)
+        {
+            for (var v = source as Visual; v != null; v = v.GetVisualParent())
+                if (v is TextBlock t) return t.Inlines is { Count: > 0 } inlines ? inlines.Text : t.Text;
+            return null;
+        }
+
+        /// <summary>The line of the text that shows `shown` (the clicked element): the first line whose words, without the marks of Markdown, start like it; 0: none.</summary>
+        private static int LineOf(string text, string? shown)
+        {
+            if (string.IsNullOrWhiteSpace(shown)) return 0;
+            static string Plain(string s) => System.Text.RegularExpressions.Regex.Replace(s, @"^\s*(#{1,6}\s+|>\s*|[-*+]\s+(\[[ xX/#]\]\s+)?|\d+[.)]\s+)", "")
+                .Replace("**", "").Replace("__", "").Replace("`", "").Replace("*", "").Replace("~~", "").Trim();
+            string key = shown.Trim();
+            if (key.Length > 24) key = key.Substring(0, 24);
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+                if (Plain(lines[i]).StartsWith(key, StringComparison.Ordinal)) return i + 1;
+            for (int i = 0; i < lines.Length; i++)   // a link or other inline marks: look for the first words
+                if (key.Length >= 6 && Plain(lines[i]).Contains(key.Substring(0, Math.Min(12, key.Length)), StringComparison.Ordinal)) return i + 1;
+            return 0;
+        }
+
+        private void BeginEdit(ContainerCell? cell, string? clicked = null)
         {
             if (_host == null) return;
             string original = OverviewSource.OwnText(_host.Lines, _doc, cell?.Model);
@@ -578,7 +662,18 @@ namespace fire.Editor
                 // the focus went somewhere else (not into the editor's own parts): the text is done
                 if (_edit == edit && !editor.IsKeyboardFocusWithin) Commit();
             }, DispatcherPriority.Background);
-            Dispatcher.UIThread.Post(() => { editor.Focus(); editor.TextArea.Focus(); }, DispatcherPriority.Loaded);
+            int line = LineOf(original, clicked);
+            Dispatcher.UIThread.Post(() =>
+            {
+                editor.Focus();
+                editor.TextArea.Focus();
+                if (line > 0 && line <= editor.Document.LineCount)
+                {
+                    // the cursor goes to the end of the line of the element that was double clicked
+                    editor.TextArea.Caret.Offset = editor.Document.GetLineByNumber(line).EndOffset;
+                    editor.TextArea.Caret.BringCaretToView();
+                }
+            }, DispatcherPriority.Loaded);
         }
 
         /// <summary>Ends editing in place: a changed text goes into the document (the surface is built again from it), else the text is shown as it was.</summary>
@@ -694,7 +789,7 @@ namespace fire.Editor
                     double x = Math.Min(start.X, end.X), y = Math.Min(start.Y, end.Y), w = Math.Abs(end.X - start.X), h = Math.Abs(end.Y - start.Y);
                     if (w < 3 && h < 3) break;
                     string kind = stroke.Tool == OverviewTool.Rect ? "rect" : "ellipse";
-                    AddShape(scope, $"[{kind}]: <{N(Snap(x, free))} {N(Snap(y, free))} {N(Math.Max(Raster, Snap(w, free)))} {N(Math.Max(Raster, Snap(h, free)))}{ColorOf(kind)}>");
+                    AddShape(scope, $"[{kind}]: <{N(Snap(x, free))} {N(Snap(y, free))} {N(Math.Max(Raster, Snap(w, free)))} {N(Math.Max(Raster, Snap(h, free)))}{ColorOf(kind)}{FillOf(kind)}>");
                     break;
                 }
                 case OverviewTool.Arrow:
