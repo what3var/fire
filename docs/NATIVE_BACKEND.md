@@ -520,6 +520,8 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
 `supportsThreads`, `floatWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+**Ein fremdes Ziel ist immer nativ:** `build -t esp32` (oder `wasm`, oder ein anderes System als dieses) baut ohne `--engine` nativ - die VM gibt es nur für den eigenen Rechner
+(sie bringt die .NET-Runtime mit), die Ziele des nativen Backends brauchen kein .NET. `--engine vm` mit einem fremden Ziel ist ein Fehler der Befehlszeile.
 Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Argumente, Bibliotheken, Include-Ordner), `custom` (`command` mit `{cpp}`, `{dir}`, `{out}`, `{args}`, `{libs}`) und
 `files` (schreibt nur die Quellen; `layout: "idf-component"` legt dazu eine `CMakeLists.txt` an, `buildCommand` läuft danach im Ordner, z.B. `idf.py build`). Eingebaut: `gcc`, `clang`, `msvc`,
 `files`, `esp-idf`. Die Zeilen mit `//` und Kommas am Ende sind erlaubt.
@@ -675,7 +677,7 @@ Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
 
 ## WebAssembly (`wasm`) - Programme im Browser
 
-`fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire --engine native -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
+`fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
 `out.html` (Standard), die sich so öffnen lässt - auch per Doppelklick aus einem Ordner, ohne Webserver: die WebAssembly-Binärdatei steckt in der Seite (`-sSINGLE_FILE=1`).
 
 **Werkzeug:** Emscripten (emsdk; das Programm ist C: `emcc` mit `-std=gnu11`, denn `EM_ASM` braucht den GNU-Modus). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),

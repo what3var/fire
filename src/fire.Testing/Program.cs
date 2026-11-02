@@ -25448,6 +25448,22 @@ else
             var out4 = new StringWriter();
             int code4 = CommandLineRunner.Run(new[] { "build", script, "--engine", "vm", "-o", Path.Combine(dir, "vm.exe") }, out4, new StringWriter());
             CheckNat("build: --engine vm gewinnt gegen die Konfiguration", code4 == 0 && File.Exists(Path.Combine(dir, "vm.exe")));
+            // a target other than this machine is always native (the VM exists only for this machine; esp32, wasm and other systems need no .NET): without
+            // --engine and without a configuration, -t esp32 writes the component; --engine vm with such a target is a clear error of the command line
+            string bare = Path.Combine(workDir, "build-bare");
+            Directory.CreateDirectory(bare);
+            string bareScript = Path.Combine(bare, "hello.fire");
+            File.WriteAllText(bareScript, "print(1)\n");
+            string bareOut = Path.Combine(bare, "component");
+            var out5 = new StringWriter(); var err5 = new StringWriter();
+            int code5 = CommandLineRunner.Run(new[] { "build", bareScript, "-t", "esp32", "-o", bareOut }, out5, err5);
+            CheckNat("build: ein fremdes Ziel (-t esp32) baut ohne --engine nativ", code5 == 0 && File.Exists(Path.Combine(bareOut, "fire_program.c")) && File.Exists(Path.Combine(bareOut, "CMakeLists.txt")), $"{code5}\n{out5}\n{err5}");
+            var err6 = new StringWriter();
+            int code6 = CommandLineRunner.Run(new[] { "build", bareScript, "--engine", "vm", "-t", "esp32", "-o", Path.Combine(bare, "vm.exe") }, new StringWriter(), err6);
+            CheckNat("build: --engine vm mit einem fremden Ziel ist ein Fehler der Befehlszeile", code6 == CommandLineRunner.ExitUsage && err6.ToString().Contains("esp32") && !File.Exists(Path.Combine(bare, "vm.exe")), err6.ToString());
+            var out7 = new StringWriter();
+            int code7 = CommandLineRunner.Run(new[] { "build", bareScript, "-t", TargetProfile.Host.Name, "-o", Path.Combine(bare, "host.exe") }, out7, new StringWriter());
+            CheckNat("build: das eigene Ziel (-t " + TargetProfile.Host.Name + ") bleibt ohne --engine bei der VM", code7 == 0 && !out7.ToString().Contains("(native"), out7.ToString());
         }
 
         // What is not yet translated must be rejected clearly - never translated wrongly

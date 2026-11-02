@@ -1654,7 +1654,7 @@ FIRE_COLD FIRE_FN Value callLamDefaults(Value callee, int argc, const Value* arg
     uint32_t k;
     if (!l->dflt || (uint32_t)argc > l->nparams || (uint32_t)argc < l->nreq || l->nparams > 16) {
         char text[160];
-        snprintf(text, sizeof text, "Wrong number of arguments: expected %u%s, got %d.", l->nparams, (uint32_t)argc < l->nparams ? " (the missing parameters have no default value)" : "", argc);
+        snprintf(text, sizeof text, "Wrong number of arguments: expected %u%s, got %d.", (unsigned)l->nparams, (uint32_t)argc < l->nparams ? " (the missing parameters have no default value)" : "", argc);
         return fireError("ArgumentException", text);
     }
     for (i = 0; i < argc; i++) full[i] = args[i];
@@ -1693,7 +1693,7 @@ FIRE_FN void checkLambda(Value v, int nparams) {
     if (FIRE_UNLIKELY(v.kind != K_Lambda || lamOf(v)->nparams != (uint32_t)nparams)) {
         char text[120];
         if (v.kind != K_Lambda) snprintf(text, sizeof text, "Expected a lambda with %d parameter(s), got a value that is no lambda.", nparams);
-        else snprintf(text, sizeof text, "The lambda has %u parameter(s), its declaration says %d.", lamOf(v)->nparams, nparams);
+        else snprintf(text, sizeof text, "The lambda has %u parameter(s), its declaration says %d.", (unsigned)lamOf(v)->nparams, nparams);
 #ifndef FIRE_LIBRARY
         fireError("ArgumentException", text);
 #else
