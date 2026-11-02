@@ -8,12 +8,13 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'windows' of fire: prelude and C++ sources."
+    "description": "The standard library 'windows' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_windows.hpp"
+      "native/fire_bridge_windows.h"
     ],
-    "discover": false
+    "discover": false,
+    "language": "c"
   }
 }

@@ -6,7 +6,7 @@ namespace fire.Windows.Bridge
 {
     /// <summary>
     /// `SystemTheme.Current()` in the virtual machine: what the desktop says about the look of programs - the same queries as the native runtime
-    /// (native/platform/std/fire_systheme.hpp): Windows reads the registry and the DPI, Linux GNOME's gsettings or KDE's kdeglobals, macOS `defaults`.
+    /// (native/platform/std/fire_systheme.h): Windows reads the registry and the DPI, Linux GNOME's gsettings or KDE's kdeglobals, macOS `defaults`.
     /// What cannot be found keeps its default (scale 1, light, the accent 0x0078D7, no font); FIRE_SYSTEM_THEME=off switches the query off.
     /// </summary>
     public sealed class SystemThemeProbe

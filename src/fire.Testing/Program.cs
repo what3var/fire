@@ -18224,7 +18224,7 @@ else
             """),
     }).ToArray();
 
-    // Graphics (bridges/fire_bridge_graphics.hpp)
+    // Graphics (packages/graphics/native/fire_bridge_graphics.h)
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Vergleiche: == mit Einheiten und int/float, Zeichen mit <, Fehler als ArgumentException", """
@@ -22947,7 +22947,7 @@ else
             CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
         }
 
-        // ---- Window (bridges/fire_bridge_windows.hpp): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
+        // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
         {
             string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
             File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
@@ -23071,7 +23071,7 @@ else
             {
                 var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
                 string cpp = generated.Program;
-                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && generated.Natives != null && generated.Natives.Contains("fire_display.hpp"), "");
+                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, "");
                 if (sdlExit != 0) { Console.WriteLine("(SDL2 nicht verfuegbar: das Fenster wird nicht ausgefuehrt)"); continue; }
                 string name = "window_" + Math.Abs(wc.Title.GetHashCode()), exe = Path.Combine(workDir, name + ".bin");
                 File.WriteAllText(Path.Combine(workDir, name + ".c"), cpp);

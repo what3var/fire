@@ -192,7 +192,6 @@ namespace fire.Compiler
             {
                 var names = File.ReadLines(nativesFile).Where(l => l.StartsWith("// ---- package ", StringComparison.Ordinal))
                     .Select(l => l.Substring("// ---- package ".Length).Split(' ')[0]).Distinct().ToList();
-                if (File.ReadAllText(nativesFile).Contains("fire_bridge_graphics")) names.Insert(0, "graphics");
                 return names.Count > 0 ? string.Join(", ", names) : "a bridge of the compiler";
             }
             catch (IOException) { return "a bridge of the compiler"; }
