@@ -1,12 +1,12 @@
 # Sound (`#import "audio"`, the package `fire-audio`)
 
-Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C++ in `packages/audio/native/fire_bridge_audio.hpp` over the platform layer `plat::audio`
-(`native/platform/std/fire_audio_*.hpp`), so the same code runs in the virtual machine (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build. It needs `time`.
+Sound output and input: play samples, generate tones, play WAV files, record from a microphone or a line in. Like every bridge it is a **package** (`ember`, docs/PACKAGES.md): a prelude in fire plus C in `packages/audio/native/fire_bridge_audio.h` over the platform layer in C `fire_audio_*`
+(`native/platform/std/fire_audio_*.h`), so the same code runs in the virtual machine (through the package ABI, docs/PACKAGE_NATIVES.md) and in a native build. It needs `time`.
 
 ```
 program        #import "audio"        Audio.Output, Audio.Input, Audio.Sound, Audio.Board, Audio.Sim   (fire, package fire-audio)
-bridge         fire_bridge_audio.hpp  handles, volume, waves, errors, the simulated device             (C++, shared by VM and native)
-platform       plat::audio            open / write / queued / stop / close,                            (Linux: PulseAudio or ALSA, Windows: winmm, macOS: SDL2, ESP32: PWM, else: stub)
+bridge         fire_bridge_audio.h    handles, volume, waves, errors, the simulated device             (C, shared by VM and native)
+platform       fire_audio_*           open / write / queued / stop / close,                            (Linux: PulseAudio or ALSA, Windows: winmm, macOS: SDL2, ESP32: PWM, else: stub)
                                       openInput / read / available / closeInput
 ```
 
@@ -67,7 +67,7 @@ Samples are **16 bit signed, little endian, interleaved** (a *frame* is one samp
 * `Close()` plays what was taken to its end, then closes (call `Stop()` first to cut it off). The destructor closes, too - but **call `Drain()` before the program ends** if the last sound must be heard.
 * `Volume` (0..100) scales the samples written afterwards.
 * `Tone(frequency, milliseconds, wave = Audio.Wave.Sine, volume = 100)` generates and queues a tone (the frequency may be a float); the waves are `Sine`, `Square`, `Triangle`, `Saw` and `Noise`. The generation is native (a
-  fast loop in C++, the same in the VM and in a native build). `Beep(frequency = 440, milliseconds = 200, volume = 100)` is a tone that is played to its end.
+  fast loop in C, the same in the VM and in a native build). `Beep(frequency = 440, milliseconds = 200, volume = 100)` is a tone that is played to its end.
 
 `Audio.Sound` is PCM in memory: `new Audio.Sound(rate, channels, buffer, offset = 0, length = -1)`; `sound.ToWav()` gives the bytes of a WAV file (PCM, 16 bit) and `Audio.Sound.FromWav(bytes)` reads PCM WAV files (8 or 16 bit, mono or stereo, any rate; other formats are
 `Audio.UnsupportedException`); `Audio.Sound.Tone(frequency, milliseconds, wave, volume, rate = 22050)` generates one. `sound.Open(device)` opens an output with the rate and channels of the sound, and `output.Play(sound)` queues it
@@ -111,7 +111,7 @@ it sound, which an `Audio.Input("sim", ...)` then reads (in the channels of that
 
 ## How the platform layers work
 
-`plat::audio` (`native/platform/std/fire_audio_none.hpp` describes the interface): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
+`fire_audio_*` (`native/platform/std/fire_audio_c.h` describes the interface; it compiles as C++ as well): `open(name, rate, channels)`, `write` (takes what fits, never blocks), `queued`, `stop`, `close` -
 and for inputs `inputDevices`, `openInput`, `read` (takes what was recorded, never blocks), `available`, `closeInput`. The package `circuits` uses the same layer for its fast way to a device. The bridge keeps the handle table, applies
 the volume and generates the waves. SDL2 (macOS): `SDL_QueueAudio`, kept to half a second ahead, `SDL_GetQueuedAudioSize` for `queued`. Linux: ALSA runs non-blocking (`snd_pcm_writei`, `-EAGAIN` means full, an underrun is recovered); PulseAudio's simple API only blocks, so each output has a thread that plays a ring buffer
 (all calls into PulseAudio are made by that thread, with a 200 ms buffer on the server and playback starting at once). Windows: blocks of 50 ms handed to `waveOutWrite`, free again when the driver sets the DONE flag.

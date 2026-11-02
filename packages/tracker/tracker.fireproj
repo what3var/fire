@@ -8,84 +8,85 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'tracker' of fire: prelude and C++ sources."
+    "description": "The standard library 'tracker' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_tracker.hpp"
+      "native/fire_bridge_tracker.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__TrackerLastError",
         "arguments": 0,
-        "cpp": "tracker::LastError"
+        "c": "fire_tracker_LastError"
       },
       {
         "name": "__TrackerLastErrorMessage",
         "arguments": 0,
-        "cpp": "tracker::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tracker_LastErrorMessage"
       },
       {
         "name": "__TrackerOpenCount",
         "arguments": 0,
-        "cpp": "tracker::OpenCount"
+        "c": "fire_tracker_OpenCount"
       },
       {
         "name": "__TrackerLoad",
         "arguments": 4,
-        "cpp": "tracker::Load"
+        "c": "fire_tracker_Load"
       },
       {
         "name": "__TrackerClose",
         "arguments": 1,
-        "cpp": "tracker::Close"
+        "c": "fire_tracker_Close"
       },
       {
         "name": "__TrackerRender",
         "arguments": 5,
-        "cpp": "tracker::Render"
+        "c": "fire_tracker_Render"
       },
       {
         "name": "__TrackerGet",
         "arguments": 2,
-        "cpp": "tracker::Get"
+        "c": "fire_tracker_Get"
       },
       {
         "name": "__TrackerSet",
         "arguments": 3,
-        "cpp": "tracker::Set"
+        "c": "fire_tracker_Set"
       },
       {
         "name": "__TrackerText",
         "arguments": 3,
-        "cpp": "tracker::Text",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_tracker_Text"
       },
       {
         "name": "__TrackerSampleInfo",
         "arguments": 3,
-        "cpp": "tracker::SampleInfo"
+        "c": "fire_tracker_SampleInfo"
       },
       {
         "name": "__TrackerRestart",
         "arguments": 1,
-        "cpp": "tracker::Restart"
+        "c": "fire_tracker_Restart"
       },
       {
         "name": "__TrackerSeek",
         "arguments": 3,
-        "cpp": "tracker::Seek"
+        "c": "fire_tracker_Seek"
       },
       {
         "name": "__TrackerPatternCell",
         "arguments": 5,
-        "cpp": "tracker::PatternCell"
+        "c": "fire_tracker_PatternCell"
       }
     ],
-    "reset": "tracker::reset"
+    "reset": "fire_tracker_reset",
+    "language": "c"
   }
 }

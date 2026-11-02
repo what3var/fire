@@ -34,10 +34,17 @@
 #endif
 
 // A stream can play to a sound device and record from one in the kernel itself (SignalStream::PlayTo / RecordFrom): on the hosted platforms, with the
-// devices of the platform package (plat::audio, as the package "audio"). Elsewhere only the simulated device "sim" is there.
-#if !defined(CIR_NO_AUDIO) && !defined(__EMSCRIPTEN__) && defined(FIRE_PLATFORM_AUDIO_HEADER) && (defined(FIRE_LIBRARY) || defined(FIRE_HAL_POSIX) || defined(FIRE_HAL_WINDOWS))
+// devices of the platform layer in C (fire_audio_*, as the package "audio"). Elsewhere only the simulated device "sim" is there.
+#if !defined(CIR_NO_AUDIO) && !defined(__EMSCRIPTEN__) && defined(FIRE_PLATFORM_AUDIO_C_HEADER) && (defined(FIRE_LIBRARY) || defined(FIRE_HAL_POSIX) || defined(FIRE_HAL_WINDOWS))
 #define CIR_AUDIO 1
-#include FIRE_PLATFORM_AUDIO_HEADER
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"   // (the layer's functions are static; this file uses only some of them)
+#endif
+#include FIRE_PLATFORM_AUDIO_C_HEADER
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 #endif
 
 namespace fire {
@@ -1126,8 +1133,8 @@ struct Runner;
 struct StreamDevice {
     bool sim = false;              // the simulated device: plays at once and keeps what it played, records what the program gave it (SimInput)
 #ifdef CIR_AUDIO
-    plat::audio::Output* out = nullptr;
-    plat::audio::Input* in = nullptr;
+    FireAudioOutput* out = nullptr;
+    FireAudioInput* in = nullptr;
 #endif
     int rate = 44100, channels = 1;
     double fullScale = 1.0;        // the volts of a full-scale sample
@@ -1140,8 +1147,8 @@ struct StreamDevice {
     size_t simInputAt = 0;
     void close() {
 #ifdef CIR_AUDIO
-        if (out) { plat::audio::close(out); out = nullptr; }
-        if (in) { plat::audio::closeInput(in); in = nullptr; }
+        if (out) { fire_audio_close(out); out = nullptr; }
+        if (in) { fire_audio_closeInput(in); in = nullptr; }
 #endif
     }
     ~StreamDevice() { close(); }
@@ -1297,8 +1304,8 @@ inline void pumpOut(SignalStream* st) {
         }
 #ifdef CIR_AUDIO
         else if (d.out) {
-            plat::audio::Status status = plat::audio::write(d.out, d.pending.data(), (int)d.pending.size(), taken);
-            if (!status.ok()) taken = 0;
+            FireAudioStatus status;
+            if (!fire_audio_write(d.out, d.pending.data(), (int)d.pending.size(), &taken, &status)) taken = 0;
         }
 #endif
         if (taken <= 0) return;
@@ -1329,8 +1336,8 @@ inline void pumpIn(SignalStream* st) {
         }
 #ifdef CIR_AUDIO
         else if (d.in) {
-            plat::audio::Status status = plat::audio::read(d.in, buffer, (int)want, got);
-            if (!status.ok()) got = 0;
+            FireAudioStatus status;
+            if (!fire_audio_read(d.in, buffer, (int)want, &got, &status)) got = 0;
         }
 #endif
         if (got <= 0) return;
@@ -1357,7 +1364,7 @@ inline double deviceLag(SignalStream* st, bool& any) {
 #ifdef CIR_AUDIO
     if (st->playTo && st->playTo->out && st->playTo->primed) {
         StreamDevice& d = *st->playTo;
-        double fill = ((double)plat::audio::queued(d.out) / (2.0 * d.channels) + (double)d.pending.size() / (2.0 * d.channels)) / d.rate + (double)st->count / st->rate;
+        double fill = ((double)fire_audio_queued(d.out) / (2.0 * d.channels) + (double)d.pending.size() / (2.0 * d.channels)) / d.rate + (double)st->count / st->rate;
         lag += d.latency - fill;
         any = true;
     }
@@ -2781,11 +2788,10 @@ inline Value StreamPlay(Value h, Value device, Value fullScale, Value latency) {
     else {
 #ifdef CIR_AUDIO
         if (d->rate < 1000 || d->rate > 192000) { lastError() = "A sound device takes rates between 1000 and 192000 Hz."; return Int(0); }
-        plat::audio::Status status = plat::audio::open(name, d->rate, 1, d->out);
-        if (!status.ok()) {
+        FireAudioStatus status, second;
+        if (!fire_audio_open(name.c_str(), d->rate, 1, &d->out, &status)) {
             d->channels = 2;   // (some devices play only stereo)
-            plat::audio::Status second = plat::audio::open(name, d->rate, 2, d->out);
-            if (!second.ok()) { lastError() = status.message; return Int(0); }
+            if (!fire_audio_open(name.c_str(), d->rate, 2, &d->out, &second)) { lastError() = status.message; return Int(0); }
         }
 #else
         lastError() = "There are no sound devices here (only \"sim\").";
@@ -2809,11 +2815,10 @@ inline Value StreamRecord(Value h, Value device, Value fullScale, Value latency)
     else {
 #ifdef CIR_AUDIO
         if (d->rate < 1000 || d->rate > 192000) { lastError() = "A sound device takes rates between 1000 and 192000 Hz."; return Int(0); }
-        plat::audio::Status status = plat::audio::openInput(name, d->rate, 1, d->in);
-        if (!status.ok()) {
+        FireAudioStatus status, second;
+        if (!fire_audio_openInput(name.c_str(), d->rate, 1, &d->in, &status)) {
             d->channels = 2;
-            plat::audio::Status second = plat::audio::openInput(name, d->rate, 2, d->in);
-            if (!second.ok()) { lastError() = status.message; return Int(0); }
+            if (!fire_audio_openInput(name.c_str(), d->rate, 2, &d->in, &second)) { lastError() = status.message; return Int(0); }
         }
 #else
         lastError() = "There are no sound devices here (only \"sim\").";
@@ -2849,7 +2854,7 @@ inline Value StreamDeviceInfo(Value h, Value what) { KernelLock kl_;
         case 1: return Int(i ? i->frames : 0);
         case 2:
 #ifdef CIR_AUDIO
-            if (o && o->out) return Int(plat::audio::queued(o->out));
+            if (o && o->out) return Int(fire_audio_queued(o->out));
 #endif
             return Int(0);
         case 3: return Int(o ? 1 : 0);

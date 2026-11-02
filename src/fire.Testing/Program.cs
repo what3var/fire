@@ -21733,7 +21733,7 @@ else
             """),
     }).ToArray();
 
-    // Tracker (bridges/fire_bridge_tracker.hpp): a module built in memory, rendered, played to the simulated audio device - the same in the VM and in the native build
+    // Tracker (packages/tracker/native/fire_bridge_tracker.h): a module built in memory, rendered, played to the simulated audio device - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Tracker: Modul im Speicher - Laden, Rendern, Seek, Mute, Stereo, Player auf dem simulierten Geraet, Fehler", """
@@ -21879,7 +21879,7 @@ else
     // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
     natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
 
-    // Audio (bridges/fire_bridge_audio.hpp): the simulated device "sim" records what is played - the same in the VM and in the native build
+    // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Audio: simuliertes Geraet - Schreiben, Wellen, Lautstaerke, WAV, Halten/Stop, Fehler", """
