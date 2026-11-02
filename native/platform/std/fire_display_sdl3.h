@@ -43,6 +43,8 @@ typedef struct FireDisplayWindow {
     char* dropText;
     int dropping, hovering;
     float hoverX, hoverY;
+    int direct;               /* a presenter draws into the window itself (fire_display_native): no renderer */
+    SDL_MetalView metalView;  /* (macOS: the view with the layer the presenter draws into) */
 } FireDisplayWindow;
 
 /* One lock for everything that touches SDL's events: the pumping of the windows (from several threads: the managers) and the clipboard (on X11 SDL waits for
@@ -90,6 +92,8 @@ static void fire_display_close(FireDisplayWindow* w) {
     w->dropFiles = w->dropText = NULL; w->dropping = 0; w->hovering = 0;
     if (w->ownsJoystick) { SDL_QuitSubSystem(SDL_INIT_JOYSTICK); w->ownsJoystick = 0; }
     if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
+    if (w->metalView) { SDL_Metal_DestroyView(w->metalView); w->metalView = NULL; }
+    w->direct = 0;
     if (w->window) { SDL_DestroyWindow(w->window); w->window = NULL; }
     if (w->ownsVideo) { SDL_QuitSubSystem(SDL_INIT_VIDEO); w->ownsVideo = 0; }
 }
@@ -641,6 +645,61 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
     SDL_RenderClear(w->renderer);
     SDL_RenderTexture(w->renderer, w->texture, NULL, NULL);
     SDL_RenderPresent(w->renderer);
+}
+
+/* ---- a presenter draws into the window itself (fire_display_c.h: fire_display_native) ----
+ * The native handles are properties of the SDL window (no header of a window system is needed for them). */
+static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) {
+    SDL_PropertiesID props;
+    const char* driver;
+    int pw = 0, ph = 0;
+    memset(out, 0, sizeof *out);
+    if (!w->window) return 0;
+    props = SDL_GetWindowProperties(w->window);
+    driver = SDL_GetCurrentVideoDriver();
+    if (driver == NULL) return 0;
+    if (strcmp(driver, "windows") == 0) {
+        out->kind = FIRE_NATIVE_WIN32;
+        out->a = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, NULL);
+        out->b = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
+        if (out->b == NULL) return 0;
+    } else if (strcmp(driver, "x11") == 0) {
+        out->kind = FIRE_NATIVE_X11;
+        out->a = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+        out->id = (uint64_t)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
+        if (out->a == NULL || out->id == 0) return 0;
+    } else if (strcmp(driver, "wayland") == 0) {
+        out->kind = FIRE_NATIVE_WAYLAND;
+        out->a = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+        out->b = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+        if (out->a == NULL || out->b == NULL) return 0;
+    } else if (strcmp(driver, "cocoa") == 0) {
+        if (!w->metalView) w->metalView = SDL_Metal_CreateView(w->window);
+        if (!w->metalView) return 0;
+        out->kind = FIRE_NATIVE_METAL;
+        out->b = SDL_Metal_GetLayer(w->metalView);
+    } else return 0;
+    /* the window is the presenter's now: what showed the framebuffers goes (a swap chain of another API on the window would stand in the way) */
+    if (!w->direct) {
+        if (w->texture) { SDL_DestroyTexture(w->texture); w->texture = NULL; }
+        if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
+        w->direct = 1;
+    }
+    SDL_GetWindowSizeInPixels(w->window, &pw, &ph);
+    out->width = pw; out->height = ph;
+    out->vsync = w->vsync;
+    return 1;
+}
+
+static void fire_display_restore(FireDisplayWindow* w) {
+    if (!w->direct) return;
+    w->direct = 0;
+    if (w->metalView) { SDL_Metal_DestroyView(w->metalView); w->metalView = NULL; }
+    if (!w->renderer && w->window) {
+        w->renderer = SDL_CreateRenderer(w->window, NULL);
+        if (!w->renderer) w->renderer = SDL_CreateRenderer(w->window, SDL_SOFTWARE_RENDERER);
+        if (w->renderer) SDL_SetRenderVSync(w->renderer, w->vsync ? 1 : 0);
+    }
 }
 
 /* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL3 cannot start such a drag: fire_dragout.h does it for the

@@ -32,6 +32,8 @@ static int fire_display_touchMouse(const FireDisplayWindow* w) { return w->touch
 static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int fbWidth, int fbHeight) { (void)w; (void)out; (void)fbWidth; (void)fbHeight; return 0; }
 static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 static void fire_display_close(FireDisplayWindow* w) { (void)w; }
+static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) { (void)w; (void)out; return 0; }
+static void fire_display_restore(FireDisplayWindow* w) { (void)w; }
 
 /* No desktop: the clipboard is the program's own (Clipboard.SetText/GetText, SetImage/GetImage, SetFiles/GetFiles work within it). */
 static int fire_display_clipboardSet(const char* text) { return fire_display_memSetText(text); }

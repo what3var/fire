@@ -10,6 +10,9 @@
  *   int  fire_display_pump(w, FireDisplayEvents* out, fbWidth, fbHeight)    takes the pending events (positions in framebuffer pixels); 0 once the window was closed
  *   void fire_display_present(w, const uint32_t* rgba, width, height)       shows the pixels (R,G,B,A per 32-bit word), stretched to the window
  *   void fire_display_close(w)                                closes it (again: nothing)
+ *   int  fire_display_native(w, fire_native_window* out)      gives the window to a presenter that draws into it itself (a GPU, see fire_present_fn): the display stops showing
+ *                                                             framebuffers in it (and lets go of what it shows them with), and `out` gets its native handles and size; 0: not possible
+ *   void fire_display_restore(w)                              takes the window back from the presenter: framebuffers are shown again
  *   void fire_display_threadDone(void)                        a thread of the program that used the display ends
  *   void fire_display_systemTheme(FireSystemTheme*)           the look of the desktop
  *   int  fire_display_clipboardSet(text (UTF-8))              puts text on the clipboard of the desktop (1: done)
@@ -35,6 +38,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* A window that a package draws into itself (the same declarations as in native/abi/fire_pkg_abi.h, where they are described). */
+#ifndef FIRE_NATIVE_WINDOW_DEFINED
+#define FIRE_NATIVE_WINDOW_DEFINED 1
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+typedef struct fire_native_window { int32_t kind; int32_t width, height; int32_t vsync; void* a; void* b; uint64_t id; } fire_native_window;
+typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+#endif
 
 /* The numbers are those of `EventType` in the windows prelude. */
 enum { FIRE_EV_UNKNOWN = 0, FIRE_EV_CLOSE = 1, FIRE_EV_CLOSE_REQUEST = 2, FIRE_EV_TEXT_INPUT = 3, FIRE_EV_RESIZE = 4, FIRE_EV_TOUCH_DOWN = 16, FIRE_EV_TOUCH_MOVE = 17, FIRE_EV_TOUCH_UP = 18,

@@ -3,6 +3,8 @@
 enum Template { Box = 0, Sphere = 1, Cylinder = 2, Cone = 3, Plane = 4, Quad = 5 }
 enum BillboardMode { Off = 0, Facing = 1, Vertical = 2 }
 enum LightKind { Ambient = 0, Directional = 1, Point = 2 }
+// Who draws a scene: the software renderer (everywhere, the same pixels everywhere) or the GPU (Vulkan; where there is none, the software renderer draws).
+enum RenderMode { Software = 0, Hardware = 1 }
 
 class Scene3DException : Exception {
     construct(string message) : base(message) { }
@@ -38,6 +40,15 @@ class S3D {
 
     // A colour from its parts (0..255 each).
     static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 255 * 16777216 }
+
+    // The GPU that RenderMode.Hardware draws with ("" when there is none: no Vulkan, no driver, no GPU; HardwareError says why).
+    static string HardwareName() { return __S3DHardwareName() }
+
+    // Why there is no GPU to draw with ("" when there is one).
+    static string HardwareError() {
+        __S3DHardwareName()
+        return __S3DHardwareError()
+    }
 }
 
 // The triangles of an object, to be shared by objects: from a template, from the text of a Wavefront OBJ file, or from arrays.
@@ -66,8 +77,8 @@ class Model {
     }
 
     // A box, sphere, cylinder, cone, plane or quad of the size 1m (a plane is 1m x 1m lying down, a quad 1m x 1m standing, facing +Z); `detail` is the number of segments around a round shape.
-    static Model FromTemplate(int template, int detail = 24) {
-        var h = __S3DMeshTemplate(template, detail)
+    static Model FromTemplate(Template template, int detail = 24) {
+        var h = __S3DMeshTemplate(template!int, detail)
         if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
         return new Model(h)
     }
@@ -180,7 +191,7 @@ class Texture {
 
 // A light: ambient (everywhere), directional (parallel rays, like the sun) or point (from a place, weaker with the distance).
 class Light {
-    int Kind
+    LightKind Kind
     int Color
     float Intensity
     float x
@@ -197,7 +208,7 @@ class Light {
     // The layers of objects that it lights: a number whose bits (1, 2, 4, ... up to 8388608) are layers; an object is lit when it shares a layer with the light (default: all).
     int Layers
 
-    construct(int kind = 2, int color = 4294967295, float intensity = 1.0) {
+    construct(LightKind kind = LightKind.Point, int color = 4294967295, float intensity = 1.0) {
         this.Enabled = true
         this.CastShadows = true
         this.Layers = 16777215
@@ -213,17 +224,17 @@ class Light {
         this.range = 10.0
     }
 
-    static Light Ambient(int color = 4294967295, float intensity = 0.3) { return new Light(0, color, intensity) }
+    static Light Ambient(int color = 4294967295, float intensity = 0.3) { return new Light(LightKind.Ambient, color, intensity) }
 
     // Rays that travel in the direction (dx, dy, dz) (a vector without a unit).
     static Light Directional(float dx, float dy, float dz, int color = 4294967295, float intensity = 1.0) {
-        var l = new Light(1, color, intensity)
+        var l = new Light(LightKind.Directional, color, intensity)
         l.Direction(dx, dy, dz)
         return l
     }
 
     static Light Point(float x : any m, float y : any m, float z : any m, int color = 4294967295, float intensity = 1.0) {
-        var l = new Light(2, color, intensity)
+        var l = new Light(LightKind.Point, color, intensity)
         l.X = x
         l.Y = y
         l.Z = z
@@ -245,8 +256,8 @@ class Light {
     // The numbers the renderer takes: kind, r, g, b, intensity, position (3), direction (3), range, casts shadows, layers.
     float[] Parameters() {
         var shadows = 0.0
-        if (this.CastShadows && this.Kind != 0) { shadows = 1.0 }
-        return [this.Kind * 1.0, S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), this.Intensity, this.x, this.y, this.z, this.dx, this.dy, this.dz, this.range, shadows, this.Layers * 1.0]
+        if (this.CastShadows && this.Kind != LightKind.Ambient) { shadows = 1.0 }
+        return [this.Kind!int * 1.0, S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), this.Intensity, this.x, this.y, this.z, this.dx, this.dy, this.dz, this.range, shadows, this.Layers * 1.0]
     }
 }
 
@@ -291,7 +302,7 @@ class Object {
     // The layers of the object (see Light.Layers): only lights that share a layer with it light it (default: all).
     int Layers
     // BillboardMode.Facing: the object always faces the camera (Template.Quad: sprites, labels); Vertical: it turns around the vertical axis only (trees).
-    int Billboard
+    BillboardMode Billboard
     Texture texture
     Material material
     string Key
@@ -321,18 +332,18 @@ class Object {
     }
 
     // From a template (Template.Box, Sphere, Cylinder, Cone, Plane, Quad): at (x, y, z), the outer dimensions width, height and depth (a plane has no height, a quad no depth: pass 0m).
-    construct(int template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {
+    construct(Template template, float x : any m, float y : any m, float z : any m, float width : any m, float height : any m, float depth : any m, int detail = 24) {
         this.Init()
-        var h = __S3DMeshTemplate(template, detail)
+        var h = __S3DMeshTemplate(template!int, detail)
         if (h == 0) { throw new Scene3DException("Unknown template: " + template) }
         this.UseMesh(h)
-        if (template == 4 || template == 5) { this.twoSided = true }
+        if (template == Template.Plane || template == Template.Quad) { this.twoSided = true }
         this.X = x
         this.Y = y
         this.Z = z
         this.Width = width
-        if (template != 4) { this.Height = height }
-        if (template != 5) { this.Depth = depth }
+        if (template != Template.Plane) { this.Height = height }
+        if (template != Template.Quad) { this.Depth = depth }
     }
 
     destruct() {
@@ -366,7 +377,7 @@ class Object {
         this.CastShadows = true
         this.ReceiveShadows = true
         this.Layers = 16777215
-        this.Billboard = 0
+        this.Billboard = BillboardMode.Off
         this.Key = ""
         this.dirty = false
     }
@@ -593,7 +604,7 @@ class Object {
         return [this.px, this.py, this.pz, this.rx, this.ry, this.rz, this.sx, this.sy, this.sz, pivotX, pivotY, pivotZ,
             S3D.Red(this.Color), S3D.Green(this.Color), S3D.Blue(this.Color), spec, shin, smooth, two,
             S3D.Red(emissive), S3D.Green(emissive), S3D.Blue(emissive), useTexture, repU, repV, this.trot, offU, offV,
-            opacity, this.AlphaCutoff, lit, cast, receive, this.Layers * 1.0, bump, this.Billboard * 1.0]
+            opacity, this.AlphaCutoff, lit, cast, receive, this.Layers * 1.0, bump, this.Billboard!int * 1.0]
     }
 
     // Queues the object for the frame (the camera draws everything in one go afterwards).
@@ -628,10 +639,18 @@ class Camera {
     float farPlane
     int Background
     string Key
+    // true: with the scene's RenderMode.Hardware the pictures go straight from the GPU into the window that shows the framebuffer, without the way through the framebuffer.
+    // The framebuffer is then cleared to transparent by Render: what the program draws into it afterwards is laid over the picture (a HUD). Where that is not possible (no GPU,
+    // no window, a window system the GPU cannot draw into) the camera draws as without.
+    bool DirectDrawing
+    bool directOn
+    byte clearBytes[]
 
     construct(Framebuffer target) {
         this.framebuffer = target
         try target.TakeTo(this)
+        this.DirectDrawing = false
+        this.directOn = false
         this.frame = 0
         this.frameWidth = 0
         this.frameHeight = 0
@@ -700,12 +719,38 @@ class Camera {
             this.frameWidth = w
             this.frameHeight = h
         }
+        // DirectDrawing: the frame draws into the windows of the framebuffer (or no longer)
+        var direct = this.DirectDrawing && this.scene.Renderer == RenderMode.Hardware
+        if (direct != this.directOn) { this.directOn = __S3DFrameDirect(this.frame, this.framebuffer.id, direct) }
         if (!__S3DFrameClear(this.frame, this.pixels, w, h, this.Background)) { throw new Scene3DException("The frame cannot be cleared.") }
         var camera = [this.x, this.y, this.z, this.rx, this.ry, this.rz, this.fov, this.nearPlane, this.farPlane]
         var lights = this.scene.LightParameters()
         foreach (o in this.scene.Objects) { o.Draw(this.frame, camera) }
         if (!__S3DFlush(this.frame, this.pixels, camera, lights, this.scene.Settings())) { throw new Scene3DException("The scene cannot be drawn (a handle is no longer valid).") }
-        this.framebuffer.WriteBytes(this.pixels)
+        if (__S3DFrameRenderer(this.frame) == 2) {
+            // the picture went to the window: the framebuffer becomes transparent, for what the program lays over it
+            if (this.clearBytes == undefined || this.clearBytes.length != w * h * 4) { this.clearBytes = new byte[w * h * 4] }
+            this.framebuffer.WriteBytes(this.clearBytes)
+        } else {
+            this.framebuffer.WriteBytes(this.pixels)
+        }
+    }
+
+    // The last picture went straight from the GPU into the window (DirectDrawing), not through the framebuffer.
+    bool DrewDirectly {
+        get {
+            if (this.frame == 0) { return false }
+            return __S3DFrameRenderer(this.frame) == 2
+        }
+    }
+
+    // Who drew the last picture: RenderMode.Software or RenderMode.Hardware (the scene asked for the hardware renderer and there is a GPU).
+    RenderMode LastRenderer {
+        get {
+            if (this.frame == 0) { return RenderMode.Software }
+            if (__S3DFrameRenderer(this.frame) == 0) { return RenderMode.Software }
+            return RenderMode.Hardware
+        }
     }
 }
 
@@ -725,11 +770,14 @@ class Scene {
     int ShadowResolution
     // How many threads draw (0 = as many as the machine has, up to 8; 1 = one). The picture is the same for every number.
     int Threads
+    // RenderMode.Software (default) or RenderMode.Hardware: the GPU draws (Vulkan), where there is one; else the software renderer.
+    RenderMode Renderer
 
     construct() {
         this.Shadows = true
         this.ShadowResolution = 1024
         this.Threads = 0
+        this.Renderer = RenderMode.Software
         this.Objects = new List()
         this.Cameras = new List()
         this.Lights = new List()
@@ -817,10 +865,10 @@ class Scene {
         return all
     }
 
-    // The settings of the renderer: shadows on (1) or off (0), the size of a shadow map, the number of threads.
+    // The settings of the renderer: shadows on (1) or off (0), the size of a shadow map, the number of threads, the renderer (RenderMode).
     float[] Settings() {
         var shadows = 0.0
         if (this.Shadows) { shadows = 1.0 }
-        return [shadows, this.ShadowResolution * 1.0, this.Threads * 1.0]
+        return [shadows, this.ShadowResolution * 1.0, this.Threads * 1.0, this.Renderer!int * 1.0]
     }
 }

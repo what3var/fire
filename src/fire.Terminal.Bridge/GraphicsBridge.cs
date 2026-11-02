@@ -47,9 +47,13 @@ namespace fire.Terminal.Bridge
 
         /// <summary>`readFile`: how `Framebuffer.FromFile` gets to the bytes of a file (the host decides what a script may read, see IoPolicy) -
         /// without it the file is simply read.</summary>
+        /// <summary>The framebuffers of the program that registered the natives last (the host finds a framebuffer by its id for a package: scene3d DirectDrawing).</summary>
+        public static FramebufferManager? CurrentFramebuffers { get; private set; }
+
         public static void RegisterAll(
             NativeRegistry natives, FramebufferManager framebuffers, RendererManager renderers, Func<string, byte[]>? readFile = null)
         {
+            CurrentFramebuffers = framebuffers;
             natives.RegisterGroup(FramebufferPrefix, BuildFramebufferFunctions(framebuffers, readFile));
             natives.RegisterGroup(RendererPrefix, BuildRendererFunctions(renderers));
             natives.RegisterGroup(BrushPrefix, BuildBrushFunctions(renderers));

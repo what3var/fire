@@ -1,14 +1,16 @@
 # 3D scenes (`#import "scene3d"`, the package `fire-scene3d`)
 
 A small 3D engine for programs: a **scene** is a space that holds objects, cameras, lights and textures; a **camera** is the link between the scene and a framebuffer - `camera.Render()` draws what
-the camera sees into it. The renderer is a **software renderer** written in C++ (`packages/scene3d/native/s3d_engine.hpp`), so it runs everywhere fire runs - on a PC, in a native build, on an ESP32,
-in the browser (WebAssembly) - and **the picture is the same pixel for pixel** in the virtual machine and in a native build. Like every bridge it is a package (`ember`, docs/PACKAGES.md): a prelude in
-fire (`Scene3DPrelude.cs`: the scene, the units, the objects) plus the C++ of the renderer. It needs `graphics`.
+the camera sees into it. The renderer is a **software renderer** written in C (`packages/scene3d/native/s3d_engine.h`), so it runs everywhere fire runs - on a PC, in a native build, on an ESP32,
+in the browser (WebAssembly) - and **the picture is the same pixel for pixel** in the virtual machine and in a native build. Where there is a GPU, a scene can be drawn by it instead (`scene.Renderer =
+RenderMode.Hardware`, Vulkan; see *Hardware*). Like every bridge it is a package (`ember`, docs/PACKAGES.md): a prelude in fire (`scene3d.fire`: the scene, the units, the objects) plus the C of the
+renderer (`"language": "c"`, docs/PACKAGE_NATIVES.md). It needs `graphics`.
 
 ```
 program         #import "scene3d"          Scene, Camera, Object, Light, Texture, Material, Model, Template   (fire, package fire-scene3d)
-bridge          fire_bridge_scene3d.hpp    meshes, textures and depth buffers by handle                         (C++, the same code in the VM and in a native build)
-renderer        scene3d/s3d_engine.hpp     triangles in, RGBA pixels out; knows nothing of fire                 (plain C++)
+bridge          fire_bridge_scene3d.h      meshes, textures and depth buffers by handle                         (C99, the same code in the VM and in a native build)
+renderer        s3d_engine.h               triangles in, RGBA pixels out; knows nothing of fire                 (plain C99: the software renderer)
+hardware        s3d_gpu_vk.h               the same queue drawn by the GPU                                      (C99 + Vulkan 1.0, loaded at run time; optional)
 ```
 
 ## Quick start
@@ -62,6 +64,9 @@ scene.AmbientColor  scene.AmbientIntensity                         // the light 
 ```
 
 The scene owns what it holds (ownership like everywhere in fire: `Add` takes the item, destroying the scene destroys its objects, cameras, lights and textures).
+`Add` keeps an item only when it is handed over (`try item.TakeTo(scene)`, SPEC 2.2): a fresh one (`scene.Add(new Object(...))`) or one passed with `take`. An item in a variable of
+the caller stays the caller's - at the top level that is fine (it lives as long as the program), but in a loop or a function it dies with that scope and the scene is left with a
+destroyed object (`DestroyedException`). Hand it over: `var b = new Object(...); b.Color = ...; scene.Add(take b)`.
 
 ## Objects
 
@@ -162,16 +167,80 @@ threads (`scene.Threads`: 0 = as many as the machine has, up to 8; 1 = one threa
 for every number of threads** and in a native build. WebAssembly and the ESP32 draw with one thread. What costs time is the pixels, not the triangles: the lighting is computed per pixel and per light,
 so the time follows the size of the picture and the number of lights; copying the finished picture (800 x 600 x 4 bytes) takes about 0.3 ms. On the development machine a picture of 800 x 600 with
 four objects and three lights takes about 20 ms on one thread and 6 ms on four; shadows add about 40 ms on one thread, 10 ms on four. Ways to go faster: a smaller framebuffer (stretch it with
-the window), fewer lights, `scene.Shadows = false`, a smaller `ShadowResolution`. There is no anti-aliasing yet.
+the window), fewer lights, `scene.Shadows = false`, a smaller `ShadowResolution` - or the GPU (`scene.Renderer = RenderMode.Hardware`). There is no anti-aliasing yet.
 
 ## What the renderer does
 
 Perspective projection, clipping against the near plane, back-face culling (`TwoSided` turns it off), a depth buffer, perspective-correct texture coordinates, bilinear texture filtering with
 repeat, Blinn-Phong lighting per pixel with an ambient, directional and point lights, flat or smooth shading. Shadows (shadow maps, soft edge), transparency (opacity, alpha textures, cut-outs), billboards, bump maps, lights and surfaces that can be switched off or limited to layers. There is no
-anti-aliasing. All numbers are `float`; the VM and a native build run the same C++ and give the same pixels (the tests compare them).
+anti-aliasing. All numbers are `float`; the VM and a native build run the same C and give the same pixels (the tests compare them; the C is a port of the former C++ renderer and gives the same
+pixels as it did).
 
-**Hardware.** Everything above is software - nothing needs a GPU or a driver, which is what makes the same program run on a microcontroller and in the browser. A hardware backend (OpenGL/Vulkan
-through SDL) could draw the same scene later: the scene, the objects and the camera are plain data, only the last step - `Draw` of an object into a frame - would change.
+## Hardware
+
+The software renderer needs no GPU and no driver, which is what makes the same program run on a microcontroller and in the browser. On a PC the GPU can draw the same scene:
+
+```
+scene.Renderer = RenderMode.Hardware     // the GPU, where there is one (default: RenderMode.Software)
+cam.Render()
+print(cam.LastRenderer)                  // who drew the last picture: RenderMode.Hardware, or RenderMode.Software when there is no GPU
+print(S3D.HardwareName())                // the GPU ("" when there is none)
+print(S3D.HardwareError())               // why there is none ("" when there is one)
+```
+
+* **Vulkan 1.0**, the API that drivers of Windows, Linux and Android have, and macOS through MoltenVK (the Vulkan SDK or `brew install molten-vk`). It is **loaded when the hardware renderer is first
+  asked for** (`vulkan-1.dll`, `libvulkan.so.1`, `libvulkan.1.dylib`/`libMoltenVK.dylib`); nothing is linked, and building fire or a program needs no Vulkan SDK - the declarations come with the
+  package (`s3d_vk.h`, made from the Khronos header) and the shaders are compiled to SPIR-V already (`s3d_shaders.h`).
+* **Optional at every level.** No Vulkan, no driver, no GPU, a device that is lost: the software renderer draws, and the program goes on. `LastRenderer` and `HardwareError` say what happened.
+  Targets without a GPU (the ESP32, FreeRTOS, the browser) have no hardware renderer at all (`RenderMode.Hardware` draws in software there).
+* **The same scene, the same look.** Everything in this document works on the GPU too: the per pixel lighting (the fragment shader is the software renderer's code in GLSL), textures with their
+  mapping, bump maps, cut-outs, transparency (opaque first, then the transparent objects from far to near), two sided surfaces, billboards, layers and shadow maps (drawn by the GPU, compared and
+  filtered like the software ones). The pictures are close to the software ones but not the same pixel for pixel (the GPU rasterises and filters by its own rules); the software renderer stays the
+  reference, and only it gives the same pixels everywhere.
+* **How.** A picture is drawn into an image on the GPU and read back into the camera's framebuffer, so everything else stays as it is (a window shows it, `new Texture(cameraFramebuffer)` takes it).
+  Meshes and textures are copied to the GPU when they are first drawn, and again when a texture gets another bump map. One picture at a time: `Render` waits for the GPU. With
+  `DirectDrawing` (below) the picture is not read back.
+* **No limits** on lights and shadows (as in the software renderer): the lights and the shadow maps are storage buffers of any length, and the shadow maps are packed into an atlas
+  (an array of layers, several maps per layer). The shadow maps may take a quarter of the GPU's memory (64 MB to 1 GB): when a scene has more of them than fit, all of them are made
+  smaller (half the size, again if needed) - a light never loses its shadow for that; it gets softer. Checked with 250 lights and 1250 shadow maps.
+* **Switches** (environment variables): `FIRE_S3D_GPU=0` never uses the GPU; `FIRE_S3D_GPU=cpu` also takes a Vulkan device that is a CPU (Mesa's lavapipe, SwiftShader) - slower than the
+  software renderer, but it lets a machine without a GPU test the hardware renderer (the tests of fire do so).
+* **For the developers of the package**: `native/shaders/` holds the GLSL (`build.sh` compiles it with `glslangValidator` into `s3d_shaders.h`), `native/tools/make_s3d_vk.py` makes `s3d_vk.h`
+  from the Vulkan header (only what the backend uses) and `native/tools/check_s3d_vk.sh` checks every struct and value of it against the real header. The backend is checked with the Khronos
+  validation layers (`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`, also with synchronization validation).
+
+### DirectDrawing
+
+```
+scene.Renderer = RenderMode.Hardware
+cam.DirectDrawing = true                 // the camera's pictures go straight from the GPU into the window that shows its framebuffer
+while (win.Tick()) {
+    cam.Render()                         // draws on the GPU; the framebuffer becomes transparent
+    hud.FillText(10, 10, "Score 42", ...) // what is drawn into the framebuffer now lies over the picture
+}
+print(cam.DrewDirectly)                  // the last picture went straight into the window
+```
+
+Without DirectDrawing a picture of the GPU travels back to the CPU, into the framebuffer, and from there into the window (another copy, and another way to the GPU of the window). With it,
+the window shows the picture from the GPU itself: the camera's renderer draws into the window through a swap chain (Vulkan's `VK_KHR_swapchain` on a surface of the window system: Win32,
+X11, Wayland, or a `CAMetalLayer` on macOS), and `Render` does not wait for the GPU - the program goes on (the next `Render` waits for the picture before).
+
+* **The framebuffer is the overlay.** `Render` clears the framebuffer to transparent; what the program draws into it afterwards (a HUD, text, a UI) is laid over the picture where its
+  alpha is not 0, stretched to the window like the picture. So a program that draws a HUD after `Render` looks the same with and without DirectDrawing. The framebuffer does not hold the
+  picture then: `new Texture(cameraFramebuffer)` or a screenshot of the framebuffer see only the overlay.
+* **When it works**: the scene's `Renderer` is `RenderMode.Hardware`, there is a GPU with swap chains, and a `Window` shows the camera's framebuffer (also one of a started
+  `WindowManager`, which presents on its own thread). The window gives itself to the camera at its next frame: its usual way of showing the framebuffer (SDL's renderer) is put away
+  and comes back when `DirectDrawing` is switched off, the camera goes, or the GPU cannot show the window. The first picture after switching it on is also read back (the window may not
+  take it); a camera whose window cannot take it works as without (`DrewDirectly` stays false). One window per camera: a second window of the same framebuffer shows the framebuffer.
+* **Is it faster?** It saves reading the picture back (on a GPU of its own a wait for the GPU and a copy over the bus), the copy into the framebuffer and the copy into the window's
+  texture, and the CPU and the GPU work at the same time; it costs the copy of the overlay to the GPU (skipped when nothing is drawn into the framebuffer). The sample
+  **Scene3D Benchmark** (Help > Samples) measures the three ways on a machine: software, hardware with the picture read back, and DirectDrawing.
+* **In the VM** the host shows the windows (src/fire.Terminal.Sdl): the package library gets them through `fire_host.win_attach` (native/abi/fire_pkg_abi.h, `fire_present_fn`); in a
+  native build the windows bridge does the same through the graphics bridge (`fire_gfx_attachPresenter`; the display layer gives the native handles: `fire_display_native`, with SDL2
+  and with SDL3).
+
+Why Vulkan: it is the GPU API with a future on all desktop systems and Android, has a C interface (it fits a C package) and a loader on every machine with a GPU driver; OpenGL is frozen and
+deprecated on macOS, Direct3D is Windows only. Further backends can sit behind the same queue (`s3d_gpu_flush`): WebGPU for the browser (through `webgpu.h`) or Metal directly are the candidates.
 
 ## Errors
 

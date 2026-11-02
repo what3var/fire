@@ -23053,7 +23053,7 @@ else
             """),
     }).ToArray();
 
-    // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
+    // Scene3D (packages/scene3d/native/fire_bridge_scene3d.h): the software renderer gives the same pixels in the VM and in the native build (and the hardware renderer, where there is a GPU, a close picture)
     natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
 
     // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build
@@ -25377,6 +25377,20 @@ else
                     string missing = fire.Native.SdlSetup.HelpText;
                     CheckNat("SDL2: die Hilfe sagt, was zu tun ist (Linux, macOS, Windows, SDL2_DIR)", missing.Contains("libsdl2-dev") && missing.Contains("brew install sdl2") && missing.Contains("SDL2_DIR"));
 
+                    // SDL2 of the system (/usr/include/SDL2): the folder of SDL.h is named as well - TinyCC has no __has_include and includes <SDL.h> (fire_display_sdl.h)
+                    if (!OperatingSystem.IsWindows() && File.Exists("/usr/include/SDL2/SDL.h"))
+                    {
+                        Environment.SetEnvironmentVariable("SDL2_DIR", null);
+                        var system = fire.Native.SdlSetup.Locate();
+                        var (_, tccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["tcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                        CheckNat("SDL2: das SDL2 des Systems - der Ordner von SDL.h kommt mit (-I/usr/include/SDL2: TinyCC hat kein __has_include)",
+                            system != null && system.IncludeDirs.Contains("/usr/include/SDL2") && tccArgs.Contains("-I\"/usr/include/SDL2\""), tccArgs);
+                        // (TinyCC does not follow the RUNPATH of libpulse.so.0: the folder of libpulsecommon is named for it, and only for it)
+                        var (_, gccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                        CheckNat("SDL2: TinyCC bekommt den Ordner von libpulsecommon (-L .../pulseaudio), gcc nicht",
+                            fire.Native.SdlSetup.TccRunpathDirs().All(d => tccArgs.Contains($"-L\"{d}\"")) && !gccArgs.Contains("pulseaudio"), tccArgs);
+                    }
+
                     // SDL3: the same for its MinGW package (SDL3_DIR, SDL3.dll), and `// fire-link: SDL3`
                     string archive3 = Path.Combine(sdlDir, "sdl3.tar.gz");
                     using (var gz = new System.IO.Compression.GZipStream(File.Create(archive3), System.IO.Compression.CompressionLevel.Fastest))
@@ -25432,10 +25446,11 @@ else
                             bool second = fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.Host);
                             long secondMs = watch.ElapsedMilliseconds;
                             bool remembered = File.Exists(fire.Native.NativeProbeCache.FilePath) && File.ReadAllText(fire.Native.NativeProbeCache.FilePath).Contains("sdl3|gcc");
+                            // (a probe is only built where SDL3's header is: without it the answer is "no" at once - and not remembered, so that SDL3 installed later counts)
                             CheckNat("SDL3 oder SDL2: die Probe (kann die Toolchain SDL3 uebersetzen und binden?) wird gemerkt",
-                                first == expectSdl3 && second == first && remembered && fire.Compiler.NativeBuilder.ChooseSdl(gcc, TargetProfile.Host) == (expectSdl3 ? 3 : 2)
+                                first == expectSdl3 && second == first && remembered == expectSdl3 && fire.Compiler.NativeBuilder.ChooseSdl(gcc, TargetProfile.Host) == (expectSdl3 ? 3 : 2)
                                 && !fire.Compiler.NativeBuilder.CanBuildSdl3(fire.Native.ToolchainDef.BuiltIn["files"], TargetProfile.Host)
-                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.FreeRtos), $"first {first} ({firstMs} ms), second {second} ({secondMs} ms), expected {expectSdl3}");
+                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.FreeRtos), $"first {first} ({firstMs} ms), second {second} ({secondMs} ms), expected {expectSdl3}, remembered {remembered}");
                         }
                         finally
                         {

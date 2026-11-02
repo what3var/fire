@@ -88,18 +88,53 @@ namespace fire.Native
             string? compiler = toolchain == null ? null : ToolchainDetector.Find(toolchain);
             if (compiler != null && Path.GetDirectoryName(compiler) is { } bin && Path.GetDirectoryName(bin) is { } prefix)
                 foreach (string candidate in new[] { prefix, Path.Combine(prefix, Triplet) })
-                    if (HasHeader(candidate, version)) return new SdlLocation(Array.Empty<string>(), Array.Empty<string>(), FindDll(candidate, version), "the prefix of the compiler");
+                    if (HasHeader(candidate, version)) return new SdlLocation(InnerDirs(candidate, version), Array.Empty<string>(), FindDll(candidate, version), "the prefix of the compiler");
 
             // 4. the system
             foreach (string prefix2 in new[] { "/usr", "/usr/local" })
-                if (HasHeader(prefix2, version)) return new SdlLocation(Array.Empty<string>(), Array.Empty<string>(), null, prefix2);
+                if (HasHeader(prefix2, version)) return new SdlLocation(InnerDirs(prefix2, version), Array.Empty<string>(), null, prefix2);
             if (OperatingSystem.IsMacOS())
                 foreach (string brew in new[] { "/opt/homebrew", "/usr/local" })
-                    if (HasHeader(brew, version)) return new SdlLocation(new[] { Path.Combine(brew, "include") }, new[] { Path.Combine(brew, "lib") }, null, "Homebrew");
+                    if (HasHeader(brew, version)) return new SdlLocation(new[] { Path.Combine(brew, "include") }.Concat(InnerDirs(brew, version)).ToList(), new[] { Path.Combine(brew, "lib") }, null, "Homebrew");
 
             // 5. pkg-config: -I and -L only (the library itself is named by the build)
             if (!OperatingSystem.IsWindows() && FromPkgConfig(version) is { } pkg) return pkg;
             return null;
+        }
+
+        /// <summary>SDL2: the folder SDL.h lies in when it is <c>include/SDL2</c> of the prefix (as with the packages of the Linux distributions, MSYS2 and Homebrew): a compiler
+        /// that finds <c>&lt;SDL2/SDL.h&gt;</c> by itself does not need it, but one without <c>__has_include</c> (TinyCC) includes <c>&lt;SDL.h&gt;</c> (fire_display_sdl.h) - as
+        /// <c>sdl2-config --cflags</c> does, the folder is named. (SDL3 is always included as <c>&lt;SDL3/SDL.h&gt;</c>: nothing.)</summary>
+        private static IReadOnlyList<string> InnerDirs(string prefix, int version)
+        {
+            if (version != 2) return Array.Empty<string>();
+            string inner = Path.Combine(prefix, "include", "SDL2");
+            return File.Exists(Path.Combine(inner, "SDL.h")) ? new[] { inner } : Array.Empty<string>();
+        }
+
+        /// <summary>Linux, TinyCC: folders that the libraries of the system's SDL find their own libraries in only through their RUNPATH, which TinyCC does not follow when it links
+        /// (it reports "referenced dll ... not found" then): the folder <c>pulseaudio</c> of the library folders (libpulse.so.0 needs libpulsecommon-*.so from there) - of this machine's
+        /// architecture (<c>/usr/lib/x86_64-linux-gnu</c>, ...), <c>/usr/lib64</c> (Fedora) and <c>/usr/lib</c> (Arch). Only the folders that are there.</summary>
+        public static IReadOnlyList<string> TccRunpathDirs()
+        {
+            string triplet = RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.X64 => "x86_64-linux-gnu",
+                Architecture.Arm64 => "aarch64-linux-gnu",
+                Architecture.Arm => "arm-linux-gnueabihf",
+                Architecture.X86 => "i386-linux-gnu",
+                Architecture.RiscV64 => "riscv64-linux-gnu",
+                _ => "",
+            };
+            var dirs = new List<string>();
+            foreach (string libDir in new[] { triplet.Length > 0 ? "/usr/lib/" + triplet : "", "/usr/lib64", "/usr/lib" })
+            {
+                if (libDir.Length == 0) continue;
+                string pulse = Path.Combine(libDir, "pulseaudio");
+                try { if (Directory.Exists(pulse) && Directory.EnumerateFiles(pulse, "libpulsecommon-*.so").Any()) dirs.Add(pulse); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            return dirs;
         }
 
         private static bool HasHeader(string prefix, int version = 2) => version == 3
