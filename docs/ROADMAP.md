@@ -221,10 +221,15 @@ Stand: **umgesetzt** (docs/CONSOLE.md "Drag & Drop aus anderen Programmen, Zwisc
 Windows `CF_HDROP` nativ) - VM: SDL3, nativ: SDL3, wenn die Toolchain es hat (sonst SDL2: nur Text), ohne Desktop eine eigene Zwischenablage des Programms; die Ereignisse `DropFiles`/`DropText` mit Position
 und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem Fenster schwebt (SDL3); im `ui` die Auswahl im Textfeld mit Kopieren/Ausschneiden/Einfügen, Doppelklick markiert ein Wort,
 Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
-`OnDragDone`, `UI.DropEffect`) mit einem Schild am Zeiger (`DragData.ShowImage`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`).
+`OnDragDone`, `UI.DropEffect`) mit einem Schild am Zeiger (`DragData.ShowImage`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`);
+Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und Dateien, die Antwort Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11
+(XDND), in der VM und nativ mit SDL3 und SDL2 - das `ui` übergibt ein Ziehen mit Text oder Dateien, sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`).
 
 **Offen:**
-- Ziehen aus dem Programm heraus in andere Programme (`Window.StartDrag`; in Arbeit für Windows und X11, Wayland und macOS danach); ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text).
+- Ziehen aus dem Fenster heraus unter Wayland (`wl_data_source`/`start_drag`; SDL gibt die Verbindung nicht so heraus, dass das neben SDL ginge) und macOS (`NSDraggingSession`); bis dahin endet dort
+  ein Ziehen im `ui` beim Verlassen des Fensters mit `None` - besser wäre, es dann im Fenster weiterlaufen zu lassen (die Plattform müsste sagen, ob sie Drag-out kann).
+- Ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text, und nur im Fenster).
+- Drag-out in der VM unter echtem Windows prüfen (OLE-Pfad nur unter Wine nativ getestet; die VM läuft dort nicht).
 - SDL 3.2 unter X11 sieht nicht, was ein anderes Programm vor seinem Start kopiert hat (es fragt nach den Arten nur, wenn der Besitzer wechselt); Dateien in der Zwischenablage unter Windows
   in der VM (SDL3 hat kein `CF_HDROP`, die VM bleibt dort bei ihrer eigenen).
 - `TextArea`: Rückgängig/Wiederholen, Markierung im Text ziehen (Drag & Drop aus dem Feld heraus).
@@ -233,7 +238,7 @@ Ursprünglicher Plan:
 
 * `Clipboard.GetText`/`SetText`, `GetImage`/`SetImage` (`graphics.Image`), `GetFiles`; im `ui`: Kopieren/Einfügen in `TextBox` und eigenen Elementen.
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
-  `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später.
+  `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später (jetzt: Windows und X11).
 * Nativ über SDL (Clipboard, `SDL_EVENT_DROP_*`), in der VM über die C#-Natives von `windows`/`ui`.
 
 ## 11. Ungenutzten Code weglassen

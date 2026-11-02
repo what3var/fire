@@ -312,6 +312,9 @@ namespace UI {
         bool Pending = false
         // While it is dragged in the interface, the root shows a small label at the pointer (the text, the files or the kind); false: none
         bool ShowImage = true
+        // May the drag leave the window? With Text or Files, a drag whose pointer leaves the window goes on in the desktop: other programs (a file manager,
+        // an editor) can take it, and the source hears in OnDragDone what they did (Window.StartDrag). false keeps it inside the program.
+        bool AllowExternal = true
 
         construct(string text = "", any value = undefined, string kind = "") {
             this.Text = text

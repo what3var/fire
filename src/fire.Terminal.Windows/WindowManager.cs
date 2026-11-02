@@ -257,6 +257,25 @@ namespace fire.Terminal.Windows
         /// <summary>Window.SetSize (on the thread that owns the OS window).</summary>
         public void SetSize(int id, int width, int height) { _windows.Get(id); OnOwner(id, w => w.SetSize(width, height)); }
 
+        /// <summary>Window.StartDrag: the text and/or the files are dragged out of the window into other programs until the user lets go (0 nothing, 1 copied,
+        /// 2 moved) - on the thread that owns the OS window: here, or the thread of its manager, while the program waits for the answer.</summary>
+        public int StartDrag(int id, string text, string[] files)
+        {
+            var window = _windows.Get(id);
+            if (string.IsNullOrEmpty(text) && files.Length == 0) return 0;
+            ManagedWindow? state = null;
+            Manager? manager = null;
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.OwnsWindows) { state = entry.State; manager = entry.Manager; }
+            if (state == null || manager == null) return window.StartDrag(text, files);
+            // (the event is not disposed: a thread that serves the request after the program stopped waiting still sets it)
+            var done = new ManualResetEventSlim();
+            int result = 0;
+            state.Todo.Enqueue(w => { try { Volatile.Write(ref result, w.StartDrag(text, files)); } finally { done.Set(); } });
+            while (!done.Wait(20))
+                if (manager.Stop || state.Closed || state.Release) return 0;   // the thread is gone or the window closed: no drag
+            return Volatile.Read(ref result);
+        }
+
         /// <summary>A single cycle for ONE window (see
         /// ConsoleWindow.Tick) - returns false if the window was closed
         /// by the user (the caller should then usually

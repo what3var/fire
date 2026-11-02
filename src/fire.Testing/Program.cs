@@ -9393,6 +9393,9 @@ uiDrawScript = """
             renderer.Push((int)args[0].AsInt(), args);
             return Value.MakeUndefined();
         });
+        // Window.StartDrag: the answer of the desktop, and each call as a line of the output
+        natives.Register("__TestDragAnswer", args => { renderer.DragAnswer = (int)args[0].AsInt(); return Value.MakeUndefined(); });
+        renderer.Dragged = (text, files) => { lock (lines) lines.Add($"StartDrag [{text}] [{string.Join(",", files)}]"); };
 
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -9640,6 +9643,73 @@ uiDrawScript = """
         __TestEvent(11, 1, inner.ax + 40.0, 156.0)
         ui.Tick()
         """, new[] { "click | False", "| True 10", "over | 11", "over over drop Daten 42 True done 2 | False", "over leave done 0 | False", "over over done 0 ", "done 1 | [Text] True", "False True" });
+
+    CheckUi("Drag & Drop aus dem Fenster heraus: mit Text oder Dateien geht der Drag an Window.StartDrag, sobald der Zeiger das Fenster verlaesst; OnDragDone hoert die Antwort, AllowExternal false haelt ihn drinnen", uiHead + """
+        var log = ""
+        var src = new UI.Button("Quelle", 10, 10, 80, 24)
+        src.OnDragStart = func (int x, int y) => {
+            var d = new UI.DragData("Gezogen")
+            d.Files.Add("/tmp/a.txt")
+            return d
+        }
+        src.OnDragDone = func (UI.DragData d, UI.DropEffect e) => { log = log + "done " + e!int + " " }
+        var target = new UI.Panel(120, 10, 80, 60)
+        target.AllowDrop = true
+        target.OnDragOver = func (UI.DragData d, int x, int y) => {
+            log = log + "over "
+            return UI.DropEffect.Copy
+        }
+        target.OnDragLeave = func () => { log = log + "leave " }
+        ui.Add(src)
+        ui.Add(target)
+        ui.Draw()
+        // over the target, then out of the window: the target is left, the desktop takes over and answers Move
+        __TestDragAnswer(2)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 130.0, 20.0)
+        ui.Tick()
+        __TestEvent(9, 400.0, 20.0)
+        ui.Tick()
+        __TestEvent(11, 1, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // straight out over the top edge; no program took it: None
+        log = ""
+        __TestDragAnswer(0)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 20.0, -5.0)
+        __TestEvent(11, 1, 20.0, -5.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // AllowExternal false: the drag stays in the window (over nothing: None at the end)
+        log = ""
+        src.OnDragStart = func (int x, int y) => {
+            var d = new UI.DragData("drinnen")
+            d.AllowExternal = false
+            return d
+        }
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        __TestEvent(11, 1, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // a value of the program without text or files: other programs could not take it
+        log = ""
+        src.OnDragStart = func (int x, int y) => { return new UI.DragData("", 42, "zahl") }
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 400.0, 20.0)
+        __TestEvent(11, 1, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // Window.StartDrag itself: a text, paths as an array or a List; nothing to drag: 0 without asking the desktop
+        __TestDragAnswer(1)
+        var paths = new List<string>()
+        paths.Add("/p q")
+        print(win.StartDrag("abc", undefined) + " " + win.StartDrag("", ["/x", "/y"]) + " " + win.StartDrag("t", paths) + " " + win.StartDrag("", undefined))
+        """, new[] { "StartDrag [Gezogen] [/tmp/a.txt]", "over leave done 2 | False", "StartDrag [Gezogen] [/tmp/a.txt]", "done 0 | False", "| True", "done 0 | False",
+                     "done 0 | False", "StartDrag [abc] []", "StartDrag [] [/x,/y]", "StartDrag [t] [/p q]", "1 1 1 0" });
 
     CheckUi("Drop aus einem anderen Programm: Dateien und Text gehen an das Element darunter (ein Textfeld nimmt sie), sonst an onDrop", uiHead + """
         var tb = new UI.TextBox("", 10, 10, 200, 24)
@@ -24459,6 +24529,178 @@ else
                 }
             }
 
+            // ---- drag-out (Window.StartDrag): a fire window drags a text and then two files into another program. X11 under Xvfb (XDND): the target is a native fire
+            // program with SDL3 that prints what is dropped on it; the source a fire window built with SDL2 and with SDL3 (and once on the thread of its manager:
+            // Window.Show), and the VM's window (forge run). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).
+            // Both windows open in the middle of the screen: the hand drags from the middle of the source to a point near the left edge of the bigger target.
+            const string dragDriverSource = """
+                #include <X11/Xlib.h>
+                #include <dlfcn.h>
+                #include <stdio.h>
+                #include <stdlib.h>
+                #include <string.h>
+                #include <time.h>
+                typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
+                typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
+                static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
+                static Window find(Display* d, Window w, const char* name) {
+                    Window root, parent, *kids = NULL, found = 0;
+                    unsigned int n = 0, i;
+                    char* title = NULL;
+                    if (XFetchName(d, w, &title) && title) { int same = strcmp(title, name) == 0; XFree(title); if (same) return w; }
+                    if (!XQueryTree(d, w, &root, &parent, &kids, &n)) return 0;
+                    for (i = 0; i < n && !found; i++) found = find(d, kids[i], name);
+                    if (kids) XFree(kids);
+                    return found;
+                }
+                static int point(Display* d, Window w, int* x, int* y, int left) {
+                    XWindowAttributes a;
+                    Window child;
+                    if (!XGetWindowAttributes(d, w, &a)) return 0;
+                    XTranslateCoordinates(d, w, DefaultRootWindow(d), left ? 20 : a.width / 2, a.height / 2, x, y, &child);
+                    return 1;
+                }
+                int main(int argc, char** argv) {
+                    Display* d = XOpenDisplay(NULL);
+                    void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
+                    FakeButton button;
+                    FakeMotion motion;
+                    Window src = 0, dst = 0;
+                    int times = argc > 3 ? atoi(argv[3]) : 1, k, i, sx, sy, dx, dy;
+                    if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "driver: no display or no libXtst\n"); return 2; }
+                    button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
+                    motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
+                    if (!button || !motion) { fprintf(stderr, "driver: XTest incomplete\n"); return 2; }
+                    for (k = 0; k < 300 && (!src || !dst); k++) {
+                        src = find(d, DefaultRootWindow(d), argv[1]);
+                        dst = find(d, DefaultRootWindow(d), argv[2]);
+                        if (!src || !dst) pause_ms(100);
+                    }
+                    if (!src || !dst) { fprintf(stderr, "driver: windows not found\n"); return 2; }
+                    pause_ms(1000);
+                    for (k = 0; k < times; k++) {
+                        if (!point(d, src, &sx, &sy, 0) || !point(d, dst, &dx, &dy, 1)) return 2;
+                        motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
+                        button(d, 1, True, 0); XSync(d, False); pause_ms(400);
+                        for (i = 1; i <= 12; i++) { motion(d, -1, sx + (dx - sx) * i / 12, sy + (dy - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
+                        pause_ms(300);
+                        button(d, 1, False, 0); XSync(d, False);
+                        pause_ms(1500);
+                    }
+                    XCloseDisplay(d);
+                    return 0;
+                }
+                """;
+            string? dragDriver = null;
+            bool dragDriverTried = false;
+            // (built once, when a case needs it: the headers of X11 are needed; libXtst only at run time)
+            string? DragDriver()
+            {
+                if (dragDriverTried) return dragDriver;
+                dragDriverTried = true;
+                string c = Path.Combine(workDir, "dragdriver.c");
+                File.WriteAllText(c, dragDriverSource);
+                string exe = Path.Combine(workDir, "dragdriver.bin");
+                RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{c}\" -o \"{exe}\" -lX11 -ldl", workDir, out int code);
+                dragDriver = code == 0 ? exe : null;
+                return dragDriver;
+            }
+            string DragSourceScript(string path1, string path2, bool show) => """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "fire drag source")
+                var drags = 0
+                win.RegisterMouseDown(func(int b, float x, float y) => {
+                    drags++
+                    if (drags == 1) { print("text " + win.StartDrag("Text aus fire ä", undefined)) }
+                    else {
+                        var files = new List<string>()
+                        files.Add("PATH1")
+                        files.Add("PATH2")
+                        print("files " + win.StartDrag("", files))
+                        CLOSE
+                    }
+                })
+
+                """.Replace("PATH1", path1).Replace("PATH2", path2).Replace("CLOSE", show ? "win.Close()" : "")
+                + (show ? "win.Show()\n" : "var t = 0\nwhile (drags < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }\n");
+            const string dragTargetScript = """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(400, 300)
+                var win = new Window(fb, "fire drop target")
+                var got = 0
+                win.RegisterDropText(func(string text, float x, float y) => {
+                    print("dropped text [" + text + "]")
+                    got++
+                })
+                win.RegisterDropFiles(func(any files, float x, float y) => {
+                    var line = "dropped files " + files.length
+                    foreach (f in files) { line = line + " [" + f + "]" }
+                    print(line)
+                    got++
+                })
+                var t = 0
+                while (got < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }
+                """;
+            // (the script for the X server: the target, half a second later the source, then the hand; the outputs of source and target; the exit code: all three ended well)
+            // (what the programs printed about the drag - not what forge or Wine say besides: packages it installs, the end of the X connection)
+            string DragLines(string file) => File.Exists(file)
+                ? string.Concat(File.ReadAllText(file).Replace("\r", "").Split('\n').Where(l => l.StartsWith("text ", StringComparison.Ordinal) || l.StartsWith("files ", StringComparison.Ordinal) || l.StartsWith("dropped ", StringComparison.Ordinal)).Select(l => l + "\n"))
+                : "";
+            string DragScript(string target, string source, string driver, string outSource, string outTarget, string delay = "0.5") =>
+                $"{target} > \"{outTarget}\" 2>&1 &\nt=$!\nsleep {delay}\n{source} > \"{outSource}\" 2>&1 &\ns=$!\n\"{driver}\" \"fire drag source\" \"fire drop target\" 2\nd=$?\nwait $s\nse=$?\nwait $t\nte=$?\nexit $(( d + se + te ))\n";
+            {
+                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true) };
+                string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
+                string? dragTarget = null;
+                foreach (var dc in dragCases)
+                {
+                    string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (X11, Xvfb, XDND): Text und Dateien, die Antwort Kopie [{dc.Label}]";
+                    if (!TestSelected(title)) continue;
+                    if (xvfbRun == null || sdl3Exit != 0 || (dc.Sdl == 2 && sdlExit != 0)) { Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})"); continue; }
+                    if (dc.Vm && !File.Exists(forge)) { Console.WriteLine($"(uebersprungen - forge fehlt: {title})"); continue; }
+                    string? driver = DragDriver();
+                    if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
+                    string Build(string script, int version, string name)
+                    {
+                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                        var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
+                        string exe = Path.Combine(workDir, name + ".bin");
+                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, $" -lSDL{version}");
+                        if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
+                        return exe;
+                    }
+                    string sourceCommand;
+                    try
+                    {
+                        dragTarget ??= Build(dragTargetScript, 3, "dragtarget");
+                        string sourceScript = DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", dc.Show);
+                        if (dc.Vm)
+                        {
+                            string file = Path.Combine(workDir, "dragsource.fire");
+                            File.WriteAllText(file, sourceScript);
+                            sourceCommand = $"\"{forge}\" run \"{file}\"";
+                        }
+                        else sourceCommand = "\"" + Build(sourceScript, dc.Sdl, $"dragsource{dc.Sdl}{(dc.Show ? "s" : "")}") + "\"";
+                    }
+                    catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); continue; }
+                    string outSource = Path.Combine(workDir, "dragsource.out"), outTarget = Path.Combine(workDir, "dragtarget.out");
+                    string script = Path.Combine(workDir, "drag.sh");
+                    File.WriteAllText(script, DragScript($"\"{dragTarget}\"", sourceCommand, driver, outSource, outTarget));
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
+                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={lsanFile}:print_suppressions=0");
+                    string runLog = RunProc(xvfbRun, $"-a sh \"{script}\"", workDir, out int runExit);
+                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                    string actual = DragLines(outSource) + DragLines(outTarget);
+                    string want = string.Concat(dragExpected.Select(l => l + "\n"));
+                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}");
+                }
+            }
+
             // ---- Windows: the window and the clipboard built with MinGW against the MinGW package of SDL3 (SDL3_DIR, else /opt/sdl-mingw/SDL3-*), SDL3.dll next to it, run under Wine
             {
                 string title = "Fenster: Windows (MinGW, SDL3, unter Wine): Drop-Ereignisse, Zwischenablage mit Text, Bild (CF_DIB) und Dateien (CF_HDROP)";
@@ -24514,6 +24756,72 @@ else
                         string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
                         CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
                     }
+                }
+            }
+
+            // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - the source built with MinGW against SDL3 and SDL2, the
+            // target with SDL3 (its OLE drop target), the hand the X program above on the X server that Wine draws on
+            {
+                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                string? MingwSdl(int version)
+                {
+                    string? dir = Environment.GetEnvironmentVariable($"SDL{version}_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                        : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", $"SDL{version}-*").OrderBy(d => d).LastOrDefault() : null;
+                    string header = version == 3 ? Path.Combine("include", "SDL3", "SDL.h") : Path.Combine("include", "SDL2", "SDL.h");
+                    return dir == null ? null : new[] { dir, Path.Combine(dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, header)) && File.Exists(Path.Combine(d, "bin", $"SDL{version}.dll")));
+                }
+                string? sdl3Mingw = MingwSdl(3), sdl2Mingw = MingwSdl(2);
+                foreach (int version in new[] { 3, 2 })
+                {
+                    string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP) [SDL{version}]";
+                    string? sdlMingw = version == 3 ? sdl3Mingw : sdl2Mingw;
+                    if (!TestSelected(title)) continue;
+                    if (mingw == null || wine == null || sdl3Mingw == null || sdlMingw == null || xvfbRun == null) { Console.WriteLine($"(uebersprungen - MinGW, Wine, xvfb-run oder die MinGW-Pakete von SDL fehlen: {title})"); continue; }
+                    string? driver = DragDriver();
+                    if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
+                    string winDir = Path.Combine(workDir, "wine_drag");
+                    Directory.CreateDirectory(winDir);
+                    fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
+                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
+                    File.Copy(Path.Combine(sdlMingw, "bin", $"SDL{version}.dll"), Path.Combine(winDir, $"SDL{version}.dll"), true);
+                    string RunWine(string tool, string arguments, out int exit)
+                    {
+                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
+                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                        info.Environment["WINEDEBUG"] = "-all";
+                        info.Environment["LANG"] = "C.UTF-8";
+                        info.Environment["SDL_VIDEODRIVER"] = "windows";
+                        using var p = System.Diagnostics.Process.Start(info)!;
+                        var errTask = p.StandardError.ReadToEndAsync();
+                        string output = p.StandardOutput.ReadToEnd();
+                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                        exit = p.ExitCode;
+                        return output + errTask.Result;
+                    }
+                    string BuildWin(string script, int sdl, string sdlDir, string name, out string error)
+                    {
+                        var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = sdl } };
+                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                        string exeFile = Path.Combine(winDir, name + ".exe");
+                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, name,
+                            $"-O2 -Wall -Wextra -I\"{Path.Combine(sdlDir, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdlDir, "lib")}\"{links}");
+                        error = buildExit != 0 || build.Contains("warning:") || !links.Contains($"-lSDL{sdl}") ? "MinGW: " + links + "\n" + build : "";
+                        return exeFile;
+                    }
+                    RunWine(wine, "wineboot --init", out _);
+                    string targetExe = BuildWin(dragTargetScript, 3, sdl3Mingw, "dragtarget", out string targetError);
+                    string sourceExe = BuildWin(DragSourceScript("C:\\\\fire\\\\ein Ordner\\\\datei ä.txt", "C:\\\\zwei", false), version, sdlMingw, $"dragsource{version}", out string sourceError);
+                    if (targetError != "" || sourceError != "") { CheckNat(title, false, targetError + sourceError); continue; }
+                    string outSource = Path.Combine(winDir, "dragsource.out"), outTarget = Path.Combine(winDir, "dragtarget.out");
+                    string script = Path.Combine(winDir, "drag.sh");
+                    // (Wine's windows need a moment more: the source starts 2 s after the target)
+                    File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
+                    string runLog = RunWine(xvfbRun, $"-a sh \"{script}\"", out int runExit);
+                    string actual = DragLines(outSource) + DragLines(outTarget);
+                    string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
+                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
                 }
             }
         }
@@ -25186,6 +25494,11 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
     public void Initialize(string title, int initialWidth, int initialHeight, int internalHandle) { }
     public void Present(fire.Terminal.Framebuffer framebuffer) { }
     public void Dispose() { }
+
+    /// <summary>Window.StartDrag: what the desktop answers (0 nothing, 1 copied, 2 moved), and who hears of the call (text, paths).</summary>
+    public int DragAnswer { get; set; }
+    public Action<string, string[]>? Dragged { get; set; }
+    public int StartDrag(string text, string[] files) { Dragged?.Invoke(text, files); return DragAnswer; }
 
     public fire.Terminal.WindowPumpResult PumpEvents()
     {

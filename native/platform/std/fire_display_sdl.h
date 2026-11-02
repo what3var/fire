@@ -29,6 +29,7 @@
 #include <string.h>
 #include "fire_display_c.h"
 #include "fire_systheme.h"
+#include "fire_dragout.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
 
@@ -431,6 +432,50 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
 #ifdef __EMSCRIPTEN__
     emscripten_sleep(0);   /* in the browser the page draws only when the program hands the thread back */
 #endif
+}
+
+/* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL2 cannot start such a drag: fire_dragout.h does it for the
+ * window of the platform, see fire_display_sdl3.h) - 0 nothing, 1 copied, 2 moved. The handles come from SDL_GetWindowWMInfo; its struct is declared here
+ * as far as it is needed (SDL_syswm.h would want the headers of X11). ---- */
+#if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
+struct SDL_SysWMinfo;
+extern DECLSPEC SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window* window, struct SDL_SysWMinfo* info);
+/* (the layout of SDL_SysWMinfo: the version, the kind of window system - 1 Windows, 2 X11 - and a union of the handles, at least 64 bytes) */
+typedef struct FireSdlWmInfo {
+    SDL_version version;
+    int subsystem;
+    union {
+        struct { void* window; void* hdc; void* hinstance; } win;
+        struct { void* display; unsigned long window; } x11;
+        Uint8 dummy[64];
+    } info;
+} FireSdlWmInfo;
+#endif
+#define FIRE_DISPLAY_START_DRAG 1
+static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) {
+    int result = 0;
+    if (!w->window) return 0;
+#if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
+    {
+        FireSdlWmInfo wm;
+        memset(&wm, 0, sizeof wm);
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(w->window, (struct SDL_SysWMinfo*)(void*)&wm)) {
+#if defined(_WIN32)
+            if (wm.subsystem == 1 && wm.info.win.window != NULL) result = fire_dragout_win32((HWND)wm.info.win.window, text, files);
+#else
+            if (wm.subsystem == 2 && wm.info.x11.display != NULL && wm.info.x11.window != 0) {
+                fire_display_lockSdl();
+                result = fire_dragout_x11(wm.info.x11.display, wm.info.x11.window, text, files);
+                fire_display_unlockSdl();
+            }
+#endif
+        }
+    }
+#else
+    (void)text; (void)files;
+#endif
+    return result;
 }
 
 #endif

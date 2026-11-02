@@ -53,6 +53,9 @@ typedef struct FireWinShared {
     int vsyncReq, touchReq;       /* settings for the thread */
     int sizeReqW, sizeReqH;       /* a new size of the window for the thread (0: none) */
     int cursorReq;                /* a new cursor for the thread (-1: none) */
+    int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
+    char* dragText;
+    char* dragFiles;
     int release;                  /* the window is gone: the thread closes it and frees this */
     /* the thread's own */
     uint32_t* shown;
@@ -75,6 +78,8 @@ static void fire_winb_sharedDelete(FireWinShared* s) {
     if (s == NULL) return;
     fire_display_close(&s->display);
     fire_display_eventsFree(&s->inbox);
+    free(s->dragText);
+    free(s->dragFiles);
     free(s->front);
     free(s->shown);
     free(s->title);
@@ -348,6 +353,17 @@ static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
     return !s->failed;
 }
 
+/* Window.StartDrag on the thread of the OS window: the drag of the display (0 where the display has none: a board package of its own without
+ * fire_display_startDrag). */
+static int fire_winb_startDrag(FireDisplayWindow* display, const char* text, const char* files) {
+#ifdef FIRE_DISPLAY_START_DRAG
+    return fire_display_startDrag(display, text != NULL ? text : "", files != NULL ? files : "");
+#else
+    (void)display; (void)text; (void)files;
+    return 0;
+#endif
+}
+
 /* (a pointer list: remove every `item`) */
 static void fire_winb_remove(void** items, size_t* count, const void* item) {
     size_t i, k = 0;
@@ -431,6 +447,21 @@ static void fire_winb_pumpThread(void* arg) {
             if (s->touchReq >= 0) { fire_display_setTouchMouse(&s->display, s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { fire_display_setSize(&s->display, s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             if (s->cursorReq >= 0) { fire_display_setCursor(&s->display, s->cursorReq); s->cursorReq = -1; }
+            if (s->dragReq) {
+                /* Window.StartDrag: the drag runs here, on the thread of the OS window, until the user lets go (the program waits for the answer) */
+                char* text = s->dragText;
+                char* files = s->dragFiles;
+                int result;
+                s->dragText = s->dragFiles = NULL;
+                s->dragReq = 0;
+                fire_winb_unlock(&s->m);
+                result = fire_winb_startDrag(&s->display, text, files);
+                free(text);
+                free(files);
+                fire_winb_lock(&s->m);
+                s->dragResult = result;
+                s->dragDone = 1;
+            }
             fire_display_eventsClear(&events);
             w = s->frontW > 0 ? s->frontW : s->width; h = s->frontH > 0 ? s->frontH : s->height;
             open = fire_display_pump(&s->display, &events, w, h);
@@ -897,6 +928,75 @@ static Value fire_win_WinClipboardSetFiles(Value paths) {
     return Bool(ok != 0);
 }
 static Value fire_win_WinClipboardHasFiles(void) { return Bool(fire_display_clipboardHasFiles() != 0); }
+
+/* The paths of a string[] as one text, one per line (malloc; NULL: none - empty paths and paths with a line break are left out). */
+static char* fire_winb_pathLines(Value paths) {
+    Arr* a;
+    char* all = NULL;
+    size_t total = 0, used = 0;
+    uint32_t i;
+    if (paths.kind != K_Array || !leafAlive(paths)) return NULL;
+    a = arrOf(paths);
+    for (i = 0; i < a->length; i++) {
+        Value item = arrItems(a)[i];
+        char* utf8;
+        size_t n;
+        char* grown;
+        if (item.kind != K_String) continue;
+        utf8 = fire_winb_toUtf8(item);
+        n = strlen(utf8);
+        if (n == 0 || strchr(utf8, '\n') != NULL) { free(utf8); continue; }
+        grown = (char*)realloc(all, total + n + 2);
+        if (grown == NULL) { free(utf8); free(all); fatal("Out of memory."); }
+        all = grown;
+        total += n + 2;
+        if (used > 0) all[used++] = '\n';
+        memcpy(all + used, utf8, n + 1);
+        used += n;
+        free(utf8);
+    }
+    return all;
+}
+
+/* ---- Window.StartDrag: text and/or files (string[]) are dragged out of the window into other programs until the user lets go: 0 nothing, 1 copied, 2 moved ----
+ * The drag runs on the thread that owns the OS window: here, or - when a manager's thread pumps the window - there; the program waits for the answer
+ * (without the GIL, so that the program's other threads go on). */
+static Value fire_win_WinStartDrag(Value id, Value text, Value files) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    char* utf8 = text.kind == K_String ? fire_winb_toUtf8(text) : NULL;
+    char* paths = fire_winb_pathLines(files);
+    int result = 0;
+    if ((utf8 == NULL || utf8[0] == 0) && paths == NULL) { free(utf8); return Int(0); }
+#ifdef FIRE_WINDOW_THREADS
+    if (fire_winb_threaded(w)) {
+        FireWinMgr* m = w->mgr;
+        int done = 0;
+        fire_winb_lock(&s->m);
+        if (!s->opened || s->failed || s->closed) { fire_winb_unlock(&s->m); free(utf8); free(paths); return Int(0); }
+        free(s->dragText); free(s->dragFiles);
+        s->dragText = utf8; s->dragFiles = paths;
+        s->dragReq = 1; s->dragDone = 0; s->dragResult = 0;
+        fire_winb_unlock(&s->m);
+        gilRelease();
+        while (!done) {
+            fire_mutex_lock(&m->cycleM);
+            fire_cond_waitFor(&m->cycleCv, &m->cycleM, 20);
+            fire_mutex_unlock(&m->cycleM);
+            fire_winb_lock(&s->m);
+            if (s->dragDone) { result = s->dragResult; s->dragDone = 0; done = 1; }
+            else if (s->closed || s->release || fire_atomic_load(&m->stop)) { s->dragReq = 0; done = 1; }   /* (the thread is gone or the window closed: no drag) */
+            fire_winb_unlock(&s->m);
+        }
+        gilAcquire();
+        return Int(result);
+    }
+#endif
+    if (s->opened && !s->failed) result = fire_winb_startDrag(&s->display, utf8, paths);
+    free(utf8);
+    free(paths);
+    return Int(result);
+}
 
 static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
     FireWinState* w = fire_winb_windowOf(id);
