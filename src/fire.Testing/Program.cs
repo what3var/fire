@@ -21664,7 +21664,7 @@ else
         }
     }
 
-    // GPIO (bridges/fire_bridge_gpio.hpp): the simulated chip "sim" - outputs, inputs, wires, pulls, edges, errors - the same in the VM and in the native build
+    // GPIO (packages/gpio/native/fire_bridge_gpio.h): the simulated chip "sim" - outputs, inputs, wires, pulls, edges, errors - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Gpio: simulierter Chip - Ausgang, Eingang, Draht, Pull, Flanken, Fehler", """
@@ -22011,7 +22011,7 @@ else
             """),
     }).ToArray();
 
-    // I2C (bridges/fire_bridge_i2c.hpp): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
+    // I2C (packages/i2c/native/fire_bridge_i2c.h): the simulated bus "sim" with register-file devices - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("I2c: simulierter Bus - Geraete, Register, Scan, Fehler", """
@@ -22065,7 +22065,7 @@ else
             """),
     }).ToArray();
 
-    // SPI (bridges/fire_bridge_spi.hpp): the simulated device "sim" (loopback, queued answers, log of what was sent) - the same in the VM and in the native build
+    // SPI (packages/spi/native/fire_bridge_spi.h): the simulated device "sim" (loopback, queued answers, log of what was sent) - the same in the VM and in the native build
     natCases = natCases.Concat(new (string Name, string Source)[]
     {
         ("Spi: simuliertes Geraet - Loopback, Antworten, Protokoll, Einstellungen, Fehler", """

@@ -236,9 +236,6 @@ namespace fire.Compiler
             foreach (string line in CppGenerator.CPlatformHeaderDefines(target.Native.Platform)) sb.AppendLine(line);   // (the platform layers in C: packages in C++ use them as well)
             sb.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{target.Native.Platform}/fire_fs.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{target.Native.Platform}/fire_dev.hpp\"");
-            sb.AppendLine($"#define FIRE_PLATFORM_GPIO_HEADER \"platform/{target.Native.Platform}/fire_gpio.hpp\"");
-            sb.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{target.Native.Platform}/fire_i2c.hpp\"");
-            sb.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{target.Native.Platform}/fire_spi.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{target.Native.Platform}/fire_wifi.hpp\"");
             sb.AppendLine($"#define FIRE_PLATFORM_USB_HEADER \"platform/{target.Native.Platform}/fire_usb.hpp\"");
             sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the library has a runtime of its own (its state lives here)");
