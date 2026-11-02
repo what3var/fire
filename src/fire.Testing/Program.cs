@@ -21964,7 +21964,7 @@ else
             """),
     }).ToArray();
 
-    // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
+    // Scene3D (packages/scene3d/native/fire_bridge_scene3d.h): the software renderer gives the same pixels in the VM and in the native build (and the hardware renderer, where there is a GPU, a close picture)
     natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
 
     // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build

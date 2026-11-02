@@ -8,115 +8,144 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'scene3d' of fire: prelude and C++ sources."
+    "description": "The standard library 'scene3d' of fire: prelude and C sources (the software renderer and the hardware renderer, Vulkan)."
   },
   "native": {
     "sources": [
-      "native/s3d_engine.hpp",
-      "native/fire_bridge_scene3d.hpp"
+      "native/s3d_engine.h",
+      "native/s3d_vk.h",
+      "native/s3d_shaders.h",
+      "native/s3d_gpu_vk.h",
+      "native/fire_bridge_scene3d.h"
     ],
     "discover": false,
+    "linkLibraries": {
+      "posix": [
+        "dl",
+        "pthread"
+      ]
+    },
     "functions": [
       {
         "name": "__S3DMeshNew",
         "arguments": 3,
-        "cpp": "s3d::MeshNew"
+        "c": "fire_s3d_MeshNew"
       },
       {
         "name": "__S3DMeshTemplate",
         "arguments": 2,
-        "cpp": "s3d::MeshTemplate"
+        "c": "fire_s3d_MeshTemplate"
       },
       {
         "name": "__S3DMeshFromObj",
         "arguments": 1,
-        "cpp": "s3d::MeshFromObj"
+        "c": "fire_s3d_MeshFromObj"
       },
       {
         "name": "__S3DLookAt",
         "arguments": 6,
-        "cpp": "s3d::LookAt",
+        "c": "fire_s3d_LookAt",
         "needsList": true,
         "returnsReference": true
       },
       {
         "name": "__S3DMeshRetain",
         "arguments": 1,
-        "cpp": "s3d::MeshRetain"
+        "c": "fire_s3d_MeshRetain"
       },
       {
         "name": "__S3DMeshFree",
         "arguments": 1,
-        "cpp": "s3d::MeshFree"
+        "c": "fire_s3d_MeshFree"
       },
       {
         "name": "__S3DMeshBounds",
         "arguments": 1,
-        "cpp": "s3d::MeshBounds",
+        "c": "fire_s3d_MeshBounds",
         "needsList": true,
         "returnsReference": true
       },
       {
         "name": "__S3DMeshTriangleCount",
         "arguments": 1,
-        "cpp": "s3d::MeshTriangleCount"
+        "c": "fire_s3d_MeshTriangleCount"
       },
       {
         "name": "__S3DTexNew",
         "arguments": 3,
-        "cpp": "s3d::TexNew"
+        "c": "fire_s3d_TexNew"
       },
       {
         "name": "__S3DTexChecker",
         "arguments": 4,
-        "cpp": "s3d::TexChecker"
+        "c": "fire_s3d_TexChecker"
       },
       {
         "name": "__S3DTexFree",
         "arguments": 1,
-        "cpp": "s3d::TexFree"
+        "c": "fire_s3d_TexFree"
       },
       {
         "name": "__S3DTexBumpAuto",
         "arguments": 1,
-        "cpp": "s3d::TexBumpAuto"
+        "c": "fire_s3d_TexBumpAuto"
       },
       {
         "name": "__S3DTexBump",
         "arguments": 5,
-        "cpp": "s3d::TexBump"
+        "c": "fire_s3d_TexBump"
       },
       {
         "name": "__S3DTexBumpClear",
         "arguments": 1,
-        "cpp": "s3d::TexBumpClear"
+        "c": "fire_s3d_TexBumpClear"
       },
       {
         "name": "__S3DFrameNew",
         "arguments": 2,
-        "cpp": "s3d::FrameNew"
+        "c": "fire_s3d_FrameNew"
       },
       {
         "name": "__S3DFrameFree",
         "arguments": 1,
-        "cpp": "s3d::FrameFree"
+        "c": "fire_s3d_FrameFree"
       },
       {
         "name": "__S3DFrameClear",
         "arguments": 5,
-        "cpp": "s3d::FrameClear"
+        "c": "fire_s3d_FrameClear"
       },
       {
         "name": "__S3DDraw",
         "arguments": 5,
-        "cpp": "s3d::Draw"
+        "c": "fire_s3d_Draw"
       },
       {
         "name": "__S3DFlush",
         "arguments": 5,
-        "cpp": "s3d::Flush"
+        "c": "fire_s3d_Flush"
+      },
+      {
+        "name": "__S3DFrameRenderer",
+        "arguments": 1,
+        "c": "fire_s3d_FrameRenderer"
+      },
+      {
+        "name": "__S3DHardwareName",
+        "arguments": 0,
+        "c": "fire_s3d_HardwareName",
+        "needsList": true,
+        "returnsReference": true
+      },
+      {
+        "name": "__S3DHardwareError",
+        "arguments": 0,
+        "c": "fire_s3d_HardwareError",
+        "needsList": true,
+        "returnsReference": true
       }
     ],
-    "reset": "s3d::reset"
+    "reset": "fire_s3d_reset",
+    "language": "c"
   }
 }

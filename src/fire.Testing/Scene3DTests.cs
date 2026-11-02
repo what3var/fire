@@ -164,6 +164,26 @@ static class Scene3DTests
         print("bumpdata " + H.Sum(frame))
         try { bumpy.Texture.AddBumpmap(3, 3, heights) } catch (Scene3DException e) { print("error " + e.message) }
 
+        // the hardware renderer: where there is a GPU it draws, and its picture is close to the software one; where there is none the software renderer draws the same picture
+        var software = frame.ReadBytes()
+        print("renderer " + scene.Renderer + " " + cam.LastRenderer)
+        scene.Renderer = RenderMode.Hardware
+        cam.Render()
+        var hardware = frame.ReadBytes()
+        var gpu = S3D.HardwareName() != ""
+        var off = 0
+        for (var i = 0; i < hardware.length; i++) {
+            var d = hardware[i] - software[i]
+            if (d > 24 || d < -24) { off++ }
+        }
+        if (gpu) { print("hardware " + (cam.LastRenderer == 1) + " " + (off * 100 < hardware.length) + " " + (S3D.HardwareError() == "")) }
+        else { print("hardware " + (cam.LastRenderer == 0) + " " + (off == 0) + " " + (S3D.HardwareError() != "")) }
+        cam.Render()
+        print("again " + (frame.ReadBytes().length == software.length))
+        scene.Renderer = RenderMode.Software
+        cam.Render()
+        print("software " + (H.Sum(frame) == H.Sum(frame)) + " " + cam.LastRenderer)
+
         // lengths and angles need units (a length property converts and refuses a number without a unit itself)
         try { box.X = 3 } catch (UnitMismatchException e) { print("unit " + e.message) }
         try { box.RotationX = 1.5 } catch (Scene3DException e) { print("error " + e.message) }

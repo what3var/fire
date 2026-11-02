@@ -3,6 +3,8 @@
 enum Template { Box = 0, Sphere = 1, Cylinder = 2, Cone = 3, Plane = 4, Quad = 5 }
 enum BillboardMode { Off = 0, Facing = 1, Vertical = 2 }
 enum LightKind { Ambient = 0, Directional = 1, Point = 2 }
+// Who draws a scene: the software renderer (everywhere, the same pixels everywhere) or the GPU (Vulkan; where there is none, the software renderer draws).
+enum RenderMode { Software = 0, Hardware = 1 }
 
 class Scene3DException : Exception {
     construct(string message) : base(message) { }
@@ -38,6 +40,15 @@ class S3D {
 
     // A colour from its parts (0..255 each).
     static int Rgb(int r, int g, int b) { return r + g * 256 + b * 65536 + 255 * 16777216 }
+
+    // The GPU that RenderMode.Hardware draws with ("" when there is none: no Vulkan, no driver, no GPU; HardwareError says why).
+    static string HardwareName() { return __S3DHardwareName() }
+
+    // Why there is no GPU to draw with ("" when there is one).
+    static string HardwareError() {
+        __S3DHardwareName()
+        return __S3DHardwareError()
+    }
 }
 
 // The triangles of an object, to be shared by objects: from a template, from the text of a Wavefront OBJ file, or from arrays.
@@ -707,6 +718,14 @@ class Camera {
         if (!__S3DFlush(this.frame, this.pixels, camera, lights, this.scene.Settings())) { throw new Scene3DException("The scene cannot be drawn (a handle is no longer valid).") }
         this.framebuffer.WriteBytes(this.pixels)
     }
+
+    // Who drew the last picture: RenderMode.Software or RenderMode.Hardware (the scene asked for the hardware renderer and there is a GPU).
+    int LastRenderer {
+        get {
+            if (this.frame == 0) { return 0 }
+            return __S3DFrameRenderer(this.frame)
+        }
+    }
 }
 
 // The space: objects, cameras, lights and textures, each also reachable by a key.
@@ -725,11 +744,14 @@ class Scene {
     int ShadowResolution
     // How many threads draw (0 = as many as the machine has, up to 8; 1 = one). The picture is the same for every number.
     int Threads
+    // RenderMode.Software (default) or RenderMode.Hardware: the GPU draws (Vulkan), where there is one; else the software renderer.
+    int Renderer
 
     construct() {
         this.Shadows = true
         this.ShadowResolution = 1024
         this.Threads = 0
+        this.Renderer = 0
         this.Objects = new List()
         this.Cameras = new List()
         this.Lights = new List()
@@ -817,10 +839,10 @@ class Scene {
         return all
     }
 
-    // The settings of the renderer: shadows on (1) or off (0), the size of a shadow map, the number of threads.
+    // The settings of the renderer: shadows on (1) or off (0), the size of a shadow map, the number of threads, the renderer (RenderMode).
     float[] Settings() {
         var shadows = 0.0
         if (this.Shadows) { shadows = 1.0 }
-        return [shadows, this.ShadowResolution * 1.0, this.Threads * 1.0]
+        return [shadows, this.ShadowResolution * 1.0, this.Threads * 1.0, this.Renderer * 1.0]
     }
 }
