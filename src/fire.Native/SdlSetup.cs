@@ -68,18 +68,27 @@ namespace fire.Native
             string? compiler = toolchain == null ? null : ToolchainDetector.Find(toolchain);
             if (compiler != null && Path.GetDirectoryName(compiler) is { } bin && Path.GetDirectoryName(bin) is { } prefix)
                 foreach (string candidate in new[] { prefix, Path.Combine(prefix, Triplet) })
-                    if (HasHeader(candidate)) return new SdlLocation(Array.Empty<string>(), Array.Empty<string>(), FindDll(candidate), "the prefix of the compiler");
+                    if (HasHeader(candidate)) return new SdlLocation(InnerDirs(candidate), Array.Empty<string>(), FindDll(candidate), "the prefix of the compiler");
 
             // 4. the system
             foreach (string prefix2 in new[] { "/usr", "/usr/local" })
-                if (HasHeader(prefix2)) return new SdlLocation(Array.Empty<string>(), Array.Empty<string>(), null, prefix2);
+                if (HasHeader(prefix2)) return new SdlLocation(InnerDirs(prefix2), Array.Empty<string>(), null, prefix2);
             if (OperatingSystem.IsMacOS())
                 foreach (string brew in new[] { "/opt/homebrew", "/usr/local" })
-                    if (HasHeader(brew)) return new SdlLocation(new[] { Path.Combine(brew, "include") }, new[] { Path.Combine(brew, "lib") }, null, "Homebrew");
+                    if (HasHeader(brew)) return new SdlLocation(new[] { Path.Combine(brew, "include") }.Concat(InnerDirs(brew)).ToList(), new[] { Path.Combine(brew, "lib") }, null, "Homebrew");
 
             // 5. pkg-config (and sdl2-config): -I and -L only (the library itself is named by the build)
             if (!OperatingSystem.IsWindows() && FromPkgConfig() is { } pkg) return pkg;
             return null;
+        }
+
+        /// <summary>The folder SDL.h lies in when it is <c>include/SDL2</c> of the prefix (as with the packages of the Linux distributions, MSYS2 and Homebrew): a compiler that
+        /// finds <c>&lt;SDL2/SDL.h&gt;</c> by itself does not need it, but one without <c>__has_include</c> (TinyCC) includes <c>&lt;SDL.h&gt;</c> (fire_display_sdl.h) - as
+        /// <c>sdl2-config --cflags</c> does, the folder is named.</summary>
+        private static IReadOnlyList<string> InnerDirs(string prefix)
+        {
+            string inner = Path.Combine(prefix, "include", "SDL2");
+            return File.Exists(Path.Combine(inner, "SDL.h")) ? new[] { inner } : Array.Empty<string>();
         }
 
         private static bool HasHeader(string prefix) =>

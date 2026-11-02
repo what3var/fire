@@ -23723,6 +23723,16 @@ else
 
                     string missing = fire.Native.SdlSetup.HelpText;
                     CheckNat("SDL2: die Hilfe sagt, was zu tun ist (Linux, macOS, Windows, SDL2_DIR)", missing.Contains("libsdl2-dev") && missing.Contains("brew install sdl2") && missing.Contains("SDL2_DIR"));
+
+                    // SDL2 of the system (/usr/include/SDL2): the folder of SDL.h is named as well - TinyCC has no __has_include and includes <SDL.h> (fire_display_sdl.h)
+                    if (!OperatingSystem.IsWindows() && File.Exists("/usr/include/SDL2/SDL.h"))
+                    {
+                        Environment.SetEnvironmentVariable("SDL2_DIR", null);
+                        var system = fire.Native.SdlSetup.Locate();
+                        var (_, tccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["tcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                        CheckNat("SDL2: das SDL2 des Systems - der Ordner von SDL.h kommt mit (-I/usr/include/SDL2: TinyCC hat kein __has_include)",
+                            system != null && system.IncludeDirs.Contains("/usr/include/SDL2") && tccArgs.Contains("-I\"/usr/include/SDL2\""), tccArgs);
+                    }
                 }
                 finally
                 {
