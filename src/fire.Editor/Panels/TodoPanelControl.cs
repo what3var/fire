@@ -170,7 +170,8 @@ namespace fire.Editor
             return panel;
         }
 
-        private static readonly IBrush BlockedBackground = new SolidColorBrush(Color.FromArgb(0x48, 0xE5, 0x56, 0x6F));
+        private static readonly IBrush BlockedBackground = new SolidColorBrush(Color.FromArgb(0x40, TaskMark.BlockedColor.R, TaskMark.BlockedColor.G, TaskMark.BlockedColor.B));
+        private static readonly IBrush BlockedBrush = new SolidColorBrush(TaskMark.BlockedColor);
         private static readonly IBrush SelectedBackground = new SolidColorBrush(Color.FromArgb(0x50, 0xB7, 0x00, 0x52));
         private static readonly IBrush Accent = new SolidColorBrush(EditorTheme.AccentTextColor);
 
@@ -236,7 +237,7 @@ namespace fire.Editor
                 Child = grid, Padding = new Thickness(0, 3), Margin = new Thickness(2, 0), CornerRadius = new CornerRadius(3),
                 Background = line == _selectedLine ? SelectedBackground : item.State == TodoState.Blocked ? BlockedBackground : Brushes.Transparent,
             };
-            if (item.State == TodoState.Blocked) { row.BorderBrush = EditorTheme.WineRed; row.BorderThickness = new Thickness(3, 0, 0, 0); }
+            if (item.State == TodoState.Blocked) { row.BorderBrush = BlockedBrush; row.BorderThickness = new Thickness(3, 0, 0, 0); }
             row.PointerPressed += (_, e) =>
             {
                 if (_editingLine == line) return;
@@ -250,28 +251,15 @@ namespace fire.Editor
             return row;
         }
 
-        /// <summary>The mark of a state: an empty box (open), a box with a slash in the accent colour (in progress), a red stop sign (blocked), a tick (done).</summary>
-        private static Border Mark(TodoState state)
+        /// <summary>The mark of a state: the drawn box of the Markdown preview (<see cref="TaskMark"/>).</summary>
+        private static TaskMark Mark(TodoState state) => new()
         {
-            var (glyph, foreground, border, background) = state switch
+            State = state switch
             {
-                TodoState.InProgress => ("/", Accent, Accent, (IBrush)Brushes.Transparent),
-                TodoState.Blocked => ("!", Brushes.White, EditorTheme.WineRed, EditorTheme.WineRed),
-                TodoState.Done => ("✓", EditorTheme.TextDim, EditorTheme.TextDim, Brushes.Transparent),
-                _ => ("", EditorTheme.Text, EditorTheme.TextDim, Brushes.Transparent),
-            };
-            return new Border
-            {
-                Width = 15, Height = 15, Margin = new Thickness(0, 1, 8, 0), VerticalAlignment = VerticalAlignment.Top, Cursor = new Cursor(StandardCursorType.Hand),
-                BorderBrush = border, BorderThickness = new Thickness(1.5), Background = background,
-                CornerRadius = new CornerRadius(state == TodoState.Blocked ? 7.5 : 3),
-                Child = new TextBlock
-                {
-                    Text = glyph, Foreground = foreground, FontSize = 11, FontWeight = FontWeight.Bold,
-                    HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-                },
-            };
-        }
+                TodoState.InProgress => MdTaskState.InProgress, TodoState.Blocked => MdTaskState.Blocked, TodoState.Done => MdTaskState.Done, _ => MdTaskState.Open,
+            },
+            Width = 15, Height = 15, Margin = new Thickness(0, 1, 8, 0), VerticalAlignment = VerticalAlignment.Top, Cursor = new Cursor(StandardCursorType.Hand),
+        };
 
         private void UpdateSelection()
         {

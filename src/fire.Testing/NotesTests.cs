@@ -25,6 +25,7 @@ static class NotesTests
         Adding();
         LineEndings();
         Folders();
+        Preview();
         Console.WriteLine(_failures == 0 ? "Notes: alle Tests bestanden" : $"Notes: {_failures} FEHLER");
     }
 
@@ -164,6 +165,16 @@ static class NotesTests
         list.SetState(list.Items[1], TodoState.Done);
         list.Add("c");
         Same("CRLF und fehlender Zeilenumbruch am Ende bleiben", list.ToString(), "# Todo\r\n\r\n- [ ] a\r\n- [x] b\r\n- [ ] c");
+    }
+
+    private static void Preview()
+    {
+        var list = fire.Editor.MarkdownParser.Parse("- [ ] a\n- [/] b\n- [#] c\n- [x] d\n- [X] e\n- f\n").OfType<fire.Editor.MdList>().Single();
+        var states = list.Items.Select(i => i.Task).ToList();
+        Check("Markdown-Vorschau: vier Zustaende, Punkt ohne Marke ist keine Aufgabe",
+            states.SequenceEqual(new fire.Editor.MdTaskState?[] { fire.Editor.MdTaskState.Open, fire.Editor.MdTaskState.InProgress, fire.Editor.MdTaskState.Blocked, fire.Editor.MdTaskState.Done, fire.Editor.MdTaskState.Done, null }),
+            string.Join(",", states));
+        Check("Markdown-Vorschau: Checked bleibt (erledigt oder nicht)", list.Items[3].Checked == true && list.Items[1].Checked == false && list.Items[5].Checked == null);
     }
 
     private static void Folders()

@@ -51,14 +51,15 @@ A todo list is a Markdown task list. Headings group the tasks, indented tasks ar
 - [ ] CIRCUITS.md in English
 ```
 
-| Mark | State | In spark |
+| Mark | State | In spark (the Todo window and the Markdown preview) |
 |---|---|---|
-| `[ ]` | open | normal |
-| `[/]` | in progress | accent colour |
-| `[#]` | blocked (a stopper) | red background and a stop sign; first in its group |
-| `[x]` | done | dimmed, struck through (`[X]` is read as done, too) |
+| `[ ]` | open | an empty box |
+| `[/]` | in progress | a box filled up to the diagonal; the text in the accent colour |
+| `[#]` | blocked (a stopper) | a red box; in the Todo window a red row, first in its group |
+| `[x]` | done | a filled box; the text dimmed and struck through (`[X]` is read as done, too) |
 
-`[ ]` and `[x]` are the task lists of GitHub; `[/]` and `[#]` are shown there as text in front of the task, which stays readable.
+The boxes have rounded corners and a filling a little darker than their outline. `[ ]` and `[x]` are the task lists of GitHub; `[/]` and `[#]` are shown there as text
+in front of the task, which stays readable.
 
 A task is a list item (`-`, `*`, `+` or `1.`, `1)`) that starts with one of the marks. A heading of level 2 or deeper starts a group; the heading of level 1 is the title of the
 list. Everything else in the file - paragraphs, notes below a task, list items without a mark, code blocks - belongs to the file and is kept as it is; the Todo window does not
