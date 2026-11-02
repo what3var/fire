@@ -22,6 +22,28 @@
 #define MyAppAssoc4Name MyAppName + " project"
 #define MyAppAssoc4Ext ".fireproj"
 #define MyAppAssoc4Key StringChange(MyAppAssoc4Name, " ", "") + MyAppAssoc4Ext
+#define MyAppAssoc5Name "fire circuit"
+#define MyAppAssoc5Ext ".biscuit"
+#define MyAppAssoc5Key StringChange(MyAppAssoc5Name, " ", "") + MyAppAssoc5Ext
+#define MyAppAssoc6Name "fire canvas"
+#define MyAppAssoc6Ext ".xmd"
+#define MyAppAssoc6Key StringChange(MyAppAssoc6Name, " ", "") + MyAppAssoc6Ext
+#define MyAppAssoc7Name "fire markdown"
+#define MyAppAssoc7Ext ".md"
+#define MyAppAssoc7Key StringChange(MyAppAssoc7Name, " ", "") + MyAppAssoc7Ext
+
+; Icons in spark.exe (src\fire.Editor\fileicons.rc / fileicons.res), addressed by resource ID.
+; DefaultIcon only accepts "file,index" or "file,-ID" (no names), so "-ID" keeps working when icons are added.
+#define IconId(Id) "{app}\" + MyAppExeName + ",-" + Str(Id)
+#define IconFire       IconId(101)
+#define IconFireApp    IconId(102)
+#define IconFireProj   IconId(103)
+#define IconFireScript IconId(104)
+#define IconFireSln    IconId(105)
+#define IconFireXml    IconId(106)
+#define IconBiscuit    IconId(107)
+#define IconMarkdown   IconId(108)
+#define IconCanvas     IconId(109)
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -60,6 +82,15 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; The file types: shown on the page "Select Additional Tasks" before the installation starts.
+; Each one only adds spark to the "Open with" list of the type (OpenWithProgids), it does not take over a type another program already opens.
+Name: "assoc_script";  Description: "fire scripts (.fire, .script)";      GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_fxml";    Description: "user interfaces (.fxml)";            GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_sln";     Description: "solutions (.firesln)";               GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_proj";    Description: "projects (.fireproj)";               GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_biscuit"; Description: "circuits (.biscuit)";                GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_xmd";     Description: "canvases (.xmd)";                    GroupDescription: "Open these file types with {#MyAppName}:"
+Name: "assoc_md";      Description: "Markdown (.md), in ""Open with"" only"; GroupDescription: "Open these file types with {#MyAppName}:"; Flags: unchecked
 
 [Dirs]
 Name: "{app}\Packages"; Permissions: users-modify
@@ -72,29 +103,44 @@ Source: "C:\Users\david\source\repos\what3var\fire\src\fire.Editor\bin\publish\*
 
 [Registry]
 ; firescript .fire .script
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc1Key}"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssocExt}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc1Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_script
 ; Sollten durch Assoc1 schon stehen
 ; Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssocName}"; Flags: uninsdeletekey
-; Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},2"
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc1Key}"; ValueData: ""; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc1Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},3"
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+; Root: HKA; Subkey: "Software\Classes\{#MyAppAssocKey}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFireScript}"
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc1Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_script
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc1Name}"; Flags: uninsdeletekey; Tasks: assoc_script
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFireScript}"; Tasks: assoc_script
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc1Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_script
 ; firexml
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc2Key}"; ValueData: ""; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc2Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},5"
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc2Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_fxml
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc2Name}"; Flags: uninsdeletekey; Tasks: assoc_fxml
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFireXml}"; Tasks: assoc_fxml
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc2Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_fxml
 ; firesln
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc3Key}"; ValueData: ""; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc3Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},4"
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc3Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_sln
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc3Name}"; Flags: uninsdeletekey; Tasks: assoc_sln
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFireSln}"; Tasks: assoc_sln
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc3Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_sln
 ; fireproj
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc4Key}"; ValueData: ""; Flags: uninsdeletevalue
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc4Name}"; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#MyAppExeName},2"
-Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc4Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_proj
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc4Name}"; Flags: uninsdeletekey; Tasks: assoc_proj
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconFireProj}"; Tasks: assoc_proj
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc4Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_proj
+; biscuit (circuit)
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc5Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_biscuit
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc5Name}"; Flags: uninsdeletekey; Tasks: assoc_biscuit
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconBiscuit}"; Tasks: assoc_biscuit
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc5Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_biscuit
+; xmd (canvas: extended Markdown, docs/NOTES.md)
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc6Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_xmd
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc6Name}"; Flags: uninsdeletekey; Tasks: assoc_xmd
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconCanvas}"; Tasks: assoc_xmd
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc6Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_xmd
+; md: only in "Open with" (the task is unchecked by default)
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Ext}\OpenWithProgids"; ValueType: string; ValueName: "{#MyAppAssoc7Key}"; ValueData: ""; Flags: uninsdeletevalue; Tasks: assoc_md
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}"; ValueType: string; ValueName: ""; ValueData: "{#MyAppAssoc7Name}"; Flags: uninsdeletekey; Tasks: assoc_md
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{#IconMarkdown}"; Tasks: assoc_md
+Root: HKA; Subkey: "Software\Classes\{#MyAppAssoc7Key}\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#MyAppExeName}"" ""%1"""; Tasks: assoc_md
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
