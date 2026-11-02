@@ -154,11 +154,10 @@ Reines C ohne Abhängigkeiten (läuft auch auf dem ESP32); auf Zielen mit mbedTL
 
 Stand: **umgesetzt** (docs/COMPRESSION.md) - Paket `compression`: Deflate/Inflate in eigenem C (streamfähig, gegen Python-zlib und mit 1500 kaputten
 Strömen unter ASan geprüft; Größe wie zlib), `DeflateStream`/`GZipStream`/`ZLibStream`, Einmal-Funktionen, `Zip.Archive` lesen (Zip64, Datendeskriptoren,
-CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 wird beim Schreiben für die Endsätze erzeugt; ein
-einzelner Eintrag über 4 GB wird beim Schreiben abgelehnt.
-
-**Offen:** Schreiben von Einträgen über 4 GB (Zip64 auch in den lokalen Headern bzw. Datendeskriptoren mit 8-Byte-Größen und im Zip64-Extra-Feld des
-zentralen Verzeichnisses); heute lehnt `EntryStream.Close` einen solchen Eintrag mit einer `ZipException` ab.
+CP437/UTF-8) und schreiben (auch streamend), Entpacken mit Schutz vor Pfaden außerhalb des Ziels. Zip64 auch beim Schreiben: Einträge über 4 GB (Zip64-Extra-Feld
+im zentralen Verzeichnis, im lokalen Header bei bekannter Größe bzw. mit dem Parameter `zip64` von `CreateEntry` und bei `AddFile` großer Dateien, Datendeskriptoren mit
+8-Byte-Größen), mehr als 65534 Einträge und ein zentrales Verzeichnis jenseits von 4 GB (Zip64-Endsatz mit Locator). Nur wo eine Zahl nicht passt - Archive
+unter 4 GB bleiben bytegleich. Geprüft mit gesenkten Grenzen (Tests, VM == nativ) und einmal echt mit 4,3 GB (VM und nativ; `zipfile`, `unzip -t`).
 
 Ursprünglicher Plan:
 

@@ -119,6 +119,90 @@ class CompressionTests {
         IO.Directory.Delete(dir, true)
     }
 
+    // An archive with every kind of entry (fixed times): its bytes must not change.
+    static byte[] Fixed() {
+        var t = new DateTime(2024, 2, 29, 23, 59, 58)
+        var data = new byte[30000]
+        for (var i = 0; i < data.length; i++) { data[i] = (i * 13 + i / 97) % 256 }
+        var m = new IO.MemoryStream()
+        var a = Zip.Archive.Write(m, true)
+        a.Add("a.txt", "Hallo", 6, t)
+        a.Add("bin/data.bin", data, 6, t)
+        a.Add("grün.txt", "x", 0, t)
+        a.AddDirectory("leer", t)
+        var s = a.CreateEntry("strom.txt", 9, t)
+        s.Write(data, 0, 20000)
+        s.Close()
+        a.Comment = "kommentar"
+        a.Close()
+        return m.ToBuffer()
+    }
+
+    [Test "Zip: an archive below 4 GB has the same bytes as before Zip64 writing"]
+    undefined ZipSameBytes() {
+        var b = CompressionTests.Fixed()
+        Testing.Assert.AreEqual(2487, b.length)
+        Testing.Assert.AreEqual(184334853, __CmpCrc32(0, b, 0, b.length))
+    }
+
+    [Test "Zip64 writing (limits lowered): sizes, offsets and the count in Zip64 fields, read back"]
+    undefined Zip64Lowered() {
+        var t = new DateTime(2024, 2, 29, 23, 59, 58)
+        var data = CompressionTests.Sample(30000)
+        var m = new IO.MemoryStream()
+        Zip.Archive.TestZip64Limits(1000, 5)
+        try {
+            var a = Zip.Archive.Write(m, true)
+            a.Add("small.txt", "Hallo", 6, t)
+            a.Add("big.bin", data, 6, t)
+            a.Add("stored.bin", data, 0, t)
+            var s = a.CreateEntry("stream.bin", 6, t)
+            s.Write(data, 0, 30000)
+            s.Close()
+            s = a.CreateEntry("stream64.bin", 0, t, true)
+            s.Write(data, 0, 30000)
+            s.Close()
+            for (var i = 0; i < 4; i++) { a.Add("n" + i + ".txt", "x" + i, 6, t) }
+            a.Close()
+        } finally { Zip.Archive.TestZip64Limits(0, 0) }
+        var b = m.ToBuffer()
+        // the local headers: version 4.5 and the Zip64 field with both sizes where they reach the limit
+        Testing.Assert.AreEqual(20, Zip.Bytes.U16(b, 4))
+        var big = 30 + 5 + 9
+        Testing.Assert.AreEqual(0x04034b50, Zip.Bytes.U32(b, big))
+        Testing.Assert.AreEqual(45, Zip.Bytes.U16(b, big + 4))
+        Testing.Assert.AreEqual(0xFFFFFFFF, Zip.Bytes.U32(b, big + 18))
+        Testing.Assert.AreEqual(20, Zip.Bytes.U16(b, big + 28))
+        Testing.Assert.AreEqual(30000, Zip.Bytes.U64(b, big + 30 + 7 + 4))
+        // the end: Zip64 record, locator, end record with 0xFFFF entries
+        var end = b.length - 22
+        Testing.Assert.AreEqual(0x06054b50, Zip.Bytes.U32(b, end))
+        Testing.Assert.AreEqual(0xFFFF, Zip.Bytes.U16(b, end + 10))
+        Testing.Assert.AreEqual(0xFFFFFFFF, Zip.Bytes.U32(b, end + 16))
+        Testing.Assert.AreEqual(0x07064b50, Zip.Bytes.U32(b, end - 20))
+        var r = Zip.Archive.FromBytes(b)
+        Testing.Assert.AreEqual(9, r.Count)
+        foreach (e in r.Entries) {
+            var back = e.ReadAllBytes()
+            Testing.Assert.AreEqual(e.Length, back.length, e.FullName)
+        }
+        Testing.Assert.IsTrue(CompressionTests.Same(data, r.GetEntry("stream.bin").ReadAllBytes()))
+        Testing.Assert.IsTrue(CompressionTests.Same(data, r.GetEntry("stream64.bin").ReadAllBytes()))
+        Testing.Assert.AreEqual(30005, r.GetEntry("stream64.bin").CompressedLength)
+        Testing.Assert.AreEqual("x3", r.GetEntry("n3.txt").ReadAllText())
+        // the data descriptors have 8-byte sizes: the next local header follows 24 bytes after the data
+        var st = r.GetEntry("stream.bin")
+        var after = st.headerOffset + 30 + 10 + st.CompressedLength
+        Testing.Assert.AreEqual(0x08074b50, Zip.Bytes.U32(b, after))
+        Testing.Assert.AreEqual(st.CompressedLength, Zip.Bytes.U64(b, after + 8))
+        Testing.Assert.AreEqual(30000, Zip.Bytes.U64(b, after + 16))
+        Testing.Assert.AreEqual(0x04034b50, Zip.Bytes.U32(b, after + 24))
+        r.Close()
+        // the limits are back: the same bytes as ever
+        var again = CompressionTests.Fixed()
+        Testing.Assert.AreEqual(184334853, __CmpCrc32(0, again, 0, again.length))
+    }
+
     [Test "Zip: a name outside of the folder is refused, a broken entry noticed"]
     undefined ZipSafety() {
         var m = new IO.MemoryStream()

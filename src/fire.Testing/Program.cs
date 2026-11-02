@@ -20285,6 +20285,38 @@ else
             IO.Directory.Delete(dir, true)
             print("end")
             """),
+        ("Compression: Zip64 schreiben (Grenzen fuer den Test gesenkt) - Extra-Felder, 8-Byte-Datendeskriptoren, Zip64-Endsatz, zurueckgelesen", """
+            #import "compression"
+            #import "io"
+            var t = new DateTime(2024, 2, 29, 23, 59, 58)
+            var data = new byte[20000]
+            for (var i = 0; i < data.length; i++) { data[i] = (i * 13 + i / 97) % 256 }
+            var m = new IO.MemoryStream()
+            Zip.Archive.TestZip64Limits(1000, 4)
+            var a = Zip.Archive.Write(m, true)
+            a.Add("klein.txt", "Hallo", 6, t)
+            a.Add("gross.bin", data, 6, t)
+            a.Add("roh.bin", data, 0, t)
+            var s = a.CreateEntry("strom.bin", 6, t)
+            s.Write(data, 0, 20000)
+            s.Close()
+            s = a.CreateEntry("strom64.bin", 0, t, true)
+            s.Write(data, 0, 20000)
+            s.Close()
+            a.Add("hinten.txt", "Ende", 6, t)
+            a.Close()
+            Zip.Archive.TestZip64Limits(0, 0)
+            var b = m.ToBuffer()
+            print("bytes " + b.length + " crc " + __CmpCrc32(0, b, 0, b.length))
+            var r = Zip.Archive.FromBytes(b)
+            foreach (e in r.Entries) {
+                var back = e.ReadAllBytes()
+                print(e.FullName + " " + e.Length + " " + e.CompressedLength + " " + e.Crc32 + " " + (back.length == e.Length))
+            }
+            print(r.GetEntry("hinten.txt").ReadAllText())
+            r.Close()
+            print("end")
+            """),
     }).ToArray();
 
     // Differences that were aligned

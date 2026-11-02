@@ -232,6 +232,7 @@ namespace Zip {
         int dosTime
         string comment = ""
         int externalAttributes
+        bool zip64Header = false   // writing: the local header carries the Zip64 field (then the data descriptor has 8-byte sizes)
 
         // The path in the archive ("docs/readme.txt"; folders end with "/").
         string FullName { get { return this.fullName } }
@@ -388,14 +389,16 @@ namespace Zip {
             this.Drain()
             __CmpClose(this.handle)
             this.entry.crc = this.crc
-            if (this.entry.length > 0xFFFFFFFE || this.entry.compressedLength > 0xFFFFFFFE) { throw new Zip.ZipException("The entry '" + this.entry.fullName + "' is larger than 4 GB, which this writer does not support.") }
-            // the data descriptor: CRC-32 and the sizes (the local header could not know them)
-            var d = new byte[16]
+            // the data descriptor: CRC-32 and the sizes (the local header could not know them); 8-byte sizes (Zip64) when the local header announced
+            // Zip64 or the entry became 4 GB or larger (the central directory then has the Zip64 field)
+            var size = 4
+            if (this.entry.zip64Header || Zip.Archive.NeedsZip64(this.entry.length) || Zip.Archive.NeedsZip64(this.entry.compressedLength)) { size = 8 }
+            var d = new byte[8 + 2 * size]
             Zip.Bytes.Put(d, 0, 4, 0x08074b50)
             Zip.Bytes.Put(d, 4, 4, this.crc)
-            Zip.Bytes.Put(d, 8, 4, this.entry.compressedLength)
-            Zip.Bytes.Put(d, 12, 4, this.entry.length)
-            this.archive.Out(d, 0, 16)
+            Zip.Bytes.Put(d, 8, size, this.entry.compressedLength)
+            Zip.Bytes.Put(d, 8 + size, size, this.entry.length)
+            this.archive.Out(d, 0, d.length)
             this.archive.open = undefined
         }
         destruct() { try { this.Close() } catch (Exception e) { } }
@@ -413,7 +416,21 @@ namespace Zip {
         int written = 0
         Zip.EntryStream open
 
+        // From these on a size or offset (a count of entries) is written as Zip64; only tests lower them (TestZip64Limits).
+        static int zip64Size = 0xFFFFFFFF
+        static int zip64Count = 0xFFFF
+
         construct() { this.entries = new List<Zip.Entry>(Owns.Values) }
+
+        static bool NeedsZip64(int value) { return value >= Zip.Archive.zip64Size }
+
+        // For tests: Zip64 already from `size` bytes and `count` entries on (archives of a few bytes then take the Zip64 paths); 0, 0 restores 4 GB / 65535.
+        static undefined TestZip64Limits(int size, int count) {
+            if (size <= 0) { size = 0xFFFFFFFF }
+            if (count <= 0) { count = 0xFFFF }
+            Zip.Archive.zip64Size = size
+            Zip.Archive.zip64Count = count
+        }
 
         // ---- reading ----
         // An archive file to read.
@@ -577,23 +594,39 @@ namespace Zip {
             return e
         }
 
-        // The local header of an entry (`descriptor`: the sizes follow the data).
-        undefined WriteLocalHeader(Zip.Entry e, byte name[], bool descriptor) {
+        // The local header of an entry (`descriptor`: the sizes follow the data). `zip64`: the sizes are in a Zip64 field (both, 8 bytes each; 0 with a
+        // descriptor, which then has 8-byte sizes too) and the 4-byte fields say 0xFFFFFFFF.
+        undefined WriteLocalHeader(Zip.Entry e, byte name[], bool descriptor, bool zip64) {
             var h = new byte[30]
             Zip.Bytes.Put(h, 0, 4, 0x04034b50)
-            Zip.Bytes.Put(h, 4, 2, 20)
+            Zip.Bytes.Put(h, 4, 2, zip64 ? 45 : 20)
             Zip.Bytes.Put(h, 6, 2, e.flags)
             Zip.Bytes.Put(h, 8, 2, e.method)
             Zip.Bytes.Put(h, 10, 2, e.dosTime)
             Zip.Bytes.Put(h, 12, 2, e.dosDate)
-            if (!descriptor) {
-                Zip.Bytes.Put(h, 14, 4, e.crc)
+            if (!descriptor) { Zip.Bytes.Put(h, 14, 4, e.crc) }
+            if (zip64) {
+                Zip.Bytes.Put(h, 18, 4, 0xFFFFFFFF)
+                Zip.Bytes.Put(h, 22, 4, 0xFFFFFFFF)
+                Zip.Bytes.Put(h, 28, 2, 20)
+            } else if (!descriptor) {
                 Zip.Bytes.Put(h, 18, 4, e.compressedLength)
                 Zip.Bytes.Put(h, 22, 4, e.length)
             }
             Zip.Bytes.Put(h, 26, 2, name.length)
             this.Out(h, 0, 30)
             this.Out(name, 0, name.length)
+            e.zip64Header = zip64
+            if (zip64) {
+                var x = new byte[20]
+                Zip.Bytes.Put(x, 0, 2, 1)
+                Zip.Bytes.Put(x, 2, 2, 16)
+                if (!descriptor) {
+                    Zip.Bytes.Put(x, 4, 8, e.length)
+                    Zip.Bytes.Put(x, 12, 8, e.compressedLength)
+                }
+                this.Out(x, 0, 20)
+            }
         }
 
         static int NameFlags(byte name[]) {
@@ -621,7 +654,7 @@ namespace Zip {
                 }
             }
             e.compressedLength = stored.length
-            this.WriteLocalHeader(e, nameBytes, false)
+            this.WriteLocalHeader(e, nameBytes, false, Zip.Archive.NeedsZip64(e.length) || Zip.Archive.NeedsZip64(e.compressedLength))
             this.Out(stored, 0, stored.length)
             this.entries.Add(e)
             return e
@@ -638,9 +671,11 @@ namespace Zip {
         Zip.Entry AddFile(string name, string path, int level = 6) {
             this.CheckWriting()
             var time = IO.File.GetLastWriteTime(path)
-            if (IO.File.Size(path) <= 16777216) { return this.Add(name, IO.File.ReadAllBytes(path), level, time) }
+            var size = IO.File.Size(path)
+            if (size <= 16777216) { return this.Add(name, IO.File.ReadAllBytes(path), level, time) }
             var input = IO.File.OpenRead(path)
-            var output = this.CreateEntry(name, level, time)
+            // Zip64 in the local header when the entry may reach 4 GB (Deflate of data that does not compress adds a little)
+            var output = this.CreateEntry(name, level, time, Zip.Archive.NeedsZip64(size + size / 1024 + 65536))
             try { input.CopyTo(output, 65536) } finally {
                 output.Close()
                 input.Close()
@@ -649,14 +684,16 @@ namespace Zip {
         }
 
         // An entry to write into piece by piece: what is written is compressed (Deflate) into the archive; Close the stream before the next entry.
-        Zip.EntryStream CreateEntry(string name, int level = 6, DateTime time = undefined) {
+        // It may grow beyond 4 GB: then its data descriptor and the central directory carry Zip64 sizes. `zip64` also announces that in the local
+        // header (as the APPNOTE asks for an entry that may become that large; readers that go through the archive front to back need it).
+        Zip.EntryStream CreateEntry(string name, int level = 6, DateTime time = undefined, bool zip64 = false) {
             this.CheckWriting()
             if (time == undefined) { time = DateTime.Now }
             var e = this.NewEntry(name, time)
             var nameBytes = IO.Utf8.GetBytes(e.fullName)
             e.flags = Zip.Archive.NameFlags(nameBytes) | 8
             e.method = 8
-            this.WriteLocalHeader(e, nameBytes, true)
+            this.WriteLocalHeader(e, nameBytes, true, zip64)
             this.entries.Add(e)
             this.open = new Zip.EntryStream(this, e, level)
             return this.open
@@ -673,7 +710,7 @@ namespace Zip {
                 var dirSize = this.written - dirOffset
                 var count = this.entries.Count
                 var commentBytes = IO.Utf8.GetBytes(this.comment)
-                if (count >= 0xFFFF || dirOffset >= 0xFFFFFFFF || dirSize >= 0xFFFFFFFF) {
+                if (count >= Zip.Archive.zip64Count || Zip.Archive.NeedsZip64(dirOffset) || Zip.Archive.NeedsZip64(dirSize)) {
                     var z64 = this.written
                     var r = new byte[76]
                     Zip.Bytes.Put(r, 0, 4, 0x06064b50)
@@ -689,9 +726,9 @@ namespace Zip {
                     Zip.Bytes.Put(r, 64, 8, z64)
                     Zip.Bytes.Put(r, 72, 4, 1)
                     this.Out(r, 0, 76)
-                    if (count > 0xFFFF) { count = 0xFFFF }
-                    if (dirOffset > 0xFFFFFFFF) { dirOffset = 0xFFFFFFFF }
-                    if (dirSize > 0xFFFFFFFF) { dirSize = 0xFFFFFFFF }
+                    if (count >= Zip.Archive.zip64Count) { count = 0xFFFF }
+                    if (Zip.Archive.NeedsZip64(dirOffset)) { dirOffset = 0xFFFFFFFF }
+                    if (Zip.Archive.NeedsZip64(dirSize)) { dirSize = 0xFFFFFFFF }
                 }
                 var end = new byte[22]
                 Zip.Bytes.Put(end, 0, 4, 0x06054b50)
@@ -713,16 +750,34 @@ namespace Zip {
 
         undefined WriteCentral(Zip.Entry e) {
             var nameBytes = IO.Utf8.GetBytes(e.fullName)
+            // the Zip64 field: the numbers that do not fit into their 4 bytes (which then say 0xFFFFFFFF), in this order
+            var length = e.length
+            var compressedLength = e.compressedLength
             var offset = e.headerOffset
-            var big = offset >= 0xFFFFFFFF
-            var extra = new byte[0]
-            if (big) {
-                extra = new byte[12]
-                Zip.Bytes.Put(extra, 0, 2, 1)
-                Zip.Bytes.Put(extra, 2, 2, 8)
-                Zip.Bytes.Put(extra, 4, 8, offset)
+            var extra = new byte[28]
+            var x = 4
+            if (Zip.Archive.NeedsZip64(length)) {
+                Zip.Bytes.Put(extra, x, 8, length)
+                x = x + 8
+                length = 0xFFFFFFFF
+            }
+            if (Zip.Archive.NeedsZip64(compressedLength)) {
+                Zip.Bytes.Put(extra, x, 8, compressedLength)
+                x = x + 8
+                compressedLength = 0xFFFFFFFF
+            }
+            if (Zip.Archive.NeedsZip64(offset)) {
+                Zip.Bytes.Put(extra, x, 8, offset)
+                x = x + 8
                 offset = 0xFFFFFFFF
             }
+            var extraLength = 0
+            if (x > 4) {
+                Zip.Bytes.Put(extra, 0, 2, 1)
+                Zip.Bytes.Put(extra, 2, 2, x - 4)
+                extraLength = x
+            }
+            var big = extraLength > 0 || e.zip64Header
             var h = new byte[46]
             Zip.Bytes.Put(h, 0, 4, 0x02014b50)
             Zip.Bytes.Put(h, 4, 2, 0x031E)        // made by: UNIX, version 3.0 (the attributes below are UNIX modes)
@@ -734,17 +789,17 @@ namespace Zip {
             Zip.Bytes.Put(h, 12, 2, e.dosTime)
             Zip.Bytes.Put(h, 14, 2, e.dosDate)
             Zip.Bytes.Put(h, 16, 4, e.crc)
-            Zip.Bytes.Put(h, 20, 4, e.compressedLength)
-            Zip.Bytes.Put(h, 24, 4, e.length)
+            Zip.Bytes.Put(h, 20, 4, compressedLength)
+            Zip.Bytes.Put(h, 24, 4, length)
             Zip.Bytes.Put(h, 28, 2, nameBytes.length)
-            Zip.Bytes.Put(h, 30, 2, extra.length)
+            Zip.Bytes.Put(h, 30, 2, extraLength)
             var mode = 0x81A4                       // a file, rw-r--r--
             if (e.IsDirectory) { mode = 0x41ED }    // a folder, rwxr-xr-x
             Zip.Bytes.Put(h, 38, 4, (mode << 16) | (e.IsDirectory ? 0x10 : 0))
             Zip.Bytes.Put(h, 42, 4, offset)
             this.Out(h, 0, 46)
             this.Out(nameBytes, 0, nameBytes.length)
-            this.Out(extra, 0, extra.length)
+            this.Out(extra, 0, extraLength)
         }
 
         destruct() { try { this.Close() } catch (Exception e) { } }
