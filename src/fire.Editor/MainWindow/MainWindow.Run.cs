@@ -221,7 +221,12 @@ namespace fire.Editor
             _isBusy = false;
             _session.UpdateBreakpoints(BreakpointLocations());
 
-            bool compiled = _session.Compile(sources, filename, baseDirectory, plan);
+            var environment = new fire.Standard.ProgramEnvironment
+            {
+                Args = project != null ? plan!.Settings.Arguments ?? new List<string>() : ScriptArguments(doc),
+                ProgramPath = project != null ? plan!.SourcePaths.LastOrDefault() ?? "" : FullPathOf(doc) ?? "",
+            };
+            bool compiled = _session.Compile(sources, filename, baseDirectory, plan, environment);
             // the errors and warnings of the compile: into the build log and the error list (until the next build)
             FinishBuild("Compile", compiled, _session.LastDiagnostics, buildFile, buildPath);
             if (!compiled)
@@ -378,6 +383,41 @@ namespace fire.Editor
         {
             if (ActiveScript is { } script) script.ToggleBreakpointAtCaret();
             else UpdateStatus("Breakpoints are only available in script tabs.");
+        }
+
+        /// <summary>The arguments a single script gets when it runs (Environment.Args), by its path (or its tab name while unsaved); a project keeps them in settings.arguments.</summary>
+        private readonly Dictionary<string, List<string>> _scriptArguments = new();
+
+        private List<string> ScriptArguments(OpenDocument? doc) =>
+            doc != null && _scriptArguments.TryGetValue(FullPathOf(doc) ?? doc.DisplayName, out var args) ? args : new List<string>();
+
+        /// <summary>Run > Program Arguments: what the program gets as Environment.Args - for a project its settings.arguments (saved with the project), for a single script until spark ends.</summary>
+        private async void ProgramArguments_Click(object? sender, RoutedEventArgs e)
+        {
+            var project = ContextProject();
+            var doc = ActiveDocument;
+            if (project == null && doc == null) { UpdateStatus("No document is open."); return; }
+            string current = project != null ? ArgumentText.Join(project.Project.Settings?.Arguments) : ArgumentText.Join(ScriptArguments(doc));
+            string what = project != null ? $"the project {project.Name}" : doc!.DisplayName;
+            var text = await Dialogs.Input(this, $"The arguments of {what} (separated by blanks, \"...\" around one with blanks):", "Program Arguments", current);
+            if (text == null) return;
+            var args = ArgumentText.Split(text);
+            if (project != null)
+            {
+                project.Project.Settings ??= new ProjectSettings();
+                project.Project.Settings.Arguments = args.Count > 0 ? args : null;
+                try
+                {
+                    _workspace.SaveProject(project);
+                    UpdateStatus($"Arguments of {project.Name}: {(args.Count == 0 ? "none" : ArgumentText.Join(args))} (saved in {Path.GetFileName(project.FilePath)})");
+                }
+                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Program Arguments"); }
+            }
+            else
+            {
+                _scriptArguments[FullPathOf(doc) ?? doc!.DisplayName] = args;
+                UpdateStatus($"Arguments of {doc!.DisplayName}: {(args.Count == 0 ? "none" : ArgumentText.Join(args))}");
+            }
         }
 
         private void mnuRunDebug_Click(object? sender, RoutedEventArgs e) => SetMode(Runtime.VmExecutionMode.Debug);

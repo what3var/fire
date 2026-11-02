@@ -340,7 +340,7 @@ class DeviceManager {
 
     static undefined RemoveDriver(Driver driver) {
         var all = DeviceManager.Drivers()
-        for (int i = 0; i < all.count; i++) {
+        for (int i = 0; i < all.Count; i++) {
             if (all[i] == driver) {
                 all.RemoveAt(i)
                 DeviceManager.Host.DevicesChanged(DeviceManager.Devices())
@@ -351,7 +351,7 @@ class DeviceManager {
 
     // the serial driver, when the program has none of its own
     static undefined EnsureDrivers() {
-        if (DeviceManager.Drivers().count == 0) { DeviceManager.AddDriver(new SerialDriver()) }
+        if (DeviceManager.Drivers().Count == 0) { DeviceManager.AddDriver(new SerialDriver()) }
     }
 
     /// <summary>All devices of all drivers.</summary>

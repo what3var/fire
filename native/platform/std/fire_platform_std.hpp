@@ -1,6 +1,6 @@
 // fire native platform layer - the portable part of the hosted platforms (Linux, macOS, Windows): C++ standard library threads.
 //
-// A platform header offers the runtime (fire_rt.hpp) these, in namespace fire::plat:
+// The C++ platform layer (the natives in C++ include it through fire_rt_cpp.hpp; the runtime itself uses fire_platform.h) offers these, in namespace fire::plat:
 //   int64_t nowMs()                    a monotonic clock in milliseconds
 //   [[noreturn]] void exitProcess(int) ends the program (the streams are flushed already)
 //   int64_t unixMicros()               the wall clock: microseconds since 1970-01-01 UTC (the time bridge)

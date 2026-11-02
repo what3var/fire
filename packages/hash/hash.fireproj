@@ -1,0 +1,68 @@
+{
+  "format": 1,
+  "name": "fire-hash",
+  "type": "library",
+  "import": "hash",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'hash' of fire: MD5, SHA-1, SHA-256/384/512, CRC-32, Adler-32 and HMAC (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_hash.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__HashInit",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_hash_Init"
+      },
+      {
+        "name": "__HashUpdate",
+        "arguments": 4,
+        "c": "fire_hash_Update"
+      },
+      {
+        "name": "__HashUpdateText",
+        "arguments": 2,
+        "c": "fire_hash_UpdateText"
+      },
+      {
+        "name": "__HashFinal",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_hash_Final"
+      },
+      {
+        "name": "__HashToHex",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_hash_ToHex"
+      },
+      {
+        "name": "__HashFromHex",
+        "arguments": 1,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_hash_FromHex"
+      },
+      {
+        "name": "__HashEqual",
+        "arguments": 2,
+        "c": "fire_hash_Equal"
+      }
+    ],
+    "exceptions": [
+      "ArgumentException"
+    ],
+    "language": "c"
+  }
+}

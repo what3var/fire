@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using fire.Ast;
 using fire.Lexing;
+using fire.Resolving;
 using fire.Values;
 
 namespace fire.Compiler
@@ -20,7 +21,7 @@ namespace fire.Compiler
     /// <summary>
     /// The static types the checker knows. `Dynamic` is "not known": it is compatible with everything, so code that does not state its types is never reported.
     /// </summary>
-    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array }
+    internal enum StaticKind { Dynamic, Bool, Int, Float, Char, String, Lambda, Undefined, Class, Object, Array, Enum }
 
     /// <summary>A static type: `Element` is the element type of an array, `ParamCount`/`Return` the signature of a lambda (-1 / null: not known).</summary>
     internal sealed record StaticType(StaticKind Kind, string? Class = null, StaticType? Element = null, int ParamCount = -1, StaticType? Return = null, IReadOnlyList<StaticType>? Params = null,
@@ -51,12 +52,15 @@ namespace fire.Compiler
         public static StaticType ArrayOf(StaticType element) => new(StaticKind.Array, Element: element);
         /// <summary>An instance of a class or interface; `args` are its type arguments (null: the raw form, every type argument `any`).</summary>
         public static StaticType ClassOf(string name, IReadOnlyList<StaticType>? args = null) => new(StaticKind.Class, name, Args: args);
+        /// <summary>A value of the enum `name` (its full name): not an int (docs/language/10-enums-and-namespaces.md).</summary>
+        public static StaticType EnumOf(string name) => new(StaticKind.Enum, name);
         public static StaticType LambdaOf(int paramCount, StaticType? returns, IReadOnlyList<StaticType>? parameters = null) => new(StaticKind.Lambda, ParamCount: paramCount, Return: returns, Params: parameters);
         public bool IsDynamic => Kind == StaticKind.Dynamic;
         public override string ToString() => Kind switch
         {
             StaticKind.Class => GenericClassNames.PlainName(Class!) + (Args is { Count: > 0 } ? "<" + string.Join(", ", Args) + ">" : ""),
             StaticKind.Object => "class",
+            StaticKind.Enum => Class!,
             StaticKind.Dynamic => "any",
             StaticKind.Array => Element + "[]",
             StaticKind.Lambda => (Return != null ? Return + " " : "") + "lambda" + (ParamCount > 0 ? "<" + string.Join(", ", Params ?? Enumerable.Repeat(Dynamic, ParamCount)) + ">" : ""),
@@ -82,6 +86,9 @@ namespace fire.Compiler
         public const string UnitLossCode = "TC007";
         public const string UnknownMemberCode = "TC008";
         public const string AssignInConditionCode = "TC009";
+        public const string SwitchMissingCode = "TC010";
+        /// <summary>A named argument (`f(size: 2)`) that no parameter has, or a parameter that gets no value with named arguments - an error in lax mode too.</summary>
+        public const string NamedArgumentCode = "TC011";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -112,6 +119,11 @@ namespace fire.Compiler
         private List<StaticType>? _collectedReturns;
         private static readonly bool SuggestReturnTypes = Environment.GetEnvironmentVariable("FIRE_TYPECHECK_SUGGEST") == "1";
 
+        /// <summary>What the resolver found for the names (`Color.Red`: a member of an enum, with its type).</summary>
+        private IReadOnlyDictionary<Expr, ResolvedRef> _refs = new Dictionary<Expr, ResolvedRef>();
+        /// <summary>The enums of the program: full name -> a flag enum.</summary>
+        private readonly Dictionary<string, bool> _enumNames = new(StringComparer.Ordinal);
+
         private TypeChecker(IReadOnlyDictionary<string, ClassDecl> classes, TypeCheckMode defaultMode, int firstUserSource, Dictionary<Expr, string> unitChecks,
             Dictionary<Expr, string[]> methodTypeArgs, Dictionary<Expr, (TypeRef Type, string What)> localGuards, Dictionary<Expr, string> overloadHints)
         {
@@ -132,6 +144,7 @@ namespace fire.Compiler
             foreach (var stmt in program)
                 if (stmt is TypeCheckDirective d) checker._strictBySource[d.Source] = d.Strict;
             checker.CollectInterfaces(program);
+            checker._refs = resolved.References;
             checker._scopes.Add(new Dictionary<string, StaticType>());
             foreach (var stmt in program)
             {
@@ -156,6 +169,7 @@ namespace fire.Compiler
             foreach (var stmt in statements)
             {
                 if (stmt is InterfaceDecl i) _interfaces[i.Name] = i;
+                else if (stmt is EnumDecl e) _enumNames[e.Name] = e.IsFlags;
                 else if (stmt is NamespaceDecl n) CollectInterfaces(n.Members);
             }
         }
@@ -166,7 +180,7 @@ namespace fire.Compiler
         private bool Strict => _strictBySource.TryGetValue(_source, out bool strict) ? strict : _defaultMode == TypeCheckMode.Strict;
 
         private void Report(string code, string message, int line) =>
-            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
+            _diagnostics.Add(new Diagnostic(line, message, Strict && code is not (UnitLossCode or AssignInConditionCode or SwitchMissingCode) ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning, code));
 
         /// <summary>The condition of `if`, `while` and `for` must be a bool: a number is no condition (`if (n)`), the VM throws an ArgumentException for it.</summary>
         private void CheckCondition(Expr condition)
@@ -258,6 +272,8 @@ namespace fire.Compiler
                 var view = value.Class == target.Class ? value : AsBase(value, target.Class!);
                 return view?.Args == null || view.Args.Zip(target.Args).All(p => p.First.IsDynamic || p.Second.IsDynamic || p.First == p.Second);
             }
+            // an enum is not an int (and an int not an enum): `Color c = 5`, `int i = c` want a `!` (`5!Color`, `c!int`)
+            if (value.Kind == StaticKind.Enum || target.Kind == StaticKind.Enum) return value.Kind == target.Kind && value.Class == target.Class;
             return value.Kind == target.Kind;
         }
 
@@ -401,6 +417,7 @@ namespace fire.Compiler
             }
             string plain = PlainName(name);
             if (_classes.ContainsKey(plain) || _interfaces.ContainsKey(plain)) return StaticType.ClassOf(plain);
+            if (EnumNamed(name) is { } enumName) return StaticType.EnumOf(enumName);
             return TypeParamRef(name) is { } typeParam ? StaticType.Dynamic with { TypeParam = typeParam } : StaticType.Dynamic;
         }
 
@@ -775,16 +792,39 @@ namespace fire.Compiler
         private static bool Fits(IReadOnlyList<LambdaParam> parameters, int argc) =>
             argc <= parameters.Count && argc >= parameters.Count(p => p.DefaultValue == null);
 
-        private void CheckArguments(IReadOnlyList<LambdaParam> parameters, IReadOnlyList<StaticType> args, IReadOnlyList<Expr> argExprs, string callee,
+        private void CheckArguments(IReadOnlyList<LambdaParam?> parameters, IReadOnlyList<StaticType> args, IReadOnlyList<Expr> argExprs, string callee,
             IReadOnlyDictionary<string, StaticType>? map = null)
         {
             for (int i = 0; i < args.Count && i < parameters.Count; i++)
             {
-                if (parameters[i].ByRef) continue;
-                var declared = Declared(parameters[i].Type, parameters[i].ArrayRanks.Count, map);
-                if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameters[i].Name}' of '{callee}'", ArgumentCode, argExprs[i]);
+                if (parameters[i] is not { ByRef: false } parameter) continue;
+                var declared = Declared(parameter.Type, parameter.ArrayRanks.Count, map);
+                if (declared is { } target) CheckAssignable(args[i], target, argExprs[i].Line, $"parameter '{parameter.Name}' of '{callee}'", ArgumentCode, argExprs[i]);
             }
         }
+
+        /// <summary>The parameter each argument of a call goes to: the positional ones in order, a named one (`size: 2`) to the parameter of its name
+        /// (docs/language/08-classes.md). With names, a name that no parameter has and a parameter without a value and without a default value are errors
+        /// (TC011, in lax mode too); null for an argument without a parameter.</summary>
+        private List<LambdaParam?> ArgParams(IReadOnlyList<LambdaParam> parameters, IReadOnlyList<string?>? names, int argCount, string callee, int line)
+        {
+            var result = new List<LambdaParam?>(argCount);
+            for (int i = 0; i < argCount; i++)
+            {
+                string? name = names != null && i < names.Count ? names[i] : null;
+                if (name == null) { result.Add(i < parameters.Count ? parameters[i] : null); continue; }
+                var param = parameters.FirstOrDefault(p => p.Name == name);
+                if (param == null) ReportError(NamedArgumentCode, $"'{callee}' has no parameter '{name}'", line);
+                result.Add(param);
+            }
+            if (names != null)
+                foreach (var p in parameters)
+                    if (!result.Contains(p) && p.DefaultValue == null)
+                        ReportError(NamedArgumentCode, $"The parameter '{p.Name}' of '{callee}' gets no value (it has no default value)", line);
+            return result;
+        }
+
+        private void ReportError(string code, string message, int line) => _diagnostics.Add(new Diagnostic(line, message, DiagnosticSeverity.Error, code));
 
         // -------------------------------------------------------------------------------------------------------------
         // Statements
@@ -914,6 +954,7 @@ namespace fire.Compiler
         {
             var declared = Declared(v.Type, v.ArrayRanks.Count);
             var init = v.Initializer != null ? Infer(v.Initializer, declared) : StaticType.Dynamic;
+            if (init.Kind == StaticKind.Enum && Parser.Switches.TryGetValue(v, out var caseValues)) CheckSwitchOverEnum(init.Class!, caseValues, v.Line);
             if (declared is { } target)
             {
                 if (v.Initializer != null)
@@ -1202,6 +1243,11 @@ namespace fire.Compiler
 
         private StaticType InferBinaryType(BinaryExpr b, StaticType left, StaticType right)
         {
+            // `|`, `&`, `#` of two values of the same flag enum: that enum; any other operation on an enum value works on its number (an int)
+            if (b.Op is BinaryOp.BitAnd or BinaryOp.BitOr or BinaryOp.BitXor && left.Kind == StaticKind.Enum && left == right && _enumNames.GetValueOrDefault(left.Class!)) return left;
+            if (b.Op is BinaryOp.Eq or BinaryOp.NotEq or BinaryOp.Lt or BinaryOp.LtEq or BinaryOp.Gt or BinaryOp.GtEq && (left.Kind == StaticKind.Enum || right.Kind == StaticKind.Enum)) return StaticType.Bool;
+            if (left.Kind == StaticKind.Enum) left = StaticType.Int;
+            if (right.Kind == StaticKind.Enum) right = StaticType.Int;
             switch (b.Op)
             {
                 case BinaryOp.And or BinaryOp.Or: return StaticType.Bool;
@@ -1270,8 +1316,32 @@ namespace fire.Compiler
         /// <summary>A tool for refactorings (FIRE_MEMBER_LOG): every member access whose receiver class is known (source, line, class, name, bare).</summary>
         public static List<(int Source, int Line, string Class, string Name, bool Bare)>? MemberLog;
 
+        /// <summary>A `switch` over a value of an enum without `case default`: the members no `case` names (TC010, a warning also in strict mode - it may be meant).</summary>
+        private void CheckSwitchOverEnum(string enumName, List<Expr> caseValues, int line)
+        {
+            fire.Values.EnumType? type = null;
+            var covered = new HashSet<long>();
+            foreach (var value in caseValues)
+                if (_refs.TryGetValue(value, out var r) && r is ResolvedRef.EnumMember { Type: { } t } member && t.Name == enumName) { type = t; covered.Add(member.Value); }
+                else return;   // (a case that is no member of the enum: not checked)
+            if (type == null) return;
+            var missing = type.Members.Where(m => !covered.Contains(m.Value)).Select(m => m.Name).Distinct().ToList();
+            if (missing.Count > 0)
+                Report(SwitchMissingCode, $"The switch over '{enumName}' has no case for {string.Join(", ", missing)} (add the cases or a 'case default')", line);
+        }
+
+        /// <summary>The full name of the enum a type name means (its full name, or the name in the namespace of the class that is being checked), or null.</summary>
+        private string? EnumNamed(string name)
+        {
+            if (_enumNames.ContainsKey(name)) return name;
+            if (_class?.Name is { } cls && cls.LastIndexOf('.') is var dot and > 0 && _enumNames.ContainsKey(cls.Substring(0, dot) + "." + name)) return cls.Substring(0, dot) + "." + name;
+            return null;
+        }
+
         private StaticType InferMember(MemberExpr m)
         {
+            // `Color.Red`: a value of the enum
+            if (_refs.TryGetValue(m, out var resolvedRef) && resolvedRef is ResolvedRef.EnumMember { Type: { } enumType }) return StaticType.EnumOf(enumType.Name);
             var target = Infer(m.Target);
             if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
@@ -1430,8 +1500,16 @@ namespace fire.Compiler
                     return StaticType.Dynamic;
                 }
             }
+            if (c.ArgNames != null && candidates is { Count: > 1 })
+            {
+                // named arguments: only the overloads that have parameters of these names
+                var named = candidates.Where(x => c.ArgNames.All(n => n == null || x.Method.Params.Any(p => p.Name == n))).ToList();
+                if (named.Count > 1) { foreach (var a in c.Args) Infer(a); return StaticType.Dynamic; }
+                if (named.Count == 1) candidates = named;
+            }
             if (candidates is { Count: > 1 }) return InferOverloadedCall(c, candidates, receiverClass, virtualCall);
             if (candidates is { Count: 1 }) (method, map) = candidates[0];
+            var argParams = method == null ? null : ArgParams(method.Params, c.ArgNames, c.Args.Count, method.Name, c.Line);
 
             // a generic method (`R Select<R>(R lambda<T> fn)`): its type parameters are taken from the arguments, one after the other (a later argument
             // - a lambda - sees what the earlier ones fixed); what is not found is `any`
@@ -1451,9 +1529,8 @@ namespace fire.Compiler
             for (int i = 0; i < c.Args.Count; i++)
             {
                 StaticType? expected = null;
-                if (method != null && i < method.Params.Count && !method.Params[i].ByRef)
+                if (argParams?[i] is { ByRef: false } param)
                 {
-                    var param = method.Params[i];
                     expected = Declared(param.Type, param.ArrayRanks.Count, open == null ? map : WithOpen(map!, open));
                     // a type parameter found to be an int so far may still become a float (`Max(2, 3.5)`): the argument is not held to int
                     if (open != null && param.Type is { TypeArgs: null } bare && open.Contains(bare.BaseName) && param.ArrayRanks.Count + bare.ArrayRank == 0
@@ -1463,18 +1540,18 @@ namespace fire.Compiler
                     if (open != null && expected is { Kind: StaticKind.Lambda } && param.Type?.LambdaSignature?.ReturnTypeName is { } r && open.Contains(r) && !map!.ContainsKey(r))
                         expected = expected with { Return = null };
                 }
-                else if (lambda?.Params != null && i < lambda.Params.Count) expected = lambda.Params[i];
+                else if (lambda?.Params != null && i < lambda.Params.Count && c.ArgNames == null) expected = lambda.Params[i];
                 var arg = Infer(c.Args[i], expected);
                 args.Add(arg);
-                if (open != null && i < method!.Params.Count) Bind(method.Params[i].Type, method.Params[i].ArrayRanks.Count, arg, map!, open);
+                if (open != null && argParams![i] is { } bound) Bind(bound.Type, bound.ArrayRanks.Count, arg, map!, open);
             }
             if (open != null)
             {
                 // what was found is given to the call at run time (ObjectInstance-like: the generic method checks its parameters against it)
                 _methodTypeArgs[c] = method!.TypeParams!.Select(p => map!.TryGetValue(p.Name, out var found) ? TypeArgText(found) : "").ToArray();
                 // a whole number for a type parameter found to be a float becomes a float at the call (`Max(2, 3.5)`), not only in the method
-                for (int i = 0; i < c.Args.Count && i < method.Params.Count; i++)
-                    if (method.Params[i] is { ByRef: false, Type: { TypeArgs: null, ArrayRank: 0 } bare } p && p.ArrayRanks.Count == 0 && open.Contains(bare.BaseName)
+                for (int i = 0; i < c.Args.Count; i++)
+                    if (argParams![i] is { ByRef: false, Type: { TypeArgs: null, ArrayRank: 0 } bare } p && p.ArrayRanks.Count == 0 && open.Contains(bare.BaseName)
                         && map!.TryGetValue(bare.BaseName, out var found) && found.Kind == StaticKind.Float && args[i].Kind == StaticKind.Int)
                         _unitChecks.TryAdd(c.Args[i], "#any");
                 map = WithOpen(map!, open);
@@ -1485,7 +1562,7 @@ namespace fire.Compiler
                 if (c.Callee is MemberExpr callee && calleeTarget != null) ReportMissingMethod(callee, calleeTarget, c.Args.Count);
                 return StaticType.Dynamic;
             }
-            CheckArguments(method.Params, args, c.Args, method.Name, map);
+            CheckArguments(argParams!, args, c.Args, method.Name, map);
             return DeclaredOrDynamic(method.ReturnType, 0, map);
         }
 
@@ -1611,6 +1688,17 @@ namespace fire.Compiler
             if (!_classes.TryGetValue(plain, out var decl)) { foreach (var a in n.Args) Infer(a); return StaticType.Dynamic; }
             var map = MapFor(decl.TypeParams, typeArgs);
             var ctors = decl.Members.OfType<ConstructorDecl>().Where(c => Fits(c.Params, n.Args.Count)).ToList();
+            if (n.ArgNames != null)
+            {
+                // named arguments: the constructors with parameters of these names; several of them - not checked
+                ctors = ctors.Where(k => n.ArgNames.All(name => name == null || k.Params.Any(p => p.Name == name))).ToList();
+                if (ctors.Count == 0) ReportError(NamedArgumentCode, $"No constructor of '{PlainName(plain)}' has parameters named {string.Join(", ", n.ArgNames.Where(x => x != null).Select(x => "'" + x + "'"))}", n.Line);
+                if (ctors.Count != 1) { foreach (var a in n.Args) Infer(a); return StaticType.ClassOf(plain, typeArgs); }
+                var named = ArgParams(ctors[0].Params, n.ArgNames, n.Args.Count, "new " + PlainName(plain), n.Line);
+                var namedArgs = n.Args.Select((a, i) => Infer(a, named[i] is { ByRef: false } p ? Declared(p.Type, p.ArrayRanks.Count, map) : null)).ToList();
+                CheckArguments(named, namedArgs, n.Args, "new " + PlainName(plain), map);
+                return StaticType.ClassOf(plain, typeArgs);
+            }
             var ctor = ctors.Count == 1 ? ctors[0] : null;
             if (ctors.Count > 1)
             {

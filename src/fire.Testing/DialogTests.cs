@@ -137,7 +137,7 @@ static class DialogTests
                 print(d.ShowDialog())
                 print(d.FileName)
                 """, new[] { "text:b.md", Enter });
-            Check("Oeffnen: Name tippen, Enter waehlt die Datei", lines.Count == 2 && lines[0] == "1" && lines[1] == Path.Combine(root, "b.md") && titles.SequenceEqual(new[] { "Open" }),
+            Check("Oeffnen: Name tippen, Enter waehlt die Datei", lines.Count == 2 && lines[0] == "OK" && lines[1] == Path.Combine(root, "b.md") && titles.SequenceEqual(new[] { "Open" }),
                 string.Join(" | ", lines) + " / " + string.Join(",", titles));
 
             (lines, _) = Run($$"""
@@ -149,7 +149,7 @@ static class DialogTests
                 print(d.FileName)
                 print(d.FilterIndex)
                 """, new[] { "text:sub", Enter, "text:c.txt", Enter });
-            Check("Oeffnen: ein Ordnername oeffnet den Ordner, dann die Datei darin", lines.Count == 3 && lines[0] == "1" && lines[1] == Path.Combine(root, "sub", "c.txt") && lines[2] == "1", string.Join(" | ", lines));
+            Check("Oeffnen: ein Ordnername oeffnet den Ordner, dann die Datei darin", lines.Count == 3 && lines[0] == "OK" && lines[1] == Path.Combine(root, "sub", "c.txt") && lines[2] == "1", string.Join(" | ", lines));
 
             (lines, _) = Run($$"""
                 var d = new Dialogs.OpenFileDialog()
@@ -157,7 +157,7 @@ static class DialogTests
                 print(d.ShowDialog())
                 print(d.FileName == "")
                 """, new[] { "text:nope.txt", Enter, Escape });
-            Check("Oeffnen: eine Datei, die es nicht gibt, beendet den Dialog nicht; Escape bricht ab", lines.SequenceEqual(new[] { "2", "True" }), string.Join(" | ", lines));
+            Check("Oeffnen: eine Datei, die es nicht gibt, beendet den Dialog nicht; Escape bricht ab", lines.SequenceEqual(new[] { "Cancel", "True" }), string.Join(" | ", lines));
 
             const string Down = "key:1073741905", Backspace = "key:8";
             (lines, _) = Run($$"""
@@ -167,7 +167,7 @@ static class DialogTests
                 print(d.FileName)
                 """, new[] { Tab, Tab, Tab, Tab, Tab, Down, Enter, Backspace, Down, Enter, Down, Enter });
             Check("Liste: Tab zur Liste, Pfeil und Enter oeffnen den Ordner, Ruecktaste geht hinauf, Enter auf einer Datei waehlt sie",
-                lines.Count == 2 && lines[0] == "1" && lines[1] == Path.Combine(root, "sub", "c.txt"), string.Join(" | ", lines));
+                lines.Count == 2 && lines[0] == "OK" && lines[1] == Path.Combine(root, "sub", "c.txt"), string.Join(" | ", lines));
 
             (lines, _) = Run($$"""
                 print(Dialogs.OpenFileDialog.Show("", "", "{{folder}}") == undefined)
@@ -182,7 +182,7 @@ static class DialogTests
                 print(d.ShowDialog())
                 print(d.FileName)
                 """, new[] { "text:new", Enter });
-            Check("Speichern: ein neuer Name bekommt die Endung des Dateityps", lines.Count == 2 && lines[0] == "1" && lines[1] == Path.Combine(root, "new.txt"), string.Join(" | ", lines));
+            Check("Speichern: ein neuer Name bekommt die Endung des Dateityps", lines.Count == 2 && lines[0] == "OK" && lines[1] == Path.Combine(root, "new.txt"), string.Join(" | ", lines));
 
             (lines, titles) = Run($$"""
                 var d = new Dialogs.SaveFileDialog()
@@ -190,7 +190,7 @@ static class DialogTests
                 print(d.ShowDialog())
                 print(d.FileName)
                 """, new[] { "text:a.txt", Enter }, new[] { Enter });
-            Check("Speichern: eine vorhandene Datei erst nach Rueckfrage (Ja)", lines.Count == 2 && lines[0] == "1" && lines[1] == Path.Combine(root, "a.txt") && titles.SequenceEqual(new[] { "Save As", "Confirm Save As" }),
+            Check("Speichern: eine vorhandene Datei erst nach Rueckfrage (Ja)", lines.Count == 2 && lines[0] == "OK" && lines[1] == Path.Combine(root, "a.txt") && titles.SequenceEqual(new[] { "Save As", "Confirm Save As" }),
                 string.Join(" | ", lines) + " / " + string.Join(",", titles));
 
             (lines, _) = Run($$"""
@@ -198,7 +198,7 @@ static class DialogTests
                 d.InitialDirectory = "{{folder}}"
                 print(d.ShowDialog())
                 """, new[] { "text:a.txt", Enter, Escape }, new[] { Escape });
-            Check("Speichern: Nein bei der Rueckfrage laesst den Dialog offen", lines.SequenceEqual(new[] { "2" }), string.Join(" | ", lines));
+            Check("Speichern: Nein bei der Rueckfrage laesst den Dialog offen", lines.SequenceEqual(new[] { "Cancel" }), string.Join(" | ", lines));
 
             (lines, _) = Run($$"""
                 var d = new Dialogs.FolderBrowserDialog()
@@ -208,7 +208,7 @@ static class DialogTests
                 print(d.SelectedPath)
                 print(Dialogs.FolderBrowserDialog.Show("", "{{folder}}"))
                 """, new[] { "text:sub", Enter }, new[] { Enter });
-            Check("Ordner: ein Name waehlt den Unterordner, leer der offene Ordner", lines.Count == 3 && lines[0] == "1" && lines[1] == Path.Combine(root, "sub") && lines[2] == root,
+            Check("Ordner: ein Name waehlt den Unterordner, leer der offene Ordner", lines.Count == 3 && lines[0] == "OK" && lines[1] == Path.Combine(root, "sub") && lines[2] == root,
                 string.Join(" | ", lines));
 
             (lines, titles) = Run("""
@@ -217,7 +217,7 @@ static class DialogTests
                 print(Dialogs.MessageBox.Show("Save?", "Editor", Dialogs.MessageBoxButtons.YesNo))
                 print(Dialogs.MessageBox.Show("Go on?", "", Dialogs.MessageBoxButtons.OKCancel))
                 """, new[] { Enter }, new[] { Tab, Enter }, new[] { Escape }, new[] { Escape });
-            Check("Meldung: OK, Tab zum zweiten Knopf, Escape ergibt Nein bzw. Abbrechen", lines.SequenceEqual(new[] { "1", "4", "4", "2" }) && titles.SequenceEqual(new[] { "Note", "Editor", "Editor", "Message" }),
+            Check("Meldung: OK, Tab zum zweiten Knopf, Escape ergibt Nein bzw. Abbrechen", lines.SequenceEqual(new[] { "OK", "No", "No", "Cancel" }) && titles.SequenceEqual(new[] { "Note", "Editor", "Editor", "Message" }),
                 string.Join(" | ", lines) + " / " + string.Join(",", titles));
         }
         catch (Exception ex) { Check("ohne Ausnahme durchgelaufen", false, ex.ToString()); }

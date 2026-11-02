@@ -1,0 +1,153 @@
+// The tests of the compression package: `forge test packages/compression/compression.fireproj`.
+#import "testing"
+#import "io"
+#import "filesystem"
+#import "compression"
+
+class CompressionTests {
+    static byte[] Sample(int n) {
+        var b = new byte[n]
+        for (var i = 0; i < n; i++) { b[i] = (i * 7 + (i / 100)) % 251 }
+        return b
+    }
+    static bool Same(byte a[], byte b[]) {
+        if (a.length != b.length) { return false }
+        for (var i = 0; i < a.length; i++) { if (a[i] != b[i]) { return false } }
+        return true
+    }
+
+    [Test "Deflate, zlib and gzip in one go, every level"]
+    undefined OneGo() {
+        var data = CompressionTests.Sample(50000)
+        for (var level = 0; level <= 9; level++) {
+            Testing.Assert.IsTrue(CompressionTests.Same(data, Compression.Deflate.Decompress(Compression.Deflate.Compress(data, level))), "raw " + level)
+            Testing.Assert.IsTrue(CompressionTests.Same(data, Compression.ZLib.Decompress(Compression.ZLib.Compress(data, level))), "zlib " + level)
+            Testing.Assert.IsTrue(CompressionTests.Same(data, Compression.GZip.Decompress(Compression.GZip.Compress(data, level))), "gzip " + level)
+        }
+        Testing.Assert.AreEqual("Grüße 😀", Compression.GZip.DecompressText(Compression.GZip.Compress("Grüße 😀")))
+        Testing.Assert.AreEqual(0, Compression.Deflate.Decompress(Compression.Deflate.Compress(new byte[0])).length)
+        Testing.Assert.IsTrue(Compression.Deflate.Compress(new byte[100000], 9).length < 200)
+    }
+
+    [Test "Known bytes: gzip of other programs, zlib of \"hello\""]
+    undefined Known() {
+        // zlib.compress(b"hello") of Python
+        var z = Hex.Bytes("789ccb48cdc9c90700062c0215")
+        Testing.Assert.AreEqual("hello", IO.Utf8.GetString(Compression.ZLib.Decompress(z)))
+        // two gzip members (as `cat a.gz b.gz` makes) with a file name in the header
+        var two = Hex.Bytes("1f8b08080000000002ff612e74787400cb48cdc9c9070086a61036050000001f8b08000000000002ff2bcf2fca4901004311773a05000000")
+        Testing.Assert.AreEqual("helloworld", Compression.GZip.DecompressText(two))
+    }
+
+    [Test "Streams: written in pieces with Flush, read in pieces"]
+    undefined Streams() {
+        var m = new IO.MemoryStream()
+        var z = new Compression.GZipStream(m, Compression.Mode.Compress, 6, true)
+        var w = new IO.TextWriter(z, true)
+        for (var i = 0; i < 3000; i++) {
+            w.WriteLine("line " + i)
+            if (i == 1500) { w.Flush(); z.Flush() }
+        }
+        w.Close()
+        z.Close()
+        Testing.Assert.IsTrue(m.Length < 20000)
+        m.Position = 0
+        var r = new IO.TextReader(new Compression.GZipStream(m, Compression.Mode.Decompress, 6, true))
+        var n = 0
+        var last = ""
+        foreach (line in r) { n++; last = line }
+        Testing.Assert.AreEqual(3000, n)
+        Testing.Assert.AreEqual("line 2999", last)
+        Testing.Assert.IsFalse(z.CanWrite)
+        Testing.Assert.Throws(() => z.Write(new byte[1], 0, 1))
+    }
+
+    [Test "Broken data is an InvalidDataException"]
+    undefined Broken() {
+        var packed = Compression.GZip.Compress(CompressionTests.Sample(5000))
+        var cut = new byte[packed.length - 10]
+        for (var i = 0; i < cut.length; i++) { cut[i] = packed[i] }
+        var e = Testing.Assert.Throws(() => Compression.GZip.Decompress(cut))
+        Testing.Assert.IsTrue(e is of Compression.InvalidDataException)
+        packed[packed.length - 6] = packed[packed.length - 6] # 1
+        e = Testing.Assert.Throws(() => Compression.GZip.Decompress(packed))
+        Testing.Assert.Contains("CRC-32", e.message)
+        e = Testing.Assert.Throws(() => Compression.ZLib.Decompress(IO.Utf8.GetBytes("not zlib")))
+        Testing.Assert.IsTrue(e is of Compression.InvalidDataException)
+        Testing.Assert.Throws(() => Compression.Deflate.Compress("x", 10))
+    }
+
+    [Test "Zip: write, read back, extract, folders"]
+    undefined ZipRoundTrip() {
+        var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_zip_test")
+        if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+        IO.Directory.CreateDirectory(dir)
+        var path = IO.Path.Combine(dir, "a.zip")
+        var w = Zip.Archive.Create(path)
+        w.Add("hello.txt", "Hallo Welt")
+        w.Add("data/sample.bin", CompressionTests.Sample(40000))
+        w.AddDirectory("empty")
+        var s = w.CreateEntry("data/stream.txt")
+        var tw = new IO.TextWriter(s, true)
+        for (var i = 0; i < 500; i++) { tw.WriteLine("entry line " + i) }
+        tw.Close()
+        s.Close()
+        w.Comment = "a comment"
+        w.Close()
+
+        var a = Zip.Archive.Open(path)
+        Testing.Assert.AreEqual(4, a.Count)
+        Testing.Assert.AreEqual("a comment", a.Comment)
+        Testing.Assert.AreEqual("Hallo Welt", a.GetEntry("hello.txt").ReadAllText())
+        Testing.Assert.IsTrue(CompressionTests.Same(CompressionTests.Sample(40000), a.GetEntry("data/sample.bin").ReadAllBytes()))
+        Testing.Assert.AreEqual(Zip.Method.Deflated, a.GetEntry("data/sample.bin").CompressionMethod)
+        Testing.Assert.AreEqual("sample.bin", a.GetEntry("data/sample.bin").Name)
+        Testing.Assert.IsTrue(a.GetEntry("empty/").IsDirectory)
+        Testing.Assert.IsUndefined(a.GetEntry("missing"))
+        var out = IO.Path.Combine(dir, "out")
+        a.ExtractTo(out)
+        a.Close()
+        Testing.Assert.AreEqual("Hallo Welt", IO.File.ReadAllText(IO.Path.Combine(out, "hello.txt")))
+        Testing.Assert.IsTrue(IO.Directory.Exists(IO.Path.Combine(out, "empty")))
+        Testing.Assert.AreEqual(500, IO.File.ReadAllLines(IO.Path.Combine(out, "data/stream.txt")).Count)
+
+        var second = IO.Path.Combine(dir, "b.zip")
+        Zip.Archive.CreateFromDirectory(out, second)
+        Zip.Archive.ExtractToDirectory(second, IO.Path.Combine(dir, "again"))
+        Testing.Assert.AreEqual("Hallo Welt", IO.File.ReadAllText(IO.Path.Combine(dir, "again/hello.txt")))
+        Testing.Assert.IsTrue(IO.Directory.Exists(IO.Path.Combine(dir, "again/empty")))
+        IO.Directory.Delete(dir, true)
+    }
+
+    [Test "Zip: a name outside of the folder is refused, a broken entry noticed"]
+    undefined ZipSafety() {
+        var m = new IO.MemoryStream()
+        var w = Zip.Archive.Write(m, true)
+        w.Add("ok.txt", "fine")
+        w.Add("../outside.txt", "evil")
+        w.Close()
+        var dir = IO.Path.Combine(IO.Path.GetTempPath(), "fire_zip_slip")
+        if (IO.Directory.Exists(dir)) { IO.Directory.Delete(dir, true) }
+        var a = Zip.Archive.FromBytes(m.ToBuffer())
+        var e = Testing.Assert.Throws(() => a.ExtractTo(dir))
+        Testing.Assert.IsTrue(e is of Zip.ZipException)
+        Testing.Assert.IsFalse(IO.File.Exists(IO.Path.Combine(dir, "ok.txt")))   // nothing is extracted
+        a.Close()
+        var bytes = m.ToBuffer()
+        bytes[37] = bytes[37] # 255   // inside the data of ok.txt (header 30 + name 6 bytes)
+        var b = Zip.Archive.FromBytes(bytes)
+        e = Testing.Assert.Throws(() => b.GetEntry("ok.txt").ReadAllText())
+        Testing.Assert.IsTrue(e is of Compression.InvalidDataException)
+        Testing.Assert.Throws(() => Zip.Archive.FromBytes(IO.Utf8.GetBytes("no archive")))
+    }
+}
+
+// Hex text as bytes (for the known test data).
+class Hex {
+    static byte[] Bytes(string text) {
+        var b = new byte[text.Length / 2]
+        var digits = "0123456789abcdef"
+        for (var i = 0; i < b.length; i++) { b[i] = digits.IndexOf(text[2 * i]) * 16 + digits.IndexOf(text[2 * i + 1]) }
+        return b
+    }
+}

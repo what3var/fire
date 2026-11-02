@@ -21,7 +21,7 @@ namespace UI {
             return node
         }
 
-        bool HasChildren() { return this.children.count > 0 }
+        bool HasChildren() { return this.children.Count > 0 }
 
         int Depth() {
             var d = 0
@@ -82,9 +82,9 @@ namespace UI {
         // A feature of the visible nodes (count, texts, expanded state): if it changes - for example by `node.expanded = true` - it is repainted.
         int Signature() {
             var list = new List()
-            for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
-            var sig = list.count
-            for (var i = 0; i < list.count; i = i + 1) {
+            for (var i = 0; i < this.nodes.Count; i = i + 1) { this.Collect_(list, this.nodes[i]) }
+            var sig = list.Count
+            for (var i = 0; i < list.Count; i = i + 1) {
                 var n = list[i]
                 sig = (sig * 31 + n.Text.Length * 7 + n.Depth()) % 1000000007
                 if (n.Expanded) { sig = (sig * 31 + 1) % 1000000007 }
@@ -109,30 +109,30 @@ namespace UI {
         undefined Collect_(List list, TreeNode node) {
             list.Add(node)
             if (node.Expanded) {
-                for (var i = 0; i < node.children.count; i = i + 1) { this.Collect_(list, node.children[i]) }
+                for (var i = 0; i < node.children.Count; i = i + 1) { this.Collect_(list, node.children[i]) }
             }
         }
 
         // Rebuilds the list of visible nodes.
         undefined Flatten() {
             this.visibleNodes = new List()
-            for (var i = 0; i < this.nodes.count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
+            for (var i = 0; i < this.nodes.Count; i = i + 1) { this.Collect_(this.visibleNodes, this.nodes[i]) }
         }
 
         undefined MeasureCore(Root root, int aw, int ah) {
             this.Flatten()
             var widest = 0
-            for (var i = 0; i < this.visibleNodes.count; i = i + 1) {
+            for (var i = 0; i < this.visibleNodes.Count; i = i + 1) {
                 var n = this.visibleNodes[i]
                 widest = UI.M.Max(widest, n.Depth() * this.Indent + 20 + this.TextWidth(root, n.Text))
             }
             this.cw = widest + 4
-            this.ch = this.visibleNodes.count * this.RowHeight(root) + 2
+            this.ch = this.visibleNodes.Count * this.RowHeight(root) + 2
         }
 
         undefined ArrangeCore(Root root, int w, int h) {
             this.viewH = UI.M.Max(0, h - 2)
-            this.scroller.extent = this.visibleNodes.count * this.RowHeight(root)
+            this.scroller.extent = this.visibleNodes.Count * this.RowHeight(root)
             this.scroller.viewport = this.viewH
             this.scroller.Set(this.scroller.offset)
             this.viewW = w - 2
@@ -156,7 +156,7 @@ namespace UI {
             var top = ay + 1
             root.PushClip(ax + 1, top, this.viewW, this.viewH)
             var first = this.scroller.offset / rh
-            var last = UI.M.Min(this.visibleNodes.count - 1, (this.scroller.offset + this.viewH) / rh)
+            var last = UI.M.Min(this.visibleNodes.Count - 1, (this.scroller.offset + this.viewH) / rh)
             for (var i = first; i <= last; i = i + 1) {
                 var node = this.visibleNodes[i]
                 var y = top + i * rh - this.scroller.offset
@@ -193,7 +193,7 @@ namespace UI {
             var top = this.ay + 1
             if (py < top || py >= top + this.viewH || px < this.ax + 1 || px >= this.ax + 1 + this.viewW) { return -1 }
             var index = (py - top + this.scroller.offset) / this.RowHeight(root)
-            if (index >= this.visibleNodes.count) { return -1 }
+            if (index >= this.visibleNodes.Count) { return -1 }
             return index
         }
 
@@ -270,7 +270,7 @@ namespace UI {
 
         // Up and Down select another node (at the edge the tree releases the key), Left and Right collapse/expand
         bool WantsKey(int key) {
-            var last = this.visibleNodes.count - 1
+            var last = this.visibleNodes.Count - 1
             var index = this.IndexOfSelected()
             if (key == UI.Keys.Down()) { return index < last }
             if (key == UI.Keys.Up()) { return index > 0 }
@@ -279,7 +279,7 @@ namespace UI {
 
         undefined KeyDown(Root root, int key, int mod) {
             var index = this.IndexOfSelected()
-            var count = this.visibleNodes.count
+            var count = this.visibleNodes.Count
             if (count == 0) { return }
             if (key == UI.Keys.Down()) { index = UI.M.Min(count - 1, index + 1) }
             else if (key == UI.Keys.Up()) { index = UI.M.Max(0, index - 1) }
@@ -307,7 +307,7 @@ namespace UI {
                 }
                 return
             } else { return }
-            if (index < 0 || index >= this.visibleNodes.count) { return }
+            if (index < 0 || index >= this.visibleNodes.Count) { return }
             var node = this.visibleNodes[index]
             this.SelectNode(node)
             this.EnsureVisible(root, node)

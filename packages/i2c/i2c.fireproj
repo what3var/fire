@@ -11,104 +11,105 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'i2c' of fire: prelude and C++ sources."
+    "description": "The standard library 'i2c' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_i2c.hpp"
+      "native/fire_bridge_i2c.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__I2cLastError",
         "arguments": 0,
-        "cpp": "i2c::LastError"
+        "c": "fire_i2c_LastError"
       },
       {
         "name": "__I2cLastErrorMessage",
         "arguments": 0,
-        "cpp": "i2c::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_i2c_LastErrorMessage"
       },
       {
         "name": "__I2cOpenCount",
         "arguments": 0,
-        "cpp": "i2c::OpenCount"
+        "c": "fire_i2c_OpenCount"
       },
       {
         "name": "__I2cSupported",
         "arguments": 0,
-        "cpp": "i2c::Supported"
+        "c": "fire_i2c_Supported"
       },
       {
         "name": "__I2cBuses",
         "arguments": 0,
-        "cpp": "i2c::Buses",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_i2c_Buses"
       },
       {
         "name": "__I2cOpen",
         "arguments": 2,
-        "cpp": "i2c::Open"
+        "c": "fire_i2c_Open"
       },
       {
         "name": "__I2cSetSpeed",
         "arguments": 2,
-        "cpp": "i2c::SetSpeed"
+        "c": "fire_i2c_SetSpeed"
       },
       {
         "name": "__I2cWrite",
         "arguments": 5,
-        "cpp": "i2c::Write"
+        "c": "fire_i2c_Write"
       },
       {
         "name": "__I2cRead",
         "arguments": 5,
-        "cpp": "i2c::Read"
+        "c": "fire_i2c_Read"
       },
       {
         "name": "__I2cWriteRead",
         "arguments": 8,
-        "cpp": "i2c::WriteRead"
+        "c": "fire_i2c_WriteRead"
       },
       {
         "name": "__I2cProbe",
         "arguments": 2,
-        "cpp": "i2c::Probe"
+        "c": "fire_i2c_Probe"
       },
       {
         "name": "__I2cClose",
         "arguments": 1,
-        "cpp": "i2c::Close"
+        "c": "fire_i2c_Close"
       },
       {
         "name": "__I2cSimAdd",
         "arguments": 1,
-        "cpp": "i2c::SimAdd"
+        "c": "fire_i2c_SimAdd"
       },
       {
         "name": "__I2cSimRemove",
         "arguments": 1,
-        "cpp": "i2c::SimRemove"
+        "c": "fire_i2c_SimRemove"
       },
       {
         "name": "__I2cSimSetRegister",
         "arguments": 3,
-        "cpp": "i2c::SimSetRegister"
+        "c": "fire_i2c_SimSetRegister"
       },
       {
         "name": "__I2cSimGetRegister",
         "arguments": 2,
-        "cpp": "i2c::SimGetRegister"
+        "c": "fire_i2c_SimGetRegister"
       },
       {
         "name": "__I2cSimReset",
         "arguments": 0,
-        "cpp": "i2c::SimReset"
+        "c": "fire_i2c_SimReset"
       }
     ],
-    "reset": "i2c::reset"
+    "reset": "fire_i2c_reset",
+    "language": "c"
   }
 }

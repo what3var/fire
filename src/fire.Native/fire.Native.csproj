@@ -16,14 +16,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The C++ runtime that the generated code includes; written next to the generated file (see NativeRuntimeFiles). -->
-    <EmbeddedResource Include="..\..\native\runtime\fire_rt.hpp" LogicalName="fire_rt.hpp" />
-    <!-- JSON (`#import "json"`): put into the generated file when the program uses it. -->
-    <EmbeddedResource Include="..\..\native\runtime\fire_json.hpp" LogicalName="runtime/fire_json.hpp" />
+    <!-- The runtime (C) that the generated code includes; written next to the generated file (see NativeRuntimeFiles). -->
+    <EmbeddedResource Include="..\..\native\runtime\fire_rt.h" LogicalName="fire_rt.h" />
+    <!-- What the natives in C++ include (fire_natives.cpp): fire_rt.h as C++ and the C++ platform layer. -->
+    <EmbeddedResource Include="..\..\native\runtime\fire_rt_cpp.hpp" LogicalName="fire_rt_cpp.hpp" />
+    <!-- JSON (`#import "json"`): the engine in C, written next to the program (it includes it when it uses JSON). -->
+    <EmbeddedResource Include="..\..\native\runtime\fire_json.h" LogicalName="fire_json.h" />
     <!-- The C ABI between the virtual machine and the natives of packages, and its C++ wrapper (native/abi/). -->
     <EmbeddedResource Include="..\..\native\abi\*" LogicalName="abi/%(Filename)%(Extension)" />
     <!-- The platform packages (native/platform/<name>/): everything that depends on the operating system or the board. -->
     <EmbeddedResource Include="..\..\native\platform\**\*.hpp" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\native\platform\**\*.h" LogicalName="platform/%(RecursiveDir)%(Filename)%(Extension)" />
     <!-- A FreeRTOS simulator on top of pthreads (to try a FreeRTOS build on a PC, and for the tests). -->
     <EmbeddedResource Include="..\..\native\sim\**\*.h" LogicalName="sim/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

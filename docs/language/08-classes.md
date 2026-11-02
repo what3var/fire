@@ -70,6 +70,32 @@ print(x + " " + y)      // 2 1
 
 A `ref` argument must be a variable, a field or an array element; `ref` parameters cannot have a default value.
 
+### Named arguments
+
+An argument can name its parameter: `name: value`. Named arguments follow the positional ones, in any order; a parameter that gets no argument takes
+its default value - also one in the middle:
+
+```fire
+class Window {
+    string title
+    construct(string title, int width = 640, int height = 480, bool resizable = true) {
+        this.title = title + " " + width + "x" + height + (resizable ? "" : " fixed")
+    }
+    static string Line(string text, int indent = 0, string bullet = "-") { return indent + bullet + " " + text }
+}
+print(new Window("Editor", height: 300).title)              // Editor 640x300
+print(new Window("Tool", resizable: false, width: 200).title) // Tool 200x480 fixed
+print(Window.Line("item", bullet: "*"))                     // 0* item
+```
+
+- Methods (also static ones, `base.` and extensions in the VM) and constructors take named arguments; lambdas, native and `extern` functions do not.
+- Write a space after the colon: `size: 2`. `x:m` without a space is a [unit conversion](05-units.md) (`print(distance:m)`), also as an argument, and so is `x:` before an operator (`print(a: + b)`).
+- A name that the parameters do not have, and a parameter without argument and without default value, are compile errors (`TC011`) when the
+  method is known when compiling (otherwise an `ArgumentException` at run time). A name given twice and a positional argument after a named one are
+  syntax errors.
+- The arguments are evaluated in the order they are written; then each goes to its parameter.
+- With overloads, only the overloads that have parameters of these names come into question.
+
 ## Inheritance
 
 A class can derive from **one** base class: `class Dog : Animal`. It inherits all fields and methods; a method with the same name and number of
@@ -267,8 +293,8 @@ Without `operator==`, `==` compares objects by reference (the same instance).
 
 ## Attributes
 
-An attribute is a name in square brackets on the line before a method, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
-new List<int>()]`; `{...}` is an array here, like `[...]`). A method may have several. Attributes do nothing by themselves; tools read them (reflection: `Member.Attributes`, see [Probes and reflection](16-probes-and-reflection.md)) - `forge test`
+An attribute is a name in square brackets on the line before a class, a method, a field or a property, with arguments after the name and no parentheses (as in C#, `[Name 1, "text", {1, 2},
+new List<int>()]`; `{...}` is an array here, like `[...]`). A declaration may have several. Attributes do nothing by themselves; tools read them (reflection: `Type.Attributes`, `Member.Attributes`, see [Probes and reflection](16-probes-and-reflection.md)) - `forge test`
 runs the methods with `[Test]` (docs/TESTING.md):
 
 ```fire
@@ -306,6 +332,19 @@ class Account {
     [NonSerialized]
     int cachedBalance
     construct() { }
+}
+```
+
+An attribute whose name is a `flag enum` takes members of that enum as its arguments (`[Access Read, Write]`) and marks the declaration with
+these flags; reflection checks them with `HasFlag` (see [Enums](10-enums-and-namespaces.md#flag-enums-as-attributes)):
+
+```fire
+flag enum Access { Read = 1, Write = 2 }
+
+[Access Read]
+class Report {
+    [Access Read, Write]
+    string title
 }
 ```
 

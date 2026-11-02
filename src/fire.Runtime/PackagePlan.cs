@@ -60,6 +60,11 @@ namespace fire.Runtime
             var plan = new PackagePlan();
             var searchDirs = SearchDirectories(baseDir);
             var frameworkDir = RuntimeEnvironment.GetRuntimeDirectory();
+            // Which assemblies belong to .NET: a self-contained build has them next to the compiler (its runtime directory IS that folder - every DLL there would
+            // count as the framework, fire.dll too), its deps.json names them (the files of the runtime pack). A framework-dependent build: what lies in the
+            // shared framework.
+            var frameworkNames = RuntimePackAssemblies(baseDir);
+            bool IsFramework(string name) => frameworkNames != null ? frameworkNames.Contains(name) : File.Exists(Path.Combine(frameworkDir, name + ".dll"));
 
             // the shared libraries of the natives of packages travel in the payload like the native libraries of the bridges
             if (extraNativeFiles != null)
@@ -92,11 +97,11 @@ namespace fire.Runtime
                 if (path == null)
                 {
                     // If it belongs to the .NET framework, it comes from there at runtime - everything else is really missing.
-                    if (!File.Exists(Path.Combine(frameworkDir, name + ".dll")))
+                    if (!IsFramework(name))
                         plan.Unresolved.Add(name);
                     continue;
                 }
-                if (File.Exists(Path.Combine(frameworkDir, name + ".dll")))
+                if (IsFramework(name))
                     continue;
 
                 plan.Assemblies[name] = path;
@@ -104,6 +109,29 @@ namespace fire.Runtime
                     queue.Enqueue(reference);
             }
             return plan;
+        }
+
+        /// <summary>The names of the assemblies of the .NET runtime pack that runtime.deps.json in <paramref name="baseDir"/> lists (a self-contained build), or null
+        /// (no deps.json, or a framework-dependent one without a runtime pack).</summary>
+        private static HashSet<string>? RuntimePackAssemblies(string baseDir)
+        {
+            string deps = Path.Combine(baseDir, "runtime.deps.json");
+            if (!File.Exists(deps)) return null;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(deps));
+                HashSet<string>? names = null;
+                foreach (var target in doc.RootElement.GetProperty("targets").EnumerateObject())
+                    foreach (var library in target.Value.EnumerateObject())
+                    {
+                        if (!library.Name.StartsWith("runtimepack.", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (!library.Value.TryGetProperty("runtime", out var runtime)) continue;
+                        names ??= new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var file in runtime.EnumerateObject()) names.Add(Path.GetFileNameWithoutExtension(file.Name));
+                    }
+                return names;
+            }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException or IOException) { return null; }
         }
 
         /// <summary>Platform-specific subfolders (runtimes/win/lib/..., runtimes/unix/lib/...) before the main folder -

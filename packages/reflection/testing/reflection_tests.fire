@@ -24,7 +24,7 @@ class AttributeTests {
     [Test]
     undefined NamesAndConstants() {
         var m = Type.Of("Tagged").Find("Run")
-        Testing.Assert.AreEqual(2, m.Attributes.count)
+        Testing.Assert.AreEqual(2, m.Attributes.Count)
         Testing.Assert.IsTrue(m.HasAttribute("Info"))
         Testing.Assert.IsFalse(m.HasAttribute("Nope"))
         var info = m.FindAttribute("Info")
@@ -36,6 +36,6 @@ class AttributeTests {
         Testing.Assert.AreEqual(false, range.Args[2])
         Testing.Assert.IsUndefined(range.Args[3])
         Testing.Assert.AreEqual("new List()", range.ArgTexts[3])
-        Testing.Assert.AreEqual(0, Type.Of("Tagged").Find("Plain").Attributes.count)
+        Testing.Assert.AreEqual(0, Type.Of("Tagged").Find("Plain").Attributes.Count)
     }
 }

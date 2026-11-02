@@ -1,0 +1,7 @@
+// Included by the test "#include (textuelle Vorverarbeitung)" in Program.cs: a class that the including script uses.
+// (The area with 3 for pi keeps the expected output a whole number: Circle(2.0).Area() is 12.)
+class Circle {
+    float radius
+    construct(float radius) { this.radius = radius }
+    float Area() { return 3 * this.radius * this.radius }
+}

@@ -224,7 +224,7 @@ namespace Usb {
             if (device is of string) { this.id = device }
             else {
                 var found = Usb.Bus.Find(device, productId, serialNumber)
-                if (found.count == 0) { throw new NotFoundException("There is no USB device " + Usb.Format.Hex(device) + ":" + Usb.Format.Hex(productId) + ".") }
+                if (found.Count == 0) { throw new NotFoundException("There is no USB device " + Usb.Format.Hex(device) + ":" + Usb.Format.Hex(productId) + ".") }
                 this.id = found[0].Id
             }
             this.handle = Usb.Errors.Check(__UsbOpen(this.id))

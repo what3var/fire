@@ -32,7 +32,7 @@ namespace UI {
             return item
         }
 
-        bool HasSubmenu() { return this.items.count > 0 }
+        bool HasSubmenu() { return this.items.Count > 0 }
 
         // Executes the action (toggle the check mark, call the lambda).
         undefined Activate() {
@@ -67,7 +67,7 @@ namespace UI {
         undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
             var h = 4
-            for (var i = 0; i < this.entries.count; i = i + 1) {
+            for (var i = 0; i < this.entries.Count; i = i + 1) {
                 var item = this.entries[i]
                 h = h + this.HeightOf(root, item)
                 if (item.separator) { continue }
@@ -83,7 +83,7 @@ namespace UI {
         // The index of the row at the screen height `py`, or -1.
         int RowAt(Root root, int py) {
             var y = this.ay + 2
-            for (var i = 0; i < this.entries.count; i = i + 1) {
+            for (var i = 0; i < this.entries.Count; i = i + 1) {
                 var h = this.HeightOf(root, this.entries[i])
                 if (py >= y && py < y + h) { return i }
                 y = y + h
@@ -108,7 +108,7 @@ namespace UI {
             if (border == undefined) { border = theme.border }
             r.DrawRect(ax, ay, this.actualWidth, this.actualHeight, border)
             var y = ay + 2
-            for (var i = 0; i < this.entries.count; i = i + 1) {
+            for (var i = 0; i < this.entries.Count; i = i + 1) {
                 var item = this.entries[i]
                 var h = this.HeightOf(root, item)
                 if (item.separator) {
@@ -226,7 +226,7 @@ namespace UI {
         }
 
         int FirstRow() {
-            for (var i = 0; i < this.entries.count; i = i + 1) {
+            for (var i = 0; i < this.entries.Count; i = i + 1) {
                 if (!this.entries[i].separator && this.entries[i].Enabled) { return i }
             }
             return -1
@@ -234,7 +234,7 @@ namespace UI {
 
         // The next selectable row in the direction `direction` (1 or -1), wrapping around.
         undefined Step(int direction) {
-            var n = this.entries.count
+            var n = this.entries.Count
             if (n == 0) { return }
             var i = this.hot
             for (var k = 0; k < n; k = k + 1) {
@@ -275,7 +275,7 @@ namespace UI {
 
         undefined MeasureCore(Root root, int aw, int ah) {
             var w = 0
-            for (var i = 0; i < this.menus.count; i = i + 1) { w = w + this.HeaderWidth(root, this.menus[i]) }
+            for (var i = 0; i < this.menus.Count; i = i + 1) { w = w + this.HeaderWidth(root, this.menus[i]) }
             this.cw = w
             this.ch = this.TextHeight(root) + 8
         }
@@ -283,7 +283,7 @@ namespace UI {
         // The index of the title at the screen position px, or -1.
         int IndexAt(Root root, int px) {
             var x = this.ax
-            for (var i = 0; i < this.menus.count; i = i + 1) {
+            for (var i = 0; i < this.menus.Count; i = i + 1) {
                 var w = this.HeaderWidth(root, this.menus[i])
                 if (px >= x && px < x + w) { return i }
                 x = x + w
@@ -313,7 +313,7 @@ namespace UI {
             if (back == undefined) { back = theme.panel }
             root.renderer.FillRect(ax, ay, this.actualWidth, this.actualHeight, back)
             var x = ax
-            for (var i = 0; i < this.menus.count; i = i + 1) {
+            for (var i = 0; i < this.menus.Count; i = i + 1) {
                 var item = this.menus[i]
                 var w = this.HeaderWidth(root, item)
                 var text = theme.text

@@ -131,8 +131,8 @@ as shipped; after a change of the C++ the library is built on first use like tha
 The next start of spark or forge would install it, too.
 
 What makes these projects special is small: `"standard": true` lets a project have the import name of a library of the compiler (`time`, `graphics`, ...), and `"native": { "discover": false,
-"functions": [...] }` names the natives explicitly (their C++ names are in namespaces such as `io::FileOpen`). Five imports have natives that are part of the virtual machine (C#): `graphics`,
-`windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package, and for native builds the C++ of `graphics` and `windows` too. Only the core prelude (`Exception`,
+"functions": [...] }` names the natives explicitly (`"c": "fire_io_FileOpen"` for a package in C, `"cpp": "circuits::New"` for one in C++). Five imports have natives that are part of the virtual machine (C#): `graphics`,
+`windows`, `ui`, `linq`, `reflection` - their fire code still comes from the package, and for native builds the C of `graphics` and `windows` too. Only the core prelude (`Exception`,
 `List<T>`, `Math`, string methods, ...) is built into the compiler.
 
 Inside its own project a library is the program: `#import "time"` in the tests of `time` means the project's files (and its C++, built for the VM), not the installed package.

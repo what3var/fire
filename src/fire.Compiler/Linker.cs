@@ -78,7 +78,7 @@ namespace fire.Compiler
             if (settings.FileVersion != null) info.FileVersion = settings.FileVersion;
         }
 
-        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources, IEnumerable<string>? defines = null, fire.Projects.ProjectSettings? settings = null)
+        public static AssemblyInfo ExtractAssemblyInfo(IReadOnlyList<string> sources, IEnumerable<string>? defines = null, fire.Projects.ProjectSettings? settings = null, string? basePath = null)
         {
             var assemblyInfo = new AssemblyInfo();
             var alreadyIncluded = new HashSet<string>();
@@ -191,7 +191,8 @@ namespace fire.Compiler
 
             foreach (var source in inputSources)
             {
-                var processed = Preprocessor.Process(source, Directory.GetCurrentDirectory(), alreadyIncluded, registry);
+                // (an `#include` is relative to the file that has it: here the folder of the script, `basePath`)
+                var processed = Preprocessor.Process(source, basePath ?? Directory.GetCurrentDirectory(), alreadyIncluded, registry);
                 processedSources.Add(processed);
             }
 
@@ -413,6 +414,9 @@ namespace fire.Compiler
             // the files of a project are part of the program anyway: an `#include` of one of them (also of a markup file) adds nothing, so that nothing is declared twice
             if (Plan != null)
                 foreach (var projectFile in Plan.SourcePaths) alreadyIncluded.Add(Path.GetFullPath(projectFile));
+            // the same for the files the program is made of: a file that is part of it is not inserted a second time by an `#include` in another one
+            if (SourcePaths != null)
+                foreach (var sourceFile in SourcePaths) if (sourceFile != null) alreadyIncluded.Add(Path.GetFullPath(sourceFile));
 
             for (int i = 0; i < inputSources.Count; i++)
             {

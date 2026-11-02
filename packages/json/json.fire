@@ -33,9 +33,9 @@ class JsonOptions {
 
 /// <summary>A JSON object without a class (what Json.Parse gives, or an object without `$type` read into an `any` slot): its members by name, in order.</summary>
 class JsonObject {
-    any keys
-    any values
-    int count
+    private any keys
+    private any values
+    private int count
 
     construct() {
         this.keys = new string[4]
@@ -43,7 +43,8 @@ class JsonObject {
         this.count = 0
     }
 
-    int Count() { return this.count }
+    /// <summary>The number of members.</summary>
+    int Count { get { return this.count } }
 
     int IndexOf(string key) {
         for (int i = 0; i < this.count; i++) {

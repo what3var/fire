@@ -160,7 +160,7 @@ A semiconductor or op amp takes a **model** - the numbers of a kind of part, lik
 Circuits.Models.Add(new Circuits.Model("BAT54", "D", 0.0000002, 1.0, 30.0))
 var d = new Circuits.Diode("BAT54")
 var fast = Circuits.Models.Get("1N4148").With("1N4148-hot", 0, 0.000000005)   // a copy with another IS
-print(Circuits.Models.Names("NPN").count)
+print(Circuits.Models.Names("NPN").Count)
 ```
 
 ### Parts given by a formula

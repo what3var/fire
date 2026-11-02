@@ -11,109 +11,110 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'spi' of fire: prelude and C++ sources."
+    "description": "The standard library 'spi' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_spi.hpp"
+      "native/fire_bridge_spi.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__SpiLastError",
         "arguments": 0,
-        "cpp": "spi::LastError"
+        "c": "fire_spi_LastError"
       },
       {
         "name": "__SpiLastErrorMessage",
         "arguments": 0,
-        "cpp": "spi::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_spi_LastErrorMessage"
       },
       {
         "name": "__SpiOpenCount",
         "arguments": 0,
-        "cpp": "spi::OpenCount"
+        "c": "fire_spi_OpenCount"
       },
       {
         "name": "__SpiSupported",
         "arguments": 0,
-        "cpp": "spi::Supported"
+        "c": "fire_spi_Supported"
       },
       {
         "name": "__SpiDevices",
         "arguments": 0,
-        "cpp": "spi::Devices",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_spi_Devices"
       },
       {
         "name": "__SpiOpen",
         "arguments": 4,
-        "cpp": "spi::Open"
+        "c": "fire_spi_Open"
       },
       {
         "name": "__SpiConfigure",
         "arguments": 4,
-        "cpp": "spi::Configure"
+        "c": "fire_spi_Configure"
       },
       {
         "name": "__SpiTransfer",
         "arguments": 6,
-        "cpp": "spi::Transfer"
+        "c": "fire_spi_Transfer"
       },
       {
         "name": "__SpiWrite",
         "arguments": 4,
-        "cpp": "spi::Write"
+        "c": "fire_spi_Write"
       },
       {
         "name": "__SpiRead",
         "arguments": 4,
-        "cpp": "spi::Read"
+        "c": "fire_spi_Read"
       },
       {
         "name": "__SpiClose",
         "arguments": 1,
-        "cpp": "spi::Close"
+        "c": "fire_spi_Close"
       },
       {
         "name": "__SpiSimReply",
         "arguments": 3,
-        "cpp": "spi::SimReply"
+        "c": "fire_spi_SimReply"
       },
       {
         "name": "__SpiSimSetReply",
         "arguments": 3,
-        "cpp": "spi::SimSetReply"
+        "c": "fire_spi_SimSetReply"
       },
       {
         "name": "__SpiSimLoopback",
         "arguments": 0,
-        "cpp": "spi::SimLoopback"
+        "c": "fire_spi_SimLoopback"
       },
       {
         "name": "__SpiSimSentCount",
         "arguments": 0,
-        "cpp": "spi::SimSentCount"
+        "c": "fire_spi_SimSentCount"
       },
       {
         "name": "__SpiSimSentByte",
         "arguments": 1,
-        "cpp": "spi::SimSentByte"
+        "c": "fire_spi_SimSentByte"
       },
       {
         "name": "__SpiSimInfo",
         "arguments": 1,
-        "cpp": "spi::SimInfo"
+        "c": "fire_spi_SimInfo"
       },
       {
         "name": "__SpiSimClear",
         "arguments": 0,
-        "cpp": "spi::SimClear"
+        "c": "fire_spi_SimClear"
       }
     ],
-    "reset": "spi::reset"
+    "reset": "fire_spi_reset",
+    "language": "c"
   }
 }

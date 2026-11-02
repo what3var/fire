@@ -50,7 +50,7 @@ namespace fire.Resolving
         /// runtime resolution needed (see Ast.EnumDecl docs). Attached by the
         /// resolver to the affected MemberExpr node (not to
         /// an IdentifierExpr like the other ResolvedRef cases).</summary>
-        public sealed record EnumMember(long Value) : ResolvedRef;
+        public sealed record EnumMember(long Value, fire.Values.EnumType? Type = null) : ResolvedRef;
 
         /// <summary>A static class-member access ('ClassName.Member',
         /// SPEC "Static members") - like EnumMember attached to the affected

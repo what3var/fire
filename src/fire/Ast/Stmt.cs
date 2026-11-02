@@ -63,7 +63,8 @@ namespace fire.Ast
     /// member as an object instance of a generated class of its own -
     /// that would need a concept for STATIC/shared instances,
     /// which this language does not currently have.</summary>
-    public sealed record EnumDecl(int Source, int Line, string Name, IReadOnlyList<EnumMember> Members) : Stmt(Source, Line);
+    /// <param name="IsFlags">`flag enum`: its values combine with `|` and it is an attribute (`[Name a, b]`, see docs/language/10-enums-and-namespaces.md).</param>
+    public sealed record EnumDecl(int Source, int Line, string Name, IReadOnlyList<EnumMember> Members, bool IsFlags = false) : Stmt(Source, Line);
 
     /// <summary>IsReadonly: declared with `readonly` - the resolver then forbids
     /// any further assignment to this variable after the declaration
@@ -306,7 +307,8 @@ namespace fire.Ast
         IReadOnlyList<TypeRef>? BaseRefs,
         IReadOnlyList<Stmt> Members,
         IReadOnlyList<TypeParam>? TypeParams = null,
-        bool IsActor = false) : Stmt(Source, Line);
+        bool IsActor = false,
+        IReadOnlyList<AttributeDecl>? Attributes = null) : Stmt(Source, Line);   // (Attributes: `[Name ...]` before the class, read by reflection)
 
     // ---------------------------------------------------------------
     // Interfaces (SPEC 8.5): pure method signatures, no fields/bodies.

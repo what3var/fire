@@ -13,5 +13,5 @@ namespace fire.Values
     /// a deliberate but arbitrary choice - if another 8-bit format
     /// is needed, this is the only place that would have to change.
     /// </summary>
-    public enum NumericWidth { W8 = 8, W16 = 16, W32 = 32, W64 = 64 }
+    public enum NumericWidth : byte { W8 = 8, W16 = 16, W32 = 32, W64 = 64 }
 }

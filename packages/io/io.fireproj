@@ -8,333 +8,334 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'io' of fire: prelude and C++ sources."
+    "description": "The standard library 'io' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_io.hpp"
+      "native/fire_bridge_io.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__IOLastError",
         "arguments": 0,
-        "cpp": "io::LastError"
+        "c": "fire_io_LastError"
       },
       {
         "name": "__IOLastErrorMessage",
         "arguments": 0,
-        "cpp": "io::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_LastErrorMessage"
       },
       {
         "name": "__IOOpenCount",
         "arguments": 0,
-        "cpp": "io::OpenCount"
+        "c": "fire_io_OpenCount"
       },
       {
         "name": "__IOFileOpen",
         "arguments": 3,
-        "cpp": "io::FileOpen"
+        "c": "fire_io_FileOpen"
       },
       {
         "name": "__IOMemNew",
         "arguments": 0,
-        "cpp": "io::MemNew"
+        "c": "fire_io_MemNew"
       },
       {
         "name": "__IOMemFromBuffer",
         "arguments": 1,
-        "cpp": "io::MemFromBuffer"
+        "c": "fire_io_MemFromBuffer"
       },
       {
         "name": "__IOClose",
         "arguments": 1,
-        "cpp": "io::Close"
+        "c": "fire_io_Close"
       },
       {
         "name": "__IORead",
         "arguments": 4,
-        "cpp": "io::Read"
+        "c": "fire_io_Read"
       },
       {
         "name": "__IOWrite",
         "arguments": 4,
-        "cpp": "io::Write"
+        "c": "fire_io_Write"
       },
       {
         "name": "__IOReadByte",
         "arguments": 1,
-        "cpp": "io::ReadByte"
+        "c": "fire_io_ReadByte"
       },
       {
         "name": "__IOWriteByte",
         "arguments": 2,
-        "cpp": "io::WriteByte"
+        "c": "fire_io_WriteByte"
       },
       {
         "name": "__IOReadRest",
         "arguments": 1,
-        "cpp": "io::ReadRest",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_ReadRest"
       },
       {
         "name": "__IOFlush",
         "arguments": 1,
-        "cpp": "io::Flush"
+        "c": "fire_io_Flush"
       },
       {
         "name": "__IOSeek",
         "arguments": 3,
-        "cpp": "io::Seek"
+        "c": "fire_io_Seek"
       },
       {
         "name": "__IOPosition",
         "arguments": 1,
-        "cpp": "io::Position"
+        "c": "fire_io_Position"
       },
       {
         "name": "__IOLength",
         "arguments": 1,
-        "cpp": "io::Length"
+        "c": "fire_io_Length"
       },
       {
         "name": "__IOSetLength",
         "arguments": 2,
-        "cpp": "io::SetLength"
+        "c": "fire_io_SetLength"
       },
       {
         "name": "__IOCanRead",
         "arguments": 1,
-        "cpp": "io::CanRead"
+        "c": "fire_io_CanRead"
       },
       {
         "name": "__IOCanWrite",
         "arguments": 1,
-        "cpp": "io::CanWrite"
+        "c": "fire_io_CanWrite"
       },
       {
         "name": "__IOCanSeek",
         "arguments": 1,
-        "cpp": "io::CanSeek"
+        "c": "fire_io_CanSeek"
       },
       {
         "name": "__IOMemToBuffer",
         "arguments": 1,
-        "cpp": "io::MemToBuffer",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_MemToBuffer"
       },
       {
         "name": "__IOFileExists",
         "arguments": 1,
-        "cpp": "io::FileExists"
+        "c": "fire_io_FileExists"
       },
       {
         "name": "__IOFileSize",
         "arguments": 1,
-        "cpp": "io::FileSize"
+        "c": "fire_io_FileSize"
       },
       {
         "name": "__IOFileTime",
         "arguments": 1,
-        "cpp": "io::FileTime"
+        "c": "fire_io_FileTime"
       },
       {
         "name": "__IOFileDelete",
         "arguments": 1,
-        "cpp": "io::FileDelete"
+        "c": "fire_io_FileDelete"
       },
       {
         "name": "__IOFileCopy",
         "arguments": 3,
-        "cpp": "io::FileCopy"
+        "c": "fire_io_FileCopy"
       },
       {
         "name": "__IOFileMove",
         "arguments": 3,
-        "cpp": "io::FileMove"
+        "c": "fire_io_FileMove"
       },
       {
         "name": "__IODirExists",
         "arguments": 1,
-        "cpp": "io::DirExists"
+        "c": "fire_io_DirExists"
       },
       {
         "name": "__IODirCreate",
         "arguments": 1,
-        "cpp": "io::DirCreate"
+        "c": "fire_io_DirCreate"
       },
       {
         "name": "__IODirDelete",
         "arguments": 2,
-        "cpp": "io::DirDelete"
+        "c": "fire_io_DirDelete"
       },
       {
         "name": "__IODirList",
         "arguments": 4,
-        "cpp": "io::DirList",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_DirList"
       },
       {
         "name": "__IOCurrentDir",
         "arguments": 0,
-        "cpp": "io::CurrentDir",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_CurrentDir"
       },
       {
         "name": "__IOEntryTime",
         "arguments": 1,
-        "cpp": "io::EntryTime"
+        "c": "fire_io_EntryTime"
       },
       {
         "name": "__IODirMove",
         "arguments": 2,
-        "cpp": "io::DirMove"
+        "c": "fire_io_DirMove"
       },
       {
         "name": "__IOSetCurrentDir",
         "arguments": 1,
-        "cpp": "io::SetCurrentDir"
+        "c": "fire_io_SetCurrentDir"
       },
       {
         "name": "__IORoots",
         "arguments": 0,
-        "cpp": "io::Roots",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_Roots"
       },
       {
         "name": "__IOHomeDir",
         "arguments": 0,
-        "cpp": "io::HomeDir",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_HomeDir"
       },
       {
         "name": "__IOPathCombine",
         "arguments": 2,
-        "cpp": "io::PathCombine",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathCombine"
       },
       {
         "name": "__IOPathFileName",
         "arguments": 1,
-        "cpp": "io::PathFileName",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathFileName"
       },
       {
         "name": "__IOPathStem",
         "arguments": 1,
-        "cpp": "io::PathStem",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathStem"
       },
       {
         "name": "__IOPathExtension",
         "arguments": 1,
-        "cpp": "io::PathExtension",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathExtension"
       },
       {
         "name": "__IOPathParent",
         "arguments": 1,
-        "cpp": "io::PathParent",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathParent"
       },
       {
         "name": "__IOPathFull",
         "arguments": 1,
-        "cpp": "io::PathFull",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathFull"
       },
       {
         "name": "__IOPathTemp",
         "arguments": 0,
-        "cpp": "io::PathTemp",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathTemp"
       },
       {
         "name": "__IOPathSeparator",
         "arguments": 0,
-        "cpp": "io::PathSeparator",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_PathSeparator"
       },
       {
         "name": "__IOPathIsRooted",
         "arguments": 1,
-        "cpp": "io::PathIsRooted"
+        "c": "fire_io_PathIsRooted"
       },
       {
         "name": "__IOStdHandle",
         "arguments": 1,
-        "cpp": "io::StdHandle"
+        "c": "fire_io_StdHandle"
       },
       {
         "name": "__IOStdWrite",
         "arguments": 2,
-        "cpp": "io::StdWrite"
+        "c": "fire_io_StdWrite"
       },
       {
         "name": "__IOStdFlush",
         "arguments": 1,
-        "cpp": "io::StdFlush"
+        "c": "fire_io_StdFlush"
       },
       {
         "name": "__IOStdReadLine",
         "arguments": 0,
-        "cpp": "io::StdReadLine",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_StdReadLine"
       },
       {
         "name": "__IOStdReadAll",
         "arguments": 0,
-        "cpp": "io::StdReadAll",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_StdReadAll"
       },
       {
         "name": "__IOBufferIndexOf",
         "arguments": 4,
-        "cpp": "io::BufferIndexOf"
+        "c": "fire_io_BufferIndexOf"
       },
       {
         "name": "__IOUtf8Encode",
         "arguments": 1,
-        "cpp": "io::Utf8Encode",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_Utf8Encode"
       },
       {
         "name": "__IOUtf8Decode",
         "arguments": 3,
-        "cpp": "io::Utf8Decode",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_Utf8Decode"
       },
       {
         "name": "__IOSplitLines",
         "arguments": 1,
-        "cpp": "io::SplitLines",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_io_SplitLines"
       }
     ],
     "exceptions": [
       "DestroyedException"
     ],
-    "reset": "io::reset"
+    "reset": "fire_io_reset",
+    "language": "c"
   }
 }

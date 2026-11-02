@@ -21,6 +21,8 @@ namespace fire.Native
         private readonly Dictionary<string, OverloadSelector> _overloadSelectors = new();
         /// <summary>Classes named by a parameter of an overload: each gets `ovd_Name(v)`, the score of an object for it (closer classes score higher).</summary>
         private readonly SortedSet<string> _ovClassNames = new(StringComparer.Ordinal);
+        /// <summary>The tests of generic parameters (`ovg_N(value, owner)`): body -> name.</summary>
+        private readonly Dictionary<string, string> _ovGenericTests = new(StringComparer.Ordinal);
 
         /// <summary>The implementations a call of `name` with `argc` arguments on an object of `rc` can reach: all candidates when the types of the
         /// arguments decide, otherwise the one method.</summary>
@@ -81,7 +83,7 @@ namespace fire.Native
         }
 
         private static string SelectorSignature(OverloadSelector selector) =>
-            $"[[maybe_unused]] static Value {selector.Name}(Value self{string.Concat(Enumerable.Range(0, selector.Argc).Select(i => $", Value a{i}"))}, OwnList* list)";
+            $"FIRE_MAYBE_UNUSED static Value {selector.Name}(Value self{string.Concat(Enumerable.Range(0, selector.Argc).Select(i => $", Value a{i}"))}, OwnList* list)";
 
         private string SelectorFunction(OverloadSelector selector)
         {
@@ -89,7 +91,7 @@ namespace fire.Native
             sb.AppendLine(SelectorSignature(selector));
             sb.AppendLine("{");
             sb.AppendLine("    (void)self; (void)list;");
-            string ownerObj = selector.Kind == FuncKind.Static ? "nullptr" : "(self.kind == K_Class ? objAt(self) : nullptr)";
+            string ownerObj = selector.Kind == FuncKind.Static ? "NULL" : "(self.kind == K_Class ? objAt(self) : NULL)";
             // an argument that carries an address: its value is scored, and a candidate without `ref` there gets the value
             bool IsAddress(int i) => (selector.Addresses >> i & 1) != 0;
             for (int i = 0; i < selector.Argc; i++)
@@ -147,7 +149,7 @@ namespace fire.Native
         }
 
         /// <summary>A method that is not generic takes no type arguments: the ones a call named are dropped (like the VM).</summary>
-        private static string ClearCallTArgs(FunctionProto proto) => proto.TypeParamCount == 0 ? "g_callTArgs = nullptr; " : "";
+        private static string ClearCallTArgs(FunctionProto proto) => proto.TypeParamCount == 0 ? "g_callTArgs = NULL; " : "";
 
         /// <summary>The OverloadHint in front of a call instruction (before its SetTypeArgs and CopyArgs), or null.</summary>
         private static OverloadHint? HintBefore(Func f, Instr ins)
@@ -231,15 +233,21 @@ namespace fire.Native
                     string fits = parsed.Alternatives.Length == 0 ? "true"
                         : string.Join(" || ", parsed.Alternatives.Select(alt => "(" + string.Join(" && ", alt.Select(cond => HoldsExpr("ovc", cond))) + ")"));
                     string? typeArg = null;
+                    bool usesOwner = false;
                     if (parsed.TypeParamIndex >= 0)
                     {
                         int k = parsed.TypeParamIndex;
+                        usesOwner = parsed.TypeParamClass!.Length > 0 && ownerObj != "NULL";
                         typeArg = parsed.TypeParamClass!.Length > 0
-                            ? (ownerObj != "nullptr" ? TArgOfExpr(parsed.TypeParamClass, k, ownerObj) : null)
-                            : (generic ? $"(g_callTArgs ? static_cast<TArgs>(g_callTArgs)[{k}] : nullptr)" : null);
+                            ? (usesOwner ? TArgOfExpr(parsed.TypeParamClass, k, "own") : null)
+                            : (generic ? $"(g_callTArgs ? ((TArgs)g_callTArgs)[{k}] : NULL)" : null);
                     }
-                    string byTypeArg = typeArg != null ? $"const TArg* tga = {typeArg}; if (tga) return fitsTArg(ovc, tga); " : "";
-                    return $"({v}.kind == K_Undefined ? {Overloads.UndefinedScore} : [&]() {{ Value ovc = {v}; {byTypeArg}return {fits}; }}() ? {Overloads.GenericScore} : {Overloads.NoMatch})";
+                    string byTypeArg = typeArg != null ? $"const TArg* tga = {typeArg}; if (tga) return fitsTArg(&ovc, tga); " : "";
+                    // the test is a function of its own (C has no lambdas): the value, and the object whose type arguments count
+                    string body = $"{{ (void)own; {byTypeArg}return {fits}; }}";
+                    if (!_ovGenericTests.TryGetValue(body, out var testName))
+                        _ovGenericTests[body] = testName = $"ovg_{_ovGenericTests.Count}";
+                    return $"({v}.kind == K_Undefined ? {Overloads.UndefinedScore} : {testName}({v}, {(usesOwner ? ownerObj : "NULL")}) ? {Overloads.GenericScore} : {Overloads.NoMatch})";
                 }
             }
             return $"({v}.kind == K_Undefined ? {Overloads.UndefinedScore} : {Overloads.AnyScore})";
@@ -249,9 +257,11 @@ namespace fire.Native
         private string OverloadClassFunctions()
         {
             var sb = new StringBuilder();
+            foreach (var (body, testName) in _ovGenericTests)
+                sb.AppendLine($"FIRE_MAYBE_UNUSED static bool {testName}(Value ovc, Obj* own) {body}");
             foreach (var name in _ovClassNames)
             {
-                sb.AppendLine($"[[maybe_unused]] static int ovd_{Mangle(name)}(Value v) {{");
+                sb.AppendLine($"FIRE_MAYBE_UNUSED static int ovd_{Mangle(name)}(Value v) {{");
                 sb.AppendLine($"    if (!leafAlive(v)) return {Overloads.UndefinedScore};");
                 var cases = new StringBuilder();
                 foreach (var cls in _classList)

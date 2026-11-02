@@ -11,109 +11,110 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'gpio' of fire: prelude and C++ sources."
+    "description": "The standard library 'gpio' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_gpio.hpp"
+      "native/fire_bridge_gpio.h"
     ],
     "discover": false,
     "functions": [
       {
         "name": "__GpioLastError",
         "arguments": 0,
-        "cpp": "gpio::LastError"
+        "c": "fire_gpio_LastError"
       },
       {
         "name": "__GpioLastErrorMessage",
         "arguments": 0,
-        "cpp": "gpio::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_gpio_LastErrorMessage"
       },
       {
         "name": "__GpioOpenCount",
         "arguments": 0,
-        "cpp": "gpio::OpenCount"
+        "c": "fire_gpio_OpenCount"
       },
       {
         "name": "__GpioSupported",
         "arguments": 0,
-        "cpp": "gpio::Supported"
+        "c": "fire_gpio_Supported"
       },
       {
         "name": "__GpioChips",
         "arguments": 0,
-        "cpp": "gpio::Chips",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_gpio_Chips"
       },
       {
         "name": "__GpioOpen",
         "arguments": 2,
-        "cpp": "gpio::Open"
+        "c": "fire_gpio_Open"
       },
       {
         "name": "__GpioConfigure",
         "arguments": 5,
-        "cpp": "gpio::Configure"
+        "c": "fire_gpio_Configure"
       },
       {
         "name": "__GpioRead",
         "arguments": 1,
-        "cpp": "gpio::Read"
+        "c": "fire_gpio_Read"
       },
       {
         "name": "__GpioWrite",
         "arguments": 2,
-        "cpp": "gpio::Write"
+        "c": "fire_gpio_Write"
       },
       {
         "name": "__GpioPollEdge",
         "arguments": 1,
-        "cpp": "gpio::PollEdge"
+        "c": "fire_gpio_PollEdge"
       },
       {
         "name": "__GpioEdgeTime",
         "arguments": 1,
-        "cpp": "gpio::EdgeTime"
+        "c": "fire_gpio_EdgeTime"
       },
       {
         "name": "__GpioClose",
         "arguments": 1,
-        "cpp": "gpio::Close"
+        "c": "fire_gpio_Close"
       },
       {
         "name": "__GpioSimWire",
         "arguments": 2,
-        "cpp": "gpio::SimWire"
+        "c": "fire_gpio_SimWire"
       },
       {
         "name": "__GpioSimUnwire",
         "arguments": 2,
-        "cpp": "gpio::SimUnwire"
+        "c": "fire_gpio_SimUnwire"
       },
       {
         "name": "__GpioSimDrive",
         "arguments": 2,
-        "cpp": "gpio::SimDrive"
+        "c": "fire_gpio_SimDrive"
       },
       {
         "name": "__GpioSimLevel",
         "arguments": 1,
-        "cpp": "gpio::SimLevel"
+        "c": "fire_gpio_SimLevel"
       },
       {
         "name": "__GpioSimOutput",
         "arguments": 1,
-        "cpp": "gpio::SimOutput"
+        "c": "fire_gpio_SimOutput"
       },
       {
         "name": "__GpioSimReset",
         "arguments": 0,
-        "cpp": "gpio::SimReset"
+        "c": "fire_gpio_SimReset"
       }
     ],
-    "reset": "gpio::reset"
+    "reset": "fire_gpio_reset",
+    "language": "c"
   }
 }

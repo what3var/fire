@@ -14,7 +14,7 @@ namespace IO {
     class FileStream : NativeStream {
         string name
 
-        construct(string path, int mode = IO.FileMode.Open, int access = -1) : base(-1) {
+        construct(string path, IO.FileMode mode = IO.FileMode.Open, IO.FileAccess access = (-1)!IO.FileAccess) : base(-1) {
             this.name = path
             this.handle = IO.IOErrors.Handle(__IOFileOpen(path, mode, IO.FileStream.AccessFor(mode, access)))
         }
@@ -23,7 +23,7 @@ namespace IO {
         string Name { get { return this.name } }
 
         // The FileAccess for a FileMode when none is given (-1).
-        static int AccessFor(int mode, int access) {
+        static IO.FileAccess AccessFor(IO.FileMode mode, IO.FileAccess access) {
             if (access != -1) { return access }
             if (mode == IO.FileMode.Open) { return IO.FileAccess.Read }
             if (mode == IO.FileMode.Append) { return IO.FileAccess.Write }
@@ -118,13 +118,13 @@ namespace IO {
             var start = IO.Path.Parts(IO.Path.GetFullPath(relativeTo))
             var goal = IO.Path.Parts(IO.Path.GetFullPath(path))
             var full = IO.Path.GetFullPath(path)
-            if (start.count == 0 || goal.count == 0 || !IO.Path.SamePart(start[0], goal[0])) { return full }
+            if (start.Count == 0 || goal.Count == 0 || !IO.Path.SamePart(start[0], goal[0])) { return full }
             var same = 0
-            while (same < start.count && same < goal.count && IO.Path.SamePart(start[same], goal[same])) { same++ }
+            while (same < start.Count && same < goal.Count && IO.Path.SamePart(start[same], goal[same])) { same++ }
             var result = new List()
-            for (var i = same; i < start.count; i++) { result.Add("..") }
-            for (var i = same; i < goal.count; i++) { result.Add(goal[i]) }
-            if (result.count == 0) { return "." }
+            for (var i = same; i < start.Count; i++) { result.Add("..") }
+            for (var i = same; i < goal.Count; i++) { result.Add(goal[i]) }
+            if (result.Count == 0) { return "." }
             return sep.Join(result)
         }
 
@@ -189,7 +189,7 @@ namespace IO {
         }
 
         // A stream on the file (see IO.FileStream).
-        static IO.FileStream Open(string path, int mode, int access = -1) { return new IO.FileStream(path, mode, access) }
+        static IO.FileStream Open(string path, IO.FileMode mode, IO.FileAccess access = (-1)!IO.FileAccess) { return new IO.FileStream(path, mode, access) }
         static IO.FileStream OpenRead(string path) { return new IO.FileStream(path, IO.FileMode.Open, IO.FileAccess.Read) }
         static IO.FileStream OpenWrite(string path) { return new IO.FileStream(path, IO.FileMode.OpenOrCreate, IO.FileAccess.Write) }
         // Creates the file or empties it.
@@ -232,7 +232,7 @@ namespace IO {
             IO.File.AppendAllBytes(path, IO.Utf8.GetBytes(text))
         }
 
-        // All lines as a List of strings (`foreach (line in ...)`, `.count`, `[i]`).
+        // All lines as a List of strings (`foreach (line in ...)`, `.Count`, `[i]`).
         static List ReadAllLines(string path) {
             return new List(__IOSplitLines(IO.File.ReadAllText(path)))
         }

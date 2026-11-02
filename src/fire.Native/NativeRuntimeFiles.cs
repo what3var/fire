@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace fire.Native
 {
-    /// <summary>The C++ files the generated code needs (embedded in this assembly): the runtime <c>fire_rt.hpp</c> and the platform package it was generated for.</summary>
+    /// <summary>The files the generated code needs (embedded in this assembly): the runtime <c>fire_rt.h</c> (and <c>fire_rt_cpp.hpp</c>, <c>fire_json.h</c>) and the platform package it was generated for.</summary>
     public static class NativeRuntimeFiles
     {
         private static readonly Assembly Asm = typeof(NativeRuntimeFiles).Assembly;
@@ -16,12 +16,14 @@ namespace fire.Native
         private static IEnumerable<string> Names() => Resources.Keys;
         private static Stream Open(string name) => Asm.GetManifestResourceStream(Resources[name])!;
 
-        /// <summary>Writes <c>fire_rt.hpp</c> and - with <paramref name="platform"/> - the platform package <c>platform/&lt;platform&gt;/</c> (and the packages it
+        /// <summary>Writes <c>fire_rt.h</c> (with <c>fire_rt_cpp.hpp</c> and <c>fire_json.h</c>) and - with <paramref name="platform"/> - the platform package <c>platform/&lt;platform&gt;/</c> (and the packages it
         /// includes, like <c>std</c> under <c>posix</c>) into <paramref name="directory"/>; existing files are replaced. Without a platform name every package is written.</summary>
         public static void WriteTo(string directory, string? platform = null)
         {
             Directory.CreateDirectory(directory);
-            WriteResource("fire_rt.hpp", directory);
+            WriteResource("fire_rt.h", directory);
+            WriteResource("fire_rt_cpp.hpp", directory);
+            WriteResource("fire_json.h", directory);
             foreach (string name in Names().Where(n => n.StartsWith("abi/", StringComparison.Ordinal)))
                 WriteResource(name, directory);
             var wanted = platform == null ? AllPackages() : PackageClosure(platform);

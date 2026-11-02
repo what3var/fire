@@ -56,7 +56,7 @@ namespace fire.Package.Manager
             """;
 
         public const string ExampleNative = """
-            // C++ source of the natives of "mathkit" (docs/PACKAGE_NATIVES.md). It is put into the generated file after the runtime (fire_rt.hpp), outside of any namespace, and built into a shared library for the virtual machine.
+            // C++ source of the natives of "mathkit" (docs/PACKAGE_NATIVES.md). It is put into the natives of the program (fire_natives.cpp) after the runtime (fire_rt_cpp.hpp), outside of any namespace, and built into a shared library for the virtual machine.
             #include <cmath>
 
             namespace fire {

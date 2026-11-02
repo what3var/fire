@@ -18,7 +18,7 @@ foreach (path in IO.Directory.GetFiles(folder, "*.txt", IO.SearchOption.AllDirec
 IO.Directory.Delete(folder, true)
 ```
 
-The natives are those of the IO bridge (`packages/io/native/fire_bridge_io.hpp`): a `FileStream` is a handle in the same table as every other stream. Every access
+The natives are those of the IO bridge (`packages/io/native/fire_bridge_io.h`, C): a `FileStream` is a handle in the same table as every other stream. Every access
 goes through the host's `IoPolicy` (docs/SPEC.md 8.11): a denied access is an `IO.PermissionException`.
 
 ## `IO.Path`

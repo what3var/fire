@@ -1,4 +1,4 @@
-# Natives Backend (AOT): fire -> C++
+# Natives Backend (AOT): fire -> C
 
 Status: **experimentell**, Branch `aot`. Dieses Dokument beschreibt Ziel, Architektur, den aktuellen Stand und die Messwerte.
 
@@ -7,17 +7,18 @@ Status: **experimentell**, Branch `aot`. Dieses Dokument beschreibt Ziel, Archit
 fire-Programme sollen sich auf Wunsch zu **richtig schnellen, eigenständigen Binaries** übersetzen lassen - auf dem Desktop
 und auf einem ESP32 (FreeRTOS), wo die Sprache nur dann sinnvoll ist, wenn die Leistung stimmt.
 
-## Entscheidung: den Code direkt als C++ einbetten
+## Entscheidung: den Code direkt als C einbetten
 
-Der Bytecode wird **nicht** als Datenblock neben einem Interpreter ausgeliefert, sondern in **C++-Anweisungen übersetzt**, die der
-C++-Compiler zusammen mit der Runtime sieht und optimiert. Dafür sprechen:
+Der Bytecode wird **nicht** als Datenblock neben einem Interpreter ausgeliefert, sondern in **C-Anweisungen übersetzt**, die der
+C-Compiler zusammen mit der Runtime sieht und optimiert. (Bis zum Branch `native-c` war es C++; der erzeugte Code hat nichts von C++ gebraucht,
+C läuft mit jedem Compiler, auch denen der Mikrocontroller, und ist die Grenze, an der später getrennt übersetzte Bibliotheken zusammenkommen.) Dafür sprechen:
 
-* Der C++-Compiler erledigt die Typinferenz mit: `var i = 0` ist ein `Int(0)`, die Art des Werts steht zur Übersetzungszeit fest,
+* Der C-Compiler erledigt die Typinferenz mit: `var i = 0` ist ein `Int(0)`, die Art des Werts steht zur Übersetzungszeit fest,
   und der generische `Value`-Pfad (Art prüfen, Einheit prüfen, rechnen) faltet sich zu nacktem `int64`-Code zusammen.
   Das haben wir gemessen (siehe unten): schon die *generische* Übersetzung ist mehr als 20x schneller als die VM.
 * Kein Programmformat, kein Lader, kein Dispatch. Auf dem ESP32 liegt der Code als normaler Code im Flash (Firmware), nicht als
   Daten, die ein Interpreter erst lesen müsste.
-* Jede fire-Funktion (statische Methode, später auch Methode, Konstruktor, Lambda) wird eine C++-Funktion; kleine werden vom
+* Jede fire-Funktion (statische Methode, Methode, Konstruktor, Lambda) wird eine C-Funktion; kleine werden vom
   Compiler eingebettet, der Rest bleibt ein Aufruf - genau so, wie man es erwartet.
 
 Ein portables Binärformat braucht nur noch der **Interpreter** - und den braucht man nur, wenn Skripte auf dem Gerät *zur Laufzeit*
@@ -33,16 +34,41 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
                           v                                                      v
                   C#-VM (Editor, Debugger)                       fire.Native (CppGenerator)
                                                                                  |
-                                                                  erzeugtes C++ + native/runtime/fire_rt.hpp
+                                                      fire_program.c (C11) + native/runtime/fire_rt.h
+                                                      [fire_natives.cpp (C++) + fire_rt_cpp.hpp: Natives in C++]
                                                                                  |
-                                                                  clang/gcc/MSVC/xtensa-gcc -> Binary
+                                                                  gcc/clang/MSVC/xtensa-gcc -> Binary
 ```
 
-* `src/fire.Native` - der Generator (`CppGenerator`), liest `LinkedProgram` und schreibt eine `.cpp`-Datei. Die Runtime
-  (`fire_rt.hpp`) steckt als Ressource in der DLL und wird neben die `.cpp` geschrieben.
-* `native/runtime/fire_rt.hpp` - die C++-Runtime: `Value` (16 Byte), Arithmetik/Vergleiche mit schnellem Pfad und kaltem Fehlerpfad,
-  Ausgabeformat identisch zu `Value.ToString()`.
-* `fire.Compiler native <dateien> [-o out.cpp]` - Befehlszeile.
+* `src/fire.Native` - der Generator (`CppGenerator`), liest `LinkedProgram` und schreibt das Programm als C (`fire_program.c`). Die Runtime
+  (`fire_rt.h`) steckt als Ressource in der DLL und wird daneben geschrieben.
+* `native/runtime/fire_rt.h` - die Runtime in C11 (übersetzt auch als C++): `Value` (16 Byte), Arithmetik/Vergleiche mit schnellem Pfad und kaltem
+  Fehlerpfad, Ausgabeformat identisch zu `Value.ToString()`. Ihr globaler Zustand liegt in der Einheit, die `FIRE_RT_IMPLEMENTATION` definiert (das Programm,
+  oder die Bibliothek eines Packages für die VM).
+* **Natives in C++** (die Natives der Packages, die noch C++ sind; die Bridges von `graphics` und `windows` sind C und Teil von `fire_program.c`): eine eigene Datei `fire_natives.cpp`, die
+  `native/runtime/fire_rt_cpp.hpp` einbindet - `fire_rt.h` als C++ (Funktionen in `namespace fire`, mit C-Linkage, also *eine* Runtime für beide Dateien), die
+  C++-Plattformschicht (`fire::plat`, `FIRE_PLATFORM_CPP_HEADER`) und die paar Überladungen mit Referenzen, mit denen die Natives geschrieben sind. Das Programm ruft
+  jeden Native über eine C-Funktion `fire_nat_N` auf, die der Generator am Ende von `fire_natives.cpp` schreibt (und im Programm deklariert). Ein Programm ohne
+  solche Natives (auch eines mit JSON) ist reines C.
+* **JSON** (`#import "json"`): `native/runtime/fire_json.h` - die Engine in C (Schreiben, Parser, Lesen; dieselben Texte und Fehler wie `JsonMethods` der VM; was sie
+  für sich braucht, kommt aus einer Arena des Aufrufs) und die Tabellen der Klassen des Programms, die der Generator dahinter schreibt (`kJsonClasses`, `jsonClassAt`, ...).
+* **Bauen** (`NativeBuilder.BuildCommands`): ohne Natives in C ein Aufruf des C-Compilers (`gcc -std=c11 ... -lm`); mit Natives wird das Programm zur Objektdatei
+  übersetzt und vom C++-Compiler zusammen mit `fire_natives.cpp` gelinkt. Der C-Compiler gehört zum C++-Compiler der Toolchain (`g++` -> `gcc`, `clang++` -> `clang`,
+  `em++` -> `emcc`, `x86_64-w64-mingw32-g++` -> `...-gcc`; MSVC: `cl /TC`), oder `toolchain.cCompiler`/`cStd`. Ein ESP-IDF-Komponent listet beide Dateien.
+* `fire.Compiler native <dateien> [-o out.c]` - Befehlszeile (schreibt mit Natives auch `fire_natives.cpp`).
+
+### C statt C++: was der Generator anders macht
+
+* **Catch-Blöcke** waren C++-Lambdas (`[&]`), die über der Wurfstelle laufen (damit `resume` dort weitermacht). In C ist jeder `try` mit Catch-Blöcken eine eigene
+  Funktion `C_<funktion>_<n>(void* ctx, uint32_t ci, Value e)`; die Funktion, zu der er gehört, hält die Variablen, die ihre Catch-Blöcke benutzen, in einem
+  **Frame** (`struct FR_<funktion>`: die Handler, die Stackplätze der Catch-Blöcke und von Parametern, Stackplätzen, Locals und Besitzlisten nur die, die im Code der
+  Catch-Funktionen vorkommen), `Handler.ctx` zeigt darauf. Alles andere bleibt eine gewöhnliche Variable, die der C-Compiler in einem Register halten kann. Der Code behält seine Namen: ein Makro je
+  Variable macht aus `s0` ein `(FR->s0)`, in der Funktion und in ihren Catch-Funktionen (danach `#undef`). Funktionen ohne Catch-Block bleiben, wie sie waren.
+* **Aufruftiefe** (`try x.Take...`): statt eines RAII-Zählers ein Wrapper, der zählt und `<funktion>_b` aufruft (die Trampoline für Spezialisierungen rufen `_b` direkt).
+* **Statische Initialisierung** (Einheitentabelle, Ressourcen, Hooks) läuft in `fire_init()` vor `fire_main()`; Globals beginnen mit `FIRE_UNDEF_INIT`.
+* Variadische Templates und `std::initializer_list` sind Compound Literals: `ownValueN(o, v, (OwnList* const[]){&OP, &O3}, 2)`, `internTArgsN(...)`. Die Tests
+  generischer Parameter bei der Überladungswahl sind kleine Funktionen `ovg_N(value, owner)` statt sofort aufgerufener Lambdas.
+* Kein `namespace`, kein `nullptr`, kein `std::`, keine Referenzen (`timeObjTicks(v, &ticks)`), `fire_char16` statt `char16_t`, `objFields(o)` statt `o->fields()`.
 
 ### Wie der Bytecode übersetzt wird
 
@@ -171,6 +197,10 @@ Bekannte Abweichungen zur VM:
 * Eine Ausnahme, die ein Destruktor wirft, wird beim Abrollen ignoriert.
 
 ## Messwerte
+
+**C gegen C++** (Branch `native-c`, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` sind als C 4-16 % schneller
+als der C++-Code davor (fib 3,6 statt 4,3 ms, method 3,3 statt 3,9 ms, list 5,2 statt 6,1 ms, die anderen 4-13 %), die Ausgaben gleich. 2 Millionen Aufrufe einer
+Funktion mit `try`/`catch`: 12,9 ms (C++: 15,2 ms) - mit allen Variablen im Frame waren es 34,7 ms, daher hält der Frame nur, was die Catch-Blöcke benutzen.
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 
@@ -313,7 +343,7 @@ einzigen Maschine, keine Garantie.
 ### Bridges: Time und `Sleep` - umgesetzt
 
 Die Natives einer `#import`-Bibliothek stehen in einem eigenen Header `packages/<name>/native/fire_bridge_<name>.hpp`, den die erzeugte Datei nur einbindet, wenn das Programm
-die Bibliothek importiert (`bridges/` liegt neben `fire_rt.hpp`; `NativeRuntimeFiles` schreibt sie mit). Sie benutzen die Runtime und die Plattformschicht (`plat::`), nie ein
+die Bibliothek importiert (`bridges/` liegt neben `fire_rt.h`; `NativeRuntimeFiles` schreibt sie mit). Sie benutzen die Runtime und die Plattformschicht (`plat::`), nie ein
 Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `DateTime.Now/UtcNow`, Kalenderrechnung, `ToString(format)` (die .NET-Zeitformate, Invariant Culture),
 `Parse`/`TryParse`, `TimeSpan`-Text. Was der Header von der Plattform braucht: `plat::unixMicros()` (Wanduhr) und für `Sleep` ohne Threads `plat::sleepMs`; die Zeitzone kommt aus
 `localtime_r` (mit `FIRE_NO_LOCALTIME` auf Boards ohne Zeitzonen: Ortszeit = UTC).
@@ -323,35 +353,41 @@ Betriebssystem-Header direkt. **`time`** (`fire_bridge_time.hpp`): `Sleep`, `Dat
   Eine falsche Angabe ist eine `TimeException` mit den Texten der VM.
 * Abweichung: `DateTime.Parse` liest eine Teilmenge der .NET-Formate (ISO-Datum und -Zeit mit `Z`/`+hh:mm`, `yyyy-MM`, `M/d/yyyy`, Monatsnamen (auch `March 2024`), `3:45 PM`, `GMT`); sonst `undefined` bzw. `TimeException`.
 
-**`io`** (`fire_bridge_io.hpp`): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8. Die Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread:
-`g_ioError` in den Thread-Variablen) sind in C++, das Dateisystem kommt aus dem Plattformpaket: `platform/<name>/fire_fs.hpp` (der Generator setzt `FIRE_PLATFORM_FS_HEADER`) mit
-`plat::fs::open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/fullPath/...`. Mitgeliefert: `std/fire_fs_std.hpp` (`<filesystem>`, für posix und
-windows), `std/fire_fs_posix.hpp` (POSIX-Aufrufe für `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF; `FIRE_FS_ROOT` für relative Pfade) und
-`std/fire_fs_none.hpp` (`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.hpp`.
-Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund)` (Funktion, vor den Includes in der Zielkonfiguration), Standard: alles erlaubt.
+**`io`** (`fire_bridge_io.h`, C - auch mit TinyCC): Streams (Datei, Speicher, Konsole), Dateien, Verzeichnisse, Pfade, UTF-8 (der Decoder ersetzt ungültige Folgen wie .NET). Die
+Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread: `g_ioError` in den Thread-Variablen) sind in der Brücke, das Dateisystem kommt aus dem Plattformpaket:
+`platform/<name>/fire_fs.h` (der Generator setzt `FIRE_PLATFORM_FS_C_HEADER`) mit `fire_fs_open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/
+fullPath/...` (die Schnittstelle und das Gemeinsame: `std/fire_fs_c.h`). Mitgeliefert: `std/fire_fs_posix.h` (POSIX-Aufrufe; für `posix`, `wasm` und - mit `FIRE_FS_ROOT` für relative Pfade und
+32-Bit-Positionen - `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF), `std/fire_fs_win32.h` (die Wide-API von Windows) und `std/fire_fs_none.h`
+(`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.h`. (`graphics` liest Bilder und
+Systemschriften über dieselbe Schicht; eine C++-Schicht für Dateien gibt es nicht mehr.)
+Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund, größe)` (eine Funktion `int(const char*, int, char*, size_t)`, 1 erlaubt; vor den
+Includes in der Zielkonfiguration), Standard: alles erlaubt.
 Abweichungen: Standardeingabe wartet bei `Read` auf die verlangte Byteanzahl oder das Ende; `IO.Stdio` schreibt direkt auf `stdout`/`stderr` (gemeinsame Pufferung mit `print`);
 was ein Skript offen lässt, wird am Programmende geschlossen (statisches Destruktor-Netz).
 
-**`devices`** (`fire_bridge_devices.hpp`): Geräteverwaltung (Handles, Kennungen `treiber:port`, Standardgerät), Empfangspuffer mit Paketgrenzen und `WaitFor`/`WaitForString`. Welche Geräte
+**`devices`** (`fire_bridge_devices.h`, C): Geräteverwaltung (Handles, Kennungen `treiber:port`, Standardgerät), Empfangspuffer mit Paketgrenzen und `WaitFor`/`WaitForString`. Welche Geräte
 es gibt, bestimmen **Treiber**: `FIRE_DEVICES` (Komma-Liste in der Reihenfolge der Anmeldung, Standard `"serial"`; `"loopback"` ist ein simuliertes Gerät `loopback:echo`, das nach 5 ms zurücksendet,
 was es bekommt) und `FIRE_DEFAULT_DEVICE` (Kennung des Standardgeräts, `Device.Default`) - beides als `defines` im Ziel. Die seriellen Ports liefert das Plattformpaket
-(`platform/<name>/fire_dev.hpp`, vom Generator als `FIRE_PLATFORM_DEV_HEADER` eingebunden): `plat::dev::serialNames()` und `plat::dev::SerialPort` (115200 Baud 8N1, `open/close/read/write`, Lesen ohne
-Blockieren). Mitgeliefert: `std/fire_dev_posix.hpp` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `std/fire_dev_win32.hpp` (Win32-Kommunikations-API, Ports aus der Registry),
-`std/fire_dev_esp32.hpp` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `std/fire_dev_none.hpp` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
+(`platform/<name>/fire_dev.h`, vom Generator als `FIRE_PLATFORM_DEV_C_HEADER` eingebunden, Schnittstelle in `std/fire_dev_c.h`): `fire_dev_serialNames()` und `FireDevSerialPort` (115200 Baud 8N1, `fire_dev_serialOpen/Close/Read/Write`, Lesen ohne
+Blockieren). Mitgeliefert: `std/fire_dev_posix.h` (termios; Linux `/dev/ttyS*|ttyUSB*|ttyACM*|ttyAMA*`, macOS `/dev/tty.*|cu.*`), `std/fire_dev_win32.h` (Win32-Kommunikations-API, Ports aus der Registry),
+`std/fire_dev_esp32.h` (UART-Treiber von ESP-IDF; `FIRE_SERIAL_PORTS`, `FIRE_UART<n>_TX/RX`) und `std/fire_dev_none.h` (keine Ports). Die Windows- und ESP32-Teile sind noch nicht auf echter Hardware probiert.
 **Es gibt keine Hintergrund-Threads**: Empfangenes wird eingesammelt, wenn das Programm fragt (`HasData`, `Read...`, die Warte-Funktionen, `Connect`) - bis dahin hält es der Puffer des Betriebssystems bzw. des
 UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
 benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.
 
-**`graphics`** (`fire_bridge_graphics.hpp`, Zeichencode in `bridges/graphics/`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Renderer` (Text mit der 8x14-Schrift, Alpha-Blending schaltbar), `Brush` (Füllungen: Rechtecke, Kreise, Ellipsen, Dreiecke, Polygone, Flood-Fill) und `Pen` (Punkt, Linie, Pfad, Umrisse; vorgerenderte Spitze), `Blit` zwischen den Farbmodi, Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
-Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_HEADER`, begrenzt durch
-`FIRE_IO_POLICY` wie bei IO). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
+**`graphics`** (`fire_bridge_graphics.h`, C - auch mit TinyCC; Zeichencode in `fire_gfx.h`, `fire_gfx_ttf.h`, `fire_gfx_text.h`, `fire_gfx_images.h`, `fire_gfx_slicer.h` daneben in `packages/graphics/native/`;
+die Funktion `__GRPHName` heißt im Programm `fire_gfx_Name`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Renderer` (Text mit der 8x14-Schrift, Alpha-Blending schaltbar), `Brush` (Füllungen: Rechtecke, Kreise, Ellipsen, Dreiecke, Polygone, Flood-Fill) und `Pen` (Punkt, Linie, Pfad, Umrisse; vorgerenderte Spitze), `Blit` zwischen den Farbmodi, Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
+Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_C_HEADER`: `fire_fs_*`, begrenzt durch
+`FIRE_IO_POLICY` wie bei IO; Systemschriften ebenso). Die Meldung der letzten fehlgeschlagenen Funktion steht in `g_gfxError` (je Thread). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
 die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Arrays, die ein `ToolPath` behält).
 
-**`windows`** (`fire_bridge_windows.hpp`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
+**`windows`** (`fire_bridge_windows.h`, C - auch mit TinyCC; `__GRPHWinName` heißt im Programm `fire_win_WinName`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
 Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
-Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.hpp`, als `FIRE_PLATFORM_DISPLAY_HEADER` eingebunden): `fire::plat::disp::Window` mit
-`open/close/pump/present/setVSync`. Mitgeliefert: `std/fire_display_sdl.hpp` (SDL2, für `posix` und `windows`; das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`)
-und `std/fire_display_none.hpp` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Die VM nutzt SDL3, die Tasten- und
+Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.h`, als `FIRE_PLATFORM_DISPLAY_C_HEADER` eingebunden; die Schnittstelle, die Ereignisse und das
+Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl.h` (SDL2, für `posix`, `windows` und `wasm`;
+das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`; das Systemaussehen aus `std/fire_systheme.h`)
+und `std/fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
+Fenstermanager an und die Fenster schließen sich. Die VM nutzt SDL3, die Tasten- und
 Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
 (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
@@ -360,9 +396,9 @@ die Umgebungsvariable `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW 
 (MSYS2: `ucrt64\include\SDL2`), das System (`/usr/include/SDL2`, Homebrew) und `pkg-config sdl2`. Fehlt SDL2 unter Windows (das portable w64devkit bringt es nicht mit), fragt der Build wie bei der Toolchain
 (Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL2.dll` neben dem gebauten Programm.
 Unter Linux und macOS gibt es keinen Download: die Meldung nennt das Paket (`sudo apt install libsdl2-dev`, `brew install sdl2`). Das Programm definiert `SDL_MAIN_HANDLED`, braucht also weder `SDL2main` noch `-lmingw32`.
-Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
-(`gfx::Framebuffer::resize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
-Finger und Joysticks meldet die Anzeige als `EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `setTouchMouse(bool)`/`touchMouse()` schalten SDLs Mausereignisse aus Fingern (Window.TouchMouse). Die SDL2-Anzeige öffnet jeden angesteckten Joystick (`SDL_JOYDEVICEADDED`). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.
+Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `FIRE_EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
+(`fire_gfx_fbResize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
+Finger und Joysticks meldet die Anzeige als `FIRE_EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `FIRE_EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `fire_display_setTouchMouse`/`fire_display_touchMouse` schalten SDLs Mausereignisse aus Fingern (Window.TouchMouse). Die SDL2-Anzeige öffnet jeden angesteckten Joystick (`SDL_JOYDEVICEADDED`). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.
 
 **Zeiger** (`unsafe`, SPEC 8.3): ein Zeiger ist ein `K_Pointer`-Wert auf die Speicherstelle einer Variablen, eines Feldes oder eines Array-/Puffer-Elements (`ref`-Argumente). `&`, `*`, `*p = v`,
 Zeiger auf Zeiger, der Vergleich, `p + n`, `p - n` und `p - q` laufen wie in der VM. `width` sagt, wohin er zeigt: 0 eine Variable oder ein Feld (der Versatz in Elementen steckt in `unit`: ein Zeiger darauf ist ein
@@ -372,7 +408,7 @@ prüfen mit `ptrValid` (Versatz, zerstörtes Array, Grenzen: eine fangbare `Inde
 
 ### Plattformschicht
 
-Alles, was vom Betriebssystem oder Board abhängt, steht **in einem Ordner je Plattform**: `native/platform/<name>/fire_platform.hpp`. Die Runtime (`fire_rt.hpp`) benutzt
+Alles, was vom Betriebssystem oder Board abhängt, steht **in einem Ordner je Plattform**: `native/platform/<name>/fire_platform.h` (C, für die Runtime) und `fire_platform.hpp` (C++, `fire::plat` für die Natives). Die Runtime (`fire_rt.h`) benutzt
 nur diese Schnittstelle (`fire::plat`):
 
 | | |
@@ -610,7 +646,7 @@ Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emsc
 ## Natives von Packages in der VM (Shared Library, C-ABI)
 
 Die C++-Natives eines Packages (docs/PACKAGES.md, docs/PACKAGE_NATIVES.md) laufen in der VM nicht als Fehler-Stub, sondern über eine **Shared Library**: `PackageLibrary` (fire.Compiler) erzeugt einen
-Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.hpp` in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
+Wrapper (`native/abi/fire_pkg_wrapper.hpp` + je Funktion ein Thunk), kompiliert ihn zusammen mit `fire_rt.h` (als C++, über `fire_rt_cpp.hpp`) in dem Modus `FIRE_LIBRARY` (`fatal`/`unsupported` werfen eine `FireFatalError`, statt das
 Programm zu beenden; `runDestructors` ist leer) und den Quellen des Packages für die Plattform dieses Rechners (`platformSources`) mit dem Toolchain-Aufruf von `NativeBuilder.CompilerCommand(sharedLibrary: true)`.
 Die Bibliothek exportiert die C-Schnittstelle aus `native/abi/fire_pkg_abi.h` (`fire_pkg_call` mit `fire_val`: Zahlen, Text als UTF-16, Arrays und Puffer werden kopiert). `PackageNativeBinding` (fire.Runtime) lädt sie
 (`NativeLibrary`, im gepackten Programm über den Payload wie SDL) und übersetzt `Value` <-> `fire_val`. Ein Package kann fertige Bibliotheken je Runtime-Identifier mitbringen (`native.libraries`).

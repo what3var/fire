@@ -201,11 +201,11 @@ namespace Http {
             this.values = new List()
         }
 
-        int Count { get { return this.names.count } }
+        int Count { get { return this.names.Count } }
 
         int IndexOf(string name) {
             var lower = name.ToLower()
-            for (var i = 0; i < this.names.count; i++) {
+            for (var i = 0; i < this.names.Count; i++) {
                 if (this.names[i].ToLower() == lower) { return i }
             }
             return -1
@@ -237,7 +237,7 @@ namespace Http {
 
         undefined Remove(string name) {
             var lower = name.ToLower()
-            var i = this.names.count - 1
+            var i = this.names.Count - 1
             while (i >= 0) {
                 if (this.names[i].ToLower() == lower) {
                     this.names.RemoveAt(i)
@@ -253,7 +253,7 @@ namespace Http {
         // All fields as "Name: value\r\n" lines.
         string ToString() {
             var text = ""
-            for (var i = 0; i < this.names.count; i++) { text = text + this.names[i] + ": " + this.values[i] + "\r\n" }
+            for (var i = 0; i < this.names.Count; i++) { text = text + this.names[i] + ": " + this.values[i] + "\r\n" }
             return text
         }
     }
@@ -842,7 +842,7 @@ namespace Http {
             var result = undefined
             try {
                 var handler = this.fallback
-                for (var i = 0; i < this.routes.count; i++) {
+                for (var i = 0; i < this.routes.Count; i++) {
                     var route = this.routes[i]
                     if (route.Matches(request.method, request.path)) {
                         handler = route.handler

@@ -7,7 +7,7 @@ using fire.Standard;
 namespace fire.Native
 {
     /// <summary>
-    /// JSON (`#import "json"`, docs/JSON.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.hpp
+    /// JSON (`#import "json"`, docs/JSON.md) in the native backend: the program calls `__JsonCall`, the runtime part is native/runtime/fire_json.h (C)
     /// (put into the generated file), and the generator writes the tables it reads - per class its fields as JSON sees them (JsonMethods.JsonFieldsOf),
     /// the slots of List and JsonObject, and the texts of the type arguments. Every class of the program is generated: `"$type"` can name any of them.
     /// </summary>
@@ -24,8 +24,8 @@ namespace fire.Native
             _version++;
         }
 
-        /// <summary>The C++ expression of the type argument of the running generic method (`Json.Deserialize&lt;Person&gt;`): its text, or nullptr.</summary>
-        private static string JsonCallType(Func f) => f.HasCallTArgs ? "(ctargs && ctargs[0] ? jsonTArgText(ctargs[0]) : nullptr)" : "nullptr";
+        /// <summary>The C++ expression of the type argument of the running generic method (`Json.Deserialize&lt;Person&gt;`): its text, or NULL.</summary>
+        private static string JsonCallType(Func f) => f.HasCallTArgs ? "(ctargs && ctargs[0] ? jsonTArgText(ctargs[0]) : NULL)" : "NULL";
 
         /// <summary>Every class can be named by `"$type"`: all are registered, with the units of their fields and the type arguments their fields name.</summary>
         private void RegisterJsonTargets()
@@ -71,22 +71,20 @@ namespace fire.Native
             return Math.Min(count, 255);
         }
 
-        /// <summary>The runtime part (fire_json.hpp) and the tables of the program.</summary>
+        /// <summary>The engine (fire_json.h) and the tables of the program.</summary>
         private string JsonCode()
         {
             var sb = new StringBuilder();
-            string runtime = NativeRuntimeFiles.ReadText("runtime/fire_json.hpp") ?? throw new NativeNotSupportedException("the JSON runtime (fire_json.hpp) is missing");
-            sb.AppendLine("// ---- runtime/fire_json.hpp");
-            sb.AppendLine(runtime);
-            sb.AppendLine("// ---- end of runtime/fire_json.hpp");
-            sb.AppendLine("namespace fire {");
+            // the engine (C, fire_json.h), then the tables of the program's classes and the functions that read them
+            sb.AppendLine("#define FIRE_JSON_IMPLEMENTATION 1");
+            sb.AppendLine("#include \"fire_json.h\"");
             var rows = new List<string>();
             int listCls = -1, listItems = -1, listCount = -1, objCls = -1, objKeys = -1, objValues = -1, objCount = -1;
             foreach (var ci in _classList.OrderBy(c => c.Id))
             {
                 var rc = ci.Rc;
                 var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
-                string fieldTable = "nullptr";
+                string fieldTable = "NULL";
                 if (fields.Count > 0)
                 {
                     fieldTable = $"kJsonF{ci.Id}";
@@ -108,28 +106,27 @@ namespace fire.Native
                 }
                 rows.Add($"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {ci.Fields.Count}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}}}");
             }
-            sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, nullptr, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
+            sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
             sb.AppendLine($"static const uint32_t kJsonClassCount = {rows.Count};");
             sb.AppendLine($"static const JsonSpecial kJsonSpecial = {{{listCls}, {listItems}, {listCount}, {objCls}, {objKeys}, {objValues}, {objCount}}};");
             var targs = _targIds.OrderBy(kv => kv.Value).ToList();
-            sb.AppendLine("struct JsonTArgText { const char* text; const TArg* targ; };");
-            sb.AppendLine($"static const JsonTArgText kJsonTArgs[] = {{{(targs.Count == 0 ? "{nullptr, nullptr}" : string.Join(", ", targs.Select(t => $"{{{CString(t.Key)}, &ta_{t.Value}}}")))}}};");
+            sb.AppendLine("typedef struct JsonTArgText { const char* text; const TArg* targ; } JsonTArgText;");
+            sb.AppendLine($"static const JsonTArgText kJsonTArgs[] = {{{(targs.Count == 0 ? "{NULL, NULL}" : string.Join(", ", targs.Select(t => $"{{{CString(t.Key)}, &ta_{t.Value}}}")))}}};");
             sb.AppendLine($"static const uint32_t kJsonTArgCount = {targs.Count};");
-            sb.AppendLine("static const JsonClassInfo* jsonClassAt(uint32_t cls) { return cls < kJsonClassCount ? &kJsonClasses[cls] : nullptr; }");
-            sb.AppendLine("static int32_t jsonClassNamed(const char* name) {");
-            sb.AppendLine("    for (uint32_t i = 0; i < kJsonClassCount; i++) if (std::strcmp(kJsonClasses[i].name, name) == 0) return (int32_t)i;");
+            sb.AppendLine("const JsonClassInfo* jsonClassAt(uint32_t cls) { return cls < kJsonClassCount ? &kJsonClasses[cls] : NULL; }");
+            sb.AppendLine("int32_t jsonClassNamed(const char* name) {");
+            sb.AppendLine("    for (uint32_t i = 0; i < kJsonClassCount; i++) if (strcmp(kJsonClasses[i].name, name) == 0) return (int32_t)i;");
             sb.AppendLine("    return -1;");
             sb.AppendLine("}");
-            sb.AppendLine("static const char* jsonTArgText(const TArg* t) {");
+            sb.AppendLine("const char* jsonTArgText(const TArg* t) {");
             sb.AppendLine("    for (uint32_t i = 0; i < kJsonTArgCount; i++) if (kJsonTArgs[i].targ == t) return kJsonTArgs[i].text;");
-            sb.AppendLine("    return nullptr;");
+            sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
-            sb.AppendLine("static const TArg* jsonTArgFor(const std::string& text) {");
-            sb.AppendLine("    for (uint32_t i = 0; i < kJsonTArgCount; i++) if (text == kJsonTArgs[i].text) return kJsonTArgs[i].targ;");
-            sb.AppendLine("    return nullptr;");
+            sb.AppendLine("const TArg* jsonTArgFor(const char* text) {");
+            sb.AppendLine("    for (uint32_t i = 0; i < kJsonTArgCount; i++) if (kJsonTArgs[i].text && strcmp(text, kJsonTArgs[i].text) == 0) return kJsonTArgs[i].targ;");
+            sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
-            sb.AppendLine("static const JsonSpecial& jsonSpecial() { return kJsonSpecial; }");
-            sb.AppendLine("}  // namespace fire");
+            sb.AppendLine("const JsonSpecial* jsonSpecial(void) { return &kJsonSpecial; }");
             return sb.ToString();
         }
     }

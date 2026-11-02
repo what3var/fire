@@ -22,12 +22,12 @@ class FileDialogTests {
         d.Filter = "Text|*.txt|Pictures|*.png;*.bmp|All|*.*"
         d.FilterIndex = 2
         d.ParseFilter()
-        Testing.Assert.AreEqual(3, d.filterNames.count)
+        Testing.Assert.AreEqual(3, d.filterNames.Count)
         Testing.Assert.AreEqual("Pictures", d.filterNames[d.filterAt])
         Testing.Assert.AreEqual("*.png;*.bmp", d.filterPatterns[1])
         var none = new Dialogs.SaveFileDialog()
         none.ParseFilter()
-        Testing.Assert.AreEqual(1, none.filterNames.count)
+        Testing.Assert.AreEqual(1, none.filterNames.Count)
     }
 
     [Test]

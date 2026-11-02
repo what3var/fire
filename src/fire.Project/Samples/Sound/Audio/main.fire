@@ -9,7 +9,7 @@ try {
     out = new Audio.Output("sim")
 }
 var devices = Audio.Board.Devices()
-for (var i = 0; i < devices.count; i++) { print("device: " + devices[i]) }
+for (var i = 0; i < devices.Count; i++) { print("device: " + devices[i]) }
 
 // notes: frequency in Hz and length in milliseconds
 var notes = [262, 294, 330, 349, 392, 392, 440, 440, 440, 440, 392]

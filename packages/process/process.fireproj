@@ -1,0 +1,90 @@
+{
+  "format": 1,
+  "name": "fire-process",
+  "type": "library",
+  "import": "process",
+  "standard": true,
+  "settings": {
+    "version": "1.0.0",
+    "author": "fire",
+    "license": "fire",
+    "description": "The standard library 'process' of fire: starting programs, pipes, exit codes (prelude and C sources)."
+  },
+  "native": {
+    "sources": [
+      "native/fire_bridge_process.h"
+    ],
+    "discover": false,
+    "functions": [
+      {
+        "name": "__ProcLastError",
+        "arguments": 0,
+        "c": "fire_proc_LastError"
+      },
+      {
+        "name": "__ProcLastErrorMessage",
+        "arguments": 0,
+        "needsList": true,
+        "returnsReference": true,
+        "c": "fire_proc_LastErrorMessage"
+      },
+      {
+        "name": "__ProcOpenCount",
+        "arguments": 0,
+        "c": "fire_proc_OpenCount"
+      },
+      {
+        "name": "__ProcSupported",
+        "arguments": 0,
+        "c": "fire_proc_Supported"
+      },
+      {
+        "name": "__ProcStart",
+        "arguments": 5,
+        "c": "fire_proc_Start"
+      },
+      {
+        "name": "__ProcId",
+        "arguments": 1,
+        "c": "fire_proc_Id"
+      },
+      {
+        "name": "__ProcPoll",
+        "arguments": 1,
+        "c": "fire_proc_Poll"
+      },
+      {
+        "name": "__ProcExitCode",
+        "arguments": 1,
+        "c": "fire_proc_ExitCode"
+      },
+      {
+        "name": "__ProcRead",
+        "arguments": 5,
+        "c": "fire_proc_Read"
+      },
+      {
+        "name": "__ProcWrite",
+        "arguments": 4,
+        "c": "fire_proc_Write"
+      },
+      {
+        "name": "__ProcCloseInput",
+        "arguments": 1,
+        "c": "fire_proc_CloseInput"
+      },
+      {
+        "name": "__ProcKill",
+        "arguments": 1,
+        "c": "fire_proc_Kill"
+      },
+      {
+        "name": "__ProcClose",
+        "arguments": 1,
+        "c": "fire_proc_Close"
+      }
+    ],
+    "reset": "fire_proc_reset",
+    "language": "c"
+  }
+}

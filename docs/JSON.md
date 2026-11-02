@@ -52,7 +52,7 @@ print(copy.friend.friend == copy)   // True: the cycle is back
 | `Json.Deserialize<T>(text)` | reads the text into a value of type `T` (`Json.Deserialize<Person>(text)`, `Json.Deserialize<List<Point>>(text)`) |
 | `Json.Deserialize(text, typeName)` | the same with the type given by its name (`"Person"`, `"Box<int>"`) |
 | `Json.Parse(text)` | JSON without classes: objects become `JsonObject`s, arrays arrays, the rest numbers, strings, `bool` and `undefined` (`null`) |
-| `JsonObject` | `Get(key)`, `Set(key, value)`, `Has(key)`, `Remove(key)`, `Keys()`, `Count()` - members in the order of the text |
+| `JsonObject` | `Get(key)`, `Set(key, value)`, `Has(key)`, `Remove(key)`, `Keys()`, `Count` - members in the order of the text |
 | `JsonException` | a text that cannot be read (with line and column: `Expected ',' or ']' in an array (line 1, column 6).`) or a value that does not fit its type (`$.age: expected a whole number, found 1.5.`) |
 
 `new JsonOptions(true)` is the indented form.
@@ -89,6 +89,6 @@ The class of an object comes from `"$type"`, else from the declared type of the 
 
 ## Native builds
 
-The native backend (docs/NATIVE_BACKEND.md) has the same functions in its runtime (`fire_json.hpp`, put into the program when it uses JSON) and writes a table
+The native backend (docs/NATIVE_BACKEND.md) has the same functions in its runtime (`fire_json.h`, C, included by the program when it uses JSON) and writes a table
 of the program's classes for it: every class of the program is generated then, because `"$type"` can name any of them. It needs exceptions in the runtime (for
 `JsonException`), not C++ exceptions, so it also works on boards whose compiler has them switched off.

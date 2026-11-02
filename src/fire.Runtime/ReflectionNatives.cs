@@ -32,6 +32,9 @@ namespace fire.Runtime
             natives.Register("__refl_probe", a => Probe(a[0], a[1], a[2].AsString(), a[3]));
             natives.Register("__refl_silence", a => Silence(a[0], a[1]));
             natives.Register("__refl_silence_handle", a => SilenceHandle(a[0]));
+            // the enum of a value (its full name, undefined for anything else), and a number as a value of the enum of another value
+            natives.Register("__refl_enum_name", a => a[0].Enum is { } type ? Str(type.Name) : Value.MakeUndefined());
+            natives.Register("__refl_enum_of", a => a[0].Enum is { } type && a[1].Kind == ValueKind.Int ? Value.MakeEnum(a[1].AsInt(), type) : a[1]);
         }
 
         private static VM Vm() =>
@@ -67,11 +70,12 @@ namespace fire.Runtime
             if (rc.Meta != null)
                 foreach (var b in rc.Meta.BaseNames)
                     if (rc.Base == null || !(rc.Base.Name == b || rc.Base.Name.EndsWith("." + b, StringComparison.Ordinal))) interfaces.Add(b);
-            var info = new ScriptArray(4);
+            var info = new ScriptArray(5);
             info.Items[0] = Str(rc.Name);
             info.Items[1] = rc.Base != null ? Str(rc.Base.Name) : Value.MakeUndefined();
             info.Items[2] = Value.MakeBool(rc.IsActor);
             info.Items[3] = StringArray(interfaces);
+            info.Items[4] = Attributes((IReadOnlyList<AttributeMeta>?)rc.Meta?.Attributes ?? Array.Empty<AttributeMeta>());   // (the attributes before the class)
             return Value.MakeArray(info);
         }
 
