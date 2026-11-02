@@ -14,6 +14,7 @@ fire.Terminal                  (net10.0, plattformunabhängig)
 fire.Terminal.Sdl              (net10.0, referenziert nur .Terminal)
   SdlFramebufferRenderer         – IFramebufferRenderer über SDL3-CS
   SdlClipboard                   – IClipboard über SDL3-CS (Text, image/png, image/bmp, text/uri-list)
+  WinClipboard, DropFiles        – Dateien in der Zwischenablage von Windows (CF_HDROP, P/Invoke; SDL3 hat es nicht)
 
 fire.Terminal.Windows          (net10.0, referenziert .Terminal + .Sdl)
   ConsoleWindow                   – zeigt EINEN Framebuffer in einem Fenster an
@@ -488,8 +489,8 @@ Sie braucht kein offenes Fenster (SDL startet seinen Video-Teil dafür einmal). 
 die innerhalb des Programms genauso funktioniert. Zugriffe auf die Zwischenablage und das Abholen der Fenster-Ereignisse schließen sich gegenseitig aus (unter X11 wartet SDL auf die Antwort des
 Besitzers der Zwischenablage, indem es selbst Ereignisse abholt). Ein Programm ohne Fenster beantwortet die Fragen anderer Programme nach dem, was es hineingelegt hat, während es `Clipboard`
 aufruft (dort holt SDL die Ereignisse der Zwischenablage ab). SDL 3.2 unter X11 fragt nach den Arten in der Zwischenablage nur, wenn ihr Besitzer wechselt, während das Programm läuft; damit auch
-da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim ersten Zugriff einmal, der Besitzer habe gewechselt (VM und nativ; danach fragt SDL selbst). Unter Windows hat SDL3 keine Dateilisten: die VM hält Dateien dort in ihrer eigenen Zwischenablage, ein nativer Build spricht
-selbst mit `CF_HDROP`.
+da ist, was ein anderes Programm vor dem Start kopiert hat, sagt fire SDL beim ersten Zugriff einmal, der Besitzer habe gewechselt (VM und nativ; danach fragt SDL selbst). Unter Windows hat SDL3 keine Dateilisten: VM und nativer Build sprechen dafür selbst mit der Zwischenablage von Windows
+(`CF_HDROP`, wie der Explorer beim Kopieren von Dateien).
 
 Im nativen Backend: `fire_display_clipboardSet/Get/Has` (Text), `fire_display_clipboardGetImage/SetImage/HasImage` und `GetFiles/SetFiles/HasFiles` der Anzeige (`fire_display_c.h`; SDL3, SDL2 sagt "nicht
 vorhanden", ohne Desktop die eigene des Programms), die Drops als `EV_DROP_FILES`/`EV_DROP_TEXT` mit `data` (Pfade zeilenweise bzw. der Text), das Schweben als `EV_DRAG_HOVER`/`EV_DRAG_LEAVE`

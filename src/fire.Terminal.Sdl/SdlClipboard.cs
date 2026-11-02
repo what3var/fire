@@ -5,7 +5,7 @@ using SDL3;
 namespace fire.Terminal.Sdl
 {
     /// <summary>The clipboard of the desktop through SDL3: text, pictures (image/png, image/bmp - SDL3 puts image/bmp on the Windows clipboard as CF_DIB) and files
-    /// (text/uri-list and x-special/gnome-copied-files; on Windows SDL3 has no CF_HDROP, so files stay within the program there). The video part of SDL is started for it
+    /// (text/uri-list and x-special/gnome-copied-files; on Windows CF_HDROP, which SDL3 does not have: <see cref="WinClipboard"/>). The video part of SDL is started for it
     /// once (on X11 SDL needs a window of its own for the clipboard); the calls hold <see cref="SdlGate.Lock"/>, which the pumping of the windows holds as well - on X11
     /// SDL waits for the answer of the clipboard's owner by pumping events itself. A desktop that cannot be reached (no SDL, no display) gives the program a clipboard of its
     /// own instead. The same kinds as the native display (native/platform/std/fire_display_sdl3.h).</summary>
@@ -178,6 +178,11 @@ namespace fire.Terminal.Sdl
             lock (SdlGate.Lock)
             {
                 if (!Ready()) return _fallback.GetFiles();
+                if (WinFiles)
+                {
+                    var dropped = WinClipboard.GetFiles();
+                    if (dropped != null && dropped.Length > 0) return dropped;
+                }
                 var list = GetData("text/uri-list") ?? GetData("x-special/gnome-copied-files");
                 return list == null ? Array.Empty<string>() : PathsFromUriList(Encoding.UTF8.GetString(list));
             }
@@ -191,11 +196,17 @@ namespace fire.Terminal.Sdl
             lock (SdlGate.Lock)
             {
                 if (!Ready()) return _fallback.SetFiles(kept);
+                // (Windows: CF_HDROP of our own; SDL's offer is withdrawn first - it would still answer for the kinds it keeps within the program, e.g. image/png)
+                if (WinFiles && SDL.ClearClipboardData() && WinClipboard.SetFiles(kept)) return true;
                 return SetData(new[] { ("text/uri-list", Encoding.UTF8.GetBytes(uris)), ("x-special/gnome-copied-files", Encoding.UTF8.GetBytes("copy\n" + uris)) });
             }
         }
 
         public bool HasFiles => GetFiles().Length > 0;
+
+        /// <summary>Files go through CF_HDROP of <see cref="WinClipboard"/>: on Windows with SDL's video driver of Windows (with another one - the dummy of the
+        /// tests - the clipboard is SDL's own). The caller holds the lock and SDL is ready.</summary>
+        private static bool WinFiles => OperatingSystem.IsWindows() && SDL.GetCurrentVideoDriver() == "windows";
 
         /// <summary>The paths as a text/uri-list: `file://` URIs, each line ending in CR LF, the bytes a URI may not hold as %XX (C:\a\b becomes file:///C:/a/b).</summary>
         public static string UriListFromPaths(IEnumerable<string> paths)

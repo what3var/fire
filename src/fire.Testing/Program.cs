@@ -24802,6 +24802,135 @@ else
                 }
             }
 
+            // ---- the VM's clipboard under Windows (Wine): files as CF_HDROP (SdlClipboard + WinClipboard). A small harness with fire.Terminal.Sdl is published for win-x64
+            // (self-contained; its own artifacts folder, so that the projects of the repository keep theirs) and runs under Wine: it puts two files on the clipboard,
+            // checks them with the shell (DragQueryFileW) and reads them back; a native program (MinGW, SDL3) reads them and puts its own there, which the harness reads.
+            {
+                string title = "Fenster: die VM unter Windows (win-x64 unter Wine): Dateien in der Zwischenablage als CF_HDROP, auch mit einem nativen Programm";
+                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
+                var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
+                string? sdlProject = null;
+                for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && sdlProject == null; dir = dir.Parent)
+                {
+                    string candidate = Path.Combine(dir.FullName, "src", "fire.Terminal.Sdl", "fire.Terminal.Sdl.csproj");
+                    if (File.Exists(candidate)) sdlProject = candidate;
+                }
+                if (!TestSelected(title)) { }
+                else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null || sdlProject == null)
+                    Console.WriteLine("(die VM unter Wine: uebersprungen - MinGW, Wine, xvfb-run, das MinGW-Paket von SDL3 oder die Quellen von fire.Terminal.Sdl fehlen)");
+                else
+                {
+                    string vmDir = Path.Combine(workDir, "wine_vmclip");
+                    Directory.CreateDirectory(vmDir);
+                    File.WriteAllText(Path.Combine(vmDir, "harness.csproj"), $"""
+                        <Project Sdk="Microsoft.NET.Sdk">
+                          <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+                          <ItemGroup><ProjectReference Include="{sdlProject}" /></ItemGroup>
+                        </Project>
+                        """);
+                    File.WriteAllText(Path.Combine(vmDir, "Program.cs"), """
+                        using System.Runtime.InteropServices;
+                        using System.Text;
+                        using fire.Terminal.Sdl;
+                        static class P
+                        {
+                            [DllImport("user32.dll")] static extern int OpenClipboard(IntPtr owner);
+                            [DllImport("user32.dll")] static extern int CloseClipboard();
+                            [DllImport("user32.dll")] static extern int IsClipboardFormatAvailable(uint format);
+                            [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
+                            [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFileW(IntPtr drop, uint index, StringBuilder? file, uint size);
+                            static string ShellFiles()
+                            {
+                                if (OpenClipboard(IntPtr.Zero) == 0) return "not open";
+                                try
+                                {
+                                    IntPtr h = GetClipboardData(15);
+                                    if (h == IntPtr.Zero) return "none";
+                                    uint n = DragQueryFileW(h, 0xFFFFFFFF, null, 0);
+                                    var line = n.ToString();
+                                    for (uint i = 0; i < n; i++) { var sb = new StringBuilder(1024); DragQueryFileW(h, i, sb, 1024); line += " [" + sb + "]"; }
+                                    return line;
+                                }
+                                finally { CloseClipboard(); }
+                            }
+                            static string Files(string[] files) => files.Length + string.Concat(files.Select(f => " [" + f + "]"));
+                            static int Main(string[] args)
+                            {
+                                Console.OutputEncoding = Encoding.UTF8;
+                                var c = new SdlClipboard();
+                                if (args.Length > 0 && args[0] == "read") { Console.WriteLine("vm read " + Files(c.GetFiles()) + " " + c.HasFiles + " " + c.HasText); return 0; }
+                                string[] paths = { @"C:\fire\ein Ordner\datei ä.txt", @"C:\zwei" };
+                                Console.WriteLine("vm set " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText + " " + c.HasImage);
+                                Console.WriteLine("vm shell " + ShellFiles());
+                                Console.WriteLine("vm get " + Files(c.GetFiles()));
+                                Console.WriteLine("vm text " + c.SetText("Text") + " " + c.HasFiles + " " + (IsClipboardFormatAvailable(15) != 0) + " " + c.HasText + " " + c.GetText());
+                                Console.WriteLine("vm again " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText);
+                                return 0;
+                            }
+                        }
+                        """);
+                    string publish = RunProc("dotnet", $"publish -c Release -r win-x64 --self-contained -o out --artifacts-path artifacts -p:NuGetAudit=false", vmDir, out int publishExit);
+                    string harness = Path.Combine(vmDir, "out", "harness.exe");
+                    if (publishExit != 0 || !File.Exists(harness))
+                        Console.WriteLine("(die VM unter Wine: uebersprungen - `dotnet publish -r win-x64` ging nicht (ohne Netz fehlt das Laufzeitpaket fuer win-x64): "
+                            + string.Join(" ", publish.Split('\n').Where(l => l.Contains("error")).Take(2)) + ")");
+                    else
+                    {
+                        var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
+                        fire.Native.NativeRuntimeFiles.WriteTo(vmDir, "windows");
+                        File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(vmDir, "SDL3.dll"), true);
+                        string RunWine(string tool, string arguments, out int exit)
+                        {
+                            var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = vmDir };
+                            info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                            info.Environment["WINEDEBUG"] = "-all";
+                            info.Environment["LANG"] = "C.UTF-8";
+                            using var p = System.Diagnostics.Process.Start(info)!;
+                            var errTask = p.StandardError.ReadToEndAsync();
+                            string output = p.StandardOutput.ReadToEnd();
+                            if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                            exit = p.ExitCode;
+                            return output + errTask.Result;
+                        }
+                        RunWine(wine, "wineboot --init", out _);
+                        const string nativeScript = """
+                        #import "windows"
+                        var got = Clipboard.GetFiles()
+                        var line = "native " + got.length
+                        foreach (f in got) { line = line + " [" + f + "]" }
+                        print(line + " " + Clipboard.HasFiles + " " + Clipboard.HasText)
+                        var paths = new List<string>()
+                        paths.Add("C:\\nativ\\drei ö.txt")
+                        print("native set " + Clipboard.SetFiles(paths))
+                        """;
+                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { nativeScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                        string nativeExe = Path.Combine(vmDir, "nativeclip.exe");
+                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, vmDir, "nativeclip",
+                            $"-O2 -Wall -Wextra -I\"{Path.Combine(sdl3Mingw, "include")}\"", nativeExe, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
+                        if (buildExit != 0 || build.Contains("warning:")) CheckNat(title, false, "MinGW: " + links + "\n" + build);
+                        else
+                        {
+                            // (one X server for all three, so that they share Wine's desktop and its clipboard)
+                            string script = Path.Combine(vmDir, "run.sh");
+                            File.WriteAllText(script, $"export SDL_VIDEODRIVER=windows\n\"{wine}\" \"{harness}\" && \"{wine}\" \"{nativeExe}\" && \"{wine}\" \"{harness}\" read\n");
+                            string actual = RunWine(xvfbRun, $"-a sh \"{script}\"", out int runExit);
+                            actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => l != "" && !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
+                            string want = string.Join("\n", new[]
+                            {
+                                "vm set True True False False", "vm shell 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]", "vm get 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]",
+                                "vm text True False False True Text", "vm again True True False",
+                                "native 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei] True False", "native set True", "vm read 1 [C:\\nativ\\drei ö.txt] True False",
+                            });
+                            CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                        }
+                    }
+                }
+            }
+
             // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - the source built with MinGW against SDL3 and SDL2, the
             // target with SDL3 (its OLE drop target), the hand the X program above on the X server that Wine draws on
             {
