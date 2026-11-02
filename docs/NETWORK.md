@@ -132,7 +132,7 @@ The versions are TLS 1.2 and 1.3; SNI is sent; a server that closes without `clo
 
 ## GPIO (`#import "gpio"`, the package `fire-gpio`)
 
-Digital pins. It needs `time` (the clock of the time limits). The natives are `packages/gpio/native/fire_bridge_gpio.hpp` over `plat::gpio` (`native/platform/std/fire_gpio_*.hpp`): the **GPIO character device** of Linux
+Digital pins. It needs `time` (the clock of the time limits). The natives are C (`packages/gpio/native/fire_bridge_gpio.h` over `fire_gpio_*` of `fire_gpio.h`, see `native/platform/std/fire_gpio_c.h`; the implementations are `native/platform/std/fire_gpio_*.h`): the **GPIO character device** of Linux
 (`/dev/gpiochipN`, the v2 ioctl interface of kernel 5.10+ - Raspberry Pi and other boards; used only when the kernel headers are there, `FIRE_NO_GPIO` switches it off), **ESP-IDF `driver/gpio`** on an ESP32
 (add the components `driver` and `esp_timer`), and a stub elsewhere (Windows, macOS: no chips). Every platform has the **simulated chip** `"sim"`, so a program can be written and tested on the PC.
 
@@ -165,7 +165,7 @@ button.Poll()                                              // hands every waitin
 
 ## I2C (`#import "i2c"`, the package `fire-i2c`)
 
-The I2C bus as a controller. The natives are `packages/i2c/native/fire_bridge_i2c.hpp` over `plat::i2c` (`native/platform/std/fire_i2c_*.hpp`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
+The I2C bus as a controller. The natives are C (`packages/i2c/native/fire_bridge_i2c.h` over `fire_i2c_*` of `fire_i2c.h`, see `native/platform/std/fire_i2c_c.h`; the implementations are `native/platform/std/fire_i2c_*.h`): **`/dev/i2c-N`** of Linux (the i2c-dev interface with the `I2C_RDWR` ioctl; used only when the kernel headers are
 there, `FIRE_NO_I2C` switches it off), the **master driver of ESP-IDF** (`driver/i2c_master.h`, IDF 5.2+; add the component `esp_driver_i2c` or `driver`) on an ESP32, and a stub elsewhere (no buses). Every platform has the **simulated bus** `"sim"`.
 
 ```
@@ -195,7 +195,7 @@ var r2 = bus.WriteRead(0x3C, command, 4)          // the general form: write, re
 
 ## SPI (`#import "spi"`, the package `fire-spi`)
 
-The SPI bus as a controller. The natives are `packages/spi/native/fire_bridge_spi.hpp` over `plat::spi` (`native/platform/std/fire_spi_*.hpp`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
+The SPI bus as a controller. The natives are C (`packages/spi/native/fire_bridge_spi.h` over `fire_spi_*` of `fire_spi.h`, see `native/platform/std/fire_spi_c.h`; the implementations are `native/platform/std/fire_spi_*.h`): **`/dev/spidevB.C`** of Linux (the spidev interface with `SPI_IOC_MESSAGE`; used only when the kernel headers are there,
 `FIRE_NO_SPI` switches it off), the **SPI master driver of ESP-IDF** (`driver/spi_master.h`; add the component `esp_driver_spi` or `driver`) on an ESP32, and a stub elsewhere (no devices). Every platform has the **simulated device** `"sim"`.
 A *device* is a bus with one chip select (that is how the kernel sees it and what a chip on the bus needs).
 
@@ -260,7 +260,7 @@ ap.Stop()
 
 ## Hardware buses (the device platform)
 
-The device platform of `devices` today knows serial ports and loopback devices. GPIO, I2C and SPI are added the same way: a driver per platform under `native/platform/std/fire_<bus>_*.hpp`
+The device platform of `devices` today knows serial ports and loopback devices. GPIO, I2C and SPI are added the same way: a driver per platform under `native/platform/std/fire_<bus>_*.h` (in C)
 (`posix` uses what Linux offers **when it is there**, `esp32` the ESP-IDF drivers, the others the "not supported" stub) and **one package each**, so a program that only needs I2C does not carry SPI.
 On Linux an unavailable bus is not an error of the program: the list of buses is just empty, `Open` of a missing one throws `DeviceException` (`code = NotFound`).
 
