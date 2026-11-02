@@ -253,8 +253,8 @@ static char* fire_io_authorize(Value path, int access) {
     reason[0] = 0;
     if (!fire_io_allowed(full, access, reason, sizeof reason)) {
         char text[176];
-        if (reason[0]) snprintf(text, sizeof text, "%s", reason);
-        else snprintf(text, sizeof text, "Access to '%s' is not allowed.", full);
+        if (reason[0]) { free(full); fire_io_fail(FIRE_IO_DENIED, reason); return NULL; }
+        snprintf(text, sizeof text, "Access to '%s' is not allowed.", full);
         free(full);
         fire_io_fail(FIRE_IO_DENIED, text);
         return NULL;

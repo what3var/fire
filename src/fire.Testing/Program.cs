@@ -19167,6 +19167,32 @@ else
             """),
     }).ToArray();
 
+    // Hash functions (#import "hash", docs/HASH.md): the same digests in the VM and natively, errors as ArgumentException
+    natCases = natCases.Concat(new (string Name, string Source)[]
+    {
+        ("Hash: SHA-256/1/384/512, MD5, CRC-32, Adler-32, HMAC, Hex, Streams, Fehler", """
+            #import "hash"
+            #import "io"
+            print(Hash.Sha256.HexOf("abc"))
+            print(Hash.Sha1.HexOf("") + " " + Hash.Md5.HexOf("Grüße 😀"))
+            print(Hash.Sha384.HexOf("abc").Substring(0, 16) + " " + Hash.Sha512.HexOf("abc").Substring(0, 16))
+            var h = new Hash.Sha512()
+            var block = new byte[777]
+            for (var i = 0; i < block.length; i++) { block[i] = (i * 31) % 256 }
+            for (var i = 0; i < 50; i++) { h.Update(block, i, 777 - i) }
+            print(h.FinishHex().Substring(0, 32) + " " + h.Size)
+            print(Hash.Crc32.Of("123456789") + " " + Hash.Adler32.Of("Wikipedia") + " " + Hash.Crc32.HexOf(block))
+            print(Hash.Sha256.HexOf(new IO.MemoryStream(block)) == Hash.Sha256.HexOf(block))
+            print(Hash.Hmac.HexOf(Hash.Algorithm.Sha256, "Jefe", "what do ya want for nothing?"))
+            var mac = new Hash.Hmac(Hash.Algorithm.Sha1, Hash.Hex.Decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"))
+            print(mac.UpdateText("Hi ").UpdateText("There").FinishHex())
+            print(Hash.Bytes.Equal(Hash.Md5.Of("x"), Hash.Md5.Of("x")) + " " + Hash.Bytes.Equal(Hash.Md5.Of("x"), Hash.Md5.Of("y")))
+            try { Hash.Hex.Decode("0g") } catch (ArgumentException e) { print("hex: " + e.message) }
+            try { new Hash.Md5().Update(block, 700, 100) } catch (ArgumentException e) { print("range: " + e.message) }
+            print("end")
+            """),
+    }).ToArray();
+
     // Differences that were aligned
     natCases = natCases.Concat(new (string Name, string Source)[]
     {

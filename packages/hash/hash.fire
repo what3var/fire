@@ -1,0 +1,227 @@
+#import "io"
+
+// Hash functions (docs/HASH.md): MD5, SHA-1, SHA-256, SHA-384, SHA-512, CRC-32, Adler-32 and HMAC. Everything is plain C in the package (no library), so the
+// results are the same on every target. Data is a byte buffer, a string (hashed as UTF-8) or an IO.Stream (read to its end).
+namespace Hash {
+    enum Algorithm { Md5 = 1, Sha1 = 2, Sha256 = 3, Sha384 = 4, Sha512 = 5, Crc32 = 6, Adler32 = 7 }
+
+    // A hasher that is fed piece by piece: Update (bytes, a string as UTF-8 or a stream), then Finish for the digest. Finish starts it anew, so one hasher
+    // can hash one thing after the other.
+    class Hasher {
+        protected byte state[]
+        protected Hash.Algorithm algorithm
+
+        construct(Hash.Algorithm algorithm) {
+            this.algorithm = algorithm
+            this.state = __HashInit(algorithm)
+        }
+
+        // The algorithm of this hasher.
+        Hash.Algorithm Algorithm { get { return this.algorithm } }
+
+        // The length of the digest in bytes (16 for MD5, 20 for SHA-1, 32 for SHA-256, 48 for SHA-384, 64 for SHA-512, 4 for CRC-32 and Adler-32).
+        int Size { get { return Hash.Hasher.SizeOf(this.algorithm) } }
+
+        // The bytes of a buffer: all of them, or `count` from `offset` (-1: up to the end).
+        Hash.Hasher Update(byte data[], int offset = 0, int count = -1) {
+            if (count == -1) { count = data.length - offset }
+            __HashUpdate(this.state, data, offset, count)
+            return this
+        }
+
+        // A text, as UTF-8.
+        Hash.Hasher UpdateText(string text) {
+            __HashUpdateText(this.state, text)
+            return this
+        }
+
+        // Everything a stream gives until its end.
+        Hash.Hasher UpdateStream(IO.Stream stream) {
+            var chunk = new byte[65536]
+            while (true) {
+                var n = stream.Read(chunk, 0, chunk.length)
+                if (n <= 0) { break }
+                __HashUpdate(this.state, chunk, 0, n)
+            }
+            return this
+        }
+
+        // Bytes, a string (UTF-8) or a stream - whatever `data` is.
+        Hash.Hasher UpdateAny(any data) {
+            if (data is of string) { return this.UpdateText(data) }
+            if (data is of IO.Stream) { return this.UpdateStream(data) }
+            return this.Update(data)
+        }
+
+        // The digest of everything so far; the hasher starts anew.
+        byte[] Finish() { return __HashFinal(this.state) }
+
+        // The digest as lower-case hex digits; the hasher starts anew.
+        string FinishHex() { return __HashToHex(__HashFinal(this.state)) }
+
+        // Forgets what was hashed so far.
+        undefined Reset() { this.state = __HashInit(this.algorithm) }
+
+        // The digest of `data` (bytes, a string as UTF-8, or a stream to its end) with `algorithm`.
+        static byte[] Compute(Hash.Algorithm algorithm, any data) {
+            var h = new Hash.Hasher(algorithm)
+            h.UpdateAny(data)
+            return h.Finish()
+        }
+
+        static int SizeOf(Hash.Algorithm algorithm) {
+            if (algorithm == Hash.Algorithm.Md5) { return 16 }
+            if (algorithm == Hash.Algorithm.Sha1) { return 20 }
+            if (algorithm == Hash.Algorithm.Sha256) { return 32 }
+            if (algorithm == Hash.Algorithm.Sha384) { return 48 }
+            if (algorithm == Hash.Algorithm.Sha512) { return 64 }
+            return 4
+        }
+
+        // The size of the blocks the algorithm works on (what HMAC pads the key to).
+        static int BlockSizeOf(Hash.Algorithm algorithm) {
+            if (algorithm == Hash.Algorithm.Sha384 || algorithm == Hash.Algorithm.Sha512) { return 128 }
+            return 64
+        }
+    }
+
+    class Md5 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Md5) { }
+        static byte[] Of(any data) { return Hash.Hasher.Compute(Hash.Algorithm.Md5, data) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Md5, data)) }
+    }
+
+    class Sha1 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Sha1) { }
+        static byte[] Of(any data) { return Hash.Hasher.Compute(Hash.Algorithm.Sha1, data) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Sha1, data)) }
+    }
+
+    class Sha256 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Sha256) { }
+        static byte[] Of(any data) { return Hash.Hasher.Compute(Hash.Algorithm.Sha256, data) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Sha256, data)) }
+    }
+
+    class Sha384 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Sha384) { }
+        static byte[] Of(any data) { return Hash.Hasher.Compute(Hash.Algorithm.Sha384, data) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Sha384, data)) }
+    }
+
+    class Sha512 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Sha512) { }
+        static byte[] Of(any data) { return Hash.Hasher.Compute(Hash.Algorithm.Sha512, data) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Sha512, data)) }
+    }
+
+    // CRC-32 (the checksum of Zip, gzip and PNG) as a number: Value, or Of(data).
+    class Crc32 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Crc32) { }
+
+        // The checksum so far (0 .. 4294967295); unlike Finish it does not start anew.
+        int Value {
+            get {
+                var twin = new Hash.Crc32()
+                twin.state = copy this.state
+                return Hash.Crc32.Number(twin.Finish())
+            }
+        }
+
+        static int Of(any data) { return Hash.Crc32.Number(Hash.Hasher.Compute(Hash.Algorithm.Crc32, data)) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Crc32, data)) }
+
+        // Four bytes (big endian, as Finish gives them) as a number.
+        static int Number(byte digest[]) { return (digest[0] << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3] }
+    }
+
+    // Adler-32 (the checksum of zlib) as a number: Value, or Of(data).
+    class Adler32 : Hash.Hasher {
+        construct() : base(Hash.Algorithm.Adler32) { }
+
+        int Value {
+            get {
+                var twin = new Hash.Adler32()
+                twin.state = copy this.state
+                return Hash.Crc32.Number(twin.Finish())
+            }
+        }
+
+        static int Of(any data) { return Hash.Crc32.Number(Hash.Hasher.Compute(Hash.Algorithm.Adler32, data)) }
+        static string HexOf(any data) { return __HashToHex(Hash.Hasher.Compute(Hash.Algorithm.Adler32, data)) }
+    }
+
+    // HMAC (RFC 2104) with one of the hash functions MD5 .. SHA-512: a key and a message give a code that only someone with the key can make.
+    class Hmac {
+        Hash.Hasher inner
+        Hash.Hasher outer
+        byte outerPad[]
+
+        // `key`: bytes or a string (UTF-8).
+        construct(Hash.Algorithm algorithm, any key) {
+            if (algorithm == Hash.Algorithm.Crc32 || algorithm == Hash.Algorithm.Adler32) { throw new ArgumentException("HMAC needs a hash function (MD5, SHA-1, SHA-256, SHA-384 or SHA-512), not a checksum.") }
+            var block = Hash.Hasher.BlockSizeOf(algorithm)
+            var k = key
+            if (key is of string) { k = IO.Utf8.GetBytes(key) }
+            if (k.length > block) { k = Hash.Hasher.Compute(algorithm, k) }
+            var ipad = new byte[block]
+            this.outerPad = new byte[block]
+            for (var i = 0; i < block; i++) {
+                var b = 0
+                if (i < k.length) { b = k[i] }
+                ipad[i] = b # 0x36
+                this.outerPad[i] = b # 0x5C
+            }
+            this.inner = new Hash.Hasher(algorithm)
+            this.outer = new Hash.Hasher(algorithm)
+            this.inner.Update(ipad)
+        }
+
+        Hash.Hmac Update(byte data[], int offset = 0, int count = -1) {
+            this.inner.Update(data, offset, count)
+            return this
+        }
+        Hash.Hmac UpdateText(string text) {
+            this.inner.UpdateText(text)
+            return this
+        }
+        Hash.Hmac UpdateStream(IO.Stream stream) {
+            this.inner.UpdateStream(stream)
+            return this
+        }
+
+        // The code; afterwards the HMAC starts anew with the same key.
+        byte[] Finish() {
+            var innerDigest = this.inner.Finish()
+            this.outer.Update(this.outerPad)
+            this.outer.Update(innerDigest)
+            var mac = this.outer.Finish()
+            var ipad = new byte[this.outerPad.length]
+            for (var i = 0; i < ipad.length; i++) { ipad[i] = this.outerPad[i] # 0x5C # 0x36 }
+            this.inner.Update(ipad)
+            return mac
+        }
+        string FinishHex() { return __HashToHex(this.Finish()) }
+
+        // The code of `data` (bytes, a string or a stream) with `key`.
+        static byte[] Of(Hash.Algorithm algorithm, any key, any data) {
+            var h = new Hash.Hmac(algorithm, key)
+            h.inner.UpdateAny(data)
+            return h.Finish()
+        }
+        static string HexOf(Hash.Algorithm algorithm, any key, any data) { return __HashToHex(Hash.Hmac.Of(algorithm, key, data)) }
+    }
+
+    // Bytes as hex digits and back.
+    class Hex {
+        // Lower-case hex digits, two per byte.
+        static string Encode(byte data[]) { return __HashToHex(data) }
+        // Hex digits (either case; spaces, ':' and '-' between the bytes are skipped) as bytes; an ArgumentException for anything else.
+        static byte[] Decode(string text) { return __HashFromHex(text) }
+    }
+
+    class Bytes {
+        // Whether two buffers hold the same bytes, in a time that does not depend on where they differ (for digests and MACs).
+        static bool Equal(byte a[], byte b[]) { return __HashEqual(a, b) }
+    }
+}

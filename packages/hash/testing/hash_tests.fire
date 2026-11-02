@@ -1,0 +1,97 @@
+// The tests of the hash package: `forge test packages/hash/hash.fireproj`. The expected values are the test vectors of FIPS 180, RFC 1321, RFC 2202 and RFC 4231.
+#import "testing"
+#import "io"
+#import "hash"
+
+class HashTests {
+    [Test "SHA-256 of the FIPS 180 messages"]
+    undefined Sha256() {
+        Testing.Assert.AreEqual("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", Hash.Sha256.HexOf(""))
+        Testing.Assert.AreEqual("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Hash.Sha256.HexOf("abc"))
+        Testing.Assert.AreEqual("248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1", Hash.Sha256.HexOf("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))
+    }
+
+    [Test "SHA-1, SHA-384, SHA-512 and MD5 of \"abc\""]
+    undefined Others() {
+        Testing.Assert.AreEqual("a9993e364706816aba3e25717850c26c9cd0d89d", Hash.Sha1.HexOf("abc"))
+        Testing.Assert.AreEqual("cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7", Hash.Sha384.HexOf("abc"))
+        Testing.Assert.AreEqual("ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f", Hash.Sha512.HexOf("abc"))
+        Testing.Assert.AreEqual("900150983cd24fb0d6963f7d28e17f72", Hash.Md5.HexOf("abc"))
+        Testing.Assert.AreEqual("d41d8cd98f00b204e9800998ecf8427e", Hash.Md5.HexOf(""))
+    }
+
+    [Test "A million times 'a' in pieces gives the digest of the whole"]
+    undefined Pieces() {
+        var block = new byte[1000]
+        for (var i = 0; i < block.length; i++) { block[i] = 97 }
+        var h = new Hash.Sha256()
+        for (var i = 0; i < 1000; i++) { h.Update(block) }
+        Testing.Assert.AreEqual("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0", h.FinishHex())
+        // after Finish the hasher starts anew
+        Testing.Assert.AreEqual("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", h.UpdateText("a").UpdateText("bc").FinishHex())
+        // offset and count
+        var abc = IO.Utf8.GetBytes("xxabcxx")
+        Testing.Assert.AreEqual(Hash.Sha256.HexOf("abc"), new Hash.Sha256().Update(abc, 2, 3).FinishHex())
+    }
+
+    [Test "Text is hashed as UTF-8, a stream to its end"]
+    undefined TextAndStreams() {
+        Testing.Assert.AreEqual(Hash.Sha1.HexOf(IO.Utf8.GetBytes("Grüße 😀")), Hash.Sha1.HexOf("Grüße 😀"))
+        var m = new IO.MemoryStream(IO.Utf8.GetBytes("abc"))
+        Testing.Assert.AreEqual("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Hash.Sha256.HexOf(m))
+        Testing.Assert.AreEqual(32, Hash.Sha256.Of("x").length)
+        Testing.Assert.AreEqual(64, new Hash.Sha512().Size)
+    }
+
+    [Test "CRC-32 and Adler-32"]
+    undefined Checksums() {
+        Testing.Assert.AreEqual(3421780262, Hash.Crc32.Of("123456789"))
+        Testing.Assert.AreEqual("cbf43926", Hash.Crc32.HexOf("123456789"))
+        Testing.Assert.AreEqual(0, Hash.Crc32.Of(""))
+        Testing.Assert.AreEqual(300286872, Hash.Adler32.Of("Wikipedia"))
+        var c = new Hash.Crc32()
+        c.UpdateText("12345")
+        Testing.Assert.AreEqual(3421780262 != c.Value, true)
+        c.UpdateText("6789")
+        Testing.Assert.AreEqual(3421780262, c.Value)
+        Testing.Assert.AreEqual(3421780262, c.Value)
+    }
+
+    [Test "HMAC (RFC 2202, RFC 4231)"]
+    undefined Hmac() {
+        var key = new byte[20]
+        for (var i = 0; i < key.length; i++) { key[i] = 11 }
+        Testing.Assert.AreEqual("b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7", Hash.Hmac.HexOf(Hash.Algorithm.Sha256, key, "Hi There"))
+        Testing.Assert.AreEqual("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843", Hash.Hmac.HexOf(Hash.Algorithm.Sha256, "Jefe", "what do ya want for nothing?"))
+        Testing.Assert.AreEqual("effcdf6ae5eb2fa2d27416d5f184df9c259a7c79", Hash.Hmac.HexOf(Hash.Algorithm.Sha1, "Jefe", "what do ya want for nothing?"))
+        Testing.Assert.AreEqual("750c783e6ab0b503eaa86e310a5db738", Hash.Hmac.HexOf(Hash.Algorithm.Md5, "Jefe", "what do ya want for nothing?"))
+        Testing.Assert.AreEqual("164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737", Hash.Hmac.HexOf(Hash.Algorithm.Sha512, "Jefe", "what do ya want for nothing?"))
+        // a key longer than a block (RFC 4231 case 6), and the same HMAC twice in a row
+        var longKey = new byte[131]
+        for (var i = 0; i < longKey.length; i++) { longKey[i] = 170 }
+        var mac = new Hash.Hmac(Hash.Algorithm.Sha256, longKey)
+        Testing.Assert.AreEqual("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54", mac.UpdateText("Test Using Larger Than Block-Size Key - Hash Key First").FinishHex())
+        Testing.Assert.AreEqual("60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54", mac.UpdateText("Test Using Larger Than Block-Size Key - Hash Key First").FinishHex())
+        Testing.Assert.Throws(() => new Hash.Hmac(Hash.Algorithm.Crc32, "k"))
+    }
+
+    [Test "Hex and the comparison of digests"]
+    undefined HexAndEqual() {
+        var bytes = Hash.Hex.Decode("00 ff:10-AB")
+        Testing.Assert.AreEqual(4, bytes.length)
+        Testing.Assert.AreEqual(255, bytes[1])
+        Testing.Assert.AreEqual("00ff10ab", Hash.Hex.Encode(bytes))
+        Testing.Assert.Throws(() => Hash.Hex.Decode("abc"))
+        Testing.Assert.Throws(() => Hash.Hex.Decode("zz"))
+        Testing.Assert.IsTrue(Hash.Bytes.Equal(Hash.Sha1.Of("a"), Hash.Sha1.Of("a")))
+        Testing.Assert.IsFalse(Hash.Bytes.Equal(Hash.Sha1.Of("a"), Hash.Sha1.Of("b")))
+        Testing.Assert.IsFalse(Hash.Bytes.Equal(Hash.Sha1.Of("a"), Hash.Sha256.Of("a")))
+    }
+
+    [Test "Wrong arguments are an ArgumentException"]
+    undefined Errors() {
+        var e = Testing.Assert.Throws(() => new Hash.Sha256().Update(new byte[4], 2, 5))
+        Testing.Assert.IsTrue(e is of ArgumentException)
+        Testing.Assert.Contains("outside of the buffer", e.message)
+    }
+}

@@ -17,6 +17,7 @@
     "testing/testing.fireproj",
     "net/net.fireproj",
     "process/process.fireproj",
+    "hash/hash.fireproj",
     "tls/tls.fireproj",
     "http/http.fireproj",
     "gpio/gpio.fireproj",
