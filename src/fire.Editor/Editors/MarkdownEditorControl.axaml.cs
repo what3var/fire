@@ -9,6 +9,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.Platform.Storage;
 using Avalonia.VisualTree;
 using AvaloniaEdit.Document;
 
@@ -59,7 +60,6 @@ namespace fire.Editor
         private readonly HighlightingColorizer _fireColorizer = new();
         private readonly MarkdownRenderer _renderer = new();
         private double _overviewZoom = 1;
-        private bool _isOverview;
         private OverviewHost? _overviewHost;
 
         /// <summary>What the surface of an overview changes goes into this document: as one undo step, so Ctrl+Z takes it back and Ctrl+S saves it.</summary>
@@ -70,6 +70,16 @@ namespace fire.Editor
 
             public string[] Lines => _owner.Editor.Text.Replace("\r\n", "\n").Split('\n');
             public int? SelectedLine { get; set; }
+            public int? PendingEditLine { get; set; }
+            public OverviewTool Tool => _owner._tool;
+            public void ToolDone() { if (_owner._tool != OverviewTool.Pen) _owner.SetTool(OverviewTool.Select); }
+            public void Batch(Action changes)
+            {
+                var doc = _owner.Editor.Document;
+                doc.UndoStack.StartUndoGroup();
+                try { changes(); }
+                finally { doc.UndoStack.EndUndoGroup(); }
+            }
             public void Undo() { if (_owner.Editor.Document.UndoStack.CanUndo) _owner.Editor.Undo(); }
             public void Redo() { if (_owner.Editor.Document.UndoStack.CanRedo) _owner.Editor.Redo(); }
 
@@ -139,8 +149,12 @@ namespace fire.Editor
             _highlightTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
             _highlightTimer.Tick += (_, _) => { _highlightTimer.Stop(); RecomputeFireHighlighting(); };
 
+            BuildCanvasTools();
             RecomputeFences();
-            UpdatePreview();
+            _settingLayout = true;
+            LayoutBox.SelectedIndex = (int)Layout;
+            _settingLayout = false;
+            ApplyPreviewVisibility();
         }
 
         // -----------------------------------------------------------
@@ -151,7 +165,7 @@ namespace fire.Editor
         public int GetCaretLine() => Editor.TextArea.Caret.Line;
         public void FocusEditor()
         {
-            if (ViewerOnly) Preview.Focus();
+            if (Layout is Layouts.Surface or Layouts.View) Preview.Focus();
             else Editor.Focus();
         }
 
@@ -281,70 +295,107 @@ namespace fire.Editor
         // Vorschau
         // -----------------------------------------------------------
 
-        public bool PreviewVisible
+        /// <summary>How a Markdown document is shown: the surface (edited on it), text and view side by side, the text alone, the view alone.</summary>
+        public enum Layouts { Surface, Split, Code, View }
+
+        private Layouts _layout = Layouts.Surface;
+
+        /// <summary>The layout; a read-only document is shown as a view (the surface edits).</summary>
+        public Layouts Layout
         {
-            get => ViewerOnly || PreviewToggle.IsChecked == true;
+            get => ViewerOnly ? Layouts.View : IsReadOnly && _layout == Layouts.Surface ? Layouts.View : _layout;
             set
             {
-                PreviewToggle.IsChecked = value;
+                _layout = value;
+                _settingLayout = true;
+                LayoutBox.SelectedIndex = (int)Layout;
+                _settingLayout = false;
                 ApplyPreviewVisibility();
             }
         }
+        private bool _settingLayout;
 
+        public bool PreviewVisible
+        {
+            get => Layout != Layouts.Code;
+            set => Layout = value ? (Layout == Layouts.Code ? Layouts.View : Layout) : Layouts.Code;
+        }
+
+        /// <summary>The preview button (Ctrl+Shift+V): Surface - leave the editor of a container; Code and View - switch between the two; Split - only the view.</summary>
         public void TogglePreview()
         {
-            if (!ViewerOnly) PreviewVisible = !PreviewVisible;
+            switch (Layout)
+            {
+                case Layouts.Surface:
+                    if (Preview.Content is OverviewView view) view.EndEditing();
+                    break;
+                case Layouts.View when !ViewerOnly: Layout = Layouts.Code; break;
+                case Layouts.Code or Layouts.Split: Layout = Layouts.View; break;
+            }
+        }
+
+        private void PreviewButton_Click(object? sender, RoutedEventArgs e) => TogglePreview();
+
+        private void LayoutBox_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+        {
+            if (_settingLayout || LayoutBox.SelectedIndex < 0) return;
+            _layout = (Layouts)LayoutBox.SelectedIndex;
+            ApplyPreviewVisibility();
         }
 
         /// <summary>Applies <see cref="Mode"/>: editor read-only, formatting buttons disabled, or (viewer) the editor hidden altogether.</summary>
         private void ApplyMode()
         {
             Editor.IsReadOnly = IsReadOnly;
-            foreach (var item in FormatPanel.Children.OfType<Control>())
-                if (!ReferenceEquals(item, PreviewToggle)) item.IsEnabled = !IsReadOnly;
+            foreach (var item in TextTools.Children.OfType<Control>()) item.IsEnabled = !IsReadOnly;
             FormatBar.IsVisible = !ViewerOnly;
+            if (IsReadOnly && _layout == Layouts.Surface) _layout = Layouts.View;
+            _settingLayout = true;
+            LayoutBox.SelectedIndex = (int)Layout;
+            _settingLayout = false;
             ApplyPreviewVisibility();
         }
 
-        private void PreviewToggle_Click(object? sender, RoutedEventArgs e) => ApplyPreviewVisibility();
-
-        /// <summary>The text is a project overview and only its surface is shown.</summary>
-        private bool SurfaceOnly => _isOverview && SurfaceToggle.IsChecked == true && !ViewerOnly;
-
         private void ApplyPreviewVisibility()
         {
-            if (ViewerOnly || SurfaceOnly)
-            {
-                // only the rendered page: no editor, no splitter
-                Editor.IsVisible = false;
-                EditorColumn.Width = new GridLength(0);
-                Splitter.IsVisible = false;
-                SplitterColumn.Width = new GridLength(0);
-                Preview.IsVisible = true;
-                PreviewColumn.Width = new GridLength(1, GridUnitType.Star);
-                UpdatePreview();
-                return;
-            }
-            Editor.IsVisible = true;
-            EditorColumn.Width = new GridLength(1, GridUnitType.Star);
-
-            if (PreviewVisible)
+            var layout = Layout;
+            bool editor = layout is Layouts.Split or Layouts.Code;
+            bool preview = layout != Layouts.Code;
+            Editor.IsVisible = editor;
+            EditorColumn.Width = editor ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+            if (layout == Layouts.Split)
             {
                 Splitter.IsVisible = true;
-                Preview.IsVisible = true;
                 SplitterColumn.Width = GridLength.Auto;
                 PreviewColumn.Width = _previewWidth;
-                UpdatePreview();
             }
             else
             {
-                if (PreviewColumn.Width.Value > 0) _previewWidth = PreviewColumn.Width;
+                if (Splitter.IsVisible && PreviewColumn.Width.Value > 0 && PreviewColumn.Width.IsStar) _previewWidth = PreviewColumn.Width;
                 Splitter.IsVisible = false;
-                Preview.IsVisible = false;
                 SplitterColumn.Width = new GridLength(0);
-                PreviewColumn.Width = new GridLength(0);
+                PreviewColumn.Width = preview ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
             }
+            Preview.IsVisible = preview;
+            TextTools.IsVisible = editor;
+            CanvasTools.IsVisible = !IsReadOnly && layout is Layouts.Surface or Layouts.Split;
+            PreviewButtonText.Text = layout == Layouts.View ? "Code" : "Preview";
+            ToolTip.SetTip(PreviewButton, layout switch
+            {
+                Layouts.Surface => "Leave the editor of a container (Ctrl+Shift+V)",
+                Layouts.View => "Show the text (Ctrl+Shift+V)",
+                _ => "Show the view (Ctrl+Shift+V)",
+            });
+            if (preview) UpdatePreview();
         }
+
+        /// <summary>The document is a canvas: a `.xmd` file, or Markdown that already has containers, sketches or lines (or was made a canvas before it was saved).</summary>
+        public bool IsCanvas => _madeCanvas || (FilePath != null && Path.GetExtension(FilePath).Equals(OverviewParser.CanvasExtension, StringComparison.OrdinalIgnoreCase))
+            || OverviewParser.IsOverview(Editor.Text);
+        private bool _madeCanvas;
+
+        /// <summary>Makes a Markdown document a canvas (`.md` → `.xmd`), after asking (set by the main window); true: it is one now.</summary>
+        public static Func<MarkdownEditorControl, System.Threading.Tasks.Task<bool>>? ConvertToCanvas { get; set; }
 
         private void UpdatePreview(bool keepScroll = true)
         {
@@ -355,22 +406,18 @@ namespace fire.Editor
             var offset = keepScroll ? Preview.Offset : default;
 
             string text = Editor.Text;
-            bool overview = OverviewParser.IsOverview(text);
-            if (overview != _isOverview)
+            var layout = Layout;
+            bool surface = layout == Layouts.Surface || (IsCanvas && layout == Layouts.Split) || (IsCanvas && layout == Layouts.View);
+            if (surface)
             {
-                _isOverview = overview;
-                SurfaceToggle.IsVisible = overview && !ViewerOnly;
-                if (!overview && SurfaceToggle.IsChecked == true) { SurfaceToggle.IsChecked = false; ApplyPreviewVisibility(); return; }
-            }
-            if (overview)
-            {
-                // a project overview (docs/NOTES.md): the surface with its containers instead of the flowing page; it scrolls both ways and keeps its zoom
+                // the surface (docs/NOTES.md): the text at the top left, containers at their places; it scrolls both ways and keeps its zoom. It edits in Surface and Split.
                 bool hadFocus = false;
                 if (Preview.Content is OverviewView old) { _overviewZoom = old.Zoom; hadFocus = old.IsKeyboardFocusWithin; }
                 var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 if (FilePath != null) visited.Add(Path.GetFullPath(FilePath));
+                bool edits = !IsReadOnly && layout != Layouts.View;
                 var view = new OverviewView(OverviewParser.Parse(text), new OverviewContext { BaseDirectory = BaseDirectory, LinkClicked = HandleLink, Visited = visited },
-                    IsReadOnly ? null : _overviewHost ??= new OverviewHost(this));
+                    edits ? _overviewHost ??= new OverviewHost(this) : null);
                 view.SetZoom(_overviewZoom);
                 Preview.HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
                 Preview.Content = view;
@@ -383,6 +430,99 @@ namespace fire.Editor
             }
 
             Dispatcher.UIThread.Post(() => Preview.Offset = offset, DispatcherPriority.Loaded);
+        }
+
+        // -----------------------------------------------------------
+        // The tools of a canvas
+        // -----------------------------------------------------------
+
+        private readonly Dictionary<OverviewTool, Avalonia.Controls.Primitives.ToggleButton> _toolButtons = new();
+        private OverviewTool _tool = OverviewTool.Select;
+
+        private void BuildCanvasTools()
+        {
+            void Tool(OverviewTool tool, string label, string tip)
+            {
+                var button = new Avalonia.Controls.Primitives.ToggleButton { Content = new TextBlock { Text = label }, IsChecked = tool == OverviewTool.Select };
+                button.Classes.Add("tool");
+                ToolTip.SetTip(button, tip);
+                button.Click += async (_, _) => await ChooseTool(tool);
+                _toolButtons[tool] = button;
+                CanvasTools.Children.Add(button);
+            }
+            void Command(string label, string tip, Action action)
+            {
+                var button = new Button { Content = new TextBlock { Text = label } };
+                button.Classes.Add("tool");
+                ToolTip.SetTip(button, tip);
+                button.Click += (_, _) => action();
+                CanvasTools.Children.Add(button);
+            }
+            Tool(OverviewTool.Select, "Select", "Select, move and size containers; a double click edits the text");
+            Tool(OverviewTool.Container, "Container", "Draw a container (a click: 300 wide)");
+            Tool(OverviewTool.Rect, "Rect", "Draw a rectangle");
+            Tool(OverviewTool.Ellipse, "Ellipse", "Draw an ellipse");
+            Tool(OverviewTool.Arrow, "Arrow", "Draw an arrow");
+            Tool(OverviewTool.Pen, "Pen", "Draw freely");
+            Tool(OverviewTool.Text, "Text", "Write a text on the surface");
+            Tool(OverviewTool.Connect, "Connect", "Draw a line from one container to another");
+            Command("Embed...", "A container that shows a file: a todo list, another canvas, Markdown, a picture", () => _ = Embed());
+            Command("Fit", "Fit the whole canvas into the window", FitToView);
+            CanvasTools.Children.Add(new Border { Width = 1, Background = EditorTheme.Border, Margin = new Thickness(4, 2) });
+        }
+
+        /// <summary>Chooses a tool; the first tool of a canvas makes a Markdown document a canvas (after asking).</summary>
+        private async System.Threading.Tasks.Task ChooseTool(OverviewTool tool)
+        {
+            if (tool != OverviewTool.Select && !await EnsureCanvas()) tool = OverviewTool.Select;
+            SetTool(tool);
+        }
+
+        private void SetTool(OverviewTool tool)
+        {
+            _tool = tool;
+            foreach (var (t, button) in _toolButtons) button.IsChecked = t == tool;
+            if (Layout is Layouts.Code or Layouts.View && tool != OverviewTool.Select) Layout = Layouts.Surface;
+            if (Preview.Content is OverviewView view) { view.EndEditing(); view.Focus(); }
+        }
+
+        private async System.Threading.Tasks.Task<bool> EnsureCanvas()
+        {
+            if (IsCanvas) return true;
+            if (ConvertToCanvas == null || !await ConvertToCanvas(this)) return false;
+            if (!IsCanvas) _madeCanvas = true;
+            return true;
+        }
+
+        /// <summary>A container that shows a file, in the visible part of the surface.</summary>
+        private async System.Threading.Tasks.Task Embed()
+        {
+            if (IsReadOnly || !await EnsureCanvas()) return;
+            var top = TopLevel.GetTopLevel(this);
+            if (top == null) return;
+            var files = await top.StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions { Title = "Embed a file", AllowMultiple = false });
+            if (files.Count == 0 || files[0].TryGetLocalPath() is not { } path) return;
+            string src = BaseDirectory != null ? Path.GetRelativePath(BaseDirectory, path).Replace('\\', '/') : path;
+            double zoom = Preview.Content is OverviewView v ? v.Zoom : 1;
+            double x = Math.Round((Preview.Offset.X / zoom + 40) / 10) * 10, y = Math.Round((Preview.Offset.Y / zoom + 40) / 10) * 10;
+            var host = _overviewHost ??= new OverviewHost(this);
+            string name = OverviewSource.UniqueName(OverviewParser.Parse(Editor.Text), Path.GetFileNameWithoutExtension(path).Replace(' ', '_'));
+            var (change, line) = OverviewSource.Insert(host.Lines, null,
+                new[] { $"[container]: <x={OverviewSource.Number(x)} y={OverviewSource.Number(y)} w=300 src=\"{src}\"> \"{name}\"" });
+            host.Replace(change.First, change.Count, change.Lines);
+            host.SelectedLine = line;
+            if (Layout is Layouts.Code or Layouts.View) Layout = Layouts.Surface;
+        }
+
+        private void FitToView()
+        {
+            if (Layout is Layouts.Code) Layout = Layouts.Surface;
+            if (Preview.Content is OverviewView view)
+            {
+                view.FitTo(Preview.Viewport);
+                _overviewZoom = view.Zoom;
+                Dispatcher.UIThread.Post(() => Preview.Offset = default, DispatcherPriority.Loaded);
+            }
         }
 
         /// <summary>Scrolls the preview to the heading with the given anchor (GitHub style, see <see cref="MdAnchors"/>).</summary>

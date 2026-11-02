@@ -155,6 +155,9 @@ namespace fire.Editor
         private static readonly Regex HeadingLine = new(@"^ {0,3}#{1,6}(\s|$)", RegexOptions.Compiled);
         private static readonly HashSet<string> ShapeKinds = new(StringComparer.OrdinalIgnoreCase) { "rect", "ellipse", "path", "text" };
 
+        /// <summary>The extension of a canvas: Markdown with containers, sketches and lines (docs/NOTES.md).</summary>
+        public const string CanvasExtension = ".xmd";
+
         /// <summary>A Markdown text is an overview when it has at least one container, sketch or line.</summary>
         public static bool IsOverview(string markdown) => OverviewMark.IsMatch(markdown);
 
@@ -289,6 +292,66 @@ namespace fire.Editor
                     : (dest.TrimEnd().Length > 0 ? dest.TrimEnd() + " " : "") + key + "=" + value;
             }
             return m.Groups["head"].Value + dest + m.Groups["tail"].Value;
+        }
+
+        private static readonly Regex TitleTail = new(@"^(?<head> {0,3}\[[^\]\r\n]+\]:[ \t]*<(?:\\.|[^<>\\\r\n])*>)(?<title>.*)$", RegexOptions.Compiled);
+        private static readonly Regex AnyDefinition = new(@"^ {0,3}\[[^\]\r\n]+\]:[ \t]*<", RegexOptions.Compiled);
+        private static readonly Regex Heading = new(@"^ {0,3}#{1,6}(\s|$)", RegexOptions.Compiled);
+
+        /// <summary>The line with the name (the title) `name`.</summary>
+        public static string SetTitle(string line, string name)
+        {
+            var m = TitleTail.Match(line);
+            return m.Success ? m.Groups["head"].Value + " \"" + name.Replace("\"", "\\\"") + "\"" : line;
+        }
+
+        /// <summary>A name no container has yet: `stem`, `stem2`, `stem3`, ...</summary>
+        public static string UniqueName(OverviewDocument doc, string stem = "box", IEnumerable<string>? taken = null)
+        {
+            var used = doc.AllContainers().Select(c => c.Name).Where(n => n != null).Concat(taken ?? Array.Empty<string>()).ToHashSet(StringComparer.Ordinal);
+            if (!used.Contains(stem)) return stem;
+            for (int n = 2; ; n++) if (!used.Contains(stem + n)) return stem + n;
+        }
+
+        /// <summary>
+        /// Inserts lines of definitions (a container, a sketch, a line) at the end of a container (null: of the overview): before the end of the container, after an empty
+        /// line when text stands before it. Returns the change (first, count 0, lines) and the line the block starts at after it.
+        /// </summary>
+        public static ((int First, int Count, List<string> Lines) Change, int BlockLine) Insert(string[] lines, OvContainer? scope, IReadOnlyList<string> block)
+        {
+            int at;
+            if (scope != null && scope.EndLine >= 0) at = scope.EndLine;
+            else if (scope != null) at = lines.Length;
+            else
+            {
+                at = lines.Length;
+                while (at > 0 && lines[at - 1].Trim().Length == 0) at--;   // after the last line that is not empty (the final line break stays)
+            }
+            var result = new List<string>();
+            string before = at > 0 ? lines[at - 1] : "";
+            if (before.Trim().Length > 0 && !AnyDefinition.IsMatch(before) && !Heading.IsMatch(before)) result.Add("");
+            else if (scope == null && at > 0 && before.Trim().Length > 0) result.Add("");   // set apart at the end of the overview
+            int blockLine = at + result.Count;
+            result.AddRange(block);
+            return ((at, 0, result), blockLine);
+        }
+
+        /// <summary>Adds a shape to the sketch of a container (null: of the overview): to its first sketch, or to a new one at its end.</summary>
+        public static ((int First, int Count, List<string> Lines) Change, int ShapeLine) AddShape(string[] lines, OverviewDocument doc, OvContainer? scope, string shape)
+        {
+            var sketch = (scope?.Children ?? doc.Children).OfType<OvSketch>().FirstOrDefault(s => s.EndLine >= 0);
+            if (sketch != null) return ((sketch.EndLine, 0, new List<string> { shape }), sketch.EndLine);
+            var (change, blockLine) = Insert(lines, scope, new[] { "[sketch]: <>", shape, "[/]: <>" });
+            return (change, blockLine + 1);
+        }
+
+        /// <summary>Removes a container or sketch with everything in it (and an empty line after it, so that no gap of two is left).</summary>
+        public static (int First, int Count, List<string> Lines) Remove(string[] lines, OvElement element)
+        {
+            int end = Math.Min(EndOf(element, lines.Length), lines.Length - 1);
+            int count = end - element.Line + 1;
+            if (end + 1 < lines.Length && lines[end + 1].Trim().Length == 0 && (element.Line == 0 || lines[element.Line - 1].Trim().Length == 0)) count++;
+            return (element.Line, count, new List<string>());
         }
 
         /// <summary>A number as it is written into an attribute.</summary>

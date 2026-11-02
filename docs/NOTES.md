@@ -4,12 +4,13 @@ IDEs know projects and solutions, but not the notes that belong to them. spark k
 live in the repository with the code:
 
 - a **todo list** (`notes/todo.md`), shown and edited in the tool window **Todo**,
-- a **project overview** (`notes/overview.md`), a surface with text, containers, drawings and lines, opened in its own editor.
+- a **project overview** (`notes/overview.xmd`), a canvas: a surface with text, containers, drawings and lines (**Project → Overview** opens it, and makes it
+  when it does not exist yet).
 
-Both are Markdown that any other program shows sensibly: what spark needs on top of Markdown is written so that other renderers (GitHub, other editors) hide it.
+Both are Markdown that any other program shows sensibly: what spark needs on top of Markdown is written so that other renderers (GitHub, other editors) hide it. A canvas
+has the extension `.xmd`, so that spark knows it at once; its content is Markdown all the same.
 
-Status: the todo list is built (format, reading and writing back, the tool window). Overviews are shown and edited on the surface (steps 2 and 3); drawing on it comes
-next - see the steps at the end.
+Status: built - the todo list, and canvases with their views, editing on the surface, the drawing tools and Fit to View (see the steps at the end).
 
 ## The folder `notes/`
 
@@ -22,7 +23,7 @@ App/
   main.fire
   notes/
     todo.md
-    overview.md
+    overview.xmd
 All.firesln
 notes/
   todo.md            the todo list of the solution
@@ -175,11 +176,28 @@ Positions are **absolute**, in pixels at a zoom of 100 %, measured from the top 
 Moving a container changes its own line only - not the lines of what it holds - so diffs stay small and merges rarely conflict. What is written later lies on top. Zoom and
 *Fit to View* only change the view, never the file.
 
+### Canvases and views
+
+A **canvas** is a `.xmd` file - or a Markdown file that already has a `[container]`, `[sketch]` or `[line]`. Every Markdown document (`.md` and `.xmd`) is shown in one of
+four views, chosen in the box of its tool bar:
+
+| View | What it shows |
+|---|---|
+| **Surface** (the default) | the surface alone, edited there: the text of a plain Markdown file is the text at the top left, edited by a double click |
+| **Split** | the text and, beside it, the surface of a canvas (edited there, too) or the page of plain Markdown |
+| **Code** | the text alone |
+| **View** | the surface or the page alone, only to look at |
+
+The button beside the box (**Ctrl+Shift+V**): in Surface it leaves the editor of a container; in Code it shows the view, in View the code (it is called *Code* there); in
+Split it shows the view alone. A read-only document starts in View.
+
+The tools of a canvas (in Surface and Split) make a Markdown document a canvas: the first time one is chosen, spark asks, and renames `name.md` to `name.xmd`
+(a document that was never saved stays as it is until it is saved).
+
 ### Showing
 
-A Markdown file with at least one `[container]`, `[sketch]` or `[line]` is an overview. It is opened like any Markdown document; its preview shows the surface instead of
-the flowing page: the text at the top left, the containers at their places with their names on the top edge, the lines on top, the surface scrolls both ways. **Ctrl+mouse
-wheel** zooms (25 % to 400 %). What is wrong in the file - a definition that sticks to a paragraph, a container without a width, a line to a name that does not exist, an end
+The surface shows the text at the top left, the containers at their places with their names on the top edge, the lines on top; it scrolls both ways. **Ctrl+mouse
+wheel** zooms (25 % to 400 %), **Fit** zooms so that everything fits into the window. What is wrong in the file - a definition that sticks to a paragraph, a container without a width, a line to a name that does not exist, an end
 too many or one missing - is listed above the surface with its line.
 
 A container with `src=` shows its document:
@@ -192,7 +210,7 @@ A container with `src=` shows its document:
 ### Editing
 
 The surface edits the overview; every change goes into the text of the document - only into the lines it concerns - as one step that **Ctrl+Z** takes back (and
-**Ctrl+Y** brings again); **Ctrl+S** saves it, as any other change. **Surface** in the tool bar of the document shows only the surface, without the text beside it.
+**Ctrl+Y** brings again); **Ctrl+S** saves it, as any other change.
 
 - A click selects a container: its outline turns to the accent colour and it gets its handles. **Dragging** it moves it; the handle at the lower right corner changes its size
   (width and height: a container with a height cuts off what does not fit), its right edge only its width. Positions and sizes snap to a raster of 10; with **Alt** held down
@@ -203,15 +221,35 @@ The surface edits the overview; every change goes into the text of the document 
   containers that stood there.
 - A double click on the text of the overview edits that text the same way (the containers then come after it in the file).
 - A double click on a container that shows a document (`src=`) opens the document.
-- **Esc** clears the selection; a click on the empty surface does, too.
+- **Esc** clears the selection; a click on the empty surface does, too. **Delete** deletes the selected container with everything in it.
 - A todo list shown in a container is a working list: a click on the mark of a task moves it on, as in the Todo window. The change is written the same way (only that line, an
   open document of the list is kept in step), and the Todo window and the overview pick up changes of the file from the other within a second.
 - A document that shows itself (directly or through others) is shown once and then as a link, not again.
+
+### Drawing
+
+The tool bar of a canvas has a tool for each element; after it has made one, it goes back to **Select** (the pen stays, for the next stroke). What is drawn goes into the
+container it starts in - a container that shows a document does not count - or into the overview itself:
+
+| Tool | Mouse | What is written |
+|---|---|---|
+| **Container** | drag a frame (a click: 300 wide) | `[container]: <x y w>` and its end; its editor opens at once. The height follows the text - the corner handle fixes it |
+| **Rect**, **Ellipse** | drag a frame | `[rect]` / `[ellipse]` into the first sketch of the container (a new sketch if there is none) |
+| **Arrow** | drag from the start to the tip | `[path]: <M … L … arrow=end>` |
+| **Pen** | draw | `[path]` with the points of the stroke |
+| **Text** | click, type, Enter (Esc drops it) | `[text]: <x y> "…"` |
+| **Connect** | drag from one container to another | `[line]: <from to arrow=end>`; a container without a name gets one (`box`, `box2`, ...) |
+| **Embed...** | choose a file | a container showing it, in the visible part of the surface |
+| **Fit** | | zooms the whole canvas into the window |
+
+Rectangles and positions of containers snap to the raster of 10 (Alt: free). Changing a drawn shape is done in the text for now.
 
 ## Steps
 
 1. **Todo** (built): the folder `notes/`, the format with four states, writing back only what changed, the Todo window for projects and solutions.
 2. **Overview, viewing** (built): reading containers, sketches and lines; showing them in the preview; containers with documents, todo lists with ticking off; zoom.
 3. **Overview, editing** (built): selecting, moving and resizing on a raster, the editor in a container (with the inner containers at half opacity), undo, the surface alone.
-4. **Drawing**: shapes, pen, lines between containers.
-5. **Fit to View** and finishing.
+4. **Drawing** (built): the tool bar of a canvas, `.xmd`, the four views; containers, shapes, pen, text, lines between containers, embedding.
+5. **Fit to View** (built).
+
+Next ideas: selecting and moving drawn shapes, colours in the tool bar, deleting lines on the surface.

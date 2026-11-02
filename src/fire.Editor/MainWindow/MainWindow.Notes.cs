@@ -24,6 +24,7 @@ namespace fire.Editor
             // a todo list ticked off in a project overview goes the same way
             OverviewContext.WriteTodo = WriteTodo;
             OverviewContext.OpenFile = path => OpenFile(path);
+            MarkdownEditorControl.ConvertToCanvas = ConvertToCanvas;
             // a change from outside (git pull, another editor, the document of the list) is seen within a second
             _todoTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => RefreshTodo());
             _todoTimer.Start();
@@ -104,6 +105,59 @@ namespace fire.Editor
                 _ = Dialogs.Message(this, $"The todo list cannot be written: {ex.Message}", "Todo");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// The first tool of a canvas in a Markdown document (docs/NOTES.md): asks whether the document should become a canvas; yes renames the file to `.xmd`
+        /// (a document that was never saved becomes one when it is saved).
+        /// </summary>
+        private async System.Threading.Tasks.Task<bool> ConvertToCanvas(MarkdownEditorControl view)
+        {
+            var doc = _documents.FirstOrDefault(d => ReferenceEquals(d.View, view));
+            string name = doc?.DisplayName ?? "This document";
+            var answer = await Dialogs.Ask(this,
+                $"Containers, drawings and lines make '{name}' a canvas. It is renamed to .xmd: spark opens it as a canvas, other programs show its text.\n\nMake it a canvas?",
+                "Canvas", ("Make it a canvas", Dialogs.Answer.Yes), ("Cancel", Dialogs.Answer.Cancel));
+            if (answer != Dialogs.Answer.Yes) return false;
+            if (view.FilePath is not { } path) return true;
+            string target = Path.ChangeExtension(path, OverviewParser.CanvasExtension);
+            if (File.Exists(target))
+            {
+                await Dialogs.Message(this, $"'{Path.GetFileName(target)}' exists already: rename or remove it first.", "Canvas");
+                return false;
+            }
+            try { if (File.Exists(path)) File.Move(path, target); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await Dialogs.Message(this, $"'{Path.GetFileName(path)}' cannot be renamed: {ex.Message}", "Canvas");
+                return false;
+            }
+            view.FilePath = target;
+            if (doc != null) UpdateTitle(doc);
+            foreach (var project in _workspace.Projects) project.Refresh();
+            RefreshProjectUi();
+            UpdateStatus($"Renamed to {Path.GetFileName(target)}: it is a canvas now.");
+            return true;
+        }
+
+        /// <summary>Project > Overview: the canvas of the project (notes/overview.xmd), made with its title when it does not exist yet.</summary>
+        private async void OverviewOpen_Click(object? sender, RoutedEventArgs e)
+        {
+            var project = (FullPathOf(ActiveDocument) is { } path ? ProjectByFolder(path) : null) ?? _solutionPanel.Selected?.Project ?? _workspace.Startup;
+            string? file = project != null ? ProjectNotes.OverviewPath(project.Project) : _workspace.Solution is { FilePath: not null } s ? ProjectNotes.OverviewPath(s) : null;
+            if (file == null) { await Dialogs.Message(this, "Open a project or a solution: its overview is notes/overview.xmd.", "Overview"); return; }
+            if (!File.Exists(file))
+            {
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                    File.WriteAllText(file, $"# {project?.Name ?? _workspace.Name}\n\nWhat this project is about.\n");
+                    foreach (var p in _workspace.Projects) p.Refresh();
+                    RefreshProjectUi();
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Overview"); return; }
+            }
+            OpenFile(file);
         }
 
         private void TodoOpen_Click(object? sender, RoutedEventArgs e)

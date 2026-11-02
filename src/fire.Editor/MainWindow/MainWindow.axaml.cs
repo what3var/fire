@@ -154,7 +154,7 @@ namespace fire.Editor
         private static DocumentKind KindOfPath(string path)
         {
             string ext = Path.GetExtension(path).ToLowerInvariant();
-            if (ext is ".md" or ".markdown" or ".mdown") return DocumentKind.Markdown;
+            if (ext is ".md" or ".xmd" or ".markdown" or ".mdown") return DocumentKind.Markdown;   // .xmd: a canvas (docs/NOTES.md)
             if (ext == fire.Device.Manager.DeviceManager.PacketLog.FileExtension) return DocumentKind.PacketLog;
             if (ext == ".fxml") return DocumentKind.UiMarkup;
             if (ext == ".biscuit") return DocumentKind.Circuit;

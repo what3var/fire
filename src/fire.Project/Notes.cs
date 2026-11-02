@@ -14,7 +14,7 @@ namespace fire.Projects
     {
         public const string DefaultFolder = "notes";
         public const string TodoFileName = "todo.md";
-        public const string OverviewFileName = "overview.md";
+        public const string OverviewFileName = "overview.xmd";
 
         /// <summary>The notes folder of the project or solution file `ownerFile`; `setting` is its `"notes"` (null or empty: `notes/`).</summary>
         public static string Folder(string ownerFile, string? setting)
@@ -28,6 +28,8 @@ namespace fire.Projects
 
         public static string TodoPath(FireProject project) => Path.Combine(Folder(project), TodoFileName);
         public static string TodoPath(FireSolution solution) => Path.Combine(Folder(solution), TodoFileName);
+        public static string OverviewPath(FireProject project) => Path.Combine(Folder(project), OverviewFileName);
+        public static string OverviewPath(FireSolution solution) => Path.Combine(Folder(solution), OverviewFileName);
 
         /// <summary>The character between the brackets.</summary>
         public static char Mark(TodoState state) => state switch

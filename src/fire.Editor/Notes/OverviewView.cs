@@ -41,7 +41,18 @@ namespace fire.Editor
         /// <summary>Undo and redo of the document (the surface has the keyboard, not the text editor).</summary>
         void Undo();
         void Redo();
+        /// <summary>The line of a container whose text is edited as soon as the surface is built again (a new container); null: none.</summary>
+        int? PendingEditLine { get; set; }
+        /// <summary>The tool of the tool bar.</summary>
+        OverviewTool Tool { get; }
+        /// <summary>The tool has made what it makes (the host goes back to Select).</summary>
+        void ToolDone();
+        /// <summary>Several changes as one undo step.</summary>
+        void Batch(Action changes);
     }
+
+    /// <summary>The tools of a canvas (docs/NOTES.md).</summary>
+    internal enum OverviewTool { Select, Container, Rect, Ellipse, Arrow, Pen, Text, Connect }
 
     /// <summary>
     /// A project overview (docs/NOTES.md), shown: the text at the top left, the containers at their places (their text, sketches and containers in them, or the document they show),
@@ -57,7 +68,7 @@ namespace fire.Editor
         private static readonly IBrush Page = new SolidColorBrush(Color.FromRgb(0x24, 0x20, 0x28));
         private static readonly IBrush EditorBack = EditorTheme.CodeBlockBackground;
         public const double TextWidth = 680;
-        private const double Padding = 12;
+        private const double Padding = 8;
         private const double Raster = 10;
 
         private readonly LayoutTransformControl _zoomHost = new();
@@ -159,11 +170,39 @@ namespace fire.Editor
                     if (_edit != null) return;   // the editor in a container has its own undo
                     bool ctrl = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
                     if (e.Key == Key.Escape && _selected != null) { Select(null); e.Handled = true; }
+                    else if (e.Key == Key.Delete && _selected != null) { DeleteSelected(); e.Handled = true; }
                     else if (ctrl && e.Key == Key.Z && !e.KeyModifiers.HasFlag(KeyModifiers.Shift)) { host.Undo(); e.Handled = true; }
                     else if (ctrl && (e.Key == Key.Y || e.Key == Key.Z)) { host.Redo(); e.Handled = true; }
                 };
                 if (host.SelectedLine is { } line && _cells.FirstOrDefault(c => c.Model.Line == line) is { } keep) Select(keep);
+                if (host.PendingEditLine is { } edit)
+                {
+                    host.PendingEditLine = null;
+                    if (_cells.FirstOrDefault(c => c.Model.Line == edit) is { } fresh) Dispatcher.UIThread.Post(() => { Select(fresh); BeginEdit(fresh); }, DispatcherPriority.Loaded);
+                }
+                // the drawing tools take the mouse before the containers do
+                AddHandler(PointerPressedEvent, OnToolPress, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+                AddHandler(PointerMovedEvent, OnToolMove, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+                AddHandler(PointerReleasedEvent, OnToolRelease, Avalonia.Interactivity.RoutingStrategies.Tunnel);
+                _root.Children.Add(_rubber);
+                Cursor = host.Tool == OverviewTool.Select ? null : new Cursor(StandardCursorType.Cross);
             }
+        }
+
+        /// <summary>Ends editing in place (the text goes into the document) and gives the keys to the surface.</summary>
+        public void EndEditing()
+        {
+            Commit();
+            Focus();
+        }
+
+        /// <summary>Zooms so that the whole canvas fits into `viewport`.</summary>
+        public void FitTo(Size viewport)
+        {
+            var content = _root.DesiredSize;
+            double w = content.Width + _root.Margin.Left + _root.Margin.Right, h = content.Height + _root.Margin.Top + _root.Margin.Bottom + 30;
+            if (w <= 0 || h <= 0 || viewport.Width <= 0 || viewport.Height <= 0) return;
+            SetZoom(Math.Min(2, Math.Min(viewport.Width / w, viewport.Height / h)));
         }
 
         public double Zoom => _zoom;
@@ -176,12 +215,23 @@ namespace fire.Editor
 
         // ---------------------------------------------------------------- building
 
-        private static Control MarkdownText(string markdown, OverviewContext context, double width)
+        /// <summary>Markdown as a page of the given width; `compact` (in a container): no space above the first block and less below the last one.</summary>
+        private static Control MarkdownText(string markdown, OverviewContext context, double width, bool compact = false)
         {
             if (markdown.Trim().Length == 0) return new Panel { Width = 0, Height = 0 };
             var renderer = new MarkdownRenderer { BaseDirectory = context.BaseDirectory, LinkClicked = context.LinkClicked };
             var page = renderer.Render(markdown);
-            if (page is StackPanel sp) sp.Margin = new Thickness(0);
+            if (page is StackPanel sp)
+            {
+                sp.Margin = new Thickness(0);
+                if (compact && sp.Children.Count > 0)
+                {
+                    var first = sp.Children[0];
+                    first.Margin = new Thickness(first.Margin.Left, 0, first.Margin.Right, first.Margin.Bottom);
+                    var last = sp.Children[^1];
+                    last.Margin = new Thickness(last.Margin.Left, last.Margin.Top, last.Margin.Right, last.Margin.Bottom / 2);
+                }
+            }
             page.Width = width;
             return page;
         }
@@ -204,7 +254,7 @@ namespace fire.Editor
 
         private Control Container(OvContainer c, OverviewContext context)
         {
-            Control body = c.Src != null ? Document(c.Src, context, c.W - 2 * Padding) : MarkdownText(c.Markdown, context, c.W - 2 * Padding);
+            Control body = c.Src != null ? Document(c.Src, context, c.W - 2 * Padding) : MarkdownText(c.Markdown, context, c.W - 2 * Padding, compact: true);
             if (_host != null && c.Src == null && body is Panel { Width: 0 }) body = EmptyText(c.W - 2 * Padding, "Double click to write.");
 
             var box = new Border
@@ -254,11 +304,12 @@ namespace fire.Editor
             };
             cell.Children.Add(cell.Edge);
             cell.Children.Add(cell.Corner);
-            cell.Corner.PointerPressed += (_, e) => { StartDrag(cell, DragKind.Resize, e); e.Handled = true; };
-            cell.Edge.PointerPressed += (_, e) => { StartDrag(cell, DragKind.ResizeWidth, e); e.Handled = true; };
+            cell.Corner.PointerPressed += (_, e) => { if (_host!.Tool != OverviewTool.Select) return; StartDrag(cell, DragKind.Resize, e); e.Handled = true; };
+            cell.Edge.PointerPressed += (_, e) => { if (_host!.Tool != OverviewTool.Select) return; StartDrag(cell, DragKind.ResizeWidth, e); e.Handled = true; };
 
             cell.AddHandler(PointerPressedEvent, (_, e) =>
             {
+                if (_host!.Tool != OverviewTool.Select || _stroke != null) return;   // a drawing tool has the mouse
                 if (CellOf(e.Source) != cell || IsInside(e.Source, _edit?.Editor)) return;   // a container inside it, or its own editor
                 if (!e.GetCurrentPoint(cell).Properties.IsLeftButtonPressed) return;
                 if (IsInside(e.Source, cell.Corner) || IsInside(e.Source, cell.Edge)) return;
@@ -445,6 +496,173 @@ namespace fire.Editor
             _host.Replace(first, count, lines);
         }
 
+        // ---------------------------------------------------------------- tools
+
+        private readonly RubberLayer _rubber = new() { IsHitTestVisible = false };
+        private ToolStroke? _stroke;
+
+        /// <summary>What a tool is drawing: in which container (null: the overview), its points in the coordinates of that container.</summary>
+        private sealed class ToolStroke
+        {
+            public required OverviewTool Tool { get; init; }
+            public ContainerCell? Scope { get; init; }
+            public required List<Point> Points { get; init; }
+        }
+
+        /// <summary>The coordinates of the container a tool draws in (its top left corner), or of the overview.</summary>
+        private Point Local(PointerEventArgs e, ContainerCell? scope) => e.GetPosition(scope ?? (Visual)_root);
+
+        private Point ToRoot(ContainerCell? scope, Point p) => scope == null ? p : scope.TranslatePoint(p, _root) ?? p;
+
+        private void OnToolPress(object? sender, PointerPressedEventArgs e)
+        {
+            var tool = _host!.Tool;
+            if (tool == OverviewTool.Select || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
+            if (_edit != null && IsInside(e.Source, _edit.Editor)) return;
+            Commit();
+            // a shape or container goes into the container it starts in (not into one that shows a document)
+            var scope = CellOf(e.Source);
+            while (scope != null && scope.Model.Src != null) scope = CellOf(scope.GetVisualParent());
+            if (tool == OverviewTool.Connect) scope = CellOf(e.Source);
+            if (tool == OverviewTool.Connect && scope == null) { e.Handled = true; return; }
+            var p = Local(e, tool == OverviewTool.Connect ? null : scope);
+            if (tool == OverviewTool.Text) { e.Handled = true; AskText(scope, p); return; }
+            _stroke = new ToolStroke { Tool = tool, Scope = scope, Points = new List<Point> { p } };
+            e.Pointer.Capture(this);
+            e.Handled = true;
+            UpdateRubber();
+        }
+
+        private void OnToolMove(object? sender, PointerEventArgs e)
+        {
+            if (_stroke is not { } stroke) return;
+            var p = Local(e, stroke.Tool == OverviewTool.Connect ? null : stroke.Scope);
+            if (stroke.Tool == OverviewTool.Pen) { if (Distance(stroke.Points[^1], p) >= 3) stroke.Points.Add(p); }
+            else if (stroke.Points.Count == 1) stroke.Points.Add(p);
+            else stroke.Points[^1] = p;
+            UpdateRubber();
+            e.Handled = true;
+        }
+
+        private static double Distance(Point a, Point b) => Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y));
+
+        private void UpdateRubber()
+        {
+            if (_stroke is not { } stroke) { _rubber.Points = null; _rubber.InvalidateVisual(); return; }
+            _rubber.Tool = stroke.Tool;
+            _rubber.Points = stroke.Points.Select(p => stroke.Tool == OverviewTool.Connect ? p : ToRoot(stroke.Scope, p)).ToList();
+            _rubber.InvalidateVisual();
+        }
+
+        private void OnToolRelease(object? sender, PointerReleasedEventArgs e)
+        {
+            if (_stroke is not { } stroke) return;
+            _stroke = null;
+            UpdateRubber();
+            e.Pointer.Capture(null);
+            e.Handled = true;
+            bool free = e.KeyModifiers.HasFlag(KeyModifiers.Alt);
+            var start = stroke.Points[0];
+            var end = stroke.Points[^1];
+            var scope = stroke.Scope?.Model;
+            string N(double v) => OverviewSource.Number(v);
+            switch (stroke.Tool)
+            {
+                case OverviewTool.Container:
+                {
+                    double x = Snap(Math.Min(start.X, end.X), free), y = Snap(Math.Min(start.Y, end.Y), free);
+                    // the drag gives the place and the width; the height follows the text (the corner handle fixes it, if wanted)
+                    double w = Math.Abs(end.X - start.X);
+                    w = w >= 20 ? Math.Max(60, Snap(w, free)) : 300;
+                    var (change, line) = OverviewSource.Insert(_host!.Lines, scope, new[] { $"[container]: <x={N(x)} y={N(y)} w={N(w)}>", "[/]: <>" });
+                    _host.PendingEditLine = line;
+                    _host.SelectedLine = line;
+                    _host.Replace(change.First, change.Count, change.Lines);
+                    break;
+                }
+                case OverviewTool.Rect or OverviewTool.Ellipse:
+                {
+                    double x = Math.Min(start.X, end.X), y = Math.Min(start.Y, end.Y), w = Math.Abs(end.X - start.X), h = Math.Abs(end.Y - start.Y);
+                    if (w < 3 && h < 3) break;
+                    string kind = stroke.Tool == OverviewTool.Rect ? "rect" : "ellipse";
+                    AddShape(scope, $"[{kind}]: <{N(Snap(x, free))} {N(Snap(y, free))} {N(Math.Max(Raster, Snap(w, free)))} {N(Math.Max(Raster, Snap(h, free)))}>");
+                    break;
+                }
+                case OverviewTool.Arrow:
+                    if (Distance(start, end) < 5) break;
+                    AddShape(scope, $"[path]: <M {N(Math.Round(start.X))} {N(Math.Round(start.Y))} L {N(Math.Round(end.X))} {N(Math.Round(end.Y))} arrow=end>");
+                    break;
+                case OverviewTool.Pen:
+                    if (stroke.Points.Count < 2) break;
+                    AddShape(scope, "[path]: <M " + string.Join(" L ", stroke.Points.Select(p => $"{N(Math.Round(p.X))} {N(Math.Round(p.Y))}")) + ">");
+                    break;
+                case OverviewTool.Connect:
+                    Connect(stroke.Scope, e);
+                    break;
+            }
+            _host!.ToolDone();
+        }
+
+        private void AddShape(OvContainer? scope, string shape)
+        {
+            var (change, _) = OverviewSource.AddShape(_host!.Lines, _doc, scope, shape);
+            _host.Replace(change.First, change.Count, change.Lines);
+        }
+
+        /// <summary>A line from the container the drag started in to the one it ends in; containers without a name get one.</summary>
+        private void Connect(ContainerCell? from, PointerEventArgs e)
+        {
+            var to = CellOf(_root.InputHitTest(e.GetPosition(_root)) as Visual);
+            if (from == null || to == null || to == from) return;
+            var lines = _host!.Lines;
+            string a = from.Model.Name ?? OverviewSource.UniqueName(_doc);
+            string b = to.Model.Name ?? OverviewSource.UniqueName(_doc, taken: new[] { a });
+            string? fromLine = from.Model.Name == null ? OverviewSource.SetTitle(lines[from.Model.Line], a) : null;
+            string? toLine = to.Model.Name == null ? OverviewSource.SetTitle(lines[to.Model.Line], b) : null;
+            _host.Batch(() =>
+            {
+                if (fromLine != null) _host.Replace(from.Model.Line, 1, new[] { fromLine });
+                if (toLine != null) _host.Replace(to.Model.Line, 1, new[] { toLine });
+                var (change, _) = OverviewSource.Insert(_host.Lines, null, new[] { $"[line]: <from={a} to={b} arrow=end>" });
+                _host.Replace(change.First, change.Count, change.Lines);
+            });
+        }
+
+        /// <summary>A text on the surface: a box at the point; Enter writes it into the sketch of the container, Esc drops it.</summary>
+        private void AskText(ContainerCell? scope, Point at)
+        {
+            var box = new TextBox { MinWidth = 160, FontSize = 13, Watermark = "Text (Enter)" };
+            AbsolutePanel.SetPosition(box, ToRoot(scope, at));
+            _root.Children.Add(box);
+            bool done = false;
+            void Finish(bool keep)
+            {
+                if (done) return;
+                done = true;
+                _root.Children.Remove(box);
+                string text = (box.Text ?? "").Trim();
+                if (keep && text.Length > 0)
+                    AddShape(scope?.Model, $"[text]: <{OverviewSource.Number(Math.Round(at.X))} {OverviewSource.Number(Math.Round(at.Y))}> \"{text.Replace("\"", "\\\"")}\"");
+                _host!.ToolDone();
+            }
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key == Key.Enter) { Finish(true); e.Handled = true; }
+                else if (e.Key == Key.Escape) { Finish(false); e.Handled = true; }
+            };
+            box.LostFocus += (_, _) => Finish(true);
+            Dispatcher.UIThread.Post(() => box.Focus(), DispatcherPriority.Loaded);
+        }
+
+        /// <summary>Deletes the selected container with everything in it.</summary>
+        private void DeleteSelected()
+        {
+            if (_selected == null || _host == null) return;
+            var change = OverviewSource.Remove(_host.Lines, _selected.Model);
+            _host.SelectedLine = null;
+            _host.Replace(change.First, change.Count, change.Lines);
+        }
+
         // ---------------------------------------------------------------- documents in containers
 
         /// <summary>The document a container shows: a todo list (to tick off), another overview, Markdown, a picture - or a link to open it.</summary>
@@ -459,13 +677,13 @@ namespace fire.Editor
                 try { return new Image { Source = new Bitmap(path), Stretch = Stretch.Uniform, Width = width }; }
                 catch (Exception) { return FileLink(src, path); }
             }
-            if (ext != ".md") return FileLink(src, path);
+            if (ext is not (".md" or ".xmd")) return FileLink(src, path);
 
             string text;
             try { text = File.ReadAllText(path); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return new TextBlock { Text = ex.Message, Foreground = EditorTheme.Yellow }; }
 
-            if (OverviewParser.IsOverview(text))
+            if (ext == OverviewParser.CanvasExtension || OverviewParser.IsOverview(text))
             {
                 if (context.Visited.Contains(path)) return FileLink(src, path);
                 var visited = new HashSet<string>(context.Visited, StringComparer.OrdinalIgnoreCase) { path };
@@ -473,7 +691,7 @@ namespace fire.Editor
                 return new Border { ClipToBounds = true, Width = width, Child = nested };
             }
             if (TodoList.Parse(text).Items.Count > 0) return new TodoListView(path, width);
-            return MarkdownText(text, new OverviewContext { BaseDirectory = Path.GetDirectoryName(path), LinkClicked = context.LinkClicked }, width);
+            return MarkdownText(text, new OverviewContext { BaseDirectory = Path.GetDirectoryName(path), LinkClicked = context.LinkClicked }, width, compact: true);
         }
 
         private static Control FileLink(string src, string path)
@@ -481,6 +699,35 @@ namespace fire.Editor
             var link = new TextBlock { Text = "Open " + src, Foreground = new SolidColorBrush(EditorTheme.AccentTextColor), Cursor = new Cursor(StandardCursorType.Hand), FontSize = 13 };
             link.PointerPressed += (_, e) => { OverviewContext.OpenFile?.Invoke(path); e.Handled = true; };
             return link;
+        }
+    }
+
+    /// <summary>What a tool draws while the mouse is down: the frame of a container or shape, the arrow, the stroke of the pen, the line between containers.</summary>
+    internal sealed class RubberLayer : Control, IFillLayer
+    {
+        private static readonly IPen Pen = new Pen(new SolidColorBrush(EditorTheme.AccentTextColor), 1.5) { DashStyle = new DashStyle(new double[] { 4, 3 }, 0) };
+        private static readonly IBrush Brush = new SolidColorBrush(EditorTheme.AccentTextColor);
+        public OverviewTool Tool { get; set; }
+        public List<Point>? Points { get; set; }
+
+        public override void Render(DrawingContext context)
+        {
+            if (Points is not { Count: >= 2 } p) return;
+            var a = p[0];
+            var b = p[^1];
+            var rect = new Rect(new Point(Math.Min(a.X, b.X), Math.Min(a.Y, b.Y)), new Point(Math.Max(a.X, b.X), Math.Max(a.Y, b.Y)));
+            switch (Tool)
+            {
+                case OverviewTool.Container or OverviewTool.Rect: context.DrawRectangle(null, Pen, rect, 4, 4); break;
+                case OverviewTool.Ellipse: context.DrawEllipse(null, Pen, rect); break;
+                case OverviewTool.Arrow or OverviewTool.Connect:
+                    context.DrawLine(Pen, a, b);
+                    ArrowHead.Draw(context, b, new Point(b.X - a.X, b.Y - a.Y), Brush);
+                    break;
+                case OverviewTool.Pen:
+                    for (int i = 1; i < p.Count; i++) context.DrawLine(Pen, p[i - 1], p[i]);
+                    break;
+            }
         }
     }
 

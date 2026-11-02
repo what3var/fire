@@ -28,6 +28,7 @@ static class NotesTests
         Preview();
         Overview();
         OverviewEdits();
+        OverviewTools();
         Console.WriteLine(_failures == 0 ? "Notes: alle Tests bestanden" : $"Notes: {_failures} FEHLER");
     }
 
@@ -280,6 +281,49 @@ static class NotesTests
         Check("Text der Uebersicht ersetzen: Text zuerst, dann die Container, dann die Linien",
             rootDoc.Markdown == "# Pedal\n\nShort." && rootDoc.Children.Count == 2 && rootDoc.Lines.Count == 1 && rootDoc.Problems.Count == 0 && root.TrimEnd().EndsWith("[line]: <from=signal to=todos arrow=end> \"open\""),
             root + "\n" + string.Join("\n", rootDoc.Problems));
+    }
+
+    private static void OverviewTools()
+    {
+        string[] lines = OverviewSample.Replace("\r\n", "\n").Split('\n');
+        var doc = fire.Editor.OverviewParser.Parse(OverviewSample);
+        var signal = (fire.Editor.OvContainer)doc.Children[1];
+        var inner = signal.Children.OfType<fire.Editor.OvContainer>().Single();
+
+        Check("Name setzen: ersetzt", fire.Editor.OverviewSource.SetTitle("[container]: <x=1 w=2> \"a\"", "b") == "[container]: <x=1 w=2> \"b\"");
+        Check("Name setzen: neu", fire.Editor.OverviewSource.SetTitle("[container]: <x=1 w=2>", "box") == "[container]: <x=1 w=2> \"box\"");
+        Check("eindeutiger Name", fire.Editor.OverviewSource.UniqueName(doc) == "box" && fire.Editor.OverviewSource.UniqueName(doc, "signal") == "signal2");
+
+        // a new container in a container: before its end, the overview stays without problems
+        var (change, at) = fire.Editor.OverviewSource.Insert(lines, inner, new[] { "[container]: <x=10 y=10 w=100>", "[/]: <>" });
+        string text = Apply(lines, change);
+        var parsed = fire.Editor.OverviewParser.Parse(text);
+        var newInner = parsed.AllContainers().Single(c => c.Line == at);
+        Check("Container in Container einfuegen", parsed.Problems.Count == 0 && newInner.W == 100 && parsed.AllContainers().Single(c => c.Name == "inner").Children.Contains(newInner),
+            text + "\n" + string.Join("\n", parsed.Problems));
+
+        // a new container at the end of the overview: after an empty line, the end of the file stays
+        var withEnd = (OverviewSample + "\n").Split('\n');
+        var (change2, at2) = fire.Editor.OverviewSource.Insert(withEnd, null, new[] { "[container]: <x=0 y=0 w=50>", "[/]: <>" });
+        string text2 = Apply(withEnd, change2);
+        var parsed2 = fire.Editor.OverviewParser.Parse(text2);
+        Check("Container am Ende einfuegen", parsed2.Problems.Count == 0 && parsed2.Children.Count == 3 && ((fire.Editor.OvContainer)parsed2.Children[2]).Line == at2
+            && text2.EndsWith("\"a link of the author\"\n\n[container]: <x=0 y=0 w=50>\n[/]: <>\n"), text2);
+
+        // a shape: into the sketch that is there, or into a new one
+        var (change3, shapeLine) = fire.Editor.OverviewSource.AddShape(lines, doc, signal, "[rect]: <1 2 3 4>");
+        var parsed3 = fire.Editor.OverviewParser.Parse(Apply(lines, change3));
+        var sketch3 = parsed3.AllContainers().Single(c => c.Name == "signal").Children.OfType<fire.Editor.OvSketch>().Single();
+        Check("Form in vorhandenen Sketch", sketch3.Shapes.Count == 4 && sketch3.Shapes[^1].Line == shapeLine && parsed3.Problems.Count == 0);
+        var (change4, shapeLine4) = fire.Editor.OverviewSource.AddShape(lines, doc, inner, "[ellipse]: <0 0 10 10>");
+        var parsed4 = fire.Editor.OverviewParser.Parse(Apply(lines, change4));
+        var sketch4 = parsed4.AllContainers().Single(c => c.Name == "inner").Children.OfType<fire.Editor.OvSketch>().Single();
+        Check("Form in neuen Sketch", sketch4.Shapes.Single().Kind == "ellipse" && sketch4.Shapes[0].Line == shapeLine4 && parsed4.Problems.Count == 0, string.Join("\n", parsed4.Problems));
+
+        // removing a container takes what is in it
+        string text5 = Apply(lines, fire.Editor.OverviewSource.Remove(lines, inner));
+        var parsed5 = fire.Editor.OverviewParser.Parse(text5);
+        Check("Container loeschen", parsed5.Problems.Count == 0 && !parsed5.AllContainers().Any(c => c.Name == "inner") && !text5.Contains("Nested text") && !text5.Contains("\n\n\n"), text5);
     }
 
     private static void Folders()
