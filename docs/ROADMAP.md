@@ -56,9 +56,9 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
 auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher (docs/NATIVE_BACKEND.md, "Benchmarks vor und nach dem C-Port"): der Programmstart
-ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser - bis auf `method`, das ein späterer Generatorstand (Zugriffsschutz: `this.count` geht
-über `gf_count`/`sf_count`, weil `List` ein privates Feld `count` hat) knapp 4x langsamer macht. Offen: ein echter ESP32-Build (ESP-IDF), MSVC, macOS und
-Emscripten sind hier nicht installiert; der direkte Feldzugriff in diesem Fall (Typ des Objekts bekannt).
+ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser ; `method` war durch den Zugriffsschutz knapp 4x langsamer (`this.count`
+über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist. Offen: MSVC und
+macOS sind hier nicht installiert.
 
 Danach: ~~die Natives der Standard-Packages in C~~ - **umgesetzt**: process, time, io, net, tls (OpenSSL, mbedTLS, SChannel), gpio, i2c, spi, usb, wifi,
 devices, audio, tracker, graphics und windows sind C99 (`"language": "c"` im Manifest), ihre Plattformschichten ebenso (`native/platform/std/fire_<teil>_c.h`).

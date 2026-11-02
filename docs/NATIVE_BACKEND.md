@@ -218,7 +218,7 @@ statt `Fib(23)`) - dort zählt der Programmstart kaum noch.
 | `loop` | 2,74 ms | 2,15 ms | 0,79 | 27,7 ms | 26,4 ms | 0,95 |
 | `float` | 5,48 ms | 5,05 ms | 0,92 | 81,8 ms | 81,2 ms | 0,99 |
 | `fib` | 1,95 ms | 1,39 ms | 0,71 | 8,7 ms | 7,5 ms | 0,85 |
-| `method` | 1,84 ms | 2,66 ms | 1,44 | 8,8 ms | 34,3 ms | 3,88 |
+| `method` | 1,84 ms | 2,66 ms | 1,44 | 8,8 ms | 34,3 ms (jetzt ~10 ms) | 3,88 (jetzt ~1,1) |
 | `array` | 6,63 ms | 5,84 ms | 0,88 | 84,6 ms | 73,6 ms | 0,87 |
 | `string` | 2,61 ms | 2,13 ms | 0,81 | 18,7 ms | 20,2 ms | 1,08 |
 | `alloc` | 3,16 ms | 2,58 ms | 0,82 | 34,5 ms | 27,4 ms | 0,79 |
@@ -234,7 +234,9 @@ Alle neun ließen sich mit dem alten Generator bauen. Was man sieht:
 * **`method` ist langsamer - nicht wegen C**, sondern wegen einer späteren Änderung des Generators (Zugriffsschutz): weil `List` (und die Hashtabelle hinter `Dictionary`) im Prelude ein
   privates Feld `count` haben, gehen `this.count` lesen und schreiben im Benchmark über die allgemeinen Zugriffsfunktionen `gf_count`/`sf_count` (mit
   Klassen-Switch und Prüfung des Aufrufers) statt direkt auf das Feld. Mit dem Feld umbenannt (`tally`) braucht die C-Fassung 8,3 ms - so viel wie der C++-Code.
-  Der direkte Zugriff, wenn der Typ des Objekts bekannt ist (`this` in einer Methode der eigenen Klasse), wäre die Abhilfe.
+  **Behoben:** Ein Feld, dessen Name irgendwo privat oder geschützt ist, liest und schreibt der Generator jetzt direkt über den Index, wenn der Typ des Objekts
+  bekannt ist und der Code der Funktion das Feld auf jeder möglichen Klasse benutzen darf (die Prüfung steht dann schon beim Übersetzen fest, z. B. `this.count` in
+  einer Methode von `List`); `method` braucht damit wieder ~10 ms.
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 

@@ -559,13 +559,18 @@ namespace fire.Native
 
         /// <summary>The index of field `name` in every object an `rc` can be (the fields of a base class come first, so it is the same in derived
         /// classes); null when a property, an access check or the threads (sections) need the field helpers, or the index differs.</summary>
-        private int? DirectFieldIndex(RuntimeClass rc, string name)
+        private int? DirectFieldIndex(RuntimeClass rc, string name, Func? from = null)
         {
-            if (_usesThreads || HasProperty(name) || RestrictedField(name)) return null;
+            if (_usesThreads || HasProperty(name)) return null;
+            // a name that is private or protected somewhere: direct only when the code of `from` may use the field on every class the object can be
+            // (the check is then known at compile time - e.g. `this.count` in a method of the class that declares it)
+            bool restricted = RestrictedField(name);
+            if (restricted && from == null) return null;
             int? index = null;
             foreach (var c in InstancesOf(rc))
             {
                 if (!c.Rc.FieldIndex.TryGetValue(name, out int i) || index is { } known && known != i) return null;
+                if (restricted && c.Rc.FindFieldAccess(name) is { } access && !AccessAllowed(from!.Chunk.OwnerClass, access.DeclaringClass, access.Access)) return null;
                 index = i;
             }
             return index;
@@ -573,9 +578,9 @@ namespace fire.Native
 
         /// <summary>`obj.name = value` on an object of a known class: the checks of the field's declaration (unit, kind) and the store by index, like sf_
         /// (a destroyed object throws first); null when the field helpers are needed.</summary>
-        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, bool nullable = false)
+        private string? DirectSetField(RuntimeClass rc, string name, string obj, string value, int valueType, Func from, bool nullable = false)
         {
-            if (DirectFieldIndex(rc, name) is not int index) return null;
+            if (DirectFieldIndex(rc, name, from) is not int index) return null;
             string? unit = rc.FindFieldRequiredUnit(name);
             byte kind = rc.FindFieldRequiredKind(name);
             string? requiredType = rc.FindFieldRequiredType(name);
@@ -591,9 +596,11 @@ namespace fire.Native
                 + (requiredType != null ? ClassGuard("x", requiredType, $"Field '{name}'", $"objAt({obj})") + " " : "");
             string store = checks.Length > 0 && _usesExceptions ? $"if (FIRE_LIKELY(!g_unwind.active)) setFieldAt({obj}, {index}, x);" : $"setFieldAt({obj}, {index}, x);";
             // an object with probes (flag 2) takes the setter, which tells them; every other one is written by the index
-            string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) sf_{Mangle(name)}({obj}, x); " : "";
+            // (the setter of a restricted name takes the caller's class: here it may, see DirectFieldIndex)
+            string tail = FieldTail(name, from, () => "NULL");
+            string probed = _usesProbes ? $"else if (FIRE_UNLIKELY(objAt({obj})->h.flags & 2)) sf_{Mangle(name)}({obj}, x{tail}); " : "";
             // (a receiver that may be undefined: the setter reports that)
-            string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) sf_{Mangle(name)}({obj}, x); else " : "";
+            string notObject = nullable ? $"if (FIRE_UNLIKELY({obj}.kind != K_Class)) sf_{Mangle(name)}({obj}, x{tail}); else " : "";
             return $"{{ Value x = {value}; {notObject}if (FIRE_UNLIKELY(!leafAlive({obj}))) destroyedError({obj}); {probed}else {{ {checks}{store} }} }}";
         }
 
@@ -3634,10 +3641,10 @@ namespace fire.Native
                     Need(1);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field) is int fieldIndex)
+                    if (ObjSlot(d - 1) && DirectFieldIndex(ObjClass(Ty(d - 1)), field, f) is int fieldIndex)
                     {
                         // an object of a known class: the field by its index (a destroyed object throws, like gf_; undefined goes to gf_, which reports it)
-                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : gf_{Mangle(field)}({S(d - 1)});");
+                        if (IsNullable(Ty(d - 1))) E($"{S(d - 1)} = FIRE_LIKELY({S(d - 1)}.kind == K_Class && leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "NULL")});");
                         else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : destroyedError({S(d - 1)});");
                         Check();
                     }
@@ -3654,7 +3661,7 @@ namespace fire.Native
                     Need(2);
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, S(d - 2), S(d - 1), Ty(d - 1), IsNullable(Ty(d - 2))) is { } direct) E(direct);
+                    if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, S(d - 2), S(d - 1), Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(direct);
                     else E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
@@ -3666,7 +3673,7 @@ namespace fire.Native
                     Need(1); RequireSelf();
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
-                    if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass && DirectSetField(selfClass, field, "self", S(d - 1), Ty(d - 1)) is { } direct) E(direct);
+                    if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass && DirectSetField(selfClass, field, "self", S(d - 1), Ty(d - 1), f) is { } direct) E(direct);
                     else E($"sf_{Mangle(field)}(self, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
