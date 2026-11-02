@@ -141,7 +141,7 @@ namespace Audio {
         }
 
         // A generated tone: the frequency in Hz (a float is fine), the length in milliseconds, the wave and the volume in percent.
-        static Audio.Sound Tone(float frequency, int milliseconds, int wave = 0, int volume = 100, int rate = 22050) {
+        static Audio.Sound Tone(float frequency, int milliseconds, Audio.Wave wave = Audio.Wave.Sine, int volume = 100, int rate = 22050) {
             var frames = rate * milliseconds / 1000
             var data = new byte[frames * 2]
             if (__AudioWave(data, 0, frames, wave, frequency, volume, rate, 1, 0) < 0) { Audio.Errors.Throw() }
@@ -291,7 +291,7 @@ namespace Audio {
         }
 
         // Queues a tone and returns: the frequency in Hz (a float is fine), the length in milliseconds, the wave (Audio.Wave.Sine, Square, Triangle, Saw, Noise) and the volume in percent.
-        undefined Tone(float frequency, int milliseconds, int wave = 0, int volume = 100) {
+        undefined Tone(float frequency, int milliseconds, Audio.Wave wave = Audio.Wave.Sine, int volume = 100) {
             this.Check()
             var left = this.rate * milliseconds / 1000
             var chunk = 2048
@@ -312,7 +312,7 @@ namespace Audio {
 
         // A tone that is played to its end before Beep returns (440 Hz, 200 ms without arguments).
         undefined Beep(float frequency = 440, int milliseconds = 200, int volume = 100) {
-            this.Tone(frequency, milliseconds, 0, volume)
+            this.Tone(frequency, milliseconds, Audio.Wave.Sine, volume)
             this.Drain()
         }
 

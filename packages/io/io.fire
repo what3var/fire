@@ -84,7 +84,7 @@ namespace IO {
             throw new IOException("This stream is not writable.", 8)
         }
 
-        int Seek(int offset, int origin = IO.SeekOrigin.Begin) {
+        int Seek(int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             throw new IOException("This stream does not support seeking.", 8)
         }
 
@@ -207,7 +207,7 @@ namespace IO {
         }
 
         // New position (from the start), `origin`: IO.SeekOrigin.
-        int Seek(int offset, int origin = IO.SeekOrigin.Begin) {
+        int Seek(int offset, IO.SeekOrigin origin = IO.SeekOrigin.Begin) {
             this.Check()
             var p = __IOSeek(this.handle, offset, origin)
             if (p < 0) { IO.IOErrors.Throw() }
