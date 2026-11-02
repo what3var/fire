@@ -91,6 +91,31 @@ namespace fire.Native
             return File.Exists(Path.Combine(inner, "SDL.h")) ? new[] { inner } : Array.Empty<string>();
         }
 
+        /// <summary>Linux, TinyCC: folders that the libraries of the system's SDL2 find their own libraries in only through their RUNPATH, which TinyCC does not follow when it links
+        /// (it reports "referenced dll ... not found" then): the folder <c>pulseaudio</c> of the library folders (libpulse.so.0 needs libpulsecommon-*.so from there) - of this machine's
+        /// architecture (<c>/usr/lib/x86_64-linux-gnu</c>, ...), <c>/usr/lib64</c> (Fedora) and <c>/usr/lib</c> (Arch). Only the folders that are there.</summary>
+        public static IReadOnlyList<string> TccRunpathDirs()
+        {
+            string triplet = RuntimeInformation.OSArchitecture switch
+            {
+                Architecture.X64 => "x86_64-linux-gnu",
+                Architecture.Arm64 => "aarch64-linux-gnu",
+                Architecture.Arm => "arm-linux-gnueabihf",
+                Architecture.X86 => "i386-linux-gnu",
+                Architecture.RiscV64 => "riscv64-linux-gnu",
+                _ => "",
+            };
+            var dirs = new List<string>();
+            foreach (string libDir in new[] { triplet.Length > 0 ? "/usr/lib/" + triplet : "", "/usr/lib64", "/usr/lib" })
+            {
+                if (libDir.Length == 0) continue;
+                string pulse = Path.Combine(libDir, "pulseaudio");
+                try { if (Directory.Exists(pulse) && Directory.EnumerateFiles(pulse, "libpulsecommon-*.so").Any()) dirs.Add(pulse); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            return dirs;
+        }
+
         private static bool HasHeader(string prefix) =>
             File.Exists(Path.Combine(prefix, "include", "SDL2", "SDL.h")) || File.Exists(Path.Combine(prefix, "include", "SDL.h"));
 

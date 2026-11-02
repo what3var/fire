@@ -23732,6 +23732,10 @@ else
                         var (_, tccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["tcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
                         CheckNat("SDL2: das SDL2 des Systems - der Ordner von SDL.h kommt mit (-I/usr/include/SDL2: TinyCC hat kein __has_include)",
                             system != null && system.IncludeDirs.Contains("/usr/include/SDL2") && tccArgs.Contains("-I\"/usr/include/SDL2\""), tccArgs);
+                        // (TinyCC does not follow the RUNPATH of libpulse.so.0: the folder of libpulsecommon is named for it, and only for it)
+                        var (_, gccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                        CheckNat("SDL2: TinyCC bekommt den Ordner von libpulsecommon (-L .../pulseaudio), gcc nicht",
+                            fire.Native.SdlSetup.TccRunpathDirs().All(d => tccArgs.Contains($"-L\"{d}\"")) && !gccArgs.Contains("pulseaudio"), tccArgs);
                     }
                 }
                 finally

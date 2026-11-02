@@ -225,6 +225,8 @@ namespace fire.Compiler
             {
                 includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
                 libDirs.AddRange(sdl.LibDirs);
+                // TinyCC resolves the libraries that libSDL2.so needs itself and does not follow their RUNPATH (libpulse.so.0 -> pulseaudio/libpulsecommon-*.so): it is told the folder
+                if (kind == "tcc" && OperatingSystem.IsLinux()) libDirs.AddRange(SdlSetup.TccRunpathDirs().Where(d => !libDirs.Contains(d)));
             }
             if (kind == "custom")
             {
