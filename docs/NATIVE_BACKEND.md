@@ -198,9 +198,43 @@ Bekannte Abweichungen zur VM:
 
 ## Messwerte
 
-**C gegen C++** (Branch `native-c`, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` sind als C 4-16 % schneller
-als der C++-Code davor (fib 3,6 statt 4,3 ms, method 3,3 statt 3,9 ms, list 5,2 statt 6,1 ms, die anderen 4-13 %), die Ausgaben gleich. 2 Millionen Aufrufe einer
-Funktion mit `try`/`catch`: 12,9 ms (C++: 15,2 ms) - mit allen Variablen im Frame waren es 34,7 ms, daher hält der Frame nur, was die Catch-Blöcke benutzen.
+**C gegen C++** (während des Ports, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` waren als C 4-16 % schneller
+als der C++-Code davor. 2 Millionen Aufrufe einer Funktion mit `try`/`catch`: 12,9 ms (C++: 15,2 ms) - mit allen Variablen im Frame waren es 34,7 ms, daher hält
+der Frame nur, was die Catch-Blöcke benutzen.
+
+### Benchmarks vor und nach dem C-Port
+
+Verglichen: der Generator vor dem Port (Commit `9de4c77`, der Vorgänger von `b0c73d9` "native-c: C runtime fire_rt.h"; erzeugt C++ gegen `fire_rt.hpp`) und der
+heutige (C11 gegen `fire_rt.h`), dieselben neun Programme aus `src/fire.Benchmarks/BenchmarkScripts.cs`, jeweils mit `forge build --engine native` gebaut - also
+`g++ -std=c++17 -O2` gegen `gcc -std=c11 -O2` (sonst dieselben Schalter: `-Wall -Wextra -pthread -s`). Rechner: Intel Xeon @ 2,10 GHz (4 vCPUs, VM), Linux 6.18,
+gcc/g++ 13.3.0. Gemessen wird die Wandzeit eines Programmlaufs mit Prozessstart; alt und neu laufen abwechselnd, die Tabelle zeigt das Minimum (60 Läufe je
+Programm, bei den 20-fachen 20 Läufe). Auf dem Rechner liefen gleichzeitig andere Prozesse (Last ~4); die Mediane geben dasselbe Bild. Die Ausgaben sind in
+allen Fällen gleich. Weil die Programme nur wenige Millisekunden laufen, gibt es jedes zusätzlich mit etwa 20-facher Arbeit (größere Schleifenzahlen, `Fib(29)`
+statt `Fib(23)`) - dort zählt der Programmstart kaum noch.
+
+| Benchmark | C++ vorher | C jetzt | Verhältnis | 20-fach: C++ vorher | C jetzt | Verhältnis |
+|---|---:|---:|---:|---:|---:|---:|
+| leeres Programm (`print(0)`) | 1,73 ms | 1,20 ms | 0,69 | - | - | - |
+| `loop` | 2,74 ms | 2,15 ms | 0,79 | 27,7 ms | 26,4 ms | 0,95 |
+| `float` | 5,48 ms | 5,05 ms | 0,92 | 81,8 ms | 81,2 ms | 0,99 |
+| `fib` | 1,95 ms | 1,39 ms | 0,71 | 8,7 ms | 7,5 ms | 0,85 |
+| `method` | 1,84 ms | 2,66 ms | 1,44 | 8,8 ms | 34,3 ms | 3,88 |
+| `array` | 6,63 ms | 5,84 ms | 0,88 | 84,6 ms | 73,6 ms | 0,87 |
+| `string` | 2,61 ms | 2,13 ms | 0,81 | 18,7 ms | 20,2 ms | 1,08 |
+| `alloc` | 3,16 ms | 2,58 ms | 0,82 | 34,5 ms | 27,4 ms | 0,79 |
+| `lambda` | 3,63 ms | 3,18 ms | 0,88 | 41,4 ms | 42,5 ms | 1,03 |
+| `list` | 4,41 ms | 3,87 ms | 0,88 | 44,9 ms | 47,6 ms | 1,06 |
+
+Alle neun ließen sich mit dem alten Generator bauen. Was man sieht:
+
+* Der **Programmstart** ist als C gut 0,5 ms kürzer (keine libstdc++, keine statischen Initialisierer); bei den Programmen, wie sie in `fire.Benchmarks` stehen,
+  macht das den größten Teil des Unterschieds aus.
+* Die **reine Rechenzeit** (20-fach) ist meist gleich oder etwas besser: `fib` (Aufrufe) und `alloc` (Objekte anlegen und freigeben) 15-20 % schneller, `array`
+  13 %; `string`, `lambda` und `list` liegen innerhalb von ±8 % (die Mediane: 0,97/1,02/1,04 - Rauschen).
+* **`method` ist langsamer - nicht wegen C**, sondern wegen einer späteren Änderung des Generators (Zugriffsschutz): weil `List` (und die Hashtabelle hinter `Dictionary`) im Prelude ein
+  privates Feld `count` haben, gehen `this.count` lesen und schreiben im Benchmark über die allgemeinen Zugriffsfunktionen `gf_count`/`sf_count` (mit
+  Klassen-Switch und Prüfung des Aufrufers) statt direkt auf das Feld. Mit dem Feld umbenannt (`tally`) braucht die C-Fassung 8,3 ms - so viel wie der C++-Code.
+  Der direkte Zugriff, wenn der Typ des Objekts bekannt ist (`this` in einer Methode der eigenen Klasse), wäre die Abhilfe.
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 
