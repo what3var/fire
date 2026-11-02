@@ -49,7 +49,7 @@ namespace fire.Native
             ["msvc"] = new() { Kind = "msvc", Compiler = "cl", Std = "c++17", Optimization = "/O2", Args = new() { "/nologo", "/EHsc" } },
             // Emscripten (emsdk): C++ to WebAssembly. -fexceptions: fire exceptions are C++ exceptions, which Emscripten leaves off by default. ASYNCIFY lets `Sleep` and the window loop hand the thread back to the browser; SINGLE_FILE puts the .wasm into the page, so that the
             // .html opens as it is (also from a folder, without a web server).
-            ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
+            ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", CStd = "gnu11", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
             // TinyCC: a small, fast C compiler - enough for programs whose packages are all in C (it compiles no C++: a program with natives in C++ needs one of the
             // others). -w: tcc warns about every call of a function that does not return (it does not know the attribute).
             ["tcc"] = new() { Kind = "tcc", Compiler = "tcc", CCompiler = "tcc", CStd = "c11", Optimization = "-O2", Args = new() { "-w" } },

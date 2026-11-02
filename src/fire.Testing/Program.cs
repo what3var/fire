@@ -53,6 +53,8 @@ string[] uiDrawExpected = Array.Empty<string>();
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
 // FIRE_TESTS_ONLY=native: only the native backend (generated C against the VM, devices, windows, FreeRTOS, toolchains)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nativeTests;
+// FIRE_TESTS_ONLY=packer: only the packer (single file, payload, loader) and the native targets checked there (wasm with Emscripten and the browser)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") goto packerTests;
 // FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
 // the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
 static bool TestSelected(string name)
@@ -7382,6 +7384,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+packerTests:
 // ---------------------------------------------------------------------------
 // Packer: self-contained file (bundle + payload), bridges only when needed, loader instead of Costura
 // ---------------------------------------------------------------------------
@@ -7683,16 +7686,23 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
                 const string wasmSource = "#import \"time\"\nclass Oops : Exception { construct(string m) : base(m) { } }\nvar sum = 0\nfor (var i = 0; i < 5; i++) { sum = sum + i; Sleep(1ms) }\nprint(\"sum \" + sum + \" \" + (sum / 4.0) + \" \" + (1.0 / 3.0))\ntry { throw new Oops(\"caught\") } catch (Oops e) { print(e.message) }\n";
                 string wasmDir = Path.Combine(sfDir, "wasm");
                 fire.Native.NativeRuntimeFiles.WriteTo(wasmDir, "wasm");
-                File.WriteAllText(Path.Combine(wasmDir, "p.cpp"), fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wasmSource }, null, null, VmExecutionMode.Release, null, wasm), wasm));
-                var (emExe, emArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm, Path.Combine(wasmDir, "p.cpp"), wasmDir, Path.Combine(wasmDir, "p.js"));
-                using (var em = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(emExe, emArgs) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!)
+                // (the program is C: emcc with -std=gnu11 - EM_ASM needs the GNU mode)
+                string EmBuild(string source, string name, out string log)
                 {
+                    string c = Path.Combine(wasmDir, name + ".c");
+                    File.WriteAllText(c, fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, wasm), wasm).Program);
+                    string output = Path.Combine(wasmDir, name + (name.StartsWith("win") ? ".html" : ".js"));
+                    var (emExe, emArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm, c, wasmDir, output, language: "c");
+                    using var em = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(emExe, emArgs) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!;
                     var emErr = em.StandardError.ReadToEndAsync();
                     em.StandardOutput.ReadToEnd();
                     em.WaitForExit();
+                    log = emExe + " " + emArgs + "\n" + emErr.Result;
+                    return File.Exists(output) && em.ExitCode == 0 ? output : "";
                 }
-                bool emBuilt = File.Exists(Path.Combine(wasmDir, "p.js"));
-                SfCheck(emBuilt, "wasm: em++ baut das Programm (p.js mit eingebetteter WebAssembly)");
+                string pJs = EmBuild(wasmSource, "p", out string emLog);
+                bool emBuilt = pJs != "";
+                SfCheck(emBuilt && !emLog.Contains("warning:"), "wasm: emcc baut das Programm (C, p.js mit eingebetteter WebAssembly) ohne Warnung" + (emBuilt && !emLog.Contains("warning:") ? "" : "\n" + emLog));
                 if (emBuilt)
                 {
                     using var node = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{Path.Combine(wasmDir, "p.js")}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
@@ -7704,6 +7714,42 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
                     Value.SingleFloats = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
                 }
+                // a window (Emscripten's SDL2 port: -sUSE_SDL=2; without network access to GitHub the port can come from a folder: EMCC_LOCAL_PORTS=sdl2=<SDL source>):
+                // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
+                const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
+                string winHtml = EmBuild(winSource, "win", out string winLog);
+                SfCheck(winHtml != "" && winLog.Contains("-sUSE_SDL=2") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut mit SDL2 von Emscripten (-sUSE_SDL=2), ohne Warnung" + (winHtml != "" ? "" : "\n" + winLog));
+                bool playwright = false;
+                try
+                {
+                    using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", "-e \"require('playwright')\"") { RedirectStandardError = true, UseShellExecute = false })!;
+                    probe.StandardError.ReadToEnd(); probe.WaitForExit(); playwright = probe.ExitCode == 0;
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                if (winHtml != "" && playwright)
+                {
+                    string script = Path.Combine(wasmDir, "page.js");
+                    File.WriteAllText(script, """
+                        const { chromium } = require('playwright');
+                        (async () => {
+                          const b = await chromium.launch(); const p = await b.newPage(); const out = [];
+                          p.on('console', m => { if (!m.text().includes('GL Driver')) out.push(m.text()); });
+                          p.on('pageerror', e => out.push('error ' + e.message));
+                          await p.goto('file://' + process.argv[2]);
+                          for (let i = 0; i < 100 && !out.includes('done'); i++) await p.waitForTimeout(100);
+                          const canvas = await p.evaluate(() => { const c = document.getElementById('canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height;
+                            const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(c.width >> 1, c.height >> 1, 1, 1).data; return c.width + 'x' + c.height + ' ' + d[0] + ' ' + d[1] + ' ' + d[2]; });
+                          console.log(out.join('\n')); console.log('canvas ' + canvas); await b.close();
+                        })();
+                        """);
+                    using var page = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{script}\" \"{winHtml}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!;
+                    var pageErr = page.StandardError.ReadToEndAsync();
+                    string pageOut = page.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                    page.WaitForExit();
+                    // (the colour r + g*256 + b*65536 + a*2^24: the bytes of the framebuffer are R G B A, the canvas shows the same colour)
+                    SfCheck(pageOut.Contains("pixel 32 128 240\ndone\n") && pageOut.Contains("canvas 40x30 32 128 240"), "wasm: das Fenster laeuft im Browser (Chromium, headless): es druckt und zeichnet ins Canvas\n" + pageOut + pageErr.Result);
+                }
+                else Console.WriteLine("(wasm im Browser: uebersprungen - " + (winHtml == "" ? "das Fenster-Programm baute nicht" : "Playwright fehlt") + ")");
             }
         }
         var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
@@ -7716,6 +7762,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 
     Console.WriteLine(sfFailures == 0 ? "Alle Single-File-Pruefungen bestanden." : $"FEHLER: {sfFailures} Single-File-Pruefung(en) fehlgeschlagen.");
 }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") return;
 
 // ---------------------------------------------------------------------------
 // Command line of the compiler (run / build)

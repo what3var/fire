@@ -215,7 +215,8 @@ namespace fire.Compiler
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
             // the generated program asks for libraries it needs (`// fire-link: SDL3` or `SDL2` for a window): -lSDL3, SDL3.lib with msvc
             string linkSource = programFile ?? cppFile;
-            if (!compileOnly && File.Exists(linkSource))
+            // (Emscripten needs -sUSE_SDL=2 also when it only compiles: it picks the headers of its SDL2 port)
+            if ((!compileOnly || kind == "emscripten") && File.Exists(linkSource))
                 foreach (string line in File.ReadLines(linkSource))
                     if (line.StartsWith("// fire-link: ", StringComparison.Ordinal))
                     {
@@ -283,6 +284,7 @@ namespace fire.Compiler
                 args.Append($"-I\"{includeDir}\" ");
                 foreach (string d in includes) args.Append($"-I\"{d}\" ");
                 args.Append($"-o \"{exe}\"");
+                if (compileOnly && kind == "emscripten") foreach (string l in libs.Where(l => l.StartsWith("-s", StringComparison.Ordinal))) args.Append(' ').Append(l);
                 if (compileOnly) return (isC ? ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler : ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler, args.ToString());
                 // the C library of the program: libm (the math functions of C are in a library of their own on some systems)
                 if (isC && !sharedLibrary && kind != "emscripten" && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !libs.Contains("-lm")) libs.Add("-lm");

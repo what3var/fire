@@ -678,8 +678,11 @@ Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
 `fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire --engine native -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
 `out.html` (Standard), die sich so öffnen lässt - auch per Doppelklick aus einem Ordner, ohne Webserver: die WebAssembly-Binärdatei steckt in der Seite (`-sSINGLE_FILE=1`).
 
-**Werkzeug:** Emscripten (emsdk, `em++`). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),
+**Werkzeug:** Emscripten (emsdk; das Programm ist C: `emcc` mit `-std=gnu11`, denn `EM_ASM` braucht den GNU-Modus). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),
 `-sALLOW_MEMORY_GROWTH=1`, `-sSINGLE_FILE=1`, `-sMINIFY_HTML=0`; `// fire-link: SDL2` wird zu `-sUSE_SDL=2` (SDL2 bringt Emscripten selbst mit, es gibt nichts zu installieren).
+Den SDL2-Port lädt Emscripten beim ersten Bau eines Programms mit Fenster von GitHub (als Zip) und übersetzt ihn einmal (danach im Cache von emsdk); ohne
+Zugang zu diesem Download nimmt es einen Ordner mit den Quellen: `git clone --branch release-2.32.10 https://github.com/libsdl-org/SDL` und
+`EMCC_LOCAL_PORTS=sdl2=<Ordner>`. Geprüft mit Emscripten 6.0 (Testgruppe `packer`: ein Programm unter node wie die VM, ein Fenster im Chromium der Testmaschine, headless).
 Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emscripten"` und `args` bzw. `--shell-file`.
 
 **Plattformpaket `native/platform/wasm/`:**

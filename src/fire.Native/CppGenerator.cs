@@ -1123,7 +1123,8 @@ namespace fire.Native
                 if (import.Import.Native is { } packageNative)
                     foreach (string lib in packageNative.LinkLibrariesFor(new[] { _target.Native.Platform, _target.Name })) sb.AppendLine($"// fire-link: {lib}");
             // the display of these platforms is SDL3 or SDL2 (fire_display.h of the platform picks it by FIRE_SDL3): the build links it
-            if (_usesWindows && _target.Native.Platform is "posix" or "windows")
+            if (_usesWindows && _target.Native.Platform == "wasm") sb.AppendLine("// fire-link: SDL2");   // (Emscripten's own SDL2: -sUSE_SDL=2)
+            else if (_usesWindows && _target.Native.Platform is "posix" or "windows")
             {
                 int sdl = _target.Native.Sdl ?? (_sdlChosen ??= _chooseSdl?.Invoke() ?? 2);
                 if (sdl == 3) { sb.AppendLine("// fire-link: SDL3"); sb.AppendLine("#define FIRE_SDL3 1"); }
