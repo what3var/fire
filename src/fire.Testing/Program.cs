@@ -44,8 +44,22 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { Dialog
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
+// (filled by sections that FIRE_TESTS_ONLY may skip: the native device cases by the device checks of the VM, the UI drawing by the UI checks)
+var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
+string uiDrawScript = "";
+string[] uiDrawExpected = Array.Empty<string>();
 // FIRE_TESTS_ONLY=ui: only the UI library in the VM (fake renderer: text fields, clipboard, drag & drop, touch, joystick, markup, ...)
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
+// FIRE_TESTS_ONLY=native: only the native backend (generated C against the VM, devices, windows, FreeRTOS, toolchains)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nativeTests;
+// FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
+// the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
+static bool TestSelected(string name)
+{
+    string? filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER");
+    if (string.IsNullOrWhiteSpace(filter)) return true;
+    return filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase));
+}
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 // the prelude of a standard library (from its installed package)
@@ -9217,7 +9231,7 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 
 // the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
 uiTests:
-string uiDrawScript = """
+uiDrawScript = """
     var fb = new Framebuffer(640, 300)
     var win = new Window(fb, "Test")
     var ui = new UI.Root(fb, win)
@@ -9330,7 +9344,6 @@ string uiDrawScript = """
     print("hash " + h)
     print(ui.Tick())
     """;
-string[] uiDrawExpected = Array.Empty<string>();
 
 // ---------------------------------------------------------------------------
 // UI library (#import "ui"): headless - real framebuffer/console/WindowManager, only the renderer is a dummy
@@ -9426,6 +9439,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     void CheckUi(string title, string script, string[] expected)
     {
+        if (!TestSelected(title)) return;
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
         {
             string[] actual;
@@ -11981,7 +11995,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 }
 
 // The scripts of the device checks with their expected output, for the native backend (a loopback device)
-var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
+devNativeCases.Clear();
 
 // ---------------------------------------------------------------------------
 // Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
@@ -14590,6 +14604,7 @@ GitTests.Run();
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native backend (fire.Native): the same source runs in the VM and as generated C++ - the output must be identical
 // ---------------------------------------------------------------------------------------------------------------------------
+nativeTests:
 if (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1") Console.WriteLine("(FIRE_TEST_NO_NATIVE: the native checks are skipped)");
 else
 {
@@ -23021,6 +23036,7 @@ else
         }
         Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
 
+        natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
         // The VM runs sequentially: the precision of float is process-wide while a program runs.
         var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
 
@@ -23178,7 +23194,8 @@ else
         }
         // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
         {
-            var devTasks = devNativeCases.Select((c, index) => Task.Run(() =>
+            if (devNativeCases.Count == 0) Console.WriteLine("(Geraete nativ: keine Faelle - die Geraete-Pruefungen der VM liefen nicht)");
+            var devTasks = devNativeCases.Where(c => TestSelected(c.Title)).Select((c, index) => Task.Run(() =>
             {
                 var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
                 if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
@@ -23198,7 +23215,7 @@ else
                 var (title, expected, actual) = task.Result;
                 CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
             }
-            CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER")) && Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == null) CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
         }
 
         // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
@@ -23369,6 +23386,7 @@ else
             var windowTarget = TargetProfile.Host;
             foreach (var wc in windowCases)
             {
+                if (!TestSelected(wc.Title)) continue;
                 var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
                 string cpp = generated.Program;
                 CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, "");
@@ -23390,6 +23408,7 @@ else
         {
             string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
             if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
+            else if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
             else
             {
                 var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
@@ -23429,7 +23448,7 @@ else
                 var (name, expected, actual) = task.Result;
                 CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
             }
-            CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
         }
 
         // ---- Target configuration (fire.native.json) and `build` with the native engine

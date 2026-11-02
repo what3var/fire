@@ -134,3 +134,20 @@ place). A double click (or Enter) opens the test in the editor.
 Stop ends the run at the next instruction of the VM; the test that was running is an error "cancelled". A program that is started with F5 and a test run do
 not run at the same time - stop the program first.
 
+
+## The test suite of the compiler (`src/fire.Testing`)
+
+The compiler, the VM, the native backend and the libraries are checked by `fire.Testing` (`dotnet build -c Release`, then `dotnet bin/Release/net10.0/linux-x64/fire.Testing.dll`).
+A full run takes about half an hour, most of it the native backend: every case is built with gcc and AddressSanitizer/UBSan and compared with the VM. To check a change
+quickly:
+
+| Switch | Effect |
+|---|---|
+| `FIRE_TESTS_ONLY=<group>` | only one group: `native` (the native backend: cases against the VM, windows, FreeRTOS, toolchains), `ui` (the UI library in the VM), `types`, `syntax`, `diagnostics`, `projects`, `testing`, `windows`, `dialogs`, `docking`, `circuiteditor`, `scene3d`, `snippets` |
+| `FIRE_TESTS_FILTER=<text>` | of the checks listed as cases (the native cases, the native window and device cases, the UI checks) only those whose name contains the text; several texts separated by `\|`, case does not matter |
+| `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
+| `FIRE_TEST_CCACHE=0` | no compiler cache |
+
+When `ccache` is installed, the native builds of the tests go through it: a case whose generated program did not change is not compiled again (a run of the native group
+with an unchanged program takes seconds per case instead of a minute). Example: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Drop|Compression:"` runs the native checks of
+two topics in under a minute.
