@@ -1,0 +1,27 @@
+// Source of fileicons.res (the Win32 resources of spark.exe, see <Win32Resource> in fire.Editor.csproj).
+// Rebuild on Windows with:   rc /nologo /fo fileicons.res fileicons.rc
+// or anywhere with:          python fileicons.py
+//
+// The icons have numeric IDs, not names: a file type's DefaultIcon in the registry can only address
+// an icon as "spark.exe,<index>" or "spark.exe,-<ID>" - never by a name. setup.iss uses "-<ID>",
+// so keep these IDs in step with the IconId* defines there. The lowest ID is the icon of the exe itself.
+
+#define IDI_FIRE         101
+#define IDI_FIREAPP      102
+#define IDI_FIREPROJ     103
+#define IDI_FIRESCRIPT   104
+#define IDI_FIRESLN      105
+#define IDI_FIREXML      106
+#define IDI_FIREBISCUIT  107
+#define IDI_MARKDOWN     108
+#define IDI_CANVAS       109
+
+IDI_FIRE         ICON "filetypes hires\\ico fire.ico"
+IDI_FIREAPP      ICON "filetypes hires\\ico fireapp.ico"
+IDI_FIREPROJ     ICON "filetypes hires\\ico fireproj.ico"
+IDI_FIRESCRIPT   ICON "filetypes hires\\ico firescript.ico"
+IDI_FIRESLN      ICON "filetypes hires\\ico firesln.ico"
+IDI_FIREXML      ICON "filetypes hires\\ico firexml.ico"
+IDI_FIREBISCUIT  ICON "filetypes hires\\ico biscuit.ico"
+IDI_MARKDOWN     ICON "filetypes hires\\ico md.ico"
+IDI_CANVAS       ICON "filetypes hires\\ico xmd.ico"

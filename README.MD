@@ -39,4 +39,4 @@ Or just download it, compile it and have a look.
 ![fxml designer](https://github.com/what3var/fire/blob/master/screenshots/3.png?raw=true)
 ![md viewer/editor](https://github.com/what3var/fire/blob/master/screenshots/4.png?raw=true)
 ![raster editor](https://github.com/what3var/fire/blob/master/screenshots/5.png?raw=true)
-![scene3d package](https://github.com/what3var/fire/blob/master/screenshots/5.png?raw=true)
+![scene3d package](https://github.com/what3var/fire/blob/master/screenshots/6.png?raw=true)

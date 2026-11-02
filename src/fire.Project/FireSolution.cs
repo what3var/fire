@@ -23,6 +23,8 @@ namespace fire.Projects
         public string? Startup { get; set; }
         /// <summary>Settings for every project of the solution (a project's own settings go before them).</summary>
         public ProjectSettings Settings { get; set; } = new();
+        /// <summary>The folder of the notes of the solution (docs/NOTES.md), relative to the solution file; null: `notes/`.</summary>
+        public string? Notes { get; set; }
 
         [JsonIgnore] public string? FilePath { get; set; }
         [JsonIgnore] public string? Directory => FilePath == null ? null : Path.GetDirectoryName(Path.GetFullPath(FilePath));
@@ -66,6 +68,7 @@ namespace fire.Projects
             if (Folders.Count > 0) shape["folders"] = Folders;
             if (Startup != null) shape["startup"] = Startup;
             if (Settings != null && !Settings.IsEmpty) shape["settings"] = Settings;
+            if (!string.IsNullOrWhiteSpace(Notes)) shape["notes"] = Notes;
             return JsonSerializer.Serialize(shape, Options);
         }
 

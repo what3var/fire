@@ -39,6 +39,7 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { Di
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "types") { TypeTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "testing") { TestingTests.Run(); return; }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "notes") { NotesTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "windows") { WindowManagerTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { DialogTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
@@ -15441,6 +15442,7 @@ static int CountOccurrences(string haystack, string needle)
 }
 
 ProjectTests.Run();
+NotesTests.Run();
 DiagnosticTests.Run();
 SyntaxTests.Run();
 TypeTests.Run();
@@ -24898,6 +24900,9 @@ else
             CheckNat("Konfiguration: unbekanntes Ziel wird abgelehnt, Standard ist der Rechner", unknownTarget && new fire.Native.NativeConfig().ResolveTarget() == TargetProfile.Host);
             var roundTrip = fire.Native.NativeConfig.Parse(config.ToJson());
             CheckNat("Konfiguration: speichern und wieder lesen", roundTrip.ResolveTarget("board").Native.Defines.SequenceEqual(new[] { "BOARD_X=3", "FIRE_THREAD_PRIORITY=5" }) && roundTrip.Engine == "native");
+            string savedJson = new fire.Native.NativeConfig { Toolchains = { ["x"] = new fire.Native.ToolchainDef { Compiler = "g++", Std = "c++20" } } }.ToJson();
+            CheckNat("Konfiguration: gespeichert wird nur, was eingestellt ist (keine abgeleiteten Namen), g++ steht lesbar da", savedJson.Contains("\"g++\"") && savedJson.Contains("\"c++20\"")
+                && !savedJson.Contains("targetNames") && !savedJson.Contains("toolchainNames") && !savedJson.Contains("effectiveKind") && !savedJson.Contains("compilesCpp"));
             string boardCpp = fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, board), board);
             int incAt = boardCpp.IndexOf("#include <my_rtos.h>", StringComparison.Ordinal), platAt = boardCpp.IndexOf("#define FIRE_PLATFORM_HEADER \"platform/freertos/fire_platform.h\"", StringComparison.Ordinal);
             CheckNat("Konfiguration: Defines, Includes vor der Plattform und Einsprung stehen im C++", boardCpp.Contains("#define BOARD_X 3") && incAt > 0 && platAt > incAt

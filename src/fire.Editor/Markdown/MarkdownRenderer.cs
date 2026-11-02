@@ -124,11 +124,13 @@ namespace fire.Editor
                     int number = list.Ordered ? list.Start : 1;
                     foreach (var item in list.Items)
                     {
-                        string marker = item.Checked != null ? (item.Checked == true ? "☑" : "☐")
-                            : list.Ordered ? number + "." : listDepth % 2 == 0 ? "•" : "◦";
+                        string marker = list.Ordered ? number + "." : listDepth % 2 == 0 ? "•" : "◦";
                         number++;
                         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*") };
-                        row.Children.Add(new TextBlock { Text = marker, Foreground = foreground, FontSize = 14, Margin = new Thickness(0, 1, 8, 1), MinWidth = 16, VerticalAlignment = VerticalAlignment.Top });
+                        // a task: its state as a drawn box (docs/NOTES.md), else the bullet or number
+                        row.Children.Add(item.Task is { } state
+                            ? new TaskMark { State = state, Margin = new Thickness(1, 3, 9, 1), VerticalAlignment = VerticalAlignment.Top }
+                            : new TextBlock { Text = marker, Foreground = foreground, FontSize = 14, Margin = new Thickness(0, 1, 8, 1), MinWidth = 16, VerticalAlignment = VerticalAlignment.Top });
                         var content = new StackPanel();
                         foreach (var b in item.Blocks) AddBlock(content.Children, b, listDepth + 1, foreground);
                         Grid.SetColumn(content, 1);

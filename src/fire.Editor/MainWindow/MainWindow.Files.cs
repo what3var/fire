@@ -14,7 +14,7 @@ namespace fire.Editor
     public partial class MainWindow
     {
         private static readonly FilePickerFileType ScriptFiles = new("fire files") { Patterns = new[] { "*.fire", "*.script", "*.fi", "*.fic" } };
-        private static readonly FilePickerFileType MarkdownFiles = new("Markdown") { Patterns = new[] { "*.md", "*.markdown" } };
+        private static readonly FilePickerFileType MarkdownFiles = new("Markdown") { Patterns = new[] { "*.md", "*.xmd", "*.markdown" } };
         private static readonly FilePickerFileType PacketLogFiles = new("Packet logs") { Patterns = new[] { "*.fplog" } };
         private static readonly FilePickerFileType PictureFiles = new("Pictures (PNG, BMP)") { Patterns = new[] { "*.png", "*.bmp" } };
         private static readonly FilePickerFileType UiMarkupFiles = new("UI markup") { Patterns = new[] { "*.fxml" } };
@@ -75,15 +75,6 @@ namespace fire.Editor
             if (kind == Dialogs.Answer.Cancel) return;
             var doc = CreateDocument(DocumentKind.Pixel, "", null, untitledName: "Untitled.png");
             ((PixelEditorControl)doc.View).NewPicture(w, h, kind == Dialogs.Answer.Yes);
-        }
-
-        private void OpenReadOnly_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.ReadOnly);
-        private void OpenViewer_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.Viewer);
-
-        private async void OpenMarkdownDialog(MarkdownViewMode mode)
-        {
-            var files = await PickFiles(mode == MarkdownViewMode.Viewer ? "Open Markdown in Viewer" : "Open Markdown Read-Only", MarkdownFiles);
-            foreach (var file in files) OpenFile(file, mode);
         }
 
         private void HelpFirstSteps_Click(object? sender, RoutedEventArgs e) => OpenHelp("First Steps.md");

@@ -164,6 +164,7 @@ namespace fire.Editor
             // what belongs to which project (and the libraries) may have changed: check the open scripts again
             foreach (var doc in _documents) { doc.Script?.InvalidateConditionalSymbols(); doc.Script?.Revalidate(); }
             ScheduleTestDiscovery();
+            RefreshTodo();
         }
 
         /// <summary>The explorer and the status bar follow the workspace and the active document.</summary>
@@ -512,7 +513,7 @@ namespace fire.Editor
         private async Task ShowProjectProperties(LoadedProject? project, bool solutionTab = false, int tab = -1)
         {
             if (project == null) return;
-            var dialog = new ProjectPropertiesDialog(_workspace, project);
+            var dialog = new ProjectPropertiesDialog(_workspace, project) { EditToolchains = owner => ShowNativeBuildSettings(toolchainPage: true, owner) };
             if (solutionTab) dialog.SelectSolutionTab();
             else if (tab >= 0) dialog.SelectTab(tab);
             if (await dialog.ShowDialog<bool?>(this) != true) return;
@@ -593,6 +594,8 @@ namespace fire.Editor
                 case "install-library": await InstallLibrary(project); break;
                 case "refresh": project?.Refresh(); _workspace.Refresh(); break;
                 case "properties": await ShowProjectProperties(project); break;
+                case "open-notes": await OpenOverview(project); break;
+                case "open-todo": TodoOpen_Click(this, new RoutedEventArgs()); break;
                 case "solution-properties": await ShowProjectProperties(_workspace.Projects.FirstOrDefault(), solutionTab: true); break;
                 case "run-project": await RunProject(project); break;
                 case "reveal": Reveal(node); break;

@@ -41,7 +41,7 @@ last**: what the other files declare is known by then.
 (markup files come first, so that their classes are there before the scripts use them). An `#include` of a file that is part of the project adds nothing (it is there anyway), so nothing
 is declared twice. Files that are not code - pictures, data, C++ sources - are the **content** of the project: they live in its folder (shown by the editor, not compiled), see below.
 
-**Content.** Everything else in the project folder is content: resources, the C++ of the natives, notes. `new Resource("images/logo.png")` takes a file of the folder into the program when
+**Content.** Everything else in the project folder is content: resources, the C++ of the natives, notes (the folder `notes/` holds the todo list and the overview of the project, docs/NOTES.md; `"notes"` in the project or solution file puts it elsewhere). `new Resource("images/logo.png")` takes a file of the folder into the program when
 it is compiled (docs/RESOURCES.md: the path is relative to the file that writes it); the editor copies files in (*Add Resource*) into a folder you choose.
 
 **Natives.** A project with `"native": {}` has C++ natives in its folder `native/` (docs/PACKAGE_NATIVES.md): every `inline Value name(Value a, ...)` in a file there is the fire function
@@ -159,8 +159,9 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
 ## The editor
 
 * **Solution Explorer** (a tool window): the solution, its folders and projects (programs and libraries), their files - the code in compile order, the content (resources, C++) next to it,
-  also empty folders - and references. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
-  pictures (a viewer), other data files (the hex editor). The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
+  also empty folders - and references, each row with the icon of its file type. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
+  pictures (a viewer), other data files (the hex editor). A double click on a row that folds opens it instead of folding it (the arrow still folds): the solution and a project
+  open their properties, a `.fxml` or `.biscuit` its designer, the notes folder (always shown, pale until it exists; docs/NOTES.md) the overview. The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
   code (C++), a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
   picture - in the *pixel editor*. The markup of an interface (`Name.fxml`) opens like a folder: its first row **Designer** opens the markup editor (as a double click on the
   file does), below it is the code-behind `Name.fire` of the same folder.
@@ -174,7 +175,7 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
   offset, Find looks for bytes (`DE AD BE EF`) or text (`"abc"`); files up to 128 MB; undo.
 * **Start**: a splash screen while the editor starts, then the **welcome window**: the projects and solutions that were opened last (a click opens one; the cross takes it out of the list; one that is gone shows as not found), and what to do - new solution, new project, open a project or solution, open a file, new script, the first steps. *Show this window when the editor starts* turns it off; *? > Welcome...* brings it back. The list is `recent.json` in the application data folder of fire (`fire.Projects.RecentWorkspaces`, at most 20); *File > Open Recent* shows the last ten. Files given on the command line skip the window.
 * **File menu**: New (Solution, Project, Script, Markdown, Raster Image; see [TEMPLATES.md](TEMPLATES.md)) / Open Project or Solution / Close. **Project menu**: add a new or existing project to the solution, set the startup project, reload the project (read its folder
-  again), **Project properties** (tabs *Project*, *Build settings*, *References*, *Solution*; the settings of the solution are the ones that every project without its own value gets).
+  again), **Project properties**: a window with pages chosen at the left - *General* (name, version, author, description, icon, program or library, entry file or import name, Desktop/Console, lax/strict, VM/native, startup project), *Version & Info* (product name, internal name, file version, license, comments), *Build* (configuration, float precision, symbols for `#if`, output folder), *Native & Toolchain* (target, toolchain, a button to the native build settings), *Run & Debug* (the program arguments), *References*, *Notes* (the notes folder) and, when a solution is open, a page for the solution (startup project, notes folder and the settings that every project without its own value gets). A value the project does not set shows the one it inherits (from the solution or the default) greyed out; *reset* removes the project's own value again.
 * The documents stay documents: files of the project open in tabs like any other file, files outside open next to them, and every command that builds looks at the active tab. The status bar
   and the Build/Run commands say what they act on (`Build: App (project)`, `Build: single.fire (single file)`). Unsaved buffers of the project's files go into the build.
 * **F5 on a library file** runs the *startup project* (a library has no entry point); **Build** on a library packs it (`Core-1.2.0.fpk`).

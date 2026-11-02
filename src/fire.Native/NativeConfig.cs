@@ -30,6 +30,7 @@ namespace fire.Native
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             PropertyNameCaseInsensitive = true,
             WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,   // g++ and c++17 as they are, not g\u002B\u002B
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
             ReadCommentHandling = JsonCommentHandling.Skip,
             AllowTrailingCommas = true,
@@ -73,6 +74,7 @@ namespace fire.Native
         // Targets
         // -------------------------------------------------------------------------------------------------------------
         /// <summary>The names of all targets: the built-in ones and the configured ones.</summary>
+        [JsonIgnore]
         public IEnumerable<string> TargetNames => TargetProfile.All.Select(p => p.Name).Concat(Targets.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The target <paramref name="name"/> (null: the configured default target, else this machine), with the configuration's changes applied.</summary>
@@ -98,6 +100,7 @@ namespace fire.Native
         // -------------------------------------------------------------------------------------------------------------
         // Toolchains
         // -------------------------------------------------------------------------------------------------------------
+        [JsonIgnore]
         public IEnumerable<string> ToolchainNames => ToolchainDef.BuiltIn.Keys.Concat(Toolchains.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>The toolchain to build <paramref name="target"/> with: the one asked for, the configured default, the target's, else the first compiler found on this machine.</summary>

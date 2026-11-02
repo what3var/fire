@@ -175,18 +175,10 @@
 					</MenuItem>
 					<MenuItem Header="Close Solution / Project" x:Name="mnuCloseWorkspace" Click="CloseWorkspace_Click"/>
 					<Separator/>
-					<MenuItem Header="Open Markdown _Read-Only..." Click="OpenReadOnly_Click"/>
-					<MenuItem Header="Open Markdown in _Viewer..." Click="OpenViewer_Click"/>
 					<MenuItem Header="_Save" x:Name="mnuSave" Click="Save_Click" InputGesture="Ctrl+S"/>
 					<MenuItem Header="Save _As..." x:Name="mnuSaveAs" Click="SaveAs_Click"/>
 					<MenuItem Header="Save A_ll" x:Name="mnuSaveAll" Click="SaveAll_Click" InputGesture="Ctrl+Shift+S"/>
 					<MenuItem Header="_Close Document" Click="CloseDocument_Click" InputGesture="Ctrl+W"/>
-					<Separator/>
-					<MenuItem Header="Build Settings (of the project or the file)" Click="BuildSettings_Click"/>
-					<MenuItem Header="Native Build Settings..." Click="NativeBuildSettings_Click"/>
-					<MenuItem Header="Package Manager (ember)..." Click="PackageManager_Click"/>
-					<MenuItem Header="Install Package File (.fpk)..." Click="InstallPackageFile_Click"/>
-					<MenuItem Header="Open the Standard Libraries (Source)" Click="OpenStandardSources_Click"/>
 					<Separator/>
 					<MenuItem Header="E_xit" Click="Exit_Click"/>
 				</MenuItem>
@@ -233,6 +225,9 @@
 					<MenuItem Header="_Pack Library as Package (.fpk)..." x:Name="mnuPackLibrary" Click="PackLibrary_Click"/>
 					<MenuItem Header="_Install Library (pack and install)" x:Name="mnuInstallLibrary" Click="InstallLibrary_Click"/>
 					<MenuItem Header="_Reload Project (read the folder again)" x:Name="mnuReloadProject" Click="ReloadProject_Click"/>
+					<!-- the notes of the project (docs/NOTES.md) -->
+					<MenuItem Header="_Todo List" Click="TodoOpen_Click"/>
+					<MenuItem Header="O_verview" Click="OverviewOpen_Click"/>
 					<MenuItem Header="Project Pr_operties..." x:Name="mnuProjectProperties" Click="ProjectProperties_Click"/>
 				</MenuItem>
 				<MenuItem Header="_Git" x:Name="mnuGit" SubmenuOpened="GitMenu_SubmenuOpened">
@@ -300,6 +295,13 @@
 					<MenuItem Header="Show Simulated _Loopback Device" x:Name="mnuLoopback" ToggleType="CheckBox" Click="DevicesLoopback_Click"
                               ToolTip.Tip="An echo device without hardware (loopback:echo) for trying out scripts and the packet trace"/>
 				</MenuItem>
+				<MenuItem Header="T_ools">
+					<MenuItem Header="_Package Manager (ember)..." Click="PackageManager_Click"/>
+					<MenuItem Header="_Install Package File (.fpk)..." Click="InstallPackageFile_Click"/>
+					<MenuItem Header="Open the _Standard Libraries (Source)" Click="OpenStandardSources_Click"/>
+					<Separator/>
+					<MenuItem Header="_Toolchain Settings..." Click="NativeBuildSettings_Click"/>
+				</MenuItem>
 				<!-- a check = the window is visible (updated when the menu opens, see ViewMenu_SubmenuOpened) -->
 				<MenuItem Header="_View" x:Name="mnuView" SubmenuOpened="ViewMenu_SubmenuOpened">
 					<MenuItem Header="_Output" Tag="output" ToggleType="CheckBox" Click="ViewPanel_Click"/>
@@ -311,6 +313,7 @@
 					<MenuItem Header="_Devices" Tag="devices" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Sol_ution Explorer" Tag="solution" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="Test E_xplorer" Tag="tests" ToggleType="CheckBox" Click="ViewPanel_Click"/>
+					<MenuItem Header="T_odo" Tag="todo" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<MenuItem Header="_Properties" Tag="properties" ToggleType="CheckBox" Click="ViewPanel_Click"/>
 					<!-- only while a circuit is the active document -->
 					<MenuItem Header="Tool_box" Tag="toolbox" x:Name="mnuViewToolbox" ToggleType="CheckBox" Click="ViewPanel_Click" IsVisible="False"/>
