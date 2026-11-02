@@ -14,23 +14,22 @@ The larger plan (native C, debugging of native builds, binary libraries, the lib
 |---|---|---|
 | 1.1 | Numbers with a unit from text: `"5mm".ToFloat()` | `ToInt`/`ToFloat` read only the number |
 | 1.2 | `Math` for whole arrays and lists (`Sum`, `Average`, `Min`, `Max` of many values) | today a loop or `#import "linq"` |
+| 1.3 | The litre as a built-in unit: `l`, the same as `dm^3` (`1l == 1dm^3`, `1000l == 1m^3`), with prefixes (`ml`, `cl`, with 2.6 also `dl`, `hl`) | volumes are common; today only `m^3` and its parts, or an own `unit` |
 
 ## 2. Language
 
 | # | Task | Why |
 |---|---|---|
 | 2.1 | `break`/`continue` with a number across a `try` with `finally` | `break 2` cannot leave such a `try` yet |
-| 2.2 | Enum types: `Color c` as a declared type, `c.ToString()` gives the name | today an enum value is an `int`; `Color.Name(c)` gives the name |
 | 2.3 | Combined units at a return type: `float:m/s Speed()` | combined units work in declarations of variables, fields and parameters |
 | 2.4 | Bit widths `float[16]` and `float[8]` take effect on assignment | `int[N]`, `byte` and `float[32]` are cut, the small floats not yet |
-| 2.6 | The prefix `d` (deci) and `h` (hecto): `dm^3`, `hPa` | `d` is the day today |
+| 2.6 | The prefix `d` (deci) and `h` (hecto): `dm^3`, `dl`, `hPa` | `d` is the day today, `hPa` is a unit of its own |
 
 ## 3. Type checker
 
 | # | Task | Why |
 |---|---|---|
 | 3.1 | Check the target of `!` statically (`x!Dog` where `x` can never be a `Dog`) | today a cast that can never succeed is found only at run time |
-| 3.2 | Know the enum type: `Color c = 5` is a warning, `c.ToString()` the name (see 2.2) | today an enum value is an `int` for the checker |
 
 ## 4. Runtime and native backend
 
@@ -73,5 +72,7 @@ These problems were found by the examples and fixed right away:
   numbers in units with an uneven factor (`10in + 1ft`) no longer loses 1 by a rounding error, and the factor between two units has no rounding error of
   its own any more (`1.0mm:cm` is `0.1cm`, `2ft:in` is `24in`).
 - An assignment as a condition (`if (a = b)`) is the warning `TC009`.
+- Enum types: `Color c` is a declared type, `c.ToString()` and `print(c)` give the name, `Color c = 5` is a warning of the type checker (lax) or an
+  error (strict) - see [Enums](10-enums-and-namespaces.md).
 - Own units with an offset (`unit Celsius: C { coerce K => value + 273.15 }`) and with conversion functions of any kind (`coerce to mW => 10 ^ (value
   / 10)` and `coerce from mW => 10 * Math.Log10(value)`), VM and native.
