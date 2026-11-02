@@ -24,6 +24,7 @@ Leitlinien:
 | 4 | [Debugging nativer Builds](#8-debugging-nativer-builds-variante-b) | 0 | Runtime-Agent in C, Haken im Generator |
 | 5 | [Binäre Libraries und dynamisches Laden](#9-binäre-libraries-und-dynamisches-laden) | 0, 8 (Debug-Tabellen pro Modul) | größter Umbau des Generators (getrennte Übersetzung) |
 | 6 | [Clipboard, Drag & Drop](#10-clipboard-drag--drop) | 0 | Plattformschicht (SDL) und VM-Seite |
+| 6 | [Ungenutzten Code weglassen](#11-ungenutzten-code-weglassen) | 0; mit 5 abstimmen | Bauzeit und Größe nativer Programme (ein leeres `ui`-Programm: ~7,4 MB C) |
 
 Nach Phase 3 wäre **ember** in fire schreibbar (der erste Härtetest), nach Phase 5 **forge**, nach Phase 6 (plus VM/Debugger in fire, Code-Editor-Control) **spark**.
 
@@ -234,3 +235,22 @@ Ursprünglicher Plan:
 * Drag & Drop: Dateien aus dem Betriebssystem in ein Fenster (`windows`: Ereignis `Drop`), innerhalb des `ui` zwischen Elementen (`DragStart`,
   `DragOver`, `Drop` mit Daten und Effekt); Drag aus dem Programm heraus später.
 * Nativ über SDL (Clipboard, `SDL_EVENT_DROP_*`), in der VM über die C#-Natives von `windows`/`ui`.
+
+## 11. Ungenutzten Code weglassen
+
+Anlass: Der Generator übersetzt heute alles, was importiert ist - ein minimales Programm mit `#import "ui"` ergibt rund 207.000 Zeilen bzw. 7,4 MB C, und
+`gcc -O2` braucht dafür über eine Minute (TinyCC ist schnell, das Programm wird aber trotzdem groß). Ziel: nur übersetzen, was das Programm erreichen kann -
+ungenutzte Methoden, Funktionen, Felder-Initialisierer und **ganze Klassen** fallen weg.
+
+* **Erreichbarkeit** vom Einstieg (`Main`, Tests, statische Initialisierer der erreichten Klassen) über Aufrufe, `new`, Basisklassen, Interfaces und Lambdas.
+  Virtuelle Aufrufe: eine Überschreibung bleibt, wenn die Methode der Basis erreicht **und** die Klasse instanziiert wird (Rapid Type Analysis).
+* **Dynamische Zugriffe** halten Code fest: `Reflect.New`/`Reflect.*`, JSON (`Json.Read<T>`), Markup des `ui` (Elemente nach Namen), Treiber und Plugins
+  (Abschnitt 9), Debugger (Abschnitt 8, Ausdrücke im Haltepunkt). Dafür ein Attribut zum Behalten (z. B. `[Keep]`) und ein Schalter, der alles behält
+  (Debug-Builds, Live-Sitzungen).
+* **Natives**: nur die Natives erreichter Methoden einbinden; die C-Bridges der Packages so schneiden, dass ungenutzte Teile (z. B. Zwischenablage,
+  Drag & Drop) gar nicht erst mitkompiliert werden.
+* Tabellen (Klassen-IDs, Methoden-Verteiler, Ausnahmen, Reflection, internierte Namen) nur für das, was bleibt.
+* Mit Abschnitt 9 abstimmen: Eine Library, die als `"static"`/`"shared"` vorgebaut wird, behält ihre öffentliche Schnittstelle vollständig; das Weglassen
+  wirkt dort nur auf Internes bzw. beim Linken des Programms (`"source"`).
+* Optional auch für die VM (kleinere Images, schnellerer Start).
+* Prüfen: die Testsuite mit und ohne Weglassen gleich; Messung von Codegröße und Bauzeit (`ui`, `graphics`, `scene3d`) vorher/nachher.
