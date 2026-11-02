@@ -159,8 +159,9 @@ proposed as the solution folder; a folder of the solution (*New Folder* on the s
 ## The editor
 
 * **Solution Explorer** (a tool window): the solution, its folders and projects (programs and libraries), their files - the code in compile order, the content (resources, C++) next to it,
-  also empty folders - and references. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
-  pictures (a viewer), other data files (the hex editor). The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
+  also empty folders - and references, each row with the icon of its file type. Double-click opens a file in the editor that fits: scripts, markup (with the design view), C++ and other text (a text editor; C++ with colours),
+  pictures (a viewer), other data files (the hex editor). A double click on a row that folds opens it instead of folding it (the arrow still folds): the solution and a project
+  open their properties, a `.fxml` or `.biscuit` its designer, the notes folder (always shown, pale until it exists; docs/NOTES.md) the overview. The context menus add a new file, an existing file, a resource (the file is *copied* into a folder of the project), a folder, native
   code (C++), a reference, set the startup project, build/run/pack, reveal in the file manager, remove, and open the project's properties; a file can also be opened *as text*, *as hex* or - a
   picture - in the *pixel editor*. The markup of an interface (`Name.fxml`) opens like a folder: its first row **Designer** opens the markup editor (as a double click on the
   file does), below it is the code-behind `Name.fire` of the same folder.

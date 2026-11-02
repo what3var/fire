@@ -141,9 +141,12 @@ namespace fire.Editor
         }
 
         /// <summary>Project > Overview: the canvas of the project (notes/overview.xmd), made with its title when it does not exist yet.</summary>
-        private async void OverviewOpen_Click(object? sender, RoutedEventArgs e)
+        private async void OverviewOpen_Click(object? sender, RoutedEventArgs e) =>
+            await OpenOverview((FullPathOf(ActiveDocument) is { } path ? ProjectByFolder(path) : null) ?? _solutionPanel.Selected?.Project ?? _workspace.Startup);
+
+        /// <summary>Opens the overview of a project (of the solution when there is no project); the notes folder and the canvas are made at their first use.</summary>
+        private async Task OpenOverview(LoadedProject? project)
         {
-            var project = (FullPathOf(ActiveDocument) is { } path ? ProjectByFolder(path) : null) ?? _solutionPanel.Selected?.Project ?? _workspace.Startup;
             string? file = project != null ? ProjectNotes.OverviewPath(project.Project) : _workspace.Solution is { FilePath: not null } s ? ProjectNotes.OverviewPath(s) : null;
             if (file == null) { await Dialogs.Message(this, "Open a project or a solution: its overview is notes/overview.xmd.", "Overview"); return; }
             if (!File.Exists(file))

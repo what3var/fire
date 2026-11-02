@@ -11,7 +11,7 @@ using Avalonia.Controls.Presenters;
 namespace fire.Editor
 {
     /// <summary>
-    /// The pieces of the settings windows (Project Properties, Native Build Settings): pages chosen in a list at the left, groups with a small accent title, rows with a label,
+    /// The pieces of the settings windows (Project Properties, Toolchain Settings): pages chosen in a list at the left, groups with a small accent title, rows with a label,
     /// hints, and buttons side by side for a choice of a few values. One look for all settings.
     /// </summary>
     internal static class SettingsLayout

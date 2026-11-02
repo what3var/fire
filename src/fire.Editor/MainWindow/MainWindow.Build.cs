@@ -161,7 +161,7 @@ namespace fire.Editor
             fire.Native.NativeConfig config;
             string savePath;
             try { config = LoadNativeConfig(out savePath); }
-            catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Native Build Settings"); return false; }
+            catch (fire.Native.NativeConfigException ex) { await Dialogs.Message(owner ?? this, ex.Message, "Toolchain Settings"); return false; }
             var dialog = new NativeBuildDialog(config, savePath);
             if (toolchainPage) dialog.SelectToolchainTab();
             if (await dialog.ShowDialog<bool?>(owner ?? this) != true) return false;
@@ -178,7 +178,7 @@ namespace fire.Editor
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                await Dialogs.Message(owner ?? this, ex.Message, "Native Build Settings");
+                await Dialogs.Message(owner ?? this, ex.Message, "Toolchain Settings");
                 return false;
             }
         }

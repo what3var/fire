@@ -15,7 +15,8 @@ Status: built - the todo list, and canvases with their views, editing on the sur
 ## The folder `notes/`
 
 The notes of a project are in the folder **`notes/`** next to its `.fireproj`; the notes of a solution in `notes/` next to its `.firesln`. The folder does not exist at first: it is made
-when the first entry is written (the first task in the Todo window, the first overview).
+when the first entry is written (the first task in the Todo window, the first overview). The Solution Explorer always shows the folder of a project: before it exists as a pale
+row; a double click on it opens the overview (`notes/overview.xmd`) and so makes the folder and the canvas.
 
 ```
 App/

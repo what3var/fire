@@ -4,7 +4,7 @@ fire can import more than the libraries that come with the compiler (`graphics`,
 interface to a sensor, a protocol or an operating system API. `#import "name"` finds the imports of the installed packages like the built-in ones.
 
 `ember` is the package manager (the library `fire.Package.Manager`, used by fire.Native and fire.Project, and the command line program `ember` in `src/fire.Ember`). The editor has a small window for it
-(*File > Package Manager (ember)...*).
+(*Tools > Package Manager (ember)...*).
 
 ## Using packages
 
@@ -126,7 +126,7 @@ is not installed yet, or whose folder changed since it was installed, is packed 
 `Packages/.source-stamps.json` keeps the check quick. A prebuilt library goes along when it was built from the same C++, so that the virtual machine needs no C++ compiler for the libraries
 as shipped; after a change of the C++ the library is built on first use like that of any package.
 
-**Changing a standard library**: *File > Open the Standard Libraries (Source)* opens the solution in spark. Change a file, run its tests (`forge test`, or the tests of the project), then
+**Changing a standard library**: *Tools > Open the Standard Libraries (Source)* opens the solution in spark. Change a file, run its tests (`forge test`, or the tests of the project), then
 *Install* the project (context menu of the project, or *Project > Install Library*): it is packed and installed at once; an installed package of the same version is replaced after a question.
 The next start of spark or forge would install it, too.
 

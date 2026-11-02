@@ -77,15 +77,6 @@ namespace fire.Editor
             ((PixelEditorControl)doc.View).NewPicture(w, h, kind == Dialogs.Answer.Yes);
         }
 
-        private void OpenReadOnly_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.ReadOnly);
-        private void OpenViewer_Click(object? sender, RoutedEventArgs e) => OpenMarkdownDialog(MarkdownViewMode.Viewer);
-
-        private async void OpenMarkdownDialog(MarkdownViewMode mode)
-        {
-            var files = await PickFiles(mode == MarkdownViewMode.Viewer ? "Open Markdown in Viewer" : "Open Markdown Read-Only", MarkdownFiles);
-            foreach (var file in files) OpenFile(file, mode);
-        }
-
         private void HelpFirstSteps_Click(object? sender, RoutedEventArgs e) => OpenHelp("First Steps.md");
 
         /// <summary>Help > Samples: copies a sample project that ships with fire into a folder of the user's choice and opens it.</summary>
