@@ -26,6 +26,7 @@ static class NotesTests
         LineEndings();
         Folders();
         Preview();
+        Overview();
         Console.WriteLine(_failures == 0 ? "Notes: alle Tests bestanden" : $"Notes: {_failures} FEHLER");
     }
 
@@ -175,6 +176,70 @@ static class NotesTests
             states.SequenceEqual(new fire.Editor.MdTaskState?[] { fire.Editor.MdTaskState.Open, fire.Editor.MdTaskState.InProgress, fire.Editor.MdTaskState.Blocked, fire.Editor.MdTaskState.Done, fire.Editor.MdTaskState.Done, null }),
             string.Join(",", states));
         Check("Markdown-Vorschau: Checked bleibt (erledigt oder nicht)", list.Items[3].Checked == true && list.Items[1].Checked == false && list.Items[5].Checked == null);
+    }
+
+    private const string OverviewSample = """
+        # Fuzz pedal
+
+        Goal: a distortion.
+
+        [container]: <x=420 y=180 w=300 src="todo.md"> "todos"
+
+        [container]: <x=40 y=180 w=340 h=200> "signal"
+        ## Signal path
+        Input → Out
+
+        [container]: <x=16 y=110 w=260> 'inner'
+        Nested text
+
+        [/]: <>
+
+        [sketch]: <>
+        ```
+        [rect]: <0 90 300 60 stroke=#147AD0>
+        [path]: <M 20 120 L 280 120 stroke=#ff4070 width=2 arrow=end>
+        [text]: <10 10 size=14> "Clipper"
+        ```
+        [/sketch]: <>
+        [/container]: <>
+
+        [line]: <from=signal to=todos arrow=end> "open"
+
+        [other]: <https://example.com> "a link of the author"
+        """;
+
+    private static void Overview()
+    {
+        Check("Uebersicht erkannt", fire.Editor.OverviewParser.IsOverview(OverviewSample) && !fire.Editor.OverviewParser.IsOverview(Sample));
+        var doc = fire.Editor.OverviewParser.Parse(OverviewSample);
+        Check("keine Probleme", doc.Problems.Count == 0, string.Join("\n", doc.Problems));
+        Check("Text der Uebersicht ohne Definitionen", doc.Markdown.StartsWith("# Fuzz pedal") && doc.Markdown.Contains("Goal: a distortion.") && !doc.Markdown.Contains("[container]")
+            && !doc.Markdown.Contains("Signal path") && doc.Markdown.Contains("[other]: <https://example.com>"), doc.Markdown);
+        var todos = doc.Children[0] as fire.Editor.OvContainer;
+        Check("Container mit src: ohne Inhalt, ohne Ende", todos is { Name: "todos", Src: "todo.md", X: 420, Y: 180, W: 300, H: null, EndLine: -1 });
+        var signal = doc.Children[1] as fire.Editor.OvContainer;
+        Check("Container: Position, Groesse, Name", signal is { Name: "signal", X: 40, Y: 180, W: 340, H: 200 });
+        Check("Container: sein Text", signal!.Markdown.Contains("## Signal path") && signal.Markdown.Contains("Input → Out") && !signal.Markdown.Contains("Nested"), signal.Markdown);
+        var inner = signal.Children.OfType<fire.Editor.OvContainer>().Single();
+        Check("verschachtelt, Name in '...'", inner.Name == "inner" && inner.Markdown == "Nested text" && inner.X == 16);
+        var sketch = signal.Children.OfType<fire.Editor.OvSketch>().Single();
+        Check("Sketch im Container, Zaun ``` wird uebersprungen", sketch.Shapes.Select(s => s.Kind).SequenceEqual(new[] { "rect", "path", "text" }), string.Join(",", sketch.Shapes.Select(s => s.Kind)));
+        Check("Form: Zahlen ohne Schluessel, Attribute", sketch.Shapes[0].Attributes.Number("x", 0) == 0 && sketch.Shapes[0].Attributes.Number("h", 3) == 60 && sketch.Shapes[0].Attributes.Get("stroke") == "#147AD0");
+        Check("Pfad: die Woerter ohne Schluessel sind die Pfaddaten", string.Join(" ", sketch.Shapes[1].Attributes.Positional) == "M 20 120 L 280 120" && sketch.Shapes[1].Attributes.Get("arrow") == "end");
+        Check("Text: der Titel ist der Text", sketch.Shapes[2].Name == "Clipper" && sketch.Shapes[2].Attributes.Number("size") == 14);
+        var line = doc.Lines.Single();
+        Check("Linie", line is { From: "signal", To: "todos", Arrow: "end", Name: "open" });
+        Check("alle Container", doc.AllContainers().Select(c => c.Name).SequenceEqual(new[] { "todos", "signal", "inner" }));
+
+        var attrs = fire.Editor.OvAttributes.Parse("x=1 label=\"two words\" 3 4 key='q'");
+        Check("Attribute: Anfuehrungszeichen, Woerter ohne Schluessel", attrs.Get("label") == "two words" && attrs.Get("key") == "q" && attrs.Positional.SequenceEqual(new[] { "3", "4" }) && attrs.Number("x") == 1);
+
+        var bad = fire.Editor.OverviewParser.Parse("Text\n[container]: <x=1 y=2> \"a\"\nInhalt\n\n[line]: <from=a to=b>\n\n[/]: <>\n[/]: <>\n");
+        Check("Probleme: klebt am Absatz, keine Breite, unbekanntes Ziel, [/] zu viel",
+            bad.Problems.Count == 4 && bad.Problems.Any(p => p.StartsWith("2:") && p.Contains("directly follows text")) && bad.Problems.Any(p => p.Contains("no width"))
+            && bad.Problems.Any(p => p.Contains("'b'")) && bad.Problems.Any(p => p.StartsWith("8:") && p.Contains("ends nothing")), string.Join("\n", bad.Problems));
+        var open = fire.Editor.OverviewParser.Parse("[container]: <x=0 y=0 w=10>\ntext\n");
+        Check("Problem: nicht beendet", open.Problems.Single().Contains("not ended") && ((fire.Editor.OvContainer)open.Children[0]).Markdown == "text");
     }
 
     private static void Folders()

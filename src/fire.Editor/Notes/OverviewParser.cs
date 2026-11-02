@@ -1,0 +1,265 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+
+namespace fire.Editor
+{
+    // -----------------------------------------------------------
+    // The model of a project overview (docs/NOTES.md), without any user interface - testable on its own.
+    // -----------------------------------------------------------
+
+    /// <summary>The attributes of a definition: what stands between `&lt;` and `&gt;` - `key=value` pairs (a value with spaces in quotes) and words without a key.</summary>
+    public sealed class OvAttributes
+    {
+        public Dictionary<string, string> Named { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> Positional { get; } = new();
+
+        public string? Get(string key) => Named.TryGetValue(key, out var v) ? v : null;
+
+        /// <summary>The number of `key`, else the positional word at `index` (if given); null: none or not a number.</summary>
+        public double? Number(string key, int index = -1)
+        {
+            string? text = Get(key) ?? (index >= 0 && index < Positional.Count ? Positional[index] : null);
+            return text != null && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) ? d : null;
+        }
+
+        public static OvAttributes Parse(string text)
+        {
+            var result = new OvAttributes();
+            int i = 0;
+            while (i < text.Length)
+            {
+                while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
+                if (i >= text.Length) break;
+                int start = i;
+                var key = new StringBuilder();
+                while (i < text.Length && (char.IsLetterOrDigit(text[i]) || text[i] is '_' or '-')) key.Append(text[i++]);
+                if (key.Length > 0 && char.IsLetter(key[0]) && i < text.Length && text[i] == '=')
+                {
+                    i++;
+                    result.Named[key.ToString()] = Value(text, ref i);
+                    continue;
+                }
+                i = start;
+                result.Positional.Add(Value(text, ref i));
+            }
+            return result;
+        }
+
+        private static string Value(string text, ref int i)
+        {
+            if (i < text.Length && text[i] is '"' or '\'')
+            {
+                char quote = text[i++];
+                var sb = new StringBuilder();
+                while (i < text.Length && text[i] != quote)
+                {
+                    if (text[i] == '\\' && i + 1 < text.Length) i++;
+                    sb.Append(text[i++]);
+                }
+                i++;
+                return sb.ToString();
+            }
+            int start = i;
+            while (i < text.Length && !char.IsWhiteSpace(text[i])) i++;
+            return text.Substring(start, i - start);
+        }
+    }
+
+    public abstract class OvElement
+    {
+        /// <summary>The name (the title of the definition); null: none.</summary>
+        public string? Name { get; init; }
+        /// <summary>The line of the definition (0-based).</summary>
+        public int Line { get; init; }
+        public OvAttributes Attributes { get; init; } = new();
+    }
+
+    /// <summary>A container: at X/Y (relative to the container it is in), W wide, H high (null: as high as its content); text and further elements - or a document (`src`).</summary>
+    public sealed class OvContainer : OvElement
+    {
+        public double X => Attributes.Number("x") ?? 0;
+        public double Y => Attributes.Number("y") ?? 0;
+        public double W => Attributes.Number("w") ?? 300;
+        public double? H => Attributes.Number("h");
+        /// <summary>The document it shows (a path relative to the overview); null: its own content.</summary>
+        public string? Src => Attributes.Get("src");
+        /// <summary>Its text (Markdown), without the definitions of the elements in it.</summary>
+        public string Markdown { get; internal set; } = "";
+        public List<OvElement> Children { get; } = new();
+        /// <summary>The line of its end (`[/]: &lt;&gt;`); -1: none (a container with `src`, or one that is not closed).</summary>
+        public int EndLine { get; internal set; } = -1;
+    }
+
+    /// <summary>A shape of a sketch: `rect`, `ellipse`, `path` or `text`, with its attributes; the title of the definition is the text of a `text`.</summary>
+    public sealed class OvShape : OvElement
+    {
+        public required string Kind { get; init; }
+    }
+
+    /// <summary>Drawings, relative to the container the sketch is in.</summary>
+    public sealed class OvSketch : OvElement
+    {
+        public List<OvShape> Shapes { get; } = new();
+        public int EndLine { get; internal set; } = -1;
+    }
+
+    /// <summary>A line between two named containers; it follows them when they move. `Name` is its label.</summary>
+    public sealed class OvLine : OvElement
+    {
+        public string From => Attributes.Get("from") ?? "";
+        public string To => Attributes.Get("to") ?? "";
+        /// <summary>`none`, `end`, `start` or `both`.</summary>
+        public string Arrow => Attributes.Get("arrow") ?? "none";
+    }
+
+    /// <summary>A parsed overview: its own text, the elements on it, the lines between containers and what is wrong in the file.</summary>
+    public sealed class OverviewDocument
+    {
+        public string Markdown { get; internal set; } = "";
+        public List<OvElement> Children { get; } = new();
+        public List<OvLine> Lines { get; } = new();
+        /// <summary>Problems, each with its line (1-based) in front.</summary>
+        public List<string> Problems { get; } = new();
+
+        /// <summary>Every container, also the nested ones, in the order of the file.</summary>
+        public IEnumerable<OvContainer> AllContainers()
+        {
+            IEnumerable<OvContainer> Walk(IEnumerable<OvElement> elements)
+            {
+                foreach (var c in elements.OfType<OvContainer>())
+                {
+                    yield return c;
+                    foreach (var inner in Walk(c.Children)) yield return inner;
+                }
+            }
+            return Walk(Children);
+        }
+    }
+
+    /// <summary>
+    /// Reads a project overview (docs/NOTES.md): Markdown in which what only spark understands is written as link reference definitions -
+    /// `[container]: &lt;x= y= w=&gt; "name"` … `[/]: &lt;&gt;`, `[sketch]: &lt;&gt;` with shapes, `[line]: &lt;from= to=&gt;`. Everything else is the text of the overview or
+    /// of the container it is in.
+    /// </summary>
+    public static class OverviewParser
+    {
+        private static readonly Regex Definition = new(
+            @"^ {0,3}\[(?<label>[^\]\r\n]+)\]:[ \t]*<(?<dest>(?:\\.|[^<>\\\r\n])*)>(?:[ \t]+(?:""(?<title>(?:\\.|[^""\\])*)""|'(?<title>(?:\\.|[^'\\])*)'|\((?<title>[^)]*)\)))?[ \t]*$",
+            RegexOptions.Compiled);
+        private static readonly Regex OverviewMark = new(@"^ {0,3}\[(container|sketch|line)\]:[ \t]*<", RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
+        private static readonly Regex Fence = new(@"^ {0,3}(```|~~~)", RegexOptions.Compiled);
+        private static readonly Regex HeadingLine = new(@"^ {0,3}#{1,6}(\s|$)", RegexOptions.Compiled);
+        private static readonly HashSet<string> ShapeKinds = new(StringComparer.OrdinalIgnoreCase) { "rect", "ellipse", "path", "text" };
+
+        /// <summary>A Markdown text is an overview when it has at least one container, sketch or line.</summary>
+        public static bool IsOverview(string markdown) => OverviewMark.IsMatch(markdown);
+
+        public static OverviewDocument Parse(string markdown)
+        {
+            var doc = new OverviewDocument();
+            var lines = markdown.Replace("\r\n", "\n").Split('\n');
+            var open = new List<OvElement>();   // the open containers and sketches, outermost first
+            var texts = new Dictionary<object, StringBuilder> { [doc] = new StringBuilder() };
+            bool inFence = false;
+            bool sketchFence = false;   // shapes in a code fence: shown as code elsewhere, on purpose
+            string previous = "";
+
+            StringBuilder TextOf() => texts[(object?)open.OfType<OvContainer>().LastOrDefault() ?? doc];
+            List<OvElement> ChildrenOf() => open.LastOrDefault() is OvContainer c ? c.Children : open.Count == 0 ? doc.Children : new List<OvElement>();
+            void Problem(int line, string text) => doc.Problems.Add($"{line + 1}: {text}");
+
+            for (int i = 0; i < lines.Length; i++)
+            {
+                string line = lines[i];
+                var sketch = open.LastOrDefault() as OvSketch;
+
+                if (sketch == null && Fence.IsMatch(line)) { inFence = !inFence; TextOf().AppendLine(line); previous = line; continue; }
+                if (inFence) { TextOf().AppendLine(line); previous = line; continue; }
+
+                if (sketch != null && Fence.IsMatch(line)) { sketchFence = !sketchFence; previous = line; continue; }
+
+                var m = Definition.Match(line);
+                if (!m.Success)
+                {
+                    // in a sketch only shapes count (a code fence around them shows them as code elsewhere)
+                    if (sketch == null) TextOf().AppendLine(line);
+                    previous = line;
+                    continue;
+                }
+
+                string label = m.Groups["label"].Value.Trim();
+                var attributes = OvAttributes.Parse(Unescape(m.Groups["dest"].Value));
+                string? title = m.Groups["title"].Success ? Unescape(m.Groups["title"].Value) : null;
+                bool known = label.StartsWith('/') || label.Equals("container", StringComparison.OrdinalIgnoreCase) || label.Equals("sketch", StringComparison.OrdinalIgnoreCase)
+                    || label.Equals("line", StringComparison.OrdinalIgnoreCase) || (sketch != null && ShapeKinds.Contains(label));
+                if (known && !(sketch != null && sketchFence) && previous.Trim().Length > 0 && !Definition.IsMatch(previous) && !HeadingLine.IsMatch(previous) && !Fence.IsMatch(previous))
+                    Problem(i, $"[{label}] directly follows text: other programs show it as a link - put an empty line before it.");
+
+                if (label.StartsWith('/'))
+                {
+                    string what = label.Substring(1).Trim();
+                    if (open.Count == 0) Problem(i, "[/] ends nothing: there is no open container or sketch.");
+                    else
+                    {
+                        var closing = open[^1];
+                        string kind = closing is OvSketch ? "sketch" : "container";
+                        if (what.Length > 0 && !what.Equals(kind, StringComparison.OrdinalIgnoreCase)) Problem(i, $"[/{what}] ends a {kind}.");
+                        open.RemoveAt(open.Count - 1);
+                        if (closing is OvContainer c) { c.EndLine = i; c.Markdown = texts[c].ToString().TrimEnd(); }
+                        else if (closing is OvSketch s) { s.EndLine = i; sketchFence = false; }
+                    }
+                }
+                else if (sketch != null && ShapeKinds.Contains(label))
+                {
+                    sketch.Shapes.Add(new OvShape { Kind = label.ToLowerInvariant(), Attributes = attributes, Name = title, Line = i });
+                }
+                else if (label.Equals("container", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (sketch != null) Problem(i, "A container cannot be in a sketch.");
+                    var container = new OvContainer { Name = title, Attributes = attributes, Line = i };
+                    if (attributes.Get("w") == null) Problem(i, "The container has no width (w=): 300 is used.");
+                    ChildrenOf().Add(container);
+                    if (container.Src == null) { open.Add(container); texts[container] = new StringBuilder(); }
+                }
+                else if (label.Equals("sketch", StringComparison.OrdinalIgnoreCase))
+                {
+                    var s = new OvSketch { Name = title, Attributes = attributes, Line = i };
+                    ChildrenOf().Add(s);
+                    open.Add(s);
+                }
+                else if (label.Equals("line", StringComparison.OrdinalIgnoreCase))
+                {
+                    var l = new OvLine { Name = title, Attributes = attributes, Line = i };
+                    if (l.From.Length == 0 || l.To.Length == 0) Problem(i, "A line needs from= and to= (the names of two containers).");
+                    doc.Lines.Add(l);
+                }
+                else if (sketch == null)
+                {
+                    TextOf().AppendLine(line);   // a definition of the author's own (a link reference): part of the text
+                }
+                previous = line;
+            }
+
+            for (int k = open.Count - 1; k >= 0; k--)
+            {
+                Problem(open[k].Line, $"The {(open[k] is OvSketch ? "sketch" : "container")} is not ended: [/]: <> is missing.");
+                if (open[k] is OvContainer c) c.Markdown = texts[c].ToString().TrimEnd();
+            }
+            doc.Markdown = texts[doc].ToString().TrimEnd();
+
+            var names = doc.AllContainers().Where(c => c.Name != null).GroupBy(c => c.Name!, StringComparer.Ordinal).ToList();
+            foreach (var dup in names.Where(g => g.Count() > 1)) Problem(dup.Skip(1).First().Line, $"The name '{dup.Key}' is used by more than one container.");
+            var known2 = names.Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
+            foreach (var l in doc.Lines)
+                foreach (string end in new[] { l.From, l.To })
+                    if (end.Length > 0 && !known2.Contains(end)) Problem(l.Line, $"The line goes to '{end}', but no container has that name.");
+            return doc;
+        }
+
+        private static string Unescape(string text) => Regex.Replace(text, @"\\(.)", "$1");
+    }
+}

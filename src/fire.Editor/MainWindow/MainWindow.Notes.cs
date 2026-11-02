@@ -21,6 +21,9 @@ namespace fire.Editor
             _todoPanel.Write = WriteTodo;
             _todoPanel.ScopeChanged += () => RefreshTodo(force: true);
             _todoPanel.OpenFileRequested += path => OpenFile(path);
+            // a todo list ticked off in a project overview goes the same way
+            OverviewContext.WriteTodo = WriteTodo;
+            OverviewContext.OpenFile = path => OpenFile(path);
             // a change from outside (git pull, another editor, the document of the list) is seen within a second
             _todoTimer = new DispatcherTimer(TimeSpan.FromSeconds(1), DispatcherPriority.Background, (_, _) => RefreshTodo());
             _todoTimer.Start();

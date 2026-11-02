@@ -58,6 +58,7 @@ namespace fire.Editor
         private readonly MarkdownColorizer _colorizer = new();
         private readonly HighlightingColorizer _fireColorizer = new();
         private readonly MarkdownRenderer _renderer = new();
+        private double _overviewZoom = 1;
         private readonly DispatcherTimer _previewTimer;
         private readonly DispatcherTimer _highlightTimer;
         private List<(int Start, int End)> _fireBlocks = new();
@@ -316,11 +317,27 @@ namespace fire.Editor
             _renderer.BaseDirectory = BaseDirectory;
 
             // Keep the scroll position across rebuilding the page.
-            double offset = keepScroll ? Preview.Offset.Y : 0;
+            var offset = keepScroll ? Preview.Offset : default;
 
-            Preview.Content = _renderer.Render(Editor.Text);
+            string text = Editor.Text;
+            if (OverviewParser.IsOverview(text))
+            {
+                // a project overview (docs/NOTES.md): the surface with its containers instead of the flowing page; it scrolls both ways and keeps its zoom
+                if (Preview.Content is OverviewView old) _overviewZoom = old.Zoom;
+                var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                if (FilePath != null) visited.Add(Path.GetFullPath(FilePath));
+                var view = new OverviewView(OverviewParser.Parse(text), new OverviewContext { BaseDirectory = BaseDirectory, LinkClicked = HandleLink, Visited = visited });
+                view.SetZoom(_overviewZoom);
+                Preview.HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+                Preview.Content = view;
+            }
+            else
+            {
+                Preview.HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+                Preview.Content = _renderer.Render(text);
+            }
 
-            Dispatcher.UIThread.Post(() => Preview.Offset = new Vector(0, offset), DispatcherPriority.Loaded);
+            Dispatcher.UIThread.Post(() => Preview.Offset = offset, DispatcherPriority.Loaded);
         }
 
         /// <summary>Scrolls the preview to the heading with the given anchor (GitHub style, see <see cref="MdAnchors"/>).</summary>

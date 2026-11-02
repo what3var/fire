@@ -8,7 +8,8 @@ live in the repository with the code:
 
 Both are Markdown that any other program shows sensibly: what spark needs on top of Markdown is written so that other renderers (GitHub, other editors) hide it.
 
-Status: the todo list is built (format, reading and writing back, the tool window). The overview is specified here and built in the steps listed at the end.
+Status: the todo list is built (format, reading and writing back, the tool window). Overviews are shown (step 2); editing them on the surface comes next - see the
+steps at the end.
 
 ## The folder `notes/`
 
@@ -144,6 +145,20 @@ Nested text
 
 The name (the title in `"…"`) is optional; it may also be written in `'…'` or `(…)`. Lines need names to refer to. Attributes are `key=value`, a value with spaces in `"…"`.
 
+**Shapes of a sketch** (numbers without a key are taken in this order; every one can also be given with its key):
+
+| Shape | Numbers | More attributes |
+|---|---|---|
+| `[rect]: <x y w h …>` | position and size | `radius` (default 4) |
+| `[ellipse]: <x y w h …>` | the box around it | |
+| `[path]: <M 20 120 L 280 120 …>` | the words without a key are the path data (SVG syntax), or `d="…"` | `arrow=end`, `start`, `both` |
+| `[text]: <x y …> "text"` | position; the title is the text | `size` (default 13), `color` |
+
+All shapes take `stroke` (a colour like `#ff4070`, or `none`), `fill`, `width` (of the stroke, default 1.5) and `dash=true`. Lines between containers take `stroke`, `width`,
+`dash=true` and `arrow`.
+
+The shapes of a sketch may stand in a code fence (```` ``` ````): other programs then show them as code instead of hiding them - spark reads them either way.
+
 **What other programs show.** A container's content is ordinary Markdown, so GitHub shows its text and headings in the order of the file. Content that should appear as code
 elsewhere is put into a fenced code block (```` ``` ````); a sketch consists only of definitions, so it is not shown at all.
 
@@ -160,21 +175,38 @@ Positions are **absolute**, in pixels at a zoom of 100 %, measured from the top 
 Moving a container changes its own line only - not the lines of what it holds - so diffs stay small and merges rarely conflict. What is written later lies on top. Zoom and
 *Fit to View* only change the view, never the file.
 
+### Showing
+
+A Markdown file with at least one `[container]`, `[sketch]` or `[line]` is an overview. It is opened like any Markdown document; its preview shows the surface instead of
+the flowing page: the text at the top left, the containers at their places with their names on the top edge, the lines on top, the surface scrolls both ways. **Ctrl+mouse
+wheel** zooms (25 % to 400 %). What is wrong in the file - a definition that sticks to a paragraph, a container without a width, a line to a name that does not exist, an end
+too many or one missing - is listed above the surface with its line.
+
+A container with `src=` shows its document:
+
+- a todo list (a Markdown file with tasks) as its tasks - ticked off right there, see below;
+- another overview as a surface of its own (an overview that would show itself is shown as a link instead);
+- other Markdown as its page, a picture (`.png`, `.jpg`, `.gif`, `.bmp`, `.webp`) as the picture;
+- any other file (a `.biscuit`, ...) as a link that opens it.
+
 ### Editing
+
+Until editing on the surface is built (step 3), an overview is edited as text, with the preview beside it.
+
 
 - A click selects a container; it is moved by dragging and resized by its handles.
 - A **double click** edits the container in place: it turns into a Markdown editor of the same place and size, with the colours of the Markdown editor. Its own text is edited
   there; the definitions of position and size are kept by the surface. The containers it holds stay visible above the editor at **half opacity** - clearly visible, but not
   in the way - and are edited themselves by a double click. A click outside or Esc shows the text rendered again.
 - The text of the overview itself is edited the same way.
-- A todo list shown in a container is a working list: its tasks are ticked off there, too. The overview and the Todo window share one document per file, so a change in one is
-  seen in the other at once (and written to the file only where it changed, see above).
+- A todo list shown in a container is a working list: a click on the mark of a task moves it on, as in the Todo window. The change is written the same way (only that line, an
+  open document of the list is kept in step), and the Todo window and the overview pick up changes of the file from the other within a second.
 - A document that shows itself (directly or through others) is shown once and then as a link, not again.
 
 ## Steps
 
 1. **Todo** (built): the folder `notes/`, the format with four states, writing back only what changed, the Todo window for projects and solutions.
-2. **Overview, viewing**: reading containers, sketches and lines; showing them; containers with documents, todo lists with ticking off.
+2. **Overview, viewing** (built): reading containers, sketches and lines; showing them in the preview; containers with documents, todo lists with ticking off; zoom.
 3. **Overview, editing**: moving and resizing, the editor in a container (with the inner containers at half opacity).
 4. **Drawing**: shapes, pen, lines between containers.
 5. **Fit to View** and finishing.
