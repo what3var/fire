@@ -1135,6 +1135,8 @@ namespace fire.Native
             nat.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
             nat.AppendLine($"#define FIRE_PLATFORM_CPP_HEADER \"platform/{_target.Native.Platform}/fire_platform.hpp\"");
             nat.AppendLine("#include \"fire_rt_cpp.hpp\"   // the runtime (fire_rt.h, the program has its state) and what C++ code expects of it");
+            // the platform layers in C (FIRE_PLATFORM_AUDIO_C_HEADER, ...): packages in C++ use them as well (the circuits package plays through the audio layer)
+            if (_packageImports.Count > 0) foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) nat.AppendLine(line);
             bool natSources = false;
             if (_packageImports.Count > 0 || _usesGraphics) nat.AppendLine($"#define FIRE_PLATFORM_FS_HEADER \"platform/{_target.Native.Platform}/fire_fs.hpp\"");   // (the io package, graphics)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_DEV_HEADER \"platform/{_target.Native.Platform}/fire_dev.hpp\"");   // (the devices package)
@@ -1142,7 +1144,6 @@ namespace fire.Native
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_I2C_HEADER \"platform/{_target.Native.Platform}/fire_i2c.hpp\"");   // (the i2c package)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_SPI_HEADER \"platform/{_target.Native.Platform}/fire_spi.hpp\"");   // (the spi package)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_WIFI_HEADER \"platform/{_target.Native.Platform}/fire_wifi.hpp\"");   // (the wifi package)
-            if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_AUDIO_HEADER \"platform/{_target.Native.Platform}/fire_audio.hpp\"");   // (the audio package)
             if (_packageImports.Count > 0) nat.AppendLine($"#define FIRE_PLATFORM_USB_HEADER \"platform/{_target.Native.Platform}/fire_usb.hpp\"");   // (the usb package)
             if (_usesGraphics) { AppendStandardNatives(nat, "graphics"); natSources = true; }
             if (_usesWindows)

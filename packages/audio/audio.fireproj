@@ -8,16 +8,17 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'audio' of fire: prelude and C++ sources."
+    "description": "The standard library 'audio' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_bridge_audio.hpp"
+      "native/fire_bridge_audio.h"
     ],
     "discover": false,
     "linkLibraries": {
       "posix": [
-        "dl"
+        "dl",
+        "pthread"
       ],
       "windows": [
         "winmm"
@@ -30,127 +31,128 @@
       {
         "name": "__AudioLastError",
         "arguments": 0,
-        "cpp": "audio::LastError"
+        "c": "fire_audio_LastError"
       },
       {
         "name": "__AudioLastErrorMessage",
         "arguments": 0,
-        "cpp": "audio::LastErrorMessage",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_audio_LastErrorMessage"
       },
       {
         "name": "__AudioOpenCount",
         "arguments": 0,
-        "cpp": "audio::OpenCount"
+        "c": "fire_audio_OpenCount"
       },
       {
         "name": "__AudioSupported",
         "arguments": 0,
-        "cpp": "audio::Supported"
+        "c": "fire_audio_Supported"
       },
       {
         "name": "__AudioDevices",
         "arguments": 0,
-        "cpp": "audio::Devices",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_audio_Devices"
       },
       {
         "name": "__AudioOpen",
         "arguments": 3,
-        "cpp": "audio::Open"
+        "c": "fire_audio_Open"
       },
       {
         "name": "__AudioWrite",
         "arguments": 4,
-        "cpp": "audio::Write"
+        "c": "fire_audio_Write"
       },
       {
         "name": "__AudioQueued",
         "arguments": 1,
-        "cpp": "audio::Queued"
+        "c": "fire_audio_Queued"
       },
       {
         "name": "__AudioStop",
         "arguments": 1,
-        "cpp": "audio::Stop"
+        "c": "fire_audio_Stop"
       },
       {
         "name": "__AudioSetVolume",
         "arguments": 2,
-        "cpp": "audio::SetVolume"
+        "c": "fire_audio_SetVolume"
       },
       {
         "name": "__AudioClose",
         "arguments": 1,
-        "cpp": "audio::Close"
+        "c": "fire_audio_Close"
       },
       {
         "name": "__AudioWave",
         "arguments": 9,
-        "cpp": "audio::Wave"
+        "c": "fire_audio_Wave"
       },
       {
         "name": "__AudioSimReset",
         "arguments": 0,
-        "cpp": "audio::SimReset"
+        "c": "fire_audio_SimReset"
       },
       {
         "name": "__AudioSimHold",
         "arguments": 1,
-        "cpp": "audio::SimHold"
+        "c": "fire_audio_SimHold"
       },
       {
         "name": "__AudioSimInfo",
         "arguments": 1,
-        "cpp": "audio::SimInfo"
+        "c": "fire_audio_SimInfo"
       },
       {
         "name": "__AudioSimData",
         "arguments": 0,
-        "cpp": "audio::SimData",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_audio_SimData"
       },
       {
         "name": "__AudioInSupported",
         "arguments": 0,
-        "cpp": "audio::InSupported"
+        "c": "fire_audio_InSupported"
       },
       {
         "name": "__AudioInDevices",
         "arguments": 0,
-        "cpp": "audio::InDevices",
         "needsList": true,
-        "returnsReference": true
+        "returnsReference": true,
+        "c": "fire_audio_InDevices"
       },
       {
         "name": "__AudioInOpen",
         "arguments": 3,
-        "cpp": "audio::InOpen"
+        "c": "fire_audio_InOpen"
       },
       {
         "name": "__AudioInRead",
         "arguments": 4,
-        "cpp": "audio::InRead"
+        "c": "fire_audio_InRead"
       },
       {
         "name": "__AudioInAvailable",
         "arguments": 1,
-        "cpp": "audio::InAvailable"
+        "c": "fire_audio_InAvailable"
       },
       {
         "name": "__AudioInClose",
         "arguments": 1,
-        "cpp": "audio::InClose"
+        "c": "fire_audio_InClose"
       },
       {
         "name": "__AudioSimFeed",
         "arguments": 3,
-        "cpp": "audio::SimFeed"
+        "c": "fire_audio_SimFeed"
       }
     ],
-    "reset": "audio::reset"
+    "reset": "fire_audio_reset",
+    "language": "c"
   }
 }
