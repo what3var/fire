@@ -478,7 +478,7 @@ Callbacks) – er ist nicht eingebaut. Der Editor kennt beides im Dialog „Nati
 `fire.Compiler build skript.fire [-o ziel] [--engine vm|native] [-t ziel] [--toolchain name] [--config datei] [--keep]`: ohne `--engine` gilt das `engine` der Konfiguration (Standard `vm`: die
 eigenständige Datei mit der VM, wie bisher). Mit `native` wird für das Ziel übersetzt (`NativeBuilder`: C++ erzeugen, Runtime und Plattformpaket daneben legen) und mit der Toolchain gebaut;
 bei `files` ist `-o` ein Ordner. `fire.Compiler native ...` erzeugt weiter nur das C++ (samt Runtime und Plattformpaket des Ziels). Der Editor hat denselben Weg:
-**File > Native Build Settings...** (Engine, Ziel mit Plattform/Includes/Defines/Einsprung, Toolchain mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript), **Run > Build Native...**,
+**File > Native Build Settings...** (Seiten links: *Build* mit der Standard-Engine, *Target* mit Plattform/Includes/Defines/Einsprung, *Toolchain* mit Compiler und Argumenten; speichert `fire.native.json` neben dem Skript bzw. Projekt; auch erreichbar über *Project Properties > Native & Toolchain*), **Run > Build Native...**,
 und **Build** folgt dem `engine` der Konfiguration.
 
 Getestet wird per **Differential-Test** (`fire.Testing`, Block "Native-Backend"): jeder Fall läuft in der VM und als erzeugtes
