@@ -45,7 +45,7 @@ Skript -> Lexer -> Parser -> Resolver -> Compiler -> Bytecode (LinkedProgram)
 * `native/runtime/fire_rt.h` - die Runtime in C11 (übersetzt auch als C++): `Value` (16 Byte), Arithmetik/Vergleiche mit schnellem Pfad und kaltem
   Fehlerpfad, Ausgabeformat identisch zu `Value.ToString()`. Ihr globaler Zustand liegt in der Einheit, die `FIRE_RT_IMPLEMENTATION` definiert (das Programm,
   oder die Bibliothek eines Packages für die VM).
-* **Natives in C++** (die Bridges von `graphics` und `windows`, die Natives der Packages): eine eigene Datei `fire_natives.cpp`, die
+* **Natives in C++** (die Natives der Packages, die noch C++ sind; die Bridges von `graphics` und `windows` sind C und Teil von `fire_program.c`): eine eigene Datei `fire_natives.cpp`, die
   `native/runtime/fire_rt_cpp.hpp` einbindet - `fire_rt.h` als C++ (Funktionen in `namespace fire`, mit C-Linkage, also *eine* Runtime für beide Dateien), die
   C++-Plattformschicht (`fire::plat`, `FIRE_PLATFORM_CPP_HEADER`) und die paar Überladungen mit Referenzen, mit denen die Natives geschrieben sind. Das Programm ruft
   jeden Native über eine C-Funktion `fire_nat_N` auf, die der Generator am Ende von `fire_natives.cpp` schreibt (und im Programm deklariert). Ein Programm ohne
@@ -358,8 +358,8 @@ Handle-Tabelle und die Fehlerbehandlung (`__IOLastError` je Thread: `g_ioError` 
 `platform/<name>/fire_fs.h` (der Generator setzt `FIRE_PLATFORM_FS_C_HEADER`) mit `fire_fs_open/tell/seek/truncate/fileSize/fileTime/removeFile/copyFile/moveFile/makeDirs/removeDir/list/
 fullPath/...` (die Schnittstelle und das Gemeinsame: `std/fire_fs_c.h`). Mitgeliefert: `std/fire_fs_posix.h` (POSIX-Aufrufe; für `posix`, `wasm` und - mit `FIRE_FS_ROOT` für relative Pfade und
 32-Bit-Positionen - `esp32` und `freertos`: SPIFFS/FAT/LittleFS über das virtuelle Dateisystem von ESP-IDF), `std/fire_fs_win32.h` (die Wide-API von Windows) und `std/fire_fs_none.h`
-(`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.h`. (Die C++-Schicht
-`fire_fs.hpp` mit `plat::fs::` gibt es noch für `graphics`, bis auch das in C ist.)
+(`FIRE_NO_FS`: ein Board ohne Dateisystem - Dateioperationen scheitern mit `NotSupported`, Konsole und `MemoryStream` gehen). Ein eigenes Paket liefert eine eigene `fire_fs.h`. (`graphics` liest Bilder und
+Systemschriften über dieselbe Schicht; eine C++-Schicht für Dateien gibt es nicht mehr.)
 Die Richtlinie des Hosts (`IoPolicy`) ist ein Übersetzungsschalter: `FIRE_IO_POLICY(vollerPfad, zugriff, grund, größe)` (eine Funktion `int(const char*, int, char*, size_t)`, 1 erlaubt; vor den
 Includes in der Zielkonfiguration), Standard: alles erlaubt.
 Abweichungen: Standardeingabe wartet bei `Read` auf die verlangte Byteanzahl oder das Ende; `IO.Stdio` schreibt direkt auf `stdout`/`stderr` (gemeinsame Pufferung mit `print`);
@@ -375,16 +375,19 @@ Blockieren). Mitgeliefert: `std/fire_dev_posix.h` (termios; Linux `/dev/ttyS*|tt
 UART-Treibers. Die Gerätliste entsteht beim ersten Zugriff auf eine Geräte-Funktion und bei jedem `Refresh` (in einem VM-Programm ohne Editor ist sie vor dem ersten `Refresh` leer). Die Warte-Funktionen
 benutzen `#timeout` (`SetTimeout` setzt `g_defaultTimeoutTicks`), warten mit freigegebenem GIL und enden bei `terminate`.
 
-**`graphics`** (`fire_bridge_graphics.hpp`, Zeichencode in `bridges/graphics/`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Renderer` (Text mit der 8x14-Schrift, Alpha-Blending schaltbar), `Brush` (Füllungen: Rechtecke, Kreise, Ellipsen, Dreiecke, Polygone, Flood-Fill) und `Pen` (Punkt, Linie, Pfad, Umrisse; vorgerenderte Spitze), `Blit` zwischen den Farbmodi, Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
-Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_HEADER`, begrenzt durch
-`FIRE_IO_POLICY` wie bei IO). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
+**`graphics`** (`fire_bridge_graphics.h`, C - auch mit TinyCC; Zeichencode in `fire_gfx.h`, `fire_gfx_ttf.h`, `fire_gfx_text.h`, `fire_gfx_images.h`, `fire_gfx_slicer.h` daneben in `packages/graphics/native/`;
+die Funktion `__GRPHName` heißt im Programm `fire_gfx_Name`): `Framebuffer` (RGBA und Palette, Palette, Transparenz), `Renderer` (Text mit der 8x14-Schrift, Alpha-Blending schaltbar), `Brush` (Füllungen: Rechtecke, Kreise, Ellipsen, Dreiecke, Polygone, Flood-Fill) und `Pen` (Punkt, Linie, Pfad, Umrisse; vorgerenderte Spitze), `Blit` zwischen den Farbmodi, Bilder (PNG, BMP, GIF aus Bytes und aus Dateien) und der `Slicer`. Das ist ein Port von `src/fire.Terminal` ohne
+Betriebssystem und ohne Ausnahmen - dieselben Pixel kommen heraus (die Tests vergleichen Prüfsummen mit der VM). Dateien liest das Plattformpaket (`FIRE_PLATFORM_FS_C_HEADER`: `fire_fs_*`, begrenzt durch
+`FIRE_IO_POLICY` wie bei IO; Systemschriften ebenso). Die Meldung der letzten fehlgeschlagenen Funktion steht in `g_gfxError` (je Thread). Abweichungen: eine unbekannte oder zerstörte Ressourcen-ID beendet das Programm mit einer Meldung (die VM wirft eine .NET-Ausnahme); die verschachtelten Arrays,
 die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Arrays, die ein `ToolPath` behält).
 
-**`windows`** (`fire_bridge_windows.hpp`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
+**`windows`** (`fire_bridge_windows.h`, C - auch mit TinyCC; `__GRPHWinName` heißt im Programm `fire_win_WinName`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
 Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
-Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.hpp`, als `FIRE_PLATFORM_DISPLAY_HEADER` eingebunden): `fire::plat::disp::Window` mit
-`open/close/pump/present/setVSync`. Mitgeliefert: `std/fire_display_sdl.hpp` (SDL2, für `posix` und `windows`; das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`)
-und `std/fire_display_none.hpp` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Die VM nutzt SDL3, die Tasten- und
+Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.h`, als `FIRE_PLATFORM_DISPLAY_C_HEADER` eingebunden; die Schnittstelle, die Ereignisse und das
+Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl.h` (SDL2, für `posix`, `windows` und `wasm`;
+das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`; das Systemaussehen aus `std/fire_systheme.h`)
+und `std/fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
+Fenstermanager an und die Fenster schließen sich. Die VM nutzt SDL3, die Tasten- und
 Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
 (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
@@ -393,9 +396,9 @@ die Umgebungsvariable `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW 
 (MSYS2: `ucrt64\include\SDL2`), das System (`/usr/include/SDL2`, Homebrew) und `pkg-config sdl2`. Fehlt SDL2 unter Windows (das portable w64devkit bringt es nicht mit), fragt der Build wie bei der Toolchain
 (Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL2.dll` neben dem gebauten Programm.
 Unter Linux und macOS gibt es keinen Download: die Meldung nennt das Paket (`sudo apt install libsdl2-dev`, `brew install sdl2`). Das Programm definiert `SDL_MAIN_HANDLED`, braucht also weder `SDL2main` noch `-lmingw32`.
-Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
-(`gfx::Framebuffer::resize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
-Finger und Joysticks meldet die Anzeige als `EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `setTouchMouse(bool)`/`touchMouse()` schalten SDLs Mausereignisse aus Fingern (Window.TouchMouse). Die SDL2-Anzeige öffnet jeden angesteckten Joystick (`SDL_JOYDEVICEADDED`). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.
+Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `FIRE_EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
+(`fire_gfx_fbResize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
+Finger und Joysticks meldet die Anzeige als `FIRE_EV_TOUCH_DOWN/MOVE/UP` (16-18; `finger`, `x`, `y` in Framebuffer-Pixeln, `pressure`) und `FIRE_EV_JOY_AXIS/BUTTON_DOWN/BUTTON_UP/HAT/ADDED/REMOVED` (32-37; `joystick`, `index`, `value`); `fire_display_setTouchMouse`/`fire_display_touchMouse` schalten SDLs Mausereignisse aus Fingern (Window.TouchMouse). Die SDL2-Anzeige öffnet jeden angesteckten Joystick (`SDL_JOYDEVICEADDED`). `-DFIRE_DISPLAY_SELFTEST_INPUT` speist eine feste Folge solcher Ereignisse ein.
 
 **Zeiger** (`unsafe`, SPEC 8.3): ein Zeiger ist ein `K_Pointer`-Wert auf die Speicherstelle einer Variablen, eines Feldes oder eines Array-/Puffer-Elements (`ref`-Argumente). `&`, `*`, `*p = v`,
 Zeiger auf Zeiger, der Vergleich, `p + n`, `p - n` und `p - q` laufen wie in der VM. `width` sagt, wohin er zeigt: 0 eine Variable oder ein Feld (der Versatz in Elementen steckt in `unit`: ein Zeiger darauf ist ein

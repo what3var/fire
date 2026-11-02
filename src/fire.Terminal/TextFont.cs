@@ -9,7 +9,7 @@ namespace fire.Terminal
     /// A font for text at pixel positions (<see cref="Renderer.DrawText(int, int, string, Brush, Brush?, TextFont?, int)"/>): either one of the two built-in bitmap fonts (8x14, 8x8 - a fixed size, the size argument is ignored) or a
     /// TrueType font (any size in pixels, anti-aliased).
     ///
-    /// The layout of a TrueType text is simple and exactly specified, because the native build has the same code in C++ (fire_gfx.hpp) and both draw the same pixels: the size is the em in pixels; the line is
+    /// The layout of a TrueType text is simple and exactly specified, because the native build has the same code in C (fire_gfx_text.h) and both draw the same pixels: the size is the em in pixels; the line is
     /// `Ascent + Descent + LineGap` pixels high (each rounded); the baseline is `Ascent + LineGap / 2` below the top; the pen starts at x and moves on by the advance width of every glyph plus the
     /// kerning of the pair (in fractions of a pixel); a glyph is drawn at the pen position rounded to whole pixels. Characters below U+0020 are skipped, a character the font does not have is drawn as the glyph 0 of the font.
     /// </summary>

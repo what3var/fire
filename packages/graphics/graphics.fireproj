@@ -8,18 +8,19 @@
     "version": "1.0.0",
     "author": "fire",
     "license": "fire",
-    "description": "The standard library 'graphics' of fire: prelude and C++ sources."
+    "description": "The standard library 'graphics' of fire: prelude and C sources."
   },
   "native": {
     "sources": [
-      "native/fire_gfx_font.hpp",
-      "native/fire_gfx.hpp",
-      "native/fire_gfx_ttf.hpp",
-      "native/fire_gfx_text.hpp",
-      "native/fire_gfx_images.hpp",
-      "native/fire_gfx_slicer.hpp",
-      "native/fire_bridge_graphics.hpp"
+      "native/fire_gfx_font.h",
+      "native/fire_gfx.h",
+      "native/fire_gfx_ttf.h",
+      "native/fire_gfx_text.h",
+      "native/fire_gfx_images.h",
+      "native/fire_gfx_slicer.h",
+      "native/fire_bridge_graphics.h"
     ],
-    "discover": false
+    "discover": false,
+    "language": "c"
   }
 }
