@@ -20,9 +20,28 @@ A unit stands directly after a number literal, without a space: `5mm`, `1.5km`, 
 | `s` | second | `ms`, `µs`, `ns`, ... |
 | `b` | bit | `kb`, `Mb`, ... |
 | `B` | byte (8 bit) | `kB`, `MB`, `GB` |
+| `l` | litre, the same as `dm^3` (compatible with `m^3`) | `ml`, `cl`, `dl`, `hl`, `kl`, ... |
 | `min`, `h`, `d` | minute, hour, day (compatible with `s`) | no prefixes |
 
-Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` or `u` (1e-6: `5µs` and `5us` are the same), `m` (1e-3), `c` (1e-2), `k` (1e3), `M` (1e6), `G` (1e9).
+Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` or `u` (1e-6: `5µs` and `5us` are the same), `m` (1e-3), `c` (1e-2), `d` (deci, 1e-1),
+`h` (hecto, 1e2), `k` (1e3), `M` (1e6), `G` (1e9).
+
+```fire
+print(1l == 1dm * 1dm * 1dm)    // True
+print(1l:ml + " " + 1hl:l)      // 1000ml 100l
+float volume : m^3 = 5l
+print(volume)                   // 0.005m^3
+print(2dm + " " + 1hm:m)        // 2dm 100m
+print(1d + " " + 1h:min)        // 1d 60min - `d` and `h` alone are the day and the hour
+```
+
+- `d` and `h` alone are the day and the hour; only in front of another unit they are deci and hecto (`dm`, `dl`, `dg`, `hl`, `hm`, and `hPa` when
+  the program declares `prefixed unit Pascal: Pa`).
+- `d` and `h` are no prefixes of the bit and the byte: `dB` is not a deci-byte. A program that needs the decibel declares it (see
+  [Units that become a plain number](#units-that-become-a-plain-number)).
+- **A unit wins over a prefix**: the exact symbols - those of fire and those the program declares - are looked up first, a prefix is split off only
+  when no unit has the whole symbol. A program may therefore declare `dB`, `hs` or `Gs` as units of their own; it may not declare a symbol that is
+  already a unit of fire without a prefix (`m`, `l`, `h`, `min`).
 
 Any other word is an **own unit** that is only compatible with itself: `5apples + 3apples` is `8apples`, `5apples + 3pears` is an error.
 

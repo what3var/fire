@@ -648,6 +648,140 @@ FIRE_FN uint32_t unitDiv(uint32_t a, uint32_t b) {
     return unitIntern(dims, x->scale / y->scale, NULL);
 }
 
+/* ---------------------------------------------------------------------------------------------------------------------
+ * Units named by a text (`"5mm".ToFloat()`, Unit.ParseKnown): the units of fire without a prefix and the units of the program (by symbol and by name) are
+ * rows of a generated table (`g_textUnits`, set by the program before it runs); a prefix in front of a prefixable row and the combinations (`km/h`,
+ * `kg*m/s^2`) are made here, like the VM makes them. An unknown word is no unit here.
+ * --------------------------------------------------------------------------------------------------------------------- */
+typedef struct TextUnit { const char* symbol; uint32_t unit; bool prefixable; } TextUnit;
+extern const TextUnit* g_textUnits;
+extern uint32_t g_textUnitCount;
+
+/* Unit.IsUnitLetter: ASCII letters, the micro sign and the Greek mu. */
+FIRE_FN bool unitIsLetter(fire_char16 c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == 0xB5 || c == 0x3BC; }
+/* Unit.Prefixes */
+FIRE_FN bool unitPrefixFactor(fire_char16 c, double* f) {
+    switch (c) {
+        case 'f': *f = 1e-15; return true;
+        case 'p': *f = 1e-12; return true;
+        case 'n': *f = 1e-9; return true;
+        case 0xB5: case 0x3BC: case 'u': *f = 1e-6; return true;
+        case 'm': *f = 1e-3; return true;
+        case 'c': *f = 1e-2; return true;
+        case 'd': *f = 1e-1; return true;
+        case 'h': *f = 1e2; return true;
+        case 'k': *f = 1e3; return true;
+        case 'M': *f = 1e6; return true;
+        case 'G': *f = 1e9; return true;
+        default: return false;
+    }
+}
+/* Unit.PrefixAllowed: deci and hecto not in front of the bit and the byte. */
+FIRE_FN bool unitPrefixAllowed(fire_char16 prefix, const char* symbol) {
+    return !((prefix == 'd' || prefix == 'h') && (strcmp(symbol, "b") == 0 || strcmp(symbol, "B") == 0));
+}
+/* The UTF-8 of unit letters (and `*`, `/`, `^`, digits, `-`) into `out` (size `cap`); false when it does not fit. */
+FIRE_FN bool unitTextUtf8(const fire_char16* s, uint32_t n, char* out, size_t cap) {
+    size_t k = 0;
+    uint32_t i;
+    for (i = 0; i < n; i++) {
+        fire_char16 c = s[i];
+        if (c < 0x80) { if (k + 1 >= cap) return false; out[k++] = (char)c; }
+        else { if (k + 2 >= cap || c >= 0x800) return false; out[k++] = (char)(0xC0 | (c >> 6)); out[k++] = (char)(0x80 | (c & 0x3F)); }
+    }
+    out[k] = 0;
+    return true;
+}
+/* unitIntern with a display text that is only borrowed: a new unit gets its own copy. */
+FIRE_FN uint32_t unitInternText(const int32_t* dims, double scale, const char* display) {
+    uint32_t before = g_udCount, id = unitIntern(dims, scale, display);
+    if (id == before && g_udCount == before + 1) {
+        size_t l = strlen(display);
+        char* copy = (char*)malloc(l + 1);
+        if (!copy) outOfMemory();
+        memcpy(copy, display, l + 1);
+        g_ud[id].display = copy;
+    }
+    return id;
+}
+/* Unit.ParseWith for one word: an exact symbol (of fire first, then of the program - the unit wins over a prefix), then a prefix in front of a
+ * prefixable row. */
+FIRE_FN bool unitOfWord(const fire_char16* w, uint32_t n, uint32_t* out) {
+    char word[64];
+    uint32_t i;
+    double f;
+    if (n == 0 || !unitTextUtf8(w, n, word, sizeof word)) return false;
+    for (i = 0; i < g_textUnitCount; i++)
+        if (strcmp(g_textUnits[i].symbol, word) == 0) { *out = g_textUnits[i].unit; return true; }
+    if (n >= 2 && unitPrefixFactor(w[0], &f)) {
+        const char* rest = word + (w[0] < 0x80 ? 1 : 2);
+        for (i = 0; i < g_textUnitCount; i++) {
+            const TextUnit* t = &g_textUnits[i];
+            if (t->prefixable && strcmp(t->symbol, rest) == 0 && unitPrefixAllowed(w[0], t->symbol)) {
+                *out = unitInternText(g_ud[t->unit].dims, f * g_ud[t->unit].scale, word);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+/* Unit.ParseKnown: the unit a text names after its number (`mm`, `km/h`, `kg*m/s^2`, `m^2`); a unit with an offset or conversion functions only alone. */
+FIRE_FN bool unitOfText(const fire_char16* s, uint32_t n, uint32_t* out) {
+    int32_t dims[FIRE_NDIMS];
+    double scale = 1.0;
+    bool divide = false, combined = false;
+    uint32_t i, f;
+    char display[128];
+    int d;
+    for (i = 0; i < n; i++) {
+        if (s[i] == '*' || s[i] == '/' || s[i] == '^') combined = true;
+        else if (!unitIsLetter(s[i]) && !(s[i] >= '0' && s[i] <= '9') && s[i] != '-') return false;
+    }
+    if (!combined) {
+        for (i = 0; i < n; i++) if (!unitIsLetter(s[i])) return false;
+        return unitOfWord(s, n, out);
+    }
+    if (!unitTextUtf8(s, n, display, sizeof display)) return false;
+    memset(dims, 0, sizeof dims);
+    i = 0;
+    for (;;) {
+        uint32_t start = i, p, count;
+        int power = 1;
+        const UnitDef* u;
+        while (i < n && unitIsLetter(s[i])) i++;
+        if (i == start || !unitOfWord(s + start, i - start, &f)) return false;
+        if (!unitLinear(f) || g_ud[f].ulconv >= 0) return false;
+        if (i < n && s[i] == '^') {
+            bool negative = false;
+            uint32_t digits;
+            i++;
+            if (i < n && s[i] == '-') { negative = true; i++; }
+            digits = i;
+            power = 0;
+            while (i < n && s[i] >= '0' && s[i] <= '9') power = power * 10 + (s[i++] - '0');
+            if (i == digits || i - digits > 2) return false;
+            if (negative) power = -power;
+        }
+        u = &g_ud[f];
+        count = (uint32_t)(power < 0 ? -power : power);
+        for (p = 0; p < count; p++) {
+            /* (Unit.Divide / Unit.Multiply, the same steps: a factor without dimensions leaves the other one as it is) */
+            if (divide != (power < 0)) {
+                if (!unitDimsZero(u->dims)) { for (d = 0; d < FIRE_NDIMS; d++) dims[d] -= u->dims[d]; scale = scale / u->scale; }
+            } else if (!unitDimsZero(u->dims)) {
+                if (unitDimsZero(dims)) { memcpy(dims, u->dims, sizeof dims); scale = u->scale; }
+                else { for (d = 0; d < FIRE_NDIMS; d++) dims[d] += u->dims[d]; scale = scale * u->scale; }
+            }
+        }
+        if (i == n) break;
+        if (s[i] == '/') divide = true;
+        else if (s[i] != '*') return false;
+        i++;
+    }
+    *out = unitInternText(dims, scale, display);
+    return true;
+}
+
 
 /* ---------------------------------------------------------------------------------------------------------------------
  * Heap values. Two kinds of lifetime:
@@ -2112,6 +2246,19 @@ FIRE_FN bool parseFloatText(const fire_char16* s, uint32_t len, double* out) {
     *out = negative ? -v : v;
     return true;
 }
+/* StringMethods.SplitUnit: a number followed by a unit (`"5mm"`, `"-2.5 km/h"`): the first place where a letter starts a unit text (unitOfText) and the
+ * text in front of it is a number (spaces between them are allowed). */
+FIRE_FN bool splitNumberUnit(const fire_char16* s, uint32_t len, bool isFloat, int64_t* whole, double* number, uint32_t* unit) {
+    uint32_t start = 0, end = len, k;
+    while (start < end && numSpace(s[start])) start++;
+    while (end > start && numSpace(s[end - 1])) end--;
+    for (k = start + 1; k < end; k++) {
+        if (!unitIsLetter(s[k])) continue;
+        if (isFloat ? !parseFloatText(s + start, k - start, number) : !parseIntText(s + start, k - start, whole)) continue;
+        if (unitOfText(s + k, end - k, unit)) return true;
+    }
+    return false;
+}
 /* `'text' is not a number.` as the ArgumentException of ToInt/ToFloat. */
 FIRE_FN Value numberTextError(Value text, const char* tail) {
     char utf8[300];
@@ -2239,13 +2386,19 @@ FIRE_FN Value stringCall(int64_t method, Value text, int argc, Value a0, Value a
         }
         case 17: case 19: {  /* ToInt / TryToInt */
             int64_t whole;
+            double ignored;
+            uint32_t unit;
             if (parseIntText(s, len, &whole)) return Int(whole);
+            if (splitNumberUnit(s, len, false, &whole, &ignored, &unit)) return Int(whole, unit);
             if (method == 19) return Undef();
             return numberTextError(text, "' is not a whole number.");
         }
         case 18: case 20: {  /* ToFloat / TryToFloat */
             double number;
+            int64_t ignored;
+            uint32_t unit;
             if (parseFloatText(s, len, &number)) return Float((Real)number);
+            if (splitNumberUnit(s, len, true, &ignored, &number, &unit)) return Float((Real)number, unit);
             if (method == 20) return Undef();
             return numberTextError(text, "' is not a number.");
         }
@@ -5303,6 +5456,8 @@ const UnitConvFn* g_unitTo = NULL;
 const UnitConvFn* g_unitFrom = NULL;
 UnitDef* g_ud = NULL;
 uint32_t g_udCount = 0, g_udCap = 0;
+const TextUnit* g_textUnits = NULL;
+uint32_t g_textUnitCount = 0;
 #ifndef FIRE_UNCHECKED
 SlotTable g_slots;
 #endif

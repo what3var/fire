@@ -97,8 +97,8 @@ foreach (c in "abc") { print(c) }
 | `PadLeft(width)`, `PadLeft(width, fill)`, `PadRight(...)` | fill up to a minimum width |
 | `ToBytes()` | a byte buffer, one byte per character |
 | `ToUnicode(n)` | a byte buffer, `n` bytes per character |
-| `ToInt()`, `ToFloat()` | the number in the text; an `ArgumentException` if it is none |
-| `TryToInt()`, `TryToFloat()` | the number, or `undefined` if the text is none |
+| `ToInt()`, `ToFloat()` | the number in the text, with its unit if one follows (`"5mm"`); an `ArgumentException` if it is none |
+| `TryToInt()`, `TryToFloat()` | the number (with its unit), or `undefined` if the text is none |
 | `CompareTo(other)` | `-1`, `0` or `1`: the order of the two texts (ordinal) |
 | `Join(items)` | the elements of a list or an array as text, with this text between them |
 
@@ -121,7 +121,17 @@ print("7".PadLeft(3, '0'))      // 007
 ### Numbers from text
 
 `ToInt()` reads a whole number: spaces around it are ignored, a sign is allowed, also `0x`/`0b` and `_` between digits. `ToFloat()` also reads a
-fraction and an exponent (`2.5`, `.5`, `1e3`). Units are not read (`"5mm"` is no number).
+fraction and an exponent (`2.5`, `.5`, `1e3`).
+
+A **unit** may follow the number; the result carries it (see [Units](05-units.md)):
+
+- a unit of fire, also with a prefix (`"5mm"`, `"2 l"`, `"3hl"`), or a unit the program declares, by its symbol or its name, a `prefixed` one also
+  with a prefix (`"5in"`, `"2 Inch"`, `"3mV"`, `"1013 hPa"`);
+- a combination of them with `*`, `/` and powers `^n`, as in a declaration (`"2.5 km/h"`, `"9.81m/s^2"`, `"4 m^-1"`); a unit with an offset or
+  conversion functions (`C`, `dB`) only alone;
+- spaces between the number and the unit are allowed (`"5 mm"`), not inside the unit (`"5 m s"` is no number);
+- an unknown word is no unit here: `"5apples"` and `"12a"` are no numbers (a literal `5apples` makes an own unit, a text does not);
+- a text that is a number as a whole stays that number: `"0x1F".ToInt()` is `31`, not `0x1` with the unit `F`.
 
 ```fire
 print("42".ToInt() + 1)             // 43
@@ -130,7 +140,12 @@ print("0xFF".ToInt())               // 255
 print("2.5".ToFloat() * 2)          // 5
 print("abc".TryToInt())             // undefined
 try { "12a".ToInt() } catch (ArgumentException e) { print(e.message) }   // '12a' is not a whole number.
+print("5mm".ToFloat() + 1cm)        // 15mm
+print("2.5 km/h".ToFloat())         // 2.5km/h
+print("3 l".ToInt():ml)             // 3000ml
+print("5apples".TryToFloat())       // undefined
 ```
+
 
 ## Methods of `char`
 

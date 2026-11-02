@@ -146,7 +146,7 @@ namespace fire.Compiler
                 else
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
-            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources, environment);   // (Environment.Args/ProgramPath: what the caller passes; none without)
+            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources, environment, linkedProgram.Program.CustomUnits);   // (Environment.Args/ProgramPath: what the caller passes; none without)
 
             // IMPORTANT: native functions are jumped to via their INDEX - the order of registration must
             // exactly match that when translating (see ImportedPreludes.Insert): graphics, windows, reflection, time, devices, io.

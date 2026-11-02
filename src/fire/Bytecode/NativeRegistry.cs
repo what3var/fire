@@ -135,9 +135,12 @@ namespace fire.Bytecode
         /// index) - hence everywhere directly after `print`.</summary>
         /// <param name="resources">The files embedded in the program that runs (<c>CompiledProgram.Resources</c>); null while compiling.</param>
         /// <param name="environment">The arguments, path and environment variables of the program that runs (Environment); null while compiling.</param>
-        public void RegisterBaseTypeNatives(System.Collections.Generic.IReadOnlyList<fire.Runtime.ResourceEntry>? resources = null, fire.Standard.ProgramEnvironment? environment = null)
+        /// <param name="customUnits">The units the program that runs declares (`"5in".ToFloat()`); null: those of the thread (Unit.UseCustomUnits).</param>
+        public void RegisterBaseTypeNatives(System.Collections.Generic.IReadOnlyList<fire.Runtime.ResourceEntry>? resources = null, fire.Standard.ProgramEnvironment? environment = null,
+            System.Collections.Generic.IReadOnlyList<fire.Values.CustomUnit>? customUnits = null)
         {
-            Register(fire.Standard.StringMethods.NativeName, fire.Standard.StringMethods.Call);
+            if (customUnits == null) Register(fire.Standard.StringMethods.NativeName, fire.Standard.StringMethods.Call);
+            else Register(fire.Standard.StringMethods.NativeName, args => fire.Standard.StringMethods.Call(args, customUnits));
             Register(fire.Standard.CharMethods.NativeName, fire.Standard.CharMethods.Call);
             Register(fire.Standard.ResourceMethods.NativeName, args => fire.Standard.ResourceMethods.Call(args, resources));
             Register(fire.Standard.MathMethods.NativeName, fire.Standard.MathMethods.Call);
