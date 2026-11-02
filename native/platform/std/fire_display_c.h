@@ -27,6 +27,9 @@
  *   int  fire_display_startDrag(w, text, paths)                 drags the text and/or the paths (one per line; both UTF-8, "" for none) out of the window into other programs
  *                                                             until the user lets go: 0 nothing, 1 copied, 2 moved (Window.StartDrag; fire_dragout.h does it for Windows and
  *                                                             X11). A display that has it defines FIRE_DISPLAY_START_DRAG; without it the bridge says 0.
+ *   int  fire_display_canStartDrag(w)                         can fire_display_startDrag hand a drag to the desktop here (1), or does it always say 0 (Wayland,
+ *                                                             macOS, a dummy driver, no desktop)? Window.CanStartDrag; a display that has it defines
+ *                                                             FIRE_DISPLAY_CAN_START_DRAG, without it the bridge says 0. UI.Root keeps a drag inside the window then.
  * (A display without such a clipboard returns NULL / 0; one without a desktop keeps all kinds itself: fire_display_memClipboard below.)
  * A desktop also reports what the user drops onto a window: FIRE_EV_DROP_FILES (`data`: the paths, one per line) and FIRE_EV_DROP_TEXT (`data`: the text), at
  * the position of the drop; while something of another program is dragged over the window, FIRE_EV_DRAG_HOVER (x, y), and FIRE_EV_DRAG_LEAVE when it leaves

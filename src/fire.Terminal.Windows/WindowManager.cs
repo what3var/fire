@@ -276,6 +276,9 @@ namespace fire.Terminal.Windows
             return Volatile.Read(ref result);
         }
 
+        /// <summary>Window.CanStartDrag: can StartDrag hand a drag to the desktop for this window (its renderer says; false while it is not open)?</summary>
+        public bool CanStartDrag(int id) => _windows.Get(id).CanStartDrag();
+
         /// <summary>A single cycle for ONE window (see
         /// ConsoleWindow.Tick) - returns false if the window was closed
         /// by the user (the caller should then usually

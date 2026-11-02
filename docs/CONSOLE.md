@@ -454,6 +454,10 @@ außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das vo
 | `1` | das andere Programm hat es kopiert |
 | `2` | es hat es verschoben (ein Dateimanager hat die Dateien verschoben: das Programm kann sie vergessen) |
 
+`window.CanStartDrag()` sagt vorher, ob die Plattform ein solches Ziehen überhaupt übernehmen kann: `true` unter Windows und X11 (der Videotreiber `windows` bzw. `x11` - in der VM gefragt in
+`SdlDragOut.CanStart`, nativ `fire_display_canStartDrag` der Anzeige), `false` unter Wayland, macOS, mit dem Dummy-/Offscreen-Treiber, ohne Desktop (`fire_display_none.h`) und solange das Fenster nicht
+offen ist; ein eigenes Board-Package ohne `FIRE_DISPLAY_CAN_START_DRAG` sagt ebenfalls `false`. Die UI-Bibliothek lässt ein Ziehen dann im Fenster weiterlaufen, statt es beim Verlassen zu beenden.
+
 - **Windows**: OLE (`DoDragDrop`) mit einem eigenen `IDataObject` - der Text als `CF_UNICODETEXT`, die Dateien als `CF_HDROP` - und einer `IDropSource`; nativ in C (die COM-Objekte als
   Strukturen mit ihren Funktionstabellen, `ole32.dll` wird beim ersten Ziehen geladen), in der VM genauso über Funktionszeiger (`src/fire.Terminal.Sdl/SdlDragOut.cs`). `DoDragDrop` ist modal und
   holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).

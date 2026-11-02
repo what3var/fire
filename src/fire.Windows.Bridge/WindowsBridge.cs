@@ -117,6 +117,8 @@ namespace fire.Windows.Bridge
                 // Window.StartDrag: text and files are dragged out of the window into other programs (0 nothing, 1 copied, 2 moved)
                 ["StartDrag"] = args => Value.MakeInt(mgr.StartDrag((int)args[0].AsInt(), args[1].Kind == ValueKind.String ? args[1].AsString() : "",
                     args[2].Kind == ValueKind.Array ? args[2].AsArray().Items.Where(v => v.Kind == ValueKind.String).Select(v => v.AsString()).Where(p => p.Length > 0 && !p.Contains('\n')).ToArray() : Array.Empty<string>())),
+                // Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11)?
+                ["CanStartDrag"] = args => Value.MakeBool(mgr.CanStartDrag((int)args[0].AsInt())),
             };
         }
         
@@ -168,6 +170,7 @@ namespace fire.Windows.Bridge
                 ["ClipboardSetFiles"] = args => Value.MakeBool(false) /*STUB*/,
                 ["ClipboardHasFiles"] = args => Value.MakeBool(false) /*STUB*/,
                 ["StartDrag"] = args => Value.MakeInt(0) /*STUB*/,
+                ["CanStartDrag"] = args => Value.MakeBool(false) /*STUB*/,
             };
         }
 

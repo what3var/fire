@@ -56,5 +56,9 @@ namespace fire.Terminal
         /// lets go - on the thread that owns the window. 0 nothing happened (no target, cancelled, no button held), 1 the other program copied, 2 it moved. A renderer
         /// without a desktop to drag into says 0.</summary>
         int StartDrag(string text, string[] files) => 0;
+
+        /// <summary>Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11), or does it always say 0 (Wayland, macOS, no desktop - the
+        /// default)? Asked from the program's thread: it must not touch the window.</summary>
+        bool CanStartDrag() => false;
     }
 }

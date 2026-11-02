@@ -734,4 +734,23 @@ static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const 
     return result;
 }
 
+/* Can fire_display_startDrag hand a drag to the desktop here? Windows (the windows video driver) and X11 (the x11 driver, with fire_dragout.h's X11 part);
+ * Wayland, macOS, the dummy/offscreen drivers: no. (Only the video driver is asked: callable from any thread.) */
+#define FIRE_DISPLAY_CAN_START_DRAG 1
+static int fire_display_canStartDrag(FireDisplayWindow* w) {
+    if (w == NULL || !w->window) return 0;
+#if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
+    {
+        const char* driver = SDL_GetCurrentVideoDriver();
+#if defined(_WIN32)
+        return driver != NULL && strcmp(driver, "windows") == 0;
+#else
+        return driver != NULL && strcmp(driver, "x11") == 0;
+#endif
+    }
+#else
+    return 0;
+#endif
+}
+
 #endif

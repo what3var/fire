@@ -121,13 +121,13 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `Label` | `Text`, `Color` (the text brush) | |
 | `Button` | `Text`, `Icon` (a symbol of `UI.Icons` such as `Up`, or path data `M 8 1 L 15 8 L 1 8 Z`), `Image` (an image file, embedded), `IconSize` | `OnClick` |
 | `CheckBox` | `Text`, `IsChecked` | `OnChange` |
-| `TextBox` | `Text`, `MaxLength`, `ReadOnly` | `OnChange`, `OnEnter` |
-| `TextArea` (several lines, docs/UI.md) | `Text`, `MaxLength`, `ReadOnly`, `WordWrap`, `AcceptsReturn`, `AcceptsTab`, `TabSize` | `OnChange` |
+| `TextBox` | `Text`, `MaxLength`, `ReadOnly`, `UndoLimit` | `OnChange`, `OnEnter` |
+| `TextArea` (several lines, docs/UI.md) | `Text`, `MaxLength`, `ReadOnly`, `WordWrap`, `AcceptsReturn`, `AcceptsTab`, `TabSize`, `UndoLimit` | `OnChange` |
 | `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `Text`, `MaxLength`, `MaxSuggestions`, `DisplayMember` | `OnChange`, `OnEnter`, `OnChosen` |
 | `ListBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
 | `ComboBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex`, `MaxDropDownItems`, `ItemsSource` | `OnSelect` |
 | `ListView` (`<Column Header="Name" Member="name" Width="100"/>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
-| `TreeView` (`<TreeNode Text="..." Expanded="true">`, nested) | `Indent` | `OnSelect` |
+| `TreeView` (`<TreeNode Text="..." Expanded="true">`, nested) | `Indent` | `OnSelect`, `OnActivate` |
 | `RadioButtons` (`<Item>text</Item>`) | `Header`, `Horizontal`, `Spacing`, `SelectedIndex` | `OnChange` |
 | `MenuBar` (`<Menu Header="File">` with `<MenuItem Header="Open" Shortcut="Ctrl+O" Checkable="true" IsChecked="true" Enabled="false" OnClick="Open">`, nested items, `<MenuSeparator/>`) | | `OnClick` of the items |
 | `Separator` | | |

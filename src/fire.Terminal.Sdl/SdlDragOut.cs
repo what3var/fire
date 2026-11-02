@@ -37,6 +37,22 @@ namespace fire.Terminal.Sdl
             return 0;
         }
 
+        /// <summary>Can Start hand a drag to the desktop for this window: Windows (the windows video driver), X11 (the x11 driver)? Wayland, macOS and
+        /// the dummy/offscreen drivers cannot. Only the video driver is asked (any thread).</summary>
+        public static bool CanStart(IntPtr window)
+        {
+            if (window == IntPtr.Zero) return false;
+            try
+            {
+                string? driver = SDL.GetCurrentVideoDriver();
+                if (OperatingSystem.IsWindows()) return driver == "windows";
+                if (OperatingSystem.IsLinux() || OperatingSystem.IsFreeBSD())
+                    return driver == "x11";   // (SDL then runs on libX11 itself)
+            }
+            catch (Exception) { }
+            return false;
+        }
+
         /// <summary>The paths as a text/uri-list (file:// URIs, CR LF; what a URI may not hold as %XX).</summary>
         internal static string UriList(string[] files)
         {

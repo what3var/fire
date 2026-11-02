@@ -398,6 +398,16 @@ static int fire_winb_startDrag(FireDisplayWindow* display, const char* text, con
 #endif
 }
 
+/* Window.CanStartDrag: can the display hand a drag to the desktop (0 where it has no such question: a board package of its own)? */
+static int fire_winb_canStartDrag(FireDisplayWindow* display) {
+#ifdef FIRE_DISPLAY_CAN_START_DRAG
+    return fire_display_canStartDrag(display);
+#else
+    (void)display;
+    return 0;
+#endif
+}
+
 /* (a pointer list: remove every `item`) */
 static void fire_winb_remove(void** items, size_t* count, const void* item) {
     size_t i, k = 0;
@@ -1035,6 +1045,17 @@ static Value fire_win_WinStartDrag(Value id, Value text, Value files) {
     free(utf8);
     free(paths);
     return Int(result);
+}
+
+/* ---- Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11), or does it always say 0 (Wayland, macOS, no desktop)? ---- */
+static Value fire_win_WinCanStartDrag(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int result = 0;
+    fire_winb_lock(&s->m);
+    if (s->opened && !s->failed && !s->closed) result = fire_winb_canStartDrag(&s->display);
+    fire_winb_unlock(&s->m);
+    return Bool(result != 0);
 }
 
 static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
