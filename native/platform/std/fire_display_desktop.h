@@ -32,6 +32,9 @@
 #  endif
 #endif
 
+#ifdef FIRE_DD_WAYLAND
+#  define FIRE_DRAGOUT_WANT_WAYLAND 1   /* (fire_dragout.h with its Wayland part: the X11 display includes it first) */
+#endif
 #include "fire_display_headless.h"
 #ifdef FIRE_DD_X11
 #  include "fire_display_x11.h"

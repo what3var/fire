@@ -25320,7 +25320,8 @@ else
                               : !cpp.Contains("// fire-link: SDL") && !cpp.Contains("FIRE_DISPLAY_SDL") && cpp.Contains("// fire-link: dl");
                     said.Add(() => CheckNat(version == 0 ? $"Fenster: {label}: das Programm braucht kein SDL" : $"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, ""));
                     if (version != 0 && (version == 2 ? sdlExit : sdl3Exit) != 0) { said.Add(() => Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)")); return Replay(); }
-                    if (display != "dummy" && xvfbRun == null) { said.Add(() => Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
+                    if (display == "wayland" && FindProgram("weston") == null) { said.Add(() => Console.WriteLine($"(weston nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
+                    if (display != "dummy" && display != "wayland" && xvfbRun == null) { said.Add(() => Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)")); return Replay(); }
                     string Build(fire.Native.NativeSources sources, string name, out string exe)
                     {
                         exe = Path.Combine(workDir, name + ".bin");
@@ -25342,6 +25343,18 @@ else
                         string actual;
                         int runExit;
                         if (display == "dummy") actual = RunProc(exe, "", workDir, out runExit, null, new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy" });
+                        else if (display == "wayland")
+                        {
+                            // (fire's own display on Wayland: a weston of its own without a screen - headless backend -, the program on its socket)
+                            string runtime = Path.Combine(workDir, name + ".xdg");
+                            Directory.CreateDirectory(runtime);
+                            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(runtime, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                            string run = Path.Combine(workDir, name + ".sh");
+                            File.WriteAllText(run, $"export XDG_RUNTIME_DIR=\"{runtime}\"\nweston --backend=headless-backend.so --socket=fire-test --idle-time=0 > /dev/null 2>&1 &\nw=$!\n" +
+                                "for i in $(seq 50); do [ -S \"$XDG_RUNTIME_DIR/fire-test\" ] && break; sleep 0.1; done\n" +
+                                $"WAYLAND_DISPLAY=fire-test FIRE_DISPLAY=wayland \"{exe}\"\nr=$?\nkill $w 2>/dev/null\nwait $w 2>/dev/null\nexit $r\n");
+                            actual = RunProc("sh", $"\"{run}\"", workDir, out runExit);
+                        }
                         else
                         {
                             var x11 = new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "x11", ["LSAN_OPTIONS"] = $"suppressions={lsanFile}:print_suppressions=0" };
@@ -25377,6 +25390,7 @@ else
                     windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 2));
                     windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 3));
                     windowSteps.Add(() => PrepareWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 0));
+                    windowSteps.Add(() => PrepareWindowCase(wc.Title + " (Wayland)", wc.Script, wc.Expected, wc.Define, 0, "wayland"));
                 }
 
                 // ---- what only SDL3 has (and what SDL2 says instead): hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
@@ -25715,19 +25729,21 @@ else
                 windowRuns.Add(() =>
                 {
                     string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
-                    var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true) };
+                    var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true), ("fire", 0, false, false), ("fire, Window.Show: der Thread des Managers zieht", 0, true, false) };
                     string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
                     string DragBuild(string script, int version, string name)
                     {
-                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                        // (version 0: fire's own display)
+                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version == 0 ? null : version } };
                         var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
                         string exe = Path.Combine(workDir, name + ".bin");
-                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, $" -lSDL{version}");
+                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, version == 0 ? " -ldl -lpthread" : $" -lSDL{version}");
                         if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
                         return exe;
                     }
                     // (the target once for all cases; the cases built in parallel, run one after the other - one X server at a time)
-                    var dragTarget = new Lazy<string>(() => DragBuild(dragTargetScript, 3, "dragtarget"));
+                    // (the target takes the drop with SDL3 when it is there, else with fire's own display - its XDND part)
+                    var dragTarget = new Lazy<string>(() => DragBuild(dragTargetScript, sdl3Exit == 0 ? 3 : 0, "dragtarget"));
                     var dragSteps = new List<Func<Action>>();
                     foreach (var dc in dragCases)
                     {
@@ -25735,7 +25751,7 @@ else
                         if (!TestSelected(title)) continue;
                         dragSteps.Add(() =>
                         {
-                            if (xvfbRun == null || sdl3Exit != 0 || (dc.Sdl == 2 && sdlExit != 0)) return () => Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})");
+                            if (xvfbRun == null || (dc.Sdl == 3 && sdl3Exit != 0) || (dc.Sdl == 2 && sdlExit != 0)) return () => Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})");
                             if (dc.Vm && !File.Exists(forge)) return () => Console.WriteLine($"(uebersprungen - forge fehlt: {title})");
                             string? driver = DragDriver();
                             if (driver == null) return () => Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
@@ -26205,20 +26221,18 @@ else
                 TestJobs.Concurrently(windowRuns[0], () => { for (int i = 1; i < 5; i++) windowRuns[i](); }, windowRuns[5], wineRuns);
             }
 
-            // ---- UI library: the same elements natively (window with the dummy driver) against the VM with the dummy
+            // ---- UI library: the same elements natively (fire's own display without a screen: FIRE_DISPLAY=headless) against the VM with the dummy
             {
-                string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
-                if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
-                else if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
+                if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
                 else
                 {
                     var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
                     string exe = Path.Combine(workDir, "uidraw.bin");
-                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL2");
+                    string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, "uidraw", $"-pthread {NativeTestBuild.Opt} -Wall -Wextra {sanitize}", exe, out int buildExit, " -ldl -lpthread");
                     if (buildExit != 0 || build.Contains("warning:")) CheckNat("UI nativ == VM", false, "C/C++-Compiler: " + build);
                     else
                     {
-                        string actual = RunProc(exe, "", workDir, out int runExit, null, new Dictionary<string, string?> { ["SDL_VIDEODRIVER"] = "dummy" });
+                        string actual = RunProc(exe, "", workDir, out int runExit, null, new Dictionary<string, string?> { ["FIRE_DISPLAY"] = "headless" });
                         string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
                         CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 5, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
                     }
