@@ -144,6 +144,17 @@ A library with drivers of the device framework names them in its project file, `
 `forge` writes them to the import in `package.json` (`"drivers": [...]`). spark loads the drivers of the installed packages and shows their devices in its device
 manager (docs/DEVICES.md).
 
+### The cache of native libraries
+
+A native build with `"linkage": "static"` (docs/NATIVE_BACKEND.md "Getrennte Übersetzung") turns every package (and the prelude, every library of a project) into a static
+library and keeps it in a cache of the user: `~/.local/share/fire/cache/native` on Linux, `%LOCALAPPDATA%\fire\cache\native` on Windows, `~/Library/Application Support/fire/cache/native`
+on macOS (`FIRE_NATIVE_CACHE` moves it). An entry is found by the content hash of everything its C depends on, so a stale entry is never used, only left behind.
+
+```
+ember cache          where the cache is and how big it is
+ember cache clean    empty it
+```
+
 ## Making packages
 
 ```

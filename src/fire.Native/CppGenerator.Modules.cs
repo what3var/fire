@@ -188,7 +188,7 @@ namespace fire.Native
         /// <summary>The C of an enum number in code.</summary>
         private string EnumC(int index) => LibraryRole && index != 0 ? $"fire_enums_{_self!.Id}[{index}]" : index.ToString(CultureInfo.InvariantCulture);
         /// <summary>The C of a source index for the debugger.</summary>
-        private string DbgSrc(int src) => LibraryRole ? $"fire_dbgsrc_{_self!.Id}[{DebugSourceIndex(src)}]" : src.ToString(CultureInfo.InvariantCulture);
+        private string DbgSrc(int src) => LibraryRole && _self!.Sources.Contains(src) ? $"fire_dbgsrc_{_self.Id}[{DebugSourceIndex(src)}]" : src.ToString(CultureInfo.InvariantCulture);   // (another source: line 0, an instruction before the first line of the function)
         /// <summary>A source of a library by its place among the module's sources (the same in every program that uses the module).</summary>
         private int DebugSourceIndex(int src)
         {

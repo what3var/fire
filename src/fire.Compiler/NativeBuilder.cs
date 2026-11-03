@@ -90,6 +90,10 @@ namespace fire.Compiler
             // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
             target = WithRequestedSdl(target, toolchain);
             Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
+            if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
+                return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
+            if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind == "files")
+                return WriteStaticFiles(sources, config, target, toolchain, output, mode, floatWidth, basePath, defines, plan, sourcePaths);
             var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl, config.Trim);
             string cpp = program.C;
             bool gui = program.Gui;
@@ -156,6 +160,181 @@ namespace fire.Compiler
             }
         }
 
+        /// <summary>Linkage "static" (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): every library module (the prelude, each import, each library of the project) is a
+        /// static library in the user-wide cache, built once for its content and the switches of the program; the program's own C is compiled and linked with them. A module
+        /// that cannot be built on its own yet: the build falls back to linkage "source" and says so.</summary>
+        private static NativeBuildResult BuildStatic(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
+            VmExecutionMode? mode, int? floatWidth, bool keepSources, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths, Func<int>? chooseSdl)
+        {
+            var log = new StringBuilder();
+            NativeBuildResult AsSource(string? why)
+            {
+                string? linkage = config.Linkage;
+                config.Linkage = "source";
+                try
+                {
+                    var r = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths);
+                    return why == null ? r : r with { Log = why + "\n" + r.Log };
+                }
+                finally { config.Linkage = linkage; }
+            }
+            if (ToolchainDetector.Find(toolchain) == null) return AsSource(null);   // (no compiler: the normal build offers one)
+            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            StaticBuildPlan staticPlan;
+            var watch = Stopwatch.StartNew();
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, ToolchainStamp(toolchain), chooseSdl, config.Trim); }
+            catch (NativeNotSupportedException ex) { return AsSource($"Linkage \"static\" is not possible for this program ({ex.Message}): built with linkage \"source\"."); }
+            log.Append(staticPlan.Log);
+            log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
+            var program = new NativeProgram(staticPlan.ProgramC, staticPlan.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
+            string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
+            string workDir = keepSources ? Path.GetFullPath(output) + ".src" : Path.Combine(Path.GetTempPath(), "fire-native-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                string cFile = WriteFiles(workDir, program.C, target, SourceName, configDirectory, program.Natives);
+                string? nativesFile = program.Natives != null ? Path.Combine(workDir, NativesName) : null;
+                string exe = Path.GetFullPath(output);
+                if (ToolchainProvider.RequireLibraries(toolchain, cFile) is { } missingLibrary)
+                    return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
+                string ext = toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
+                // the libraries that are not in the cache, side by side: each its C (the generator wrote it there) to an object file, that into the library, then its interface
+                var missing = staticPlan.Libraries.Where(l => !l.Cached).ToList();
+                var logs = new string[missing.Count];
+                var failed = new string?[missing.Count];
+                Parallel.For(0, missing.Count, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount) }, i =>
+                {
+                    var library = missing[i];
+                    var libraryLog = new StringBuilder();
+                    var libraryWatch = Stopwatch.StartNew();
+                    string obj = Path.Combine(workDir, library.LibraryName + (toolchain.EffectiveKind == "msvc" ? ".obj" : ".o"));
+                    var compile = CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true);
+                    libraryLog.AppendLine($"{compile.Executable} {compile.Arguments}");
+                    var (ok, text) = Run(compile.Executable, compile.Arguments, workDir);
+                    libraryLog.Append(text);
+                    if (!ok) { failed[i] = $"The C compiler reported errors in the library module '{library.Module}' (see the build log)."; logs[i] = libraryLog.ToString(); return; }
+                    string lib = library.LibraryFile(ext);
+                    string temp = Path.Combine(library.Directory, Guid.NewGuid().ToString("N") + ext);
+                    var archive = ArchiveCommand(toolchain, temp, obj);
+                    libraryLog.AppendLine($"{archive.Executable} {archive.Arguments}");
+                    (ok, text) = Run(archive.Executable, archive.Arguments, workDir);
+                    libraryLog.Append(text);
+                    if (!ok || !File.Exists(temp)) { failed[i] = $"The library of the module '{library.Module}' could not be made (see the build log)."; logs[i] = libraryLog.ToString(); return; }
+                    File.Move(temp, lib, true);
+                    CppGenerator.CommitStatic(library);
+                    libraryLog.AppendLine($"module {library.Module}: built in {libraryWatch.ElapsedMilliseconds} ms -> {lib}");
+                    logs[i] = libraryLog.ToString();
+                });
+                foreach (var text in logs) log.Append(text);
+                if (failed.FirstOrDefault(f => f != null) is { } failure)
+                    return new NativeBuildResult(false, exe, log.ToString(), new[] { new Diagnostic(0, failure, DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
+                // (a library before the ones it needs: the linker resolves in that order)
+                var libraries = staticPlan.Libraries.AsEnumerable().Reverse().Select(l => l.LibraryFile(ext)).ToList();
+                bool linkedOk = true;
+                watch.Restart();
+                foreach (var (exeName, arguments) in BuildCommands(toolchain, target, cFile, nativesFile, workDir, exe, program.Gui, libraries))
+                {
+                    log.AppendLine($"{exeName} {arguments}");
+                    var (stepOk, text) = Run(exeName, arguments, workDir);
+                    log.Append(text);
+                    if (!(linkedOk = stepOk)) break;
+                }
+                log.AppendLine($"program built in {watch.ElapsedMilliseconds} ms");
+                bool built = linkedOk && File.Exists(exe);
+                if (built) ApplyPeMetadata(exe, program, target, log);
+                int sdlVersion = SdlSetup.RequiredVersion(cFile);
+                if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
+                return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
+            }
+            finally
+            {
+                if (!keepSources) try { Directory.Delete(workDir, true); } catch (IOException) { }
+            }
+        }
+
+        /// <summary>Linkage "static" with a toolchain that only writes files (an ESP-IDF component, docs/NATIVE_BACKEND.md): the program's C and the C of every library module
+        /// (from the cache, generated once) as translation units of their own; the build system of the board (idf.py) compiles them into the component's library.</summary>
+        private static NativeBuildResult WriteStaticFiles(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
+            VmExecutionMode? mode, int? floatWidth, string? basePath, IReadOnlyList<string>? defines, fire.Projects.BuildPlan? plan, IReadOnlyList<string?>? sourcePaths)
+        {
+            var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
+            StaticBuildPlan staticPlan;
+            try { staticPlan = CppGenerator.GenerateStatic(linked, target, $"files|{toolchain.Layout}", null, config.Trim); }
+            catch (NativeNotSupportedException ex)
+            {
+                string? linkage = config.Linkage;
+                config.Linkage = "source";
+                try { var r = Build(sources, config, target, toolchain, output, mode, floatWidth, false, basePath, defines, plan, sourcePaths); return r with { Log = $"Linkage \"static\" is not possible for this program ({ex.Message}): written with linkage \"source\".\n" + r.Log }; }
+                finally { config.Linkage = linkage; }
+            }
+            string directory = Path.GetFullPath(output);
+            string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
+            WriteFiles(directory, staticPlan.ProgramC, target, SourceName, configDirectory, staticPlan.Natives);
+            var files = new List<string> { SourceName };
+            if (staticPlan.Natives != null) files.Add(NativesName);
+            foreach (var library in staticPlan.Libraries)
+            {
+                string name = library.LibraryName + ".c";
+                File.Copy(library.CFile, Path.Combine(directory, name), true);
+                CppGenerator.CommitStatic(library);
+                files.Add(name);
+            }
+            foreach (var stale in Directory.EnumerateFiles(directory, "fire_m*.c").Where(f => !files.Contains(Path.GetFileName(f)))) File.Delete(stale);
+            var log = new StringBuilder(staticPlan.Log);
+            if (toolchain.Layout == "idf-component")
+                File.WriteAllText(Path.Combine(directory, "CMakeLists.txt"),
+                    $"# Generated by fire.Native for target '{target.Name}' with linkage \"static\": the program and its library modules as an ESP-IDF component (call {target.Native.Entry.Name} from the application).\n" +
+                    $"idf_component_register(SRCS {string.Join(" ", files.Select(f => $"\"{f}\""))}\n                       INCLUDE_DIRS \".\")\n" +
+                    "target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:C>:-std=gnu11> $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++17>)\n");
+            log.AppendLine($"{directory}: {string.Join(", ", files)}, fire_rt.h and platform/{target.Native.Platform}/ for {target.Name}; the entry point is {target.Native.Entry.Name}");
+            if (!string.IsNullOrWhiteSpace(toolchain.BuildCommand))
+            {
+                var (ok, text) = RunCommand(toolchain.BuildCommand!, directory);
+                log.Append(text);
+                return new NativeBuildResult(ok, directory, log.ToString());
+            }
+            return new NativeBuildResult(true, directory, log.ToString());
+        }
+
+        /// <summary>What identifies the compiler of a toolchain for the cache of static libraries: its kind, the program (path, size, time), the C standard, optimization and arguments.</summary>
+        public static string ToolchainStamp(ToolchainDef toolchain)
+        {
+            string compiler = ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
+            string file = "";
+            try { var info = new FileInfo(compiler); if (info.Exists) file = $"{info.Length}@{info.LastWriteTimeUtc.Ticks}"; } catch (Exception) { }
+            return string.Join("|", toolchain.EffectiveKind, compiler, file, toolchain.CStd ?? "", toolchain.Optimization ?? "", string.Join(" ", toolchain.Args ?? new()), string.Join(" ", toolchain.IncludeDirs ?? new()));
+        }
+
+        /// <summary>The command that puts an object file into a static library: `ar rcs` next to the compiler (`x86_64-w64-mingw32-ar`, `emar`, `llvm-ar`), `tcc -ar`, `lib` of msvc.</summary>
+        public static (string Executable, string Arguments) ArchiveCommand(ToolchainDef toolchain, string library, string obj)
+        {
+            string compiler = ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
+            switch (toolchain.EffectiveKind)
+            {
+                case "tcc": return (compiler, $"-ar rcs \"{library}\" \"{obj}\"");
+                case "msvc": return (Path.Combine(Path.GetDirectoryName(compiler) ?? "", "lib.exe"), $"/nologo /OUT:\"{library}\" \"{obj}\"");
+            }
+            string dir = Path.GetDirectoryName(compiler) ?? "";
+            string name = Path.GetFileName(compiler);
+            string exe = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? ".exe" : "";
+            var m = System.Text.RegularExpressions.Regex.Match(Path.GetFileNameWithoutExtension(name), @"^(.*?)(gcc|cc|clang|emcc)(-[0-9.]+)?$");
+            var candidates = new List<string>();
+            if (m.Success)
+            {
+                string prefix = m.Groups[1].Value;
+                if (m.Groups[2].Value == "emcc") candidates.Add("emar");
+                if (m.Groups[2].Value == "clang") candidates.Add(prefix + "llvm-ar" + m.Groups[3].Value);
+                candidates.Add(prefix + "ar");
+                candidates.Add(prefix + "gcc-ar");
+            }
+            candidates.Add("ar");
+            foreach (var c in candidates)
+            {
+                if (dir.Length > 0 && File.Exists(Path.Combine(dir, c + exe))) return (Path.Combine(dir, c + exe), $"rcs \"{library}\" \"{obj}\"");
+                if (ToolchainSetup.FindProgram(c) is { } found) return (found, $"rcs \"{library}\" \"{obj}\"");
+            }
+            return ("ar", $"rcs \"{library}\" \"{obj}\"");
+        }
+
         /// <summary>Like <see cref="Build"/>, but what goes wrong (an error in the script, something the native backend cannot translate yet, a bad configuration) is in the result's log.</summary>
         public static NativeBuildResult BuildSafe(IReadOnlyList<string> sources, NativeConfig config, TargetProfile target, ToolchainDef toolchain, string output,
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null)
@@ -177,17 +356,18 @@ namespace fire.Compiler
 
         /// <summary>The commands that build the program: the C file alone (one call of the C compiler), or - with natives in C++ - the C file compiled to an object
         /// file with the C compiler, then the C++ file compiled with the C++ compiler and linked with it (the C++ compiler links, it brings its runtime library).</summary>
-        public static IReadOnlyList<(string Executable, string Arguments)> BuildCommands(ToolchainDef toolchain, TargetProfile target, string cFile, string? nativesFile, string workDir, string exe, bool gui = false)
+        public static IReadOnlyList<(string Executable, string Arguments)> BuildCommands(ToolchainDef toolchain, TargetProfile target, string cFile, string? nativesFile, string workDir, string exe, bool gui = false,
+            IReadOnlyList<string>? libraries = null)
         {
             if (nativesFile == null || toolchain.EffectiveKind == "custom")
-                return new[] { CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile) };
+                return new[] { CompilerCommand(toolchain, target, cFile, workDir, exe, gui: gui, language: "c", natives: nativesFile, extraInputs: libraries) };
             if (!toolchain.CompilesCpp)
                 throw new NativeConfigException($"The program uses natives in C++ ({NativesInCpp(nativesFile)}): the toolchain '{toolchain.EffectiveKind}' compiles only C. Build it with gcc, clang or msvc (--toolchain).");
             string obj = Path.Combine(workDir, toolchain.EffectiveKind == "msvc" ? "fire_program.obj" : "fire_program.o");
             return new[]
             {
                 CompilerCommand(toolchain, target, cFile, workDir, obj, gui: gui, language: "c", compileOnly: true),
-                CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: new[] { obj }, programFile: cFile),
+                CompilerCommand(toolchain, target, nativesFile, workDir, exe, gui: gui, language: "c++", extraInputs: new[] { obj }.Concat(libraries ?? Array.Empty<string>()), programFile: cFile),
             };
         }
 

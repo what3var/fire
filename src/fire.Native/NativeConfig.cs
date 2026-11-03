@@ -23,6 +23,9 @@ namespace fire.Native
         /// reaches, <see cref="TrimMode.Reflection"/> keeps every class as soon as reflection looks a class up by its name (like the VM), <see cref="TrimMode.All"/> keeps everything
         /// (`--keep-all`; a debug build always does).</summary>
         public TrimMode? Trim { get; set; }
+        /// <summary>How the libraries and packages are linked (ROADMAP 9): `source` (null, the default: everything is one C file) or `static` (each library a static library of
+        /// its own in the user-wide cache, built once per content and switches, linked into the program; docs/NATIVE_BACKEND.md "Getrennte Übersetzung").</summary>
+        public string? Linkage { get; set; }
         public Dictionary<string, TargetDef> Targets { get; set; } = new();
         public Dictionary<string, ToolchainDef> Toolchains { get; set; } = new();
 

@@ -314,9 +314,9 @@ Was die Runtime über eine Klasse wissen muss - ihr Name (`className`), die Dest
 (`excMatches`) -, steht in einer Tabelle `FireClassDesc kClassDescs[]` (eine Zeile je Klassen-Id, `fire_init` setzt `g_classDescs`), nicht mehr in je einer generierten
 Funktion mit einem `switch` über die Klassen-Ids. Die Funktionen sind jetzt Teil der Runtime (`fire_rt.h`, am Ende). Der `catch`-Typ `Exception` hat immer die Id 0
 (`FIRE_EXC_ANY`), jede Klasse listet die Ids der übrigen `catch`-Typen, die sie ist. Das ist die Voraussetzung dafür, dass Module ihre Klassen selbst beschreiben
-(Abschnitt "Getrennte Übersetzung").
+(Abschnitt "Getrennte Übersetzung: `linkage`").
 
-Gemessen (gcc 13 `-O2`, Programme in `scratch`: die Benchmarks von `fire.Benchmarks` mit etwa 20-facher Arbeit plus `exceptions` - 300 000 geworfene Ausnahmen
+Gemessen (gcc 13 `-O2`, eigene Programme: die Benchmarks von `fire.Benchmarks` mit etwa 20-facher Arbeit plus `exceptions` - 300 000 geworfene Ausnahmen
 zweier Klassen einer Hierarchie, zwei `catch` - und `virtual` - Aufrufe über die Basisklasse, `ToString`, ein Destruktor), alt und neu abwechselnd, 30 Läufe, mit
 Prozessstart; gleiche Ausgaben:
 
@@ -871,6 +871,97 @@ fire-Programm  ->  Natives der Bridges (IO, Time, Devices, Graphics, später Har
   Implementierung, die C#-Bridges werden dünne Wrapper.
 
 Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
+
+## Getrennte Übersetzung: `linkage` (ROADMAP 9)
+
+Ein natives Programm entsteht normalerweise als **eine** C-Datei (`linkage` `"source"`, der Standard, Entscheidung 9.1): der Generator sieht das ganze Programm
+(eine geschlossene Welt) und lässt weg, was es nicht erreicht. Mit `"linkage": "static"` (in `fire.native.json`, in den Einstellungen des Projekts oder
+`--linkage static` auf der Befehlszeile) wird jede **Library** des Programms - das Prelude (`core`), jeder Import (`json`, `ui`, ein Package), jede Library des
+Projekts - zu einer **statischen Bibliothek** (`.a`, mit msvc `.lib`), einmal gebaut und in einem Cache des Benutzers abgelegt; das Programm selbst wird bei jedem Bau
+übersetzt und mit ihnen gebunden. Zwei Programme, die dieselben Libraries mit denselben Schaltern benutzen, teilen sich ihre Bibliotheken.
+
+### Module
+
+Die Quellen des gelinkten Programms tragen ihr **Modul** (`LinkedProgram.SourceModules`: `core` für das Prelude, der Import-Schlüssel für das Prelude eines Imports,
+der Import-Name für die Dateien einer Library des Projekts, `null` für das Programm), dazu die Module, die ein Modul braucht (`ModuleDeps`: seine `#import`s, die
+Referenzen einer Library). Ein Modul gehört zu der Quelle, in der sein Code steht: die Methoden einer `class extends List` von `linq` gehören zu `linq`, nicht zu `core`
+(der Compiler merkt sich dafür die Quelle des Members, nicht die der Klasse - auch der Debugger zeigt sie jetzt in der richtigen Datei).
+
+* Eine **Library** wird von einem Generator erzeugt, der nur ihre Klassen und die der Module sieht, die sie braucht (`LibraryView`). Sie behält **alle** ihre Klassen und
+  Member (ihre öffentliche Schnittstelle ist die Wurzel dessen, was bleibt - §11), nummeriert ihre Klassen selbst (nach Namen sortiert) und schreibt ihre Ids als
+  `fire_mb_<modul> + k`. Member anderer Module ruft sie über **exportierte Namen** (`fx_<modul>_<Klasse>__<Member>_<i>`, aus dem Namen des Members abgeleitet - jedes
+  Modul kommt auf denselben Namen). Was das ganze Programm kennen müsste - die Verteiler (`call_X_n`), die Feld-Helfer (`gf_x`/`sf_x`), `is of` (`isof_X`), die
+  Operatoren, die Typargumente von Objekten (`targOf_C_k`), die Klassen-Wertungen von Überladungen (`ovd_X`), die Reflection-Funktionen, die Tabellen der Runtime -,
+  **erzeugt sie nicht**, sondern deklariert es nur. Statische Felder heißen `SFx_<modul>_<Klasse>_<Feld>`; das Modul der Klasse definiert sie.
+* Das **Programm** ist das einzige Modul, das alle Klassen kennt (eine geschlossene Welt wie bisher): es definiert die Helfer für alle Module - mit **einer Signatur für
+  alle** (jeder Verteiler nimmt die Liste des Scopes und die Klasse des Aufrufers, jeder Feld-Helfer beide; die Helfer sind nicht `static`), die Klassen-Deskriptoren
+  (A0), JSON-, Reflection- und Debug-Tabellen. Was eine Library von ihm braucht, steht in ihren **Needs** (welche Verteiler, Feldnamen, `is of`-Typen, Operatoren,
+  Reflection-Funktionen, welche Klassen ihr Code anlegt, ...). Klassen einer Library, von denen kein Modul Objekte anlegt, behalten ihre Id, bekommen aber keine Zweige
+  in den Helfern (wie eine nicht erreichte Klasse).
+* **Zahlen, die erst das Programm festlegt**, liest eine Library aus Tabellen des Programms: Einheiten (`fire_units_<m>[k]`), Enums (`fire_enums_<m>[k]`), die Typen
+  von `catch` (`fire_exct_<m>`, `HandlerInfo.typeMap`), die Quellen für den Debugger (`fire_dbgsrc_<m>[k]`, k ist die Stelle unter den Quellen des Moduls),
+  die Basis ihrer Klassen-Ids (`fire_mb_<m>`). `FIRE_NDIMS` ist mit `static` fest 16.
+* **Natives in C** (Packages in C, die Bridges von graphics und windows) stehen nur in der Datei des Programms (ihr Zustand - die Handles der Bridges - gibt es so einmal);
+  eine Library ruft sie über `fire_cn_<funktion>` des Programms. Die Natives in C++ bleiben in `fire_natives.cpp` (die Thunks der Libraries kommen dazu).
+* **Schalter des Programms** (Ausnahmen, Threads, Reflection, Probes, Zeiger mit Grenzen, `try x.Take...`, JSON, ...) gelten für alle Module: jedes Modul wird mit
+  der Vereinigung aller Schalter erzeugt (Fixpunkt über die Module); für jede Menge von Schaltern gibt es eine eigene Variante im Cache (Entscheidung 9.4).
+* Kein Inlining über Modulgrenzen, keine Devirtualisierung in einer Library (eine Klasse des Programms kann überschreiben): Aufrufe in einer Library gehen über die
+  Verteiler des Programms; nur das Programm ruft Member von Libraries direkt (es kennt alle Klassen). Eine LTO gibt es nicht (Entscheidung 9.5: optional, nicht umgesetzt).
+* Ein Member, den das Ziel nicht übersetzen kann (fire-Threads auf wasm), wird in einer Library zu einer Funktion, die beim Aufruf mit dem Grund endet (mit `source`
+  wäre er nicht erreicht worden).
+
+### Cache und Schnittstelle
+
+Der Cache liegt unter dem Ordner für Anwendungsdaten des Benutzers: `~/.local/share/fire/cache/native/<ziel>/<schlüssel>/` (Windows `%LOCALAPPDATA%\fire\cache\native`,
+macOS `~/Library/Application Support/fire/cache/native`; `FIRE_NATIVE_CACHE` verlegt ihn). Der **Schlüssel** ist der SHA-256 über alles, wovon das C einer Library
+abhängt: die Version des Generators (MVID von fire.Native, damit auch die Runtime), die Toolchain (Art, Compiler mit Größe und Zeit, C-Standard, Optimierung,
+Argumente), das Ziel, Modus und Float-Breite, die Texte der Quellen des Moduls, die **ABI-Hashes** der Module, die es braucht, ihre Natives in C und die Schalter.
+In einem Ordner liegen `<modul>.c` (für gdb und `#line`), `fire_<modul>.a` und die **Schnittstelle** `<modul>.fireiface` (JSON: `Format` - die Version des Formats,
+heute 1 -, `Abi` - der Hash der Teile, die andere Module sehen: Klassen, Basis, Interfaces, Felder mit Layout, Art, Einheit, Typ und Zugriff, Member mit Parametern,
+Typen, Zugriff und Defaults -, `Key`, die Schalter, die Klassen, die Exporte und die Needs). Die Schnittstelle wird zuletzt geschrieben: ohne sie gilt die
+Bibliothek als nicht da. Eine Library, deren Code sich ändert, bekommt einen neuen Schlüssel; die Libraries, die sie brauchen, nur wenn sich ihr ABI-Hash ändert.
+Deklariert das Programm eine Klasse einer Library neu (eine eigene `class Exception`), passen die Klassen nicht mehr zur Bibliothek: der Bau nimmt `source` und sagt es.
+`ember cache` zeigt Ort und Größe, `ember cache clean` leert den Cache.
+
+### Ziele
+
+* **Desktop** (gcc, clang, TinyCC mit `tcc -ar`, MinGW mit `x86_64-w64-mingw32-ar`, msvc mit `lib`): das Programm wird mit den Bibliotheken gebunden, eine Library vor
+  denen, die sie braucht.
+* **wasm** (Emscripten): die Bibliotheken mit `emcc -c` und `emar`, gebunden wie oben.
+* **ESP32** (Toolchain `esp-idf`, nur Dateien): die Module stehen als eigene Übersetzungseinheiten (`fire_<modul>.c`, ihr C aus dem Cache) in der Komponente;
+  `idf.py` übersetzt sie in die Bibliothek der Komponente. Ein fertiges `.a` aus dem Cache wird dort nicht benutzt (das übersetzt die Toolchain von ESP-IDF mit ihren
+  eigenen Schaltern).
+* `"shared"` (Desktop) und das Laden zur Laufzeit sind Phase C/D (ROADMAP 9).
+
+### Debuggen
+
+Ein Debug-Build mit `static` debuggt wie sonst: jede Funktion einer Library hat ihre Tabellen (Variablen, Scopes) in ihrem Modul, ihre Zeilen melden die Quelle über
+`fire_dbgsrc_<m>`, das Programm hat die Quellen, Globals und Klassen. Ein Haltepunkt in einer Datei einer Library des Projekts hält dort (Test `FIRE_TESTS_ONLY=linkage`).
+
+### Aus einer Datei: `FIRE_MODULES=1`
+
+Dieselbe Erzeugung in Modulen, aber alles in **einer** Datei (die Libraries hinter der Runtime, dann das Programm; die Namen einer Library haben den Präfix ihres Moduls):
+mit `FIRE_MODULES=1` erzeugt jeder native Bau so (für die Tests: die native Gruppe läuft damit genauso). Ein Programm, das sich nicht teilen lässt, wird ganz erzeugt
+(`FIRE_MODULES_LOG=<datei>` schreibt auf, welches - in der nativen Gruppe zwei: eines deklariert `class Exception` neu, eines `class Shape` neben der von `ui`).
+Gelaufen ist die native Gruppe damit bis zu den Fenstern (402 Prüfungen, ~2 h - jeder Fall enthält das ganze Prelude); verschieden sind nur Prüfungen, die die
+Form des erzeugten C ansehen (der eigene Verteiler eines Interfaces, die Größe des minimalen ui-Programms, der Name `fire_nat_1`), alle Ausgaben sind gleich.
+
+### Messwerte
+
+Gemessen auf dem Rechner dieser Sitzung (4 vCPUs, gcc 13 `-O2`, ohne ccache), Zeit des ganzen Baus mit `forge build`:
+
+| Programm | `source` | `static`, erster Bau (leerer Cache) | `static`, zweiter Bau | Größe `source` / `static` |
+|---|---:|---:|---:|---:|
+| CLI mit `json`, `linq`, `hash`, `compression` (9 Module) | 9-10,5 s | 51 s (94 s, die Bibliotheken nacheinander) | 27-29 s | 226 KB / 2,5 MB |
+| `ui`-Beispiel (5 Module) | 98 s | 223 s (nacheinander) | 85 s | 2,3 MB / 5,7 MB |
+
+Die Ausgaben sind gleich. Die Bibliotheken eines ersten Baus werden nebeneinander übersetzt (so viele wie Kerne). Ehrlich gesagt: so, wie es heute ist, spart
+`static` keine Zeit, außer bei sehr großen Libraries (`ui`: 13 % schneller im zweiten Bau).
+Zwei Gründe: (1) Eine Library behält **alles** - sie wird einmal für alle Programme gebaut -, und was ihr Code benutzt (Reflection in `linq`, Probes, JSON), gilt
+dann für das ganze Programm; (2) das Programm erzeugt die Helfer der geschlossenen Welt (Verteiler, Feld-Helfer, Reflection-Tabellen) für die Klassen **aller**
+Module, die angelegt werden können - sie sind ein großer Teil des C und werden bei jedem Bau übersetzt. Der nächste Schritt wäre, dass eine Library ihre eigenen
+Klassen selbst bedient (ein Verteiler je Modul, das Programm nur noch für fremde Klassen). Die Programme sind größer, weil
+ein Modul ein Objekt ist (der Linker nimmt es ganz) und die Libraries nichts weglassen.
 
 ## WebAssembly (`wasm`) - Programme im Browser
 

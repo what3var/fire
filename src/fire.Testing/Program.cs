@@ -34,6 +34,8 @@ Environment.SetEnvironmentVariable("FIRE_FONT_DIRS", fontTestDir);
 
 // FIRE_TESTS_ONLY=projects runs only the tests of projects, templates and packing (a quick run while working on them).
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "projects") { ProjectTests.Run(); return; }
+// FIRE_TESTS_ONLY=linkage: linkage "static" of native builds (libraries in the cache, ROADMAP 9)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "linkage") { LinkageTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "scene3d") { Scene3DTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "diagnostics") { DiagnosticTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "syntax") { SyntaxTests.Run(); return; }
@@ -7714,6 +7716,25 @@ packerTests:
                     RuntimeSession.Build(new[] { wasmSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
                     Value.SingleFloats = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
+                    // linkage "static" (ROADMAP 9): the modules as static libraries of Emscripten (emar), in a cache of their own; the same output
+                    string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
+                    Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(wasmDir, "cache"));
+                    try
+                    {
+                        string staticJs = Path.Combine(wasmDir, "pstatic.js");
+                        var staticBuilt = fire.Compiler.NativeBuilder.BuildSafe(new[] { wasmSource }, new fire.Native.NativeConfig { Linkage = "static" }, wasm, fire.Native.ToolchainDef.BuiltIn["emscripten"], staticJs);
+                        string staticOut = "";
+                        if (staticBuilt.Ok)
+                        {
+                            using var sn = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{staticJs}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                            sn.StandardError.ReadToEndAsync();
+                            staticOut = sn.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                            sn.WaitForExit();
+                        }
+                        SfCheck(staticBuilt.Ok && staticBuilt.Log.Contains("module core: built in") && !staticBuilt.Log.Contains("not possible") && staticOut == nodeOut,
+                            "wasm: linkage static - die Module als Bibliotheken von Emscripten (emar), das Programm druckt dasselbe" + (staticBuilt.Ok ? "" : "\n" + staticBuilt.Log));
+                    }
+                    finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cacheBefore); }
                 }
                 // a window (Emscripten's SDL2 port: -sUSE_SDL=2; without network access to GitHub the port can come from a folder: EMCC_LOCAL_PORTS=sdl2=<SDL source>):
                 // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
@@ -26238,6 +26259,31 @@ else
                     RuntimeSession.Build(new[] { espSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
                     string got = string.Join("\n", espRun.Replace("\r", "").Split('\n').Where(line => line.Length > 0));
                     CheckNat(esp32Title, espCode == 0 && espExit == 0 && warnings == "0" && got == string.Join("\n", vmLines), $"build {espCode}, warnings {warnings}\n  VM:\n{string.Join("\n", vmLines)}\n  ESP32:\n{got}\n{espErr}");
+                    // linkage "static" (ROADMAP 9): the library modules as translation units of their own in the component (idf.py compiles them into its library), their C
+                    // from the cache; a project of its own in ~/.cache/fire-tests/esp32-static
+                    string espStatic = Path.Combine(Path.GetDirectoryName(espProject)!, "esp32-static");
+                    Directory.CreateDirectory(espStatic);
+                    File.WriteAllText(Path.Combine(espStatic, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nproject(firetest)\n");
+                    File.WriteAllText(Path.Combine(espStatic, "test.fire"), espSource);
+                    string? cacheBefore = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
+                    Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", Path.Combine(espStatic, "cache"));
+                    var stOut = new StringWriter(); var stErr = new StringWriter();
+                    int stCode;
+                    try { stCode = CommandLineRunner.Run(new[] { "build", Path.Combine(espStatic, "test.fire"), "-t", "esp32", "--linkage", "static", "-o", Path.Combine(espStatic, "main") }, stOut, stErr); }
+                    finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cacheBefore); }
+                    string stRun = "";
+                    if (stCode == 0)
+                    {
+                        using var bash = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("bash", new[] { "-c", shell.Replace(espProject, espStatic) }) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                        var bashErr = bash.StandardError.ReadToEndAsync();
+                        stRun = bash.StandardOutput.ReadToEnd() + bashErr.Result;
+                        bash.WaitForExit();
+                    }
+                    string stWarnings = File.Exists(Path.Combine(espStatic, "warnings.txt")) ? File.ReadAllText(Path.Combine(espStatic, "warnings.txt")).Trim() : "?";
+                    string stGot = string.Join("\n", stRun.Replace("\r", "").Split('\n').Where(line => line.Length > 0));
+                    bool stModules = stOut.ToString().Contains("module core:") && File.Exists(Path.Combine(espStatic, "main", "fire_mcore.c"));
+                    CheckNat("ESP32 (ESP-IDF, QEMU): linkage static - die Module als eigene Uebersetzungseinheiten der Komponente, laeuft wie in der VM",
+                        stCode == 0 && stModules && stWarnings == "0" && stGot == string.Join("\n", vmLines), $"build {stCode}, warnings {stWarnings}\n{stOut}\n{stErr}\n  ESP32:\n{stGot}");
                 }
             }
         }

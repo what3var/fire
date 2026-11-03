@@ -215,6 +215,15 @@ Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 
 Zwei Teile: **getrennte Übersetzung** (Code teilen, schneller bauen) und **dynamisches Laden** (Plugins, Treiber, Natives in einer VM in fire).
 
+Stand: **Phasen A0, A und B umgesetzt** (docs/NATIVE_BACKEND.md "Klassen-Deskriptoren" und "Getrennte Übersetzung: `linkage`"): Klassen-Deskriptoren statt
+`switch` in den Hooks der Runtime (A0); Module mit eigener Registrierung der Zahlen über Tabellen des Programms, in einer Datei hinter `FIRE_MODULES=1` (A);
+`"linkage": "static"` (Projekt, `fire.native.json`, `--linkage`) mit Schnittstellendatei (Formatversion + ABI-Hash), Cache des Benutzers nach Inhalts-Hash,
+`ember cache clean`, Varianten je Menge von Schaltern, öffentliche Schnittstelle einer Library als Wurzel (§11), Debug-Tabellen je Modul (ein Haltepunkt in einer
+statischen Library hält); Desktop (gcc, clang, TinyCC, MinGW), wasm (Emscripten, `emar`) und ESP32 (die Module als eigene Übersetzungseinheiten der Komponente).
+Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` (Phase C), `Library.Load` und Plugins (Phase D); eine Library bedient ihre eigenen Klassen noch nicht selbst
+(alle Verteiler erzeugt das Programm - darum spart `static` heute kaum Bauzeit, siehe Messwerte); LTO; ein fertiges `.a` aus dem Cache für ESP-IDF; ein Programm,
+das eine Klasse einer Library neu deklariert, wird mit `source` gebaut.
+
 Getrennte Übersetzung (optional, Schalter `settings.linkage`: `"source"` = heute, Standard; `"static"`; `"shared"`):
 
 * forge übersetzt jede Library/jedes Package zu einer eigenen Bibliothek (`.a`/`.lib` bzw. `.so`/`.dll`/`.dylib`) im Cache

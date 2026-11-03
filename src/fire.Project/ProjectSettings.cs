@@ -34,6 +34,9 @@ namespace fire.Projects
         public string? Target { get; set; }
         /// <summary>The toolchain of a native build.</summary>
         public string? Toolchain { get; set; }
+        /// <summary>How a native build links the libraries and packages (ROADMAP 9, docs/NATIVE_BACKEND.md "Getrennte Übersetzung"): `source` (the default: all in one C file),
+        /// `static` (each library once as a static library in the user-wide cache, linked into the program).</summary>
+        public string? Linkage { get; set; }
         /// <summary>Where the result of a build is written (a path relative to the file that holds the setting; for a library the folder of the package).</summary>
         public string? Output { get; set; }
         /// <summary>`lax` (a type conflict is a warning, the default) or `strict` (an error); docs/TYPES.md. A `#lax` / `#strict` in a file decides for that file.</summary>
@@ -47,12 +50,13 @@ namespace fire.Projects
 
         [JsonIgnore]
         public bool IsEmpty => Subsystem == null && Mode == null && FloatWidth == null && Name == null && Codename == null && Description == null && Author == null && License == null && Comments == null && Icon == null
-            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Output == null && TypeChecking == null && Arguments == null && Port == null && Baud == null;
+            && Version == null && FileVersion == null && (Defines == null || Defines.Count == 0) && Engine == null && Target == null && Toolchain == null && Linkage == null && Output == null && TypeChecking == null && Arguments == null && Port == null && Baud == null;
 
         public static readonly IReadOnlyList<string> Subsystems = new[] { "console", "gui" };
         public static readonly IReadOnlyList<string> Modes = new[] { "debug", "release", "performance" };
         public static readonly IReadOnlyList<string> Engines = new[] { "vm", "native" };
         public static readonly IReadOnlyList<string> TypeCheckings = new[] { "lax", "strict" };
+        public static readonly IReadOnlyList<string> Linkages = new[] { "source", "static" };
 
         /// <summary>`high` over `low`: every field that `high` sets, else the one of `low` (the defines of both are added up). Either may be null.</summary>
         public static ProjectSettings Merge(ProjectSettings? high, ProjectSettings? low)
@@ -73,6 +77,7 @@ namespace fire.Projects
             r.Engine = high?.Engine ?? low?.Engine;
             r.Target = high?.Target ?? low?.Target;
             r.Toolchain = high?.Toolchain ?? low?.Toolchain;
+            r.Linkage = high?.Linkage ?? low?.Linkage;
             r.Output = high?.Output ?? low?.Output;
             r.TypeChecking = high?.TypeChecking ?? low?.TypeChecking;
             r.Arguments = high?.Arguments ?? low?.Arguments;
