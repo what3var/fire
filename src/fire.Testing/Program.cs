@@ -6692,7 +6692,10 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         print(words.length)
         """, new[] { "2", "7", "6", "2", "destroyed: Access to a destroyed array.", "after delete: Access to a destroyed array.", "len: Access to a destroyed array.", "9", "matrix gone", "5", "free r2", "end", "free kept", "last", "done", "5", "3", "8", "3" }, new[] { VmExecutionMode.Debug, VmExecutionMode.Release });
 
-    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): Feld von this, Property, Return gewinnt, Ausnahme, Setter, normale Methode unveraendert", """
+    // Ownership in property accessors (SPEC 2.2). Release also reads the destroyed objects (DestroyedException); #performance checks nothing there
+    // (SPEC 2.5: undefined, natively a read of freed memory) - its run leaves those reads out, the order of the destructors shows the same ownership.
+    // (Not Debug: it adds warnings for the fields that outlive their object.)
+    const string accessorOwnership = """
         class Item {
             string n
             construct(string n) { this.n = n }
@@ -6764,7 +6767,14 @@ Console.WriteLine("=== VM-Optimierungen: Value, Stack, Inline-Caches (Regression
         h.Method()
         try { print(h.cache.n) } catch (DestroyedException e) { print("method destroyed") }
         print("end")
-        """, new[] { "field: 1 True True inner", "ret: False True", "retfield: False retfield", "prop: 2 True prop", "peer: 3 True peer", "auto: 4 True auto", "destroy nested", "nested: 5", "nested destroyed", "caught boom True throws", "array: 3 42", "make: True made 7", "forward: True fwd 8", "finally: False", "fin: False fin", "outside: False", "destroy outside", "outside destroyed", "destroy method", "method destroyed", "end", "destroy peer", "destroy auto", "destroy fwd 8", "destroy field", "destroy inner", "destroy prop", "destroy throws", "destroy made 7", "destroy ret", "destroy retfield", "destroy fin" }, new[] { VmExecutionMode.Release, VmExecutionMode.Performance });
+        """;
+    string[] accessorExpected = new[] { "field: 1 True True inner", "ret: False True", "retfield: False retfield", "prop: 2 True prop", "peer: 3 True peer", "auto: 4 True auto", "destroy nested", "nested: 5", "nested destroyed", "caught boom True throws", "array: 3 42", "make: True made 7", "forward: True fwd 8", "finally: False", "fin: False fin", "outside: False", "destroy outside", "outside destroyed", "destroy method", "method destroyed", "end", "destroy peer", "destroy auto", "destroy fwd 8", "destroy field", "destroy inner", "destroy prop", "destroy throws", "destroy made 7", "destroy ret", "destroy retfield", "destroy fin" };
+    string[] accessorDeadReads = { "try { print(h.node.child.n) } catch (DestroyedException e) { print(\"nested destroyed\") }", "try { print(h.slot.n) } catch (DestroyedException e) { print(\"outside destroyed\") }", "try { print(h.cache.n) } catch (DestroyedException e) { print(\"method destroyed\") }" };
+    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): Feld von this, Property, Return gewinnt, Ausnahme, Setter, normale Methode unveraendert",
+        accessorOwnership, accessorExpected, new[] { VmExecutionMode.Release });
+    CheckPerf("Ownership in Property-Accessoren (SPEC 2.2): dasselbe ohne Zugriffe auf zerstoerte Objekte (#performance prueft sie nicht)",
+        accessorDeadReads.Aggregate(accessorOwnership, (text, read) => text.Replace(read, "")),
+        accessorExpected.Where(l => !l.EndsWith(" destroyed")).ToArray(), new[] { VmExecutionMode.Performance });
 
     CheckPerf("Objekte: Ownership und Destruktor pro Schleifendurchlauf", """
         class D { int id; construct(int id) { this.id = id } destruct() { print("d" + this.id) } }
