@@ -24391,16 +24391,16 @@ else
             var c = new Counter()
             fire {
                 for (var i = 0; i < 5; i++) { Sleep(10ms); c.Add() }
-                done = done + 1
+                sync global { done = done + 1 }   // (both threads count: the update must not race)
             }
             fire {
                 for (var i = 0; i < 5; i++) { Sleep(7); c.Add() }
-                done = done + 1
+                sync global { done = done + 1 }   // (both threads count: the update must not race)
             }
             // the main program sleeps and meanwhile serves the sections of the threads
             Sleep(600ms)
-            print("after sleep: " + done + " " + c.n)
             while (done < 2) { Sleep(5ms) }
+            print("after sleep: " + done + " " + c.n)   // (printed once both are done: under load 600 ms may not be enough)
             print("n = " + c.n)
             """),
         ("Threads: terminate beendet Sleep sofort", """
