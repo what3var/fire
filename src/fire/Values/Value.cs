@@ -669,11 +669,11 @@ namespace fire.Values
         /// and marks the result with the new Width.</summary>
         /// <summary>`x!int[8]`, `x!byte`, `x!float[32]` (OpCode.ConvertWidth): the value as a number of that kind (like `!int`/`!float`, also from a char)
         /// cut to the width - an int in two's complement (`300!int[8]` is 44, `200!int[8]` is -56), `unsigned` keeps 0..2^bits-1 (`byte`: `300!byte` is 44,
-        /// `-1!byte` is 255); a float is rounded to float32 (64 leaves it).</summary>
+        /// `-1!byte` is 255); a float is rounded to float32, to IEEE half precision (16) or to FP8 E4M3 (8), see <see cref="RoundFloatToWidth"/> (64 leaves it).</summary>
         public Value ConvertWidth(int bits, bool toFloat, bool unsigned)
         {
             var number = CoerceType(toFloat ? ValueKind.Float : ValueKind.Int);
-            if (toFloat) return bits == 32 ? MakeFloat((float)number._floatValue, number.Unit, NumericWidth.W32) : MakeFloat(number._floatValue, number.Unit);
+            if (toFloat) return bits is 8 or 16 or 32 ? MakeFloat(RoundFloatToWidth(number._floatValue, bits), number.Unit, (NumericWidth)bits) : MakeFloat(number._floatValue, number.Unit);
             if (bits >= 64) return MakeInt(number._intValue, number.Unit);
             long mask = (1L << bits) - 1, raw = number._intValue & mask;
             if (!unsigned && (raw & (1L << (bits - 1))) != 0) raw -= 1L << bits;
@@ -699,9 +699,7 @@ namespace fire.Values
                 double truncated = width switch
                 {
                     NumericWidth.W64 => _floatValue,
-                    NumericWidth.W32 => (float)_floatValue,
-                    NumericWidth.W16 => (double)(Half)_floatValue,
-                    NumericWidth.W8 => Minifloat8ToDouble(Minifloat8FromDouble(_floatValue)),
+                    NumericWidth.W32 or NumericWidth.W16 or NumericWidth.W8 => RoundFloatToWidth(_floatValue, (int)width),
                     _ => _floatValue,
                 };
                 return MakeFloat(truncated, Unit, width);
@@ -710,33 +708,26 @@ namespace fire.Values
             throw new InvalidOperationException($"TruncateTo is only valid for int/float, not {Kind}.");
         }
 
-        // 8-Bit-Minifloat: 1 Vorzeichen- + 4 Exponenten- (Bias 7) + 3 Mantissenbits
-        // ("E4M3"-artig). Bewusst simple, dokumentierte Wahl - siehe NumericWidth.
-        private static byte Minifloat8FromDouble(double value)
+        /// <summary>A float rounded to a small float format (round to nearest, ties to even) - the native runtime does exactly the same (roundFloatToWidth in
+        /// fire_rt.h): 32 = IEEE binary32; 16 = IEEE binary16 (half precision: 5 exponent bits, 10 mantissa bits, largest value 65504, subnormals down to
+        /// 2^-24, a larger value becomes infinity); 8 = FP8 E4M3 (OCP 8-bit floating point, "E4M3FN": 4 exponent bits with bias 7, 3 mantissa bits, largest
+        /// value 448, subnormals down to 2^-9, no infinity - a larger value and infinity saturate to +-448, NaN stays NaN). The result is the stored value as a
+        /// double.</summary>
+        public static double RoundFloatToWidth(double value, int bits)
         {
-            if (double.IsNaN(value)) return 0x7F;
-            int sign = value < 0 ? 1 : 0;
+            if (bits == 32) return (float)value;
+            int mantissaBits = bits == 16 ? 10 : 3, minExponent = bits == 16 ? -14 : -6;
+            double max = bits == 16 ? 65504.0 : 448.0;
+            if (double.IsNaN(value) || value == 0) return value;
             double abs = Math.Abs(value);
-            if (abs == 0) return (byte)(sign << 7);
-
-            int exp = (int)Math.Floor(Math.Log2(abs));
-            double mantissaF = abs / Math.Pow(2, exp) - 1.0;
-            exp += 7; // Bias
-            if (exp <= 0) return (byte)(sign << 7); // Underflow -> 0
-            if (exp >= 15) return (byte)((sign << 7) | (0xF << 3) | 0x7); // Overflow -> largest value
-
-            int mantissa = (int)Math.Round(mantissaF * 8) & 0x7;
-            return (byte)((sign << 7) | (exp << 3) | mantissa);
-        }
-
-        private static double Minifloat8ToDouble(byte bits)
-        {
-            int sign = (bits >> 7) & 1;
-            int exp = (bits >> 3) & 0xF;
-            int mantissa = bits & 0x7;
-            if (exp == 0 && mantissa == 0) return sign == 1 ? -0.0 : 0.0;
-            double value = (1.0 + mantissa / 8.0) * Math.Pow(2, exp - 7);
-            return sign == 1 ? -value : value;
+            if (double.IsInfinity(abs)) return bits == 16 ? value : Math.CopySign(max, value);
+            int exponent = Math.Max(Math.ILogB(abs), minExponent);
+            double quantum = Math.ScaleB(1.0, exponent - mantissaBits);     // the distance between two neighbours at this exponent (a power of two: exact)
+            double steps = abs / quantum, whole = Math.Floor(steps), rest = steps - whole;
+            if (rest > 0.5 || rest == 0.5 && whole % 2 == 1) whole += 1;
+            double rounded = whole * quantum;
+            if (rounded > max) rounded = bits == 16 ? double.PositiveInfinity : max;
+            return Math.CopySign(rounded, value);
         }
 
         /// <summary>Structural equality for '=='/'!=' - works across kinds

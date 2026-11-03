@@ -1199,14 +1199,36 @@ FIRE_FN Value coerceType(Value v, uint8_t target) {
     return fireError("ArgumentException", text);
 }
 
-/* `x!int[8]`, `x!byte`, `x!float[32]` (Value.ConvertWidth): the number cut to the width - an int in two's complement, `isUnsigned` keeps 0..2^bits-1, a float
- * rounded to float32. */
+/* A float rounded to a small float format, round to nearest, ties to even (exactly as Value.RoundFloatToWidth): 32 = IEEE binary32, 16 = IEEE binary16
+ * (half precision, largest value 65504, a larger value becomes infinity), 8 = FP8 E4M3 (OCP "E4M3FN": bias 7, 3 mantissa bits, largest value 448, no
+ * infinity - a larger value and infinity saturate to +-448, NaN stays NaN). Every step is exact in double arithmetic (scaling by powers of two). */
+FIRE_FN double roundFloatToWidth(double value, int bits) {
+    int mantissaBits = bits == 16 ? 10 : 3, minExponent = bits == 16 ? -14 : -6, exponent;
+    double max = bits == 16 ? 65504.0 : 448.0, a, quantum, steps, whole, rest, rounded;
+    if (bits == 32) return (double)(float)value;
+    if (isnan(value) || value == 0) return value;
+    a = fabs(value);
+    if (isinf(a)) return bits == 16 ? value : copysign(max, value);
+    exponent = ilogb(a);
+    if (exponent < minExponent) exponent = minExponent;
+    quantum = ldexp(1.0, exponent - mantissaBits);
+    steps = a / quantum;
+    whole = floor(steps);
+    rest = steps - whole;
+    if (rest > 0.5 || (rest == 0.5 && fmod(whole, 2.0) == 1.0)) whole += 1;
+    rounded = whole * quantum;
+    if (rounded > max) rounded = bits == 16 ? (double)INFINITY : max;
+    return copysign(rounded, value);
+}
+
+/* `x!int[8]`, `x!byte`, `x!float[32]`, `x!float[16]` (Value.ConvertWidth): the number cut to the width - an int in two's complement, `isUnsigned` keeps
+ * 0..2^bits-1, a float rounded to float32, half precision or FP8 E4M3 (roundFloatToWidth). */
 FIRE_FN Value convertWidth(Value v, int bits, bool toFloat, bool isUnsigned) {
     Value n = coerceType(v, toFloat ? K_Float : K_Int);
     uint64_t mask, raw;
     int64_t r;
     if (n.kind != (toFloat ? K_Float : K_Int)) return n;   /* (the error of coerceType) */
-    if (toFloat) return bits == 32 ? Float((Real)(float)n.f, n.unit) : n;
+    if (toFloat) return bits < 64 ? Float((Real)roundFloatToWidth((double)n.f, bits), n.unit) : n;
     if (bits >= 64) return n;
     mask = (1ull << bits) - 1;
     raw = (uint64_t)n.i & mask;

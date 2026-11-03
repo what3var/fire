@@ -178,7 +178,8 @@ A unit after the name (`int length : mm`) or at the type (`float:m width`) fixes
 - The return type of a method and a property can have a unit too: `float:m Length()` converts its result into metres.
 
 A declaration can also name a **combined unit**: units joined by `*` and `/`, each with an optional power - `m/s`, `km/h`, `m/s^2`, `kg*m/s^2`,
-`m^2`. Everything after a `/` divides.
+`m^2`. Everything after a `/` divides. It may stand after the name (`float v : m/s`) or at the type (`float:m/s v`), also at the return type of a
+method or a property (`float:km/h Speed()`): the returned value is converted and checked like a value stored in a variable of that unit.
 
 ```fire
 float speed : km/h = 10m / 1s
@@ -187,6 +188,14 @@ float g : m/s^2 = 9.81m / 1s / 1s
 print(g)                        // 9.81m/s^2
 float area : m^2 = 2m * 3m
 print(area)                     // 6m^2
+
+class Run {
+    float:m dist
+    float:s time
+    construct(float:km d, float:min t) { dist = d; time = t }
+    float:km/h Speed() { return dist / time }
+}
+print(new Run(10km, 48min).Speed())   // 12.5km/h
 ```
 
 ```fire

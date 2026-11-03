@@ -140,13 +140,15 @@ print(66.4!char)        // B (rounded)
 | `int`, `float` | `int`, `float`, `char` (its code), `bool`, `undefined` (`0`) |
 | `char` | `int` (the code), `float` (rounded), `undefined` (`'\0'`) |
 | `int[8]`, `int[16]`, `int[32]`, `int[64]`, `byte` | like `int`, then cut to the width (see [Bit widths](#bit-widths)) |
-| `float[32]`, `float[64]` | like `float`; `float[32]` rounds to single precision |
+| `float[8]`, `float[16]`, `float[32]`, `float[64]` | like `float`, then rounded to the width (see [Bit widths](#bit-widths)) |
 | a class or interface | an object of that class or of a derived class, `undefined` - see below |
 
 ### Casting objects
 
 `value!ClassName` tells the compiler "I know this is a `ClassName`": the result has that type, so its members can be used. At run time the cast
-is checked: an object of another class throws an `ArgumentException`. `undefined` passes unchanged.
+is checked: an object of another class throws an `ArgumentException`. `undefined` passes unchanged. A cast that can never succeed - the static type
+of the value and the target are two classes of which neither derives from the other, or a class and an interface that neither the class nor any class
+derived from it implements - is reported by the type checker (`TC013`, a warning in lax mode, an error in strict mode).
 
 A class in a namespace is written with it: `value!Shop.Item` (inside `namespace Shop` also `value!Item`, and `value!Deep.Thing` for a namespace
 nested in it). After the class name a dot goes on with a member of the result: `value!Dog.Bark()` calls `Bark` - a name before the dot that is a
@@ -204,7 +206,7 @@ print(small + medium)
 
 The width says how the value is stored natively and how it is marshalled to native functions, and every assignment cuts the value to it: a
 variable, a parameter or a field declared `int[8]` wraps an `int` in two's complement, `byte` keeps `0`...`255`, `float[32]` rounds a `float` to
-single precision. Only a number of the declared kind is cut (an `int[8]` that gets a `float` or a text keeps it as it is; the type checker
+single precision, `float[16]` and `float[8]` to the small float formats below. Only a number of the declared kind is cut (an `int[8]` that gets a `float` or a text keeps it as it is; the type checker
 reports that). A byte buffer (`new byte[n]`) cuts its elements to 8 bits as well.
 
 ```fire
@@ -216,6 +218,28 @@ byte b = 300
 print(b)                // 44
 class Calc { static int Narrow(int[16] x) { return x } }
 print(Calc.Narrow(70000))   // 4464
+```
+
+The small floats round to the nearest value they can hold (a tie goes to the even neighbour), and `print` shows the value that is stored:
+
+| Width | Format | Largest value | Smallest value above 0 | Too large |
+|---|---|---|---|---|
+| `float[32]` | IEEE 754 single precision | about `3.4e38` | about `1.4e-45` | `Infinity` |
+| `float[16]` | IEEE 754 half precision (5 exponent bits, 10 mantissa bits) | `65504` | `2^-24` (about `6e-8`) | `Infinity` |
+| `float[8]` | FP8 E4M3 (OCP 8-bit float: 4 exponent bits, 3 mantissa bits) | `448` | `2^-9` (`0.001953125`) | saturates to `448` |
+
+`float[8]` has no infinity: a larger value (and `Infinity`) becomes `448` (`-448` for a negative one); `NaN` stays `NaN`.
+
+```fire
+float[16] h = 0.1
+print(h)                // 0.0999755859375
+h = 70000.0
+print(h)                // Infinity
+float[8] q = 0.1
+print(q)                // 0.1015625
+q = 1000.0
+print(q)                // 448
+print(300.7!float[8])   // 288
 ```
 
 A conversion with `!` cuts a value to a width explicitly - `int[N]` is signed (two's complement), `byte` is unsigned:

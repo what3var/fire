@@ -422,6 +422,39 @@ static class TypeTests
             Check("Benannte Argumente: auch beim Konstruktor (TC011)", Run(decl + "var o = new C(open: true)") is var ctor && ctor.Contains("ERROR TC011"), ctor);
         }
 
+        // `x!Dog` where x can never be a Dog: TC013 (a warning in lax mode, an error in strict mode); possible casts, interfaces a subclass joins, `any` pass
+        {
+            string decl = """
+                interface IAnimal { string Name() }
+                interface IPet { }
+                interface IRobot { }
+                class Animal { }
+                class Dog : Animal, IAnimal { string Name() { return "Rex" } }
+                class Puppy : Dog, IPet { }
+                class Cat : Animal { }
+                class Car { }
+
+                """;
+            Check("Cast: unverwandte Klassen sind TC013 (lax eine Warnung, das Programm laeuft)", Run(decl + "Cat c = undefined\nprint(c!Dog)") is var unrelated && unrelated == "TC013|undefined", unrelated);
+            Check("Cast: strikt ist TC013 ein Fehler", Run(decl + "Cat c = new Cat()\nprint(c!Dog)", TypeCheckMode.Strict) is var strict && strict == "|ERROR TC013", strict);
+            Check("Cast: Klasse zu Interface, das keine Unterklasse hat, und zurueck", Run(decl + "Car car = undefined\nprint(car!IAnimal)\nIAnimal a = undefined\nprint(a!Cat)\nprint(a!Car)") is var iface
+                && iface == "TC013 TC013 TC013|undefined\nundefined\nundefined", iface);
+            Check("Cast: moegliche Casts ohne Befund (Ab- und Aufwaerts, Interface ueber Unterklasse, zwei Interfaces, any, Zahlen)", Run(decl + """
+                Animal a = new Puppy()
+                print(a!Dog.Name())
+                Dog d = new Puppy()
+                print(d!Animal)
+                print(d!IPet)
+                IAnimal ia = d
+                print(ia!Dog.Name() + " " + ia!Puppy)
+                IAnimal none = undefined
+                print(none!IRobot)
+                any x = new Cat()
+                try { print(x!Dog) } catch (ArgumentException e) { print("any") }
+                print(65!char)
+                """) is var fine && fine == "|Rex\n<object Puppy>\n<object Puppy>\nRex <object Puppy>\nundefined\nany\nA", fine);
+        }
+
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode
         foreach (var import in new[] { "io", "filesystem", "dialogs", "ui.docking", "json", "circuits", "circuits.ui", "net", "process", "hash", "compression", "http", "tls", "audio", "usb", "tracker", "wifi", "gpio", "i2c", "spi", "random", "time", "linq", "reflection", "ui", "scene3d", "graphics", "windows", "devices" })
         {

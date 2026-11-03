@@ -1121,20 +1121,40 @@ namespace fire.Compiler
             }
         }
 
-        /// <summary>The unit written at a number type (`float:m Len()`, `float:any m Width()`): a ':' followed by the unit and then the name of the declaration
-        /// (or `[]`); anything else is left alone.</summary>
+        /// <summary>The unit written at a number type (`float:m Len()`, `float:m/s Speed()`, `float:any m Width()`): a ':' followed by the unit (also a
+        /// combined one) and then the name of the declaration (or `[]`); anything else is left alone.</summary>
         private string? ParseUnitAtType()
         {
             if (!Check(TokenType.Colon) || PeekAt(1).Type != TokenType.Identifier && !IsCustomUnitWordAt(1)) return null;
             bool NameAt(int offset) => PeekAt(offset).Type == TokenType.Identifier || PeekAt(offset).Type == TokenType.LBracket && PeekAt(offset + 1).Type == TokenType.RBracket;
-            if (PeekAt(1).Lexeme == "any" && (PeekAt(2).Type == TokenType.Identifier || IsCustomUnitWordAt(2)) && NameAt(3))
+            if (PeekAt(1).Lexeme == "any" && (PeekAt(2).Type == TokenType.Identifier || IsCustomUnitWordAt(2)))
             {
-                Advance(); Advance();
-                return "any " + Advance().Lexeme;
+                int anyLength = CombinedUnitLengthAt(2);
+                if (NameAt(2 + anyLength))
+                {
+                    Advance(); Advance();
+                    return "any " + Advance().Lexeme + ParseCombinedUnitTail();
+                }
             }
-            if (!NameAt(2)) return null;
+            if (!NameAt(1 + CombinedUnitLengthAt(1))) return null;
             Advance();
-            return Advance().Lexeme;
+            return Advance().Lexeme + ParseCombinedUnitTail();
+        }
+
+        /// <summary>The number of tokens of a (combined) unit at the token <paramref name="offset"/> ahead, as ParseCombinedUnitTail reads it after the first
+        /// unit name: `m` 1, `m/s` 3, `m/s^2` 5.</summary>
+        private int CombinedUnitLengthAt(int offset)
+        {
+            int i = offset + 1;
+            while (true)
+            {
+                var token = PeekAt(i);
+                if (token.NewlineBefore && _bracketDepth == 0) return i - offset;
+                if (token.Type == TokenType.Caret && PeekAt(i + 1).Type == TokenType.IntLiteral && !PeekAt(i + 1).NewlineBefore) { i += 2; continue; }
+                if ((token.Type is TokenType.Slash or TokenType.Star) && (PeekAt(i + 1).Type == TokenType.Identifier || IsCustomUnitWordAt(i + 1)) && !PeekAt(i + 1).NewlineBefore)
+                { i += 2; continue; }
+                return i - offset;
+            }
         }
 
         /// <summary>"Bare" declaration without `var` (C-like): `Type name[ranks]
@@ -2875,9 +2895,10 @@ namespace fire.Compiler
             if (methodTypeParamNames.Count > 0)
                 throw Error("A generic type parameter head '<...>' must be followed by a parameter list '(...)'", Peek());
 
-            // `float Width : mm { get ... set ... }`: a property with a unit (a unit name, or `any`/`any m`, then the body)
+            // `float Width : mm { get ... set ... }`: a property with a unit (a unit name - also a combined one like `m/s` -, or `any`/`any m`, then the body)
             if (type != null && Check(TokenType.Colon) && PeekAt(1).Type == TokenType.Identifier
-                && (PeekAt(2).Type == TokenType.LBrace || PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && PeekAt(3).Type == TokenType.LBrace))
+                && (PeekAt(1 + CombinedUnitLengthAt(1)).Type == TokenType.LBrace
+                    || PeekAt(1).Lexeme == "any" && PeekAt(2).Type == TokenType.Identifier && PeekAt(2 + CombinedUnitLengthAt(2)).Type == TokenType.LBrace))
             {
                 Advance(); // ':'
                 type = type with { Unit = ParseUnitName() };
@@ -3598,8 +3619,8 @@ namespace fire.Compiler
                         var widthTok = Advance();
                         Advance();
                         int width = Convert.ToInt32(widthTok.LiteralValue);
-                        bool ok = typeKw == TokenType.KwInt ? width is 8 or 16 or 32 or 64 : width is 32 or 64;
-                        if (!ok) throw Error(typeKw == TokenType.KwInt ? "A bit width after '!int' is 8, 16, 32 or 64" : "A bit width after '!float' is 32 or 64", widthTok);
+                        bool ok = width is 8 or 16 or 32 or 64;
+                        if (!ok) throw Error(typeKw == TokenType.KwInt ? "A bit width after '!int' is 8, 16, 32 or 64" : "A bit width after '!float' is 8, 16, 32 or 64", widthTok);
                         expr = new TypeCoerceExpr(line, expr, typeKw, Width: width);
                         continue;
                     }

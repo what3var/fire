@@ -172,10 +172,9 @@ namespace fire.Compiler
             /// <summary>Places (operands of `Jump`) that jump into the `finally` block and are still waiting for its address.</summary>
             public readonly List<int> FinallyJumpPatches = new();
 
-            /// <summary>Per jump kind (`break`/`continue`) that leaves the `try`: the places (operands of `PushJump`) waiting for the address of the exit piece
-            /// behind the `finally` (see CompileTry).</summary>
-            public readonly List<int> BreakStubPatches = new();
-            public readonly List<int> ContinueStubPatches = new();
+            /// <summary>Per jump (`break`/`continue` and the number of loop levels it still has to leave outside the `try`) that leaves the `try`: the places
+            /// (operands of `PushJump`) waiting for the address of the exit piece behind the `finally` (see CompileTry).</summary>
+            public readonly SortedDictionary<(bool IsBreak, int Levels), List<int>> StubPatches = new();
         }
 
         private readonly List<TryCompileContext> _tryStack = new();
@@ -185,18 +184,21 @@ namespace fire.Compiler
         /// below the return value and shift the caller's operands.</summary>
         private readonly List<int> _residents = new();
 
-        /// <summary>Common compilation for `break`/`continue`: leaves from the inside out all `try`/`catch` blocks that have been open since the loop body
-        /// (close scopes, unregister handlers or discard the catch state). If it meets a `try` WITH `finally` on the way, it does not jump on by itself,
-        /// but into its `finally` (completion "jump"); after the `finally` an exit piece behind the `try` continues the journey (it is
-        /// the same `break`/`continue`, only translated from outside the `try`, see CompileTry). Otherwise it closes the remaining scopes and jumps - the
-        /// address goes into the matching list (Break-/ContinueJumpPatchAddrs) and is resolved when the loop is compiled completely.</summary>
+        /// <summary>Common compilation for `break`/`continue` (also `break 2`/`continue 3`): leaves from the inside out all `try`/`catch` blocks that have
+        /// been open since the body of the target loop (close scopes, unregister handlers or discard the catch state) and the inner loops (the enumerators of
+        /// `foreach` loops on the stack). If it meets a `try` WITH `finally` on the way, it does not jump on by itself, but into its `finally` (completion
+        /// "jump"); after the `finally` an exit piece behind the `try` continues the journey (it is the same jump, only translated from outside the `try`
+        /// with the loops inside the `try` already left, see CompileTry) - so every `finally` on the way runs, innermost first. Otherwise it closes the
+        /// remaining scopes and jumps - the address goes into the matching list (Break-/ContinueJumpPatchAddrs) of the target loop and is resolved when
+        /// that loop is compiled completely.</summary>
         private void CompileBreakOrContinue(bool isBreak, int levels = 1)
         {
-            if (levels > 1) { CompileMultiLevelBreakOrContinue(isBreak, levels); return; }
-            var ctx = _loopStack.Peek();
+            var loops = _loopStack.Take(levels).ToList();      // innermost first
+            var target = loops[^1];
+            int targetLoopCount = _loopStack.Count - levels + 1;   // loops open inside the target loop's body: count >= this
             int depth = _currentScopeDepth;      // actual depth at the jump; `_currentScopeDepth` itself stays unchanged
 
-            for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount == _loopStack.Count; k--)
+            for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount >= targetLoopCount; k--)
             {
                 var t = _tryStack[k];
                 int innerTarget = t.Phase == TryPhase.Catch ? t.OuterDepth + 1 : t.OuterDepth; // in the catch part first up to the catch scope
@@ -218,9 +220,15 @@ namespace fire.Compiler
 
                 if (t.Stmt.Finally != null)
                 {
-                    // into the finally of this `try`: afterwards it continues at the exit piece behind the `try`
+                    // the loops inside this `try` are left here: their enumerators go, so the `finally` finds the stack as the `try` found it
+                    int inside = _loopStack.Count - t.LoopCount;
+                    foreach (var inner in loops.Take(inside))
+                        if (inner.IsForeach) _chunk.EmitOp(OpCode.Pop);
+                    // into the finally of this `try`: afterwards it continues at the exit piece behind the `try` (with the levels that remain outside it)
                     _chunk.EmitOp(OpCode.PushJump);
-                    (isBreak ? t.BreakStubPatches : t.ContinueStubPatches).Add(_chunk.Here);
+                    var key = (isBreak, levels - inside);
+                    if (!t.StubPatches.TryGetValue(key, out var patches)) t.StubPatches[key] = patches = new List<int>();
+                    patches.Add(_chunk.Here);
                     _chunk.EmitU16(0);
                     _chunk.EmitOp(OpCode.Jump);
                     t.FinallyJumpPatches.Add(_chunk.Here);
@@ -229,40 +237,6 @@ namespace fire.Compiler
                 }
             }
 
-            for (; depth > ctx.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
-            _chunk.EmitOp(OpCode.Jump);
-            (isBreak ? ctx.BreakJumpPatchAddrs : ctx.ContinueJumpPatchAddrs).Add(_chunk.Here);
-            _chunk.EmitU16(0);
-        }
-
-        /// <summary>`break 2` / `continue 3`: leaves the inner loops (their scopes, the enumerators of `foreach` loops on the stack, `try` blocks
-        /// without `finally`) and jumps to the end (break) or the next round (continue) of the loop `levels` out. Leaving a `try` with a
-        /// `finally` that way is not supported yet.</summary>
-        private void CompileMultiLevelBreakOrContinue(bool isBreak, int levels)
-        {
-            var loops = _loopStack.Take(levels).ToList();      // innermost first
-            var target = loops[^1];
-            int targetLoopCount = _loopStack.Count - levels + 1;   // loops open inside the target loop's body: count >= this
-            int depth = _currentScopeDepth;
-            for (int k = _tryStack.Count - 1; k >= 0 && _tryStack[k].LoopCount >= targetLoopCount; k--)
-            {
-                var t = _tryStack[k];
-                if (t.Stmt.Finally != null)
-                    throw new NotSupportedException($"'{(isBreak ? "break" : "continue")} {levels}' cannot leave a 'try' with 'finally' yet - leave the loops one by one");
-                int innerTarget = t.Phase == TryPhase.Catch ? t.OuterDepth + 1 : t.OuterDepth;
-                for (; depth > innerTarget; depth--) _chunk.EmitOp(OpCode.ExitScope);
-                if (t.Phase == TryPhase.Try)
-                {
-                    _chunk.EmitOp(OpCode.UnregisterHandler);
-                }
-                else
-                {
-                    _chunk.EmitOp(OpCode.LoadLocal); _chunk.EmitU16(0); _chunk.EmitU16(0);
-                    _chunk.EmitOp(OpCode.ClearPendingResume);
-                    _chunk.EmitOp(OpCode.ExitScope);
-                    depth--;
-                }
-            }
             for (; depth > target.ScopeDepthAtLoopBodyStart; depth--) _chunk.EmitOp(OpCode.ExitScope);
             // the enumerators of the inner `foreach` loops lie on the stack above the target loop's own values
             foreach (var inner in loops.Take(levels - 1))
@@ -820,10 +794,11 @@ namespace fire.Compiler
                     string n = baseRef.TypeArgCount == 0 ? baseRef.ResolveBaseName(Known) : GenericClassNames.ResolveNewTarget(baseRef, baseRef.TypeArgCount, Known);
                     if (interfaceNames.Contains(n)) { rc.Interfaces.Add(n); continue; }
                     if (n != "Exception" && !classes.TryGetValue(n, out _)) continue;
-                    if (n == "Exception" && !classes.ContainsKey(n)) break; // no RuntimeClass available (a program without the prelude) -> Base stays null
+                    if (n == "Exception" && !classes.ContainsKey(n)) continue; // no RuntimeClass available (a program without the prelude) -> Base stays null
+                    // (the interfaces may follow the base class: `class Puppy : Dog, IPet` - the loop goes on for them)
+                    if (rc.Base != null) continue;
                     rc.Base = classes[n];
                     baseRefOf[rc] = baseRef;
-                    break;
                 }
             }
 
@@ -2221,16 +2196,15 @@ namespace fire.Compiler
 
             // Exit pieces for a `break`/`continue` that ran through this finally: here, behind the `try` (scope depth and `_tryStack` are already
             // right), the same jump continues from outside - via a further `finally` or directly to the target. Normal execution skips them.
-            if (tryContext.BreakStubPatches.Count > 0 || tryContext.ContinueStubPatches.Count > 0)
+            if (tryContext.StubPatches.Count > 0)
             {
                 _chunk.EmitOp(OpCode.Jump);
                 int skipStubs = _chunk.Here;
                 _chunk.EmitU16(0);
-                foreach (var (isBreak, patches) in new[] { (true, tryContext.BreakStubPatches), (false, tryContext.ContinueStubPatches) })
+                foreach (var ((isBreak, levels), patches) in tryContext.StubPatches)
                 {
-                    if (patches.Count == 0) continue;
                     foreach (var addr in patches) _chunk.PatchU16(addr, _chunk.Here);
-                    CompileBreakOrContinue(isBreak);
+                    CompileBreakOrContinue(isBreak, levels);
                 }
                 _chunk.PatchU16(skipStubs, _chunk.Here);
             }
