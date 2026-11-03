@@ -233,10 +233,13 @@ static Value fire_compression_Decompress(Value data, Value format, OwnList* list
     z->ended = 1;
     for (;;) {
         long n;
-        if (cap - len < 65536) {
-            size_t grow = cap ? cap * 2 : 65536 + (size_t)bufOf(data)->length * 3;
-            uint8_t* bigger = (uint8_t*)realloc(all, grow);
-            if (bigger == NULL || grow > 0xFFFFFFF0u) { free(bigger ? bigger : all); fire_inf_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "The result is too large for a buffer."); return Undef(); }
+        /* (the room grows with the result - small steps first, so that a board with little memory is not asked for much more than it needs) */
+        if (cap - len < 4096) {
+            size_t grow = cap ? cap + cap / 2 + 4096 : 4096 + (size_t)bufOf(data)->length * 3;
+            uint8_t* bigger;
+            if (grow > 0xFFFFFFF0u) { free(all); fire_inf_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "The result is too large for a buffer."); return Undef(); }
+            bigger = (uint8_t*)realloc(all, grow);
+            if (bigger == NULL) { free(all); fire_inf_free(z); fire_cmpb_fail(FIRE_CMPB_MEMORY, "Out of memory."); return Undef(); }
             all = bigger;
             cap = grow;
         }

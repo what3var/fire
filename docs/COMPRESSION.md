@@ -84,6 +84,9 @@ Zip64 is written only where a number does not fit, so an archive below 4 GB with
 
 ## Implementation
 
+**Memory.** The compressor keeps a 32 KB window (about 240 KB of state, like zlib). On a small board (ESP-IDF) it takes a 4 KB window (about 40 KB); the output is still
+ordinary Deflate, only a little larger. `FIRE_DEF_WBITS` (9 .. 15) chooses the window. Decompressing always needs the 32 KB window of the format.
+
 `packages/compression/native/fire_cmp_deflate.h` is the engine (C99): the inflater is a state machine that stops at a symbol boundary when its input runs out
 (so a stream can feed it in pieces of any size), decodes Huffman codes through a 10-bit table and checks every code, length, distance and check sum; the
 deflater keeps a 32 KB window with hash chains (the design of zlib, our own code) and writes length-limited Huffman codes. `fire_bridge_compression.h` puts it

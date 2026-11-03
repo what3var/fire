@@ -1368,7 +1368,17 @@ namespace fire.Native
             if (_usesThreads) sb.AppendLine("    fire_threadsInit();   // the locks of the threads, before anything else");
             sb.Append(_initCode);
             sb.AppendLine("}");
-            if (entry.Kind == EntryKind.Function)
+            if (entry.Kind == EntryKind.Function && _target.Native.Platform == "esp32")
+            {
+                // ESP-IDF calls app_main on its main task, whose stack is small (3.5 KB by default): the program runs on a task of its own with a stack that
+                // FIRE_MAIN_STACK_BYTES chooses (bytes, like xTaskCreate of ESP-IDF counts them); app_main returns at once, the task ends with the program
+                sb.AppendLine("#ifndef FIRE_MAIN_STACK_BYTES\n#define FIRE_MAIN_STACK_BYTES 16384\n#endif");
+                sb.AppendLine("static void fire_mainTask(void* arg) {\n    (void)arg;\n    fire_init();\n    fire_main();\n    fflush(stdout);\n    vTaskDelete(NULL);\n}");
+                sb.AppendLine($"{externC}void {entry.Name}(void) {{");
+                sb.AppendLine("    if (xTaskCreate(fire_mainTask, \"fire_main\", FIRE_MAIN_STACK_BYTES, NULL, 1, NULL) != pdPASS) { fire_init(); fire_main(); fflush(stdout); }   // (no memory for the task: on the main task)");
+                sb.AppendLine("}");
+            }
+            else if (entry.Kind == EntryKind.Function)
             {
                 sb.AppendLine($"{externC}void {entry.Name}(void) {{");
                 sb.AppendLine("    fire_init();\n    fire_main();");

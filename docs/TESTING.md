@@ -144,6 +144,7 @@ quickly:
 | Switch | Effect |
 |---|---|
 | `FIRE_TESTS_ONLY=<group>` | only one group: `native` (the native backend: cases against the VM, windows, FreeRTOS, toolchains), `ui` (the UI library in the VM), `types`, `syntax`, `diagnostics`, `projects`, `testing`, `windows`, `dialogs`, `docking`, `circuiteditor`, `scene3d`, `snippets`, `notes`, `packer` (the packer and the wasm target: with Emscripten on the PATH a program under node and a window in headless Chromium) |
+| ESP32 | with `IDF_PATH` set (ESP-IDF) the native group builds a program for the ESP32 and runs it in Espressif's QEMU (`FIRE_TESTS_FILTER="ESP32 (ESP-IDF"`; the project is kept in ~/.cache/fire-tests/esp32) |
 | `FIRE_TESTS_FILTER=<text>` | of the checks listed as cases (the native cases, the native window and device cases, the UI checks) only those whose name contains the text; several texts separated by `\|`, case does not matter |
 | `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
 | `FIRE_TEST_CCACHE=0` | no compiler cache |

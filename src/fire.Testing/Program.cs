@@ -25464,6 +25464,53 @@ else
             var out7 = new StringWriter();
             int code7 = CommandLineRunner.Run(new[] { "build", bareScript, "-t", TargetProfile.Host.Name, "-o", Path.Combine(bare, "host.exe") }, out7, new StringWriter());
             CheckNat("build: das eigene Ziel (-t " + TargetProfile.Host.Name + ") bleibt ohne --engine bei der VM", code7 == 0 && !out7.ToString().Contains("(native"), out7.ToString());
+            // ---- a real ESP32 build (ESP-IDF: IDF_PATH, its export.sh) that runs on the ESP32 emulator of Espressif (qemu-system-xtensa, `idf_tools.py install qemu-xtensa`):
+            // the program uses the runtime, exceptions, a fire thread (a FreeRTOS task), hash and Deflate (with the small window of a board) and prints like the VM.
+            // The ESP-IDF project stays in ~/.cache/fire-tests/esp32 (the first build takes minutes, later ones only the program).
+            string esp32Title = "ESP32 (ESP-IDF, QEMU): das Programm baut ohne Warnung und laeuft auf dem Emulator wie in der VM";
+            string? idfPath = Environment.GetEnvironmentVariable("IDF_PATH");
+            if (!TestSelected(esp32Title)) { }
+            else if (idfPath == null || !File.Exists(Path.Combine(idfPath, "export.sh"))) Console.WriteLine("(ESP32 mit ESP-IDF: uebersprungen - IDF_PATH fehlt)");
+            else
+            {
+                const string espSource = "#import \"time\"\n#import \"hash\"\n#import \"compression\"\nclass Counter {\n    private int count = 0\n    int Next() { this.count++; return this.count }\n}\n"
+                    + "var c = new Counter()\nvar l = new List<string>()\nfor (var i = 0; i < 3; i++) { l.Add(\"n\" + c.Next()) }\nprint(l[0] + \" \" + l[2])\n"
+                    + "try { var a = [1]; print(a[5]) } catch (IndexOutOfBoundsException e) { print(\"caught\") }\nprint(Hash.Sha256.HexOf(\"abc\").Substring(0, 16))\n"
+                    + "var text = \"\"\nfor (var i = 0; i < 200; i++) { text = text + \"fire \" + (i % 7) + \" \" }\nvar packed = Compression.GZip.Compress(text)\nprint((packed.Length < text.Length) + \" \" + (Compression.GZip.DecompressText(packed) == text))\n"
+                    + "var n = 0\nfire { sync global { n = 42 } }\nwhile (n == 0) { Sleep(1ms) }\nprint(\"thread \" + n)\nprint(\"done\")\n";
+                string espProject = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "fire-tests", "esp32");
+                Directory.CreateDirectory(espProject);
+                File.WriteAllText(Path.Combine(espProject, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nproject(firetest)\n");
+                string espScript = Path.Combine(espProject, "test.fire");
+                File.WriteAllText(espScript, espSource);
+                if (Directory.Exists(Path.Combine(espProject, "main"))) Directory.Delete(Path.Combine(espProject, "main"), true);
+                var espOut = new StringWriter(); var espErr = new StringWriter();
+                int espCode = CommandLineRunner.Run(new[] { "build", espScript, "-t", "esp32", "-o", Path.Combine(espProject, "main") }, espOut, espErr);
+                string shell = $"set -e; . \"{idfPath}/export.sh\" > /dev/null 2>&1; cd \"{espProject}\"; [ -f sdkconfig ] || idf.py set-target esp32 > idf.log 2>&1; idf.py build > idf.log 2>&1 || {{ tail -40 idf.log; exit 1; }}; "
+                    + "grep -c 'warning:' idf.log > warnings.txt || true; cd build; python -m esptool --chip esp32 merge_bin --fill-flash-size 4MB -o ../flash.bin @flash_args > /dev/null; cd ..; "
+                    + "command -v qemu-system-xtensa > /dev/null || { echo NOQEMU; exit 0; }; timeout 30 qemu-system-xtensa -nographic -machine esp32 -m 4M -drive file=flash.bin,if=mtd,format=raw -serial mon:stdio > qemu.log 2>&1 || true; "
+                    + "sed -n '/main_task: Calling app_main/,/^done/p' qemu.log | grep -vE '^(I|W) \\(|main_task' ";
+                string espRun = "";
+                int espExit = -1;
+                if (espCode == 0)
+                {
+                    using var bash = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("bash", new[] { "-c", shell }) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                    var bashErr = bash.StandardError.ReadToEndAsync();
+                    espRun = bash.StandardOutput.ReadToEnd();
+                    bash.WaitForExit();
+                    espExit = bash.ExitCode;
+                    espRun += bashErr.Result;
+                }
+                string warnings = File.Exists(Path.Combine(espProject, "warnings.txt")) ? File.ReadAllText(Path.Combine(espProject, "warnings.txt")).Trim() : "?";
+                if (espRun.Contains("NOQEMU")) CheckNat("ESP32 (ESP-IDF): das Programm baut ohne Warnung (QEMU fehlt: nicht ausgefuehrt)", espCode == 0 && espExit == 0 && warnings == "0", espOut + "\n" + espErr + "\n" + espRun);
+                else
+                {
+                    var vmLines = new List<string>();
+                    RuntimeSession.Build(new[] { espSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+                    string got = string.Join("\n", espRun.Replace("\r", "").Split('\n').Where(line => line.Length > 0));
+                    CheckNat(esp32Title, espCode == 0 && espExit == 0 && warnings == "0" && got == string.Join("\n", vmLines), $"build {espCode}, warnings {warnings}\n  VM:\n{string.Join("\n", vmLines)}\n  ESP32:\n{got}\n{espErr}");
+                }
+            }
         }
 
         // What is not yet translated must be rejected clearly - never translated wrongly
