@@ -45,7 +45,7 @@ is declared twice. Files that are not code - pictures, data, C++ sources - are t
 it is compiled (docs/RESOURCES.md: the path is relative to the file that writes it); the editor copies files in (*Add Resource*) into a folder you choose.
 
 **Natives.** A project with `"native": {}` has C++ natives in its folder `native/` (docs/PACKAGE_NATIVES.md): every `inline Value name(Value a, ...)` in a file there is the fire function
-`__name` (a last parameter `OwnList* list` says that the function allocates its result and returns it). A library project wraps them in classes; programs that reference the library use
+`__name`; with `"native": { "language": "c" }` they are C (C99, the recommended choice - the template *Native Library (C)*), and every `static inline Value name(Value a, ...)` is one (a last parameter `OwnList* list` says that the function allocates its result and returns it). A library project wraps them in classes; programs that reference the library use
 them (in the virtual machine a shared library is built from the C++ for the machine; a native build puts the C++ into the generated file), and the package that is packed carries the C++.
 `native` can also name `sources` (files and patterns, default `native/**`), `platformSources`, `platforms`, `linkLibraries`, `exceptions`, `reset` and `functions` (to say more about a function,
 like `returnsReference`) - the same as in a package. `"discover": false` takes only the named `functions` (no search for `inline Value` functions in the files). `"standard": true` (top
@@ -144,7 +144,8 @@ The templates that ship with fire (folders in `Templates/Project`; yours and tho
 | Empty | the solution only |
 | Terminal | a program for the console: prints `Hello, World!` |
 | Library | a library with a class `Greeter` in `namespace {Name}`; no entry point; a first test in `testing/` (`forge test`) |
-| Native Library | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
+| Native Library (C) | a library with C natives (C99, `"language": "c"`): `native/{name}.h` with an example function, wrapped by a class; a native build needs only a C compiler (also TinyCC) |
+| Native Library (C++) | a library with C++ natives: `native/{name}.hpp` with an example function, wrapped by a class |
 
 The package **fire-windows** (the standard bridge `windows`, installed with fire) brings one more, in the same list marked `From fire-windows ...`:
 
