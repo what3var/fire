@@ -156,8 +156,14 @@ namespace fire.Compiler
 
             var session = new RuntimeSession(linkedProgram.Program);
             
-            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
+            if (linkedProgram.NativeImports.Contains(NativeImports.Graphics) && GraphicsLibrary.Wanted(windowRenderer != null))
             {
+                // the C implementation of graphics and windows (the same as a native build: fire's own display, no SDL) - docs/UI_PLATFORM.md, part 2
+                GraphicsLibrary.Register(natives, linkedProgram.NativeImports.Contains(NativeImports.Windows));
+            }
+            else if (linkedProgram.NativeImports.Contains(NativeImports.Graphics))
+            {
+                PackageHost.GraphicsInC = false;
                 var font = new IntegratedGlyphFont();
                 fbManager = new FramebufferManager();
                 rendererManager = new RendererManager(fbManager, font);

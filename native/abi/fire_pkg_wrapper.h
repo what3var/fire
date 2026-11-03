@@ -25,22 +25,33 @@ bool timeObjTicks(Value v, int64_t* ticks) { (void)v; (void)ticks; return false;
 /* A native of the package as the wrapper calls it: the arguments, and the list of the scope that owns what the call allocates. */
 typedef struct FirePkgFn { const char* name; int arity; Value (*call)(const Value* args, OwnList* list); } FirePkgFn;
 
-/* ---- one call at a time ---- */
+/* ---- one call at a time - but re-entrant on the thread that holds it: a native that calls a lambda back (a window's event) may be called again by it ---- */
 #if defined(_WIN32)
-static SRWLOCK g_pkgLock = SRWLOCK_INIT;
-static void fire_pkgLock(void) { AcquireSRWLockExclusive(&g_pkgLock); }
-static void fire_pkgUnlock(void) { ReleaseSRWLockExclusive(&g_pkgLock); }
+static SRWLOCK g_pkgMutex = SRWLOCK_INIT;
+static void fire_pkgMutexLock(void) { AcquireSRWLockExclusive(&g_pkgMutex); }
+static void fire_pkgMutexUnlock(void) { ReleaseSRWLockExclusive(&g_pkgMutex); }
 typedef DWORD fire_pkgThread;
 static fire_pkgThread fire_pkgSelf(void) { return GetCurrentThreadId(); }
 static int fire_pkgSame(fire_pkgThread a, fire_pkgThread b) { return a == b; }
 #else
-static pthread_mutex_t g_pkgLock = PTHREAD_MUTEX_INITIALIZER;
-static void fire_pkgLock(void) { pthread_mutex_lock(&g_pkgLock); }
-static void fire_pkgUnlock(void) { pthread_mutex_unlock(&g_pkgLock); }
+static pthread_mutex_t g_pkgMutex = PTHREAD_MUTEX_INITIALIZER;
+static void fire_pkgMutexLock(void) { pthread_mutex_lock(&g_pkgMutex); }
+static void fire_pkgMutexUnlock(void) { pthread_mutex_unlock(&g_pkgMutex); }
 typedef pthread_t fire_pkgThread;
 static fire_pkgThread fire_pkgSelf(void) { return pthread_self(); }
 static int fire_pkgSame(fire_pkgThread a, fire_pkgThread b) { return pthread_equal(a, b); }
 #endif
+static volatile int g_pkgDepth = 0;      /* how often the holder took it */
+static fire_pkgThread g_pkgOwner;
+void fire_pkgLock(void) {
+    if (g_pkgDepth > 0 && fire_pkgSame(g_pkgOwner, fire_pkgSelf())) { g_pkgDepth++; return; }
+    fire_pkgMutexLock();
+    g_pkgOwner = fire_pkgSelf();
+    g_pkgDepth = 1;
+}
+void fire_pkgUnlock(void) {
+    if (--g_pkgDepth == 0) fire_pkgMutexUnlock();
+}
 
 /* ---- per thread of the caller: the memory for results (lives until the next call of the same thread; the caller copies it) and the last errors of the
  * bridges (`g_ioError` & co. are plain globals in a library without FIRE_THREADS: they are swapped in and out around each call, which holds the lock) ---- */
@@ -85,6 +96,22 @@ static void* fire_pkgAlloc(FirePkgArena* a, size_t bytes) {
 }
 
 /* ---- fire_val <-> Value ---- */
+static void fire_pkgFromRt(FirePkgArena* arena, Value v, fire_val* out);
+/* The body of a lambda of the VM (FIRE_LAMBDA): the arguments go to the host, which runs it - at once on the VM's thread, else at its next safe point.
+ * (From any thread: the memory of the arguments is an arena of its own, freed when the host has copied them.) */
+static Value fire_pkgHostLambda(Value lam, const Value* args) {
+    FirePkgArena own;
+    fire_val vals[16];
+    uint32_t i, n = lamOf(lam)->nparams;
+    if (g_libraryHost == NULL || (size_t)g_libraryHost->size < offsetof(fire_host, call_lambda) + sizeof g_libraryHost->call_lambda || g_libraryHost->call_lambda == NULL) return Undef();
+    memset(&own, 0, sizeof own);
+    if (n > 16) n = 16;
+    for (i = 0; i < n; i++) fire_pkgFromRt(&own, args[i], &vals[i]);
+    g_libraryHost->call_lambda(lamCaps(lamOf(lam))[0].i, vals, (int32_t)n);
+    for (i = 0; i < own.count; i++) free(own.blocks[i]);
+    free(own.blocks);
+    return Undef();
+}
 static Value fire_pkgToRt(const fire_val* in, OwnList* list) {
     switch (in->kind) {
         case FIRE_UNDEFINED: return Undef();
@@ -112,6 +139,12 @@ static Value fire_pkgToRt(const fire_val* in, OwnList* list) {
             /* by reference: the native reads and writes the bytes of the caller in place (the VM pinned them for the call) */
             Buf* b = allocBufExternal((uint8_t*)in->v.p, (uint32_t)in->length, list);
             return BufV(b);
+        }
+        case FIRE_LAMBDA: {
+            /* a lambda of the VM: a lambda here whose body asks the host to call it (its handle is its one capture) */
+            Lam* l = allocLam((uint32_t)(in->length < 0 ? 0 : in->length), 1, fire_pkgHostLambda, list);
+            lamCaps(l)[0] = Int(in->v.i);
+            return LamV(l);
         }
     }
     fatal("An argument of a package function has an unknown kind.");
@@ -161,18 +194,25 @@ static void fire_pkgFromRt(FirePkgArena* arena, Value v, fire_val* out) {
 
 static int fire_pkgCallEntry(const FirePkgFn* entries, int count, int index, const fire_val* args, int argc, fire_val* result, char* error, int errorSize) {
     jmp_buf jump;
+    jmp_buf* outerJump;
     OwnList list;
     Value values[17];
     FirePkgArena* arena;
     volatile int status = 0;
+    int nested;
     if (index < 0 || index >= count) { if (error && errorSize > 0) snprintf(error, (size_t)errorSize, "unknown function index"); return 1; }
     if (argc != entries[index].arity || argc > 16) { if (error && errorSize > 0) snprintf(error, (size_t)errorSize, "wrong number of arguments"); return 1; }
     fire_pkgLock();
+    /* (a call from a lambda that a native of this library called back: the outer call keeps its error slots and its jump target) */
+    nested = g_pkgDepth > 1;
+    outerJump = g_libraryJump;
     arena = fire_pkgArena();
     fire_pkgArenaClear(arena);
-    g_ioError = arena->io;
-    g_deviceError = arena->device;
-    g_gfxError = arena->gfx;
+    if (!nested) {
+        g_ioError = arena->io;
+        g_deviceError = arena->device;
+        g_gfxError = arena->gfx;
+    }
     ownListInit(&list, poolMark(), NULL);
     g_libraryJump = &jump;
     if (setjmp(jump) == 0) {
@@ -188,13 +228,28 @@ static int fire_pkgCallEntry(const FirePkgFn* entries, int count, int index, con
         }
         status = g_libraryError.kind == 2 ? 2 : 1;
     }
-    g_libraryJump = NULL;
+    g_libraryJump = outerJump;
     leave(&list);
-    arena->io = g_ioError;
-    arena->device = g_deviceError;
-    arena->gfx = g_gfxError;
+    if (!nested) {
+        arena->io = g_ioError;
+        arena->device = g_deviceError;
+        arena->gfx = g_gfxError;
+    }
     fire_pkgUnlock();
     return status;
+}
+
+/* fire_pkg_service: what the library asked the VM for (hostRequest), on the VM's thread - its services run like a call (the lock, a jump target for an error). */
+static void fire_pkgService(void) {
+    jmp_buf jump;
+    jmp_buf* outerJump;
+    fire_pkgLock();
+    outerJump = g_libraryJump;
+    g_libraryJump = &jump;
+    if (setjmp(jump) == 0) hostServe();
+    else fprintf(stderr, "(fire package library: %s)\n", g_libraryError.text);
+    g_libraryJump = outerJump;
+    fire_pkgUnlock();
 }
 
 #endif

@@ -652,7 +652,7 @@ namespace fire.Runtime
         // and executed by the main program - at `sync globals` or (without `#nosync`) automatically at a safe point. This way they see the real
         // globals, and there is no concurrent access to them.
 
-        private readonly record struct InboundCallback(LambdaValue Lambda, Value[] Args, Action<string>? OnUnhandled);
+        private readonly record struct InboundCallback(LambdaValue? Lambda, Value[] Args, Action<string>? OnUnhandled, Action? HostAction = null);
         private readonly System.Collections.Concurrent.ConcurrentQueue<InboundCallback> _inbound = new();
         private volatile bool _acceptingCallbacks;
 
@@ -670,15 +670,33 @@ namespace fire.Runtime
             return true;
         }
 
+        /// <summary>Accepts an action of the host from ANY thread (a library's services: fire_host.request_service) and runs it at this VM's next safe point, on its thread.
+        /// false if the VM is not (any longer) running.</summary>
+        public bool PostHostAction(Action action)
+        {
+            if (!_acceptingCallbacks) return false;
+            _inbound.Enqueue(new InboundCallback(null, Array.Empty<Value>(), null, action));
+            RaiseSignal();
+            FireRuntime.WakeWaitingOwner();
+            return true;
+        }
+
         private int DrainInbound()
         {
             int handled = 0;
             while (_inbound.TryDequeue(out var callback))
             {
                 handled++;
+                if (callback.HostAction != null)
+                {
+                    try { callback.HostAction(); }
+                    catch (Exception ex) { Console.Error.WriteLine("(host: " + ex.Message + ")"); }
+                    if (_stopExecutionRequested) break;
+                    continue;
+                }
                 try
                 {
-                    var error = CallLambdaInline(callback.Lambda, callback.Args);
+                    var error = CallLambdaInline(callback.Lambda!, callback.Args);
                     if (error != null) callback.OnUnhandled?.Invoke(new UncaughtScriptException(error).Message);
                 }
                 catch (Exception ex)

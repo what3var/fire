@@ -8,7 +8,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "fire_platform_c.h"
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)   /* (a library for the VM: a package with a thread of its own) */
 #include <pthread.h>
 #endif
 
@@ -53,7 +53,7 @@ FIRE_NORETURN static inline void fire_plat_exit(int code) {
 #endif
 }
 
-#ifdef FIRE_THREADS
+#if defined(FIRE_THREADS) || defined(FIRE_LIBRARY)
 typedef struct { pthread_mutex_t m; } fire_mutex;
 typedef struct { pthread_cond_t c; } fire_cond;
 typedef struct fire_thread { pthread_t t; } fire_thread;

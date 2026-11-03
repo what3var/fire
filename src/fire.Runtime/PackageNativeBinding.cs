@@ -7,7 +7,8 @@ namespace fire.Runtime
     /// <summary>
     /// Binds the natives of packages (docs/PACKAGE_NATIVES.md) to the virtual machine: they are C++ built into a shared library with the C ABI of native/abi/fire_pkg_abi.h.
     /// A native is registered as a function that loads its library on first use (by path, or - in a packed program - by name from the payload), copies the arguments into
-    /// the plain data of the ABI, calls the entry point and copies the result back. Numbers, text, byte buffers and arrays of these cross; objects, lambdas and pointers do not.
+    /// the plain data of the ABI, calls the entry point and copies the result back. Numbers, text, byte buffers and arrays of these cross; a lambda crosses as a handle the
+    /// library calls back (PackageHost: call_lambda); objects and pointers do not.
     /// </summary>
     public static class PackageNativeBinding
     {
@@ -17,8 +18,8 @@ namespace fire.Runtime
         [StructLayout(LayoutKind.Sequential)]
         private struct FireVal { public int Kind; public int Length; public long Bits; }
 
-        private const int KindUndefined = 0, KindBool = 1, KindInt = 2, KindFloat = 3, KindChar = 4, KindString = 5, KindArray = 6, KindBuffer = 7;
-        private static readonly int ValSize = Marshal.SizeOf<FireVal>();
+        private const int KindUndefined = 0, KindBool = 1, KindInt = 2, KindFloat = 3, KindChar = 4, KindString = 5, KindArray = 6, KindBuffer = 7, KindLambda = 8;
+        internal static readonly int ValSize = Marshal.SizeOf<FireVal>();
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CallFn(int index, IntPtr args, int argc, IntPtr result, IntPtr error, int errorSize);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int IntFn();
@@ -31,7 +32,9 @@ namespace fire.Runtime
         {
             public CallFn Call = null!;
             public Action? Reset;
+            public Action? Service;
             public Dictionary<string, (int Index, int Arity)> Functions = new();
+            public IntPtr Handle;
             public string? Failure;
         }
 
@@ -75,6 +78,21 @@ namespace fire.Runtime
             return Invoke(name, where.File, args, where.Locate);
         }
 
+        /// <summary>The libraries asked for their services (fire_host.request_service): every loaded library that has `fire_pkg_service` runs them - on the VM's thread, at a safe point.</summary>
+        internal static void ServiceLibraries()
+        {
+            Library[] loaded;
+            lock (Lock) loaded = Libraries.Values.Where(l => l.Service != null).ToArray();
+            foreach (var lib in loaded) lib.Service!();
+        }
+
+        /// <summary>An export of the library `file` beyond the ABI (the host's own functions of a library: the framebuffers of the graphics library), loading it if needed; IntPtr.Zero: none.</summary>
+        public static IntPtr Export(string file, Func<string, string?>? locate, string name)
+        {
+            var lib = Load(file, locate);
+            return lib.Failure == null && lib.Handle != IntPtr.Zero && NativeLibrary.TryGetExport(lib.Handle, name, out var fn) ? fn : IntPtr.Zero;
+        }
+
         /// <summary>A program has ended: every loaded library forgets what the program left behind (`fire_pkg_reset`: open streams, ...).</summary>
         internal static void ResetLibraries()
         {
@@ -107,6 +125,10 @@ namespace fire.Runtime
                         Marshal.GetDelegateForFunctionPointer<SetHostFn>(setHost)(PackageHost.Block);
                     if (NativeLibrary.TryGetExport(handle, "fire_pkg_reset", out var reset))
                         lib.Reset = Marshal.GetDelegateForFunctionPointer<VoidFn>(reset).Invoke;
+                    // what the library asks the VM for at a safe point (fire_host.request_service: a thread of its own, the windows' managers)
+                    if (NativeLibrary.TryGetExport(handle, "fire_pkg_service", out var service))
+                        lib.Service = Marshal.GetDelegateForFunctionPointer<VoidFn>(service).Invoke;
+                    lib.Handle = handle;
                     for (int i = 0, n = count(); i < n; i++)
                         if (Marshal.PtrToStringAnsi(nameOf(i)) is { } fn) lib.Functions[fn] = (i, arityOf(i));
                 }
@@ -121,6 +143,7 @@ namespace fire.Runtime
         private static Value Invoke(string name, string file, Value[] args, Func<string, string?>? locate)
         {
             var lib = Load(file, locate);
+            PackageHost.NoteCaller();
             if (lib.Failure != null)
                 throw new InvalidOperationException($"The native function '{name}' of a package cannot run in the virtual machine: its library '{file}' could not be loaded ({lib.Failure}). " +
                     "The compiler builds it from the C++ source of the package with a C++ compiler (g++, clang++ or cl): install one, or use a native build.");
@@ -260,15 +283,19 @@ namespace fire.Runtime
                     fv.Kind = KindBuffer; fv.Length = buf.Length; fv.Bits = pin.AddrOfPinnedObject().ToInt64();
                     break;
                 }
+                case ValueKind.Lambda when v.AsLambda() is LambdaValue lambda:
+                    // a handle the library calls back (PackageHost.CallLambda); it stays until the program ends
+                    fv.Kind = KindLambda; fv.Length = lambda.Proto.ParamCount; fv.Bits = PackageHost.RegisterLambda(lambda);
+                    break;
                 default:
-                    throw new InvalidOperationException($"An argument of the native function '{function}' is {v.Kind}: only numbers, bool, char, text, byte buffers and arrays of these can be passed to a package's native.");
+                    throw new InvalidOperationException($"An argument of the native function '{function}' is {v.Kind}: only numbers, bool, char, text, byte buffers, lambdas and arrays of these can be passed to a package's native.");
             }
             Marshal.WriteInt32(dest, fv.Kind);
             Marshal.WriteInt32(dest, 4, fv.Length);
             Marshal.WriteInt64(dest, 8, fv.Bits);
         }
 
-        private static Value FromNative(IntPtr src)
+        internal static Value FromNative(IntPtr src)
         {
             var fv = new FireVal { Kind = Marshal.ReadInt32(src), Length = Marshal.ReadInt32(src, 4), Bits = Marshal.ReadInt64(src, 8) };
             switch (fv.Kind)

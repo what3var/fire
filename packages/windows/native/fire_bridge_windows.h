@@ -20,7 +20,8 @@ typedef struct FireWinCallback { int type; Value lam; } FireWinCallback;
 /* A window manager's thread needs the fire threads (the GIL, host services; the generator switches them on when the program can start one), not the
  * browser. Where windows may only live on the main thread (macOS; FIRE_WINDOW_COOPERATIVE elsewhere, for tests) the thread only gives the beat: it asks the
  * program for a cycle about 60 times a second, and the program opens, pumps and shows the windows itself (FIRE_WINDOW_COOP). */
-#if defined(FIRE_THREADS) && !defined(__EMSCRIPTEN__)
+#if (defined(FIRE_THREADS) || defined(FIRE_LIBRARY)) && !defined(__EMSCRIPTEN__)
+/* (in the library for the VM the threads are those of the platform; the program's cycles and the holds on its end are the VM's: fire_rt.h's host services) */
 #define FIRE_WINDOW_THREADS 1
 #if defined(__APPLE__) || defined(FIRE_WINDOW_COOPERATIVE)
 #define FIRE_WINDOW_COOP 1
