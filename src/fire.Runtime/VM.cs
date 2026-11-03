@@ -299,6 +299,8 @@ namespace fire.Runtime
                 (_currentThreadVm ?? throw new InvalidOperationException("A unit with conversion functions can only be converted while the program runs."))
                     .CallUnitConverter(className, method, value);
             fire.Standard.JsonMethods.Host = () => _currentThreadVm;
+            fire.Standard.LibraryMethods.Implementation = args =>
+                (_currentThreadVm ?? throw new InvalidOperationException("Native libraries can only be loaded while the program runs.")).LibraryCall(args);
         }
 
         /// <summary>Calls a conversion function of a unit (`coerce to`/`coerce from`) nested on this VM, like a getter or setter: in the middle of the

@@ -147,6 +147,7 @@ namespace fire.Bytecode
             Register(fire.Standard.JsonMethods.NativeName, fire.Standard.JsonMethods.Call);
             var env = environment ?? new fire.Standard.ProgramEnvironment();
             Register(fire.Standard.EnvironmentMethods.NativeName, args => fire.Standard.EnvironmentMethods.Call(args, env));
+            Register(fire.Standard.LibraryMethods.NativeName, fire.Standard.LibraryMethods.Call);
         }
     }
 }

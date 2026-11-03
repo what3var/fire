@@ -95,16 +95,18 @@ namespace fire.Compiler
             // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
             target = WithRequestedSdl(target, toolchain);
             Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
-            // linkage "shared" (ROADMAP 9, phase C): Linux and macOS with gcc or clang; elsewhere (Windows, the boards, wasm, TinyCC) it is "static" and the log says so
+            // linkage "shared" (ROADMAP 9, phase C): Linux and macOS with gcc or clang, Windows with MinGW (gcc, clang; DLLs - also built on Linux); elsewhere (msvc, the
+            // boards, wasm, TinyCC) it is "static" and the log says so
             if (string.Equals(config.Linkage, "shared", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
             {
-                bool can = toolchain.EffectiveKind is "gcc" or "clang" && target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == TargetProfile.Host.Name;
+                bool can = toolchain.EffectiveKind is "gcc" or "clang" && (target.Native.Platform == "posix" && (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS()) && target.Name == TargetProfile.Host.Name
+                    || target.Native.Platform == "windows");
                 if (can) return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl, shared: true);
                 config.Linkage = "static";
                 NativeBuildResult r;
                 try { r = Build(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths); }
                 finally { config.Linkage = "shared"; }
-                return r with { Log = $"Linkage \"shared\" is only available on Linux and macOS with gcc or clang (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".\n" + r.Log };
+                return r with { Log = $"Linkage \"shared\" is only available on Linux and macOS with gcc or clang and on Windows with MinGW (not for the target '{target.Name}' with '{toolchain.EffectiveKind}'): built with linkage \"static\".\n" + r.Log };
             }
             if (string.Equals(config.Linkage, "static", StringComparison.OrdinalIgnoreCase) && toolchain.EffectiveKind is not ("files" or "custom"))
                 return BuildStatic(sources, config, target, toolchain, output, mode, floatWidth, keepSources, basePath, defines, plan, sourcePaths, chooseSdl);
@@ -213,17 +215,32 @@ namespace fire.Compiler
                 string exe = Path.GetFullPath(output);
                 if (ToolchainProvider.RequireLibraries(toolchain, cFile) is { } missingLibrary)
                     return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
-                string ext = shared ? (OperatingSystem.IsMacOS() ? ".dylib" : ".so") : toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
+                // (Windows: DLLs - the runtime one of them, see CppGenerator "linkage shared on Windows")
+                bool dll = shared && target.Native.Platform == "windows";
+                string ext = dll ? ".dll" : shared ? (OperatingSystem.IsMacOS() ? ".dylib" : ".so") : toolchain.EffectiveKind == "msvc" ? ".lib" : ".a";
                 // the libraries that are not in the cache, side by side: each its C (the generator wrote it there) to an object file, that into the library, then its interface
                 var missing = staticPlan.Libraries.Where(l => !l.Cached).ToList();
                 var logs = new string[missing.Count];
                 var failed = new string?[missing.Count];
+                var objects = new string[missing.Count];
                 Parallel.For(0, missing.Count, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount) }, i =>
                 {
                     var library = missing[i];
                     var libraryLog = new StringBuilder();
                     var libraryWatch = Stopwatch.StartNew();
                     string obj = Path.Combine(workDir, library.LibraryName + (toolchain.EffectiveKind == "msvc" ? ".obj" : ".o"));
+                    if (dll)
+                    {
+                        // a DLL: here only its object file - it is linked below, after the DLLs it imports from (in the order of the plan)
+                        var compileDll = CompilerCommand(toolchain, target, library.CFile, workDir, obj, language: "c", compileOnly: true);
+                        libraryLog.AppendLine($"{compileDll.Executable} {compileDll.Arguments}");
+                        var (dllOk, dllText) = Run(compileDll.Executable, compileDll.Arguments, workDir);
+                        libraryLog.Append(dllText);
+                        if (!dllOk) failed[i] = $"The C compiler reported errors in the library module '{library.Module}' (see the build log).";
+                        else { objects[i] = obj; libraryLog.AppendLine($"module {library.Module}: compiled in {libraryWatch.ElapsedMilliseconds} ms"); }
+                        logs[i] = libraryLog.ToString();
+                        return;
+                    }
                     if (shared)
                     {
                         // a shared library: position-independent, its own name inside (the program asks for it by that name next to itself); what it needs of the program
@@ -262,6 +279,8 @@ namespace fire.Compiler
                 foreach (var text in logs) log.Append(text);
                 if (failed.FirstOrDefault(f => f != null) is { } failure)
                     return new NativeBuildResult(false, exe, log.ToString(), new[] { new Diagnostic(0, failure, DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
+                if (dll && LinkDlls(toolchain, target, staticPlan.Libraries, missing, objects, cFile, workDir, log) is { } dllFailure)
+                    return new NativeBuildResult(false, exe, log.ToString(), new[] { new Diagnostic(0, dllFailure, DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
                 // (a library before the ones it needs: the linker resolves in that order)
                 var libraries = staticPlan.Libraries.AsEnumerable().Reverse().Select(l => l.LibraryFile(ext)).ToList();
                 bool linkedOk = true;
@@ -271,7 +290,7 @@ namespace fire.Compiler
                 {
                     var (exeName, arguments) = commands[c];
                     // (shared: the program exports what the libraries need of it, and finds them next to itself)
-                    if (shared && c == commands.Count - 1) arguments += OperatingSystem.IsMacOS() ? " -Wl,-export_dynamic -Wl,-rpath,@executable_path" : " -rdynamic -Wl,-rpath,$ORIGIN";
+                    if (shared && !dll && c == commands.Count - 1) arguments += OperatingSystem.IsMacOS() ? " -Wl,-export_dynamic -Wl,-rpath,@executable_path" : " -rdynamic -Wl,-rpath,$ORIGIN";
                     log.AppendLine($"{exeName} {arguments}");
                     var (stepOk, text) = Run(exeName, arguments, workDir);
                     log.Append(text);
@@ -296,6 +315,41 @@ namespace fire.Compiler
             {
                 if (!keepSources) try { Directory.Delete(workDir, true); } catch (IOException) { }
             }
+        }
+
+        /// <summary>Linkage "shared" on Windows: links the DLLs that are not in the cache from their object files, in the order of the plan (the runtime first, a module after
+        /// the modules it needs): each against the DLLs before it (a DLL imports by file name), exporting everything, with the system libraries of the program. Null: done.</summary>
+        private static string? LinkDlls(ToolchainDef toolchain, TargetProfile target, IReadOnlyList<StaticLibrary> all, List<StaticLibrary> missing, string[] objects, string programFile, string workDir, StringBuilder log)
+        {
+            string cc = ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler;
+            var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
+            foreach (string line in File.ReadLines(programFile))
+                if (line.StartsWith("// fire-link: ", StringComparison.Ordinal) && "-l" + line.Substring("// fire-link: ".Length).Trim() is var flag && !libs.Contains(flag)) libs.Add(flag);
+            var before = new List<string>();
+            foreach (var library in all)
+            {
+                string file = library.LibraryFile(".dll");
+                int i = missing.IndexOf(library);
+                if (i >= 0)
+                {
+                    var watch = Stopwatch.StartNew();
+                    // (a DLL carries the name it is linked as: the others import it by that name - its own name in a folder of its own, then moved)
+                    string tempDir = Path.Combine(library.Directory, Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(tempDir);
+                    string temp = Path.Combine(tempDir, Path.GetFileName(file));
+                    string arguments = $"-shared -static-libgcc -o \"{temp}\" \"{objects[i]}\"{string.Concat(before.Select(b => $" \"{b}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
+                    log.AppendLine($"{cc} {arguments}");
+                    var (ok, text) = Run(cc, arguments, workDir);
+                    log.Append(text);
+                    if (!ok || !File.Exists(temp)) { try { Directory.Delete(tempDir, true); } catch (IOException) { } return $"The DLL of the module '{library.Module}' could not be linked (see the build log)."; }
+                    File.Move(temp, file, true);
+                    try { Directory.Delete(tempDir, true); } catch (IOException) { }
+                    CppGenerator.CommitStatic(library);
+                    log.AppendLine($"module {library.Module}: built in {watch.ElapsedMilliseconds} ms -> {file}");
+                }
+                before.Add(file);
+            }
+            return null;
         }
 
         /// <summary>Linkage "static" with a toolchain that only writes files (an ESP-IDF component, docs/NATIVE_BACKEND.md): the program's C and the C of every library module

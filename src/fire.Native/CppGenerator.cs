@@ -128,6 +128,8 @@ namespace fire.Native
         private readonly List<Unit> _units = new() { Unit.Unitless };
         /// <summary>The program calls the methods of `string` (`"5mm".ToFloat()` needs the table of the units a text may name, g_textUnits).</summary>
         private bool _usesStringCall;
+        /// <summary>The code calls `__LibCall` (the class `Library`): the program generates the thunks of the signatures.</summary>
+        private bool _usesLibCall;
         /// <summary>The units with conversion functions: the hidden class -> its index in the tables of the runtime (g_unitTo/g_unitFrom) and the functions.</summary>
         private readonly Dictionary<string, (int Index, Func To, Func From)> _unitConverters = new();
         private readonly List<string> _strings = new();
@@ -1043,6 +1045,74 @@ namespace fire.Native
         // ---- Access modifiers (SPEC 5.7): checked in Debug and Release, not in Performance ----------------------------------------------
         private readonly SortedDictionary<string, string> _externDecls = new();
 
+        /// <summary>`Library.Get` (fire.Standard.LibraryMethods): a thunk for every text of the program that is a C signature - it converts the arguments like an `extern`
+        /// call, calls the address with that C type and converts the result - and `fire_libThunk`, which finds the thunk of a signature (without white space). A signature
+        /// that is made at run time has none: Get says so.</summary>
+        private string LibraryThunks()
+        {
+            var signatures = new SortedSet<string>(StringComparer.Ordinal);
+            var seen = new HashSet<Chunk>(ReferenceEqualityComparer.Instance);
+            void Scan(Chunk? chunk)
+            {
+                if (chunk == null || !seen.Add(chunk)) return;
+                foreach (var c in chunk.Constants)
+                    if (c.Kind == ValueKind.String && c.AsString() is { Length: > 2 and < 200 } text && text.Contains('(') && LibraryMethods.Parse(text) != null)
+                        signatures.Add(LibraryMethods.Normalize(text));
+                foreach (var fn in chunk.Functions) Scan(fn.Chunk);
+            }
+            void ScanProto(FunctionProto p) { Scan(p.Chunk); foreach (var dp in p.ParamDefaults) if (dp != null) ScanProto(dp); }
+            Scan(_program.Program.TopLevel);
+            foreach (var rc in _program.Program.Classes.Values)
+            {
+                foreach (var protos in rc.Methods.Values) foreach (var p in protos) ScanProto(p);
+                foreach (var p in rc.Constructors.Values) ScanProto(p);
+                foreach (var p in rc.ExtraConstructors) ScanProto(p);
+                if (rc.Destructor != null) ScanProto(rc.Destructor);
+            }
+            var sb = new StringBuilder();
+            sb.AppendLine("/* ---- Library.Get: the thunks of the C signatures that are texts of the program ---- */");
+            int k = 0;
+            var rows = new List<string>();
+            foreach (var sig in signatures)
+            {
+                var (ret, ps) = LibraryMethods.Parse(sig)!.Value;
+                var locals = new StringBuilder();
+                var frees = new List<string>();
+                var args = new List<string>();
+                var ctypes = new List<string>();
+                for (int i = 0; i < ps.Count; i++)
+                {
+                    var t = ps[i];
+                    string ctype = ExternCType(t, sig);
+                    ctypes.Add(ctype);
+                    if (t.PointerDepth > 0) { locals.Append($"ExternPtr p{i}; externPtrInit(&p{i}, a[{i}]); "); args.Add($"p{i}.raw"); frees.Insert(0, $"externPtrFree(&p{i}); "); }
+                    else if (t.BaseName == "string") { locals.Append($"ExternString p{i}; externStringInit(&p{i}, a[{i}]); "); args.Add($"p{i}.p"); frees.Insert(0, $"externStringFree(&p{i}); "); }
+                    else if (t.BaseName == "float") args.Add($"({ctype})externFloat(a[{i}])");
+                    else args.Add($"({ctype})externInt(a[{i}])");
+                }
+                string retC = ret == null ? "void" : ExternCType(ret, sig);
+                string call = $"(({retC} (*)({(ctypes.Count == 0 ? "void" : string.Join(", ", ctypes))}))fn_)({string.Join(", ", args)})";
+                string body = ret == null ? $"{call}; {string.Concat(frees)}return Undef();"
+                    : $"{retC} r_ = {call}; Value v_; {string.Concat(frees)}v_ = " + (ret.PointerDepth > 0 ? "Int((int64_t)(intptr_t)r_)" : ret.BaseName switch
+                    {
+                        "bool" => "Bool(r_ != 0)",
+                        "float" => "Float((Real)r_)",
+                        "char" => "Char((uint32_t)r_)",
+                        "string" => "externResultString(r_, list)",
+                        _ => "Int((int64_t)r_)",
+                    }) + "; return v_;";
+                sb.AppendLine($"static Value fire_lt_{k}(void* fn_, const Value* a, OwnList* list) {{ (void)a; (void)list; {locals}{body} }}   /* {sig} */");
+                rows.Add($"{{{CString(sig)}, fire_lt_{k}}}");
+                k++;
+            }
+            sb.AppendLine("FireLibThunk fire_libThunk(const char* signature) {");
+            sb.AppendLine($"    static const struct {{ const char* sig; FireLibThunk fn; }} k[] = {{{string.Join(", ", rows.Append("{NULL, NULL}"))}}};");
+            sb.AppendLine($"    int i;\n    for (i = 0; i < {rows.Count}; i++) if (strcmp(k[i].sig, signature) == 0) return k[i].fn;");
+            sb.AppendLine("    return NULL;");
+            sb.AppendLine("}");
+            return sb.ToString();
+        }
+
         /// <summary>The C type of a parameter or result of an `extern` function: `int` is as wide as the declaration says (`int[32]`), else as wide as a pointer.</summary>
         private static string ExternCType(TypeRef t, string name)
         {
@@ -1294,6 +1364,7 @@ namespace fire.Native
             if (_separate && dimNames.Count > SeparateDims) throw new NativeNotSupportedException($"the program uses {dimNames.Count} dimensions of units; with linkage \"static\" at most {SeparateDims}");
             sb.AppendLine($"#define FIRE_NDIMS {(_separate ? SeparateDims : Math.Max(1, dimNames.Count))}");
             foreach (var include in _target.Native.Includes) sb.AppendLine($"#include <{include}>");
+            if (_dll) sb.AppendLine("#define FIRE_DLL 1   // linkage \"shared\" on Windows: the runtime and the modules are DLLs (fire_rt.h)");
             // what both files say first (the natives in C++ see the same configuration of the runtime as the program)
             string prelude = sb.ToString();
             // the system libraries that packages need on this platform (`linkLibraries`): the build links them
@@ -1320,14 +1391,17 @@ namespace fire.Native
                 var head = new StringBuilder(prelude);
                 if (_usesWindows && _target.Native.Platform is "posix" or "windows" && SdlOfTarget() is int headSdl) { head.AppendLine("#define FIRE_DISPLAY_SDL 1"); if (headSdl == 3) head.AppendLine("#define FIRE_SDL3 1"); }
                 head.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
+                if (_dll) head.Append(DllHead());
                 head.AppendLine("#include \"fire_rt.h\"");
                 head.AppendLine("#if defined(__GNUC__) || defined(__clang__)\n#pragma GCC diagnostic ignored \"-Wunused-but-set-variable\"\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif");
                 foreach (string line in CPlatformHeaderDefines(_target.Native.Platform)) head.AppendLine(line);
                 if (_usesJson) head.AppendLine("#include \"fire_json.h\"");
                 _libraryHead = head.ToString();
+                if (_dll) _runtimeKey = RuntimeDllKey(_libraryHead, _toolchainStamp);
             }
             sb.AppendLine($"#define FIRE_PLATFORM_HEADER \"platform/{_target.Native.Platform}/fire_platform.h\"");
-            sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the runtime's global state lives in this file");
+            if (!_dll) sb.AppendLine("#define FIRE_RT_IMPLEMENTATION 1   // the runtime's global state lives in this file");
+            else sb.AppendLine("// (the runtime's global state lives in its DLL)");
             sb.AppendLine("#include \"fire_rt.h\"");
             // (generated code: a slot that is written and not read again, or a helper nothing calls, is no mistake)
             sb.AppendLine("#if defined(__GNUC__) || defined(__clang__)");
@@ -1561,6 +1635,7 @@ namespace fire.Native
             if (!Modular) sb.AppendLine(IndexHelpers());
             if (_usesJson) sb.AppendLine(JsonCode());
             sb.AppendLine(RuntimeHooks());
+            if (_usesLibCall || Modular) sb.Append(LibraryThunks());
 
             foreach (var f in _funcs) sb.AppendLine(f.Code);
             sb.AppendLine(main.Code);
@@ -1579,6 +1654,7 @@ namespace fire.Native
             }
             if (DebugBuild) sb.Append(DebugProgramTables());
             sb.Append(SharedLibraryChecks());
+            sb.Append(HostTable(sb.ToString()));
             sb.AppendLine("static void fire_init(void) {");
             sb.Append(SharedLibraryCheckCalls());   // (linkage "shared": the libraries first)
             if (_usesThreads) sb.AppendLine("    fire_threadsInit();   // the locks of the threads, before anything else");
@@ -3833,6 +3909,16 @@ namespace fire.Native
                         _callsJsonEngine = true;
                         int first = d - argc;
                         E($"{S(first)} = fire_jsonCall({argc}, {S(first)}, {S(first + 1)}, {(argc == 3 ? S(first + 2) : "Undef()")}, {JsonCallType(f)}, &{OwnerList()});");
+                        Check();
+                        d = first + 1; SetR(first, true); return Next();
+                    }
+                    if (native == LibraryMethods.NativeName && argc is >= 2 and <= 4)
+                    {
+                        // `Library` (fire_rt.h libCall; the calls through the thunks of the program, see LibraryThunks)
+                        _usesLibCall = true;
+                        foreach (var cls in new[] { "ArgumentException", "LibraryException" }) if (!_errorClasses.Contains(cls)) _errorClasses.Add(cls);
+                        int first = d - argc;
+                        E($"{S(first)} = libCall({S(first)}, {S(first + 1)}, {(argc > 2 ? S(first + 2) : "Undef()")}, {(argc > 3 ? S(first + 3) : "Undef()")}, &{OwnerList()});");
                         Check();
                         d = first + 1; SetR(first, true); return Next();
                     }
