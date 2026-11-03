@@ -230,5 +230,7 @@ static inline void* fire_plat_dlsym(void* library, const char* name) {
     memcpy(&r, &p, sizeof r);
     return r;
 }
+/* why the last fire_plat_dlopen failed: not known (a plugin's DLL finds what it needs of the program when it is registered, fire_link) */
+static inline const char* fire_plat_dlerror(void) { return NULL; }
 
 #endif

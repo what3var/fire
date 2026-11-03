@@ -88,9 +88,12 @@ static inline void fire_plat_envEach(void (*fn)(const char* name, size_t nameLen
 #include <dlfcn.h>
 static inline void* fire_plat_dlopen(const char* path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 static inline void* fire_plat_dlsym(void* library, const char* name) { return library ? dlsym(library, name) : NULL; }
+/* why the last fire_plat_dlopen failed (NULL: not known) */
+static inline const char* fire_plat_dlerror(void) { return dlerror(); }
 #else
 static inline void* fire_plat_dlopen(const char* path) { (void)path; return NULL; }
 static inline void* fire_plat_dlsym(void* library, const char* name) { (void)library; (void)name; return NULL; }
+static inline const char* fire_plat_dlerror(void) { return NULL; }
 #endif
 
 #endif

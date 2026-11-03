@@ -90,8 +90,13 @@ print(d.Name())                            // my driver
 - A plugin may have **natives in C++** (the folder `native/` of its project, a package in C++): they are built into the plugin's library (and, for the VM,
   into a library next to its `.fireplugin` file). They are the plugin's own copy: their state is not the program's, even when the program imports the same
   package. An exception they throw (`fireError`) must be a class the program knows (`ArgumentException`, a class of a library).
-- Not yet: plugins with `class extends` of a class of the program or a library; in a native program JSON
-  (`Json.Serialize`) of objects of a plugin's classes and named arguments in calls of the program on them; debugging a plugin.
+- **Natives in C** (a package or library with `"language": "c"`) are the program's: a plugin calls the program's, which has every native in C of the
+  packages it imports ready for plugins. One the program does not have (it was built with an older version of the package) is a `LibraryException`
+  ("The plugin library '...' cannot be loaded: it calls the native function 'x' in C, which this program does not export to plugins ...").
+- **JSON** of objects of a plugin's classes works like that of the program's (`Json.Serialize`, `Json.Deserialize` with `"$type": "Kit.Settings"`, fields
+  with the plugin's units) when the program imports `json`.
+- Not yet: plugins with `class extends` of a class of the program or a library; named arguments in calls of a native program on objects of a plugin;
+  in a native program `Reflect.Get`/`Set` of a plugin's own fields unless the plugin imports `reflection` itself; debugging a plugin.
 
 ### Functions that can fail: `try Name(...)`
 

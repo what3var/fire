@@ -6,6 +6,7 @@ using fire.Runtime;
 using fire.Values;
 using fire.Ast;
 using fire.Package.Manager;
+using fire.Standard;
 
 namespace fire.Native
 {
@@ -136,6 +137,14 @@ namespace fire.Native
                 for (var c = rc; c != null; c = c.Base) if (c.Destructor != null) GetFunc(c.Destructor, FuncKind.Dtor);
                 if (rc.FindMethodWithAccess("ToString", 0).Proto is { ParamCount: 0, IsStatic: false } toString) GetFunc(toString, FuncKind.Method);
             }
+            // (the program has JSON: the units and type arguments of the fields of its classes are in its tables)
+            if (_usesJson)
+                foreach (var name in _self.Classes)
+                    foreach (var field in JsonMethods.JsonFieldsOf(FindClass(name)))
+                    {
+                        UnitId(field.Unit);
+                        foreach (var arg in JsonTypeArgTexts(field.Type)) TArgRef(arg);
+                    }
             // the static initialisers of its classes (the compiler puts them at the start of a program's top level): what they make belongs to the global scope
             _pluginStaticInits.Clear();
             foreach (var rc in _program.Program.Classes.Values.Where(c => _self.Classes.Contains(c.Name)))
@@ -183,7 +192,10 @@ namespace fire.Native
                 rf = "kPlRf";
                 sb.AppendLine($"static const void* const kPlRf[] = {{{string.Join(", ", _self.Classes.Select(n => "&" + RfRowName(ModId, FindClass(n))))}}};");
             }
+            var jsonFixups = new List<string>();
+            string json = PluginJson(sb, jsonFixups);
             sb.AppendLine("static void fire_pl_init(void) {");
+            foreach (var fixup in jsonFixups) sb.AppendLine("    " + fixup);   // (the units of the fields JSON reads: the program's, known now)
             foreach (var (cls, field, init) in _pluginStaticInits)
                 sb.AppendLine($"    {{ Value r = {init.Name}(Undef()); {(_usesExceptions ? "if (g_unwind.active) return; " : "")}adopt(r, g_globalOwn); {StaticFieldVar(cls, field)} = r; retain(r); }}   // {cls}.{field}");
             sb.AppendLine("}");
@@ -195,7 +207,7 @@ namespace fire.Native
             }
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}extern const FirePlugin fire_module_info;");
             sb.AppendLine($"{(_dll ? "__declspec(dllexport) " : "")}const FirePlugin fire_module_info = {{FIRE_PLUGIN_FORMAT, {CString(_self.Name)}, \"{PluginHeadMark}\", {_pluginDeps.Count}u, {depNames}, {depAbis}, "
-                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}}};");
+                + $"{_self.Classes.Count}u, kPlClasses, &fire_mb_{id}, fire_pl_fill, {_enumList.Count}u, {enums}, fire_enums_{id}, {_excTypes.Count}u, kPlExc, fire_exct_{id}, {rf}, fire_pl_init, {link}, {units}, {json}}};");
             return sb.ToString();
         }
 

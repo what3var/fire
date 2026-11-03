@@ -1918,7 +1918,9 @@ FIRE_RT_FN Value fireProbeRawGet(Value obj, const char* name, OwnList* list);
  * runs (`Library.Load`). Its file exports `fire_module_info`; the runtime checks it against the program (the configuration of the runtime, the interfaces of the
  * modules it needs - ROADMAP 9.6: the hashes only), gives its classes the next ids (g_classDescs grows), maps its catch types and enums to the program's by name and
  * runs its static initialisers. Only a program with linkage "shared" can load one: it fills g_pluginHost. ---- */
-#define FIRE_PLUGIN_FORMAT 2
+#define FIRE_PLUGIN_FORMAT 3
+/* A plugin that calls a native in C of the program (`fire_cn_<function>`) the program does not export: what Load says (the function: %.*s). */
+#define FIRE_PLUGIN_CNATIVE "it calls the native function '%.*s' in C, which this program does not export to plugins (natives in C are the program's: build the program again with the package of the native; of graphics and windows it exports only those its libraries call)."
 typedef struct FirePlugin {
     uint32_t format;                     /* FIRE_PLUGIN_FORMAT */
     const char* name;                    /* its module */
@@ -1950,6 +1952,12 @@ typedef struct FirePlugin {
     const uint8_t* convOwn;              /* 1: of a unit the plugin declares (always a new unit), 0: of a library (the program's unit when it has it) */
     uint32_t ntext;
     const TextUnit* textUnits;           /* the units a text may name (`"5in".ToFloat()`), with its numbers: those the program does not know are added */
+    /* JSON (the program has `#import "json"`; NULL: it has not): the JsonClassInfo of its class k (fire_json.h; the units of the fields are the program's once
+     * it is registered), the k of its class of a name (-1: none), the texts of its type arguments and back (NULL: not its own) */
+    const void* (*jsonAt)(uint32_t k);
+    int32_t (*jsonNamed)(const char* name);
+    const char* (*jsonTargText)(const TArg* t);   /* (not jsonTArgText: a DLL defines that name as a macro) */
+    const TArg* (*jsonTargFor)(const char* text);
 } FirePlugin;
 /* What a program that can load plugins tells the runtime (linkage "shared"; NULL: it cannot). */
 typedef struct FirePluginHost {
@@ -1965,6 +1973,12 @@ extern FIRE_RT_DATA const void** g_pluginRf;
 extern FIRE_RT_DATA uint32_t g_pluginRfCount;
 /* Registers a plugin (once; again: the same answer): an array of the names of its classes, or a string that says why it does not fit. */
 FIRE_RT_FN Value fireRegisterPlugin(const FirePlugin* p, OwnList* list);
+/* JSON of the classes of the plugins (the program's jsonClassAt, ... ask here for what is not in its tables): the JsonClassInfo of a class id (NULL: no class of a
+ * plugin, or none with JSON), the id of a class name (-1: none), the text of a type argument of a plugin and back (NULL: none). */
+FIRE_RT_FN const void* firePluginJsonAt(uint32_t cls);
+FIRE_RT_FN int32_t firePluginJsonNamed(const char* name);
+FIRE_RT_FN const char* firePluginTArgText(const TArg* t);
+FIRE_RT_FN const TArg* firePluginTArgFor(const char* text);
 #endif
 /* The catch type `Exception` (catches every exception object): always type id 0. */
 #define FIRE_EXC_ANY 0
@@ -5238,6 +5252,21 @@ FIRE_FN Value libCall(Value id, Value a, Value b, Value c, OwnList* list) {
                     }
                     if (plugin) return Int(-1);
                 }
+#ifdef FIRE_MODULES
+                /* a fire plugin that calls a native in C of the program the program does not export (`fire_cn_<function>`): a text, Load throws it */
+                if (!h) {
+                    const char* why = fire_plat_dlerror();
+                    const char* cn = why ? strstr(why, "fire_cn_") : NULL;
+                    if (cn) {
+                        char t[700];
+                        size_t k = 0;
+                        cn += 8;
+                        while (k < 200 && ((cn[k] >= 'a' && cn[k] <= 'z') || (cn[k] >= 'A' && cn[k] <= 'Z') || (cn[k] >= '0' && cn[k] <= '9') || cn[k] == '_')) k++;
+                        snprintf(t, sizeof t, "The plugin library '%s' cannot be loaded: " FIRE_PLUGIN_CNATIVE, text, (int)k, cn);
+                        return newStrFromUtf8((const uint8_t*)t, strlen(t), list);
+                    }
+                }
+#endif
             }
             return Int((int64_t)(intptr_t)h);
         }
@@ -6465,6 +6494,40 @@ static Value firePluginClassNames(const FirePlugin* p, OwnList* list) {
     return ArrV(names);
 }
 
+const void* firePluginJsonAt(uint32_t cls) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const FirePlugin* p = g_plugins[i];
+        if (p->jsonAt && cls >= *p->base && cls - *p->base < p->nclasses) return p->jsonAt(cls - *p->base);
+    }
+    return NULL;
+}
+int32_t firePluginJsonNamed(const char* name) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const FirePlugin* p = g_plugins[i];
+        int32_t k = p->jsonNamed ? p->jsonNamed(name) : -1;
+        if (k >= 0) return (int32_t)(*p->base + (uint32_t)k);
+    }
+    return -1;
+}
+const char* firePluginTArgText(const TArg* t) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const char* text = g_plugins[i]->jsonTargText ? g_plugins[i]->jsonTargText(t) : NULL;
+        if (text) return text;
+    }
+    return NULL;
+}
+const TArg* firePluginTArgFor(const char* text) {
+    uint32_t i, n = g_pluginCount;
+    for (i = 0; i < n; i++) {
+        const TArg* t = g_plugins[i]->jsonTargFor ? g_plugins[i]->jsonTargFor(text) : NULL;
+        if (t) return t;
+    }
+    return NULL;
+}
+
 static Value firePluginRefused(const FirePlugin* p, const char* text, OwnList* list) {
     char t[900];
     snprintf(t, sizeof t, "The plugin '%s' cannot be loaded: %s", p->name, text);
@@ -6617,6 +6680,7 @@ Value fireRegisterPlugin(const FirePlugin* p, OwnList* list) {
     if (p->nconv > 64) return firePluginRefused(p, "it has more than 64 units with conversion functions.", list);
     if (p->link) {
         const char* missing = g_pluginHost->find ? p->link(g_pluginHost->find) : "fire_hostFind";
+        if (missing && strncmp(missing, "fire_cn_", 8) == 0) { snprintf(t, sizeof t, FIRE_PLUGIN_CNATIVE, (int)strlen(missing + 8), missing + 8); return firePluginRefused(p, t, list); }
         if (missing) { snprintf(t, sizeof t, "it needs '%s', which the program does not have.", missing); return firePluginRefused(p, t, list); }
     }
     /* its units: the program's numbers (new ones for those it does not have) */

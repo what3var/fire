@@ -146,6 +146,54 @@ namespace fire.Native
             return Math.Min(count, 255);
         }
 
+        /// <summary>The JSON row of a class (a JsonClassInfo) and the table of its fields (written to <paramref name="sb"/> as <paramref name="fieldTable"/>). A plugin
+        /// (<paramref name="unitFixups"/>): the table is not const and the units of its fields are set when the plugin is registered (the program's numbers).</summary>
+        private string JsonRow(ClassInfo ci, string fieldTable, int flags, StringBuilder sb, List<string>? unitFixups)
+        {
+            var rc = ci.Rc;
+            var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
+            if (fields.Count > 0)
+            {
+                sb.AppendLine($"static {(unitFixups != null ? "" : "const ")}JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", fields.Select(f =>
+                    $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {(unitFixups != null ? 0 : UnitId(f.Unit))}}}")) + "};");
+                if (unitFixups != null)
+                    for (int j = 0; j < fields.Count; j++)
+                        if (UnitId(fields[j].Unit) is var u and not 0) unitFixups.Add($"{fieldTable}[{j}].unit = {UnitC(u)};");
+            }
+            else fieldTable = "NULL";
+            if (rc.IsActor) flags |= 1;
+            if (rc.IsNotSerializable()) flags |= 16;
+            if (JsonMethods.HasOnDeserialized(rc)) flags |= 2;
+            return $"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {ci.Fields.Count}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}}}";
+        }
+
+        /// <summary>A plugin whose program has JSON: the rows of its classes and its type arguments (FirePlugin.jsonAt, ...: the program's jsonClassAt asks for a class
+        /// after its own); `fixups` gets the units of their fields (set when it is registered). The fields of FirePlugin from `jsonAt` on.</summary>
+        private string PluginJson(StringBuilder sb, List<string> fixups)
+        {
+            if (!_usesJson) return "NULL, NULL, NULL, NULL";
+            var rows = new List<string>();
+            for (int k = 0; k < _self!.Classes.Count; k++) rows.Add(JsonRow(RegisterClass(_self.Classes[k]), $"kPlJsonF{k}", 0, sb, fixups));
+            sb.AppendLine($"static const JsonClassInfo kPlJson[] = {{\n    {string.Join(",\n    ", rows)}\n}};");
+            sb.AppendLine("static const void* fire_pl_jsonAt(uint32_t k) { return &kPlJson[k]; }");
+            sb.AppendLine("static int32_t fire_pl_jsonNamed(const char* name) {");
+            sb.AppendLine($"    for (uint32_t k = 0; k < {rows.Count}u; k++) if (strcmp(kPlJson[k].name, name) == 0) return (int32_t)k;");
+            sb.AppendLine("    return -1;");
+            sb.AppendLine("}");
+            var targs = _targIds.OrderBy(kv => kv.Value).ToList();
+            sb.AppendLine("static const char* fire_pl_targText(const TArg* t) {");
+            foreach (var (text, i) in targs) sb.AppendLine($"    if (t == &{Px}ta_{i}) return {CString(text)};");
+            if (targs.Count == 0) sb.AppendLine("    (void)t;");
+            sb.AppendLine("    return NULL;");
+            sb.AppendLine("}");
+            sb.AppendLine("static const TArg* fire_pl_targFor(const char* text) {");
+            foreach (var (text, i) in targs) sb.AppendLine($"    if (strcmp(text, {CString(text)}) == 0) return &{Px}ta_{i};");
+            if (targs.Count == 0) sb.AppendLine("    (void)text;");
+            sb.AppendLine("    return NULL;");
+            sb.AppendLine("}");
+            return "fire_pl_jsonAt, fire_pl_jsonNamed, fire_pl_targText, fire_pl_targFor";
+        }
+
         /// <summary>The engine (fire_json.h) and the tables of the program.</summary>
         private string JsonCode()
         {
@@ -166,18 +214,7 @@ namespace fire.Native
             {
                 if (!jsonById.TryGetValue(jsonId, out var ci)) { rows.Add("{\"\", \"\", 0, NULL, 0, 0, 0}"); continue; }   // (an id without a class, see ClassDescTable)
                 var rc = ci.Rc;
-                var fields = JsonMethods.JsonFieldsOf(rc).Where(f => rc.FieldIndex.ContainsKey(f.Name)).ToList();
-                string fieldTable = "NULL";
-                if (fields.Count > 0)
-                {
-                    fieldTable = $"kJsonF{ci.Id}";
-                    sb.AppendLine($"static const JsonFieldInfo {fieldTable}[] = {{" + string.Join(", ", fields.Select(f =>
-                        $"{{{CString(f.JsonName)}, {rc.FieldIndex[f.Name]}, {CString(f.Type)}, {UnitId(f.Unit)}}}")) + "};");
-                }
                 int flags = 0;
-                if (rc.IsActor) flags |= 1;
-                if (rc.IsNotSerializable()) flags |= 16;
-                if (JsonMethods.HasOnDeserialized(rc)) flags |= 2;
                 if (rc.Name == "List" && rc.FieldIndex.TryGetValue("items", out int items) && rc.FieldIndex.TryGetValue("count", out int count))
                 {
                     flags |= 4;
@@ -188,7 +225,7 @@ namespace fire.Native
                     flags |= 8;
                     (objCls, objKeys, objValues, objCount) = (ci.Id, keys, values, n);
                 }
-                rows.Add($"{{{CString(rc.Name)}, {CString(GenericClassNames.PlainName(rc.Name))}, {ci.Fields.Count}, {fieldTable}, {fields.Count}, {flags}, {JsonTypeParamCount(rc)}}}");
+                rows.Add(JsonRow(ci, $"kJsonF{ci.Id}", flags, sb, null));
             }
             sb.AppendLine($"static const JsonClassInfo kJsonClasses[] = {{{(rows.Count == 0 ? "{\"\", \"\", 0, NULL, 0, 0, 0}" : string.Join(",\n    ", rows))}}};");
             sb.AppendLine($"static const uint32_t kJsonClassCount = {rows.Count};");
@@ -197,10 +234,11 @@ namespace fire.Native
             sb.AppendLine("typedef struct JsonTArgText { const char* text; const TArg* targ; } JsonTArgText;");
             sb.AppendLine($"static const JsonTArgText kJsonTArgs[] = {{{(targs.Count == 0 ? "{NULL, NULL}" : string.Join(", ", targs.Select(t => $"{{{CString(t.Key)}, &ta_{t.Value}}}")))}}};");
             sb.AppendLine($"static const uint32_t kJsonTArgCount = {targs.Count};");
-            sb.AppendLine("const JsonClassInfo* jsonClassAt(uint32_t cls) { return cls < kJsonClassCount ? &kJsonClasses[cls] : NULL; }");
+            // (a program that loads plugins: what is not in its tables may be a class or a type argument of a plugin - the runtime asks them)
+            sb.AppendLine($"const JsonClassInfo* jsonClassAt(uint32_t cls) {{ return cls < kJsonClassCount ? &kJsonClasses[cls] : {(_openWorld ? "(const JsonClassInfo*)firePluginJsonAt(cls)" : "NULL")}; }}");
             sb.AppendLine("int32_t jsonClassNamed(const char* name) {");
             sb.AppendLine("    for (uint32_t i = 0; i < kJsonClassCount; i++) if (strcmp(kJsonClasses[i].name, name) == 0) return (int32_t)i;");
-            sb.AppendLine("    return -1;");
+            sb.AppendLine($"    return {(_openWorld ? "firePluginJsonNamed(name)" : "-1")};");
             sb.AppendLine("}");
             // the classes JSON may not read that are not in the tables (a name of the text that names one is an ArgumentException, as in the VM)
             var excluded = _program.Program.Classes.Values.Where(rc => rc.IsNotSerializable() && !_classes.ContainsKey(rc.Name)).Select(rc => rc.Name).OrderBy(n => n, StringComparer.Ordinal).ToList();
@@ -215,11 +253,11 @@ namespace fire.Native
             sb.AppendLine("}");
             sb.AppendLine("const char* jsonTArgText(const TArg* t) {");
             sb.AppendLine("    for (uint32_t i = 0; i < kJsonTArgCount; i++) if (kJsonTArgs[i].targ == t) return kJsonTArgs[i].text;");
-            sb.AppendLine("    return NULL;");
+            sb.AppendLine($"    return {(_openWorld ? "firePluginTArgText(t)" : "NULL")};");
             sb.AppendLine("}");
             sb.AppendLine("const TArg* jsonTArgFor(const char* text) {");
             sb.AppendLine("    for (uint32_t i = 0; i < kJsonTArgCount; i++) if (kJsonTArgs[i].text && strcmp(text, kJsonTArgs[i].text) == 0) return kJsonTArgs[i].targ;");
-            sb.AppendLine("    return NULL;");
+            sb.AppendLine($"    return {(_openWorld ? "firePluginTArgFor(text)" : "NULL")};");
             sb.AppendLine("}");
             sb.AppendLine("const JsonSpecial* jsonSpecial(void) { return &kJsonSpecial; }");
             return sb.ToString();
