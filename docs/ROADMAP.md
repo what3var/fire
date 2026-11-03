@@ -368,10 +368,14 @@ Für alle neuen Ziele: Zielprofile, Toolchain OpenWatcom, eine Plattformschicht 
 * **Breiten pro Programm statt pro Prozess.** `Value.Ints32` und `Value.SingleFloats` sind statisch: Übersetzt der Editor ein Programm, während ein anderes mit
   `#intwidth 32` läuft, schneidet er dessen Konstanten ab. Die Breiten gehören zum Programm und werden über ein Objekt weitergereicht (das Zahlenmodell des Programms:
   der Linker und der Compiler bekommen es ausdrücklich, die VM setzt es für die Threads, auf denen das Programm läuft).
-* **Gepackte Arrays nicht entpacken, wo es nicht nötig ist.** Heute entpackt `arrItems` ein gepacktes Array für immer (16 Byte pro Element). JSON, der Debugger und
-  `print` lesen gepackt (`arrElemGet`); die Natives der Packages bekommen eine API, die gepackte Arrays kennt (`arrGet`/`arrSet`, direkt die Zahlen eines
-  `float[32]`-Arrays für Grafik und Audio); `ref a[i]` in ein gepacktes Array wird ein Zeiger, der den Elementtyp kennt (16-Byte-Wert: das freie Byte; kompakt: im Kasten).
-  `arrItems` bleibt als Notweg.
+* **Gepackte Arrays nicht entpacken, wo es nicht nötig ist - samt der Natives.** Heute entpackt `arrItems` ein gepacktes Array für immer (16 Byte pro Element).
+  * Runtime: JSON, der Debugger und `print` lesen gepackt (`arrElemGet`); eine API für Natives, die gepackte Arrays kennt (`arrGet`/`arrSet` pro Element,
+    `arrNumbers(a, E_F32)` für direkten Zugriff auf die Zahlen eines passend typisierten Arrays, sonst null); `ref a[i]` in ein gepacktes Array wird ein Zeiger,
+    der den Elementtyp kennt (16-Byte-Wert: das freie Byte; kompakt: im Kasten).
+  * Natives: alle Stellen unserer Packages, die ein übergebenes Array lesen oder beschreiben, auf diese API umstellen (rund 80 Aufrufe von `arrItems` in audio,
+    circuits, gpio, graphics, i2c, io, net, process, scene3d, spi, time, usb, wifi, windows und der Package-ABI; die Stellen, die ein neues Array füllen, bleiben).
+    Grafik und Audio bekommen bei `float[32]`/`int[16]`-Arrays direkt die Zahlen.
+  * `arrItems` bleibt nur als Notweg für fremde Natives; ein Test prüft, dass unsere Packages ein gepacktes Array nicht entpacken.
 * **Mehrdimensional und Literale gleich gepackt anlegen.** Nur `new int[n]` entsteht heute direkt gepackt; `int m[3][4]`, `new int[3][4]` und `int a[] = [1, 2, 3]`
   legen erst Values an (die ungenutzt im Block bleiben). Der Generator erkennt `NewJagged` / `MakeArrayLiteral` vor `TypeArray` und baut gleich gepackt.
 * **Editor:** die Breite von `int` auch im Dialog des nativen Builds (die Projekteigenschaften haben sie schon).
