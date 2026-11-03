@@ -366,17 +366,14 @@ namespace fire.Editor
             const string title = "Install Library";
             if (project == null) return;
             if (project.Project.Type != OutputType.Library) { await Dialogs.Message(this, $"'{project.Name}' is a program: only a library is installed.", title); return; }
+            if (BuildRunning()) return;
             var plan = CreatePlan(project);
             string work = Path.Combine(Path.GetTempPath(), "fire-install-" + Guid.NewGuid().ToString("N"));
             UpdateStatus($"Packing {project.Name}...");
-            string? error = null, fpk = null;
-            await Task.Run(() =>
-            {
-                try { fpk = ProjectBuilder.PackLibrary(plan, work); }
-                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException or fire.Package.Manager.PackageException || CommandLineRunner.IsCompileErrorForEditor(ex)) { error = CompileErrors.Describe(ex); }
-            });
+            var (fpk, error, cancelled) = await PackAsJob(plan, work, $"{project.Name} (package)");
             try
             {
+                if (cancelled) return;
                 if (error != null || fpk == null) { UpdateStatus("Packing failed."); await Dialogs.Message(this, error ?? "The library could not be packed.", title); return; }
                 if (await InstallPackageFile(fpk, title))
                     await Dialogs.Message(this, $"{project.Name} {ProjectBuilder.PackageVersion(plan.Settings.Version)} is installed: programs write #import \"{project.Project.ImportName}\".", title);
@@ -526,6 +523,22 @@ namespace fire.Editor
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Project Properties"); }
         }
 
+        /// <summary>Packs a library as a build job (its window after half a second, Cancel stops it): the package, or the error, or that it was cancelled.</summary>
+        private async Task<(string? Package, string? Error, bool Cancelled)> PackAsJob(BuildPlan plan, string folder, string what)
+        {
+            var job = BeginBuildJob(what);
+            string? error = null, result = null;
+            bool cancelled = false;
+            await Task.Run(() =>
+            {
+                try { result = ProjectBuilder.PackLibrary(plan, folder, job.Monitor); }
+                catch (OperationCanceledException) { cancelled = true; }
+                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException or fire.Package.Manager.PackageException || CommandLineRunner.IsCompileErrorForEditor(ex)) { error = CompileErrors.Describe(ex); }
+            });
+            EndBuildJob(job, cancelled ? BuildOutcome.Cancelled : error != null ? BuildOutcome.Failed : BuildOutcome.Succeeded, error);
+            return (result, error, cancelled);
+        }
+
         /// <summary>Asks for the version and the metadata, checks the library and writes `name-version.fpk` (a package that ember installs and other programs `#import`). The answers are kept in the
         /// project's settings; the version can be raised afterwards for the next package.</summary>
         private async Task PackLibrary(LoadedProject? project)
@@ -545,14 +558,11 @@ namespace fire.Editor
             try { _workspace.SaveProject(project); }
             catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException) { await Dialogs.Message(this, ex.Message, "Pack Library"); return; }
 
+            if (BuildRunning()) return;
             var plan = CreatePlan(project);
             UpdateStatus($"Packing {project.Name} {dialog.Version}...");
-            string? error = null, result = null;
-            await Task.Run(() =>
-            {
-                try { result = ProjectBuilder.PackLibrary(plan, dialog.Folder); }
-                catch (Exception ex) when (ex is ProjectException or IOException or UnauthorizedAccessException or fire.Package.Manager.PackageException || CommandLineRunner.IsCompileErrorForEditor(ex)) { error = CompileErrors.Describe(ex); }
-            });
+            var (result, error, cancelled) = await PackAsJob(plan, dialog.Folder, $"{project.Name} {dialog.Version} (package)");
+            if (cancelled) return;
             if (error != null) { UpdateStatus("Packing failed."); await Dialogs.Message(this, error, "Pack Library"); return; }
             string next = "";
             if (dialog.BumpAfterwards)

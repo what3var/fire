@@ -138,6 +138,47 @@ namespace fire.Editor
             }
         }
 
+        /// <summary>Like <see cref="Compile"/>, but the compiler runs on a thread of the pool (the window stays responsive and can show the progress): <paramref name="monitor"/>
+        /// gets its phases and the commands of a package's natives that are compiled for it. The session takes the program on the caller's thread. Cancelled: throws
+        /// <see cref="OperationCanceledException"/> and keeps no program.</summary>
+        public async System.Threading.Tasks.Task<bool> CompileAsync(string[] sources, string? outname, string? basePath, fire.Projects.BuildPlan? plan,
+            fire.Standard.ProgramEnvironment? environment, fire.Native.BuildMonitor? monitor)
+        {
+            Reset();
+            LastDiagnostics = Array.Empty<Diagnostic>();
+            var mode = ExecutionMode;
+            var devices = DeviceManager;
+            var (target, diagnostics, error) = await System.Threading.Tasks.Task.Run(() =>
+            {
+                using var watching = fire.Native.BuildMonitor.Use(monitor);
+                var warnings = new DiagnosticCollector();
+                using var collecting = warnings.Begin();
+                try
+                {
+                    var built = VmDebugTarget.Build(sources, mode, outname, basePath, devices, plan, environment);
+                    if (monitor?.IsCancellationRequested == true)
+                    {
+                        built.Dispose();
+                        throw new OperationCanceledException(monitor.Token);
+                    }
+                    return ((IDebugTarget?)built, (IReadOnlyList<Diagnostic>)warnings.Items.ToList(), (string?)null);
+                }
+                catch (Exception ex) when (ex is ParseException or LexException or ResolverException or TypeCheckException
+                    or NotSupportedException or PreprocessorException or LibraryEntryPointException or fire.Projects.ProjectException)
+                {
+                    return (null, CompileDiagnostics.Of(ex).Concat(warnings.Items).ToList(), CompileErrors.Describe(ex));
+                }
+            });
+            LastDiagnostics = diagnostics;
+            if (target == null)
+            {
+                CompileError = error;
+                return false;
+            }
+            Attach(target);
+            return true;
+        }
+
         /// <summary>Takes over a debug target that is ready (compiled, its main thread paused before the first line): its output, its main thread and
         /// every thread it starts later.</summary>
         public void Attach(IDebugTarget target)

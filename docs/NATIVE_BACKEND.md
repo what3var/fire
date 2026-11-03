@@ -754,6 +754,37 @@ Auf dem Desktop läuft die Ausgabe des Programms über seinen Prozess, nicht üb
 Runtime den Debug-Agenten hat - Ende-zu-Ende mit einem echten Debug-Build gegen die VM (Haltepunkt in einer Methode, Tiefe, Locals, `this`, `set`, Step Over bis
 zur unbehandelten Ausnahme mit Meldung und Ort, `resume`, die Ausgabe des Prozesses); ohne Agenten in der Runtime wird dieser Teil übersprungen.
 
+#### Fortschritt und Abbrechen (das Build-Fenster von spark)
+
+Jeder Bau, den spark startet (F5 mit der VM, wenn übersetzt wird; Build Native; natives Run/Debug; ESP32 mit `idf.py build flash`; Build; Pack/Install Library), ist ein
+**Bau-Auftrag**: dauert er länger als 0,5 s, erscheint ein Fenster mit der Phase, einem Fortschrittsbalken und dem Log (die Befehle der Compiler und ihre Ausgabe, während
+sie laufen), dazu **Hide** (Escape; die Statusleiste zeigt den Fortschritt, ein Klick holt das Fenster zurück) und **Cancel** (Ctrl+Break, Ctrl+Pause, Shift+F5,
+*Run > Cancel Build*). Erfolg schließt das Fenster (das Log bleibt im Build-Log), ein Fehler lässt es mit der Meldung offen, Abbrechen schreibt *Build cancelled* ins
+Output-Panel.
+
+Die Schnittstelle dafür ist **`BuildMonitor`** (`src/fire.Native/BuildMonitor.cs`), kein Auswerten von Text:
+
+* `NativeBuilder.Build(..., monitor)`, `NativeBuilder.BuildSafe(..., monitor)` und `ProjectBuilder.PackLibrary(plan, ordner, monitor)` nehmen einen Monitor
+  (`new BuildMonitor(token, progress, log)`); innen ist er `BuildMonitor.Current` (ein `AsyncLocal`, das in die parallelen Schritte mitgeht), so dass der
+  Prozessstarter (`NativeBuilder.Run`), der Linker und die Generatoren keinen weiteren Parameter brauchen. `DebugSession.CompileAsync` (spark) übersetzt so für die VM.
+* **Fortschritt** (`IProgress<BuildProgress>`): `BuildProgress(Phase, Text, Done, Total)` mit `BuildPhase` `CompileFire` (der Linker meldet seine vier Schritte:
+  Parsen, Namen, Typen, Bytecode), `GenerateC`, `CompileC` (linkage `static`/`shared`: `BeginCount` meldet 0/N, jede fertige Library eins mehr - N sind die Module,
+  die nicht im Cache sind; linkage `source`: das C des Programms), `Link`, `Flash` (`Esp32Launch.BuildAndFlash(..., cancel, progress)`: die Schritte von ninja `[n/m]`
+  und von esptool `(n %)` - hier gibt es nur die Ausgabe des Werkzeugs) und `Pack`. `Total` 0 heißt: ohne Zahl. Die Meldungen kommen in der Reihenfolge der Phasen
+  (fällt ein Bau auf linkage `source` zurück, beginnt er neu bei `CompileFire`).
+* **Log**: jeder Befehl (`gcc ...`) und jede Zeile seiner Ausgabe, sobald sie kommt; das `Log` des Ergebnisses ist wie bisher.
+* **Abbrechen**: das Token des Monitors. Ein laufendes Werkzeug endet mit seinem ganzen Prozessbaum (`BuildProcess.Terminate`: erst SIGTERM an alle - gcc und ninja
+  löschen dann, was sie gerade schrieben -, nach 2 s SIGKILL, auch für Kinder, deren Eltern schon weg sind; Windows: `Kill(entireProcessTree)`); die Teile im Prozess
+  halten an ihrem nächsten Punkt (`BuildMonitor.Step`/`Checkpoint`) mit `OperationCanceledException`. `BuildSafe` gibt dann ein Ergebnis mit `Cancelled` zurück
+  und löscht das Programm, wenn dieser Bau es schon zu schreiben begonnen hatte. Im Cache bleibt keine halbe Library: eine Library entsteht in einer temporären Datei,
+  die ein abgebrochener oder fehlgeschlagener Bau löscht, und die Schnittstelle wird erst nach ihr geschrieben (siehe "Cache und Schnittstelle").
+
+Getestet ohne Fenster (`FIRE_TESTS_ONLY=linkage`, `FIRE_TESTS_FILTER=cancel`): ein Bau mit linkage `static` und leerem Cache wird abgebrochen, während gcc die Module
+übersetzt - gcc/cc1 laufen binnen Sekunden nicht mehr, kein temporäres File und keine Library ohne Schnittstelle im Cache, kein Programm; der nächste Bau in denselben
+Cache gelingt, seine Phasen kommen in Reihenfolge, `CompileC` zählt 0..N, das Log hat die Befehle. `FIRE_TESTS_ONLY=projects`: die Phasen von Pack, ein abgebrochenes
+Pack hinterlässt kein `.fpk`. **Nicht geprüft**: das Fenster selbst und die Statusleiste (spark ist hier nicht zu klicken), das Abbrechen von `idf.py` auf einem
+echten ESP-IDF und Windows.
+
 #### Ziel `esp32`: Run und Debug auf dem Board (ROADMAP 8.6)
 
 Mit dem Ziel `esp32` (Build-Leiste bzw. `settings.target`) machen F5/F10/F11 aus dem Programm ein **ESP-IDF-Projekt** in `bin/esp32-<modus>` (die Komponente, die

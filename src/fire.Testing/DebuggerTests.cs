@@ -328,6 +328,22 @@ static partial class DebuggerTests
             return false;
         }
 
+        {
+            // spark's build window: CompileAsync compiles on a thread of the pool and reports the steps of the fire compiler in order; cancelled, it keeps no program
+            // (a session of its own: the events of its programs stay away from the checks below)
+            var asyncSession = new fire.Editor.DebugSession();
+            var steps = new List<fire.Native.BuildProgress>();
+            bool asyncCompiled = asyncSession.CompileAsync(new[] { TargetScript }, null, null, null, null, new fire.Native.BuildMonitor(default, p => steps.Add(p))).GetAwaiter().GetResult();
+            Check(asyncCompiled && asyncSession.HasProgram && steps.Count > 0 && steps.All(x => x.Phase == fire.Native.BuildPhase.CompileFire && x.Total == 4) && steps.Select(x => x.Done).SequenceEqual(new[] { 0, 1, 2, 3 }),
+                "DebugSession.CompileAsync: uebersetzt neben dem Fenster, die Schritte des fire-Compilers kommen in Reihenfolge (0..3 von 4)", string.Join(" | ", steps.Select(x => $"{x.Phase} {x.Done}/{x.Total} {x.Text}")));
+            using var cancel = new CancellationTokenSource();
+            cancel.Cancel();
+            bool stopped = false;
+            try { asyncSession.CompileAsync(new[] { TargetScript }, null, null, null, null, new fire.Native.BuildMonitor(cancel.Token)).GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) { stopped = true; }
+            Check(stopped && !asyncSession.HasProgram, "DebugSession.CompileAsync: abgebrochen (OperationCanceledException) bleibt kein Programm", $"{stopped} {asyncSession.HasProgram}");
+            asyncSession.Reset();
+        }
         bool compiled = session.Compile(new[] { TargetScript });
         int src = session.FirstUserSourceIndex;
         session.UpdateBreakpoints(new[] { (src, 10) });

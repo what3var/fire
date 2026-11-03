@@ -63,6 +63,90 @@ static class LinkageTests
         return new Built(result.Ok, exe, result.Log, watch.Elapsed.TotalSeconds, File.Exists(exe) ? new FileInfo(exe).Length : 0);
     }
 
+    /// <summary>The processes of this machine whose command line contains <paramref name="text"/> (Linux: /proc; elsewhere none are seen).</summary>
+    private static List<string> ProcessesWith(string text)
+    {
+        var found = new List<string>();
+        if (!OperatingSystem.IsLinux()) return found;
+        foreach (var dir in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(dir), out int pid) || pid == Environment.ProcessId) continue;
+            try
+            {
+                string cmd = File.ReadAllText(Path.Combine(dir, "cmdline")).Replace('\0', ' ');
+                string stat = File.ReadAllText(Path.Combine(dir, "stat"));
+                if (cmd.Contains(text, StringComparison.Ordinal) && !stat.Contains(") Z ", StringComparison.Ordinal)) found.Add($"{pid}: {cmd.Substring(0, Math.Min(cmd.Length, 160))}");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
+        return found;
+    }
+
+    /// <summary>spark's build window (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"): a build with linkage "static" and an empty cache is cancelled while gcc compiles
+    /// its library modules side by side - gcc (with cc1, as) ends within seconds, the build says it was cancelled, the cache has no half library (no temporary file, every
+    /// library with its interface) and no program is left; the next build into the same cache works, its progress arrives in order (compile fire in steps, generate C,
+    /// compile C counting 0..N modules - N the modules that are new -, link) and its log has the commands as they ran.</summary>
+    private static void ProgressAndCancel(string root)
+    {
+        string? before = Environment.GetEnvironmentVariable("FIRE_NATIVE_CACHE");
+        string cache = Path.Combine(root, "cancel-cache-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+        Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cache);
+        try
+        {
+            var config = new NativeConfig { Linkage = "static" };
+            var target = TargetProfile.Host;
+            var toolchain = config.ResolveToolchain(target, "gcc");
+            string exe = Path.Combine(root, "cancel-cli");
+
+            // ---- cancelled while gcc compiles the library modules ----
+            using var cancel = new CancellationTokenSource();
+            using var compiling = new ManualResetEventSlim();
+            var cancelMonitor = new BuildMonitor(cancel.Token, p => { if (p.Phase == BuildPhase.CompileC && p.Done == 0) compiling.Set(); });
+            var build = Task.Run(() => NativeBuilder.BuildSafe(new[] { Cli }, config, target, toolchain, exe, monitor: cancelMonitor));
+            bool reached = compiling.Wait(TimeSpan.FromMinutes(3));
+            Thread.Sleep(800);   // (gcc runs: cc1 is at work on the modules)
+            var running = ProcessesWith(cache);
+            var watch = Stopwatch.StartNew();
+            cancel.Cancel();
+            bool ended = build.Wait(TimeSpan.FromSeconds(60));
+            double seconds = watch.Elapsed.TotalSeconds;
+            var cancelled = ended ? build.Result : null;
+            // (a process that is ending may still be listed for a moment)
+            var left = ProcessesWith(cache);
+            for (int i = 0; i < 20 && left.Count > 0; i++) { Thread.Sleep(100); left = ProcessesWith(cache); }
+            Console.WriteLine($"  (abgebrochen: {running.Count} Prozesse des Baus liefen, nach {seconds:0.0} s war der Bau zu Ende)");
+            Check("Abbrechen: der Bau erreicht die Phase \"C uebersetzen\" (gcc laeuft fuer die Module)", reached && (!OperatingSystem.IsLinux() || running.Count > 0), string.Join("\n", running));
+            Check("Abbrechen: der Bau endet binnen weniger Sekunden als abgebrochen, gcc/cc1 laufen nicht mehr", ended && cancelled is { Cancelled: true, Ok: false } && seconds < 6 && left.Count == 0,
+                $"{seconds:0.0} s, {cancelled?.Log}\n{string.Join("\n", left)}");
+            var files = Directory.Exists(cache) ? Directory.EnumerateFiles(cache, "*", SearchOption.AllDirectories).ToList() : new List<string>();
+            var temporaries = files.Where(f => f.EndsWith(".tmp", StringComparison.Ordinal) || System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileNameWithoutExtension(f), "^[0-9a-f]{32}$")).ToList();
+            var orphans = files.Where(f => f.EndsWith(".a", StringComparison.Ordinal) && !File.Exists(Path.Combine(Path.GetDirectoryName(f)!, Path.GetFileNameWithoutExtension(f).Substring("fire_".Length) + NativeLibraryCache.InterfaceExtension))).ToList();
+            Check("Abbrechen: keine halbe Bibliothek im Cache (keine temporaere Datei, jede Bibliothek mit ihrer Schnittstelle) und kein Programm", temporaries.Count == 0 && orphans.Count == 0 && !File.Exists(exe),
+                string.Join("\n", temporaries.Concat(orphans)));
+
+            // ---- the next build into the same cache: works; its progress in order ----
+            var events = new List<BuildProgress>();
+            var lines = new List<string>();
+            var monitor = new BuildMonitor(default, p => { lock (events) events.Add(p); }, l => { lock (lines) lines.Add(l); });
+            var again = NativeBuilder.BuildSafe(new[] { Cli }, config, target, toolchain, exe, monitor: monitor);
+            string vm = Vm(new[] { Cli });
+            Check("Abbrechen: der naechste Bau in denselben Cache gelingt, das Programm gibt aus, was die VM ausgibt", again.Ok && !again.Cancelled && Exec(exe) == vm, again.Log);
+            var phases = events.Select(e => e.Phase).ToList();
+            var modules = events.Where(e => e.Phase == BuildPhase.CompileC).ToList();
+            int fresh = ModuleLines(again.Log, "built in").Count;
+            Check("Fortschritt: die Phasen kommen in Reihenfolge (fire uebersetzen, C erzeugen, C uebersetzen, linken)",
+                phases.Count > 0 && phases.Zip(phases.Skip(1)).All(z => z.First <= z.Second) && phases.Contains(BuildPhase.CompileFire) && phases.Contains(BuildPhase.GenerateC) && phases[^1] == BuildPhase.Link,
+                string.Join(" | ", events.Select(e => $"{e.Phase} {e.Done}/{e.Total} {e.Text}")));
+            Check("Fortschritt: \"C uebersetzen\" zaehlt die neuen Module von 0 bis N (der Reihe nach, N = die Module, die der Bau uebersetzt)",
+                fresh > 0 && modules.Count == fresh + 1 && modules.Select(m => m.Done).SequenceEqual(Enumerable.Range(0, fresh + 1)) && modules.All(m => m.Total == fresh),
+                $"{fresh} new: " + string.Join(" | ", modules.Select(e => $"{e.Done}/{e.Total}")));
+            Check("Fortschritt: das Protokoll hat die Befehle, wie sie liefen (gcc fuer jedes neue Modul und fuer das Programm)",
+                lines.Count(l => l.Contains(" -c ", StringComparison.Ordinal) && l.Contains(cache, StringComparison.Ordinal)) == fresh && lines.Any(l => l.Contains(exe, StringComparison.Ordinal)),
+                string.Join("\n", lines.Take(30)));
+        }
+        finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", before); }
+    }
+
     private static List<string> ModuleLines(string log, string what) =>
         log.Split('\n').Where(l => l.StartsWith("module ", StringComparison.Ordinal) && l.Contains(what)).Select(l => l.Substring(7, l.IndexOf(": ", StringComparison.Ordinal) - 7)).ToList();
 
@@ -77,9 +161,11 @@ static class LinkageTests
         {
             // (FIRE_TESTS_FILTER=plugin: only the fire plugins; =library: only Library.Load/Get)
             string filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER") ?? "";
+            // (=cancel: only the progress and the cancelling of a build, spark's build window)
             if (filter.Contains("plugin", StringComparison.OrdinalIgnoreCase)) Plugins(root);
             else if (filter.Contains("library", StringComparison.OrdinalIgnoreCase)) LibraryLoad(root);
-            else RunIn(root);
+            else if (filter.Contains("cancel", StringComparison.OrdinalIgnoreCase)) ProgressAndCancel(root);
+            else { RunIn(root); ProgressAndCancel(root); }
         }
         catch (Exception ex) { Check("ohne Ausnahme", false, ex.ToString()); }
         finally

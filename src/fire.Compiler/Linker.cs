@@ -494,6 +494,7 @@ namespace fire.Compiler
             // every type reference in the AST carries its own namespace context
             // directly on itself (see Ast.TypeRef.Namespaces), set by the
             // parser when parsing each individual ProcessedSource.
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, $"Compiling fire: parsing {processedSources.Count} sources", 0, 4);
             var program = Parser.ParseMultiple(processedSources);
             int driverSources = 0;
             if (TestDriver != null)
@@ -506,6 +507,7 @@ namespace fire.Compiler
                 driverSources = 1;
             }
             if (Plan != null && Plan.Type == fire.Projects.OutputType.Library) CheckLibraryHasNoEntryPoint(program, firstUserSource);
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: resolving names", 1, 4);
             var resolveResult = Resolver.Resolve(program, natives.Names);
             string? memberLogFile = Environment.GetEnvironmentVariable("FIRE_MEMBER_LOG");
             if (memberLogFile != null)
@@ -525,7 +527,9 @@ namespace fire.Compiler
                 TypeChecker.MemberLog = null;
                 lock (typeof(Linker)) File.AppendAllText(memberLogFile, lines.ToString());
             }
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: checking types", 2, 4);
             TypeChecker.Run(program, resolveResult, EffectiveTypeChecking, TypeCheckLibraries ? 0 : firstUserSource);
+            fire.Native.BuildMonitor.Step(fire.Native.BuildPhase.CompileFire, "Compiling fire: generating bytecode", 3, 4);
             var compiled = Compiler.Compile(program, resolveResult, natives);
             // the classes of a package with `"serializable": false` (docs/JSON.md)
             var notSerializable = new HashSet<int>(Enumerable.Range(0, processedSources.Count).Where(i => processedSources[i].NotSerializable));

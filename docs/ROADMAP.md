@@ -208,6 +208,10 @@ der Art); Windows nur mit MinGW unter Wine (nicht mit msvc auf einem echten Wind
    öffnet die serielle Schnittstelle (`port`/`baud` aus Projekt oder Ziel, sonst erkannt) - Debug über `SerialFramedTransport`, Run mit der Konsole im Output-Panel
    und einer Eingabezeile darunter. Ein fire-Thread zeigt in der Scope-Ansicht seine eigenen Variablen der obersten Ebene (`globals` mit `thread`). Offen: die
    Oberfläche ist nicht von Hand durchgeklickt, kein echtes Board.
+9. ~~**Build-Fenster**~~ (umgesetzt): jeder Bau aus spark (F5 mit der VM, nativ, ESP32, Build, Pack) zeigt nach 0,5 s ein Fenster mit Phase, Fortschritt (die Library-Module
+   von linkage `static`/`shared` gezählt, sonst unbestimmt) und Log, *Hide* (Fortschritt in der Statusleiste) und *Cancel* (Prozessbaum der Compiler beendet, nichts
+   Halbes bleibt) - `BuildMonitor` (docs/NATIVE_BACKEND.md "Fortschritt und Abbrechen"). Offen: das Fenster ist nicht von Hand durchgeklickt; `idf.py` abbrechen nur
+   ohne echtes ESP-IDF geprüft; die Natives eines Packages, die für die VM gebaut werden, melden keine eigene Phase (nur ihre Befehle im Log).
 
 Nicht in dieser Phase: Edit-and-Continue, Auswerten beliebiger Ausdrücke.
 

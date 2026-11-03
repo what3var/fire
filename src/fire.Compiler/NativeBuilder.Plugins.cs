@@ -44,6 +44,7 @@ namespace fire.Compiler
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
             string name = plan?.Project.Name ?? Path.GetFileName(full);
             var watch = Stopwatch.StartNew();
+            BuildMonitor.Step(BuildPhase.GenerateC, "Generating the C of the plugin");
             var pluginPlan = CppGenerator.GeneratePlugin(linked, target, name, host, StrippingOf(config, plan), chooseSdl, ToolchainStamp(toolchain));
             log.Append(pluginPlan.Log);
             log.AppendLine($"generated in {watch.ElapsedMilliseconds} ms");
@@ -60,6 +61,7 @@ namespace fire.Compiler
                     // a DLL imports by file name: from the runtime's DLL and the DLLs of the modules of the program (next to it)
                     var compile = CompilerCommand(toolchain, target, cFile, workDir, Path.Combine(workDir, "fire_plugin.o"), language: "c", compileOnly: true);
                     log.AppendLine($"{compile.Executable} {compile.Arguments}");
+                    BuildMonitor.Step(BuildPhase.CompileC, "Compiling the plugin (C)", 0, 2);
                     (ok, text) = Run(compile.Executable, compile.Arguments, workDir);
                     log.Append(text);
                     if (!ok) return Fail("The C compiler reported errors in the plugin (see the build log).");
@@ -73,6 +75,7 @@ namespace fire.Compiler
                     var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
                     string arguments = $"-shared -static-libgcc -o \"{library}\" \"{Path.Combine(workDir, "fire_plugin.o")}\"{string.Concat(imports.Select(i => $" \"{i}\""))} -Wl,--export-all-symbols -s {string.Join(" ", libs)}";
                     log.AppendLine($"{cc} {arguments}");
+                    BuildMonitor.Step(BuildPhase.Link, "Linking the plugin's DLL", 1, 2);
                     (ok, text) = Run(cc, arguments, workDir);
                     log.Append(text);
                 }
@@ -82,6 +85,7 @@ namespace fire.Compiler
                     var link = CompilerCommand(toolchain, target, cFile, workDir, library, sharedLibrary: true, language: "c");
                     string extra = OperatingSystem.IsMacOS() ? " -undefined dynamic_lookup" : "";
                     log.AppendLine($"{link.Executable} {link.Arguments}{extra} -lm");
+                    BuildMonitor.Step(BuildPhase.Link, "Compiling and linking the plugin (C)");
                     (ok, text) = Run(link.Executable, link.Arguments + extra + " -lm", workDir);
                     log.Append(text);
                 }
@@ -89,6 +93,7 @@ namespace fire.Compiler
                 if (built)
                 {
                     // the bytecode for the VM: compiled for the VM (`#if vm`), with the interfaces of the modules as the VM sees them
+                    BuildMonitor.Step(BuildPhase.CompileFire, "Compiling the plugin's bytecode for the VM");
                     var vmLinked = new Linker { BasePath = basePath, Engine = "vm", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth);
                     var vmDeps = (ModuleInterface.Modules(vmLinked) ?? new()).OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => (m.Key, ModuleInterface.Text(vmLinked, m.Value.Classes, m.Value.Sources)));
                     PluginBytecode.Write(bytecode, name, vmLinked, vmDeps);

@@ -148,21 +148,22 @@ namespace fire.Editor
 
         /// <summary>F5 like in Visual Studio: compiles if necessary (nothing compiled yet, stopped or the program has ended) and then runs to the next breakpoint. Every further F5
         /// continues the execution to the next breakpoint; when the program has ended, F5 starts it again.</summary>
-        private void Run_Click(object? sender, RoutedEventArgs e)
+        private async void Run_Click(object? sender, RoutedEventArgs e)
         {
-            if (_isBusy) return; // running right now - there is nothing to continue
+            if (_isBusy || BuildRunning()) return; // running right now - there is nothing to continue
             if ((!_session.HasProgram || _session.IsFinished) && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
-            if ((!_session.HasProgram || _session.IsFinished) && !CompileAndPrepare(null)) return;
+            if ((!_session.HasProgram || _session.IsFinished) && !await CompileAndPrepareAsync(null)) return;
             if (!_session.HasProgram) return;
             BeginStep();
             _session.Continue(BreakpointLocations());
         }
 
         /// <summary>Ctrl+F5: ALWAYS compiles again (also in the middle of a session - a running program is ended) and then starts like F5 up to the first breakpoint.</summary>
-        private void Restart_Click(object? sender, RoutedEventArgs e)
+        private async void Restart_Click(object? sender, RoutedEventArgs e)
         {
+            if (BuildRunning()) return;
             if (UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.Continue); return; }
-            if (!CompileAndPrepare(null) || !_session.HasProgram) return;
+            if (!await CompileAndPrepareAsync(null) || !_session.HasProgram) return;
             BeginStep();
             _session.Continue(BreakpointLocations());
         }
@@ -228,10 +229,12 @@ namespace fire.Editor
         private List<string> RunArguments(RunInput input) =>
             input.Project != null ? input.Plan!.Settings.Arguments ?? new List<string>() : ScriptArguments(input.Document);
 
-        /// <summary>Compiles what the active document belongs to (discards the previous session; see ResolveRunInput) for the virtual machine. false on an error or when there is
+        /// <summary>Compiles what the active document belongs to (discards the previous session; see ResolveRunInput) for the virtual machine - on a thread of the pool, as a
+        /// build job (its window appears when the compile takes longer than half a second; Cancel stops it). false on an error, when it was cancelled or when there is
         /// nothing to build.</summary>
-        private bool CompileAndPrepare(string? filename)
+        private async Task<bool> CompileAndPrepareAsync(string? filename)
         {
+            if (BuildRunning()) return false;
             StopNativeRun();
             if (ResolveRunInput(filename) is not { } input) return false;
             var project = input.Project;
@@ -246,15 +249,30 @@ namespace fire.Editor
                 Args = RunArguments(input),
                 ProgramPath = project != null ? plan!.SourcePaths.LastOrDefault() ?? "" : FullPathOf(doc) ?? "",
             };
-            bool compiled = _session.Compile(input.Sources, filename, input.BaseDirectory, plan, environment);
+            var job = BeginBuildJob(filename != null ? $"{input.What} (standalone, {RunModeName})" : $"{input.What} (VM, {RunModeName})");
+            bool compiled;
+            try { compiled = await _session.CompileAsync(input.Sources, filename, input.BaseDirectory, plan, environment, job.Monitor); }
+            catch (OperationCanceledException)
+            {
+                EndBuildJob(job, BuildOutcome.Cancelled);
+                return false;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                EndBuildJob(job, BuildOutcome.Failed, ex.Message);
+                UpdateStatus("The compile failed: " + ex.Message);
+                return false;
+            }
             // the errors and warnings of the compile: into the build log and the error list (until the next build)
             FinishBuild("Compile", compiled, _session.LastDiagnostics, buildFile, buildPath);
             if (!compiled)
             {
+                EndBuildJob(job, BuildOutcome.Failed, _session.CompileError ?? "");
                 UpdateStatus($"Compile error: {_session.CompileError}");
-                _ = Dialogs.Message(this, _session.CompileError, "Compile error");
+                if (!FailureShown(job)) _ = Dialogs.Message(this, _session.CompileError ?? "", "Compile error");
                 return false;
             }
+            EndBuildJob(job, BuildOutcome.Succeeded);
 
             _session.UpdateBreakpoints(BreakpointLocations());   // now with the source indexes of this program
             UpdateStatus(project != null ? $"Compiled {project.Name} ({plan!.Sources.Count} file{(plan.Sources.Count == 1 ? "" : "s")}) - ready to step, continue or run to the end." : "Compiled - ready to step, continue or run to the end.");
@@ -262,19 +280,21 @@ namespace fire.Editor
             return true;
         }
 
-        private void Step_Click(object? sender, RoutedEventArgs e)
+        private async void Step_Click(object? sender, RoutedEventArgs e)
         {
+            if (BuildRunning()) return;
             if (!_session.HasProgram && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.StepLine); return; }
-            if (!_session.HasProgram) CompileAndPrepare(null);
+            if (!_session.HasProgram) await CompileAndPrepareAsync(null);
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();
             _session.StepLine();
         }
 
-        private void StepInto_Click(object? sender, RoutedEventArgs e)
+        private async void StepInto_Click(object? sender, RoutedEventArgs e)
         {
+            if (BuildRunning()) return;
             if (!_session.HasProgram && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.StepInto); return; }
-            if (!_session.HasProgram) CompileAndPrepare(null);
+            if (!_session.HasProgram) await CompileAndPrepareAsync(null);
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();
             _session.StepInto();
@@ -338,10 +358,11 @@ namespace fire.Editor
             else if (answer == Dialogs.Answer.No) Stop_Click(this, new RoutedEventArgs());
         }
 
-        private void RunToEnd_Click(object? sender, RoutedEventArgs e)
+        private async void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
+            if (BuildRunning()) return;
             if (!_session.HasProgram && UsesNativeEngine()) { _ = StartNativeAsync(NativeFirstAction.RunToEnd); return; }
-            if (!_session.HasProgram) CompileAndPrepare(null);
+            if (!_session.HasProgram) await CompileAndPrepareAsync(null);
             if (!_session.HasProgram || _isBusy) return;
             BeginStep();
             _session.RunToCompletion();
@@ -357,6 +378,8 @@ namespace fire.Editor
 
         private void Stop_Click(object? sender, RoutedEventArgs e)
         {
+            // Shift+F5 while a build runs: cancels it (the program of the last run, if any, stays as it is)
+            if (_buildJob != null) { CancelBuild(); return; }
             StopNativeRun();
             _session.Reset();
             _reportedErrors.Clear();
