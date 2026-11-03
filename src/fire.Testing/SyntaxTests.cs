@@ -172,6 +172,117 @@ static class SyntaxTests
             while (true) { break 2 }
             """).StartsWith("ERROR"));
 
+        Check("break 2 / continue 2 durch try mit finally: jedes finally laeuft, das innerste zuerst", Output("""
+            string log = ""
+            for (int a = 0; a < 3; a++) {
+                try {
+                    foreach (b in [1, 2, 3]) {
+                        try {
+                            if (a == 1 && b == 2) continue 2
+                            if (a == 2 && b == 2) break 2
+                            log = log + a + b + " "
+                        } finally { log = log + "i" + a + b + " " }
+                    }
+                } finally { log = log + "o" + a + " " }
+            }
+            print(log)
+            """) is var through && through == "01 i01 02 i02 03 i03 o0 11 i11 i12 o1 21 i21 i22 o2 ", through);
+
+        Check("break 2 aus catch mit finally, throw im finally beendet den Sprung, return durch finally in Schleifen", Output("""
+            class E1 : Exception { construct() { } }
+            class F {
+                static string C() {
+                    string log = ""
+                    foreach (x in [1, 2]) {
+                        try {
+                            while (true) {
+                                try { throw new E1() }
+                                catch (E1 e) { log = log + "c "; break 2 }
+                                finally { log = log + "f1 " }
+                            }
+                        } finally { log = log + "f2 " }
+                        log = log + "never "
+                    }
+                    return log
+                }
+                static string T() {
+                    string log = ""
+                    try {
+                        foreach (x in [1, 2]) {
+                            foreach (y in [1, 2]) {
+                                try { try { break 2 } finally { log = log + "f1 "; throw new E1() } } finally { log = log + "f2 " }
+                            }
+                        }
+                    } catch (E1 e) { log = log + "caught" }
+                    return log
+                }
+                static int G() {
+                    int n = 0
+                    foreach (x in [1, 2, 3]) {
+                        foreach (y in [1, 2, 3]) {
+                            try { try { n = n + 1; if (y == 2) continue 2 } finally { n = n + 10 } } finally { n = n + 100 }
+                        }
+                    }
+                    return n
+                }
+                static int R() {
+                    foreach (x in [1, 2, 3]) { while (true) { try { return x * 7 } finally { print("R fin") } } }
+                    return 0
+                }
+            }
+            print(F.C())
+            print(F.T())
+            print(F.G())
+            print(F.R() + 1)
+            """) is var paths && paths == "c f1 f2 \nf1 f2 caught\n666\nR fin\n8", paths);
+
+        Check("Kombinierte Einheit am Rueckgabetyp (float:m/s Speed()), an Parametern und Feldern", Output("""
+            class Runner {
+                float:m dist
+                float:s time
+                construct(float:km d, float t : min) { dist = d; time = t }
+                float:m/s Speed() { return dist / time }
+                float : km/h SpeedKmh() { return dist / time }
+                float:any m/s Raw() { return dist / time }
+                float:m/s^2 Acc(float:m/s v, float t : s) { return v / t }
+                float:km/h Fast { get { return dist / time * 2 } }
+                float Slow : km/h { get { return dist / time / 2 } }
+                float:m/s Bad() { any d = dist; return d }
+            }
+            var r = new Runner(10km, 48min)
+            print(r.Speed())
+            print(r.SpeedKmh())
+            print(r.Raw())
+            print(r.Acc(36km / 1h, 2s))
+            print(r.Fast + " " + r.Slow)
+            float:m/s v = 36km / 1h
+            print(v)
+            try { r.Bad() } catch (UnitMismatchException e) { print(e.message) }
+            """) is var units && units == "3.4722222222222223m/s\n12.5km/h\n3.4722222222222223m/s\n5m/s^2\n25km/h 6.25km/h\n10m/s\nExpected unit 'm/s', got: m.", units);
+
+        Check("float[16] und float[8] runden bei jeder Zuweisung (Halbe Genauigkeit, FP8 E4M3)", Output("""
+            float[16] h = 0.1
+            print(h)
+            h = 65519.0
+            print(h)
+            h = 65520.0
+            print(h)
+            h = 2049.0
+            print(h + " " + 2051.0!float[16] + " " + 0.0000001!float[16] + " " + 0.00000001!float[16])
+            float[8] q = 0.1
+            print(q)
+            q = -1000.0
+            print(q + " " + 17.0!float[8] + " " + 19.0!float[8] + " " + 0.001!float[8] + " " + 300.7!float[8])
+            class Reg { float[16] v = 0; undefined Set(float x) { v = x } }
+            var r = new Reg()
+            r.Set(1.0001)
+            print(r.v)
+            class Calc { static float Narrow(float[8] x) { return x } }
+            print(Calc.Narrow(3.3))
+            float[16] mm : mm = 1.0001m
+            print(mm)
+            """) is var small && small == "0.0999755859375\n65504\nInfinity\n2048 2052 1.1920928955078125E-07 0\n0.1015625\n-448 16 20 0.001953125 288\n1\n3.25\n1000mm", small);
+
         Check("case mit mehreren Werten und Vergleichen", Output("""
             foreach (n in [5, 6, 7, -1]) {
                 switch (n) {

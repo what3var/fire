@@ -16769,6 +16769,124 @@ else
             float[32] f = 0.1
             print(f)
             """),
+        ("finally bei break 2 / continue 2: jedes finally laeuft, auch aus catch, throw im finally, in Methoden", """
+            class E1 : Exception { construct() { } }
+            string log = ""
+            for (int a = 0; a < 3; a++) {
+                try {
+                    foreach (b in [1, 2, 3]) {
+                        try {
+                            if (a == 1 && b == 2) continue 2
+                            if (a == 2 && b == 2) break 2
+                            log = log + a + b + " "
+                        } finally { log = log + "i" + a + b + " " }
+                    }
+                } finally { log = log + "o" + a + " " }
+            }
+            print(log)
+            class F {
+                static string C() {
+                    string log = ""
+                    foreach (x in [1, 2]) {
+                        try {
+                            while (true) {
+                                try { throw new E1() }
+                                catch (E1 e) { log = log + "c "; break 2 }
+                                finally { log = log + "f1 " }
+                            }
+                        } finally { log = log + "f2 " }
+                        log = log + "never "
+                    }
+                    return log
+                }
+                static string K() {
+                    string log = ""
+                    foreach (x in [1, 2]) {
+                        foreach (y in [1, 2]) {
+                            try { throw new E1() } catch (E1 e) { log = log + x + y + " "; continue 2 } finally { log = log + "f "; }
+                        }
+                    }
+                    return log
+                }
+                static string T() {
+                    string log = ""
+                    try {
+                        foreach (x in [1, 2]) {
+                            foreach (y in [1, 2]) {
+                                try { try { break 2 } finally { log = log + "f1 "; throw new E1() } } finally { log = log + "f2 " }
+                            }
+                        }
+                    } catch (E1 e) { log = log + "caught" }
+                    return log
+                }
+                static int G() {
+                    int n = 0
+                    foreach (x in [1, 2, 3]) {
+                        foreach (y in [1, 2, 3]) {
+                            try { try { n = n + 1; if (y == 2) continue 2 } finally { n = n + 10 } } finally { n = n + 100 }
+                        }
+                    }
+                    return n
+                }
+                static int R() {
+                    foreach (x in [1, 2, 3]) { while (true) { try { return x * 7 } finally { print("R fin") } } }
+                    return 0
+                }
+            }
+            print(F.C())
+            print(F.K())
+            print(F.T())
+            print(F.G())
+            print(F.R() + 1)
+            """),
+        ("Einheiten am Rueckgabetyp (float:m/s Speed()) und Bitbreiten float[16]/float[8]", """
+            class Runner {
+                float:m dist
+                float:s time
+                construct(float:km d, float t : min) { dist = d; time = t }
+                float:m/s Speed() { return dist / time }
+                float : km/h SpeedKmh() { return dist / time }
+                float:m/s^2 Acc(float:m/s v, float t : s) { return v / t }
+                float:km/h Fast { get { return dist / time * 2 } }
+                float:m/s Bad() { any d = dist; return d }
+            }
+            var r = new Runner(10km, 48min)
+            print(r.Speed() + " " + r.SpeedKmh() + " " + r.Acc(36km / 1h, 2s) + " " + r.Fast)
+            try { r.Bad() } catch (UnitMismatchException e) { print(e.message) }
+            float[16] h = 0.1
+            print(h)
+            h = 65519.0
+            print(h)
+            h = 65520.0
+            print(h + " " + (-70000.0)!float[16])
+            h = 2049.0
+            print(h + " " + 2051.0!float[16] + " " + 0.0000001!float[16] + " " + 0.00000001!float[16] + " " + (1.0 / 3)!float[16])
+            float[8] q = 0.1
+            print(q)
+            q = -1000.0
+            print(q + " " + 17.0!float[8] + " " + 19.0!float[8] + " " + 0.001!float[8] + " " + 0.0009!float[8] + " " + 300.7!float[8])
+            class Reg { float[16] v = 0; undefined Set(float x) { v = x } }
+            var g = new Reg()
+            g.Set(1.0001)
+            print(g.v)
+            class Calc { static float Narrow(float[8] x) { return x } }
+            print(Calc.Narrow(3.3))
+            float[16] mm : mm = 1.0001m
+            print(mm)
+            float[16] acc = 0.0
+            for (int i = 0; i < 3000; i++) { acc = acc + 1.0 }
+            print(acc)
+            """),
+        ("Interfaces hinter der Basisklasse (class Puppy : Dog, IPet) zaehlen fuer is of und !", """
+            interface IPet { }
+            interface ILoud { string Bark() }
+            class Dog { }
+            class Puppy : Dog, IPet, ILoud { string Bark() { return "Wuff" } }
+            Dog d = new Puppy()
+            print(d is of IPet)
+            print(d!ILoud.Bark())
+            print(new Dog() is of IPet)
+            """),
         ("! wandelt nach char und Bitbreiten und castet Objekte", """
             interface IAnimal { string Name() }
             class Dog : IAnimal {

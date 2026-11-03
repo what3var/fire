@@ -1527,17 +1527,19 @@ brackets stand after the type (`int[]`) - a bit width always has a number
 **Copy behavior:** If a value is copied into a variable/parameter with a
 lower declared bit width, it is truncated (`Value.TruncateTo`):
 for `int` classic two's-complement truncation (cast chain via
-sbyte/short/int), for `float` correspondingly via float (32 bits) or
-IEEE754 binary16 (16 bits, `System.Half`) or a documented,
-simple 8-bit minifloat (no widespread standard format exists, see
-the comment at `NumericWidth`). The mechanism (`Value.Width` +
+sbyte/short/int), for `float` by rounding to nearest (ties to even) to IEEE754
+binary32 (32 bits), IEEE754 binary16 (16 bits, half precision, a too large value becomes
+infinity) or FP8 E4M3 (8 bits, the OCP 8-bit float "E4M3FN": bias 7, 3 mantissa bits,
+largest value 448, no infinity - a too large value saturates to +-448, NaN stays NaN);
+`Value.RoundFloatToWidth` in the VM and `roundFloatToWidth` in `fire_rt.h` do the same. The mechanism (`Value.Width` +
 `Value.TruncateTo`) is applied on every assignment: the resolver keeps the
 declared width of every variable and parameter, the compiler that of every field name
 (when all classes that declare it agree), and emits an implicit `ConvertWidth`
 before the store. Implicit means: only a number of the declared kind is cut
 (`int[8]` cuts an `int`, `float[32]` rounds a `float`); every other value is
 stored as it is. `byte` keeps `0`...`255` (unsigned), `int[N]` wraps in two's
-complement; `float[16]`/`float[8]` are not cut yet.
+complement, `float[32]`/`float[16]`/`float[8]` round. `print` shows the stored value
+(`float[16] h = 0.1` prints `0.0999755859375`).
 
 #### 8.2.1 Program-wide float precision (`#floatwidth`)
 

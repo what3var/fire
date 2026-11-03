@@ -89,6 +89,9 @@ namespace fire.Compiler
         public const string SwitchMissingCode = "TC010";
         /// <summary>A named argument (`f(size: 2)`) that no parameter has, or a parameter that gets no value with named arguments - an error in lax mode too.</summary>
         public const string NamedArgumentCode = "TC011";
+        /// <summary>A cast `x!Dog` that can never succeed: the static type of `x` and the target are unrelated classes (or a class and an interface no class of
+        /// the program joins).</summary>
+        public const string ImpossibleCastCode = "TC013";
 
         private readonly IReadOnlyDictionary<string, ClassDecl> _classes;
         private readonly Dictionary<string, InterfaceDecl> _interfaces = new();
@@ -293,6 +296,47 @@ namespace fire.Compiler
         }
 
         private static string PlainName(string name) => GenericClassNames.PlainName(name);
+
+        /// <summary>`x!Dog` (a cast to a class or an interface): reported (TC013) when no object can be both the static type of `x` and the target - two classes
+        /// of which neither derives from the other (a class has one base class, so they have no common subclass), or a class and an interface that neither
+        /// the class nor any class deriving from it implements. Two interfaces, `class`, `any` and anything not fully known pass. (Casts of numbers, chars
+        /// and bools keep their own rules.)</summary>
+        private void CheckCast(StaticType operand, StaticType target, int line)
+        {
+            if (operand.Kind != StaticKind.Class || target.Kind != StaticKind.Class || CastPossible(operand.Class!, target.Class!)) return;
+            Report(ImpossibleCastCode, $"A value of type '{operand}' can never be a '{target}': the cast '!{target}' always fails at run time (only undefined passes)", line);
+        }
+
+        private bool CastPossible(string from, string to)
+        {
+            bool fromInterface = _interfaces.ContainsKey(PlainName(from)) && !_classes.ContainsKey(from);
+            bool toInterface = _interfaces.ContainsKey(PlainName(to)) && !_classes.ContainsKey(to);
+            if (fromInterface && toInterface) return true;                  // (a class may implement both)
+            if (!fromInterface && !_classes.ContainsKey(from) || !toInterface && !_classes.ContainsKey(to)) return true;
+            if (!fromInterface && !toInterface) return DerivesFrom(from, to) || DerivesFrom(to, from);
+            // a class and an interface: the class itself or one of the classes deriving from it must implement it
+            string cls = fromInterface ? to : from, iface = PlainName(fromInterface ? from : to);
+            foreach (var name in _classes.Keys)
+                if (DerivesFrom(name, cls) && MayImplement(name, iface)) return true;
+            return false;
+        }
+
+        /// <summary>Does the class (or a base class of it) name the interface - or a base that is not known (then it may)?</summary>
+        private bool MayImplement(string className, string iface)
+        {
+            string? name = className;
+            for (int d = 0; d < 64 && name != null; d++)
+            {
+                if (!_classes.TryGetValue(name, out var decl)) return true;
+                foreach (var b in decl.BaseRefs ?? Array.Empty<TypeRef>())
+                {
+                    string plain = PlainName(b.BaseName);
+                    if (plain == iface || !_classes.ContainsKey(NameOf(b)) && !_interfaces.ContainsKey(plain)) return true;
+                }
+                name = decl.BaseRefs?.Select(b => NameOf(b)).FirstOrDefault(n => _classes.ContainsKey(n));
+            }
+            return name != null;    // (the end of the chain: it does not; a chain too deep to follow: it may)
+        }
 
         // -------------------------------------------------------------------------------------------------------------
         // Types of declarations
@@ -1149,7 +1193,12 @@ namespace fire.Compiler
                     {
                         var operand = Infer(tc.Operand);
                         var operandUnit = operand.IsNumber ? operand.Unit : null;
-                        if (tc.TargetClass is { } castType) return Declared(castType, 0) ?? StaticType.Dynamic;
+                        if (tc.TargetClass is { } castType)
+                        {
+                            var castTarget = Declared(castType, 0) ?? StaticType.Dynamic;
+                            CheckCast(operand, castTarget, tc.Line);
+                            return castTarget;
+                        }
                         return tc.TargetTypeKeyword switch
                         {
                             TokenType.KwInt => StaticType.Int.WithUnit(operandUnit),

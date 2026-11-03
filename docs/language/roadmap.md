@@ -20,16 +20,11 @@ The larger plan (native C, debugging of native builds, binary libraries, the lib
 
 | # | Task | Why |
 |---|---|---|
-| 2.1 | `break`/`continue` with a number across a `try` with `finally` | `break 2` cannot leave such a `try` yet |
-| 2.3 | Combined units at a return type: `float:m/s Speed()` | combined units work in declarations of variables, fields and parameters |
-| 2.4 | Bit widths `float[16]` and `float[8]` take effect on assignment | `int[N]`, `byte` and `float[32]` are cut, the small floats not yet |
 | 2.6 | The prefix `d` (deci) and `h` (hecto): `dm^3`, `dl`, `hPa` | `d` is the day today, `hPa` is a unit of its own |
 
 ## 3. Type checker
 
-| # | Task | Why |
-|---|---|---|
-| 3.1 | Check the target of `!` statically (`x!Dog` where `x` can never be a `Dog`) | today a cast that can never succeed is found only at run time |
+Nothing open at the moment.
 
 ## 4. Runtime and native backend
 
@@ -76,3 +71,6 @@ These problems were found by the examples and fixed right away:
   error (strict) - see [Enums](10-enums-and-namespaces.md).
 - Own units with an offset (`unit Celsius: C { coerce K => value + 273.15 }`) and with conversion functions of any kind (`coerce to mW => 10 ^ (value
   / 10)` and `coerce from mW => 10 * Math.Log10(value)`), VM and native.
+- `break 2`/`continue 2` run every `finally` on their way (VM and native); combined units at a return type (`float:km/h Speed()`); `float[16]` (IEEE
+  half precision) and `float[8]` (FP8 E4M3) round on every assignment (VM and native); a cast `x!Dog` that can never succeed is `TC013`; an interface
+  named after the base class (`class Puppy : Dog, IPet`) counts for `is of` and `!`.
