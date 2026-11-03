@@ -55,8 +55,12 @@ Die HAL `fire_display_c.h` bleibt die Grenze. Neue Backends in `native/platform/
 * **wasm:** Standard ist das Canvas mit der Id `fire` oder - falls es fehlt - eines, das wir anlegen; `new Window(...)` kann ein
   vorhandenes Canvas per Name bekommen (`Window.Canvas = "#app"`).
 * **Ereignisschleife:** `pump(timeout)` und ein thread-sicheres `wake()`, damit Manager-Threads nicht pollen müssen.
-* **Neu in der HAL:** Skalierung (DPI) als Ereignis, `fire_display_wake`, `fire_display_setBackdrop(w, art)` -> erreichte Art (siehe unten),
-  Texteingabe mit Komposition (IME), rahmenlose Fenster mit eigener Titelleiste (später).
+* **Neu in der HAL** (wir erweitern die bestehende API, keine zweite): Skalierung (DPI) als Ereignis, `fire_display_wake`,
+  `fire_display_setBackdrop(w, art)` -> erreichte Art (siehe unten), rahmenlose Fenster mit eigener Titelleiste (später).
+* **IME ist Pflicht** (Teil 1, alle Desktop-Backends und Web): Komposition als eigenes Ereignis (`FIRE_EV_TEXT_EDITING`: Text, Cursor,
+  Auswahl), fertiger Text wie bisher als `FIRE_EV_TEXT_INPUT`; das Programm meldet die Position des Eingabecursors
+  (`fire_display_setTextInputRect`), damit das Kandidatenfenster dort erscheint. Win32: IMM32 (`WM_IME_COMPOSITION`), X11: XIM/XIC mit
+  Preedit-Callbacks, Wayland: `text-input-v3`, macOS: `NSTextInputClient`, Web: `compositionstart/update/end`.
 * **Was SDL sonst noch liefert und ersetzt werden muss:**
   * Joysticks: evdev (Linux), XInput + Raw Input (Windows), GameController (macOS), Gamepad-API (Web).
   * Audio unter macOS (AudioQueue) und wasm (WebAudio) - danach ist SDL ganz raus.
@@ -89,7 +93,8 @@ Neu in `packages/graphics/native/` (C, für VM und nativ):
   wo vorhanden); deckende Quellen werden erkannt und nur kopiert.
 * **Antialiasing** für Linien, Kreise und **abgerundete Rechtecke** (Abdeckung analytisch je Pixel, nur an den Kanten).
 * **Schatten:** die Maske eines abgerundeten Rechtecks auf 1/4 oder 1/8 Auflösung weichgezeichnet, bilinear hochskaliert, im Cache nach
-  (Größe, Radius, Weichheit). Klein: Popups 6-8 px, Fenster 12 px, geringe Deckkraft.
+  (Größe, Radius, Weichheit). Nur ganz fein und kontrastarm: Popups 4-6 px, Fenster 8-10 px, Deckkraft 8-15 % (dunkles Thema etwas mehr),
+  kaum Versatz nach unten.
 * **Blur:** Hintergrund auf 1/2 -> 1/4 verkleinern, Box-Blur mit gleitender Summe (Kosten unabhängig vom Radius), zwei Durchgänge, bilinear zurück.
   Ergebnis im Cache, bis das Dirty-Rechteck den Bereich berührt.
 * **Dirty-Rechtecke:** eine Liste je Framebuffer statt eines Flags; Präsentation und Blur arbeiten nur dort.
@@ -97,7 +102,8 @@ Neu in `packages/graphics/native/` (C, für VM und nativ):
 ## Materialien und Stil
 
 * **Glas** (an Aero/macOS angelehnt, nicht an Raven): Blur mit kleinem Radius (6-8 px bei voller Auflösung), Sättigung leicht angehoben (~1,2),
-  dezente Tönung (10-20 % der Fläche), eine 1-px-Haarlinie oben/am Rand, kein Leuchtrand, keine Lichtbrechung, kein Farbversatz.
+  dezente Tönung (10-20 % der Fläche), eine 1-px-Haarlinie oben/am Rand, kein Leuchtrand, kein Farbversatz. Lichtbrechung höchstens als
+  feiner, leichter Rand - praktisch wie die Haarlinie: 1-2 px, in denen der Hintergrund um 1 px nach innen versetzt und etwas aufgehellt wird.
 * **Acryl:** wie Glas, stärkere Tönung (40-60 %) und ein festes, feines Rauschen (eine kleine Kachel, keine Berechnung pro Bild).
 * **Schalter** (in `UI`, pro Root und global):
   * `Effects.Glass` - aus: kein Blur; Glas wird zu halbtransparenter Tönung, Acryl zur deckenderen Tönung.
@@ -122,7 +128,7 @@ Neu in `packages/graphics/native/` (C, für VM und nativ):
 
 | Teil | Inhalt | Ergebnis |
 |---|---|---|
-| 1 | Plattformschicht: headless, Win32, X11, Wayland, Cocoa, Web; HAL-Erweiterungen; Joysticks; Audio macOS/wasm ohne SDL. Das SDL-Backend bleibt zum Vergleich wählbar. | native Programme ohne SDL |
+| 1 | Plattformschicht: headless, Win32, X11, Wayland (eigene Titelleiste ohne Server-Deko), Cocoa, Web; HAL-Erweiterungen inkl. IME; Joysticks; Audio macOS/wasm ohne SDL. Das SDL-Backend bleibt zum Vergleich wählbar. | native Programme ohne SDL |
 | 2 | VM über C: `windows`/`graphics` als C-Bibliotheken in der VM, `UiPreview`/`LiveSession`, Tests auf headless; SDL3-CS und SDL-Backends entfernen | SDL ist raus, eine Implementierung |
 | 3 | Helfer und Effekte (Software), Materialien, Schalter, Fenster-Hintergrund, Stil-Überarbeitung von `ui`, Raven in der About-Box | Glas/Acryl, modernerer Stil |
 | 4 | GPU-2D mit Vulkan, Rücklesen nur bei Bedarf | Beschleunigung |
