@@ -7738,11 +7738,11 @@ packerTests:
                     }
                     finally { Environment.SetEnvironmentVariable("FIRE_NATIVE_CACHE", cacheBefore); }
                 }
-                // a window (Emscripten's SDL2 port: -sUSE_SDL=2; without network access to GitHub the port can come from a folder: EMCC_LOCAL_PORTS=sdl2=<SDL source>):
+                // a window (fire's own display: native/platform/std/fire_display_web.h, the canvas of the page without SDL):
                 // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
                 const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
                 string winHtml = EmBuild(winSource, "win", out string winLog);
-                SfCheck(winHtml != "" && winLog.Contains("-sUSE_SDL=2") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut mit SDL2 von Emscripten (-sUSE_SDL=2), ohne Warnung" + (winHtml != "" ? "" : "\n" + winLog));
+                SfCheck(winHtml != "" && !winLog.Contains("-sUSE_SDL") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut ohne SDL (die eigene Anzeige: das Canvas der Seite), ohne Warnung" + (winHtml != "" ? "" : "\n" + winLog));
                 bool playwright = false;
                 try
                 {
@@ -25550,10 +25550,10 @@ else
                     int askedForWindows = asked;
                     fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, auto), auto, Choose);
                     string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
-                    CheckNat("Fenster: ohne \"sdl\" die eigene Anzeige (kein SDL, keine Frage); \"sdl\": 0 fragt den Build nur bei einem Fenster (3 -> `// fire-link: SDL3` und FIRE_SDL3), das Ziel (sdl 2) geht vor, wasm bleibt bei SDL2",
+                    CheckNat("Fenster: ohne \"sdl\" die eigene Anzeige (kein SDL, keine Frage); \"sdl\": 0 fragt den Build nur bei einem Fenster (3 -> `// fire-link: SDL3` und FIRE_SDL3), das Ziel (sdl 2) geht vor, wasm zeichnet ohne SDL ins Canvas",
                         !own.Contains("// fire-link: SDL") && !own.Contains("FIRE_DISPLAY_SDL") && own.Contains("// fire-link: dl")
                         && chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
-                        && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3"), $"asked {asked}");
+                        && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3") && !wasm.Contains("// fire-link: SDL"), $"asked {asked}");
                     var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
                     var pc = config3.ResolveTarget("pc");
                     var old = config3.ResolveToolchain(pc, "old");
