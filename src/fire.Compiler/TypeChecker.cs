@@ -89,6 +89,9 @@ namespace fire.Compiler
         public const string SwitchMissingCode = "TC010";
         /// <summary>A named argument (`f(size: 2)`) that no parameter has, or a parameter that gets no value with named arguments - an error in lax mode too.</summary>
         public const string NamedArgumentCode = "TC011";
+        /// <summary>A private or protected member that the code may not use (on a receiver whose class is known) - an error in lax mode too: the access
+        /// would certainly throw an AccessDeniedException at run time.</summary>
+        public const string AccessCode = "TC012";
         /// <summary>A cast `x!Dog` that can never succeed: the static type of `x` and the target are unrelated classes (or a class and an interface no class of
         /// the program joins).</summary>
         public const string ImpossibleCastCode = "TC013";
@@ -110,6 +113,8 @@ namespace fire.Compiler
         /// <summary>The type parameters of the method being checked (their uses are passed on as type arguments: `$k@`); not inside a lambda.</summary>
         private IReadOnlyList<TypeParam>? _bodyTypeParams;
         private bool _inLambda;
+        /// <summary>Inside a lambda with `on target`: `this` is the bound object (its class is not known), the access to its members is checked at run time.</summary>
+        private bool _inBoundLambda;
         /// <summary>The type of `this` in a `class extends string/array/...` (null: the class being checked decides).</summary>
         private StaticType? _thisType;
         private StaticType? _returnType;
@@ -1033,6 +1038,8 @@ namespace fire.Compiler
         {
             var previousClass = _class;
             _class = decl;
+            // a class without a constructor of its own calls the one of its base class without arguments
+            if (!decl.Members.OfType<ConstructorDecl>().Any() && BaseClassName() is { } baseClass) CheckConstructorAccess(baseClass, 0, decl.Line);
             CheckMembers(decl.Members, decl.Name);
             _class = previousClass;
         }
@@ -1072,6 +1079,7 @@ namespace fire.Compiler
                         }
                     case ConstructorDecl c:
                         CheckParametersTyped(c.Params, "construct", c.Line);
+                        if (BaseClassName() is { } baseOfCtor) CheckConstructorAccess(baseOfCtor, c.BaseArgs?.Count ?? 0, c.Line);
                         CheckBody(c.Params, c.Body, null);
                         break;
                     case DestructorDecl d:
@@ -1149,7 +1157,9 @@ namespace fire.Compiler
                         ValueKind.Undefined => StaticType.Undefined,
                         _ => StaticType.Dynamic,
                     };
-                case IdentifierExpr id: return Lookup(id.Name, id.Line);
+                case IdentifierExpr id:
+                    CheckImplicitThisAccess(id, MemberUse.Read);
+                    return Lookup(id.Name, id.Line);
                 case ThisExpr: return _thisType ?? (_class != null ? ThisClass() : StaticType.Dynamic);
                 case InterpolatedStringExpr s:
                     foreach (var part in s.Parts) if (part is InterpolationExprPart ep) Infer(ep.Expression);
@@ -1323,7 +1333,7 @@ namespace fire.Compiler
         {
             var target = a.Target switch
             {
-                IdentifierExpr id => Lookup(id.Name, id.Line),
+                IdentifierExpr id => CheckImplicitThisAccess(id, MemberUse.Write) ?? Lookup(id.Name, id.Line),
                 MemberExpr m => InferMemberTarget(m),
                 IndexExpr ix => InferIndexTarget(ix),
                 _ => StaticType.Dynamic,
@@ -1335,7 +1345,7 @@ namespace fire.Compiler
             return target.IsDynamic ? value : target;
         }
 
-        private StaticType InferMemberTarget(MemberExpr m) => InferMember(m);
+        private StaticType InferMemberTarget(MemberExpr m) => InferMember(m, MemberUse.Write);
 
         private StaticType InferIndexTarget(IndexExpr ix)
         {
@@ -1387,12 +1397,14 @@ namespace fire.Compiler
             return null;
         }
 
-        private StaticType InferMember(MemberExpr m)
+        private StaticType InferMember(MemberExpr m, MemberUse use = MemberUse.Read)
         {
             // `Color.Red`: a value of the enum
             if (_refs.TryGetValue(m, out var resolvedRef) && resolvedRef is ResolvedRef.EnumMember { Type: { } enumType }) return StaticType.EnumOf(enumType.Name);
             var target = Infer(m.Target);
-            if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) target = StaticType.ClassOf(staticClass);
+            bool isStatic = false;
+            if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); isStatic = true; }
+            CheckAccess(target, m.Name, use, 0, m.Line, isStatic);
             if (MemberLog != null && target.Kind == StaticKind.Class && target.Class != null) MemberLog.Add((_source, m.Line, target.Class, m.Name, false));
             if (target.Kind == StaticKind.Class && FindMember(target, m.Name) == null && !HasMethodNamed(target, m.Name) && FullyKnown(target))
                 Report(UnknownMemberCode, $"'{target}' has no field, property or method '{m.Name}'", m.Line);
@@ -1416,6 +1428,105 @@ namespace fire.Compiler
             else if (!named.Any(m => Fits(m.Params, argc)))
                 Report(ArgumentCode, $"'{callee.Name}' of '{target}' takes {string.Join(" or ", named.Select(m => ArityText(m.Params)).Distinct())} argument(s), not {argc}", callee.Line);
         }
+
+        // -------------------------------------------------------------------------------------------------------------
+        // Access modifiers (TC012): decided here where the class of the receiver is known; a dynamic receiver (`any`) and reflection are checked at run time
+        // -------------------------------------------------------------------------------------------------------------
+
+        private enum MemberUse { Read, Write, Call }
+
+        /// <summary>May the code being checked (the class around it - a lambda in a method counts as code of that class; top-level code: none) use a member that
+        /// <paramref name="declaring"/> declares with this access? The rule of the run time (VM.IsMemberAccessAllowed): private - the same class, protected - the
+        /// class or one derived from it.</summary>
+        private bool AccessAllowedHere(string declaring, AccessModifier access)
+        {
+            if (access == AccessModifier.Public) return true;
+            if (_class == null) return false;
+            if (access == AccessModifier.Private) return _class.Name == declaring;
+            return Chain(StaticType.ClassOf(_class.Name)).Any(c => c.Decl.Name == declaring);
+        }
+
+        private static string AccessText(AccessModifier access) => access == AccessModifier.Private ? "private" : access == AccessModifier.Protected ? "protected" : "public";
+
+        /// <summary>What the run time finds for `name` on an object (or, <paramref name="isStatic"/>, the class) <paramref name="className"/> and whether this code
+        /// may use it: null when nothing is found (the run time reports that); otherwise allowed, or the message of the AccessDeniedException.</summary>
+        private (bool Allowed, string Message)? AccessOf(string className, string name, MemberUse use, int argc, bool isStatic)
+        {
+            var chain = Chain(StaticType.ClassOf(className)).Select(c => c.Decl).ToList();
+            if (use == MemberUse.Call)
+            {
+                // every method the run time can choose for that many arguments (overloads by type: the values decide - all of them must be denied)
+                var methods = new List<(MethodDecl Method, string Declaring)>();
+                var seen = new List<MethodDecl>();
+                foreach (var decl in chain)
+                {
+                    var named = decl.Members.OfType<MethodDecl>().Where(m => m.Name == name && m.IsStatic == isStatic).ToList();
+                    foreach (var m in named.Where(m => Fits(m.Params, argc) && !seen.Any(d => OverridesStatic(d, m)))) methods.Add((m, decl.Name));
+                    seen.AddRange(named);
+                }
+                if (methods.Count == 0) return null;
+                if (methods.Any(m => AccessAllowedHere(m.Declaring, m.Method.Access))) return (true, "");
+                var (first, declaring) = methods[0];
+                return (false, $"{(isStatic ? "Static method" : "Method")} '{name}' of '{declaring}' is {AccessText(first.Access)} and cannot be called from here.");
+            }
+            // a field first (the run time looks for the field of the object, then for an accessor of a property)
+            foreach (var decl in chain)
+                if (decl.Members.OfType<FieldDecl>().FirstOrDefault(f => f.Name == name && f.IsStatic == isStatic) is { } field)
+                    return AccessAllowedHere(decl.Name, field.Access) ? (true, "")
+                        : (false, $"{(isStatic ? "Static field" : "Field")} '{name}' of '{decl.Name}' is {AccessText(field.Access)} and cannot be accessed from here.");
+            foreach (var decl in chain)
+                if (decl.Members.OfType<PropertyDecl>().FirstOrDefault(p => p.Name == name && p.IsStatic == isStatic && (use == MemberUse.Read ? p.Getter : p.Setter) != null) is { } property)
+                    return AccessAllowedHere(decl.Name, property.Access) ? (true, "")
+                        : (false, $"'{(use == MemberUse.Read ? "get_" : "set_")}{name}' of '{decl.Name}' is {AccessText(property.Access)} and cannot be accessed from here.");
+            return null;
+        }
+
+        private readonly Dictionary<string, List<string>> _derivedClasses = new();
+        /// <summary>The classes of the program derived from <paramref name="className"/> (directly or further down).</summary>
+        private List<string> DerivedClasses(string className)
+        {
+            if (_derivedClasses.TryGetValue(className, out var found)) return found;
+            found = _classes.Values.Where(c => c.Name != className && Chain(StaticType.ClassOf(c.Name)).Skip(1).Any(b => b.Decl.Name == className)).Select(c => c.Name).ToList();
+            _derivedClasses[className] = found;
+            return found;
+        }
+
+        /// <summary>Reports a member that this code may not use on a receiver of a known class (TC012). <paramref name="exact"/>: the object is certainly of that
+        /// class (`ClassName.Static`, `base.M()`); otherwise it may be of a derived class, where the run time finds the member there - reported only when every
+        /// class the object can be denies it (a derived class may declare the name again with another access: then the run time decides).</summary>
+        private void CheckAccess(StaticType receiver, string name, MemberUse use, int argc, int line, bool isStatic = false, bool exact = false)
+        {
+            // (in a lambda with `on target` `this` is the bound object, whose class is not known here)
+            if (_inBoundLambda && !isStatic && !exact) return;
+            if (receiver.Kind != StaticKind.Class || receiver.Class is not { } className || !_classes.ContainsKey(className) || !FullyKnown(receiver)) return;
+            if (AccessOf(className, name, use, argc, isStatic) is not (false, var message)) return;
+            if (!exact && !isStatic)
+                foreach (var derived in DerivedClasses(className))
+                    if (AccessOf(derived, name, use, argc, false) is not (false, _)) return;
+            ReportError(AccessCode, message, line);
+        }
+
+        /// <summary>A field or property of `this` named without `this.` (ResolvedRef.ImplicitThisMember): checked like `this.name`. Returns null (for `??`).</summary>
+        private StaticType? CheckImplicitThisAccess(IdentifierExpr id, MemberUse use)
+        {
+            if (_class != null && !_inBoundLambda && _refs.TryGetValue(id, out var r) && r is ResolvedRef.ImplicitThisMember && !IsLocal(id.Name))
+                CheckAccess(ThisClass(), id.Name, use, 0, id.Line);
+            return null;
+        }
+
+        /// <summary>`new C(...)` and the call of the base constructor: denied when every constructor of the class for that many arguments is (a class without
+        /// constructors has a public one).</summary>
+        private void CheckConstructorAccess(string className, int argc, int line)
+        {
+            if (!_classes.TryGetValue(className, out var decl)) return;
+            var ctors = decl.Members.OfType<ConstructorDecl>().Where(c => Fits(c.Params, argc)).ToList();
+            if (ctors.Count == 0 || ctors.Any(c => AccessAllowedHere(decl.Name, c.Access))) return;
+            ReportError(AccessCode, $"Constructor of '{decl.Name}' is {AccessText(ctors[0].Access)} and cannot be called from here.", line);
+        }
+
+        /// <summary>The class `base` stands for in the class being checked (null: none known).</summary>
+        private string? BaseClassName() =>
+            _class?.BaseRefs?.Select(NameOf).FirstOrDefault(n => _classes.ContainsKey(n));
 
         private static string ArityText(IReadOnlyList<LambdaParam> parameters)
         {
@@ -1443,10 +1554,11 @@ namespace fire.Compiler
         private StaticType InferLambda(LambdaExpr lam, StaticType? expected)
         {
             // (a lambda runs in its own scope: a type parameter of the method around it is not passed on from there)
-            bool previous = _inLambda;
+            bool previous = _inLambda, previousBound = _inBoundLambda;
             _inLambda = true;
+            _inBoundLambda |= lam.OnTarget != null;
             try { return InferLambdaCore(lam, expected); }
-            finally { _inLambda = previous; }
+            finally { _inLambda = previous; _inBoundLambda = previousBound; }
         }
 
         private StaticType InferLambdaCore(LambdaExpr lam, StaticType? expected)
@@ -1521,8 +1633,12 @@ namespace fire.Compiler
             if (c.Callee is MemberExpr m)
             {
                 var target = Infer(m.Target);
-                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); virtualCall = false; }
+                bool staticCall = false;
+                if (target.IsDynamic && StaticClassRef(m.Target) is { } staticClass) { target = StaticType.ClassOf(staticClass); virtualCall = false; staticCall = true; }
                 if (m.Target is BaseExpr) virtualCall = false;
+                if (staticCall) CheckAccess(target, m.Name, MemberUse.Call, c.Args.Count, m.Line, isStatic: true);
+                else if (m.Target is BaseExpr && BaseClassName() is { } baseClass) CheckAccess(StaticType.ClassOf(baseClass), m.Name, MemberUse.Call, c.Args.Count, m.Line, exact: true);
+                else CheckAccess(target, m.Name, MemberUse.Call, c.Args.Count, m.Line);
                 receiverClass = target.Class;
                 calleeTarget = target;
                 if (target.Kind == StaticKind.Class)
@@ -1533,7 +1649,12 @@ namespace fire.Compiler
             }
             else if (c.Callee is IdentifierExpr id)
             {
-                if (_class != null && !IsLocal(id.Name)) { candidates = FindMethods(ThisClass(), id.Name, c.Args.Count); receiverClass = ThisClass().Class; }
+                if (_class != null && !IsLocal(id.Name))
+                {
+                    candidates = FindMethods(ThisClass(), id.Name, c.Args.Count); receiverClass = ThisClass().Class;
+                    // `M()` in a class: a method of `this` (or a static one of the class)
+                    if (_refs.TryGetValue(id, out var bare) && bare is ResolvedRef.ImplicitThisMember) CheckAccess(ThisClass(), id.Name, MemberUse.Call, c.Args.Count, id.Line);
+                }
                 if (candidates is not { Count: > 0 } && Lookup(id.Name) is { Kind: StaticKind.Lambda } variable) { lambda = variable; name = id.Name; }
             }
             else if (Infer(c.Callee) is { Kind: StaticKind.Lambda } callee) lambda = callee;
@@ -1735,6 +1856,7 @@ namespace fire.Compiler
             var typeArgs = n.ClassRef.TypeArgs is { Count: > 0 } refs ? refs.Select(a => DeclaredOrDynamic(a)).ToList() : null;
             string plain = typeArgs != null ? GenericName(PlainName(n.ClassRef.BaseName), typeArgs.Count) : PlainName(n.ClassRef.BaseName);
             if (!_classes.TryGetValue(plain, out var decl)) { foreach (var a in n.Args) Infer(a); return StaticType.Dynamic; }
+            CheckConstructorAccess(plain, n.Args.Count, n.Line);
             var map = MapFor(decl.TypeParams, typeArgs);
             var ctors = decl.Members.OfType<ConstructorDecl>().Where(c => Fits(c.Params, n.Args.Count)).ToList();
             if (n.ArgNames != null)

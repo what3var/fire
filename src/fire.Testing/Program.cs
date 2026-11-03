@@ -18659,7 +18659,7 @@ else
             }
             class Child : Base {
                 int Peek() { return this.shared + this.Guarded() }
-                int PeekSecret() { return this.secret }
+                int PeekSecret() { any me = this; return me.secret }
             }
             class Locked {
                 private construct() { }
@@ -18667,20 +18667,21 @@ else
             }
             var b = new Base()
             var c = new Child()
+            any ab = b
+            any ac = c
             print(b.open)
             print(b.Reveal())
             print(c.Peek())
             print(Base.PublicCounter())
-            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
-            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
-            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
-            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
-            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
-            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(ab.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { ab.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(ab.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(ab.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(ab.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(ac.Guarded()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
             try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
-            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
-            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
-            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            try { ab.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(ab.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
             print(Locked.Make() is of Locked)
             print(b.Total)
             b.Reset()
@@ -18706,7 +18707,7 @@ else
             }
             class Child : Base {
                 int Peek() { return this.shared + this.Guarded() }
-                int PeekSecret() { return this.secret }
+                int PeekSecret() { any me = this; return me.secret }
             }
             class Locked {
                 private construct() { }
@@ -18714,20 +18715,21 @@ else
             }
             var b = new Base()
             var c = new Child()
+            any ab = b
+            any ac = c
             print(b.open)
             print(b.Reveal())
             print(c.Peek())
             print(Base.PublicCounter())
-            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
-            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
-            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
-            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
-            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
-            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(ab.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { ab.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(ab.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(ab.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(ab.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(ac.Guarded()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
             try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
-            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
-            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
-            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            try { ab.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(ab.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
             print(Locked.Make() is of Locked)
             print(b.Total)
             b.Reset()

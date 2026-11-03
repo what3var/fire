@@ -607,18 +607,59 @@ namespace fire.Native
 
         /// <summary>The one method `name(argc)` every object an `rc` can be runs (no derived class overrides it); null when there is none, several, an
         /// access check, an ownership method or the threads (actors, sections) need the dispatcher.</summary>
-        private FunctionProto? DirectMethod(RuntimeClass rc, string name, int argc)
+        private FunctionProto? DirectMethod(RuntimeClass rc, string name, int argc, Func from)
         {
-            if (_usesThreads || _usesActors || RestrictedMethodName(name) || OwnMethodId(name, argc) != null) return null;
+            if (_usesThreads || _usesActors || OwnMethodId(name, argc) != null) return null;
+            // a name that is private or protected somewhere: direct only when the code of `from` may call the method on every class the object can be
+            // (the check is then known at compile time - e.g. `this.Helper()` in the class that declares the private Helper)
+            bool restricted = RestrictedMethodName(name);
             FunctionProto? proto = null;
             foreach (var c in InstancesOf(rc))
             {
                 if (c.Rc.IsTypeOverloaded(name, argc)) return null;   // (the values decide: the dispatcher scores them)
-                var m = c.Rc.FindMethodWithAccess(name, argc).Proto;
+                var found = c.Rc.FindMethodWithAccess(name, argc);
+                var m = found.Proto;
                 if (m is not { IsStatic: false } || proto != null && !ReferenceEquals(proto, m)) return null;
+                if (restricted && !AccessAllowed(from.Chunk.OwnerClass, found.DeclaringClass!, found.Access)) return null;
                 proto = m;
             }
             return proto;
+        }
+
+        /// <summary>The one accessor (`get_name`, or `set_name` for <paramref name="setter"/>) of the property `name` that every object an `rc` can be runs, when
+        /// the code of `from` may use it on each of them (known at compile time); null when a class has a field of that name, the accessors differ, or the
+        /// threads (sections) or probes need the field helpers.</summary>
+        private FunctionProto? DirectAccessor(RuntimeClass rc, string name, bool setter, Func from)
+        {
+            if (_usesThreads || _usesActors || setter && _usesProbes) return null;
+            string method = (setter ? "set_" : "get_") + name;
+            int argc = setter ? 1 : 0;
+            bool restricted = RestrictedMethodName(method);
+            FunctionProto? proto = null;
+            foreach (var c in InstancesOf(rc))
+            {
+                if (c.Rc.FieldIndex.ContainsKey(name) || c.Rc.IsTypeOverloaded(method, argc)) return null;
+                var found = c.Rc.FindMethodWithAccess(method, argc);
+                if (found.Proto is not { IsStatic: false } m || proto != null && !ReferenceEquals(proto, m)) return null;
+                if (restricted && CheckAccess && !AccessAllowed(from.Chunk.OwnerClass, found.DeclaringClass!, found.Access)) return null;
+                proto = m;
+            }
+            return proto;
+        }
+
+        /// <summary>May the code of `from` call the method `name(argc)` on an object of class `rc` (every overload the values can pick)? Known at compile time.</summary>
+        private bool MethodAllowedOn(RuntimeClass rc, string name, int argc, Func from)
+        {
+            if (!RestrictedMethodName(name)) return true;
+            if (rc.IsTypeOverloaded(name, argc))
+            {
+                var set = rc.Candidates(name, argc);
+                for (int i = 0; i < set.Protos.Length; i++)
+                    if (!AccessAllowed(from.Chunk.OwnerClass, set.Declaring[i], set.Protos[i].Access ?? AccessModifier.Public)) return false;
+                return true;
+            }
+            var found = rc.FindMethodWithAccess(name, argc);
+            return found.Proto == null || AccessAllowed(from.Chunk.OwnerClass, found.DeclaringClass!, found.Access);
         }
 
         /// <summary>Where two types meet: the same type, a type and `undefined` (nullable), else unknown.</summary>
@@ -3660,6 +3701,13 @@ namespace fire.Native
                         else E($"{S(d - 1)} = FIRE_LIKELY(leafAlive({S(d - 1)})) ? objFields(objAt({S(d - 1)}))[{fieldIndex}] : destroyedError({S(d - 1)});");
                         Check();
                     }
+                    else if (ObjSlot(d - 1) && !IsNullable(Ty(d - 1)) && DirectAccessor(ObjClass(Ty(d - 1)), field, false, f) is { } getter)
+                    {
+                        // a property of an object of a known class: its getter itself (the access is known to be allowed), like the case of gf_
+                        string getterName = GetFunc(getter, FuncKind.Method).Name;
+                        E($"if (FIRE_UNLIKELY(!leafAlive({S(d - 1)}))) {S(d - 1)} = destroyedError({S(d - 1)}); else {{ Value r_ = {getterName}({S(d - 1)}); adopt(r_, &{OwnerList()}); {S(d - 1)} = r_; }}");
+                        Check();
+                    }
                     else if (HasProperty(field) || RestrictedField(field)) { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});"); Check(); }
                     else { E($"{S(d - 1)} = gf_{Mangle(field)}({S(d - 1)});"); Check(); }   // (a destroyed object throws)
                     int fieldType = FieldType(field);
@@ -3674,6 +3722,8 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     if (ObjSlot(d - 2) && DirectSetField(ObjClass(Ty(d - 2)), field, S(d - 2), S(d - 1), Ty(d - 1), f, IsNullable(Ty(d - 2))) is { } direct) E(direct);
+                    else if (ObjSlot(d - 2) && !IsNullable(Ty(d - 2)) && DirectAccessor(ObjClass(Ty(d - 2)), field, true, f) is { } setter)
+                        E($"if (FIRE_UNLIKELY(!leafAlive({S(d - 2)}))) destroyedError({S(d - 2)}); else {{ Value r_ = {GetFunc(setter, FuncKind.Method).Name}({S(d - 2)}, {S(d - 1)}); adopt(r_, &{OwnerList()}); }}");
                     else E($"sf_{Mangle(field)}({S(d - 2)}, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     E($"{S(d - 2)} = {S(d - 1)};");
@@ -3686,6 +3736,8 @@ namespace fire.Native
                     string field = Str(ins.A[0]);
                     _fieldNames.Add(field);
                     if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass && DirectSetField(selfClass, field, "self", S(d - 1), Ty(d - 1), f) is { } direct) E(direct);
+                    else if (f.HasSelf && !IsExtensionMethod(f.Proto) && f.Chunk.OwnerClass is { } selfClass2 && DirectAccessor(selfClass2, field, true, f) is { } selfSetter)
+                        E($"if (FIRE_UNLIKELY(!leafAlive(self))) destroyedError(self); else {{ Value r_ = {GetFunc(selfSetter, FuncKind.Method).Name}(self, {S(d - 1)}); adopt(r_, &{OwnerList()}); }}");
                     else E($"sf_{Mangle(field)}(self, {S(d - 1)}{FieldTail(field, f, () => "&" + OwnerList())});");
                     Check();
                     d--; return Next();
@@ -3775,7 +3827,13 @@ namespace fire.Native
                         var line = new StringBuilder($"if ({S(slot)}.kind == K_Class && leafAlive({S(slot)})) {{ switch (objAt({S(slot)})->cls) {{ ");
                         foreach (var c in classes)
                         {
-                            if (c.Rc.IsTypeOverloaded(method, argc) || c.Rc.FindMethodWithAccess(method, argc).Proto is not { IsStatic: false } proto) continue;
+                            if (c.Rc.IsTypeOverloaded(method, argc) || c.Rc.FindMethodWithAccess(method, argc) is not { Proto: { IsStatic: false } proto } namedFound) continue;
+                            if (CheckAccess && !AccessAllowed(f.Chunk.OwnerClass, namedFound.DeclaringClass!, namedFound.Access))
+                            {
+                                // (known at compile time: this code may not call the method of that class)
+                                line.Append($"case {c.Id}: {S(slot)} = accessDenied({CString($"Method '{method}' of '{namedFound.DeclaringClass!.Name}' is {DescribeAccess(namedFound.Access)} and cannot be called from here.")}); break; ");
+                                continue;
+                            }
                             if (NamedCallArgs(proto, d - argc, argc, methodNames, nmask, S(slot)) is not { } fitting) continue;
                             var (npre, nargs) = fitting;
                             line.Append($"case {c.Id}: {{ {npre}{ClearCallTArgs(proto)}{S(slot)} = {GetFunc(proto, FuncKind.Method).Name}({S(slot)}{nargs}); break; }} ");
@@ -3830,7 +3888,7 @@ namespace fire.Native
                     }
                     bool passesAddresses = Enumerable.Range(0, Math.Min(argc, 16)).Any(i => (ArgMask() >> (4 * i) & 15) == 3);
                     if (ObjSlot(slot) && !passesAddresses && !(_usesReflection && ReflectionMethodNames.Contains(method))
-                        && DirectMethod(ObjClass(Ty(slot)), method, argc) is { } directProto)
+                        && DirectMethod(ObjClass(Ty(slot)), method, argc, f) is { } directProto)
                     {
                         // an object of a known class whose method no derived class overrides: the method itself, not the dispatcher (a destroyed object throws, like there)
                         var target = GetFunc(directProto, FuncKind.Method);
@@ -3849,7 +3907,7 @@ namespace fire.Native
                         AdoptResult(slot, specCondition == null ? ReturnType(callee) : JoinTypes(ReturnType(callee), ReturnType(target)));
                         d = slot + 1; return Next();
                     }
-                    if (!passesAddresses && !WrapDispatchers && !RestrictedMethodName(method) && OwnMethodId(method, argc) == null
+                    if (!passesAddresses && !WrapDispatchers && OwnMethodId(method, argc) == null
                         && !(_usesReflection && ReflectionMethodNames.Contains(method))
                         && HintBefore(f, ins) is { IsConstructor: false } callHint && callHint.Method == method)
                     {
@@ -3857,7 +3915,8 @@ namespace fire.Native
                         // directly - no scoring; otherwise (and for any other receiver) the dispatcher
                         var classes = ObjSlot(slot) ? InstancesOf(ObjClass(Ty(slot))).ToList()
                             : _classList.Where(c => { for (var r = c.Rc; r != null; r = r.Base) if (r.Name == callHint.DeclaringClass) return true; return false; }).ToList();
-                        var hinted = classes.Select(c => (c.Id, Proto: HintTarget(callHint, c.Rc))).Where(t => t.Proto is { IsStatic: false }).ToList();
+                        // (a class whose method this code may not call goes to the dispatcher, which says so)
+                        var hinted = classes.Where(c => MethodAllowedOn(c.Rc, method, argc, f)).Select(c => (c.Id, Proto: HintTarget(callHint, c.Rc))).Where(t => t.Proto is { IsStatic: false }).ToList();
                         if (hinted.Count > 0)
                         {
                             _dispatchers.Add((method, argc));
@@ -3931,8 +3990,9 @@ namespace fire.Native
                 {
                     // no static field of that name: a static property (`get_Name`, SPEC 8.8)
                     if (FindClass(Str(ins.A[0])) is { } getRc && getRc.FindStaticFieldOwner(Str(ins.A[1])) == null
-                        && getRc.FindMethodWithAccess("get_" + Str(ins.A[1]), 0).Proto is { IsStatic: true } staticGetter)
+                        && getRc.FindMethodWithAccess("get_" + Str(ins.A[1]), 0) is { Proto: { IsStatic: true } staticGetter } getterFound)
                     {
+                        AccessCheck(getterFound.DeclaringClass!, getterFound.Access, $"'get_{Str(ins.A[1])}' of '{getterFound.DeclaringClass!.Name}' is {DescribeAccess(getterFound.Access)} and cannot be accessed from here.");
                         E($"{S(d)} = {GetFunc(staticGetter, FuncKind.Static).Name}();");
                         Check();
                         AdoptResult(d);
@@ -3950,8 +4010,10 @@ namespace fire.Native
                 {
                     Need(1);
                     if (FindClass(Str(ins.A[0])) is { } setRc && setRc.FindStaticFieldOwner(Str(ins.A[1])) == null
-                        && setRc.FindMethodWithAccess("set_" + Str(ins.A[1]), 1).Proto is { IsStatic: true } staticSetter)
+                        && setRc.FindMethodWithAccess("set_" + Str(ins.A[1]), 1) is { Proto: { IsStatic: true } staticSetter } setterFound)
                     {
+                        if (ins.Op == OpCode.SetStaticField)
+                            AccessCheck(setterFound.DeclaringClass!, setterFound.Access, $"'set_{Str(ins.A[1])}' of '{setterFound.DeclaringClass!.Name}' is {DescribeAccess(setterFound.Access)} and cannot be accessed from here.");
                         E($"{{ Value r = {GetFunc(staticSetter, FuncKind.Static).Name}({S(d - 1)}); adopt(r, &{OwnerList()}); }}");
                         Check();
                         return Next();

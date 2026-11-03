@@ -366,6 +366,7 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC009` | An assignment as a condition - did you mean '=='? (`if (a = b)`; `if ((a = b))` says the assignment is meant; a warning also in strict mode) |
 | `TC010` | The switch over '…' has no case for … (add the cases or a 'case default') (a `switch` over an enum value; a warning also in strict mode) |
 | `TC011` | '…' has no parameter '…' / The parameter '…' of '…' gets no value (it has no default value) (named arguments, `f(size: 2)`; an error also in lax mode) |
+| `TC012` | Field '…' of '…' is private and cannot be accessed from here. / Method '…' of '…' is protected and cannot be called from here. / Constructor of '…' is … (a `private`/`protected` member used where the class of the object is known; the text of the `AccessDeniedException` at run time; an error also in lax mode) |
 | `TC013` | A value of type '…' can never be a '…': the cast '!…' always fails at run time (only undefined passes) (`x!Dog` where the static type of `x` and `Dog` are unrelated classes, or a class and an interface that no class of the program joins) |
 
 `…` stands for a part of the message that varies (a name, a number).

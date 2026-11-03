@@ -57,7 +57,7 @@ Stand (Branch `native-c`): **umgesetzt**. Der Generator erzeugt C11 (`fire_progr
 Geprüft: die Testsuite unter Linux (gcc 13, AddressSanitizer/UBSan) - native Fälle wie vor dem Umbau, gcc und clang ohne Warnungen (`-Wall -Wextra`, clang
 auch `-pedantic`), FreeRTOS-Fälle auf dem Simulator. Benchmarks vorher/nachher (docs/NATIVE_BACKEND.md, "Benchmarks vor und nach dem C-Port"): der Programmstart
 ist als C gut 0,5 ms kürzer, die Rechenzeit gleich oder bis 20 % besser ; `method` war durch den Zugriffsschutz knapp 4x langsamer (`this.count`
-über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist. Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
+über `gf_count`/`sf_count`) - behoben: ein privates Feld wird direkt gelesen und geschrieben, wenn der Zugriff schon beim Übersetzen erlaubt ist; ebenso private/geschützte Methoden und Properties. Die Zugriffsregeln entscheidet der Typprüfer, wo die Klasse des Objekts bekannt ist (`TC012`, auch lax ein Fehler); zur Laufzeit geprüft werden nur noch `any` und die Reflection. Emscripten (6.0): ein Programm unter node und ein Fenster im Browser (Testgruppe `packer`). Offen: MSVC und
 macOS sind hier nicht installiert. ESP32: mit ESP-IDF 5.5 gebaut (ohne Warnung) und im Emulator von Espressif (QEMU) ausgeführt - Ausgabe wie in der VM;
 auf echter Hardware noch nicht.
 

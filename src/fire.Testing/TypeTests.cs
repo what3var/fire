@@ -36,6 +36,13 @@ static class TypeTests
         return string.Join(" ", warnings.Items.Select(d => d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
+    /// <summary>The messages of the errors of a build ("" when it compiles).</summary>
+    private static string CompileText(string source)
+    {
+        try { RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => Value.MakeUndefined()); return ""; }
+        catch (Exception ex) { return string.Join("\n", CompileDiagnostics.Of(ex).Select(d => d.Message)); }
+    }
+
     public static void Run()
     {
         Console.WriteLine("=== Typen: Typpruefung (lax/strict) und var ===");
@@ -410,6 +417,68 @@ static class TypeTests
                 class U { static int F() { any v = "s"; return v } }
                 try { int z = U.F() } catch (ArgumentException e) { print(e.message) }
                 """) == "|Return value of 'F' is an int, not String.");
+        }
+
+        // access modifiers: decided at compile time where the class of the receiver is known (TC012, an error in lax mode too); `any` and reflection at run time
+        {
+            string access = """
+                class Base {
+                    private int secret = 1
+                    protected int shared = 2
+                    private static int sv = 4
+                    private int Hidden() { return 10 }
+                    protected int Guarded() { return 20 }
+                    private static int Counter() { return 7 }
+                    private int Hush { get { return this.secret } set { this.secret = value } }
+                    int Same(Base other) { return other.secret + other.Hidden() + Base.sv + Base.Counter() + other.Hush }
+                    int InLambda() { var me = this; var f = func () => me.secret + me.Hidden(); return f() }
+                }
+                class Child : Base {
+                    int Peek() { return this.shared + this.Guarded() + shared + Guarded() }
+                }
+                class Locked { private construct() { } static Locked Make() { return new Locked() } }
+                class Guarded2 { protected construct() { } }
+                class Sub2 : Guarded2 { }
+
+                """;
+            Check("Zugriff: erlaubte Zugriffe (eigene Klasse, anderes Objekt derselben Klasse, protected aus der Unterklasse, Lambda in der Methode) ohne Befund",
+                Run(access + "var b = new Base()\nprint(b.Same(b))\nprint(b.InLambda())\nprint(new Child().Peek())\nprint(Locked.Make() is of Locked)\nprint(new Sub2() is of Guarded2)") is var allowed
+                && allowed == "|23\n11\n44\nTrue\nTrue", allowed);
+            foreach (var (what, code) in new[]
+            {
+                ("privates Feld lesen", "var b = new Base()\nprint(b.secret)"),
+                ("privates Feld schreiben", "var b = new Base()\nb.secret = 5"),
+                ("protected Feld von aussen", "Base b = new Child()\nprint(b.shared)"),
+                ("private Methode", "var b = new Base()\nb.Hidden()"),
+                ("protected Methode", "var b = new Base()\nb.Guarded()"),
+                ("private statische Methode", "print(Base.Counter())"),
+                ("privates statisches Feld", "print(Base.sv)"),
+                ("private Property lesen", "var b = new Base()\nprint(b.Hush)"),
+                ("private Property schreiben", "var b = new Base()\nb.Hush = 3"),
+                ("privater Konstruktor", "var l = new Locked()"),
+                ("privater Konstruktor der Basisklasse", "class Sub : Locked { }"),
+                ("privates Feld der Basisklasse ueber this", "class C2 : Base { int P() { return this.secret } }"),
+                ("privates Feld der Basisklasse ohne this", "class C2 : Base { int P() { return secret } }"),
+                ("private Methode der Basisklasse ohne this", "class C2 : Base { int P() { return Hidden() } }"),
+                ("private Methode der Basisklasse ueber base", "class C2 : Base { int P() { return base.Hidden() } }"),
+                ("im Lambda einer anderen Klasse", "class C2 { int P(Base b) { var f = func () => b.secret; return f() } }"),
+                ("Parameter einer anderen Klasse", "class F { static int G(Base b) { return b.secret } }"),
+                ("Rueckgabetyp", "class F { static Base Make() { return new Base() } }\nprint(F.Make().Hidden())"),
+            })
+                Check($"Zugriff: {what} ist ein Fehler beim Uebersetzen (TC012, auch lax)", Run(access + code) is var denied && denied.StartsWith("|ERROR TC012") && !denied.Contains("TC008"), denied);
+            Check("Zugriff: die Meldung ist die der Laufzeit", Run(access + "var b = new Base()\nprint(b.secret)", null) is var text && text.Contains("TC012")
+                && CompileText(access + "var b = new Base()\nprint(b.secret)").Contains("Field 'secret' of 'Base' is private and cannot be accessed from here."));
+            Check("Zugriff: mit `any` bleibt es eine AccessDeniedException zur Laufzeit",
+                Run(access + "any b = new Base()\ntry { print(b.secret) } catch (AccessDeniedException e) { print(e.message) }\ntry { b.Hidden() } catch (AccessDeniedException e) { print(e.message) }") is var dynamic
+                && dynamic == "|Field 'secret' of 'Base' is private and cannot be accessed from here.\nMethod 'Hidden' of 'Base' is private and cannot be called from here.", dynamic);
+            Check("Zugriff: eine Unterklasse deklariert den Namen oeffentlich - die Laufzeit entscheidet nach dem Objekt", Run("""
+                class B { private int M() { return 1 } }
+                class D : B { int M() { return 2 } }
+                B b = new D()
+                print(b.M())
+                B b2 = new B()
+                try { print(b2.M()) } catch (AccessDeniedException e) { print("verweigert") }
+                """) is var mixed && mixed == "|2\nverweigert", mixed);
         }
 
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors

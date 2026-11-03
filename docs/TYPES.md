@@ -54,7 +54,10 @@ Step 3e: generic methods (`R Select<R>(R lambda<T> fn)`, `static Box<U> Of<U>(U 
 `Where`/`OrderBy`/`Take`/... keep `T`, `Select<R>`/`Zip<U, R>`/`Aggregate<A>`/`Sum<R>` take their result types from the lambdas, `First`/`Last`/`Min`/`Max` return `T`,
 `ToList()` a `List<T>`; the operators of a `List<T>` are the same, those of an array take `any` (at run time nothing changes). A member that a fully known class does
 not have (`e.Message` on an `Exception`) is `TC008`, a call with a number of arguments no overload takes is `TC002`. Assignments to fields and properties without
-`this.` (also inherited ones) are checked like those with it.
+`this.` (also inherited ones) are checked like those with it. A `private`/`protected` member that the code may not use is `TC012` (an error in lax mode too, with the
+message of the `AccessDeniedException`): on a receiver whose class is known (also `this`, a member without `this.`, `ClassName.Static`, `new`, `base.M()` and the
+call of the base constructor), when every class the object can be denies it (a derived class that declares the name again with another access leaves it to the
+run time); `any` and reflection are checked at run time.
 
 Known gaps: `SelectMany` and the selector projections (`SelectMember`, ...) are `Query` of `any`.
 
