@@ -363,6 +363,8 @@ Two attributes before a class change what happens to it:
   and its class. It is not inherited. A name given as a literal to reflection (`Reflect.New("Plugin", [])`) is kept the same way without it; the VM keeps everything
   anyway (see [Probes and reflection](16-probes-and-reflection.md#reflection-in-native-builds), the stripping levels).
 - **`[NotSerializable]`** (before a class): `#import "json"` neither writes nor reads objects of the class or of a class derived from it (an `ArgumentException`).
+- **`[NoCopy]`** (before a class): `flat` and `copy` never duplicate an instance of the class or of a class derived from it (an `ArgumentException`, see
+  [Ownership](13-ownership.md#copying-flat-and-copy)) - for classes that stand for a resource, like `NativeHandle`.
 
 ```fire
 [Keep]

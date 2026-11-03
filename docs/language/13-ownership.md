@@ -170,6 +170,9 @@ try {
 }
 ```
 
+A destroyed object has no class any more: `x is of Item`, `x!Item` and `throw x` throw the `DestroyedException` as well. Only the kind of the value is
+still known - `x is of class` is `True`.
+
 ## Testing the owner
 
 `obj is from owner` is `True` when `owner` owns `obj` directly, `obj is under owner` when `owner` is anywhere above it.
@@ -196,6 +199,25 @@ print(deep.item == bag.item)        // False - copied
 
 No constructor runs for a copy. The copy has an owner like a new object (the current scope, the object it is assigned to, or the called method when it is
 an argument). Be careful with objects that hold an external resource (a file): a `flat` copy shares it.
+
+A class that stands for something that exists only once - a handle, a connection - is marked **`[NoCopy]`**. Its instances are never duplicated: `flat x`
+and `copy x` of one, and a `copy` that reaches one through a field or an array element, throw an `ArgumentException` before anything is copied.
+The attribute is inherited (a class derived from a resource is still that resource). A `flat` copy of an object that only refers to one is fine - the
+reference is shared. `NativeHandle` ([native code](18-native-code.md)) is `[NoCopy]`.
+
+```fire
+[NoCopy]
+class Connection { int id }
+class Client { Connection conn
+    construct() { this.conn = new Connection() } }
+var client = new Client()
+var same = flat client              // fine: same.conn == client.conn
+try {
+    var twin = copy client
+} catch (ArgumentException e) {
+    print(e.message)                // 'Connection' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it ...
+}
+```
 
 ## Destructors
 

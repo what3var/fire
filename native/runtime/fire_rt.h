@@ -1860,6 +1860,7 @@ typedef struct FireClassDesc {
     const FireMembers* const* members;   /* the tables of its members, the class first, then its bases (NULL-terminated; NULL: none) */
     const TArg* (*targOf)(Obj* o, const char* cls, int k);   /* the k-th type argument of its generic base `cls` (NULL: no generic class in its chain) */
 #endif
+    uint32_t flags;   /* 1: `[NoCopy]` on the class or a base class - flat/copy refuse to duplicate it */
 } FireClassDesc;
 extern FIRE_RT_DATA const FireClassDesc* g_classDescs;
 extern FIRE_RT_DATA uint32_t g_classDescCount;
@@ -3550,6 +3551,7 @@ FIRE_FN bool wouldBeCaught(Value exception) {
 FIRE_FN Value throwValueR(Value exception, bool resumable) {
     Handler* h;
     if (FIRE_UNLIKELY(exception.kind != K_Class)) fatal("throw expects an exception object.");
+    if (FIRE_UNLIKELY(!leafAlive(exception))) return destroyedError(exception);   /* (a destroyed object: what is thrown is the DestroyedException, like in the VM) */
     takeGlobal(asObj(exception));
 #ifdef FIRE_DEBUG
     /* a debugger: an exception that nothing catches stops at the throw, before anything is unwound; `resume` ignores it (the throw gives undefined) */
@@ -4402,6 +4404,7 @@ FIRE_FN bool isFrom(Value operand, Value owner, bool transitive) {
     Owned* target;
     OwnList* l;
     if (FIRE_UNLIKELY(operand.kind != K_Class || owner.kind != K_Class)) fatal("'is from'/'is under' expects objects.");
+    if (FIRE_UNLIKELY(!leafAlive(operand) || !leafAlive(owner))) return false;   /* (a destroyed object owns nothing and belongs to nothing, like in the VM) */
     target = &asObj(owner)->h;
     for (l = asObj(operand)->h.owner; l; l = l->holder->owner) {
         if (l->holder == target) return true;
@@ -4695,13 +4698,31 @@ FIRE_FN bool ownMethodTry(int method, Value self, Value arg, Value mode, OwnList
 /* ---------------------------------------------------------------------------------------------------------------------
  * `flat x` and `copy x` (SPEC 2.4): no constructor runs, the copy belongs to `owner` like any new value.
  * --------------------------------------------------------------------------------------------------------------------- */
+/* `[NoCopy]` on the class or a base class (FireClassDesc.flags 1): flat/copy never duplicate an instance of it. */
+FIRE_FN bool classNoCopy(uint32_t cls) { return cls < g_classDescCount && (g_classDescs[cls].flags & 1u) != 0; }
+/* ... an ArgumentException instead (the text of RuntimeClass.NoCopyMessage in the VM). */
+FIRE_COLD FIRE_FN Value noCopyError(uint32_t cls, bool nested) {
+    char text[400];
+    const char* name = cls < g_classDescCount && g_classDescs[cls].name ? g_classDescs[cls].name : "?";
+    if (nested) snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.", name);
+    else snprintf(text, sizeof text, "'%s' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.", name);
+    return fireError("ArgumentException", text);
+}
+/* The operand of flat/copy is a destroyed object (its memory is freed: nothing of it can be read). */
+FIRE_COLD FIRE_FN Value copyDestroyedError(void) { return fireError("ArgumentException", "An already destroyed object cannot be copied."); }
+
 FIRE_FN Value flatCopy(Value v, OwnList* owner) {
     uint32_t i;
     switch (v.kind) {
         case K_Class: {
-            Obj* src = asObj(v);
-            Value c = newObject(src->cls, src->nfields, owner);
-            Obj* dst = asObj(c);
+            Obj* src;
+            Value c;
+            Obj* dst;
+            if (FIRE_UNLIKELY(!leafAlive(v))) return copyDestroyedError();
+            src = asObj(v);
+            if (FIRE_UNLIKELY(classNoCopy(src->cls))) return noCopyError(src->cls, false);
+            c = newObject(src->cls, src->nfields, owner);
+            dst = asObj(c);
             dst->targs = src->targs;
             for (i = 0; i < src->nfields; i++) { objFields(dst)[i] = objFields(src)[i]; retain(objFields(dst)[i]); }
             return c;
@@ -4799,6 +4820,7 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 typedef struct DeepCopier {
     OwnList* owner;
     bool taking;          /* a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked */
+    bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
     Obj* treeRoot;
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
     CopyMap containers;   /* array/buffer -> copy */
@@ -4830,8 +4852,9 @@ FIRE_FN bool copierSeenArray(DeepCopier* c, const void* a) {
     for (i = 0; i < c->seenCount; i++) if (c->seen[i] == a) return true;
     return false;
 }
-/* Phase 1: everything reachable through fields and array elements (objects in discovery order). */
-FIRE_FN void copierDiscover(DeepCopier* c, Value start) {
+/* Phase 1: everything reachable through fields and array elements (objects in discovery order); false: an instance of a `[NoCopy]` class is among them
+ * (the ArgumentException is thrown, nothing is copied yet). A destroyed object stays a shared reference (its memory is freed). */
+FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
     uint32_t i;
     copierPushPending(c, start);
     while (c->pendingCount) {
@@ -4839,8 +4862,11 @@ FIRE_FN void copierDiscover(DeepCopier* c, Value start) {
         if (c->taking && v.kind == K_Lambda) takingViolation("lambda values cannot be copied for a thread.");
         if (c->taking && v.kind == K_Pointer) takingViolation("raw pointers cannot be copied for a thread.");
         if (v.kind == K_Class) {
-            Obj* o = asObj(v);
+            Obj* o;
+            if (!leafAlive(v)) continue;
+            o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
+            if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyError(o->cls, start.kind != K_Class || o != asObj(start)); return false; }
             if (c->taking && c->treeRoot && !withinTree(o, c->treeRoot)) {
 #ifdef FIRE_THREADS
                 char text[200];
@@ -4862,6 +4888,7 @@ FIRE_FN void copierDiscover(DeepCopier* c, Value start) {
             for (i = 0; i < a->length; i++) copierPushPending(c, arrItems(a)[i]);
         }
     }
+    return true;
 }
 /* Phase 2: the copy of an object belongs to the copy of its owner when that is copied too, else to `owner`. */
 FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
@@ -4883,7 +4910,7 @@ FIRE_FN Value copierMaterialize(DeepCopier* c, Obj* o) {
 FIRE_FN Value copierMap(DeepCopier* c, Value v) {
     uint32_t i;
     switch (v.kind) {
-        case K_Class: { Value* m = copyMapFind(&c->objects, asObj(v)); return m && m->kind == K_Class ? *m : v; }
+        case K_Class: { Value* m = leafAlive(v) ? copyMapFind(&c->objects, asObj(v)) : NULL; return m && m->kind == K_Class ? *m : v; }
         case K_Array: {
             Arr* src;
             Arr* dst;
@@ -4919,7 +4946,7 @@ FIRE_FN Value copierMap(DeepCopier* c, Value v) {
 }
 FIRE_FN Value copierRun(DeepCopier* c, Value root) {
     uint32_t i, f;
-    copierDiscover(c, root);
+    if (!copierDiscover(c, root)) return Undef();
     for (i = 0; i < c->orderCount; i++) copierMaterialize(c, c->order[i]);
     for (i = 0; i < c->orderCount; i++) {
         Obj* src = c->order[i];
@@ -4931,10 +4958,12 @@ FIRE_FN Value copierRun(DeepCopier* c, Value root) {
 
 /* `copy x`: the copy of everything reachable from x, once each (cycles included); what belonged to a copied object belongs to its copy. */
 FIRE_FN Value deepCopy(Value v, OwnList* owner) {
+    if (v.kind == K_Class && FIRE_UNLIKELY(!leafAlive(v))) return copyDestroyedError();
     if (v.kind == K_Class || ((v.kind == K_Array || v.kind == K_Buffer) && ownedOf(v))) {
         DeepCopier c;
         Value r;
         copierInit(&c, owner);
+        c.noCopy = true;
         r = copierRun(&c, v);
         copierFree(&c);
         return r;

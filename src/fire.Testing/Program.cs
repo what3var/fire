@@ -18691,6 +18691,85 @@ else
             print(q)
             print("end")
             """),
+        ("Zerstoerte Objekte: is of Klasse/Interface und x!Klasse sind eine DestroyedException, is of class/int nicht; throw, copy/flat, is from (unter ASan)", """
+            interface IAnimal { string Name() }
+            class Animal : IAnimal { string Name() { return "animal" } }
+            class Dog : Animal { }
+            class Box { any item }
+            enum Color { Red, Green }
+            var d = new Dog()
+            print(d is of Dog)
+            delete d
+            print(d is of class)
+            print(d is of int)
+            print(d is of string)
+            try { print(d is of Dog) } catch (DestroyedException e) { print("isof: " + e.message) }
+            try { print(d is of Animal) } catch (DestroyedException e) { print("base: " + e.message) }
+            try { print(d is of IAnimal) } catch (DestroyedException e) { print("iface: " + e.message) }
+            try { print(d is of Color) } catch (DestroyedException e) { print("enum: " + e.message) }
+            try { var x = d!Animal; print("cast ok") } catch (DestroyedException e) { print("cast: " + e.message) }
+            try { var x = d!IAnimal; print("cast ok") } catch (DestroyedException e) { print("cast iface: " + e.message) }
+            any a = d
+            if (a is of class) { print("still class") }
+            var u = undefined
+            print(u is of Dog)
+            print(u is of IAnimal)
+            var ex = new ArgumentException("boom")
+            delete ex
+            try { throw ex } catch (ArgumentException e) { print("wrong") } catch (DestroyedException e) { print("throw: " + e.message) }
+            var b = new Box()
+            b.item = new Dog()
+            var inner = b.item
+            delete inner
+            var c = copy b
+            print(c.item == inner)
+            var fb = flat b
+            print(fb.item == inner)
+            try { var z = copy inner } catch (ArgumentException e) { print("copy dead: " + e.message) }
+            try { var z = flat inner } catch (ArgumentException e) { print("flat dead: " + e.message) }
+            var owner = new Box()
+            owner.item = new Dog()
+            var child = owner.item
+            print(child is from owner)
+            delete child
+            print(child is from owner)
+            print("end")
+            """),
+        ("[NoCopy]: copy und flat verdoppeln keine Instanz (auch abgeleitet, als Feld, Element, Argument, Feldzuweisung) - ArgumentException; flat teilt Referenzen", """
+            [NoCopy]
+            class Res { int id
+                construct(int i) { this.id = i }
+                destruct() { print("release " + this.id) } }
+            class SubRes : Res { construct(int i) : base(i) { } }
+            class Holder { string name; Res res; int nums[]
+                construct(string n) { this.name = n; this.res = new Res(3); this.nums = [1, 2] } }
+            class Plain { int v }
+            class Eat { static int Id(Res x) { return x.id } }
+            class Keeper { Res kept }
+            var r = new Res(1)
+            try { var c = copy r } catch (ArgumentException e) { print("copy: " + e.message) }
+            try { var f = flat r } catch (ArgumentException e) { print("flat: " + e.message) }
+            var s = new SubRes(2)
+            try { var c = copy s } catch (ArgumentException e) { print("sub: " + e.message) }
+            var h = new Holder("h")
+            var hf = flat h
+            print("flat holder shares: " + (hf.res == h.res))
+            try { var hc = copy h } catch (ArgumentException e) { print("deep: " + e.message) }
+            var arr = [new Plain(), r]
+            var af = flat arr
+            print("flat array shares: " + (af[1] == r))
+            try { var ac = copy arr } catch (ArgumentException e) { print("array: " + e.message) }
+            try { print(Eat.Id(copy r)) } catch (ArgumentException e) { print("arg: " + e.message) }
+            try { print(Eat.Id(flat s)) } catch (ArgumentException e) { print("flat arg: " + e.message) }
+            var k = new Keeper()
+            try { k.kept = copy r } catch (ArgumentException e) { print("field: " + e.message) }
+            print(k.kept == undefined)
+            var p = new Plain()
+            p.v = 5
+            var pc = copy p
+            print(pc.v)
+            print("end")
+            """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
             class Base {
                 private int secret

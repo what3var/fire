@@ -759,12 +759,13 @@ namespace fire.Compiler
             return meta;
         }
 
-        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/NATIVE_BACKEND.md) and `[NotSerializable]` before the class (docs/JSON.md).</summary>
+        /// <summary>`[Keep]` before the class or its members (a native build keeps them, docs/NATIVE_BACKEND.md) , `[NotSerializable]` before the class (docs/JSON.md) and `[NoCopy]` (SPEC 5.12).</summary>
         private static void MarkKeepAndSerializable(RuntimeClass rc, ClassDecl cd)
         {
             static bool Has(IReadOnlyList<AttributeDecl>? attributes, string name) => attributes?.Any(a => a.Name == name) == true;
             rc.Keep = Has(cd.Attributes, "Keep");
             if (Has(cd.Attributes, "NotSerializable")) rc.NotSerializable = true;
+            rc.NoCopy = Has(cd.Attributes, "NoCopy");
             foreach (var member in cd.Members)
             {
                 (string? name, IReadOnlyList<AttributeDecl>? attributes) = member switch

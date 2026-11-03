@@ -73,6 +73,8 @@ namespace fire.Standard
 
             /// A pointer a native library returned with `release:` (`lib.Get("make", "void*(int)", release: "unmake")`): it follows ownership - `delete h` or the
             /// end of its owner calls the release function, once; a function of the library that expects a pointer takes it (docs/language/18-native-code.md).
+            /// `[NoCopy]`: a copy would release the pointer twice - `flat`/`copy` refuse it (an ArgumentException), also of a class derived from it.
+            [NoCopy]
             class NativeHandle {
                 private int address
                 private int release
@@ -83,8 +85,8 @@ namespace fire.Standard
 
                 destruct() { {{NativeName}}({{(int)LibraryMethod.Release}}, this.release, this.address) }
 
-                /// (an argument of a library function: a handle passes its address - a released one throws the DestroyedException here, before anything
-                /// else looks at it: natively `is of NativeHandle` would read the freed object)
+                /// (an argument of a library function: a handle passes its address - a released one throws the DestroyedException here; `is of class`
+                /// only looks at the kind of the value, `is of NativeHandle` would throw it as well)
                 static any Arg(any a) {
                     if (a is of class) { return a.Address }
                     return a

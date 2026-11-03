@@ -607,6 +607,19 @@ static class LinkageTests
         try { print(get(h)) } catch (DestroyedException e) { print("use: " + e.message) }
         try { print(h.Address) } catch (DestroyedException e) { print("address: " + e.message) }
         try { delete h; print("delete again: " + live()) } catch (DestroyedException e) { print("delete again: " + e.message) }
+        try { print(h is of NativeHandle) } catch (DestroyedException e) { print("is of: " + e.message) }
+        var one = make(3)
+        try { var two = copy one } catch (ArgumentException e) { print("copy: " + e.message) }
+        try { var two = flat one } catch (ArgumentException e) { print("flat: " + e.message) }
+        {
+            var hb = new Holder()
+            hb.h = make(4)
+            try { var hc = copy hb } catch (ArgumentException e) { print("deep: " + e.message) }
+            var hf = flat hb
+            print("flat shares " + (hf.h == hb.h) + " " + live())
+        }
+        delete one
+        print("no copies " + live())
         {
             var box = new Holder()
             box.h = make(9)
@@ -628,7 +641,11 @@ static class LinkageTests
 
     /// <summary>The output of <see cref="UseRelease"/> - the same in the VM, natively (source, static, under ASan) and under Wine.</summary>
     private const string ReleaseExpected = "5 42 2 True True\nblock 0\n7 1\ndelete 0\nuse: Access to a destroyed object.\naddress: Access to a destroyed object.\n"
-        + "delete again: 0\nholder 9 1\nholder gone 0\ncopied 0\nTrue\nTrue\nTrue 1\n"
+        + "delete again: 0\nis of: Access to a destroyed object.\n"
+        + "copy: 'NativeHandle' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.\n"
+        + "flat: 'NativeHandle' cannot be copied ([NoCopy]) - an instance of it exists only once; share the reference or pass it on with 'take'.\n"
+        + "deep: 'NativeHandle' cannot be copied ([NoCopy]) - 'copy' reaches an instance of it (a field or an element of the copied value); it exists only once, share the reference instead.\n"
+        + "flat shares True 2\nno copies 0\nholder 9 1\nholder gone 0\ncopied 0\nTrue\nTrue\nTrue 1\n"
         + "rel: The library 'LIB' has no function 'nope' (release:).\n"
         + "kind: release: frees what a function returns - the signature 'int(int, int)' returns no pointer and no string.\nend 1\n";
 

@@ -73,7 +73,9 @@ print(strdup("copied"))                            // copied - the C copy is alr
 - A returned **string** is copied into a fire string and the C memory is freed at once with the release function: there is nothing to delete.
 - Without `release:` nothing changes: a pointer is an `int`, a string is copied and never freed.
 - A release function the library does not have, or `release:` on a function that returns neither a pointer nor a string, is a `LibraryException` from `Get`.
-- Do not `copy` or `flat` a handle: the copy would free the same pointer again.
+- A handle cannot be copied: `NativeHandle` is `[NoCopy]` ([ownership](13-ownership.md#copying-flat-and-copy)) - `copy h`, `flat h` and a `copy` of an object or array
+  that holds one throw an `ArgumentException` ("'NativeHandle' cannot be copied ([NoCopy]) - ..."), since the copy would free the same pointer again.
+  `h is of NativeHandle` of a released handle throws the `DestroyedException` like any destroyed object.
 - In a **native build** the call goes through a small function the compiler generates for the signature: the signature must be a text constant somewhere in
   the program (`Get("add", "int(int, int)")`). A signature that is put together while the program runs works in the VM; a native build says
   "The signature '...' is not known to this native build: pass it to Get as a text constant."

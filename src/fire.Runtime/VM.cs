@@ -3950,6 +3950,7 @@ namespace fire.Runtime
                 {
                     string typeName = _constants[ReadU16()].AsString();
                     var v = Peek();
+                    if (ReadsDeadClass(v, typeName, out var deadCast)) { ThrowDestroyedObject(deadCast); break; }
                     if (v.Kind != ValueKind.Undefined && !IsOfType(v, typeName))
                     {
                         string have = v.Kind == ValueKind.Class ? ((ObjectInstance)v.AsObjectRef()).ClassName : v.Kind.ToString();
@@ -4522,6 +4523,7 @@ namespace fire.Runtime
                 {
                     string typeName = _constants[ReadU16()].AsString();
                     var v = Pop();
+                    if (ReadsDeadClass(v, typeName, out var deadObj)) { Push(Value.MakeUndefined()); ThrowDestroyedObject(deadObj); break; }
                     Push(Value.MakeBool(IsOfType(v, typeName)));
                     break;
                 }
@@ -5125,6 +5127,8 @@ namespace fire.Runtime
         private void ThrowException(Value exceptionValue)
         {
             var excInstance = RequireObjectInstance(exceptionValue, "throw");
+            // (a destroyed object cannot be thrown: what is thrown is the DestroyedException - natively its class is not known any more)
+            if (IsDeadObject(excInstance)) { ThrowDestroyedObject(excInstance); return; }
             if (CaptureErrorTrace) RecordThrowTrace();
 
             if (PauseOnUnhandled && _nestedDepth == 0 && _callbackBoundaries.Count == 0 && !WouldBeCaught(excInstance))
@@ -5343,6 +5347,15 @@ namespace fire.Runtime
             for (; rc != null; rc = rc.Base)
                 if (rc.Name == typeName || rc.Interfaces.Contains(typeName)) return true;
             return false;
+        }
+
+        /// <summary>`x is of Dog` / `x!Dog` on a destroyed object: the test needs its class, which a destroyed object does not have any more (natively its memory
+        /// is freed) - a DestroyedException. The kind tests (`is of class`, `is of int`, ...) only look at the value and stay answerable.</summary>
+        private bool ReadsDeadClass(Value v, string typeName, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out ObjectInstance? dead)
+        {
+            dead = v.Kind == ValueKind.Class && v.AsObjectRef() is ObjectInstance obj && IsDeadObject(obj)
+                && typeName is not ("bool" or "int" or "float" or "char" or "string" or "undefined" or "class") ? obj : null;
+            return dead != null;
         }
 
         /// <summary>`value is of Type` (SPEC 6): for base-type names a simple

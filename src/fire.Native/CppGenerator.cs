@@ -1591,6 +1591,7 @@ namespace fire.Native
                     if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {enumIndex};   // (the enum {typeName})");
                     if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
                     sb.AppendLine("    if (v.kind != K_Class) return false;");
+                    sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;   /* (destroyed: its class is not known any more - `is of` and `!` throw before) */");
                     sb.AppendLine(ids.Count == 0 ? "    return false;" : "    switch (asObj(v)->cls) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }");
                     sb.AppendLine("}");
                 }
@@ -2484,9 +2485,9 @@ namespace fire.Native
                         var c = new StringBuilder();
                         for (var b = unmadeRc; b != null; b = b.Base) c.Append(CString(b.Name)).Append(", ");
                         columns.AppendLine($"static const char* const kIsa{id}[] = {{{c}NULL}};");
-                        rows.Add($"{{{CString(unmade)}, {unmadeRc.FlattenedFieldNames.Count}, -1, -1, NULL, NULL, NULL, kIsa{id}, NULL, NULL, NULL}}");
+                        rows.Add($"{{{CString(unmade)}, {unmadeRc.FlattenedFieldNames.Count}, -1, -1, NULL, NULL, NULL, kIsa{id}, NULL, NULL, NULL, {DescFlags(unmadeRc)}}}");
                     }
-                    else rows.Add(Modular ? "{\"?\", 0, -1, -1, NULL, NULL, NULL, NULL, NULL, NULL, NULL}" : "{\"?\", 0, -1, -1, NULL, NULL, NULL}");
+                    else rows.Add(Modular ? "{\"?\", 0, -1, -1, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0}" : "{\"?\", 0, -1, -1, NULL, NULL, NULL, 0}");
                     continue;
                 }
                 rows.Add(DescRow(cls, id, sb, columns, excTypes: true));
@@ -2528,8 +2529,11 @@ namespace fire.Native
                 }
             }
             string modular = Modular ? ModularDescColumns(cls.Rc, columns, id) : "";
-            return $"{{{CString(cls.Rc.Name)}, {cls.Fields.Count}, {message}, {ticks}, {destroy}, {toString}, {types}{modular}}}";
+            return $"{{{CString(cls.Rc.Name)}, {cls.Fields.Count}, {message}, {ticks}, {destroy}, {toString}, {types}{modular}, {DescFlags(cls.Rc)}}}";
         }
+
+        /// <summary>The flags of a class descriptor (FireClassDesc.flags): 1 = `[NoCopy]` on it or a base class (flat/copy refuse it).</summary>
+        private static string DescFlags(RuntimeClass rc) => rc.IsNoCopy() ? "1u" : "0u";
 
         // -------------------------------------------------------------------------------------------------------------
         // Flow state: stack depth, the static scope chain (identity of the scope + number of declared slots) and which stack
@@ -3758,7 +3762,9 @@ namespace fire.Native
                     string test = castTest == "K_Int" ? $"{S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0"
                         : castTest.Length > 0 ? $"{S(d - 1)}.kind == {castTest}" : $"{IsOfFn(castName)}({S(d - 1)})";
                     if (castTest.Length == 0) _isOfTypes.Add(castName);
-                    E($"if (FIRE_UNLIKELY({S(d - 1)}.kind != K_Undefined && !({test}))) castFailed({S(d - 1)}, {CString(castName)});");
+                    // (a destroyed object: the test needs its class - a DestroyedException, like in the VM; the kind tests do not)
+                    string dead = castTest.Length == 0 ? $"if (FIRE_UNLIKELY({S(d - 1)}.kind == K_Class && !leafAlive({S(d - 1)}))) destroyedError({S(d - 1)}); else " : "";
+                    E($"{dead}if (FIRE_UNLIKELY({S(d - 1)}.kind != K_Undefined && !({test}))) castFailed({S(d - 1)}, {CString(castName)});");
                     Check();
                     return Next();
                 }
@@ -3800,7 +3806,15 @@ namespace fire.Native
                     };
                     if (test == "K_Int") E($"{S(d - 1)} = Bool({S(d - 1)}.kind == K_Int && {S(d - 1)}.reserved == 0);");   // (an enum is not an int)
                     else if (test.Length > 0) E($"{S(d - 1)} = Bool({S(d - 1)}.kind == {test});");
-                    else { _isOfTypes.Add(typeName); E($"{S(d - 1)} = Bool({IsOfFn(typeName)}({S(d - 1)}));"); }
+                    else
+                    {
+                        // `x is of Dog` on a destroyed object: a DestroyedException (its class is not known any more; the VM does the same)
+                        _isOfTypes.Add(typeName);
+                        E($"{S(d - 1)} = FIRE_UNLIKELY({S(d - 1)}.kind == K_Class && !leafAlive({S(d - 1)})) ? destroyedError({S(d - 1)}) : Bool({IsOfFn(typeName)}({S(d - 1)}));");
+                        SetR(d - 1, false);
+                        Check();
+                        return Next();
+                    }
                     SetR(d - 1, false); return Next();
                 }
                 case OpCode.IsFrom:

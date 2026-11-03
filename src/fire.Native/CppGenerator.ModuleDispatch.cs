@@ -427,6 +427,7 @@ namespace fire.Native
             if (EnumIndexNamed(typeName) is var enumIndex and > 0) sb.AppendLine($"    if (v.kind == K_Int) return v.reserved == {EnumC(enumIndex)};   // (the enum {typeName})");
             if (typeName == "IEnumerable") sb.AppendLine("    if (v.kind == K_Array || v.kind == K_Buffer) return true;");
             sb.AppendLine("    if (v.kind != K_Class) return false;");
+            sb.AppendLine("    if (FIRE_UNLIKELY(!leafAlive(v))) return false;   /* (destroyed: its class is not known any more - `is of` and `!` throw before) */");
             sb.AppendLine($"    {{ uint32_t k_ = {OwnLocal("asObj(v)->cls")}; if (FIRE_LIKELY({OwnRangeTest("k_")})) {(ids.Count == 0 ? "return false;" : "switch (k_) { " + string.Concat(ids.Select(id => $"case {id}: ")) + "return true; default: return false; }")} }}");
             sb.AppendLine($"    return fireIsOf(asObj(v)->cls, {CString(typeName)});");
             sb.AppendLine("}");

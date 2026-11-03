@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using fire.Bytecode;
 using fire.Values;
 
 namespace fire.Runtime
@@ -22,7 +23,9 @@ namespace fire.Runtime
     /// For both: constructors do not run (only field values are transferred), the destructor of the copy runs like
     /// for any object. Actors are never copied (an actor as operand is an error, an actor at depth remains
     /// a shared reference - actor references are meant for passing around anyway, THREADING_DESIGN 2), likewise
-    /// an already destroyed object at depth remains a shared reference. Lambdas and pointers are shared.
+    /// an already destroyed object at depth remains a shared reference. Lambdas and pointers are shared. An instance of a `[NoCopy]` class (SPEC 5.12)
+    /// is never duplicated: as the operand of `flat`/`copy`, or reached by `copy`, it is an error (`flat` keeps the references of the fields, so a field
+    /// holding one is fine there).
     /// </summary>
     public static class ObjectCloner
     {
@@ -80,10 +83,19 @@ namespace fire.Runtime
         {
             if (obj.IsDestroyed)
                 throw new InvalidOperationException(
-                    $"An already destroyed object ('{obj.ClassName}') cannot be copied.");
+                    "An already destroyed object cannot be copied.");
             if (IsActor(obj))
                 throw new InvalidOperationException(
                     $"An actor ('{obj.ClassName}') cannot be copied - actor references are shared.");
+            RequireCopyable(obj, nested: false);
+        }
+
+        /// <summary>`[NoCopy]` (SPEC 5.12, inherited): the instance is never duplicated - an ArgumentException (the VM turns the InvalidOperationException into it)
+        /// before anything is copied.</summary>
+        private static void RequireCopyable(ObjectInstance obj, bool nested)
+        {
+            if (obj.RtClass?.IsNoCopy() == true)
+                throw new InvalidOperationException(RuntimeClass.NoCopyMessage(obj.ClassName, nested));
         }
 
         private static bool IsActor(ObjectInstance obj) => obj.Mailbox != null || (obj.RtClass?.IsActor ?? false);
@@ -169,6 +181,7 @@ namespace fire.Runtime
                             if (_found.ContainsKey(obj)) break;
                             // Actors and destroyed objects remain shared references (only the root is checked up front).
                             if (!ReferenceEquals(obj, _root) && (IsActor(obj) || obj.IsDestroyed)) break;
+                            RequireCopyable(obj, nested: !ReferenceEquals(obj, _root));   // (still nothing copied: discovery comes first)
                             var snapshot = Snapshot(obj);
                             _found[obj] = snapshot;
                             _order.Add(obj);

@@ -273,9 +273,14 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
 **Further rules**
 - **No constructor** runs - the field values are simply transferred. The destructor runs for the copy as for any object.
   Be careful with objects that hold an external resource (e.g. an `IO.FileStream` with its handle): the copy shares the
-  handle with the original, and both close it when destroyed.
+  handle with the original, and both close it when destroyed. A class marked **`[NoCopy]`** (5.12; `NativeHandle` is one) cannot be copied at all:
+  an instance of it as the operand of `flat`/`copy`, or reached by `copy` through a field or an array element, is an `ArgumentException`
+  ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
+  (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
+  (the reference is shared, nothing is duplicated).
 - An **actor** as an operand is an error; an actor inside a copy remains a shared reference (actor references are meant to be
-  passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error.
+  passed around). Likewise an already destroyed object inside remains a shared reference; as an operand it is an error (an `ArgumentException`
+  "An already destroyed object cannot be copied.").
 - Lambdas and pointers are shared in both cases, not copied.
 - Operands without content (number, text, `true`, `undefined`) simply yield themselves. An **array** as an operand: `flat` creates a new
   array with the same elements, `copy` also copies the elements; a **buffer** (`byte[]`) is copied byte by byte in both cases.
@@ -1081,7 +1086,9 @@ properties - nowhere else. Reflection lists them for every member (`Member.Attri
 `Reflect.New(name)`; before a class: the class with all its members, before a member: that member and its class; not inherited; a name given as a literal to
 reflection - `Reflect.New("X")`, `Reflect.Call(o, "M")` - is kept the same way without it; the VM keeps everything anyway; how much a native build leaves out is its
 stripping level 0-3, docs/NATIVE_BACKEND.md "Größe des Programms"); `[NotSerializable]` (before a class) - `#import "json"` neither writes nor reads objects of the class or of a class
-derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
+derived from it (an `ArgumentException`; a package does the same for all its classes with `"serializable": false`, docs/JSON.md); `[NoCopy]` (before a class) -
+an instance stands for something that exists once (a resource, a handle): `flat`/`copy` never duplicate it, also not of a class derived from it (an
+`ArgumentException`, 2.4; inherited because a subclass of a resource is still that resource; `NativeHandle` is `[NoCopy]`). A `[` on a new line after a declaration (`int count` + newline + `[Test]`) starts an attribute, it never continues the
 declaration as an array size. `forge test` reads `Test`, `Parameters`, `PrepareTest`, `CleanTest`, `PrepareTesting`, `CleanTesting` (docs/TESTING.md), `#import "json"` reads `NonSerialized`
 and `JsonName` on fields (docs/JSON.md); other names are allowed and ignored. `[Colorize 0xRRGGBB]` (or `[Colorize "#RRGGBB"]`) is read only by the
 editor: it shows the name of the member in that color where it is declared and wherever it is used as a member (`amp.In`); the generated class of a
@@ -1094,6 +1101,9 @@ The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusi
 
 - **`value is in unit`** → `bool`. Checks whether `value` (int/float/undefined) carries a unit that is dimensionally compatible with `unit` (see 3.4), regardless of prefix/scaling factor. Example: `5mm is in m` → `true`, `5mm is in kg` → `false`.
 - **`value is of Type`** → `bool`. Checks type membership **recursively**: for base types a simple kind comparison; for `class` instances the inheritance chain is searched upwards (the instance itself or one of its parent classes matches `Type`). Example: `a is of float`. An **interface** is also allowed as a type (`value is of IEnumerable`): true if the class (or a base class) names it in `class X : IFoo`; **arrays and buffers** satisfy `IEnumerable`.
+  A **destroyed object** (2.3, 2.5) has no class any more: `x is of Dog` (a class, an interface or an enum), `x!Dog` and `throw x` throw the `DestroyedException`,
+  in the VM and natively; the kind tests (`x is of class`, `is of int`, ...) only look at the value and stay answerable (`is of class` is `true`).
+  `undefined is of Dog` stays `false`. `x is from`/`is under` of a destroyed object is `false` (it belongs to nothing).
 - **`object is from ownerExpression`** → `bool`. Checks whether the current owner of `object` is exactly `ownerExpression` (direct owner comparison). Example: `obj is from objList`.
 - **`object is under ownerExpression`** → `bool`. Like `is from`, but **transitive**: checks whether `ownerExpression` is anywhere in the ownership chain above `object` (direct owner, its owner, and so on, arbitrarily deep).
 
