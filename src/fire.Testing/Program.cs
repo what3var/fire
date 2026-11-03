@@ -15863,6 +15863,7 @@ else
         return null;
     }
 
+    var vmUnhandled = new Dictionary<string, string>();
     string vmOutput(string source)
     {
         // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
@@ -15871,6 +15872,8 @@ else
         var lines = new List<string>();
         var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
         session.Run();
+        // what the command line runner writes to stderr for an exception that nothing catches (an "Abbruch:" case compares it with the native program)
+        if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = new UncaughtScriptException(unhandled).Message;
         return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
     }
 
@@ -17748,6 +17751,71 @@ else
             print("start")
             T.F(2)
             print("never")
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException (Programm ohne Ausnahmen) - Text und Exitcode wie die VM", """
+            any s = 1s
+            print("a")
+            print(1m + s)
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException einer Deklaration mit Einheit", """
+            try { print(1) } catch (Exception e) { }
+            any w = 3kg
+            float:km/h v = w
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException einer Deklaration (Programm ohne Ausnahmen)", """
+            any w = 3kg
+            float:km/h v = w
+            """),
+        ("Abbruch: unbehandelte IndexOutOfBoundsException (Programm ohne Ausnahmen)", """
+            int a[] = new int[3]
+            print(a[5])
+            """),
+        ("Abbruch: unbehandelte IndexOutOfBoundsException", """
+            try { print(1) } catch (Exception e) { }
+            int a[] = new int[3]
+            print(a[-1])
+            """),
+        ("Abbruch: unbehandelte ArgumentException (Programm ohne Ausnahmen)", """
+            any q = "q"
+            print(q * 2)
+            """),
+        ("Abbruch: unbehandelte DestroyedException (Programm ohne Ausnahmen)", """
+            class Foo { int x
+                construct() { } }
+            var f = new Foo()
+            delete f
+            print(f.x)
+            """),
+        ("Abbruch: unbehandelte DestroyedException beim Methodenaufruf", """
+            class Foo { construct() { } }
+            var f = new Foo()
+            delete f
+            print(f.ToString())
+            """),
+        ("Abbruch: unbehandelte AccessDeniedException (Programm ohne Ausnahmen)", """
+            class P { private int x
+                construct() { x = 1 } }
+            any p = new P()
+            print(p.x)
+            """),
+        ("Abbruch: unbehandelter Zugriff auf undefined (Programm ohne Ausnahmen)", """
+            var u = undefined
+            print(u.foo)
+            """),
+        ("Abbruch: unbehandelte DivideByZeroException (Programm ohne Ausnahmen)", """
+            int z = 0
+            print(5 / z)
+            """),
+        ("Abbruch: unbehandelte eigene Ausnahme mit Text", """
+            class MyEx : Exception { construct(string m) : base(m) { } }
+            print("vorher")
+            throw new MyEx("mine")
+            """),
+        ("Abbruch: unbehandelte Ausnahme in einem fire-Thread", """
+            #import "time"
+            fire { throw new Exception("in thread") }
+            Sleep(500ms)
+            print("after")
             """),
         ("Ausnahmen: Lambdas, ToString, Konstruktor, catch ohne try", """
             class Boom : Exception {
@@ -24605,12 +24673,15 @@ else
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C/C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
-                // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
+                // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
+                // stderr ("Unhandled exception of type 'Class': message")
                 using var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exeFile) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
                 var stderrTask = run.StandardError.ReadToEndAsync();
                 string stdout = run.StandardOutput.ReadToEnd();
                 run.WaitForExit();
-                return (c.Name, expected, run.ExitCode == 1 && stderrTask.Result.Contains("Unhandled exception") ? stdout : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
+                string vmStderr;
+                lock (vmUnhandled) vmStderr = vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
+                return (c.Name, expected + "stderr: " + vmStderr, run.ExitCode == 1 ? stdout + "stderr: " + stderrTask.Result.TrimEnd('\n', '\r') : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
             }
             string actual = RunTool(exeFile, "", out int runExit);
             // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)

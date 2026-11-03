@@ -327,6 +327,8 @@ FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) {
     snprintf(e.text, sizeof e.text, "%s", utf8);
     throw e;
 }
+/* (in a package library an exception of the language goes to the VM, which throws it there) */
+FIRE_NORETURN FIRE_FN void fatalException(const char* cls, const char* message) { fireError(cls, message); }
 #elif defined(FIRE_LIBRARY)
 /* The natives of a package in C built as a shared library for the virtual machine (native/abi/fire_pkg_wrapper.h): a run-time error does not end the process - it
  * jumps back (longjmp) to the wrapper of the entry point, which reports it to the VM. (So a native that calls fireError or fatal must not hold anything it has to
@@ -352,10 +354,20 @@ FIRE_NORETURN FIRE_FN void unsupported(const char* what) {
     fireLibraryJump(1, "", text);
 }
 FIRE_NORETURN FIRE_FN Value fireError(const char* cls, const char* utf8) { fireLibraryJump(2, cls, utf8); }
+/* (in a package library an exception of the language goes to the VM, which throws it there) */
+FIRE_NORETURN FIRE_FN void fatalException(const char* cls, const char* message) { fireLibraryJump(2, cls, message); }
 #else
 FIRE_NORETURN FIRE_COLD FIRE_FN void fatal(const char* message) {
     fflush(stdout);
     fprintf(stderr, "fire runtime error: %s\n", message);
+    exitNow(1);
+}
+
+/* An exception of the language that nothing catches (a program without exceptions ends at the first one): the text and the exit code of the VM's command line
+ * runner (UncaughtScriptException: "Unhandled exception of type 'Class': message", exit code 1). */
+FIRE_NORETURN FIRE_COLD FIRE_FN void fatalException(const char* cls, const char* message) {
+    fflush(stdout);
+    fprintf(stderr, "Unhandled exception of type '%s': %s\n", cls, message);
     exitNow(1);
 }
 
@@ -572,9 +584,9 @@ FIRE_COLD FIRE_FN void unitConflict(uint32_t from, uint32_t to) {
     snprintf(text, sizeof text, "Incompatible units: '%s' cannot be converted to '%s'.", g_ud[from].name, g_ud[to].name);
     fireError("UnitMismatchException", text);
 #else
-    fflush(stdout);
-    fprintf(stderr, "Unhandled exception. fire.Values.UnitMismatchException: Incompatible units: '%s' cannot be converted to '%s'.\n", g_ud[from].name, g_ud[to].name);
-    exitNow(1);
+    char text[240];
+    snprintf(text, sizeof text, "Incompatible units: '%s' cannot be converted to '%s'.", g_ud[from].name, g_ud[to].name);
+    fatalException("UnitMismatchException", text);
 #endif
 }
 /* Unit.ConversionFactorTo
@@ -3074,11 +3086,25 @@ FIRE_FN void takeGlobal(Obj* o) {
     ownLink(g_globalOwn, &o->h);
 }
 
+/* Generated: the index of the field `message` of an object of the class, -1 when the class has none. */
+int32_t excMessageIndex(uint32_t cls);
+/* An exception that nothing catches: the text of the VM (UncaughtScriptException) - the class and the text of the field `message`. */
 FIRE_COLD FIRE_FN void reportUnhandled(Value exception) {
-    Obj* o;
+    Obj* o = asObj(exception);
+    int32_t index = excMessageIndex(o->cls);
+    char text[1024];
+    if (index < 0) snprintf(text, sizeof text, "(no 'message' field)");
+    else {
+        Value m = objFields(o)[index];
+        if (m.kind != K_String) {
+            OwnList scratch;
+            ownListInit(&scratch, 0, NULL);
+            m = toStringValue(m, &scratch);
+        }
+        strToUtf8(m, text, sizeof text);
+    }
     fflush(stdout);
-    o = asObj(exception);
-    fprintf(stderr, "Unhandled exception of class '%s'.\n", className(o->cls));
+    fprintf(stderr, "Unhandled exception of type '%s': %s\n", className(o->cls), text);
 }
 
 #ifdef FIRE_THREADS
@@ -3176,7 +3202,7 @@ FIRE_FN Value indexError(const char* what, int64_t index, int64_t length) {
     return fireError("IndexOutOfBoundsException", text);   /* the VM throws it as the exception of the program */
 #else
     (void)n;
-    fatal(text);
+    fatalException("IndexOutOfBoundsException", text);
 #endif
 }
 
@@ -3218,8 +3244,11 @@ FIRE_FN void unitMismatch(Value v, Value expectedText) {
     actual = newStrFrom(actualText, an, &unused);
     throwValue(makeUnitError(StrV(msg), expectedText, actual));
 #else
-    (void)v; (void)expectedText;
-    fatal("Incompatible units.");
+    char expected[120], text[300];
+    uint32_t actualUnit = (v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined) ? v.unit : 0;
+    strToUtf8(expectedText, expected, sizeof expected);
+    snprintf(text, sizeof text, "Expected unit '%s', got: %s.", expected, actualUnit ? g_ud[actualUnit].name : "(no unit)");
+    fatalException("UnitMismatchException", text);
 #endif
 }
 
@@ -3240,10 +3269,8 @@ FIRE_FN Value fireError(const char* cls, const char* utf8) {
     msg = newStrFrom(text, utf8ToUtf16(utf8, text, 400), &unused);
     exception = makeClassError(cls, msg);
     if (exception.kind == K_Class) return throwValue(exception);
-#else
-    (void)cls;
 #endif
-    fatal(utf8);
+    fatalException(cls, utf8);
 }
 #endif
 
@@ -3253,6 +3280,7 @@ FIRE_FN const char* valueKindText(Value v) { return kindName(v); }
 /* A method that the value does not have (a class that has it with other numbers of arguments is reported by the dispatcher itself): a MissingMemberException. */
 FIRE_COLD FIRE_FN Value missingMethod(Value self, const char* name, int argc) {
     char text[400];
+    if (self.kind == K_Class && !leafAlive(self)) return destroyedError(self);   /* (the VM looks at a destroyed object first) */
     if (self.kind == K_Class) snprintf(text, sizeof text, "Method '%s' not found on '%s'.", name, className(asObj(self)->cls));
     else snprintf(text, sizeof text, "'%s' (%d argument(s)) is not a known built-in method on a value of type %s.", name, argc, valueKindText(self));
     return fireError("MissingMemberException", text);
@@ -3290,7 +3318,7 @@ FIRE_FN Value rfFail(const char* utf8) {
     msg = strFromUtf8(utf8, &unused);
     return throwValue(makeReflectError(msg));
 #else
-    fatal(utf8);
+    fatalException("ReflectionException", utf8);
 #endif
 }
 #endif
@@ -3485,7 +3513,7 @@ FIRE_FN Value accessDenied(const char* text) {
 #ifdef FIRE_EXCEPTIONS
     return throwValue(makeAccessError(fire_asciiMessage(text)));
 #else
-    fatal(text);
+    fatalException("AccessDeniedException", text);
 #endif
 }
 
@@ -3550,7 +3578,7 @@ FIRE_FN Value divideByZero(void) {
 #elif defined(FIRE_LIBRARY)
     return fireError("DivideByZeroException", "Division by zero.");
 #else
-    fatal("Division by zero.");
+    fatalException("DivideByZeroException", "Division by zero.");
 #endif
 }
 
@@ -3559,7 +3587,7 @@ FIRE_FN Value destroyedError(Value leaf) {
 #ifdef FIRE_EXCEPTIONS
     return throwValue(makeDestroyedError(fire_asciiMessage(text)));
 #else
-    fatal(text);
+    fatalException("DestroyedException", text);
 #endif
 }
 

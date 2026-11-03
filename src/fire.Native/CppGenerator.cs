@@ -2044,6 +2044,18 @@ namespace fire.Native
             sb.AppendLine("        default: return \"?\";");
             sb.AppendLine("    }");
             sb.AppendLine("}");
+            // the field `message` of an exception that nothing catches (reportUnhandled prints it like the VM)
+            sb.AppendLine("int32_t excMessageIndex(uint32_t cls) {");
+            var messageCases = _usesExceptions ? _classList.Where(c => c.Rc.FieldIndex.ContainsKey("message")).GroupBy(c => c.Rc.FieldIndex["message"]).ToList() : new();
+            if (messageCases.Count > 0)
+            {
+                sb.AppendLine("    switch (cls) {");
+                foreach (var g in messageCases) sb.AppendLine("        " + string.Concat(g.Select(c => $"case {c.Id}: ")) + $"return {g.Key};");
+                sb.AppendLine("        default: return -1;");
+                sb.AppendLine("    }");
+            }
+            else sb.AppendLine("    (void)cls; return -1;");
+            sb.AppendLine("}");
 
             if (_usesExceptions)
             {
