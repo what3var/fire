@@ -27,7 +27,7 @@ The elements are the ones of the library `ui` (docs/UI.md): the layout container
 #include "Greeter.fxml"                   // the script generated from the markup is included right here
 
 class UpperConverter : UI.Converter {
-    any Convert(any value) { return value.ToUpper() }
+    override any Convert(any value) { return value.ToUpper() }
 }
 
 class Person {
@@ -36,7 +36,7 @@ class Person {
 }
 
 class GreeterWindow : GreeterBase {        // the inheritance is declared here, in the code-behind
-    undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of OnClick="Ok"
+    override undefined Ok(any sender) { print("Hello " + this.dataContext.Name) }       // overrides the (empty) handler of OnClick="Ok"
 }
 
 var window = new GreeterWindow()
@@ -156,7 +156,7 @@ An argument is a number (also with a unit: `2.5mm`), a text in quotes (`'it''s'`
 A text that starts with `[` and a name is written `{}[like this]`.
 
 **Handlers:** `OnClick="Ok"` calls the method `undefined Ok(any sender)` of the object. The generated base class defines it empty, so a derived class overrides it - and a handler you do not
-override does nothing. (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override.)
+override does nothing. Mark the handler `override` (`override undefined Ok(any sender) { ... }`, SPEC 5.1 - without it the type checker warns, `TC014`). (The method has to be declared with exactly the parameters of the generated one: a different parameter list would be an overload, not an override - with `override` that is the error `TC015`.)
 
 ## Styles, triggers and templates
 

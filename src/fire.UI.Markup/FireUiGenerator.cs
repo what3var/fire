@@ -123,7 +123,7 @@ namespace fire.UI.Markup
             var code = new Writer();
             string file = string.IsNullOrEmpty(sourceName) ? "the markup" : Path.GetFileName(sourceName);
             code.Line($"// Generated from {file} - do not edit, change the markup. Derive from the class and override the methods named in on...=\"...\":");
-            code.Line($"//     class {document.ClassName} : {document.BaseName} {{ undefined Save(any sender) {{ ... }} }}");
+            code.Line($"//     class {document.ClassName} : {document.BaseName} {{ override undefined Save(any sender) {{ ... }} }}");
             code.Line("#import \"ui\"");
             // the namespaces of the markup: an unqualified type name is looked up in them (a name that two of them have must be written with its prefix)
             foreach (var ns in document.Namespaces.Values.Distinct()) code.Line($"#using {ns}");

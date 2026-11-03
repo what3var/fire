@@ -19,6 +19,7 @@ namespace fire.Lexing
         Interface,
         Readonly, Enum,
         Static, // 'static' on fields/methods/properties (see Parser.ParseClassMember)
+        Override, // 'override' on a method, property or operator that replaces an inherited one (see Parser.ParseClassMemberAfterAttributes, TypeChecker.CheckOverrides)
         Public, Private, Protected, // Access modifiers for class members (see Parser.ParseAccessModifier)
         Namespace, // 'namespace Name { ... }' (siehe Parser.ParseNamespaceDecl/FlattenNamespaces)
         With,

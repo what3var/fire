@@ -573,6 +573,15 @@ supported.
 - Single inheritance: `class Foo : Bar { ... }`
 - `base(...)` in the constructor calls the parent constructor.
 - `base.Method(...)` calls an overridden parent method.
+- **`override`:** a method, a property or an operator of an object that replaces one of a base class (any class up the chain; the rule of 5.4.3
+  "Overriding" decides which method replaces which) is marked `override`, after the access modifier: `override string Speak()`,
+  `protected override undefined Draw(UI.Root root, int x, int y)`, `override int Count { get { ... } }`, `override bool operator==(any o)`.
+  The type checker reports a missing `override` (`TC014`: a warning in lax mode, an error in strict mode) and an `override` that replaces nothing - a mistyped
+  name, other parameter types, a property the base classes do not have (`TC015`, an error in lax mode too). It changes nothing at run time: every method is
+  virtual as before. Not marked: the implementation of an interface method (only interfaces declare it: `override` there is `TC015`), a method with other
+  parameter types (another overload, 5.4.3), static members (they belong to their class; `static override` is a syntax error), constructors and destructors
+  (both chains run). Code generated from markup follows the same rule: the handlers of a `.fxml` code-behind and `OnBuilt` of a circuit replace those of the
+  generated base class (`override undefined Ok(any sender)`).
 
 ### 5.2 Constructor
 
@@ -751,8 +760,8 @@ The type checker reports `TC002` when there is no such generic method.
 
 **Overriding.** A method of a derived class overrides the one of a base class
 when it has the same number of parameters and, per parameter, the same type –
-or an untyped parameter or a type parameter on either side (`string Over(int
-x)` in the derived class overrides `string Over(any x)` of the base class).
+or an untyped parameter or a type parameter on either side (`override string Over(int
+x)` in the derived class overrides `string Over(any x)` of the base class; such a method is marked `override`, 5.1).
 With other parameter types it stands next to the inherited method as another
 overload: `Derived.Hello(int)` and the inherited `Base.Hello(string)` are both
 callable on a `Derived`.

@@ -2843,19 +2843,30 @@ namespace fire.Compiler
 
         private List<Stmt> ParseClassMemberAfterAttributes(int line)
         {
+            if (Check(TokenType.Override) && PeekAt(1).Type is TokenType.Public or TokenType.Private or TokenType.Protected)
+                throw Error($"The access modifier comes first: '{PeekAt(1).Lexeme} override ...'", Peek());
             var access = ParseOptionalAccessModifier();
+            // `override` (after the access modifier): the member replaces one of a base class - a method, a property or an operator (TypeChecker.CheckOverrides)
+            Token? overrideToken = Check(TokenType.Override) ? Advance() : null;
+            bool isOverride = overrideToken != null;
 
             if (Check(TokenType.Construct))
+            {
+                if (isOverride) throw Error("A constructor is not inherited - it cannot be 'override'", overrideToken!.Value);
                 return new List<Stmt> { ParseConstructor(access) };
+            }
             if (Check(TokenType.Destruct))
+            {
+                if (isOverride) throw Error("A destructor does not replace the one of the base class (both run) - it cannot be 'override'", overrideToken!.Value);
                 return new List<Stmt> { ParseDestructor() };
+            }
             if (Check(TokenType.Operator))
-                return new List<Stmt> { ParseOperatorMember(line, null) };
+                return new List<Stmt> { WithOverride(ParseOperatorMember(line, null), isOverride) };
             // `bool operator==(...)`: an operator with a declared return type
             if (TypeThenOperatorAhead())
             {
                 var operatorType = ParseTypeRef(allowArray: true);
-                return new List<Stmt> { ParseOperatorMember(line, operatorType) };
+                return new List<Stmt> { WithOverride(ParseOperatorMember(line, operatorType), isOverride) };
             }
 
             // 'static' on fields/methods/properties (SPEC "Static
@@ -2866,7 +2877,11 @@ namespace fire.Compiler
             // notation ('public static readonly'), no other
             // orders specially supported (simplicity).
             bool isStatic = Match(TokenType.Static);
+            if (isOverride && isStatic) throw Error("A static member belongs to its class and is not inherited - it cannot be 'override'", overrideToken!.Value);
+            if (!isOverride && Check(TokenType.Override))
+                throw Error("'static' and 'override' do not go together: a static member belongs to its class and is not inherited", Peek());
             bool isReadonly = Match(TokenType.Readonly);
+            if (isOverride && isReadonly) throw Error("A field cannot be 'override' - only methods, properties and operators replace inherited ones", overrideToken!.Value);
 
             // SPEC "Unit declarations": `var` is valid as with local
             // variables/parameters - `var` alone (type + possibly unit
@@ -2903,7 +2918,7 @@ namespace fire.Compiler
                 var methodTypeParams = ParseWhereClauses(methodTypeParamNames, line);
                 var body = ParseBlock();
                 return new List<Stmt> { new MethodDecl(_sourceIndex, line, type, name, parms, body,
-                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access, isStatic) };
+                    methodTypeParamNames.Count > 0 ? methodTypeParams : null, access, isStatic, IsOverride: isOverride) };
             }
 
             if (methodTypeParamNames.Count > 0)
@@ -2924,8 +2939,11 @@ namespace fire.Compiler
                     throw Error(
                         "'readonly' is not valid for properties - a property without 'set' is already read-only",
                         Peek());
-                return ParsePropertyBody(line, type, name, access, isStatic);
+                var property = ParsePropertyBody(line, type, name, access, isStatic);
+                if (isOverride) property = property.Select(m => m is PropertyDecl pd ? pd with { IsOverride = true } : m).ToList();
+                return property;
             }
+            if (isOverride) throw Error("A field cannot be 'override' - only methods, properties and operators replace inherited ones", overrideToken!.Value);
 
             if (type is { ArrayRank: > 0 })
                 throw Error(
@@ -2968,6 +2986,8 @@ namespace fire.Compiler
         /// object with a matching method - an overload only for the
         /// RIGHT operand (like C#'s `operator+` with swapped operand
         /// types, or Python's `__radd__`) is deliberately NOT supported.</summary>
+        private static Stmt WithOverride(Stmt member, bool isOverride) => isOverride && member is MethodDecl m ? m with { IsOverride = true } : member;
+
         private Stmt ParseOperatorMember(int line, TypeRef? returnType)
         {
             Expect(TokenType.Operator, "Expected 'operator'");
