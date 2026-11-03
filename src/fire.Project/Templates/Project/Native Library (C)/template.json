@@ -1,0 +1,7 @@
+{
+  "title": "Native Library (C)",
+  "description": "A library with C natives (C99) in the folder native/: fire code wraps them in a class. The C goes into the package too; a native build needs only a C compiler (also TinyCC).",
+  "icon": "native",
+  "open": [ "$identlower$.fire" ],
+  "order": 40
+}
