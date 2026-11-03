@@ -206,6 +206,6 @@ Noch offen:
 Noch offen:
 
 * Dirty-Rechtecke als Liste je Framebuffer (Präsentation nur dort), Blur-Cache auch für eigene Programme.
-* Tooltips gibt es in `ui` noch nicht; `ui.docking` (Werkzeugleisten, Docking) hat den alten eckigen Stil.
+* Tooltips gibt es in `ui` noch nicht.
 * `override`: der Typprüfer findet eine Basisklasse ohne Namespace innerhalb eines Namespace nicht (`TypeChecker.NameOf`) - die Pakete mit Namespace sind deshalb noch nicht markiert.
 
