@@ -126,7 +126,7 @@ namespace fire.Native
                 sb.AppendLine($"    Value* const dv_[] = {{{string.Join(", ", d.DvNames.Select(n => "&" + n))}}};");
                 sb.AppendLine("    DF->vars = dv_;");
             }
-            if (f.HasSelf || f.Kind == FuncKind.Lambda) sb.AppendLine("    DF->self = &self;");
+            if (f.HasSelf || f.Kind == FuncKind.Lambda) sb.AppendLine("    DF->thisSlot = &self;");
             return sb.ToString();
         }
 
@@ -252,6 +252,32 @@ namespace fire.Native
                 sb.AppendLine("    }");
             }
             else sb.AppendLine("    (void)cls; return NULL;");
+            sb.AppendLine("}");
+            // `set` of a field: through the setter of the field (the declared kind is checked, probes hear it) as if the class itself assigned it
+            sb.AppendLine("void fire_dbgSetField(Value o, uint32_t index, Value x) {");
+            sb.AppendLine("    OwnList scratch_ = {NULL, NULL, poolMark(), 0, NULL, NULL};");
+            sb.AppendLine("    (void)scratch_;");
+            var setters = _classList.Where(c => c.Fields.Any(_fieldNames.Contains)).ToList();
+            if (setters.Count > 0)
+            {
+                sb.AppendLine("    switch (objAt(o)->cls) {");
+                foreach (var cls in setters)
+                {
+                    sb.AppendLine($"        case {cls.Id}: switch (index) {{");
+                    for (int i = 0; i < cls.Fields.Count; i++)
+                    {
+                        string field = cls.Fields[i];
+                        if (!_fieldNames.Contains(field)) continue;
+                        string tail = (HasProperty(field) ? ", &scratch_" : "") + (RestrictedField(field) ? $", {cls.Id}u" : "");
+                        sb.AppendLine($"            case {i}: sf_{Mangle(field)}(o, x{tail}); leave(&scratch_); return;");
+                    }
+                    sb.AppendLine("            default: break;");
+                    sb.AppendLine("        } break;");
+                }
+                sb.AppendLine("        default: break;");
+                sb.AppendLine("    }");
+            }
+            sb.AppendLine("    setFieldAt(o, index, x);");
             sb.AppendLine("}");
             var (entrySrc, entryLine) = _program.Program.TopLevel.GetLocation(0);
             sb.AppendLine($"static const DbgProgram kDbgProgram = {{{(nsources > 0 ? "kDbgSources" : "NULL")}, {nsources}, {_program.FirstUserSource}, {(nglobals > 0 ? "kDbgGlobals" : "NULL")}, {nglobals}, {entrySrc}, {entryLine}, {CString(_target.Name)}}};");

@@ -29,12 +29,12 @@ typedef struct DbgProgram {
     const char* target;
 } DbgProgram;
 
-/* The frame of a running fire function (on the C stack of its wrapper). `vars` points to the addresses of its variables, `self` to its `this` (null: none). */
+/* The frame of a running fire function (on the C stack of its wrapper). `vars` points to the addresses of its variables, `thisSlot` to its `this` (null: none). */
 struct DbgFrame {
     DbgFrame* prev;
     const DbgFunc* fn;
     Value* const* vars;
-    Value* self;
+    Value* thisSlot;   /* (not `self`: the generated code has a variable of that name) */
     int32_t src, line, lv;
     uint32_t depth;
     uint8_t hidden;   /* called the way the VM runs it nested (a getter, a destructor, ...): no stops inside */
@@ -45,6 +45,8 @@ extern int32_t g_dbgGlobalCount;    /* the global variables declared so far (VM.
 
 /* (generated) the class `cls` for the debugger: its name and the names of its fields, base fields first */
 const DbgClass* fire_dbgClass(uint32_t cls);
+/* (generated) `set` of field `index` of an object: through the setter of the field, as the class itself would assign it */
+void fire_dbgSetField(Value o, uint32_t index, Value x);
 
 void fire_dbgLine(DbgFrame* f);
 void fire_dbgRet(DbgFrame* caller);
@@ -55,7 +57,7 @@ FIRE_FN void fire_dbgEnter(DbgFrame* f, const DbgFunc* fn, int hidden) {
     f->prev = prev;
     f->fn = fn;
     f->vars = NULL;
-    f->self = NULL;
+    f->thisSlot = NULL;
     f->src = 0; f->line = 0; f->lv = -1;
     f->depth = prev ? prev->depth + 1 : 0;
     f->hidden = (uint8_t)hidden;
@@ -573,10 +575,18 @@ static const DbgLevel* dbgThreadGlobals(DbgThread* t, DbgFrame** bottom) {
 }
 
 /* Resolves a ref (docs/NATIVE_DEBUG_PROTOCOL.md "Werte"): the slot of the value, or null with a reason. `thread` is the thread a `l:`/`t:` ref names. */
+static Value* dbgResolveField(const char* ref, const char** error, DbgThread** thread, Value* object, long* field);
 static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread) {
+    Value object;
+    long field;
+    return dbgResolveField(ref, error, thread, &object, &field);
+}
+/* Like dbgResolve; when the last step is a field of an object, that object and the index of the field (else `field` is -1). */
+static Value* dbgResolveField(const char* ref, const char** error, DbgThread** thread, Value* object, long* field) {
     Value* slot = NULL;
     const char* p = ref;
     *thread = NULL;
+    *field = -1;
     if (p[0] == 'g' && p[1] == ':') {
         long n = strtol(p + 2, (char**)&p, 10);
         if (n < 0 || n >= g_dbgProg->nglobals || n >= g_dbgGlobalCount || !g_dbgProg->globals[n].slot) { *error = "no such global"; return NULL; }
@@ -604,8 +614,8 @@ static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread
         *thread = t;
         f = t->atEntry ? NULL : *t->topp;
         if (kind == 't') {
-            if (!f || !f->self) { *error = "no this"; return NULL; }
-            slot = f->self;
+            if (!f || !f->thisSlot) { *error = "no this"; return NULL; }
+            slot = f->thisSlot;
         }
         else {
             long depth, index;
@@ -624,7 +634,8 @@ static Value* dbgResolve(const char* ref, const char** error, DbgThread** thread
         long k = strtol(p + 1, (char**)&p, 10);
         Value v = *slot;
         if (!dbgAlive(v)) { *error = "the value is gone"; return NULL; }
-        if (v.kind == K_Class && k >= 0 && (uint32_t)k < objAt(v)->nfields) slot = &objFields(objAt(v))[k];
+        *field = -1;
+        if (v.kind == K_Class && k >= 0 && (uint32_t)k < objAt(v)->nfields) { slot = &objFields(objAt(v))[k]; *object = v; *field = k; }
         else if (v.kind == K_Array && k >= 0 && (uint32_t)k < arrOf(v)->length) slot = &arrItems(arrOf(v))[k];
         else { *error = "the value is gone"; return NULL; }
     }
@@ -676,18 +687,46 @@ static bool dbgParseLiteral(const char* text, Value old, Value* out, OwnList* li
     }
     return false;
 }
+/* The catch block of `set`: an exception of a setter (the declared kind of a field, a probe) is the answer. */
+static Value g_dbgSetExc;
+static void dbgSetCatch(void* ctx, uint32_t ci, Value e) { (void)ci; g_dbgSetExc = e; clearPending(e); exitJump((Handler*)ctx, 0); }
 static void dbgRunTask(DbgThread* t) {
+    static const int32_t anything[] = {-1};
+    static const HandlerInfo catchAll = {1, anything, 0};
     DbgTask* task = t->task;
     const char* error = NULL;
     DbgThread* owner;
-    Value* slot = dbgResolve(task->ref, &error, &owner);
+    Value object;
+    long field;
+    Value* slot = dbgResolveField(task->ref, &error, &owner, &object, &field);
     Value nv, old;
     if (!slot) { dbgPutS(task->out, error); return; }
     old = *slot;
     if (!dbgParseLiteral(task->literal, old, &nv, g_globalOwn)) { dbgPutS(task->out, "not a literal (a number, true, false, undefined or a string in quotes)"); return; }
-    retain(nv);
-    *slot = nv;
-    release(old);
+    if (field >= 0) {
+        /* a field: its setter, under a catch block of our own (an exception does not reach the program) */
+        Handler h;
+        h.info = &catchAll; h.fn = dbgSetCatch; h.ctx = &h;
+        pushHandler(&h);
+        g_dbgNest++;
+        fire_dbgSetField(object, (uint32_t)field, nv);
+        g_dbgNest--;
+        if (g_handlers == &h) popHandler();
+        if (g_unwind.active) {
+            Obj* o = g_dbgSetExc.kind == K_Class ? asObj(g_dbgSetExc) : NULL;
+            int32_t index = o ? excMessageIndex(o->cls) : -1;
+            clearUnwind();
+            if (o && index >= 0 && objFields(o)[index].kind == K_String) dbgPutS16(task->out, strOf(objFields(o)[index])->data, strOf(objFields(o)[index])->length, 4000);
+            else dbgPutS(task->out, "the setter threw an exception");
+            return;
+        }
+        nv = *slot;
+    }
+    else {
+        retain(nv);
+        *slot = nv;
+        release(old);
+    }
     dbgPutValue(task->out, "", nv, task->ref);
     task->ok = 1;
 }
@@ -928,10 +967,10 @@ static void dbgCommand(const char* json) {
         else {
             DbgFrame* f = t->atEntry ? NULL : *t->topp;
             dbgPut(&b, ",\"value\":");
-            if (f && f->self && f->self->kind != K_Undefined) {
+            if (f && f->thisSlot && f->thisSlot->kind != K_Undefined) {
                 char ref[32];
                 snprintf(ref, sizeof ref, "t:%d", t->id);
-                dbgPutValue(&b, "this", *f->self, ref);
+                dbgPutValue(&b, "this", *f->thisSlot, ref);
             }
             else dbgPut(&b, "null");
         }

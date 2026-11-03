@@ -279,6 +279,29 @@ static class NativeDebugTests
             }
             print(total)
             """, new[] { 14, 5 }, new[] { Op.Continue, Op.StepInto, Op.Continue, Op.Continue }),
+        new("try/catch in einer Methode (Frame mit this)", """
+            class Acc {
+                int total
+                construct() {
+                    this.total = 0
+                }
+                Add(int v) {
+                    try {
+                        if (v < 0) {
+                            throw new ArgumentException("negativ")
+                        }
+                        this.total = this.total + v
+                    } catch (e) {
+                        print("fehler " + e.message)
+                    }
+                    return this.total
+                }
+            }
+            var a = new Acc()
+            a.Add(2)
+            a.Add(-1)
+            print(a.Add(3))
+            """, new[] { 12, 14 }, new[] { Op.Continue, Op.StepOver, Op.Continue, Op.StepInto, Op.StepOut, Op.Continue, Op.Continue }),
         new("Strings", """
             var s = "abc"
             var t = s + "def"
@@ -777,6 +800,8 @@ static class NativeDebugTests
             ok &= Set(children[1].GetProperty("ref").GetString()!, "\"q\"") == "q";
             ok &= Set(items[1].GetProperty("ref").GetString()!, "99") == "99";
             ok &= Set("g:999", "1") == "error" && Set(items[1].GetProperty("ref").GetString()!, "kein literal") == "error";
+            // a field goes through its setter: the declared kind is checked (an ArgumentException is the answer, the program does not see it)
+            ok &= Set(children[0].GetProperty("ref").GetString()!, "\"kein int\"") == "error";
             c.Request("continue", new() { ["thread"] = main });
             var stop2 = c.NextEvent("stopped");
             var f = Find(c.Request("globals").GetProperty("variables"), "f");
