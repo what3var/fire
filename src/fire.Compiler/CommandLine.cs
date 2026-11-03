@@ -86,6 +86,7 @@ namespace fire.Compiler
             build   turns them into a program (a project without -o or "output": <project>/bin/<target>-<mode>/<name>, target vm or the native one, mode dbg/rel/perf):
                     a self-contained executable that carries the VM (default: out.exe), or - with --engine native, or "engine": "native" in
                     fire.native.json - C (and the natives in C++) built with the toolchain of the configuration for the target (-o is the program; for a toolchain that only writes files, a folder).
+                    A target other than this machine (-t esp32, wasm, another system) is always native: the VM exists only for this machine.
             -m      Execution mode (default: whatever the script sets with #debug/#performance, otherwise RELEASE).
             native  translates the files into C (written next to fire_rt.h, the runtime it includes; default: out.c - and fire_natives.cpp with natives in C++)
                     - an experimental ahead-of-time backend, see docs/NATIVE_BACKEND.md.
@@ -372,7 +373,8 @@ namespace fire.Compiler
             fire.Native.NativeConfig config;
             try { config = LoadConfig(options); }
             catch (fire.Native.NativeConfigException ex) { stderr.WriteLine(ex.Message); return ExitUsage; }
-            string engine = options.Engine ?? config.Engine?.ToLowerInvariant() ?? "vm";
+            string? engine = ChooseEngine(options.Engine, config.Engine, options.TargetName, config, stderr);
+            if (engine == null) return ExitUsage;
             if (engine == "native") return NativeBuild(options, config, sources, stdout, stderr);
             try
             {
@@ -385,6 +387,24 @@ namespace fire.Compiler
             }
             stdout.WriteLine($"{Path.GetFullPath(options.OutputFile)} ({new FileInfo(options.OutputFile).Length} bytes)");
             return ExitOk;
+        }
+
+        /// <summary>The engine of a build: `--engine`, else the project's or the configuration's - but a target other than this machine is always native: the VM
+        /// (a self-contained file with the .NET runtime) exists only for the machine it runs on, and the targets of the native backend (esp32, wasm, another system)
+        /// need no .NET at all. `--engine vm` with such a target is an error (null).</summary>
+        internal static string? ChooseEngine(string? given, string? configured, string? targetName, fire.Native.NativeConfig config, TextWriter stderr)
+        {
+            TargetProfile? target = null;
+            try { if (targetName != null || config.Target != null) target = config.ResolveTarget(targetName); }
+            catch (fire.Native.NativeConfigException) { }   // (an unknown target is reported by the native build)
+            bool foreign = target != null && target.Name != TargetProfile.Host.Name || target == null && targetName != null;
+            if (given == "vm" && foreign)
+            {
+                stderr.WriteLine($"--engine vm cannot build for the target '{target?.Name ?? targetName}': the VM runs only on this machine ({TargetProfile.Host.Name}). Leave out --engine or use --engine native.");
+                return null;
+            }
+            if (foreign) return "native";
+            return given ?? configured?.ToLowerInvariant() ?? "vm";
         }
 
         private static fire.Native.NativeConfig LoadConfig(CommandLineOptions options)
@@ -421,7 +441,7 @@ namespace fire.Compiler
             try
             {
                 var config = LoadConfig(options);
-                var target = config.ResolveTarget(options.TargetName);
+                var target = NativeBuilder.WithRequestedSdl(config.ResolveTarget(options.TargetName), null);   // (only the sources: SDL2 for a window, unless FIRE_SDL or the target say 3)
                 var program = NativeBuilder.GenerateLinked(sources, target, options.Mode, options.FloatWidth, BaseDirectory(options), options.Defines, sourcePaths: SourceFiles(options));
                 string cpp = program.C;
                 string full = Path.GetFullPath(options.OutputFile);
@@ -618,7 +638,8 @@ namespace fire.Compiler
                     return ExitOk;
                 }
                 fire.Native.NativeConfig config = options.ConfigFile != null ? fire.Native.NativeConfig.Load(options.ConfigFile) : fire.Native.NativeConfig.FindFor(plan.Project.FilePath);
-                string engine = options.Engine ?? plan.Settings.Engine ?? config.Engine?.ToLowerInvariant() ?? "vm";
+                string? engine = ChooseEngine(options.Engine, plan.Settings.Engine ?? config.Engine, options.TargetName ?? plan.Settings.Target, config, stderr);
+                if (engine == null) return ExitUsage;
                 string? output = options.OutputGiven ? options.OutputFile : plan.Settings.Output;
                 if (engine == "native")
                 {

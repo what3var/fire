@@ -293,7 +293,7 @@ static class ProjectTests
         FireTemplate Tpl(TemplateScope scope, string title) => catalog.Find(scope, title) ?? throw new InvalidOperationException("no template " + title);
         Check("Vorlagen: Namen werden geprueft", ProjectTemplates.CheckName("Ok Name") == null && ProjectTemplates.CheckName("") != null && ProjectTemplates.CheckName("a/b") != null && ProjectTemplates.CheckName(".x") != null);
         Check("Vorlagen: der vorgeschlagene Ordner ist $HOME/spark/{Name}", ProjectTemplates.DefaultSolutionFolder("Demo") == Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "spark", "Demo"));
-        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 4 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 3 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
+        Check("Vorlagen: fuer die Mappe mit 'Empty', fuer ein Projekt ohne", catalog.Projects().Count() == 5 && catalog.Projects().First().Empty && catalog.Projects(includeEmpty: false).Count() == 4 && catalog.Projects().All(x => x.Source == "Local"), string.Join(",", catalog.Projects().Select(x => x.Display)));
 
         var empty = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Empty"), Path.Combine(t, "E"), "E");
         Check("Vorlagen: leer = eine Mappe ohne Projekt", empty.Solution != null && empty.Projects.Count == 0 && File.Exists(Path.Combine(t, "E", "E.firesln")) && !Directory.Exists(Path.Combine(t, "E", "E")));
@@ -314,8 +314,8 @@ static class ProjectTests
         var libraryPlan = BuildPlan.Create(library, library.Projects[0]);
         Check("Vorlagen: Library ist eine Bibliothek ohne Einsprung und uebersetzt", library.Projects[0].Project.Type == OutputType.Library && libraryPlan.IsValid && Ok(() => ProjectBuilder.Check(libraryPlan)), Catch(() => ProjectBuilder.Check(libraryPlan)));
 
-        var nativeLib = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Native Library"), Path.Combine(t, "N"), "N");
-        Check("Vorlagen: Native Library legt das C++ in den Ordner native/", nativeLib.Projects[0].Project.Native != null && File.Exists(Path.Combine(t, "N", "N", "native", "n.hpp")) && File.ReadAllText(Path.Combine(t, "N", "N", "N.fireproj")).Contains("\"native\""));
+        var nativeLib = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Native Library (C++)"), Path.Combine(t, "N"), "N");
+        Check("Vorlagen: Native Library (C++) legt das C++ in den Ordner native/", nativeLib.Projects[0].Project.Native != null && File.Exists(Path.Combine(t, "N", "N", "native", "n.hpp")) && File.ReadAllText(Path.Combine(t, "N", "N", "N.fireproj")).Contains("\"native\""));
 
         // natives: the functions are found in the C++, an application uses them through the library, in the virtual machine (a shared library is built from the C++ now)
         string nativeApp = Path.Combine(t, "N");
@@ -355,6 +355,41 @@ static class ProjectTests
         var nativeManifest = fire.Package.Manager.Fpk.ReadManifest(nativePack);
         var nativeImport = nativeManifest.Imports[0];
         Check("Natives: das Paket enthaelt das C++ und die Funktionen", nativeImport.Native != null && nativeImport.Native.Functions.Count == 3 && nativeImport.Native.Sources.Count == 1 && nativeImport.Prelude != null, nativeImport.Native?.Sources.Count.ToString());
+        // the same with the template in C: native/{name}.h, "language": "c"; the functions are `static inline Value name(...)`; the VM, a native build (also TinyCC) and the package
+        var cLib = Workspace.CreateSolution(Tpl(TemplateScope.Project, "Native Library (C)"), Path.Combine(t, "NC"), "NC");
+        string cHeader = Path.Combine(t, "NC", "NC", "native", "nc.h");
+        Check("Vorlagen: Native Library (C) legt das C in den Ordner native/ und sagt \"language\": \"c\"", cLib.Projects[0].Project.Native?.Language == "c" && File.Exists(cHeader), File.ReadAllText(Path.Combine(t, "NC", "NC", "NC.fireproj")));
+        File.WriteAllText(cHeader, File.ReadAllText(cHeader).Replace("#endif", "static inline Value nc_twice(Value a) { return Int(a.i * 2); }\nstatic inline Value nc_text(OwnList* list) { Str* s = allocStr(3, list); strChars(s)[0] = 'a'; strChars(s)[1] = 'b'; strChars(s)[2] = 'c'; return StrV(s); }\n\n#endif"));
+        File.WriteAllText(Path.Combine(t, "NC", "NC", "nc.fire"), "namespace NC {\n    class Native {\n        static int Add(int a, int b) { return __nc_add(a, b) }\n        static int Twice(int a) { return __nc_twice(a) }\n        static string Text() { return __nc_text() }\n    }\n}\n");
+        var cSolution = Workspace.Open(Path.Combine(t, "NC", "NC.firesln"));
+        var cFound = ProjectNatives.Resolve(cSolution.Projects[0])!;
+        Check("Natives (C): die Funktionen werden gefunden und sind C-Funktionen", cFound.Native.IsC && cFound.Native.Functions.Select(f => f.Name).OrderBy(n => n).SequenceEqual(new[] { "__nc_add", "__nc_text", "__nc_twice" }) && cFound.Native.Functions.All(f => !string.IsNullOrEmpty(f.C) && f.Cpp.Length == 0) && cFound.Native.Functions.First(f => f.Name == "__nc_text").NeedsList, string.Join(",", cFound.Native.Functions.Select(f => f.Name + "/" + f.C)));
+        string cAppDir = Path.Combine(t, "NC", "App");
+        Directory.CreateDirectory(cAppDir);
+        File.WriteAllText(Path.Combine(cAppDir, "App.fireproj"), """{ "name": "App", "references": [ { "project": "../NC/NC.fireproj" } ] }""");
+        File.WriteAllText(Path.Combine(cAppDir, "main.script"), "#import \"NC\"\nprint(NC.Native.Add(2, 3))\nprint(NC.Native.Twice(21))\nprint(NC.Native.Text())\n");
+        cSolution.AddProject(Path.Combine(cAppDir, "App.fireproj"));
+        var cAppPlan = BuildPlan.Create(cSolution, cSolution.FindByName("App")!);
+        string cOut = "";
+        string cErr = Catch(() => cOut = RunPlan(cAppPlan));
+        Check("Natives (C): das Programm ruft das C der Bibliothek in der VM", cOut.Trim() == "5\n42\nabc", cErr + cOut);
+        foreach (string toolchain in new[] { "gcc", "tcc" })
+        {
+            if (toolchain == "tcc" && !File.Exists("/usr/bin/tcc")) { Console.WriteLine("(uebersprungen - TinyCC fehlt: Natives (C) mit tcc)"); continue; }
+            string cExe = Path.Combine(t, "NC", "app-" + toolchain);
+            var bo = new StringWriter(); var be = new StringWriter();
+            int code = CommandLineRunner.Run(new[] { "build", Path.Combine(t, "NC", "NC.firesln"), "-p", "App", "--engine", "native", "--toolchain", toolchain, "-o", cExe }, bo, be);
+            string run = "";
+            if (code == 0 && File.Exists(cExe))
+            {
+                using var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(cExe) { RedirectStandardOutput = true, UseShellExecute = false })!;
+                run = proc.StandardOutput.ReadToEnd().Replace("\r\n", "\n"); proc.WaitForExit();
+            }
+            Check($"Natives (C): ein nativer Build ({toolchain}) uebernimmt das C der Bibliothek", run.Trim() == "5\n42\nabc", be.ToString() + bo + run);
+        }
+        var cLibPlan = BuildPlan.Create(cSolution, cSolution.FindByName("NC")!);
+        var cImport = fire.Package.Manager.Fpk.ReadManifest(ProjectBuilder.PackLibrary(cLibPlan, Path.Combine(t, "NC", "out"))).Imports[0];
+        Check("Natives (C): das Paket enthaelt das C, die Sprache und die Funktionen", cImport.Native != null && cImport.Native.IsC && cImport.Native.Functions.Count == 3 && cImport.Native.Sources.Count == 1, cImport.Native?.Language ?? "(none)");
         var noSources = new FireProject { Name = "Empty", Type = OutputType.Library, Native = new ProjectNative(), FilePath = Path.Combine(t, "Empty", "Empty.fireproj") };
         Directory.CreateDirectory(Path.Combine(t, "Empty")); noSources.Save();
         var emptyWs = Workspace.Open(noSources.FilePath!);

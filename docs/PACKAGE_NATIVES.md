@@ -13,7 +13,7 @@ So the C# VM never needs to know your functions: it only knows the C ABI, and th
 ## 0. C or C++
 
 A package says in its manifest which language its natives are in: `"native": { "language": "c", ... }` or `"c++"` (the default). **C (C99) is the recommended
-choice** and what all standard packages use except the simulator `circuits` and the 3D engine `scene3d`:
+choice** and what all standard packages use (the project template *Native Library (C)* starts one; *Native Library (C++)* stays for natives in C++):
 
 * a C package goes straight into the generated program (`fire_program.c`), so a C compiler is enough - TinyCC (`--toolchain tcc`), a board without C++;
 * a function is named with `"c": "fire_sensor_Read"` (instead of `"cpp": "sensor::Read"`), `"reset"` names a C function, too; every function in the sources is
@@ -168,6 +168,9 @@ In the VM your functions run in a shared library, so values are **copied** at th
   left behind (open streams), the library stays loaded for the next program;
 * **the network**: `net_allow(host, port, access, ...)` asks whether a script may connect to, listen on or resolve a host (`NetPolicy` of the host); the net package is the example (`fire_net_allowed()` in `packages/net/native/fire_bridge_net.h`, its sockets come from
   `FIRE_PLATFORM_NET_C_HEADER`: `fire_net_*`, `native/platform/std/fire_net_sockets.h`);
+* **windows**: `win_attach(framebuffer, present, ctx)` lets a package draw into the windows that show a framebuffer itself: the host calls `present` (a `fire_present_fn`) on the window's
+  thread with the native handles of the window (`fire_native_window`: Win32, X11, Wayland, a CAMetalLayer) and the framebuffer's pixels to lay over its picture, instead of showing the
+  framebuffer; `win_detach` ends it. The scene3d package is the example (DirectDrawing, `s3d_gpu_present` in `packages/scene3d/native/s3d_gpu_vk.h`);
 * **devices**: the `dev_*` callbacks of `fire_host` give a library the device manager of the host (its drivers, handles, the shared devices of the editor, the packet trace). The devices package
   uses them through a driver "host" (the devices of kind `FIRE_DEVB_HOST` in `packages/devices/native/fire_bridge_devices.h`); a native build uses the serial and loopback drivers in C instead. Waiting that must be abortable
   and know the program's `#timeout` is a `host` function (`WaitFor`): the VM waits and asks the library once per step (`__DEVWaitStep`);

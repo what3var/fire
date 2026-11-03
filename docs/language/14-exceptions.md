@@ -35,7 +35,10 @@ try {
 - The `catch` blocks are checked in order. `catch (Type name)` catches that class and the classes derived from it; `catch (name)` catches everything.
 - `finally` runs **always** when the `try` is left: normally, after a `catch`, when an exception passes on, on `return`, `break`, `continue`, `leave`
   and `terminate`.
-- An exception that nobody catches stops the program with its message (in the editor a dialog shows it and offers to go on).
+- An exception that nobody catches stops the program with its message (in the editor a dialog shows it and offers to go on). On the command line
+  the program ends with the exit code `1` and writes `Unhandled exception of type 'NotFound': not found: b` to stderr - the same text for the VM
+  and a native build, for the exceptions of the runtime (`UnitMismatchException`, `IndexOutOfBoundsException`, `ArgumentException`,
+  `DestroyedException`, `DivideByZeroException`, ...), for own classes and for an exception of a thread that no `catch threads` handles.
 
 ## `finally` and `return`
 
@@ -54,6 +57,29 @@ print(T.Run())                      // cleanup, then 1
 
 The value of a `return` in the `try` is fixed before `finally` runs. A `return` in `finally` replaces it, a `throw` in `finally` replaces the exception.
 `break` and `continue` cannot leave a `finally` block.
+
+## `finally` and `break 2`
+
+`break`, `continue`, `break 2` and `continue 2` run every `finally` they leave on their way to the target loop, the innermost first - also from a
+`catch` block. A `throw` in one of them ends the jump: the exception passes on, through the outer `finally` blocks.
+
+```fire
+foreach (file in ["a", "b"]) {
+    try {
+        foreach (line in [1, 2, 3]) {
+            try {
+                if (line == 2) { continue 2 }   // to the next file
+                print(file + line)
+            } finally {
+                print("close line " + line)
+            }
+        }
+    } finally {
+        print("close " + file)
+    }
+}
+// a1, close line 1, close line 2, close a, b1, close line 1, close line 2, close b
+```
 
 ## `catch` without `try`
 

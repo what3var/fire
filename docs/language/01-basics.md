@@ -100,8 +100,8 @@ print(Pi * 2)
 | Literal | Examples | Type |
 |---|---|---|
 | whole number | `42`, `-7`, `0x1F`, `0b1010`, `1_000_000` (`_` between digits separates groups) | `int` |
-| decimal number | `2.5`, `0.001` (a leading digit is needed: `0.5`, not `.5`) | `float` |
-| number with unit | `5mm`, `2.5kg`, `500ms`, `0xFFmm` | `int`/`float` with a unit |
+| decimal number | `2.5`, `0.001` (a leading digit is needed: `0.5`, not `.5`), `1e3`, `2.5E-3` (scientific notation: always a `float`) | `float` |
+| number with unit | `5mm`, `2.5kg`, `500ms`, `0xFFmm`, `1m3` (a power as digits: `m^3`) | `int`/`float` with a unit |
 | text | `"Hello"`, `"line\n"` | `string` |
 | interpolated text | `$"x = {x}"` | `string` |
 | character | `'a'`, `'\n'` | `char` |
@@ -118,7 +118,8 @@ print(0xFF + 0b11)      // 258
 print(1_000_000 + 0xFF_FF)   // 1065535
 ```
 
-`0x`/`0b` only start a hexadecimal/binary number when a valid digit follows: `0b` alone is the number `0` with the unit `b` (bit).
+`0x`/`0b` only start a hexadecimal/binary number when a valid digit follows: `0b` alone is the number `0` with the unit `b` (bit). The syntax of
+the number wins over a unit: `1e3` is the float `1000` (not `1` with the unit `e^3`), `0x1F` is `31`.
 
 ## Output: `print`
 

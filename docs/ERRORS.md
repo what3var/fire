@@ -302,6 +302,7 @@ configuration of the native build, a toolchain that is missing).
 | `E4060` | Property '…' of class '…' needs a type (use the type it holds, or 'any' if every type is allowed) |
 | `E4061` | '…' is generic with … type parameter(s), not … |
 | `E4062` | '…' is ambiguous: … (more than one '#using' brings it); write the full name |
+| `E4063` | Method '…' of class '…' implements interface '…' and must be public, not … (a member of an interface is public) |
 | `E4058` | 'var …' needs an initializer: the type of a 'var' comes from its value (or declare it with a type: 'int …') |
 
 ### E5xxx - Bytecode compiler
@@ -366,5 +367,7 @@ A warning in lax mode, an error in strict mode (`--types`, the project setting `
 | `TC009` | An assignment as a condition - did you mean '=='? (`if (a = b)`; `if ((a = b))` says the assignment is meant; a warning also in strict mode) |
 | `TC010` | The switch over '…' has no case for … (add the cases or a 'case default') (a `switch` over an enum value; a warning also in strict mode) |
 | `TC011` | '…' has no parameter '…' / The parameter '…' of '…' gets no value (it has no default value) (named arguments, `f(size: 2)`; an error also in lax mode) |
+| `TC012` | Field '…' of '…' is private and cannot be accessed from here. / Method '…' of '…' is protected and cannot be called from here. / Constructor of '…' is … (a `private`/`protected` member used where the class of the object is known; the text of the `AccessDeniedException` at run time; an error also in lax mode) |
+| `TC013` | A value of type '…' can never be a '…': the cast '!…' always fails at run time (only undefined passes) (`x!Dog` where the static type of `x` and `Dog` are unrelated classes, or a class and an interface that no class of the program joins) |
 
 `…` stands for a part of the message that varies (a name, a number).

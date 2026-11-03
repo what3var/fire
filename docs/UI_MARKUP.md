@@ -121,12 +121,13 @@ The old names `x`, `y`, `halign`, ... are reported with the new one.
 | `Label` | `Text`, `Color` (the text brush) | |
 | `Button` | `Text`, `Icon` (a symbol of `UI.Icons` such as `Up`, or path data `M 8 1 L 15 8 L 1 8 Z`), `Image` (an image file, embedded), `IconSize` | `OnClick` |
 | `CheckBox` | `Text`, `IsChecked` | `OnChange` |
-| `TextBox` | `Text`, `MaxLength` | `OnChange`, `OnEnter` |
+| `TextBox` | `Text`, `MaxLength`, `ReadOnly`, `UndoLimit` | `OnChange`, `OnEnter` |
+| `TextArea` (several lines, docs/UI.md) | `Text`, `MaxLength`, `ReadOnly`, `WordWrap`, `AcceptsReturn`, `AcceptsTab`, `TabSize`, `UndoLimit` | `OnChange` |
 | `AutoSuggestBox` (`<Suggestion>text</Suggestion>`) | `Text`, `MaxLength`, `MaxSuggestions`, `DisplayMember` | `OnChange`, `OnEnter`, `OnChosen` |
 | `ListBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
 | `ComboBox` (`<Item>text</Item>`) | `DisplayMember`, `SelectedIndex`, `MaxDropDownItems`, `ItemsSource` | `OnSelect` |
 | `ListView` (`<Column Header="Name" Member="name" Width="100"/>`) | `DisplayMember`, `SelectedIndex` | `OnSelect`, `OnActivate` |
-| `TreeView` (`<TreeNode Text="..." Expanded="true">`, nested) | `Indent` | `OnSelect` |
+| `TreeView` (`<TreeNode Text="..." Expanded="true">`, nested) | `Indent` | `OnSelect`, `OnActivate` |
 | `RadioButtons` (`<Item>text</Item>`) | `Header`, `Horizontal`, `Spacing`, `SelectedIndex` | `OnChange` |
 | `MenuBar` (`<Menu Header="File">` with `<MenuItem Header="Open" Shortcut="Ctrl+O" Checkable="true" IsChecked="true" Enabled="false" OnClick="Open">`, nested items, `<MenuSeparator/>`) | | `OnClick` of the items |
 | `Separator` | | |
@@ -228,7 +229,7 @@ or, with `ElementName`, to a property of another named element. It is built on `
 - **Fields and properties**: the last step of a path may be a field or a property with `get`/`set`. A write to either (also through the setter of a property) updates the target, and a `TwoWay` binding writes through the setter. A property that only computes its value from other
   members (`get` without `set`) follows its sources: when a field (or settable property) that its getter reads is written, the getter runs again and the target gets the new value
   (SPEC 8.14 - what the getter reads through other objects, `this.player.name`, is not followed).
-- **Mode**: `OneWay` (default; the source changes the property), `TwoWay` (the property writes back to the source as well - a `TextBox` as the user types, a `CheckBox` when it is toggled; a write
+- **Mode**: `OneWay` (default; the source changes the property), `TwoWay` (the property writes back to the source as well - a `TextBox` or `TextArea` as the user types, a `CheckBox` when it is toggled; a write
   that does not change the value stops there, so a converter that normalizes a value cannot make the two chase each other), `OneTime` (read once when the context is set).
 - **Converter**: the key of a converter that sits between the two sides. A converter is a class with `any Convert(any value)` (source to property) and, for `TwoWay`, `any ConvertBack(any value)`;
   deriving from `UI.Converter` supplies the identity for the one you do not write. Declare them in `<Resources><Converter Key="Upper" Type="UpperConverter"/></Resources>`; these come with the library

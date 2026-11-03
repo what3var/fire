@@ -35,6 +35,10 @@ print(new Square(1.0) is of IShape)     // True
 - A class names its interfaces after the base class: `class Dog : Animal, IShape, IComparable`. It has at most one base class but any number of
   interfaces.
 - A class that misses a method of its interfaces is a compile error (`E4010`). A method counts when its name and number of parameters match.
+- The methods of an interface are public, and so are the methods that implement them: `private int Area()` or `protected` for a method of
+  `IShape` is a compile error (`E4063`). That holds for a derived class too - it cannot hide a method of its base class's interface with a
+  `private` one. A public method inherited from the base class counts, and other methods of the same name (another number of parameters) may be
+  private. A call through a value of an interface type (`s.Area()` with `IShape s`) therefore needs no access check.
 - An interface is a type: parameters, fields, variables and return values can be declared with it, and `is of IShape` tests it.
 - Interfaces can be generic: `interface ICommand<T> { undefined Execute(T context) }`.
 

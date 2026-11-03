@@ -495,12 +495,20 @@ namespace fire.Compiler
             }
 
             foreach (var cd in _classes.Values)
+            {
                 foreach (var baseRef in cd.BaseRefs ?? Array.Empty<TypeRef>())
                 {
                     string n = ResolveBaseRef(baseRef);
                     if (_interfaces.TryGetValue(n, out var iface))
                         Guard(() => ValidateImplementsInterface(cd, iface));
                 }
+                // an interface of a base class: a method the class declares again must stay public (the class is of the interface too)
+                var seen = new HashSet<ClassDecl> { cd };
+                for (var b = GetBaseClassDecl(cd); b != null && seen.Add(b); b = GetBaseClassDecl(b))
+                    foreach (var baseRef in b.BaseRefs ?? Array.Empty<TypeRef>())
+                        if (_interfaces.TryGetValue(ResolveBaseRef(baseRef), out var inherited))
+                            Guard(() => ValidateImplementsInterface(cd, inherited, onlyOwn: true));
+            }
         }
 
         /// <summary>The class name for error messages: for a generic
@@ -595,15 +603,42 @@ namespace fire.Compiler
         /// base-class chain) provides all methods of `iface` by name+arity.
         /// A purely structural check, no return type
         /// check - the language is dynamically typed.</summary>
-        private void ValidateImplementsInterface(ClassDecl cd, InterfaceDecl iface)
+        private void ValidateImplementsInterface(ClassDecl cd, InterfaceDecl iface, bool onlyOwn = false)
         {
             foreach (var m in iface.Methods)
             {
+                if (onlyOwn)
+                {
+                    // (the interface of a base class: the base class is checked for it itself - here only a method this class declares)
+                    if (ImplementingMethod(cd, m.Name, m.Params.Count) is { Access: not AccessModifier.Public } own && cd.Members.Contains(own))
+                        throw NotPublic(cd, iface, own);
+                    continue;
+                }
                 if (!ClassHasMethod(cd, m.Name, m.Params.Count))
                     throw new ResolverException(
                         $"Class '{cd.Name}' does not implement interface '{iface.Name}' completely " +
                         $"(missing method '{m.Name}' with {m.Params.Count} parameter(s))", cd.Line);
+                // a member of an interface is public: the method that implements it is too (so a call through the interface needs no access check at run time)
+                if (ImplementingMethod(cd, m.Name, m.Params.Count) is { Access: not AccessModifier.Public } hidden)
+                    throw NotPublic(cd, iface, hidden);
             }
+        }
+
+        private static ResolverException NotPublic(ClassDecl cd, InterfaceDecl iface, MethodDecl md) =>
+            new($"Method '{md.Name}' of class '{cd.Name}' implements interface '{iface.Name}' and must be public, not " +
+                $"{(md.Access == AccessModifier.Private ? "private" : "protected")} (a member of an interface is public)", md.Line);
+
+        /// <summary>The method a call of `name` with `arity` arguments finds on an object of `cd`: the nearest class of the chain that declares one decides - a public one
+        /// there if it has one (an overload), otherwise its first (private/protected: it hides a public one of a base class).</summary>
+        private MethodDecl? ImplementingMethod(ClassDecl cd, string name, int arity)
+        {
+            var seen = new HashSet<ClassDecl>();
+            for (var c = cd; c != null && seen.Add(c); c = GetBaseClassDecl(c))
+            {
+                var found = c.Members.OfType<MethodDecl>().Where(md => md.Name == name && md.Params.Count == arity && !md.IsStatic).ToList();
+                if (found.Count > 0) return found.FirstOrDefault(md => md.Access == AccessModifier.Public) ?? found[0];
+            }
+            return null;
         }
 
         /// <summary>The parameter types of a method as overloading by type compares them (see Bytecode.Overloads): "" for an untyped parameter, `any`, a

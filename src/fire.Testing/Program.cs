@@ -45,6 +45,24 @@ if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "dialogs") { Dialog
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "docking") { DockingTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "circuiteditor") { CircuitEditorTests.Run(); return; }
 if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "snippets") { TypeTests.Snippets(); return; }
+// (filled by sections that FIRE_TESTS_ONLY may skip: the native device cases by the device checks of the VM, the UI drawing by the UI checks)
+var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
+string uiDrawScript = "";
+string[] uiDrawExpected = Array.Empty<string>();
+// FIRE_TESTS_ONLY=ui: only the UI library in the VM (fake renderer: text fields, clipboard, drag & drop, touch, joystick, markup, ...)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") goto uiTests;
+// FIRE_TESTS_ONLY=native: only the native backend (generated C against the VM, devices, windows, FreeRTOS, toolchains)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "native") goto nativeTests;
+// FIRE_TESTS_ONLY=packer: only the packer (single file, payload, loader) and the native targets checked there (wasm with Emscripten and the browser)
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") goto packerTests;
+// FIRE_TESTS_FILTER=text: of the checks that are listed as cases (the native cases, the native device and window cases, the UI checks) only those whose name contains
+// the text (several texts separated by '|'; case does not matter) - together with FIRE_TESTS_ONLY a run of a minute instead of half an hour.
+static bool TestSelected(string name)
+{
+    string? filter = Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER");
+    if (string.IsNullOrWhiteSpace(filter)) return true;
+    return filter.Split('|', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Any(f => name.Contains(f, StringComparison.OrdinalIgnoreCase));
+}
 
 // `#import "io"` is a package, too: its prelude, and its natives (C++ in a library) bound to a registry; the host's policy and console are the session's (disposing ends it).
 // the prelude of a standard library (from its installed package)
@@ -7366,6 +7384,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
     Console.WriteLine(lifeFailures == 0 ? "Alle Kopie/leave-Pruefungen bestanden." : $"FEHLER: {lifeFailures} Pruefung(en) fehlgeschlagen.");
 }
 
+packerTests:
 // ---------------------------------------------------------------------------
 // Packer: self-contained file (bundle + payload), bridges only when needed, loader instead of Costura
 // ---------------------------------------------------------------------------
@@ -7667,16 +7686,23 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
                 const string wasmSource = "#import \"time\"\nclass Oops : Exception { construct(string m) : base(m) { } }\nvar sum = 0\nfor (var i = 0; i < 5; i++) { sum = sum + i; Sleep(1ms) }\nprint(\"sum \" + sum + \" \" + (sum / 4.0) + \" \" + (1.0 / 3.0))\ntry { throw new Oops(\"caught\") } catch (Oops e) { print(e.message) }\n";
                 string wasmDir = Path.Combine(sfDir, "wasm");
                 fire.Native.NativeRuntimeFiles.WriteTo(wasmDir, "wasm");
-                File.WriteAllText(Path.Combine(wasmDir, "p.cpp"), fire.Native.CppGenerator.Generate(new Linker().CompileAndLink(new[] { wasmSource }, null, null, VmExecutionMode.Release, null, wasm), wasm));
-                var (emExe, emArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm, Path.Combine(wasmDir, "p.cpp"), wasmDir, Path.Combine(wasmDir, "p.js"));
-                using (var em = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(emExe, emArgs) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!)
+                // (the program is C: emcc with -std=gnu11 - EM_ASM needs the GNU mode)
+                string EmBuild(string source, string name, out string log)
                 {
+                    string c = Path.Combine(wasmDir, name + ".c");
+                    File.WriteAllText(c, fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, wasm), wasm).Program);
+                    string output = Path.Combine(wasmDir, name + (name.StartsWith("win") ? ".html" : ".js"));
+                    var (emExe, emArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["emscripten"], wasm, c, wasmDir, output, language: "c");
+                    using var em = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(emExe, emArgs) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!;
                     var emErr = em.StandardError.ReadToEndAsync();
                     em.StandardOutput.ReadToEnd();
                     em.WaitForExit();
+                    log = emExe + " " + emArgs + "\n" + emErr.Result;
+                    return File.Exists(output) && em.ExitCode == 0 ? output : "";
                 }
-                bool emBuilt = File.Exists(Path.Combine(wasmDir, "p.js"));
-                SfCheck(emBuilt, "wasm: em++ baut das Programm (p.js mit eingebetteter WebAssembly)");
+                string pJs = EmBuild(wasmSource, "p", out string emLog);
+                bool emBuilt = pJs != "";
+                SfCheck(emBuilt && !emLog.Contains("warning:"), "wasm: emcc baut das Programm (C, p.js mit eingebetteter WebAssembly) ohne Warnung" + (emBuilt && !emLog.Contains("warning:") ? "" : "\n" + emLog));
                 if (emBuilt)
                 {
                     using var node = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{Path.Combine(wasmDir, "p.js")}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
@@ -7688,6 +7714,42 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
                     Value.SingleFloats = false;
                     SfCheck(nodeOut == string.Join("\n", vmLines) + "\n", "wasm: das Programm laeuft (node) und druckt wie die VM (Sleep, Zahlen, Ausnahmen)");
                 }
+                // a window (Emscripten's SDL2 port: -sUSE_SDL=2; without network access to GitHub the port can come from a folder: EMCC_LOCAL_PORTS=sdl2=<SDL source>):
+                // it draws into the canvas of the page; with Playwright (the Chromium of this machine) the page runs headless and says what it printed and drew
+                const string winSource = "#import \"windows\"\n#import \"time\"\nvar fb = new Framebuffer(40, 30)\nvar win = new Window(fb, \"wasm\")\nvar r = new Renderer(fb)\nr.Clear()\nfor (var y = 0; y < 30; y++) { for (var x = 0; x < 40; x++) { r.SetPixel(x, y, 0xFFF08020) } }\nfor (var i = 0; i < 3; i++) { win.Tick(); Sleep(10ms) }\nvar px = fb.ReadBytes()\nprint(\"pixel \" + px[0] + \" \" + px[1] + \" \" + px[2])\nprint(\"done\")\nfor (var i = 0; i < 300; i++) { win.Tick(); Sleep(10ms) }\n";
+                string winHtml = EmBuild(winSource, "win", out string winLog);
+                SfCheck(winHtml != "" && winLog.Contains("-sUSE_SDL=2") && !winLog.Contains("warning:"), "wasm: ein Programm mit Fenster baut mit SDL2 von Emscripten (-sUSE_SDL=2), ohne Warnung" + (winHtml != "" ? "" : "\n" + winLog));
+                bool playwright = false;
+                try
+                {
+                    using var probe = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", "-e \"require('playwright')\"") { RedirectStandardError = true, UseShellExecute = false })!;
+                    probe.StandardError.ReadToEnd(); probe.WaitForExit(); playwright = probe.ExitCode == 0;
+                }
+                catch (System.ComponentModel.Win32Exception) { }
+                if (winHtml != "" && playwright)
+                {
+                    string script = Path.Combine(wasmDir, "page.js");
+                    File.WriteAllText(script, """
+                        const { chromium } = require('playwright');
+                        (async () => {
+                          const b = await chromium.launch(); const p = await b.newPage(); const out = [];
+                          p.on('console', m => { if (!m.text().includes('GL Driver')) out.push(m.text()); });
+                          p.on('pageerror', e => out.push('error ' + e.message));
+                          await p.goto('file://' + process.argv[2]);
+                          for (let i = 0; i < 100 && !out.includes('done'); i++) await p.waitForTimeout(100);
+                          const canvas = await p.evaluate(() => { const c = document.getElementById('canvas'); const t = document.createElement('canvas'); t.width = c.width; t.height = c.height;
+                            const g = t.getContext('2d'); g.drawImage(c, 0, 0); const d = g.getImageData(c.width >> 1, c.height >> 1, 1, 1).data; return c.width + 'x' + c.height + ' ' + d[0] + ' ' + d[1] + ' ' + d[2]; });
+                          console.log(out.join('\n')); console.log('canvas ' + canvas); await b.close();
+                        })();
+                        """);
+                    using var page = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("node", $"\"{script}\" \"{winHtml}\"") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = wasmDir })!;
+                    var pageErr = page.StandardError.ReadToEndAsync();
+                    string pageOut = page.StandardOutput.ReadToEnd().Replace("\r\n", "\n");
+                    page.WaitForExit();
+                    // (the colour r + g*256 + b*65536 + a*2^24: the bytes of the framebuffer are R G B A, the canvas shows the same colour)
+                    SfCheck(pageOut.Contains("pixel 32 128 240\ndone\n") && pageOut.Contains("canvas 40x30 32 128 240"), "wasm: das Fenster laeuft im Browser (Chromium, headless): es druckt und zeichnet ins Canvas\n" + pageOut + pageErr.Result);
+                }
+                else Console.WriteLine("(wasm im Browser: uebersprungen - " + (winHtml == "" ? "das Fenster-Programm baute nicht" : "Playwright fehlt") + ")");
             }
         }
         var noconsole = new Linker().CompileAndLink(new[] { "#noconsole\nprint(\"x\")" }, null, null);
@@ -7700,6 +7762,7 @@ Console.WriteLine("=== Kopien: Owner bei Parametern und Zuweisungen; leave zerst
 
     Console.WriteLine(sfFailures == 0 ? "Alle Single-File-Pruefungen bestanden." : $"FEHLER: {sfFailures} Single-File-Pruefung(en) fehlgeschlagen.");
 }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "packer") return;
 
 // ---------------------------------------------------------------------------
 // Command line of the compiler (run / build)
@@ -9215,7 +9278,8 @@ Console.WriteLine("=== Font-Rendering: schneller Weg == Pixel-fuer-Pixel-Weg ===
 }
 
 // the drawing of the UI library without events: run by the VM (fake renderer) below, natively (SDL dummy driver) in the native checks
-string uiDrawScript = """
+uiTests:
+uiDrawScript = """
     var fb = new Framebuffer(640, 300)
     var win = new Window(fb, "Test")
     var ui = new UI.Root(fb, win)
@@ -9327,8 +9391,16 @@ string uiDrawScript = """
     for (var i = 0; i < bytes.length; i++) { h = (h * 31 + bytes[i]) % 1000000007 }
     print("hash " + h)
     print(ui.Tick())
+    // a watched text field set again and again after the layout: the probes compare the old value with the new one (natively it once was freed before that)
+    var probed = new UI.Label("first", 300, 200)
+    ui.Add(probed)
+    ui.Draw()
+    for (var i = 0; i < 20; i = i + 1) {
+        probed.Text = "text " + i
+        ui.Draw()
+    }
+    print(probed.Text)
     """;
-string[] uiDrawExpected = Array.Empty<string>();
 
 // ---------------------------------------------------------------------------
 // UI library (#import "ui"): headless - real framebuffer/console/WindowManager, only the renderer is a dummy
@@ -9362,11 +9434,17 @@ string[] uiDrawExpected = Array.Empty<string>();
         ReflectionNatives.Register(natives);
 
         natives.Register("__TestClose", args => { renderer.Closed = true; return Value.MakeUndefined(); });
+        var testClock = System.Diagnostics.Stopwatch.StartNew();
+        natives.Register("__TestMillis", args => Value.MakeInt(testClock.ElapsedMilliseconds));
         natives.Register("__TestEvent", args =>
         {
             renderer.Push((int)args[0].AsInt(), args);
             return Value.MakeUndefined();
         });
+        // Window.StartDrag: the answer of the desktop, and each call as a line of the output
+        natives.Register("__TestDragAnswer", args => { renderer.DragAnswer = (int)args[0].AsInt(); return Value.MakeUndefined(); });
+        natives.Register("__TestCanDrag", args => { renderer.CanDrag = args[0].AsBool(); return Value.MakeUndefined(); });
+        renderer.Dragged = (text, files) => { lock (lines) lines.Add($"StartDrag [{text}] [{string.Join(",", files)}]"); };
 
         var resolveResult = Resolver.Resolve(program, natives.Names);
         var compiled = Compiler.Compile(program, resolveResult, natives);
@@ -9424,6 +9502,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     void CheckUi(string title, string script, string[] expected)
     {
+        if (!TestSelected(title)) return;
         foreach (var mode in new[] { VmExecutionMode.Debug, VmExecutionMode.Release })
         {
             string[] actual;
@@ -9478,6 +9557,1285 @@ string[] uiDrawExpected = Array.Empty<string>();
         print(win.RegisterJoystickAdded(func (int j) => { }))
         print(win.RegisterJoystickRemoved(func (int j) => { }))
         """, new[] { "True", "False", "16 3 10 20 1 ", "17 3 12 22 1 ", "18 3 12 22 1 ", "32 7 1 -0.5 ", "33 7 2 ", "34 7 2 ", "35 7 0 5 ", "36 7 ", "37 7 ", "True", "True", "True", "True", "True", "True", "True", "True", "True" });
+
+    CheckUi("Textfeld: Auswahl mit Shift und der Maus, Ctrl+A/C/X/V und Shift+Insert ueber die Zwischenablage, Tippen ersetzt die Auswahl, MaxLength", uiHead + """
+        var tb = new UI.TextBox("Hallo Welt", 10, 10, 200, 24)
+        ui.Add(tb)
+        ui.Draw()
+        ui.SetFocus(tb)
+        print(Clipboard.HasText)
+        __TestEvent(24, UI.Keys.Home(), 1)
+        __TestEvent(24, UI.Keys.C(), 64)
+        ui.Tick()
+        print("[" + tb.SelectedText + "] " + Clipboard.GetText() + " " + Clipboard.HasText)
+        __TestEvent(24, UI.Keys.End(), 0)
+        for (var i = 0; i < 4; i++) { __TestEvent(24, UI.Keys.Left(), 2) }
+        ui.Tick()
+        print("[" + tb.SelectedText + "] " + tb.SelectionStart + " " + tb.SelectionLength)
+        __TestEvent(24, UI.Keys.X(), 128)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + Clipboard.GetText() + "]")
+        __TestEvent(3, "fire")
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Left(), 1)
+        __TestEvent(24, UI.Keys.Left(), 1)
+        __TestEvent(24, UI.Keys.Left(), 0)
+        ui.Tick()
+        print(tb.caret + " " + tb.SelectionLength)
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(tb.Text)
+        Clipboard.SetText("eins\nzwei")
+        __TestEvent(24, UI.Keys.Insert(), 1)
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Home(), 0)
+        __TestEvent(24, UI.Keys.Right(), 1)
+        __TestEvent(24, UI.Keys.Right(), 1)
+        __TestEvent(24, UI.Keys.Delete(), 0)
+        ui.Tick()
+        print(tb.Text)
+        // the mouse: press at the 2nd character, drag to the 6th
+        var x0 = tb.ax + 4 + 2 * ui.cw
+        __TestEvent(8, 1, x0 * 1.0, 20.0)
+        __TestEvent(9, x0 + 4.0 * ui.cw, 20.0)
+        __TestEvent(11, 1, x0 + 4.0 * ui.cw, 20.0)
+        ui.Tick()
+        print("[" + tb.SelectedText + "]")
+        tb.MaxLength = 12
+        Clipboard.SetText("ABCDEFGHIJ")
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(tb.Text + " " + tb.Text.Length)
+        tb.Text = "kurz"
+        ui.Draw()
+        print(tb.caret + " " + tb.HasSelection())
+        """, new[] { "False", "[Hallo Welt] Hallo Welt True", "[Welt] 6 4", "[Hallo ] [Welt]", "Hallo fire", "8 0", "Welt", "Welteins zwei", "lteins zwei", "[eins]", "ltABCDE zwei 12", "4 False" });
+
+    CheckUi("Drag & Drop zwischen Elementen: Start nach 4 Pixeln, DragOver/Drop/DragLeave/DragDone, Zeiger, Escape bricht ab, der Knopf klickt nicht", uiHead + """
+        var log = ""
+        var src = new UI.Button("Quelle", 10, 10, 80, 24)
+        src.OnClick = func () => { log = log + "click " }
+        src.OnDragStart = func (int x, int y) => { return new UI.DragData("Daten", 42, "zahl") }
+        src.OnDragDone = func (UI.DragData d, UI.DropEffect e) => { log = log + "done " + e!int + " " }
+        var target = new UI.Panel(120, 10, 80, 60)
+        target.AllowDrop = true
+        target.OnDragOver = func (UI.DragData d, int x, int y) => {
+            log = log + "over "
+            if (d.Kind == "zahl") { return UI.DropEffect.Move }
+            return UI.DropEffect.None
+        }
+        target.OnDrop = func (UI.DragData d, int x, int y) => {
+            log = log + "drop " + d.Text + " " + d.Value + " " + (d.Source == src) + " "
+            return UI.DropEffect.Move
+        }
+        target.OnDragLeave = func () => { log = log + "leave " }
+        ui.Add(src)
+        ui.Add(target)
+        ui.Draw()
+        // a click without moving clicks
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 22.0, 21.0)
+        __TestEvent(11, 1, 22.0, 21.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        log = ""
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging + " " + ui.shownCursor!int)
+        __TestEvent(9, 130.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.shownCursor!int)
+        __TestEvent(11, 1, 130.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // cancelled with Escape over the target
+        log = ""
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 130.0, 30.0)
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 130.0, 30.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // a target that refuses: the source hears None, nothing is dropped
+        log = ""
+        src.OnDragStart = func (int x, int y) => { return new UI.DragData("Text") }
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 130.0, 30.0)
+        __TestEvent(11, 1, 130.0, 30.0)
+        ui.Tick()
+        print(log)
+        // into a text field (it takes text by itself)
+        var tb = new UI.TextBox("", 10, 100, 200, 24)
+        ui.Add(tb)
+        ui.Draw()
+        log = ""
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 50.0, 110.0)
+        __TestEvent(11, 1, 50.0, 110.0)
+        ui.Tick()
+        print(log + "| [" + tb.Text + "] " + (ui.focusElement == tb))
+        // a text field keeps the held button for selecting: no drag from a panel around it
+        var holder = new UI.Panel(0, 140, 300, 40)
+        holder.OnDragStart = func (int x, int y) => { return new UI.DragData("panel") }
+        var inner = new UI.TextBox("abcdef", 10, 8, 120, 24)
+        holder.Add(inner)
+        ui.Add(holder)
+        ui.Draw()
+        __TestEvent(8, 1, inner.ax + 6.0, 156.0)
+        __TestEvent(9, inner.ax + 40.0, 156.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + inner.HasSelection())
+        __TestEvent(11, 1, inner.ax + 40.0, 156.0)
+        ui.Tick()
+        """, new[] { "click | False", "| True 10", "over | 11", "over over drop Daten 42 True done 2 | False", "over leave done 0 | False", "over over done 0 ", "done 1 | [Text] True", "False True" });
+
+    CheckUi("Drag & Drop aus dem Fenster heraus: mit Text oder Dateien geht der Drag an Window.StartDrag, sobald der Zeiger das Fenster verlaesst; OnDragDone hoert die Antwort, AllowExternal false haelt ihn drinnen", uiHead + """
+        var log = ""
+        var src = new UI.Button("Quelle", 10, 10, 80, 24)
+        src.OnDragStart = func (int x, int y) => {
+            var d = new UI.DragData("Gezogen")
+            d.Files.Add("/tmp/a.txt")
+            return d
+        }
+        src.OnDragDone = func (UI.DragData d, UI.DropEffect e) => { log = log + "done " + e!int + " " }
+        var target = new UI.Panel(120, 10, 80, 60)
+        target.AllowDrop = true
+        target.OnDragOver = func (UI.DragData d, int x, int y) => {
+            log = log + "over "
+            return UI.DropEffect.Copy
+        }
+        target.OnDragLeave = func () => { log = log + "leave " }
+        ui.Add(src)
+        ui.Add(target)
+        ui.Draw()
+        // over the target, then out of the window: the target is left, the desktop takes over and answers Move
+        __TestDragAnswer(2)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 130.0, 20.0)
+        ui.Tick()
+        __TestEvent(9, 400.0, 20.0)
+        ui.Tick()
+        __TestEvent(11, 1, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // straight out over the top edge; no program took it: None
+        log = ""
+        __TestDragAnswer(0)
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 20.0, -5.0)
+        __TestEvent(11, 1, 20.0, -5.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // AllowExternal false: the drag stays in the window (over nothing: None at the end)
+        log = ""
+        src.OnDragStart = func (int x, int y) => {
+            var d = new UI.DragData("drinnen")
+            d.AllowExternal = false
+            return d
+        }
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        __TestEvent(11, 1, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // a value of the program without text or files: other programs could not take it
+        log = ""
+        src.OnDragStart = func (int x, int y) => { return new UI.DragData("", 42, "zahl") }
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 400.0, 20.0)
+        __TestEvent(11, 1, 400.0, 20.0)
+        ui.Tick()
+        print(log + "| " + ui.IsDragging)
+        // Window.StartDrag itself: a text, paths as an array or a List; nothing to drag: 0 without asking the desktop
+        __TestDragAnswer(1)
+        var paths = new List<string>()
+        paths.Add("/p q")
+        print(win.StartDrag("abc", undefined) + " " + win.StartDrag("", ["/x", "/y"]) + " " + win.StartDrag("t", paths) + " " + win.StartDrag("", undefined))
+        """, new[] { "StartDrag [Gezogen] [/tmp/a.txt]", "over leave done 2 | False", "StartDrag [Gezogen] [/tmp/a.txt]", "done 0 | False", "| True", "done 0 | False",
+                     "done 0 | False", "StartDrag [abc] []", "StartDrag [] [/x,/y]", "StartDrag [t] [/p q]", "1 1 1 0" });
+
+    CheckUi("Drop aus einem anderen Programm: Dateien und Text gehen an das Element darunter (ein Textfeld nimmt sie), sonst an onDrop", uiHead + """
+        var tb = new UI.TextBox("", 10, 10, 200, 24)
+        var area = new UI.Panel(10, 50, 200, 50)
+        area.AllowDrop = true
+        area.OnDrop = func (UI.DragData d, int x, int y) => {
+            print("area " + d.Files.Count + " [" + d.Files[0] + "] [" + d.Files[1] + "] " + d.External + " " + x + " " + y)
+            return UI.DropEffect.Copy
+        }
+        var picky = new UI.Panel(220, 50, 80, 50)
+        picky.AllowDrop = true
+        picky.OnDragOver = func (UI.DragData d, int x, int y) => { if (d.HasFiles) { return UI.DropEffect.Copy } return UI.DropEffect.None }
+        picky.OnDrop = func (UI.DragData d, int x, int y) => { print("picky " + d.Files[0]) }
+        ui.onDrop = func (UI.DragData d, int x, int y) => { print("root [" + d.Text + "] " + d.Files.Count + " " + x + " " + y) }
+        ui.Add(tb)
+        ui.Add(area)
+        ui.Add(picky)
+        ui.Draw()
+        __TestEvent(41, "Hallo", 20.0, 20.0)
+        __TestEvent(40, "/a/b.txt\n/c d.png", 20.0, 60.0)
+        __TestEvent(41, "frei", 300.0, 150.0)
+        __TestEvent(41, "Text", 230.0, 60.0)
+        __TestEvent(40, "/x.y", 230.0, 60.0)
+        __TestEvent(40, "/p", 200.0, 20.0)
+        ui.Tick()
+        print(tb.Text)
+        """, new[] { "area 2 [/a/b.txt] [/c d.png] True 20 60", "root [frei] 0 300 150", "root [Text] 0 230 60", "picky /x.y", "Hallo/p" });
+
+    CheckUi("Drag & Drop aus einem anderen Programm: DragHover meldet das Ziel darunter (Pending, noch ohne Inhalt), DragLeave und der Drop beenden es", uiHead + """
+        var log = ""
+        var a = new UI.Panel(10, 10, 100, 60)
+        a.AllowDrop = true
+        a.OnDragOver = func (UI.DragData d, int x, int y) => {
+            log = log + "A over " + x + " " + y + " " + d.Pending + " " + d.External + " [" + d.Text + "] " + d.Files.Count + "; "
+            return UI.DropEffect.Copy
+        }
+        a.OnDragLeave = func () => { log = log + "A leave; " }
+        a.OnDrop = func (UI.DragData d, int x, int y) => {
+            log = log + "A drop " + d.Pending + " " + d.Files[0] + "; "
+            return UI.DropEffect.Copy
+        }
+        var b = new UI.Panel(150, 10, 100, 60)
+        b.AllowDrop = true
+        b.OnDragOver = func (UI.DragData d, int x, int y) => {
+            log = log + "B over " + d.Pending + " [" + d.Text + "]; "
+            return UI.DropEffect.Copy
+        }
+        b.OnDragLeave = func () => { log = log + "B leave; " }
+        b.OnDrop = func (UI.DragData d, int x, int y) => {
+            log = log + "B drop " + d.Text + "; "
+            return UI.DropEffect.Copy
+        }
+        var tb = new UI.TextBox("", 10, 120, 200, 24)
+        ui.Add(a)
+        ui.Add(b)
+        ui.Add(tb)
+        ui.Draw()
+        print(win.RegisterDragHover(func (float x, float y) => { }) + " " + win.RegisterDragLeave(func () => { }) + " " + __GRPHWinRegisterEvent(win.id, 42, func () => { }))
+        // over A, within A, over B (A is left), out of the window
+        __TestEvent(42, 20.0, 20.0)
+        __TestEvent(42, 30.0, 25.0)
+        __TestEvent(42, 160.0, 20.0)
+        __TestEvent(43)
+        ui.Tick()
+        print(log)
+        // over A, then dropped on B: A is left, B gets the drop
+        log = ""
+        __TestEvent(42, 20.0, 20.0)
+        __TestEvent(41, "Text", 160.0, 20.0)
+        ui.Tick()
+        print(log)
+        // over A and dropped there: no leave
+        log = ""
+        __TestEvent(42, 20.0, 20.0)
+        __TestEvent(40, "/x.txt", 20.0, 20.0)
+        __TestEvent(43)
+        ui.Tick()
+        print(log)
+        // a text field takes what is still unknown while it hovers
+        print(tb.DragOver(ui, new UI.DragData(), 0, 0)!int + " " + (ui.hoverData == undefined))
+        var pending = new UI.DragData()
+        pending.Pending = true
+        print(tb.DragOver(ui, pending, 0, 0)!int + " " + new UI.DragData().Pending)
+        """, new[] { "True True False", "A over 20 20 True True [] 0; A over 30 25 True True [] 0; A leave; B over True []; B leave; ",
+            "A over 20 20 True True [] 0; A leave; B over False [Text]; B drop Text; ", "A over 20 20 True True [] 0; A over 20 20 False True [] 1; A drop False /x.txt; ", "0 True", "1 False" });
+
+    CheckUi("Zwischenablage: Bilder (Framebuffer.ToPng, SetImage/GetImage/HasImage) und Dateien (SetFiles/GetFiles/HasFiles) - ohne Desktop die eigene, eine Art zur Zeit", uiHead + """
+        var img = new Framebuffer(3, 2)
+        var pr = new Renderer(img)
+        pr.Clear()
+        pr.SetPixel(0, 0, 0xFF0000FF)
+        pr.SetPixel(1, 0, 0x8000FF00)
+        pr.SetPixel(2, 1, 0x00000000)
+        var png = img.ToPng()
+        print(png.Length > 40 && png[0] == 137 && png[1] == 80 && png[2] == 78 && png[3] == 71)
+        var again = Framebuffer.FromImage(png)
+        var x0 = img.ReadBytes()
+        var x1 = again.ReadBytes()
+        var same = x0.Length == x1.Length
+        for (var i = 0; i < x0.Length; i++) { if (x0[i] != x1[i]) { same = false } }
+        print(again.Width() + "x" + again.Height() + " " + same)
+        print(Clipboard.HasImage + " " + Clipboard.HasFiles + " " + (Clipboard.GetImage() == undefined) + " " + Clipboard.GetFiles().length)
+        print(Clipboard.SetImage(img) + " " + Clipboard.HasImage + " " + Clipboard.HasText + " " + Clipboard.HasFiles)
+        var back = Clipboard.GetImage()
+        var y1 = back.ReadBytes()
+        var same2 = x0.Length == y1.Length
+        for (var i = 0; i < x0.Length; i++) { if (x0[i] != y1[i]) { same2 = false } }
+        print(back.Width() + "x" + back.Height() + " " + same2)
+        var paths = new List<string>()
+        paths.Add("/tmp/ein Ordner/datei ä.txt")
+        paths.Add("/tmp/zwei")
+        print(Clipboard.SetFiles(paths) + " " + Clipboard.HasFiles + " " + Clipboard.HasImage)
+        var got = Clipboard.GetFiles()
+        print(got.length + " [" + got[0] + "] [" + got[1] + "]")
+        print(Clipboard.SetFiles(got) + " " + Clipboard.GetFiles().length)
+        Clipboard.SetText("Text")
+        print(Clipboard.HasFiles + " " + Clipboard.GetFiles().length + " " + Clipboard.HasText + " " + (Clipboard.GetImage() == undefined))
+        print(Clipboard.SetFiles(new List<string>()) + " " + Clipboard.SetImage(undefined))
+        """, new[] { "True", "3x2 True", "False False True 0", "True True False False", "3x2 True", "True True False", "2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "True 2", "False 0 True True", "False False" });
+    CheckUi("Doppelklick: root.clickCount zaehlt Klicks (Taste, Zeit, Abstand, eigene Uhr); TextBox markiert Wort/Lauf, Dreifachklick alles, Ziehen wortweise, Ctrl+Pfeile, ReadOnly", uiHead + """
+        var tb = new UI.TextBox("foo_bar1, baz  qux", 10, 10, 250, 24)
+        ui.Add(tb)
+        ui.Draw()
+        var y = 20.0
+        var cx = tb.ax + 4 + 2
+        // a double click on "bar": the word with letters, digits and _
+        var x = cx + 5 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x + 1.0, y + 1.0)
+        __TestEvent(11, 1, x + 1.0, y + 1.0)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        // on the comma (the run of punctuation), then on the two spaces: another place counts anew
+        x = cx + 8 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        x = cx + 14 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        // a third click: everything
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " [" + tb.SelectedText + "]")
+        // too late (30 cycles = 500 ms), another button, too far away: a single click again
+        for (var i = 0; i < 30; i++) { ui.Tick() }
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount + " " + tb.SelectionLength)
+        __TestEvent(8, 3, x * 1.0, y)
+        __TestEvent(11, 3, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x + 5.0, y)
+        __TestEvent(11, 1, x + 5.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        // a clock of the program decides instead of the cycles
+        var now = 1000
+        ui.clock = func () => { return now }
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        now = 1500
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        now = 1700
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        ui.Tick()
+        print(ui.clickCount)
+        ui.clock = undefined
+        for (var i = 0; i < 30; i++) { ui.Tick() }
+        // dragging after a double click selects whole words
+        x = cx + 11 * ui.cw
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(11, 1, x * 1.0, y)
+        __TestEvent(8, 1, x * 1.0, y)
+        __TestEvent(9, cx + 16.0 * ui.cw, y)
+        ui.Tick()
+        print("[" + tb.SelectedText + "]")
+        __TestEvent(9, cx + 1.0 * ui.cw, y)
+        __TestEvent(11, 1, cx + 1.0 * ui.cw, y)
+        ui.Tick()
+        print("[" + tb.SelectedText + "]")
+        // Ctrl+Left/Right jump by words
+        ui.SetFocus(tb)
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Left(), 64)
+        ui.Tick()
+        var trail = "" + tb.caret
+        __TestEvent(24, UI.Keys.Left(), 64)
+        ui.Tick()
+        trail = trail + " " + tb.caret
+        __TestEvent(24, UI.Keys.Left(), 64)
+        ui.Tick()
+        trail = trail + " " + tb.caret
+        __TestEvent(24, UI.Keys.Right(), 65)
+        ui.Tick()
+        print(trail + " " + tb.caret + " [" + tb.SelectedText + "]")
+        // ReadOnly: selecting and copying work, changing does not; Enter still reports
+        tb.ReadOnly = true
+        var entered = 0
+        tb.OnEnter = func () => { entered++ }
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.X(), 64)
+        __TestEvent(3, "z")
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.V(), 64)
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        print(tb.Text + " | " + Clipboard.GetText() + " | " + entered + " " + tb.SelectionLength)
+        """, new[] { "2 [foo_bar1]", "2 [,]", "2 [  ]", "3 [foo_bar1, baz  qux]", "1 0", "1", "1", "1", "2", "[baz  qux]", "[foo_bar1, baz]", "15 10 8 10 [, ]", "foo_bar1, baz  qux | foo_bar1, baz  qux | 1 18" });
+
+    CheckUi("TextArea: Zeilen, Auf/Ab behalten die Spalte, Pos1/Ende, Ctrl+Pos1/Ende, Enter, Rueck/Entf ueber Zeilen, Tab nur mit AcceptsTab, AcceptsReturn, Bild auf/ab, MaxLength, ReadOnly", uiHead + """
+        var ta = new UI.TextArea("erste Zeile\r\nzwei\rdritte Zeile hier", 10, 10, 220, 120)
+        var changes = 0
+        ta.OnChange = func () => { changes++ }
+        var other = new UI.Button("B", 10, 150, 40, 20)
+        ui.Add(ta)
+        ui.Add(other)
+        ui.Draw()
+        print(ta.LineCount + " [" + ta.GetLine(1) + "] " + ta.Text.Length + " " + ta.caret)
+        ui.SetFocus(ta)
+        // End of the first line, Down: the column stays (as far as the line goes), Down again: back to column 11
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Down(), 0)
+        ui.Tick()
+        var trail = ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Down(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Down(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.Up(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.CaretLine + ":" + ta.CaretColumn
+        __TestEvent(24, UI.Keys.Up(), 0)
+        ui.Tick()
+        print(trail + " " + ta.caret)
+        // Ctrl+End, Home, Ctrl+Home; Right at the end of a line goes to the next one
+        __TestEvent(24, UI.Keys.End(), 64)
+        ui.Tick()
+        trail = "" + ta.caret
+        __TestEvent(24, UI.Keys.Home(), 0)
+        ui.Tick()
+        trail = trail + " " + ta.caret
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Right(), 0)
+        ui.Tick()
+        print(trail + " " + ta.CaretLine + ":" + ta.CaretColumn)
+        // Enter splits the line, Backspace joins it again, Delete at the end of a line joins the next one
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        __TestEvent(3, "neu")
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(1) + "] [" + ta.GetLine(2) + "] " + changes)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        __TestEvent(24, UI.Keys.Backspace(), 0)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(0) + "] " + ta.CaretLine + ":" + ta.CaretColumn)
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.End(), 0)
+        __TestEvent(24, UI.Keys.Delete(), 0)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(0) + "] " + ta.caret)
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        // Tab moves the focus; with AcceptsTab it is typed (Shift+Tab still moves the focus)
+        __TestEvent(24, UI.Keys.Tab(), 0)
+        ui.Tick()
+        print((ui.focusElement == other) + " " + ta.Text.IndexOf("\t"))
+        ui.SetFocus(ta)
+        ta.AcceptsTab = true
+        __TestEvent(24, UI.Keys.Tab(), 0)
+        ui.Tick()
+        print((ui.focusElement == ta) + " " + ta.Text.IndexOf("\t") + " " + ta.CaretColumn)
+        __TestEvent(24, UI.Keys.Tab(), 1)
+        ui.Tick()
+        print(ui.focusElement == other)
+        ui.SetFocus(ta)
+        // AcceptsReturn = false: Enter does nothing
+        ta.AcceptsReturn = false
+        var lines = ta.LineCount
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        print(lines == ta.LineCount)
+        // PageDown/PageUp in a long text
+        ta.SetText("")
+        var long = ""
+        for (var i = 0; i < 40; i++) { long = long + "Zeile " + i + "\n" }
+        ta.Text = long
+        ui.Tick()
+        print(ta.LineCount + " " + ta.caret + " " + ta.vbar.offset)
+        __TestEvent(24, UI.Keys.PageDown(), 0)
+        ui.Tick()
+        var page = ta.CaretLine
+        __TestEvent(24, UI.Keys.PageDown(), 0)
+        ui.Tick()
+        print(page + " " + ta.CaretLine + " " + (ta.vbar.offset > 0))
+        __TestEvent(24, UI.Keys.PageUp(), 2)
+        ui.Tick()
+        print(ta.CaretLine + " " + ta.SelectionLength + " " + ta.SelectedText.Split("\n").length)
+        // MaxLength: typing that does not fit is not taken, pasting is cut
+        ta.SetText("abc")
+        ta.MaxLength = 6
+        __TestEvent(24, UI.Keys.End(), 64)
+        __TestEvent(3, "defg")
+        __TestEvent(3, "de")
+        ui.Tick()
+        Clipboard.SetText("XYZ")
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(ta.Text)
+        // ReadOnly: no changes, but selecting and copying
+        ta.ReadOnly = true
+        changes = 0
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.End(), 65)
+        __TestEvent(24, UI.Keys.C(), 64)
+        __TestEvent(24, UI.Keys.X(), 64)
+        __TestEvent(3, "q")
+        __TestEvent(24, UI.Keys.Delete(), 0)
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        ui.Tick()
+        print(ta.Text + " " + Clipboard.GetText() + " " + changes + " " + ta.SelectionLength)
+        """, new[] { "3 [zwei] 34 0", "1:4 2:11 2:17 0:0 0", "34 17 1:0", "4 [] [neuzwei] 2", "3 [erste Zeile] 1:0", "2 [erste Zeilezwei] 11", "True -1", "True 12 1", "True", "True", "41 0 0", "7 14 True", "7 60 8", "abcdeX", "abcdeX abcdeX 0 6" });
+
+    CheckUi("TextArea: Auswahl ueber Zeilen mit Maus und Shift, Doppel-/Dreifachklick, Zwischenablage behaelt Zeilenumbrueche (\\r\\n wird \\n), Drop von Text und Dateien", uiHead + """
+        class S { static string V(string s) { return s.Replace("\n", "|") } }
+        var ta = new UI.TextArea("alpha beta\ngamma, delta\n\nepsilon", 10, 10, 220, 120)
+        ui.Add(ta)
+        ui.Draw()
+        // the position of a character: 1 frame pixel and 3 of padding, ui.ch per row
+        var left = ta.ax + 4
+        var top = ta.ay + 4
+        // drag from "beta" (line 0, column 6) to line 1, column 5
+        __TestEvent(8, 1, left + 6.0 * ui.cw, top + 3.0)
+        __TestEvent(9, left + 5.0 * ui.cw, top + ui.ch + 3.0)
+        __TestEvent(11, 1, left + 5.0 * ui.cw, top + ui.ch + 3.0)
+        ui.Tick()
+        print((ui.focusElement == ta) + " [" + S.V(ta.SelectedText) + "]")
+        // Shift+Down and Shift+End grow it
+        __TestEvent(24, UI.Keys.Down(), 1)
+        __TestEvent(24, UI.Keys.End(), 1)
+        ui.Tick()
+        print("[" + S.V(ta.SelectedText) + "]")
+        // a double click on "delta", on ", " (the run of punctuation; then the space alone), on the empty line (nothing)
+        for (var i = 0; i < 30; i++) { ui.Tick() }
+        var dx = left + 8.0 * ui.cw + 2
+        var dy = top + ui.ch + 3.0
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        ui.Tick()
+        var words = "[" + S.V(ta.SelectedText) + "]"
+        dx = left + 5.0 * ui.cw + 2
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        ui.Tick()
+        words = words + " [" + S.V(ta.SelectedText) + "]"
+        dx = left + 2.0
+        dy = top + 2.0 * ui.ch + 3.0
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        ui.Tick()
+        words = words + " [" + S.V(ta.SelectedText) + "] " + ta.CaretLine
+        // a triple click selects the line with its line break; dragging on goes by lines
+        dx = left + 3.0 * ui.cw
+        dy = top + 3.0
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        __TestEvent(11, 1, dx, dy)
+        __TestEvent(8, 1, dx, dy)
+        ui.Tick()
+        words = words + " [" + S.V(ta.SelectedText) + "]"
+        __TestEvent(9, dx, top + ui.ch + 3.0)
+        __TestEvent(11, 1, dx, top + ui.ch + 3.0)
+        ui.Tick()
+        print(words + " [" + S.V(ta.SelectedText) + "]")
+        // the clipboard keeps line breaks ("\r\n" from another program becomes "\n")
+        ui.SetFocus(ta)
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.Down(), 1)
+        __TestEvent(24, UI.Keys.C(), 64)
+        ui.Tick()
+        print("[" + S.V(Clipboard.GetText()) + "]")
+        Clipboard.SetText("eins\r\nzwei\rdrei")
+        __TestEvent(24, UI.Keys.End(), 64)
+        __TestEvent(24, UI.Keys.Insert(), 1)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(3) + "] [" + ta.GetLine(5) + "] " + ta.Text.IndexOf("\r"))
+        __TestEvent(24, UI.Keys.Up(), 3)
+        __TestEvent(24, UI.Keys.Delete(), 1)
+        ui.Tick()
+        print(ta.LineCount + " [" + ta.GetLine(3) + "] [" + S.V(Clipboard.GetText()) + "]")
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.X(), 64)
+        ui.Tick()
+        print("[" + S.V(ta.Text) + "] " + ta.LineCount + " " + Clipboard.GetText().Length)
+        // drops: text keeps its lines, files come one per line
+        ta.SetText("ab\ncd")
+        ui.Draw()
+        __TestEvent(41, "X\r\nY", left + 1.0 * ui.cw, top + ui.ch + 3.0)
+        ui.Tick()
+        print("[" + S.V(ta.Text) + "]")
+        __TestEvent(40, "/a.txt\n/b c.png", left + 0.0, top + 3.0)
+        ui.Tick()
+        print("[" + S.V(ta.Text) + "] " + ta.LineCount)
+        ta.ReadOnly = true
+        __TestEvent(41, "nein", left + 0.0, top + 3.0)
+        ui.Tick()
+        print(ta.LineCount)
+        """, new[] { "True [beta|gamma]", "[beta|gamma, delta|]", "[delta] [,] [] 2 [alpha beta|] [alpha beta|gamma, delta|]", "[alpha beta|]", "6 [epsiloneins] [drei] -1", "5 [epsiloneins] [|drei]", "[] 1 41", "[ab|cX|Yd]", "[/a.txt|/b c.pngab|cX|Yd] 4", "4" });
+
+    CheckUi("TextArea: Bildlaufleisten, Mausrad, die Einfuegemarke bleibt sichtbar, WordWrap bricht an Leerzeichen um, Proportionalschrift und Tabs, Zeichnen", uiHead + """
+        var text = ""
+        for (var i = 0; i < 30; i++) { text = text + "Zeile " + i + " " + "".PadRight(i * 2, "x") + "\n" }
+        var ta = new UI.TextArea(text, 10, 10, 200, 100)
+        ui.Add(ta)
+        ui.Draw()
+        print(ta.showV + " " + ta.showH + " " + ta.vbar.extent + " " + ta.hbar.extent + " " + ta.viewW + " " + ta.viewH)
+        // the wheel scrolls three rows a notch, sideways with the horizontal wheel
+        ui.MouseWheel(0, -1, 50, 50)
+        ui.Tick()
+        var trail = "" + ta.vbar.offset
+        ui.MouseWheel(-1, 0, 50, 50)
+        ui.Tick()
+        print(trail + " " + ta.hbar.offset + " " + ta.caret)
+        // the caret stays in view (at the next layout): Ctrl+End scrolls to the end, Ctrl+Home back
+        ui.SetFocus(ta)
+        __TestEvent(24, UI.Keys.End(), 64)
+        ui.Tick()
+        ui.Tick()
+        trail = ta.vbar.offset + " " + ta.vbar.Max() + " " + ta.hbar.offset
+        __TestEvent(24, UI.Keys.Up(), 0)
+        __TestEvent(24, UI.Keys.End(), 0)
+        ui.Tick()
+        ui.Tick()
+        trail = trail + " | " + ta.hbar.offset + " " + (ta.hbar.offset > 0)
+        __TestEvent(24, UI.Keys.Home(), 64)
+        ui.Tick()
+        ui.Tick()
+        print(trail + " | " + ta.vbar.offset + " " + ta.hbar.offset)
+        // dragging the vertical thumb, a click on the track pages
+        var barX = ta.ax + 1 + ta.viewW + 4.0
+        __TestEvent(8, 1, barX, ta.ay + 4.0)
+        __TestEvent(9, barX, ta.ay + 40.0)
+        __TestEvent(11, 1, barX, ta.ay + 40.0)
+        ui.Tick()
+        trail = "" + (ta.vbar.offset > 0) + " " + ta.caret + " " + ui.shownCursor!int
+        __TestEvent(9, ta.ax + 30.0, ta.ay + 30.0)
+        ui.Tick()
+        print(trail + " " + ui.shownCursor!int)
+        // WordWrap: no horizontal bar, long lines are broken at spaces
+        ta.SetText("Ein langer Satz mit vielen kurzen Woertern, der in der schmalen Flaeche umgebrochen werden muss.\nkurz\nlangeswortohneleerzeichenimmernochweiter")
+        ta.WordWrap = true
+        ui.Tick()
+        var rows = ""
+        for (var r = 0; r < ta.RowCount(); r++) { rows = rows + "[" + ta.Text.Substring(ta.RowStart(r), ta.RowTextEnd(r) - ta.RowStart(r)) + "]" }
+        print(ta.showH + " " + ta.RowCount() + " " + rows)
+        // Down walks the rows, End goes to the end of the row (before the space it was broken at)
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(24, UI.Keys.Down(), 0)
+        __TestEvent(24, UI.Keys.End(), 0)
+        ui.Tick()
+        print(ta.caret + " " + ta.RowOf(ta.caret) + " " + ta.Text.Substring(0, ta.caret))
+        // typing in a broken line breaks it anew
+        __TestEvent(24, UI.Keys.Home(), 64)
+        __TestEvent(3, "Hier ist noch mehr Text: ")
+        ui.Tick()
+        var rows2 = ta.RowCount()
+        ta.WordWrap = false
+        ui.Tick()
+        print(rows2 + " " + ta.RowCount() + " " + ta.showH)
+        // a proportional font and tabs (a tab reaches the next multiple of TabSize columns)
+        var pa = new UI.TextArea("A\tB\nAVAV\tHO\n\tii", 10, 120, 200, 70)
+        pa.Font = "firesans"
+        pa.FontSize = 16
+        ui.Add(pa)
+        ui.Draw()
+        print(pa.mono + " " + pa.ColumnOf(pa.lineStart[1], pa.lineStart[1] + 5) + " [" + pa.Shown(pa.lineStart[0], 0, 3) + "] " + (pa.XOf(ui, 0, 2) == pa.TextWidth(ui, "A   ")) + " " + (pa.lineH == pa.TextHeight(ui)))
+        // a click lands at the nearest boundary, also behind a tab
+        __TestEvent(8, 1, pa.ax + 4.0 + pa.TextWidth(ui, "A   ") + 1, pa.ay + 6.0)
+        __TestEvent(11, 1, pa.ax + 4.0 + pa.TextWidth(ui, "A   ") + 1, pa.ay + 6.0)
+        ui.Tick()
+        print(pa.caret)
+        // drawing: the selection in the selection colour, the text of the next line in the text colour
+        var da = new UI.TextArea("aaaa\nbbbb", 220, 10, 90, 60)
+        ui.Add(da)
+        ui.Draw()
+        ui.SetFocus(da)
+        da.Select(0, 2)
+        ui.Tick()
+        var t = ui.theme
+        var sel = 0
+        var txt = 0
+        for (var yy = da.ay + 4; yy < da.ay + 4 + ui.ch; yy++) {
+            for (var xx = da.ax + 4; xx < da.ax + 4 + 2 * ui.cw; xx++) { if (Px.Get(ui.renderer, xx, yy) == t.selection.Color) { sel++ } }
+        }
+        for (var yy = da.ay + 4 + ui.ch; yy < da.ay + 4 + 2 * ui.ch; yy++) {
+            for (var xx = da.ax + 4; xx < da.ax + 4 + 4 * ui.cw; xx++) { if (Px.Get(ui.renderer, xx, yy) == t.text.Color) { txt++ } }
+        }
+        print((sel > 60) + " " + (txt > 10) + " " + (Px.Get(ui.renderer, da.ax, da.ay + 20) == t.borderFocus.Color))
+        """, new[] { "True True 440 544 186 86", "42 42 0", "354 354 0 | 358 True | 0 0", "True 0 0 1", "False 9 [Ein langer Satz mit ][vielen kurzen ][Woertern, der in der ][schmalen Flaeche ][umgebrochen werden ][muss.][kurz][langeswortohneleerzeic][henimmernochweiter]", "33 1 Ein langer Satz mit vielen kurzen", "10 3 True", "False 8 [A   B] True True", "2", "True True True" });
+
+    CheckUi("TextArea: 5000 Zeilen - nur sichtbare Zeilen werden gezeichnet, Tippen, Enter, Mausrad, Bild ab und WordWrap bleiben schnell", uiHead + """
+        class CountingArea : UI.TextArea {
+            int drawn = 0
+            construct(string text, int x, int y, int w, int h) : base(text, x, y, w, h) { }
+            undefined DrawRow(UI.Root root, int row, int left, int y, int selStart, int selEnd, Brush color) {
+                this.drawn = this.drawn + 1
+                base.DrawRow(root, row, left, y, selStart, selEnd, color)
+            }
+        }
+        var sb = ""
+        var chunk = ""
+        for (var i = 0; i < 5000; i++) {
+            chunk = chunk + "Zeile " + i + " mit etwas Text, damit sie nicht zu kurz ist: abcdefghijklmnopqrstuvwxyz\n"
+            if (i % 100 == 99) {
+                sb = sb + chunk
+                chunk = ""
+            }
+        }
+        var ta = new CountingArea(sb + chunk, 10, 10, 300, 180)
+        ui.Add(ta)
+        var t0 = __TestMillis()
+        ui.Draw()
+        var visible = ta.viewH / ta.lineH + 2
+        print(ta.LineCount + " " + (ta.drawn <= visible))
+        ui.SetFocus(ta)
+        ta.Select(ta.Text.Length / 2, 0)
+        ui.Tick()
+        ui.Tick()
+        var line = ta.CaretLine
+        ta.drawn = 0
+        var t = __TestMillis()
+        for (var k = 0; k < 20; k++) {
+            __TestEvent(3, "q")
+            ui.Tick()
+        }
+        for (var k = 0; k < 10; k++) {
+            __TestEvent(24, UI.Keys.Enter(), 0)
+            ui.Tick()
+        }
+        var typing = __TestMillis() - t
+        print(ta.LineCount + " " + ta.CaretLine + " " + (ta.CaretLine == line + 10) + " " + (ta.drawn <= 31 * visible))
+        t = __TestMillis()
+        ta.drawn = 0
+        for (var k = 0; k < 20; k++) {
+            ui.MouseWheel(0, -1, 100, 100)
+            ui.Tick()
+        }
+        for (var k = 0; k < 10; k++) {
+            __TestEvent(24, UI.Keys.PageDown(), 0)
+            ui.Tick()
+        }
+        var scrolling = __TestMillis() - t
+        print((ta.drawn <= 31 * visible) + " " + (ta.CaretLine > line + 10))
+        t = __TestMillis()
+        ta.WordWrap = true
+        ui.Tick()
+        for (var k = 0; k < 20; k++) {
+            __TestEvent(3, "w")
+            ui.Tick()
+        }
+        var wrapped = __TestMillis() - t
+        print(ta.RowCount() > ta.LineCount)
+        // generous limits (the debug VM is slower): 30 keys, 30 scroll steps and 20 keys with WordWrap in a 400 KB text
+        print("fast " + (typing < 6000) + " " + (scrolling < 3000) + " " + (wrapped < 8000))
+        """, new[] { "5001 True", "5011 2516 True True", "True True", "True", "fast True True True" });
+
+    CheckUi("TextArea: Zeilen- und Umbruch-Index bleiben nach vielen Aenderungen gleich einem Neuaufbau (Proportionalschrift, Tabs, WordWrap)", uiHead + """
+        class Check {
+            static string Rows(UI.TextArea ta) {
+                var s = ""
+                for (var i = 0; i < ta.RowCount(); i++) { s = s + ta.RowStart(i) + "," }
+                return s
+            }
+            static string Lines(UI.TextArea ta) {
+                var s = ""
+                for (var i = 0; i < ta.lineCount; i++) { s = s + ta.lineStart[i] + ":" + ta.lineWidth[i] + "," }
+                return s + " w" + ta.widest
+            }
+        }
+        var ta = new UI.TextArea("Das ist ein Text mit einigen Woertern, der umbrechen soll.\nKurz\n\nNoch eine lange Zeile mit vielen Woertern darin, ja wirklich viele.", 10, 10, 200, 150)
+        ta.WordWrap = true
+        ta.Font = "firesans"
+        ta.FontSize = 16
+        ui.Add(ta)
+        ui.Draw()
+        ui.SetFocus(ta)
+        var seed = 7
+        var words = ["a\tb", "\t", "bb ", "ccc ddd ", "\n", "eeee\nff", " ", "langeswortohneleerzeichen", "x y z "]
+        var bad = 0
+        for (var step = 0; step < 60; step++) {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var len = ta.Text.Length
+            var pos = seed % (len + 1)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var cut = seed % 4
+            if (pos + cut > len) { cut = len - pos }
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var w = words[seed % words.length]
+            if (step % 5 == 0) { w = "" }
+            ta.Select(pos, cut)
+            ta.ReplaceSelection(w)
+            ui.Tick()
+            var inc = Check.Rows(ta)
+            var incLines = Check.Lines(ta)
+            // full rebuild
+            var saved = ta.Text
+            ta.indexed = ""
+            ta.EnsureIndex()
+            ta.Invalidate()
+            ui.Draw()
+            var full = Check.Rows(ta)
+            var fullLines = Check.Lines(ta)
+            if (inc != full || incLines != fullLines) {
+                bad++
+                if (bad < 3) {
+                    print("MISMATCH at " + step + " [" + saved + "]")
+                    print(" inc  " + inc + " | " + incLines)
+                    print(" full " + full + " | " + fullLines)
+                }
+            }
+        }
+        print("bad " + bad + " len " + ta.Text.Length + " rows " + ta.RowCount())
+        // the same without wrapping
+        ta.WordWrap = false
+        ta.Font = ""
+        ui.Draw()
+        bad = 0
+        for (var step = 0; step < 60; step++) {
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var len = ta.Text.Length
+            var pos = seed % (len + 1)
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var cut = seed % 6
+            if (pos + cut > len) { cut = len - pos }
+            seed = (seed * 1103515245 + 12345) % 2147483648
+            var w = words[seed % words.length]
+            ta.Select(pos, cut)
+            ta.ReplaceSelection(w)
+            ui.Tick()
+            var incLines = Check.Lines(ta)
+            ta.indexed = ""
+            ta.EnsureIndex()
+            ta.Invalidate()
+            ui.Draw()
+            var fullLines = Check.Lines(ta)
+            if (incLines != fullLines) {
+                bad++
+                if (bad < 3) {
+                    print("MISMATCH2 at " + step)
+                    print(" inc  " + incLines)
+                    print(" full " + fullLines)
+                }
+            }
+        }
+        print("bad " + bad + " len " + ta.Text.Length + " lines " + ta.lineCount)
+        """, new[] { "bad 0 len 310 rows 23", "bad 0 len 585 lines 15" });
+
+    CheckUi("Drag-Bild: ein Schild am Zeiger (Text gekuerzt, Datei, n files, Kind), nur alter und neuer Bereich neu gemalt, im Fenster, ShowImage = false", uiHead + """
+        class Counter : UI.Element {
+            int painted = 0
+            construct(int x, int y) : base(x, y, 40, 40) { }
+            undefined Draw(UI.Root root, int ax, int ay) {
+                if (!this.NeedsDraw(root, ax, ay)) { return }
+                this.painted = this.painted + 1
+            }
+        }
+        var src = new UI.Button("Quelle", 10, 10, 120, 30)
+        var data = new UI.DragData("Kurz")
+        // (the label: without it the root would show a snapshot of the button, see the next case)
+        data.Snapshot = false
+        src.OnDragStart = func (int x, int y) => { return data }
+        var far = new Counter(270, 150)
+        ui.Add(src)
+        ui.Add(far)
+        ui.Draw()
+        var t = ui.theme
+        var painted = far.painted
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        ui.Tick()
+        // a label below and to the right of the pointer: the text in a box
+        print(ui.IsDragging + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH)
+        print((Px.Get(ui.renderer, 72, 36) == t.border.Color) + " " + (Px.Get(ui.renderer, 73, 37) == t.menuBack.Color))
+        // it follows the pointer: the old place is painted over, nothing else is painted again
+        __TestEvent(9, 80.0, 30.0)
+        ui.Tick()
+        ui.Tick()
+        print((Px.Get(ui.renderer, 73, 47) == t.back.Color) + " " + (Px.Get(ui.renderer, 93, 47) == t.menuBack.Color) + " " + (far.painted == painted))
+        // near the edge it stays inside the window
+        __TestEvent(9, 310.0, 195.0)
+        ui.Tick()
+        print((ui.dragImageX + ui.dragImageW <= 320) + " " + (ui.dragImageY + ui.dragImageH <= 200))
+        __TestEvent(11, 1, 310.0, 195.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragImageW + " " + (Px.Get(ui.renderer, 93, 47) == t.back.Color))
+        // what it shows: a text shortened to 30 characters on one line, the file or the number of files, else the kind
+        var many = new UI.DragData()
+        many.Files.Add("/a/x.txt")
+        many.Files.Add("/a/y.txt")
+        many.Files.Add("/a/z.txt")
+        var one = new UI.DragData()
+        one.Files.Add("C:\\daten\\bild.png")
+        print(ui.DragImageText(new UI.DragData("Ein sehr langer gezogener Text, der gekuerzt wird")) + " | " + ui.DragImageText(new UI.DragData("zwei\nZeilen")))
+        print(ui.DragImageText(many) + " | " + ui.DragImageText(one) + " | " + ui.DragImageText(new UI.DragData("", 42, "eintrag")))
+        // ShowImage = false: no label
+        data.ShowImage = false
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragImageW + " " + (Px.Get(ui.renderer, 73, 47) == t.back.Color))
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 60.0, 20.0)
+        ui.Tick()
+        """, new[] { "True 72 36 40 20", "True True", "True True True", "True True", "False 0 True", "Ein sehr langer gezogener Tex... | zwei Zeilen", "3 files | bild.png | eintrag", "True 0 True" });
+
+    CheckUi("Textfeld: Undo/Redo mit Ctrl+Z, Ctrl+Y und Ctrl+Umschalt+Z - Tippen wortweise und nach einer Pause, Einfuegen und Entfernen eigene Schritte, Auswahl zurueck, Grenze, Text aus dem Programm loescht den Verlauf, ReadOnly", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var tb = new UI.TextBox("", 10, 10, 200, 24)
+        ui.Add(tb)
+        ui.Draw()
+        ui.SetFocus(tb)
+        print(tb.CanUndo + " " + tb.CanRedo)
+        foreach (c in ["H", "a", "l", "l", "o", " ", "W", "e", "l", "t"]) { __TestEvent(3, c) }
+        ui.Tick()
+        print(tb.Text + " " + tb.CanUndo)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + tb.Text + "] " + tb.caret)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + tb.Text + "] " + tb.caret + " " + tb.CanUndo + " " + tb.CanRedo)
+        __TestEvent(24, UI.Keys.Y(), 64)
+        __TestEvent(24, UI.Keys.Z(), 65)
+        ui.Tick()
+        print("[" + tb.Text + "] " + tb.caret + " " + tb.CanRedo)
+        // pasting over a selection is a step of its own; undo brings the text and the selection back
+        Clipboard.SetText("X")
+        __TestEvent(24, UI.Keys.A(), 64)
+        __TestEvent(24, UI.Keys.V(), 64)
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text + " [" + tb.SelectedText + "]")
+        // Backspace three times: one step
+        __TestEvent(24, UI.Keys.End(), 0)
+        for (var i = 0; i < 3; i++) { __TestEvent(24, UI.Keys.Backspace(), 0) }
+        ui.Tick()
+        print(tb.Text)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text + " " + tb.caret)
+        // a pause of more than a second starts a new step
+        __TestEvent(3, "!")
+        ui.Tick()
+        now = 5000
+        __TestEvent(3, "?")
+        ui.Tick()
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text)
+        // the limit: only the last two steps
+        tb.UndoLimit = 2
+        for (var k = 0; k < 4; k++) {
+            now = now + 2000
+            __TestEvent(3, "" + k)
+            ui.Tick()
+        }
+        print(tb.Text + " " + tb.Undo() + " " + tb.Undo() + " " + tb.Undo() + " " + tb.Text)
+        // the program sets Text: the history is gone
+        tb.UndoLimit = 100
+        __TestEvent(3, "z")
+        ui.Tick()
+        tb.Text = "neu"
+        print(tb.CanUndo + " " + tb.Undo() + " " + tb.Text)
+        // ReadOnly: no Undo
+        __TestEvent(3, "s")
+        ui.Tick()
+        tb.ReadOnly = true
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(tb.Text + " " + tb.CanUndo)
+        tb.ReadOnly = false
+        print(tb.Undo() + " " + tb.Text + " " + tb.Redo() + " " + tb.Text)
+        tb.ClearUndo()
+        print(tb.CanUndo + " " + tb.CanRedo)
+        """, new[] { "False False", "Hallo Welt True", "[Hallo ] 6", "[] 0 False True", "[Hallo Welt] 10 False", "X", "Hallo Welt [Hallo Welt]", "Hallo W", "Hallo Welt 10",
+                     "Hallo Welt!", "Hallo Welt!0123 True True False Hallo Welt!01", "False False neu", "neus False", "True neu True neus", "False False" });
+
+    CheckUi("TextArea: Undo/Redo - Tippen bis zum neuen Wort ein Schritt, Ctrl+Ruecktaste, SetText/AppendText loeschen den Verlauf", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var ta = new UI.TextArea("", 10, 10, 200, 100)
+        ui.Add(ta)
+        ui.Draw()
+        ui.SetFocus(ta)
+        foreach (c in ["a", "b"]) { __TestEvent(3, c) }
+        __TestEvent(24, UI.Keys.Enter(), 0)
+        foreach (c in ["c", "d"]) { __TestEvent(3, c) }
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " " + ta.LineCount)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " " + ta.LineCount + " " + ta.CaretLine)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + ta.Text + "] " + ta.LineCount)
+        __TestEvent(24, UI.Keys.Y(), 64)
+        __TestEvent(24, UI.Keys.Y(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " " + ta.CaretLine + " " + ta.CaretColumn)
+        __TestEvent(24, UI.Keys.Backspace(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|"))
+        __TestEvent(24, UI.Keys.Z(), 65)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|"))
+        ta.AppendText("\nef")
+        print(ta.CanUndo + " " + ta.Text.Replace("\n", "|"))
+        __TestEvent(3, "g")
+        ui.Tick()
+        ta.SetText("neu")
+        print(ta.CanUndo + " " + ta.Undo() + " " + ta.Text)
+        """, new[] { "ab|cd 2", "ab| 2 1", "[] 1", "ab|cd 1 2", "ab|", "ab|cd", "False ab|cd|ef", "False False neu" });
+
+    CheckUi("Markierung ziehen: im Textfeld verschieben (mit Ctrl kopieren), Klick in die Markierung setzt die Einfuegemarke, in ein anderes Feld kopieren (Einfuegemarke folgt dem Zeiger), hinaus mit Move loescht, TextArea", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var tb = new UI.TextBox("Hallo Welt", 10, 100, 200, 24)
+        var tb2 = new UI.TextBox("ab", 10, 140, 200, 24)
+        ui.Add(tb)
+        ui.Add(tb2)
+        ui.Draw()
+        var cw = ui.cw
+        var x0 = tb.ax + 4
+        // "Hallo" to the end of the field: moved
+        tb.Select(0, 5)
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, x0 + 10.0 * cw, 112.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + tb.dropPos + " " + ui.dragEffect!int)
+        __TestEvent(11, 1, x0 + 10.0 * cw, 112.0)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb.SelectedText + "] " + tb.dropPos)
+        __TestEvent(24, UI.Keys.Z(), 64)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb.SelectedText + "]")
+        // with Ctrl held: copied
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, x0 + 10.0 * cw, 112.0)
+        ui.Tick()
+        __TestEvent(24, 1073742048, 64)
+        ui.Tick()
+        print(ui.dragEffect!int)
+        __TestEvent(11, 1, x0 + 10.0 * cw, 112.0)
+        __TestEvent(25, 1073742048, 0)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb.SelectedText + "] " + tb.SelectionStart)
+        // a click into the selection without moving puts the caret there
+        now = now + 1000
+        __TestEvent(8, 1, x0 + 12.0 * cw + 2, 112.0)
+        __TestEvent(11, 1, x0 + 12.0 * cw + 2, 112.0)
+        ui.Tick()
+        print(tb.caret + " " + tb.HasSelection() + " " + ui.IsDragging)
+        // into the other field: a copy at the place of the pointer, which the drop caret shows meanwhile
+        tb.Select(0, 5)
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, tb2.ax + 4.0 + cw, 152.0)
+        ui.Tick()
+        print(tb2.dropPos + " " + ui.dragEffect!int)
+        __TestEvent(11, 1, tb2.ax + 4.0 + cw, 152.0)
+        ui.Tick()
+        print("[" + tb.Text + "] [" + tb2.Text + "] [" + tb2.SelectedText + "] " + (ui.focusElement == tb2) + " " + tb2.dropPos)
+        // out of the window: the other program moves it - it is deleted here (one step for Undo)
+        __TestDragAnswer(2)
+        tb.Select(0, 6)
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, 400.0, 112.0)
+        __TestEvent(11, 1, 400.0, 112.0)
+        ui.Tick()
+        print("[" + tb.Text + "] " + ui.IsDragging)
+        tb.Undo()
+        print("[" + tb.Text + "]")
+        // the desktop cannot take drags (Wayland, macOS): the drag stays in the window and can come back
+        __TestCanDrag(false)
+        print(win.CanStartDrag())
+        tb.Select(0, 5)
+        now = now + 1000
+        __TestEvent(8, 1, x0 + cw + 2.0, 112.0)
+        __TestEvent(9, 400.0, 112.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragEffect!int + " " + (ui.dragTarget == undefined) + " " + (ui.dragImageX + ui.dragImageW <= 320))
+        __TestEvent(9, tb2.ax + 4.0, 152.0)
+        __TestEvent(11, 1, tb2.ax + 4.0, 152.0)
+        ui.Tick()
+        print("[" + tb2.Text + "] " + ui.IsDragging)
+        __TestCanDrag(true)
+        // TextArea: "eins" behind "zwei" in the next line
+        var ta = new UI.TextArea("eins\nzwei", 220, 10, 90, 80)
+        ui.Add(ta)
+        ui.Draw()
+        ta.Select(0, 4)
+        var lx = ta.ax + 1 + ta.padding
+        var ly = ta.ay + 1 + ta.padding
+        now = now + 1000
+        __TestEvent(8, 1, lx + cw + 2.0, ly + 2.0)
+        __TestEvent(9, lx + 4.0 * cw, ly + ta.lineH + 2.0)
+        ui.Tick()
+        print(ta.dropPos + " " + ui.dragEffect!int)
+        __TestEvent(11, 1, lx + 4.0 * cw, ly + ta.lineH + 2.0)
+        ui.Tick()
+        print(ta.Text.Replace("\n", "|") + " [" + ta.SelectedText + "] " + ta.LineCount)
+        ta.Undo()
+        print(ta.Text.Replace("\n", "|") + " [" + ta.SelectedText + "]")
+        // a click on the selection without moving: the caret
+        now = now + 1000
+        __TestEvent(8, 1, lx + 2.0 * cw + 2, ly + 2.0)
+        __TestEvent(11, 1, lx + 2.0 * cw + 2, ly + 2.0)
+        ui.Tick()
+        print(ta.caret + " " + ta.HasSelection())
+        """, new[] { "True 10 2", "[ WeltHallo] [Hallo] -1", "[Hallo Welt] [Hallo]", "1", "[Hallo WeltHallo] [Hallo] 10", "12 False False",
+                     "1 1", "[Hallo WeltHallo] [aHallob] [Hallo] True -1", "StartDrag [Hallo ] []", "[WeltHallo] False", "[Hallo WeltHallo]",
+                     "False", "True 0 True True", "[HalloaHallob] False", "9 2", "|zweieins [eins] 2", "eins|zwei [eins]", "2 False" });
+
+    CheckUi("Drag-Bild: durchscheinender Schnappschuss des Quellelements (mit dem Griffversatz), DragData.Image, Snapshot = false und Listen zeigen das Schild", uiHead + """
+        var now = 0
+        ui.clock = func () => { return now }
+        var src = new UI.Button("Quelle", 10, 10, 120, 30)
+        var data = new UI.DragData("Kurz")
+        src.OnDragStart = func (int x, int y) => { return data }
+        ui.Add(src)
+        ui.Draw()
+        var t = ui.theme
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 200.0, 120.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH + " " + (ui.dragSnapshot != undefined))
+        // the face of the button, see-through over the background
+        var c = Px.Get(ui.renderer, 196, 125)
+        print((c != t.back.Color) + " " + (c != t.face.Color))
+        __TestEvent(9, 210.0, 130.0)
+        ui.Tick()
+        ui.Tick()
+        print((Px.Get(ui.renderer, 192, 112) == t.back.Color) + " " + ui.dragImageX)
+        __TestEvent(11, 1, 210.0, 130.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.IsDragging + " " + (ui.dragSnapshot == undefined) + " " + (Px.Get(ui.renderer, 206, 135) == t.back.Color))
+        // a picture of the source: drawn at (ImageX, ImageY) from the pointer
+        var pic = new Framebuffer(10, 10)
+        var pr = new Renderer(pic)
+        pr.FillRect(0, 0, 10, 10, new SolidBrush(UI.Color.Rgb(255, 0, 0)))
+        data.Image = pic
+        now = now + 1000
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 200.0, 120.0)
+        ui.Tick()
+        ui.Tick()
+        print(ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH + " " + (Px.Get(ui.renderer, 215, 139) == UI.Color.Rgb(255, 0, 0)))
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 200.0, 120.0)
+        ui.Tick()
+        // Snapshot = false: the label
+        data.Image = undefined
+        data.Snapshot = false
+        now = now + 1000
+        __TestEvent(8, 1, 20.0, 20.0)
+        __TestEvent(9, 60.0, 20.0)
+        ui.Tick()
+        print((ui.dragPicture == undefined) + " " + ui.dragImageW)
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 60.0, 20.0)
+        ui.Tick()
+        // a list: the label with the text of the row, not a picture of the whole list
+        var lb = new UI.ListBox(10, 60, 100, 80)
+        lb.Add("eins")
+        lb.OnDragStart = func (int x, int y) => { return new UI.DragData("eins") }
+        ui.Add(lb)
+        ui.Draw()
+        now = now + 1000
+        __TestEvent(8, 1, 20.0, 66.0)
+        __TestEvent(9, 60.0, 66.0)
+        ui.Tick()
+        print(ui.IsDragging + " " + (ui.dragPicture == undefined) + " " + ui.dragImageW)
+        __TestEvent(24, UI.Keys.Escape(), 0)
+        __TestEvent(11, 1, 60.0, 66.0)
+        ui.Tick()
+        """, new[] { "True 190 110 120 30 True", "True True", "True 200", "False True True", "212 136 10 10 True", "True 40", "True True 40" });
+
+    CheckUi("Doppelklick in Liste und Baum ueber root.clickCount: TreeView klappt auf/zu und meldet OnActivate (auch Enter), Klick auf das Kaestchen nicht", uiHead + """
+        var tv = new UI.TreeView(10, 10, 200, 120)
+        var a = tv.AddNode(new UI.TreeNode("A"))
+        a.Add(new UI.TreeNode("A1"))
+        tv.AddNode(new UI.TreeNode("B"))
+        var activated = 0
+        tv.OnActivate = func () => { activated = activated + 1 }
+        ui.Add(tv)
+        ui.Draw()
+        var rh = tv.RowHeight(ui)
+        var x = tv.ax + 80
+        var y = tv.ay + 1 + rh / 2
+        ui.MouseDown(1, x, y)
+        ui.MouseUp(1, x, y)
+        print(a.Expanded + " " + activated)
+        ui.MouseDown(1, x, y)
+        ui.MouseUp(1, x, y)
+        ui.Draw()
+        print(a.Expanded + " " + activated + " " + tv.TakeActivated() + " " + tv.TakeActivated() + " " + tv.visibleNodes.Count)
+        // the box: two clicks open and close, nothing is activated
+        var bx = tv.ax + 6
+        ui.MouseDown(1, bx, y)
+        ui.MouseUp(1, bx, y)
+        ui.MouseDown(1, bx, y)
+        ui.MouseUp(1, bx, y)
+        print(a.Expanded + " " + activated)
+        // Enter: toggles and activates
+        ui.SetFocus(tv)
+        ui.KeyDown(UI.Keys.Enter(), 0)
+        ui.Draw()
+        print(a.Expanded + " " + activated + " " + tv.visibleNodes.Count)
+        // a node without children: only activated
+        var y2 = tv.ay + 1 + rh + rh / 2
+        ui.cycles = ui.cycles + 100
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        print(tv.selected.Text + " " + activated)
+        // too slow is no double click
+        ui.cycles = ui.cycles + 100
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        ui.cycles = ui.cycles + 100
+        ui.MouseDown(1, x, y2)
+        ui.MouseUp(1, x, y2)
+        print(activated)
+        """, new[] { "False 0", "True 1 True False 3", "True 1", "False 2 2", "B 3", "3" });
 
     CheckUi("Touch: UI.Root fuehrt die Oberflaeche mit dem Finger (Antippen, Abheben daneben, zweiter Finger, kein Hover danach)", uiHead + """
         print(win.TouchMouse)
@@ -10832,6 +12190,42 @@ string[] uiDrawExpected = Array.Empty<string>();
                 f.flag.Toggle()
                 """, new[] { "False 200 Name:", "clicks 1", "text h", "text hi", "field hi", "flag True" });
 
+            File.WriteAllText(P("Notes.fxml"), """
+                <Window Class="Notes" Title="Notes" Width="320" Height="200">
+                  <Panel Width="320" Height="200">
+                    <TextArea Name="notes" Left="5" Top="5" Width="300" Height="120" WordWrap="true" AcceptsTab="true" MaxLength="100" TabSize="2" Text="{Binding Body, Mode=TwoWay}" OnChange="Edited"/>
+                    <TextBox Name="locked" Left="5" Top="140" Width="100" ReadOnly="true" Text="fest"/>
+                  </Panel>
+                </Window>
+                """);
+            CheckUi("Markup: TextArea (WordWrap, AcceptsTab, MaxLength, TabSize, TwoWay-Text, OnChange) und TextBox mit ReadOnly", $$"""
+                #include "{{P("Notes.fxml")}}"
+                class Doc { string Body = "erste\nzweite" }
+                class MyNotes : NotesBase {
+                    int edits = 0
+                    Edited(sender) { this.edits = this.edits + 1 }
+                }
+                var f = new MyNotes()
+                var doc = new Doc()
+                f.SetDataContext(doc)
+                f.ui.Draw()
+                print(f.notes.WordWrap + " " + f.notes.AcceptsTab + " " + f.notes.MaxLength + " " + f.notes.TabSize + " " + f.notes.LineCount + " " + f.locked.ReadOnly)
+                f.ui.SetFocus(f.notes)
+                __TestEvent(24, UI.Keys.End(), 64)
+                __TestEvent(24, UI.Keys.Enter(), 0)
+                __TestEvent(24, UI.Keys.Tab(), 0)
+                __TestEvent(3, "dritte")
+                f.ui.Tick()
+                print(f.notes.LineCount + " " + f.edits + " [" + doc.Body.Replace("\n", "|").Replace("\t", "~") + "] " + (f.ui.focusElement == f.notes))
+                doc.Body = "neu"
+                f.ui.Tick()
+                print(f.notes.LineCount + " [" + f.notes.Text + "]")
+                f.ui.SetFocus(f.locked)
+                __TestEvent(3, "x")
+                f.ui.Tick()
+                print(f.locked.Text)
+                """, new[] { "True True 100 2 2 True", "3 3 [erste|zweite|~dritte] True", "1 [neu]", "fest" });
+
             File.WriteAllText(P("Panel.fxml"), """
                 <View Class="Panel1" Width="300" Height="200">
                   <Panel Width="300" Height="200">
@@ -11304,6 +12698,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 
     Console.WriteLine(uiFailures == 0 ? "Alle UI-Pruefungen bestanden." : $"FEHLER: {uiFailures} UI-Pruefung(en) fehlgeschlagen.");
 }
+if (Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == "ui") return;
 
 // ---------------------------------------------------------------------------
 // Native callbacks (window events) run nested on the VM of the thread: real globals, no copying
@@ -11387,6 +12782,21 @@ string[] uiDrawExpected = Array.Empty<string>();
         win.Tick()
         print("counter " + counter)
         """, new[] { "counter 5" });
+
+    CheckCb("Callbacks fuer DragHover (x, y) und DragLeave (ohne Parameter), auch in der Warteschlange", cbHead + """
+        var log = ""
+        print(win.RegisterDragHover(func (float x, float y) => { log = log + "hover " + x + " " + y + "; " }))
+        print(win.RegisterDragLeave(func () => { log = log + "leave; " }))
+        win.EnableEvents()
+        __TestEvent(42, 3.5, 4.0)
+        __TestEvent(43)
+        win.Tick()
+        print(log)
+        var e = win.NextEvent()
+        print(e.length + " " + e[0] + " " + e[1] + " " + e[2])
+        e = win.NextEvent()
+        print(e.length + " " + e[0])
+        """, new[] { "True", "True", "hover 3.5 4; leave; ", "3 42 3 4", "1 43" });
 
     CheckCb("Objekte mit Lambda-Feld und Verweis auf Fremdes als Globals stoeren den Callback nicht", cbHead + """
         class Holder { lambda cb; Framebuffer other }
@@ -11816,7 +13226,7 @@ string[] uiDrawExpected = Array.Empty<string>();
 }
 
 // The scripts of the device checks with their expected output, for the native backend (a loopback device)
-var devNativeCases = new List<(string Title, string Script, string[] Expected, string? DefaultId)>();
+devNativeCases.Clear();
 
 // ---------------------------------------------------------------------------
 // Geraete: geteilter DeviceManager, Standardgeraet, EnsureConnected, IsShared, Paketverfolgung, Paketprotokoll
@@ -14426,6 +15836,7 @@ GitTests.Run();
 // ---------------------------------------------------------------------------------------------------------------------------
 // Native backend (fire.Native): the same source runs in the VM and as generated C++ - the output must be identical
 // ---------------------------------------------------------------------------------------------------------------------------
+nativeTests:
 if (Environment.GetEnvironmentVariable("FIRE_TEST_NO_NATIVE") == "1") Console.WriteLine("(FIRE_TEST_NO_NATIVE: the native checks are skipped)");
 else
 {
@@ -14452,6 +15863,7 @@ else
         return null;
     }
 
+    var vmUnhandled = new Dictionary<string, string>();
     string vmOutput(string source)
     {
         // `terminate` and `catch threads/terminate` are process-wide state of the VM: an earlier case must not leave its handlers behind
@@ -14460,6 +15872,8 @@ else
         var lines = new List<string>();
         var session = RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, args => { lines.Add(args[0].ToString()!); return Value.MakeUndefined(); });
         session.Run();
+        // what the command line runner writes to stderr for an exception that nothing catches (an "Abbruch:" case compares it with the native program)
+        if (session.VirtualMachine?.UnhandledException is { } unhandled) lock (vmUnhandled) vmUnhandled[source] = new UncaughtScriptException(unhandled).Message;
         return string.Join("\n", lines) + (lines.Count > 0 ? "\n" : "");
     }
 
@@ -14750,7 +16164,6 @@ else
             }
             unit Foot: ft { coerce in => 12 }
             unit Mile: mi { coerce ft => 5280 }
-            prefixed unit Liter: l { coerce m^3 => 0.001 }
             unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
             prefixed unit Watt: W { coerce kg*m^2/s^3 => 1 }
             """),
@@ -15280,6 +16693,99 @@ else
             for (int i = 0; i < 100; i++) { facc.Add(0.5) }
             print(t + " " + acc.sum + " " + facc.Scaled(0.5))
             """),
+        ("Einheiten: Liter (l, ml, hl, kl) gleich dm^3, Praefixe d und h (dm, dl, dg, hm, hPa, ds), d/h allein Tag/Stunde, dB ohne Deklaration kein Dezi-Byte", """
+            print((1l == 1dm * 1dm * 1dm) + " " + (1000l == 1m * 1m * 1m) + " " + (1ml == 1cm * 1cm * 1cm))
+            float vol : m^3 = 5l
+            float back : l = 1m * 1m * 1m
+            float box : l = 20cm * 10cm * 50cm
+            print(vol + " " + back + " " + box + " " + (3l + 500ml) + " " + (2l > 1999ml))
+            print(1l:ml + " " + 1hl:l + " " + 1dl:cl + " " + 2dm + " " + 1hm:m + " " + 1.0dg:g + " " + 1kl:l + " " + 1cl:ml + " " + 1ds:ms + " " + 1.0hg:kg)
+            print(1d + " " + 1h:min + " " + 2d:h + " " + (1dm is in m) + " " + (5dB is in B) + " " + 5dB + " " + (1hPa is in Pa))
+            any metre = 1m
+            try { print(1l + metre) } catch (UnitMismatchException e) { print(e.message) }
+            """),
+        ("Bibliothek: Zahlen mit Einheit aus Text (ToFloat, ToInt, TryTo*), eigene Einheiten, kombinierte, dB gewinnt gegen Dezi-Byte", """
+            print("5mm".ToFloat() + " " + "5mm".ToInt() + " " + " -2.5 km/h ".ToFloat() + " " + "3 l".ToInt() + " " + "1e3m".ToFloat() + " " + "2kg*m/s^2".ToFloat())
+            print("5apples".TryToFloat() + " " + "5 m s".TryToFloat() + " " + "5ml".ToFloat():l + " " + "5.5m".TryToInt() + " " + "0x1Fm".ToInt() + " " + "5µs".ToFloat() + " " + "5us".ToInt())
+            try { "5xyz".ToFloat() } catch (ArgumentException e) { print(e.message) }
+            try { "2.5 kg".ToInt() } catch (ArgumentException e) { print(e.message) }
+            print("5in".ToFloat() + " " + "2 Inch".ToFloat() + " " + "3mV".ToInt() + " " + "1013 hPa".ToFloat() + " " + "1013hPa".ToFloat():Pa + " " + "20C".ToFloat():K)
+            print("6dB".ToFloat() + " " + ("6dB".ToFloat() is in dB) + " " + 6dB + " " + (6dB is in B) + " " + ("3dB".ToFloat() + 3dB) + " " + "1dl".ToFloat():l + " " + "2hl".ToInt():l)
+            print("20C/s".TryToFloat() + " " + "5V/m".ToFloat() + " " + "2 V*A".ToFloat() + " " + "1kV".ToFloat():V + " " + "4 m^-1".ToFloat() + " " + "1m^".TryToFloat() + " " + "1 m*".TryToFloat())
+            float speed : m/s = "36 km/h".ToFloat()
+            print(speed + " " + ("1.5 kg".ToFloat() + "500 g".ToFloat()) + " " + "12 min".ToInt():s)
+            prefixed unit Volt: V
+            prefixed unit Ampere: A
+            prefixed unit Pascal: Pa
+            unit Inch: in { coerce m => 0.0254 }
+            unit Kelvin: K
+            unit Celsius: C { coerce K => value + 273.15 }
+            unit Decibel: dB {
+                coerce to unitless => 10 ^ (value / 20)
+                coerce from unitless => 20 * Math.Log10(value)
+            }
+            """),
+        ("Einheiten: Namen kombinierter Einheiten (kg*m/s^2, km/h, m*mm, ms^-1), Umbenennen in eine gleiche Einheit (1dm3:l)", """
+            var f = 5kg * (2m / 1s / 1s)
+            print(f + " " + 2km / 1h + " " + 1m * 1mm + " " + 500mm * 2m + " " + 2kg * 3g + " " + 3m * 2m * 4m + " " + 10m / 2s * 3s)
+            float:kg*m/s^2 g = f
+            float:N n = f
+            print(g + " " + 1m / (1mm * 1s) + " " + "1m/mm*s".ToFloat() + " " + "2 m*m/s/s".ToFloat() + " " + "3 km/m*h".ToFloat() + " " + 1.0dm3:l + " " + 2 / 4s + " " + n)
+            unit Newton: N { coerce kg*m/s^2 => 1 }
+            """),
+        ("Einheiten: Potenz als Ziffern (1m3, float:m/s2, \"5 m3\".ToFloat()), wissenschaftliche Schreibweise 1e3", """
+            print(1m3 + " " + 5dm3 + " " + 2cm2)
+            float v : m3 = 5l
+            float:m/s2 a = 9.81m / 1s / 1s
+            float:kg*m2/s2 e = 2kg * 3m2 / 1s / 1s
+            float w : m^3 = 1m3
+            print(v + " " + a + " " + e + " " + w + " " + (1m3 == 1000l) + " " + 1m3:l + " " + 5:m3)
+            print("5 m3".ToFloat() + " " + "2 m/s2".ToFloat() + " " + "1e3".ToFloat() + " " + "1e3m".ToFloat() + " " + "3dm3".ToFloat():l)
+            print(1e3 + " " + 2.5e-3 + " " + 1e3m + " " + 0x1F + " " + 2E+2)
+            """),
+        ("Einheiten: Arrays mit Einheit am Typ rechnen ihre Elemente um (Initialisierer, Element, Parameter, Feld, Rueckgabe, mehrdimensional)", """
+            float:km/h arr[] = [36m / 1s, 10km / 1h]
+            print(arr[0] + " " + arr[1])
+            arr[1] = 5m / 1s
+            arr[0] += 1m / 1s
+            float b[3] : mm
+            b[0] = 2cm
+            int c[] : cm = [1m, 20mm]
+            print(arr[0] + " " + arr[1] + " " + b[0] + " " + b[1] + " " + c[0] + " " + c[1])
+            class K {
+                float:m lens[]
+                construct() { lens = [1km, 2cm] }
+                static float:m Sum(float v[] : m) { float s = 0m; foreach (x in v) { s += x } return s }
+                static float:cm[] Two() { return [1m, 2m] }
+            }
+            var k = new K()
+            k.lens[1] = 3mm
+            print(K.Sum([1km, 20cm]) + " " + k.lens[0] + " " + k.lens[1] + " " + K.Two()[1])
+            float:m grid[][] = new float[2][2]
+            grid[1][0] = 3km
+            float:mm nested[][] = [[1m], [2cm, 3m]]
+            print(grid[1][0] + " " + nested[1][1] + " " + grid[0][0])
+            any w = 3kg
+            try { arr[0] = w } catch (UnitMismatchException e) { print(e.message) }
+            any bad = [1m, 2s]
+            try { float:m xs[] = bad } catch (UnitMismatchException e) { print(e.message) }
+            """),
+        ("Bibliothek: Math.Sum, Average, Min, Max von Arrays und Listen (mit Einheiten, leer, falsche Werte), Min/Max mit zwei Werten", """
+            print(Math.Sum([1, 2, 3]) + " " + Math.Sum([1.5, 2]) + " " + Math.Sum([1m, 50cm]) + " " + Math.Sum(new List<int>([4, 5])) + " " + Math.Sum([]))
+            print(Math.Average([1, 2]) + " " + Math.Average([1m, 50cm]) + " " + Math.Min([3, 1, 2]) + " " + Math.Max([1m, 150cm, 20cm]) + " " + Math.Min([2.5]))
+            var list = new List()
+            list.Add("1.5 kg".ToFloat())
+            list.Add(500g)
+            print(Math.Sum(list) + " " + Math.Average(list) + " " + Math.Min(list) + " " + Math.Max(list) + " " + list.Count)
+            print(Math.Min(2, 3) + " " + Math.Max(2m, 1km) + " " + Math.Min(-1, -2.5))
+            try { Math.Min([]) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Average(new List()) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Max([]) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum(5) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum("12") } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum([1, "a"]) } catch (ArgumentException e) { print(e.message) }
+            try { Math.Sum([1m, 1s]) } catch (UnitMismatchException e) { print(e.message) }
+            """),
         ("Bibliothek: Math (mit Einheiten), Zahlen aus Text, Stringvergleich, Join, StringBuilder", """
             print(Math.Sqrt(16) + " " + Math.Sqrt(9m * 1m) + " " + Math.Sqrt(4cm * 1cm))
             print(Math.Abs(-3) + " " + Math.Abs(-2.5m) + " " + Math.Min(3, 7) + " " + Math.Max(1m, 50cm) + " " + Math.Clamp(15, 0, 10))
@@ -15357,6 +16863,124 @@ else
             print(Calc.Narrow(70000))
             float[32] f = 0.1
             print(f)
+            """),
+        ("finally bei break 2 / continue 2: jedes finally laeuft, auch aus catch, throw im finally, in Methoden", """
+            class E1 : Exception { construct() { } }
+            string log = ""
+            for (int a = 0; a < 3; a++) {
+                try {
+                    foreach (b in [1, 2, 3]) {
+                        try {
+                            if (a == 1 && b == 2) continue 2
+                            if (a == 2 && b == 2) break 2
+                            log = log + a + b + " "
+                        } finally { log = log + "i" + a + b + " " }
+                    }
+                } finally { log = log + "o" + a + " " }
+            }
+            print(log)
+            class F {
+                static string C() {
+                    string log = ""
+                    foreach (x in [1, 2]) {
+                        try {
+                            while (true) {
+                                try { throw new E1() }
+                                catch (E1 e) { log = log + "c "; break 2 }
+                                finally { log = log + "f1 " }
+                            }
+                        } finally { log = log + "f2 " }
+                        log = log + "never "
+                    }
+                    return log
+                }
+                static string K() {
+                    string log = ""
+                    foreach (x in [1, 2]) {
+                        foreach (y in [1, 2]) {
+                            try { throw new E1() } catch (E1 e) { log = log + x + y + " "; continue 2 } finally { log = log + "f "; }
+                        }
+                    }
+                    return log
+                }
+                static string T() {
+                    string log = ""
+                    try {
+                        foreach (x in [1, 2]) {
+                            foreach (y in [1, 2]) {
+                                try { try { break 2 } finally { log = log + "f1 "; throw new E1() } } finally { log = log + "f2 " }
+                            }
+                        }
+                    } catch (E1 e) { log = log + "caught" }
+                    return log
+                }
+                static int G() {
+                    int n = 0
+                    foreach (x in [1, 2, 3]) {
+                        foreach (y in [1, 2, 3]) {
+                            try { try { n = n + 1; if (y == 2) continue 2 } finally { n = n + 10 } } finally { n = n + 100 }
+                        }
+                    }
+                    return n
+                }
+                static int R() {
+                    foreach (x in [1, 2, 3]) { while (true) { try { return x * 7 } finally { print("R fin") } } }
+                    return 0
+                }
+            }
+            print(F.C())
+            print(F.K())
+            print(F.T())
+            print(F.G())
+            print(F.R() + 1)
+            """),
+        ("Einheiten am Rueckgabetyp (float:m/s Speed()) und Bitbreiten float[16]/float[8]", """
+            class Runner {
+                float:m dist
+                float:s time
+                construct(float:km d, float t : min) { dist = d; time = t }
+                float:m/s Speed() { return dist / time }
+                float : km/h SpeedKmh() { return dist / time }
+                float:m/s^2 Acc(float:m/s v, float t : s) { return v / t }
+                float:km/h Fast { get { return dist / time * 2 } }
+                float:m/s Bad() { any d = dist; return d }
+            }
+            var r = new Runner(10km, 48min)
+            print(r.Speed() + " " + r.SpeedKmh() + " " + r.Acc(36km / 1h, 2s) + " " + r.Fast)
+            try { r.Bad() } catch (UnitMismatchException e) { print(e.message) }
+            float[16] h = 0.1
+            print(h)
+            h = 65519.0
+            print(h)
+            h = 65520.0
+            print(h + " " + (-70000.0)!float[16])
+            h = 2049.0
+            print(h + " " + 2051.0!float[16] + " " + 0.0000001!float[16] + " " + 0.00000001!float[16] + " " + (1.0 / 3)!float[16])
+            float[8] q = 0.1
+            print(q)
+            q = -1000.0
+            print(q + " " + 17.0!float[8] + " " + 19.0!float[8] + " " + 0.001!float[8] + " " + 0.0009!float[8] + " " + 300.7!float[8])
+            class Reg { float[16] v = 0; undefined Set(float x) { v = x } }
+            var g = new Reg()
+            g.Set(1.0001)
+            print(g.v)
+            class Calc { static float Narrow(float[8] x) { return x } }
+            print(Calc.Narrow(3.3))
+            float[16] mm : mm = 1.0001m
+            print(mm)
+            float[16] acc = 0.0
+            for (int i = 0; i < 3000; i++) { acc = acc + 1.0 }
+            print(acc)
+            """),
+        ("Interfaces hinter der Basisklasse (class Puppy : Dog, IPet) zaehlen fuer is of und !", """
+            interface IPet { }
+            interface ILoud { string Bark() }
+            class Dog { }
+            class Puppy : Dog, IPet, ILoud { string Bark() { return "Wuff" } }
+            Dog d = new Puppy()
+            print(d is of IPet)
+            print(d!ILoud.Bark())
+            print(new Dog() is of IPet)
             """),
         ("! wandelt nach char und Bitbreiten und castet Objekte", """
             interface IAnimal { string Name() }
@@ -16172,6 +17796,71 @@ else
             print("start")
             T.F(2)
             print("never")
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException (Programm ohne Ausnahmen) - Text und Exitcode wie die VM", """
+            any s = 1s
+            print("a")
+            print(1m + s)
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException einer Deklaration mit Einheit", """
+            try { print(1) } catch (Exception e) { }
+            any w = 3kg
+            float:km/h v = w
+            """),
+        ("Abbruch: unbehandelte UnitMismatchException einer Deklaration (Programm ohne Ausnahmen)", """
+            any w = 3kg
+            float:km/h v = w
+            """),
+        ("Abbruch: unbehandelte IndexOutOfBoundsException (Programm ohne Ausnahmen)", """
+            int a[] = new int[3]
+            print(a[5])
+            """),
+        ("Abbruch: unbehandelte IndexOutOfBoundsException", """
+            try { print(1) } catch (Exception e) { }
+            int a[] = new int[3]
+            print(a[-1])
+            """),
+        ("Abbruch: unbehandelte ArgumentException (Programm ohne Ausnahmen)", """
+            any q = "q"
+            print(q * 2)
+            """),
+        ("Abbruch: unbehandelte DestroyedException (Programm ohne Ausnahmen)", """
+            class Foo { int x
+                construct() { } }
+            var f = new Foo()
+            delete f
+            print(f.x)
+            """),
+        ("Abbruch: unbehandelte DestroyedException beim Methodenaufruf", """
+            class Foo { construct() { } }
+            var f = new Foo()
+            delete f
+            print(f.ToString())
+            """),
+        ("Abbruch: unbehandelte AccessDeniedException (Programm ohne Ausnahmen)", """
+            class P { private int x
+                construct() { x = 1 } }
+            any p = new P()
+            print(p.x)
+            """),
+        ("Abbruch: unbehandelter Zugriff auf undefined (Programm ohne Ausnahmen)", """
+            var u = undefined
+            print(u.foo)
+            """),
+        ("Abbruch: unbehandelte DivideByZeroException (Programm ohne Ausnahmen)", """
+            int z = 0
+            print(5 / z)
+            """),
+        ("Abbruch: unbehandelte eigene Ausnahme mit Text", """
+            class MyEx : Exception { construct(string m) : base(m) { } }
+            print("vorher")
+            throw new MyEx("mine")
+            """),
+        ("Abbruch: unbehandelte Ausnahme in einem fire-Thread", """
+            #import "time"
+            fire { throw new Exception("in thread") }
+            Sleep(500ms)
+            print("after")
             """),
         ("Ausnahmen: Lambdas, ToString, Konstruktor, catch ohne try", """
             class Boom : Exception {
@@ -17130,7 +18819,7 @@ else
             }
             class Child : Base {
                 int Peek() { return this.shared + this.Guarded() }
-                int PeekSecret() { return this.secret }
+                int PeekSecret() { any me = this; return me.secret }
             }
             class Locked {
                 private construct() { }
@@ -17138,20 +18827,21 @@ else
             }
             var b = new Base()
             var c = new Child()
+            any ab = b
+            any ac = c
             print(b.open)
             print(b.Reveal())
             print(c.Peek())
             print(Base.PublicCounter())
-            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
-            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
-            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
-            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
-            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
-            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(ab.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { ab.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(ab.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(ab.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(ab.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(ac.Guarded()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
             try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
-            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
-            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
-            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            try { ab.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(ab.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
             print(Locked.Make() is of Locked)
             print(b.Total)
             b.Reset()
@@ -17177,7 +18867,7 @@ else
             }
             class Child : Base {
                 int Peek() { return this.shared + this.Guarded() }
-                int PeekSecret() { return this.secret }
+                int PeekSecret() { any me = this; return me.secret }
             }
             class Locked {
                 private construct() { }
@@ -17185,26 +18875,71 @@ else
             }
             var b = new Base()
             var c = new Child()
+            any ab = b
+            any ac = c
             print(b.open)
             print(b.Reveal())
             print(c.Peek())
             print(Base.PublicCounter())
-            try { print(b.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
-            try { b.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
-            try { print(b.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
-            try { print(b.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
-            try { print(b.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
-            try { print(Base.Counter()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
+            try { print(ab.secret) } catch (AccessDeniedException e) { print("denied 1: " + e.message) }
+            try { ab.secret = 5 } catch (AccessDeniedException e) { print("denied 2: " + e.message) }
+            try { print(ab.shared) } catch (AccessDeniedException e) { print("denied 3: " + e.message) }
+            try { print(ab.Hidden()) } catch (AccessDeniedException e) { print("denied 4: " + e.message) }
+            try { print(ab.Guarded()) } catch (AccessDeniedException e) { print("denied 5: " + e.message) }
+            try { print(ac.Guarded()) } catch (AccessDeniedException e) { print("denied 6: " + e.message) }
             try { print(c.PeekSecret()) } catch (AccessDeniedException e) { print("denied 7: " + e.message) }
-            try { b.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
-            try { print(b.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
-            try { var l = new Locked() } catch (AccessDeniedException e) { print("denied 9: " + e.message) }
+            try { ab.Hush = 5 } catch (AccessDeniedException e) { print("denied 8: " + e.message) }
+            try { print(ab.Hush) } catch (AccessDeniedException e) { print("denied 8b: " + e.message) }
             print(Locked.Make() is of Locked)
             print(b.Total)
             b.Reset()
             print(b.Total)
             var lam = func () => { return b.open }
             print(lam())
+            """),
+        ("Interface-Aufrufe: oeffentlich per Definition - ohne Zugriffspruefung, auch wenn eine fremde Klasse den Namen privat hat", """
+            interface IShape {
+                int Area(int scale)
+                string Name()
+            }
+            class Square : IShape {
+                int side
+                construct(int s) { this.side = s }
+                int Area(int scale) { return this.side * this.side * scale }
+                string Name() { return "square" }
+            }
+            class BigSquare : Square {
+                construct(int s) : base(s) { }
+                string Name() { return "big " + base.Name() }
+            }
+            class Disc : IShape {
+                int Area(int scale) { return 3 * scale }
+                string Name() { return "disc" }
+            }
+            class Vault {
+                private int Area(int scale) { return 1000 }
+                private string Name() { return "vault" }
+                int Open() { return this.Area(1) }
+            }
+            class Report {
+                static int Sum(IShape s, int n) {
+                    int acc = 0
+                    for (int i = 0; i < n; i++) { acc = acc + s.Area(i) }
+                    return acc
+                }
+                static string Describe(IShape s) { return s.Name() + " " + s.Area(1) }
+            }
+            print(Report.Sum(new Square(2), 10))
+            print(Report.Sum(new Disc(), 4))
+            print(Report.Describe(new BigSquare(3)))
+            print(Report.Describe(new Disc()))
+            print(new Vault().Open())
+            any v = new Vault()
+            try { print(v.Name()) } catch (AccessDeniedException e) { print("denied: " + e.message) }
+            try { print(Report.Describe(undefined)) } catch (Exception e) { print("undefined: " + e.message) }
+            var gone = new Square(1)
+            delete gone
+            try { print(Report.Describe(gone)) } catch (Exception e) { print("destroyed: " + e.message) }
             """),
         ("Reflection: Type, Member, Get/Set/Call/New/Has, Selektoren, Zugriffsregeln; probe/silence", """
             #import "reflection"
@@ -19255,6 +20990,38 @@ else
             IO.Directory.Delete(dir, true)
             print("end")
             """),
+        ("Compression: Zip64 schreiben (Grenzen fuer den Test gesenkt) - Extra-Felder, 8-Byte-Datendeskriptoren, Zip64-Endsatz, zurueckgelesen", """
+            #import "compression"
+            #import "io"
+            var t = new DateTime(2024, 2, 29, 23, 59, 58)
+            var data = new byte[20000]
+            for (var i = 0; i < data.length; i++) { data[i] = (i * 13 + i / 97) % 256 }
+            var m = new IO.MemoryStream()
+            Zip.Archive.TestZip64Limits(1000, 4)
+            var a = Zip.Archive.Write(m, true)
+            a.Add("klein.txt", "Hallo", 6, t)
+            a.Add("gross.bin", data, 6, t)
+            a.Add("roh.bin", data, 0, t)
+            var s = a.CreateEntry("strom.bin", 6, t)
+            s.Write(data, 0, 20000)
+            s.Close()
+            s = a.CreateEntry("strom64.bin", 0, t, true)
+            s.Write(data, 0, 20000)
+            s.Close()
+            a.Add("hinten.txt", "Ende", 6, t)
+            a.Close()
+            Zip.Archive.TestZip64Limits(0, 0)
+            var b = m.ToBuffer()
+            print("bytes " + b.length + " crc " + __CmpCrc32(0, b, 0, b.length))
+            var r = Zip.Archive.FromBytes(b)
+            foreach (e in r.Entries) {
+                var back = e.ReadAllBytes()
+                print(e.FullName + " " + e.Length + " " + e.CompressedLength + " " + e.Crc32 + " " + (back.length == e.Length))
+            }
+            print(r.GetEntry("hinten.txt").ReadAllText())
+            r.Close()
+            print("end")
+            """),
     }).ToArray();
 
     // Differences that were aligned
@@ -19678,6 +21445,108 @@ else
             root.Scaling = 1.0
             root.Draw()
             print("back " + fb.Width() + "x" + fb.Height())
+            """),
+        ("UI: TextArea (Zeilenindex, Tippen, Auf/Ab, WordWrap, Auswahl), Doppel-/Dreifachklick, Text des Drag-Bilds, Undo/Redo, Markierung ziehen, Schnappschuss, Doppelklick im Baum", """
+            #import "ui"
+            var fb = new Framebuffer(320, 200)
+            var win = new Window(fb, "t")
+            var ui = new UI.Root(fb, win)
+            var ta = new UI.TextArea("eins zwei\r\ndrei\n\tvier fuenf", 10, 10, 200, 100)
+            ui.Add(ta)
+            ui.Draw()
+            print(ta.LineCount + " [" + ta.GetLine(1) + "] " + ta.Text.Length)
+            ui.SetFocus(ta)
+            ui.KeyDown(UI.Keys.End(), 0)
+            ui.TextInput("!")
+            ui.KeyDown(UI.Keys.Down(), 0)
+            ui.KeyDown(UI.Keys.Enter(), 0)
+            ui.TextInput("neu")
+            ui.KeyDown(UI.Keys.Home(), 64)
+            ui.KeyDown(UI.Keys.Down(), 1)
+            ui.KeyDown(UI.Keys.End(), 1)
+            ui.Draw()
+            print(ta.LineCount + " " + ta.CaretLine + ":" + ta.CaretColumn + " [" + ta.Text.Replace("\n", "|").Replace("\t", "~") + "] " + ta.SelectionLength)
+            var x = ta.ax + 4 + 6 * ui.cw + 2
+            var y = ta.ay + 6
+            ui.MouseDown(1, x, y)
+            ui.MouseUp(1, x, y)
+            ui.MouseDown(1, x, y)
+            ui.MouseUp(1, x, y)
+            print(ui.clickCount + " [" + ta.SelectedText + "]")
+            ui.MouseDown(1, x, y)
+            ui.MouseUp(1, x, y)
+            print(ui.clickCount + " " + ta.SelectionLength)
+            var big = ""
+            for (var i = 0; i < 300; i++) { big = big + "Zeile " + i + " mit ein paar Woertern zum Umbrechen\n" }
+            ta.SetText(big)
+            ta.WordWrap = true
+            ui.Draw()
+            ta.Select(big.Length / 2, 0)
+            ui.TextInput("x y z ")
+            ui.KeyDown(UI.Keys.Enter(), 0)
+            ui.KeyDown(UI.Keys.PageDown(), 0)
+            ui.Draw()
+            print(ta.LineCount + " " + ta.RowCount() + " " + ta.CaretLine + " " + ta.showV + " " + ta.showH + " " + ta.vbar.offset)
+            var tb = new UI.TextBox("abc_d, ef", 10, 150, 150, 24)
+            ui.Add(tb)
+            ui.Draw()
+            var bx = tb.ax + 4 + 2 * ui.cw + 2
+            ui.MouseDown(1, bx, 160)
+            ui.MouseUp(1, bx, 160)
+            ui.MouseDown(1, bx, 160)
+            ui.MouseUp(1, bx, 160)
+            print("[" + tb.SelectedText + "]")
+            ui.TextInput("x")
+            ui.TextInput("y")
+            ui.KeyDown(UI.Keys.Backspace(), 0)
+            ui.Draw()
+            print(tb.Text)
+            print(ui.DragImageText(new UI.DragData("Ein sehr langer gezogener Text, der gekuerzt wird")) + " | " + ui.DragImageText(new UI.DragData("", 1, "kind")))
+            // Undo/Redo
+            ui.SetFocus(tb)
+            ui.KeyDown(UI.Keys.Z(), 64)
+            print("undo [" + tb.Text + "] " + tb.CanRedo)
+            ui.KeyDown(UI.Keys.Y(), 64)
+            print("redo [" + tb.Text + "] " + tb.CanRedo)
+            // dragging the selection to the end of the field (moved), undone
+            tb.Select(0, 3)
+            ui.cycles = ui.cycles + 100
+            ui.MouseDown(1, tb.ax + 4 + ui.cw + 2, 160)
+            ui.MouseMove(tb.ax + 4 + 5 * ui.cw, 160)
+            print("drag " + ui.IsDragging + " " + tb.dropPos + " " + ui.dragEffect!int)
+            ui.MouseUp(1, tb.ax + 4 + 5 * ui.cw, 160)
+            print("moved [" + tb.Text + "] [" + tb.SelectedText + "]")
+            ui.KeyDown(UI.Keys.Z(), 64)
+            print("back [" + tb.Text + "] [" + tb.SelectedText + "]")
+            var can = win.CanStartDrag()
+            // a see-through snapshot of a button follows the pointer
+            var bt = new UI.Button("Knopf", 200, 150, 80, 24)
+            bt.OnDragStart = func (int px, int py) => { return new UI.DragData("k") }
+            ui.Add(bt)
+            ui.Draw()
+            ui.cycles = ui.cycles + 100
+            ui.MouseDown(1, 210, 160)
+            ui.MouseMove(230, 120)
+            print("snapshot " + (ui.dragSnapshot != undefined) + " " + ui.dragImageX + " " + ui.dragImageY + " " + ui.dragImageW + " " + ui.dragImageH)
+            ui.Draw()
+            ui.KeyDown(UI.Keys.Escape(), 0)
+            ui.MouseUp(1, 230, 120)
+            print("ended " + ui.IsDragging + " " + (ui.dragSnapshot == undefined))
+            // a double click in a tree opens the node and activates it
+            var tv = new UI.TreeView(220, 10, 90, 60)
+            var node = tv.AddNode(new UI.TreeNode("A"))
+            node.Add(new UI.TreeNode("A1"))
+            var acts = 0
+            tv.OnActivate = func () => { acts = acts + 1 }
+            ui.Add(tv)
+            ui.Draw()
+            ui.cycles = ui.cycles + 100
+            var ty = tv.ay + 1 + tv.RowHeight(ui) / 2
+            ui.MouseDown(1, 280, ty)
+            ui.MouseUp(1, 280, ty)
+            ui.MouseDown(1, 280, ty)
+            ui.MouseUp(1, 280, ty)
+            print("tree " + node.Expanded + " " + acts + " " + tv.TakeActivated())
             """),
     }).ToArray();
 
@@ -21966,7 +23835,7 @@ else
             """),
     }).ToArray();
 
-    // Scene3D (bridges/fire_bridge_scene3d.hpp): the software renderer gives the same pixels in the VM and in C++
+    // Scene3D (packages/scene3d/native/fire_bridge_scene3d.h): the software renderer gives the same pixels in the VM and in the native build (and the hardware renderer, where there is a GPU, a close picture)
     natCases = natCases.Append((Scene3DTests.Name, Scene3DTests.Script)).ToArray();
 
     // Audio (packages/audio/native/fire_bridge_audio.h): the simulated device "sim" records what is played - the same in the VM and in the native build
@@ -22857,6 +24726,26 @@ else
         }
         Console.WriteLine(sanitize.Length > 0 ? "(die Faelle laufen unter AddressSanitizer/UBSan)" : "(Sanitizer nicht verfuegbar)");
 
+        // a call through an interface (members public, E4063): its own dispatcher over the implementing classes - no caller class, no access check, not the
+        // class outside the interface that has the name privately
+        const string interfaceCallTitle = "Interface-Aufrufe: eigener Verteiler ohne Aufruferklasse und Zugriffspruefung (fremde private Methode gleichen Namens)";
+        if (TestSelected(interfaceCallTitle))
+        {
+            string icpp = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { """
+                interface IShape { int Area(int scale) }
+                class Square : IShape { int Area(int scale) { return 4 * scale } }
+                class Disc : IShape { int Area(int scale) { return 3 * scale } }
+                class Vault { private int Area(int scale) { return 1000 } int Open() { return this.Area(1) } }
+                class Report { static int Use(IShape s) { return s.Area(2) } }
+                print(Report.Use(new Square()) + Report.Use(new Disc()) + new Vault().Open())
+                """ }, null, null, VmExecutionMode.Release)).Program;
+            int start = icpp.IndexOf("static Value icall_IShape_Area_1(Value self, Value a0)\n{", StringComparison.Ordinal);
+            string body = start < 0 ? "" : icpp.Substring(start, icpp.IndexOf("\n}\n", start, StringComparison.Ordinal) - start);
+            CheckNat(interfaceCallTitle, body.Length > 0 && !body.Contains("accessDenied") && !body.Contains("caller") && body.Split("return f").Length == 3
+                && System.Text.RegularExpressions.Regex.IsMatch(icpp, @"= icall_IShape_Area_1\(s\d+, s\d+\);"), body.Length > 0 ? body : icpp);
+        }
+
+        natCases = natCases.Where(c => TestSelected(c.Name)).ToArray();
         // The VM runs sequentially: the precision of float is process-wide while a program runs.
         var vmResults = natCases.Select(c => { var text = vmOutput(c.Source); Value.SingleFloats = false; return text; }).ToArray();
 
@@ -22892,12 +24781,15 @@ else
             if (buildExit != 0 || build.Contains("warning:")) return (c.Name, expected, "C/C++-Compiler: " + build);
             if (c.Name.StartsWith("Abbruch:"))
             {
-                // an exception that nothing catches: the program ends with exit code 1 after the output so far (the VM stops the same way)
+                // an exception that nothing catches: the program ends with exit code 1 after the output so far and writes the text of the VM's command line runner to
+                // stderr ("Unhandled exception of type 'Class': message")
                 using var run = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exeFile) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = workDir })!;
                 var stderrTask = run.StandardError.ReadToEndAsync();
                 string stdout = run.StandardOutput.ReadToEnd();
                 run.WaitForExit();
-                return (c.Name, expected, run.ExitCode == 1 && stderrTask.Result.Contains("Unhandled exception") ? stdout : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
+                string vmStderr;
+                lock (vmUnhandled) vmStderr = vmUnhandled.GetValueOrDefault(c.Source, "(the VM did not stop with an exception)");
+                return (c.Name, expected + "stderr: " + vmStderr, run.ExitCode == 1 ? stdout + "stderr: " + stderrTask.Result.TrimEnd('\n', '\r') : $"Exitcode {run.ExitCode}: {stdout}{stderrTask.Result}");
             }
             string actual = RunTool(exeFile, "", out int runExit);
             // `terminate(n)` with a whole number is the exit code of the process (like the command line runner)
@@ -23014,7 +24906,8 @@ else
         }
         // ---- Devices: the same scripts as in the device checks of the VM, natively with the loopback device (FIRE_DEVICES), against the expected outputs
         {
-            var devTasks = devNativeCases.Select((c, index) => Task.Run(() =>
+            if (devNativeCases.Count == 0) Console.WriteLine("(Geraete nativ: keine Faelle - die Geraete-Pruefungen der VM liefen nicht)");
+            var devTasks = devNativeCases.Where(c => TestSelected(c.Title)).Select((c, index) => Task.Run(() =>
             {
                 var defines = new List<string> { "FIRE_DEVICES=\"loopback\"" };
                 if (c.DefaultId != null) defines.Add($"FIRE_DEFAULT_DEVICE=\"{c.DefaultId}\"");
@@ -23034,10 +24927,11 @@ else
                 var (title, expected, actual) = task.Result;
                 CheckNat($"Geraete nativ: {title}", expected == actual, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
             }
-            CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER")) && Environment.GetEnvironmentVariable("FIRE_TESTS_ONLY") == null) CheckNat("Geraete nativ: es gibt Faelle", devNativeCases.Count >= 10, devNativeCases.Count.ToString());
         }
 
-        // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 with the dummy driver; the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3, there is no comparison here)
+        // ---- Window (packages/windows/native/fire_bridge_windows.h): SDL2 and SDL3 with the dummy driver - the events are provided by FIRE_DISPLAY_SELFTEST (the VM uses SDL3,
+        // there is no comparison here) -, the clipboard of X11 under Xvfb, and Windows (MinGW, SDL3) under Wine
         {
             string sdlProbe = Path.Combine(workDir, "sdlprobe.cpp");
             File.WriteAllText(sdlProbe, "#if __has_include(<SDL2/SDL.h>)\n#include <SDL2/SDL.h>\n#else\n#include <SDL.h>\n#endif\nint main() { return SDL_Init(0); }\n");
@@ -23104,6 +24998,52 @@ else
                 e = win.NextEvent()
             }
             """, new[] { "True", "False", "down 5 32 12 1", "axis 7 1 -1", "button 7 3", "hat 7 0 3", "removed 7", "True", "queued 16 5 32 12 1 ", "queued 17 5 48 24 0.5 ", "queued 18 5 48 24 0 ", "queued 32 7 1 -1 ", "queued 33 7 3 ", "queued 34 7 3 ", "queued 35 7 0 3 ", "queued 37 7 " }, "-DFIRE_DISPLAY_SELFTEST_INPUT "),
+                ("Fenster: Drop von Dateien und Text aus einem anderen Programm (Callbacks, Warteschlange, Position), die Zwischenablage", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "drop")
+            win.RegisterDropFiles(func(any files, float x, float y) => {
+                var line = "files"
+                foreach (f in files) { line = line + " [" + f + "]" }
+                print(line + " at " + x + " " + y)
+            })
+            win.RegisterDropText(func(string text, float x, float y) => { print("text [" + text + "] at " + x + " " + y) })
+            win.EnableEvents()
+            print(win.Tick())
+            var e = win.NextEvent()
+            while (e != undefined) {
+                if (e[0] == 40) { print("queued 40 " + e[1].length + " " + e[1][0] + " " + e[2] + " " + e[3]) }
+                if (e[0] == 41) { print("queued 41 " + e[1] + " " + e[2] + " " + e[3]) }
+                e = win.NextEvent()
+            }
+            print(Clipboard.HasText)
+            print(Clipboard.SetText("Grüße aus fire 😀"))
+            print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
+            """, new[] { "files [/tmp/eins.txt] [/tmp/zwei ä.png] at 40 30", "text [gezogener Text] at 40 30", "files [/tmp/allein.txt] at 40 30", "False", "queued 40 2 /tmp/eins.txt 40 30", "queued 41 gezogener Text 40 30", "queued 40 1 /tmp/allein.txt 40 30", "False", "True", "True Grüße aus fire 😀 17" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
+                ("UI: ein Drop aus einem anderen Programm erreicht das Element darunter, ein Textfeld kopiert und fuegt ueber die Zwischenablage ein", """
+            #import "ui"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "ui drop")
+            var ui = new UI.Root(fb, win)
+            var area = new UI.Panel(0, 0, 60, 40)
+            area.AllowDrop = true
+            area.OnDrop = func (UI.DragData d, int x, int y) => {
+                print("area " + d.Files.Count + " [" + d.Text + "] " + d.External + " " + x + " " + y)
+                return UI.DropEffect.Copy
+            }
+            ui.Add(area)
+            var tb = new UI.TextBox("kopier mich", 0, 0, 10, 10)
+            tb.Visible = false
+            ui.Add(tb)
+            ui.Draw()
+            ui.Tick()
+            tb.SelectAll()
+            tb.Copy()
+            print(Clipboard.GetText())
+            tb.Select(0, 6)
+            tb.Paste()
+            print(tb.Text)
+            """, new[] { "area 2 [] True 40 30", "area 0 [gezogener Text] True 40 30", "area 1 [] True 40 30", "kopier mich", "kopier mich mich" }, "-DFIRE_DISPLAY_SELFTEST_DROP "),
                 ("Fenster: Ereignisse als Callbacks und aus der Warteschlange, Schliessen beendet Tick", """
             #import "windows"
             var fb = new Framebuffer(64, 48)
@@ -23156,23 +25096,873 @@ else
             print("goes on, started " + win.Manager.IsStarted + ", default " + (win.Manager == WindowManager.Default))
             """, new[] { "goes on, started True, default True", "key 97 in cycle True", "down 1 32 24" }, "-DFIRE_DISPLAY_SELFTEST "),
             };
-            var windowTarget = TargetProfile.Host;
+            // every case with SDL2 and - when this machine has it - with SDL3 (FIRE_SDL3, fire_display_sdl3.h): the same output
+            string sdl3Probe = Path.Combine(workDir, "sdl3probe.c");
+            File.WriteAllText(sdl3Probe, "#include <SDL3/SDL.h>\nint main(void) { return SDL_Init(0) ? 0 : 1; }\n");
+            RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{sdl3Probe}\" -lSDL3 -o \"{sdl3Probe}.bin\"", workDir, out int sdl3Exit);
+            if (sdl3Exit != 0) Console.WriteLine("(SDL3 nicht verfuegbar: die Fenster laufen nur mit SDL2)");
+            string? FindProgram(string name) => (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator).Select(d => Path.Combine(d, name)).FirstOrDefault(File.Exists);
+            string? xvfbRun = FindProgram("xvfb-run");
+            // (under X11 libdbus, which SDL3 uses, keeps a buffer until the end: not a leak of the program)
+            string lsanFile = Path.Combine(workDir, "lsan.supp");
+            File.WriteAllText(lsanFile, "leak:libdbus-1.so\n");
+            // Builds a case for SDL `version` and runs it: `display` "dummy" (the events of FIRE_DISPLAY_SELFTEST...), "x11" (a real X server: Xvfb), "x11-two"
+            // (`script` is the reader, `second` the writer that starts 0.3 s after it on the same X server; the output is the reader's) or "x11-late" (the writer
+            // first, the reader 1 s later: what was copied before the reader started). `secondCommand` runs instead of the writer built from `second`,
+            // `firstCommand` instead of the reader built from `script` (the VM: forge run).
+            void RunWindowCase(string title, string script, string[] expected, string define, int version, string display = "dummy", string? second = null, string? secondCommand = null, string? firstCommand = null)
+            {
+                string label = version == 3 ? $"{title} [SDL3]" : title;
+                var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                fire.Native.NativeSources Generate(string source) => fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { source }, null, null, VmExecutionMode.Release, null, target), target);
+                var generated = Generate(script);
+                string cpp = generated.Program;
+                bool asks = version == 3 ? cpp.Contains("// fire-link: SDL3") && cpp.Contains("#define FIRE_SDL3 1") && !cpp.Contains("// fire-link: SDL2")
+                                         : cpp.Contains("// fire-link: SDL2") && !cpp.Contains("FIRE_SDL3");
+                CheckNat($"Fenster: {label}: das Programm bittet um SDL{version}", asks && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, "");
+                if ((version == 2 ? sdlExit : sdl3Exit) != 0) { Console.WriteLine($"(SDL{version} nicht verfuegbar: {label} wird nicht ausgefuehrt)"); return; }
+                if (display != "dummy" && xvfbRun == null) { Console.WriteLine($"(xvfb-run nicht da: {label} wird nicht ausgefuehrt)"); return; }
+                string Build(fire.Native.NativeSources sources, string name, out string exe)
+                {
+                    exe = Path.Combine(workDir, name + ".bin");
+                    File.WriteAllText(Path.Combine(workDir, name + ".c"), sources.Program);
+                    var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], target, Path.Combine(workDir, name + ".c"), workDir, exe);
+                    CheckNat($"Fenster: {label}: der Build haengt -lSDL{version} an", command.Arguments.Contains($"-lSDL{version}") && !command.Arguments.Contains($"-lSDL{5 - version}"), command.Arguments);
+                    string log = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}{define}", exe, out int buildExit, $" -lSDL{version}");
+                    return buildExit != 0 || log.Contains("warning:") ? "C/C++-Compiler: " + log : "";
+                }
+                string name = $"window{version}_" + Math.Abs(title.GetHashCode());
+                string exe = "";
+                string failed = firstCommand == null ? Build(generated, name, out exe) : "";
+                string exe2 = "";
+                if (failed == "" && second != null && secondCommand == null) failed = Build(Generate(second), name + "_w", out exe2);
+                if (failed != "") { CheckNat($"Fenster: {label}", false, failed); return; }
+                string actual;
+                int runExit;
+                if (display == "dummy")
+                {
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                    actual = RunProc(exe, "", workDir, out runExit);
+                }
+                else
+                {
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
+                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={lsanFile}:print_suppressions=0");
+                    if (second == null) actual = RunProc(xvfbRun!, $"-a \"{exe}\"", workDir, out runExit);
+                    else
+                    {
+                        string readerOut = Path.Combine(workDir, name + ".out");
+                        // (a script: the reader in the background, the writer 0.3 s later; the exit code says whether both ended well)
+                        string both = Path.Combine(workDir, name + ".sh");
+                        string reader = firstCommand ?? $"\"{exe}\"", writer = secondCommand ?? $"\"{exe2}\"";
+                        File.WriteAllText(both, display == "x11-late"
+                            ? $"{writer} > /dev/null 2>&1 &\nw=$!\nsleep 1\n{reader} > \"{readerOut}\" 2>&1\nr=$?\nwait $w\nexit $(( $? + r ))\n"
+                            : $"{reader} > \"{readerOut}\" 2>&1 &\nr=$!\nsleep 0.3\n{writer} > /dev/null 2>&1\nw=$?\nwait $r\nexit $(( $? + w ))\n");
+                        string writerLog = RunProc(xvfbRun!, $"-a sh \"{both}\"", workDir, out runExit);
+                        actual = (File.Exists(readerOut) ? File.ReadAllText(readerOut) : "") + writerLog;
+                        // (the VM as the reader: its first start after a build installs the standard packages and says so)
+                        if (firstCommand != null)
+                            actual = string.Concat(actual.Split('\n').Where(l => l != "" && !l.StartsWith("Installing the standard package") && !l.StartsWith("Building the native part")).Select(l => l + "\n"));
+                    }
+                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                }
+                string want = string.Concat(expected.Select(l => l + "\n"));
+                CheckNat($"Fenster: {label}", runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}");
+            }
             foreach (var wc in windowCases)
             {
-                var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wc.Script }, null, null, VmExecutionMode.Release, null, windowTarget), windowTarget);
-                string cpp = generated.Program;
-                CheckNat($"Fenster: {wc.Title}: das Programm bittet um SDL2", cpp.Contains("// fire-link: SDL2") && cpp.Contains("FIRE_PLATFORM_DISPLAY_C_HEADER") && generated.Natives == null, "");
-                if (sdlExit != 0) { Console.WriteLine("(SDL2 nicht verfuegbar: das Fenster wird nicht ausgefuehrt)"); continue; }
-                string name = "window_" + Math.Abs(wc.Title.GetHashCode()), exe = Path.Combine(workDir, name + ".bin");
-                File.WriteAllText(Path.Combine(workDir, name + ".c"), cpp);
-                var command = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], windowTarget, Path.Combine(workDir, name + ".c"), workDir, exe);
-                string build = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, generated, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}{wc.Define}", exe, out int buildExit, " -lSDL2");
-                if (buildExit != 0 || build.Contains("warning:")) { CheckNat($"Fenster: {wc.Title}", false, "C/C++-Compiler: " + build); continue; }
-                Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
-                string actual = RunProc(exe, "", workDir, out int runExit);
-                string expected = string.Concat(wc.Expected.Select(l => l + "\n"));
-                CheckNat($"Fenster: {wc.Title}", runExit == 0 && actual == expected, $"  erwartet:\n{expected}\n  erhalten:\n{actual}");
-                CheckNat($"Fenster: {wc.Title}: der Build haengt -lSDL2 an", command.Arguments.Contains("-lSDL2"), command.Arguments);
+                if (!TestSelected(wc.Title)) continue;
+                RunWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 2);
+                RunWindowCase(wc.Title, wc.Script, wc.Expected, wc.Define, 3);
+            }
+
+            // ---- what only SDL3 has (and what SDL2 says instead): hover, pictures and files on the clipboard; the real clipboard of X11 (Xvfb), also between two programs
+            const string clipScript = """
+            #import "windows"
+            print(Clipboard.SetText("Grüße aus fire 😀"))
+            print(Clipboard.HasText + " " + Clipboard.GetText() + " " + Clipboard.GetText().Length)
+            var img = new Framebuffer(3, 2)
+            var pr = new Renderer(img)
+            pr.Clear()
+            pr.SetPixel(0, 0, 0xFF0000FF)
+            pr.SetPixel(1, 0, 0x8000FF00)
+            var x0 = img.ReadBytes()
+            var png = img.ToPng()
+            var again = Framebuffer.FromImage(png)
+            var x1 = again.ReadBytes()
+            var same = x0.Length == x1.Length && png[1] == 80
+            for (var i = 0; i < x0.Length; i++) { if (x0[i] != x1[i]) { same = false } }
+            print("png " + same)
+            print(Clipboard.SetImage(img) + " " + Clipboard.HasImage + " " + Clipboard.HasText + " " + Clipboard.HasFiles)
+            var back = Clipboard.GetImage()
+            if (back == undefined) { print("no image") } else {
+                var y1 = back.ReadBytes()
+                var same2 = x0.Length == y1.Length
+                for (var i = 0; i < x0.Length; i++) { if (x0[i] != y1[i]) { same2 = false } }
+                print(back.Width() + "x" + back.Height() + " " + same2)
+            }
+            var paths = new List<string>()
+            paths.Add("/tmp/ein Ordner/datei ä.txt")
+            paths.Add("/tmp/zwei")
+            print(Clipboard.SetFiles(paths) + " " + Clipboard.HasFiles + " " + Clipboard.HasImage)
+            var got = Clipboard.GetFiles()
+            var line = "files " + got.length
+            foreach (f in got) { line = line + " [" + f + "]" }
+            print(line)
+            Clipboard.SetText("Text")
+            print(Clipboard.HasFiles + " " + Clipboard.GetFiles().length + " " + Clipboard.HasText + " " + (Clipboard.GetImage() == undefined))
+            """;
+            string[] clip3 = { "True", "True Grüße aus fire 😀 17", "png True", "True True False False", "3x2 True", "True True False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "False 0 True True" };
+            string[] clip2 = { "True", "True Grüße aus fire 😀 17", "png True", "False False True False", "no image", "False False False", "files 0", "False 0 True True" };
+            const string writerScript = """
+            #import "windows"
+            #import "time"
+            class W {
+                // answers the questions of the other program (each call takes in the events of the clipboard)
+                static undefined Serve(int ms) {
+                    for (var i = 0; i < ms / 20; i++) {
+                        var unused = Clipboard.HasText
+                        Sleep(20ms)
+                    }
+                }
+            }
+            W.Serve(500)
+            Clipboard.SetText("Text aus dem anderen Programm ä")
+            W.Serve(1500)
+            var img = new Framebuffer(5, 4)
+            var pr = new Renderer(img)
+            pr.Clear()
+            pr.SetPixel(0, 0, 0xFF0000FF)
+            pr.SetPixel(4, 3, 0xFF00FF00)
+            Clipboard.SetImage(img)
+            W.Serve(1500)
+            var paths = new List<string>()
+            paths.Add("/tmp/ein Ordner/datei ä.txt")
+            paths.Add("/tmp/zwei")
+            Clipboard.SetFiles(paths)
+            W.Serve(1500)
+            """;
+            const string readerScript = """
+            #import "windows"
+            #import "time"
+            var t = 0
+            while (!Clipboard.HasText && t < 1500) { Sleep(20ms); t++ }   // (up to 30 s: the writer may be the VM, whose first start installs the standard packages)
+            print("text [" + Clipboard.GetText() + "]")
+            t = 0
+            while (!Clipboard.HasImage && t < 120) { Sleep(20ms); t++ }
+            var img = Clipboard.GetImage()
+            if (img == undefined) { print("image none") } else {
+                var bytes = img.ReadBytes()
+                print("image " + img.Width() + "x" + img.Height() + " " + bytes[0] + " " + bytes[3] + " " + bytes[(3 * 5 + 4) * 4 + 1] + " " + Clipboard.HasText)
+            }
+            t = 0
+            while (!Clipboard.HasFiles && t < 120) { Sleep(20ms); t++ }
+            var files = Clipboard.GetFiles()
+            var line = "files " + files.length
+            foreach (f in files) { line = line + " [" + f + "]" }
+            print(line)
+            """;
+            // (the writer copies first and serves until another program takes the clipboard; the reader starts 1 s later, asks once, then takes the clipboard)
+            const string lateWriterScript = """
+            #import "windows"
+            #import "time"
+            Clipboard.SetText("Text von vorher ä")
+            for (var t = 0; t < 1500; t++) {
+                var s = Clipboard.GetText()
+                if (s == undefined) { break }
+                if (s != "Text von vorher ä") { break }
+                Sleep(20ms)
+            }
+            """;
+            const string lateReaderScript = """
+            #import "windows"
+            print("has " + Clipboard.HasText)
+            print("text [" + Clipboard.GetText() + "]")
+            Clipboard.SetText("fertig")
+            """;
+            string[] lateExpected = { "has True", "text [Text von vorher ä]" };
+            var sdlCases = new (string Title, string Script, string[]? Expected2, string[]? Expected3, string Define, string Display, string? Second)[]
+            {
+                ("Fenster: DragHover und DragLeave, solange etwas aus einem anderen Programm ueber dem Fenster ist (Callbacks, Warteschlange)", """
+            #import "windows"
+            var fb = new Framebuffer(64, 48)
+            var win = new Window(fb, "hover")
+            win.RegisterDropFiles(func(any files, float x, float y) => { print("files [" + files[0] + "] at " + x + " " + y) })
+            win.RegisterDragHover(func(float x, float y) => { print("hover " + x + " " + y) })
+            win.RegisterDragLeave(func() => { print("leave") })
+            win.EnableEvents()
+            print(win.Tick())
+            var e = win.NextEvent()
+            while (e != undefined) {
+                var line = ""
+                for (var i = 0; i < e.length; i++) { if (e[0] != 40 || i != 1) { line = line + e[i] + " " } }
+                print("queued " + line)
+                e = win.NextEvent()
+            }
+            """, null, new[] { "hover 10 20", "hover 30 22", "leave", "hover 40 30", "files [/tmp/hier.txt] at 40 30", "True", "queued 42 10 20 ", "queued 42 30 22 ", "queued 43 ", "queued 42 40 30 ", "queued 40 40 30 " },
+                    "-DFIRE_DISPLAY_SELFTEST_HOVER ", "dummy", null),
+                ("Fenster: Zwischenablage mit Bildern (PNG) und Dateien in einem Programm (SDL2: nur Text)", clipScript, clip2, clip3, "", "dummy", null),
+                ("Fenster: die Zwischenablage von X11 (Xvfb): Text, Bild und Dateien in einem Programm", clipScript, clip2, clip3, "", "x11", null),
+                ("Fenster: die Zwischenablage von X11 (Xvfb) zwischen zwei Programmen: Text, Bild, Dateien", readerScript,
+                    new[] { "text [Text aus dem anderen Programm ä]", "image none", "files 0" },
+                    new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" }, "", "x11-two", writerScript),
+                ("Fenster: die Zwischenablage von X11 (Xvfb): was ein anderes Programm vor dem Start kopiert hat, ist gleich bei der ersten Frage da", lateReaderScript,
+                    lateExpected, lateExpected, "", "x11-late", lateWriterScript),
+            };
+            foreach (var sc in sdlCases)
+            {
+                if (!TestSelected(sc.Title)) continue;
+                if (sc.Expected2 != null) RunWindowCase(sc.Title, sc.Script, sc.Expected2, sc.Define, 2, sc.Display, sc.Second);
+                if (sc.Expected3 != null) RunWindowCase(sc.Title, sc.Script, sc.Expected3, sc.Define, 3, sc.Display, sc.Second);
+            }
+
+            // which SDL: the generator asks the build only for a program with a window; the target, the toolchain and FIRE_SDL decide first
+            {
+                int asked = 0;
+                int Choose() { asked++; return 3; }
+                const string withWindow = "#import \"windows\"\nvar fb = new Framebuffer(8, 8)\nvar w = new Window(fb, \"t\")\n";
+                var windowLinked = new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Host);
+                string chosen3 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host, Choose).Program;
+                string fixed2 = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 2 } }, Choose).Program;
+                string plain = fire.Native.CppGenerator.GenerateSources(windowLinked, TargetProfile.Host).Program;
+                int askedForWindows = asked;
+                fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "print(1)" }, null, null, VmExecutionMode.Release, null, TargetProfile.Host), TargetProfile.Host, Choose);
+                string wasm = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { withWindow }, null, null, VmExecutionMode.Release, null, TargetProfile.Wasm), TargetProfile.Wasm, Choose).Program;
+                CheckNat("SDL3 oder SDL2: der Build wird nur bei einem Fenster gefragt; 3 -> `// fire-link: SDL3` und FIRE_SDL3, das Ziel (sdl 2) geht vor, ohne Frage SDL2, wasm bleibt bei SDL2",
+                    chosen3.Contains("// fire-link: SDL3\n#define FIRE_SDL3 1") && !chosen3.Contains("// fire-link: SDL2") && fixed2.Contains("// fire-link: SDL2") && !fixed2.Contains("FIRE_SDL3")
+                    && plain.Contains("// fire-link: SDL2") && askedForWindows == 1 && asked == 1 && !wasm.Contains("FIRE_SDL3"), $"asked {asked}");
+                var config3 = fire.Native.NativeConfig.Parse("{ \"targets\": { \"pc\": { \"extends\": \"linux\", \"sdl\": 3 } }, \"toolchains\": { \"old\": { \"extends\": \"gcc\", \"sdl\": 2 } } }");
+                var pc = config3.ResolveTarget("pc");
+                var old = config3.ResolveToolchain(pc, "old");
+                string? savedFireSdl = Environment.GetEnvironmentVariable("FIRE_SDL");
+                try
+                {
+                    Environment.SetEnvironmentVariable("FIRE_SDL", null);
+                    bool fromConfig = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 3 && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, old) == 2
+                        && fire.Compiler.NativeBuilder.RequestedSdl(TargetProfile.Host, fire.Native.ToolchainDef.BuiltIn["gcc"]) == null;
+                    Environment.SetEnvironmentVariable("FIRE_SDL", "2");
+                    bool fromEnv = fire.Compiler.NativeBuilder.RequestedSdl(pc, old) == 2 && fire.Compiler.NativeBuilder.WithRequestedSdl(pc, old).Native.Sdl == 2;
+                    CheckNat("SDL3 oder SDL2: \"sdl\" des Ziels und der Toolchain, FIRE_SDL geht vor", pc.Native.Sdl == 3 && old.Sdl == 2 && fromConfig && fromEnv);
+                }
+                finally { Environment.SetEnvironmentVariable("FIRE_SDL", savedFireSdl); }
+            }
+
+            // ---- the VM with the real SDL3 (SDL3-CS) on X11: it puts text, a picture and files on the clipboard (forge run under Xvfb), a native program with SDL3 reads them
+            {
+                string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) gibt einem nativen Programm Text, Bild und Dateien ueber die Zwischenablage";
+                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                if (!TestSelected(title)) { }
+                else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
+                else
+                {
+                    string writer = Path.Combine(workDir, "vmwriter.fire");
+                    File.WriteAllText(writer, writerScript);
+                    RunWindowCase(title, readerScript, new[] { "text [Text aus dem anderen Programm ä]", "image 5x4 255 255 255 False", "files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" },
+                        "", 3, "x11-two", writerScript, $"\"{forge}\" run \"{writer}\"");
+                }
+            }
+            // ---- the VM as the reader that starts after a native program copied (SDL 3.2 alone would not see it: SdlClipboard asks once, like fire_display_sdl3.h)
+            {
+                string title = "Fenster: die VM mit SDL3 auf X11 (Xvfb) sieht, was ein natives Programm vor ihrem Start kopiert hat";
+                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                if (!TestSelected(title)) { }
+                else if (!File.Exists(forge)) Console.WriteLine("(die VM unter Xvfb: uebersprungen - forge fehlt)");
+                else
+                {
+                    string reader = Path.Combine(workDir, "vmlatereader.fire");
+                    File.WriteAllText(reader, lateReaderScript);
+                    RunWindowCase(title, lateReaderScript, lateExpected, "", 3, "x11-late", lateWriterScript, null, $"\"{forge}\" run \"{reader}\"");
+                }
+            }
+
+            // ---- drag-out (Window.StartDrag): a fire window drags a text and then two files into another program. X11 under Xvfb (XDND): the target is a native fire
+            // program with SDL3 that prints what is dropped on it; the source a fire window built with SDL2 and with SDL3 (and once on the thread of its manager:
+            // Window.Show), and the VM's window (forge run). The hand is a small X program that presses, moves and lets go with XTest (libXtst, loaded at run time).
+            // Both windows open in the middle of the screen: the hand drags from the middle of the source to a point near the left edge of the bigger target.
+            const string dragDriverSource = """
+                #include <X11/Xlib.h>
+                #include <dlfcn.h>
+                #include <stdio.h>
+                #include <stdlib.h>
+                #include <string.h>
+                #include <time.h>
+                typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
+                typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
+                static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
+                static Window find(Display* d, Window w, const char* name) {
+                    Window root, parent, *kids = NULL, found = 0;
+                    unsigned int n = 0, i;
+                    char* title = NULL;
+                    if (XFetchName(d, w, &title) && title) { int same = strcmp(title, name) == 0; XFree(title); if (same) return w; }
+                    if (!XQueryTree(d, w, &root, &parent, &kids, &n)) return 0;
+                    for (i = 0; i < n && !found; i++) found = find(d, kids[i], name);
+                    if (kids) XFree(kids);
+                    return found;
+                }
+                static int point(Display* d, Window w, int* x, int* y, int left) {
+                    XWindowAttributes a;
+                    Window child;
+                    if (!XGetWindowAttributes(d, w, &a)) return 0;
+                    XTranslateCoordinates(d, w, DefaultRootWindow(d), left ? 20 : a.width / 2, a.height / 2, x, y, &child);
+                    return 1;
+                }
+                int main(int argc, char** argv) {
+                    Display* d = XOpenDisplay(NULL);
+                    void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
+                    FakeButton button;
+                    FakeMotion motion;
+                    Window src = 0, dst = 0;
+                    int times = argc > 3 ? atoi(argv[3]) : 1, k, i, sx, sy, dx, dy;
+                    if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "driver: no display or no libXtst\n"); return 2; }
+                    button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
+                    motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
+                    if (!button || !motion) { fprintf(stderr, "driver: XTest incomplete\n"); return 2; }
+                    for (k = 0; k < 300 && (!src || !dst); k++) {
+                        src = find(d, DefaultRootWindow(d), argv[1]);
+                        dst = find(d, DefaultRootWindow(d), argv[2]);
+                        if (!src || !dst) pause_ms(100);
+                    }
+                    if (!src || !dst) { fprintf(stderr, "driver: windows not found\n"); return 2; }
+                    pause_ms(1000);
+                    for (k = 0; k < times; k++) {
+                        if (!point(d, src, &sx, &sy, 0) || !point(d, dst, &dx, &dy, 1)) return 2;
+                        motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
+                        button(d, 1, True, 0); XSync(d, False); pause_ms(400);
+                        for (i = 1; i <= 12; i++) { motion(d, -1, sx + (dx - sx) * i / 12, sy + (dy - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
+                        pause_ms(300);
+                        button(d, 1, False, 0); XSync(d, False);
+                        pause_ms(1500);
+                    }
+                    XCloseDisplay(d);
+                    return 0;
+                }
+                """;
+            string? dragDriver = null;
+            bool dragDriverTried = false;
+            // (built once, when a case needs it: the headers of X11 are needed; libXtst only at run time)
+            string? DragDriver()
+            {
+                if (dragDriverTried) return dragDriver;
+                dragDriverTried = true;
+                string c = Path.Combine(workDir, "dragdriver.c");
+                File.WriteAllText(c, dragDriverSource);
+                string exe = Path.Combine(workDir, "dragdriver.bin");
+                RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{c}\" -o \"{exe}\" -lX11 -ldl", workDir, out int code);
+                dragDriver = code == 0 ? exe : null;
+                return dragDriver;
+            }
+            string DragSourceScript(string path1, string path2, bool show) => """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(64, 48)
+                var win = new Window(fb, "fire drag source")
+                var drags = 0
+                win.RegisterMouseDown(func(int b, float x, float y) => {
+                    drags++
+                    if (drags == 1) { print("text " + win.StartDrag("Text aus fire ä", undefined)) }
+                    else {
+                        var files = new List<string>()
+                        files.Add("PATH1")
+                        files.Add("PATH2")
+                        print("files " + win.StartDrag("", files))
+                        CLOSE
+                    }
+                })
+
+                """.Replace("PATH1", path1).Replace("PATH2", path2).Replace("CLOSE", show ? "win.Close()" : "")
+                + (show ? "win.Show()\n" : "var t = 0\nwhile (drags < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }\n");
+            const string dragTargetScript = """
+                #import "windows"
+                #import "time"
+                var fb = new Framebuffer(400, 300)
+                var win = new Window(fb, "fire drop target")
+                var got = 0
+                win.RegisterDropText(func(string text, float x, float y) => {
+                    print("dropped text [" + text + "]")
+                    got++
+                })
+                win.RegisterDropFiles(func(any files, float x, float y) => {
+                    var line = "dropped files " + files.length
+                    foreach (f in files) { line = line + " [" + f + "]" }
+                    print(line)
+                    got++
+                })
+                var t = 0
+                while (got < 2 && t < 1500) { win.Tick(); Sleep(10ms); t++ }
+                """;
+            // (the script for the X server: the target, half a second later the source, then the hand; the outputs of source and target; the exit code: all three ended well)
+            // (what the programs printed about the drag - not what forge or Wine say besides: packages it installs, the end of the X connection)
+            string DragLines(string file) => File.Exists(file)
+                ? string.Concat(File.ReadAllText(file).Replace("\r", "").Split('\n').Where(l => l.StartsWith("text ", StringComparison.Ordinal) || l.StartsWith("files ", StringComparison.Ordinal) || l.StartsWith("dropped ", StringComparison.Ordinal)).Select(l => l + "\n"))
+                : "";
+            string DragScript(string target, string source, string driver, string outSource, string outTarget, string delay = "0.5") =>
+                $"{target} > \"{outTarget}\" 2>&1 &\nt=$!\nsleep {delay}\n{source} > \"{outSource}\" 2>&1 &\ns=$!\n\"{driver}\" \"fire drag source\" \"fire drop target\" 2\nd=$?\nwait $s\nse=$?\nwait $t\nte=$?\nexit $(( d + se + te ))\n";
+            {
+                string forge = Path.Combine(AppContext.BaseDirectory, OperatingSystem.IsWindows() ? "forge.exe" : "forge");
+                var dragCases = new (string Label, int Sdl, bool Show, bool Vm)[] { ("SDL2", 2, false, false), ("SDL3", 3, false, false), ("SDL3, Window.Show: der Thread des Managers zieht", 3, true, false), ("die VM (SDL3-CS)", 3, false, true) };
+                string[] dragExpected = { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]" };
+                string? dragTarget = null;
+                foreach (var dc in dragCases)
+                {
+                    string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (X11, Xvfb, XDND): Text und Dateien, die Antwort Kopie [{dc.Label}]";
+                    if (!TestSelected(title)) continue;
+                    if (xvfbRun == null || sdl3Exit != 0 || (dc.Sdl == 2 && sdlExit != 0)) { Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder SDL2 fehlen: {title})"); continue; }
+                    if (dc.Vm && !File.Exists(forge)) { Console.WriteLine($"(uebersprungen - forge fehlt: {title})"); continue; }
+                    string? driver = DragDriver();
+                    if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
+                    string Build(string script, int version, string name)
+                    {
+                        var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = version } };
+                        var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
+                        string exe = Path.Combine(workDir, name + ".bin");
+                        string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, $" -lSDL{version}");
+                        if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
+                        return exe;
+                    }
+                    string sourceCommand;
+                    try
+                    {
+                        dragTarget ??= Build(dragTargetScript, 3, "dragtarget");
+                        string sourceScript = DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", dc.Show);
+                        if (dc.Vm)
+                        {
+                            string file = Path.Combine(workDir, "dragsource.fire");
+                            File.WriteAllText(file, sourceScript);
+                            sourceCommand = $"\"{forge}\" run \"{file}\"";
+                        }
+                        else sourceCommand = "\"" + Build(sourceScript, dc.Sdl, $"dragsource{dc.Sdl}{(dc.Show ? "s" : "")}") + "\"";
+                    }
+                    catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); continue; }
+                    string outSource = Path.Combine(workDir, "dragsource.out"), outTarget = Path.Combine(workDir, "dragtarget.out");
+                    string script = Path.Combine(workDir, "drag.sh");
+                    File.WriteAllText(script, DragScript($"\"{dragTarget}\"", sourceCommand, driver, outSource, outTarget));
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "x11");
+                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={lsanFile}:print_suppressions=0");
+                    string runLog = RunProc(xvfbRun, $"-a sh \"{script}\"", workDir, out int runExit);
+                    Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
+                    Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
+                    string actual = DragLines(outSource) + DragLines(outTarget);
+                    string want = string.Concat(dragExpected.Select(l => l + "\n"));
+                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}");
+                }
+            }
+
+            // ---- drag-out on Wayland (wl_data_device.start_drag, fire_dragout_wayland): weston with its X11 backend draws into Xvfb; source and target are native fire
+            // programs with SDL3 on Wayland (an SDL3 with the Wayland driver: the one of the system or the folder FIRE_TEST_SDL3_WAYLAND, put first on
+            // LD_LIBRARY_PATH). Wayland clients cannot know where their windows are: the source is magenta, the target green, and the hand finds them on the X
+            // screen (XGetImage) - it presses in the source and lets go on the point of the target farthest from it, twice (text, then files); a third program
+            // drags onto the black background (no target: 0). SDL_MOUSE_FOCUS_CLICKTHROUGH: the press that gives the source the focus back after a drop counts.
+            // (SDL 3.2 draws on Wayland always through EGL - Mesa, llvmpipe here - which keeps memory that LeakSanitizer would report: suppressed for this case)
+            {
+                const string handSource = """
+                    #include <X11/Xlib.h>
+                    #include <X11/Xutil.h>
+                    #include <dlfcn.h>
+                    #include <stdio.h>
+                    #include <stdlib.h>
+                    #include <time.h>
+                    typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
+                    typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
+                    static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
+                    typedef struct Box { int x0, y0, x1, y1, n; } Box;
+                    static void scan(Display* d, unsigned long src, unsigned long dst, Box* s, Box* t, int* tx, int* ty) {
+                        XWindowAttributes a;
+                        XImage* img;
+                        int x, y;
+                        long best = -1;
+                        XGetWindowAttributes(d, DefaultRootWindow(d), &a);
+                        img = XGetImage(d, DefaultRootWindow(d), 0, 0, (unsigned)a.width, (unsigned)a.height, AllPlanes, ZPixmap);
+                        s->n = t->n = 0;
+                        if (img == NULL) return;
+                        for (y = 0; y < a.height; y++)
+                            for (x = 0; x < a.width; x++) {
+                                unsigned long p = XGetPixel(img, x, y) & 0xFFFFFF;
+                                Box* b = p == src ? s : p == dst ? t : NULL;
+                                if (b == NULL) continue;
+                                if (b->n == 0) { b->x0 = b->x1 = x; b->y0 = b->y1 = y; }
+                                if (x < b->x0) b->x0 = x;
+                                if (x > b->x1) b->x1 = x;
+                                if (y < b->y0) b->y0 = y;
+                                if (y > b->y1) b->y1 = y;
+                                b->n++;
+                            }
+                        for (y = t->y0 + 10; t->n && y <= t->y1 - 10; y += 8)
+                            for (x = t->x0 + 10; x <= t->x1 - 10; x += 8) {
+                                long dx, dy, dist;
+                                if ((XGetPixel(img, x, y) & 0xFFFFFF) != dst) continue;
+                                dx = x - (s->x0 + s->x1) / 2; dy = y - (s->y0 + s->y1) / 2;
+                                dist = dx * dx + dy * dy;
+                                if (dist > best) { best = dist; *tx = x; *ty = y; }
+                            }
+                        XDestroyImage(img);
+                    }
+                    int main(int argc, char** argv) {
+                        Display* d = XOpenDisplay(NULL);
+                        void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
+                        FakeButton button;
+                        FakeMotion motion;
+                        unsigned long src, dst;
+                        int times = argc > 3 ? atoi(argv[3]) : 1, k, i, tx = 0, ty = 0;
+                        Box s, t;
+                        if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "hand: no display or no libXtst\n"); return 2; }
+                        src = strtoul(argv[1], NULL, 16); dst = strtoul(argv[2], NULL, 16);
+                        button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
+                        motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
+                        if (!button || !motion) { fprintf(stderr, "hand: XTest incomplete\n"); return 2; }
+                        for (k = 0; k < 300; k++) {
+                            scan(d, src, dst, &s, &t, &tx, &ty);
+                            if (s.n > 100 && t.n > 1000) break;
+                            pause_ms(100);
+                        }
+                        if (s.n <= 100 || t.n <= 1000) { fprintf(stderr, "hand: windows not found (%d, %d)\n", s.n, t.n); return 2; }
+                        pause_ms(700);
+                        for (k = 0; k < times; k++) {
+                            int sx, sy;
+                            scan(d, src, dst, &s, &t, &tx, &ty);
+                            sx = (s.x0 + s.x1) / 2; sy = (s.y0 + s.y1) / 2;
+                            motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
+                            button(d, 1, True, 0); XSync(d, False); pause_ms(400);
+                            for (i = 1; i <= 12; i++) { motion(d, -1, sx + (tx - sx) * i / 12, sy + (ty - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
+                            pause_ms(300);
+                            button(d, 1, False, 0); XSync(d, False);
+                            pause_ms(1500);
+                        }
+                        XCloseDisplay(d);
+                        return 0;
+                    }
+                    """;
+                string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0 [SDL3]";
+                string? weston = FindProgram("weston");
+                string? wlLibs = Environment.GetEnvironmentVariable("FIRE_TEST_SDL3_WAYLAND") is { Length: > 0 } wlEnv ? wlEnv : null;
+                if (!TestSelected(title)) { }
+                else if (xvfbRun == null || sdl3Exit != 0 || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder weston fehlen: {title})");
+                else
+                {
+                    // (has this SDL3 the Wayland driver? - SDL lists the drivers it was built with, no display needed)
+                    string probe = Path.Combine(workDir, "wlprobe.c");
+                    File.WriteAllText(probe, "#include <SDL3/SDL.h>\n#include <string.h>\nint main(void) { int i; for (i = 0; i < SDL_GetNumVideoDrivers(); i++) if (strcmp(SDL_GetVideoDriver(i), \"wayland\") == 0) return 0; return 1; }\n");
+                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{probe}\" -lSDL3 -o \"{probe}.bin\"", workDir, out _);
+                    string handC = Path.Combine(workDir, "wlhand.c"), hand = Path.Combine(workDir, "wlhand.bin");
+                    File.WriteAllText(handC, handSource);
+                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{handC}\" -o \"{hand}\" -lX11 -ldl", workDir, out int handExit);
+                    string ldPath = wlLibs != null ? $"LD_LIBRARY_PATH=\"{wlLibs}\" " : "";
+                    File.WriteAllText(probe + ".sh", $"{ldPath}\"{probe}.bin\"\n");
+                    RunProc("sh", $"\"{probe}.sh\"", workDir, out int probeExit);
+                    if (probeExit != 0) Console.WriteLine($"(uebersprungen - das SDL3 hier hat keinen Wayland-Treiber (FIRE_TEST_SDL3_WAYLAND: ein Ordner mit einem libSDL3.so mit Wayland): {title})");
+                    else if (handExit != 0) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
+                    else
+                    {
+                        string Colored(string script, int w, int h, string color) => script.Replace("var win = new Window(", $"var paint = new Renderer(fb)\nfor (var py = 0; py < {h}; py++) {{ for (var px = 0; px < {w}; px++) {{ paint.SetPixel(px, py, {color}) }} }}\nvar win = new Window(");
+                        string Build(string script, string name)
+                        {
+                            var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 3 } };
+                            var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
+                            string exe = Path.Combine(workDir, name + ".bin");
+                            string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL3");
+                            if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
+                            return exe;
+                        }
+                        try
+                        {
+                            string source = Build(Colored(DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", false), 64, 48, "0xFFFF00FF"), "wldragsource");
+                            string target = Build(Colored(dragTargetScript, 400, 300, "0xFF00FF00"), "wldragtarget");
+                            string run = Path.Combine(workDir, "wldrag.sh"), runtime = Path.Combine(workDir, "wlrun");
+                            string outSource = Path.Combine(workDir, "wlsource.out"), outTarget = Path.Combine(workDir, "wltarget.out"), outEmpty = Path.Combine(workDir, "wlempty.out");
+                            string socket = $"wl-fire-{Environment.ProcessId}";
+                            // (weston first - its socket says it is there -, then target, source and hand as for X11; then a source alone over the black background)
+                            File.WriteAllText(run, $"""
+                                export XDG_RUNTIME_DIR="{runtime}"
+                                mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+                                printf '[core]\nidle-time=0\n[shell]\npanel-position=none\nbackground-color=0xff000000\n' > "{runtime}/weston.ini"
+                                "{weston}" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config="{runtime}/weston.ini" > "{runtime}/weston.log" 2>&1 &
+                                wp=$!
+                                for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/{socket}" ] && break; sleep 0.1; done
+                                export WAYLAND_DISPLAY={socket} SDL_VIDEODRIVER=wayland SDL_MOUSE_FOCUS_CLICKTHROUGH=1 {ldPath}
+                                "{target}" > "{outTarget}" 2>&1 &
+                                t=$!
+                                sleep 0.5
+                                "{source}" > "{outSource}" 2>&1 &
+                                s=$!
+                                "{hand}" FF00FF 00FF00 2
+                                d=$?
+                                wait $s; se=$?
+                                wait $t; te=$?
+                                sleep 0.5
+                                "{source}" > "{outEmpty}" 2>&1 &
+                                s=$!
+                                "{hand}" FF00FF 000000 2
+                                d2=$?
+                                wait $s; se2=$?
+                                kill $wp; wait $wp
+                                exit $(( d + se + te + d2 + se2 ))
+                                """.Replace("\r", ""));
+                            string wlLsan = Path.Combine(workDir, "lsan_wayland.supp");
+                            File.WriteAllText(wlLsan, "leak:libdbus-1.so\nleak:SDL_EGL_LoadLibrary\nleak:GL_RunCommandQueue\nleak:libLLVM\nleak:libEGL_mesa\nleak:libgallium\n");
+                            Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={wlLsan}:print_suppressions=0");
+                            string runLog = RunProc(xvfbRun, $"-a -s \"-screen 0 1024x768x24\" sh \"{run}\"", workDir, out int runExit);
+                            Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
+                            string actual = DragLines(outSource) + DragLines(outTarget) + DragLines(outEmpty);
+                            string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "text 0", "files 0" }.Select(l => l + "\n"));
+                            CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}"
+                                + (File.Exists(outSource) ? File.ReadAllText(outSource) : "") + (File.Exists(outTarget) ? File.ReadAllText(outTarget) : ""));
+                        }
+                        catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); }
+                    }
+                }
+            }
+
+            // ---- Windows: the window and the clipboard built with MinGW against the MinGW package of SDL3 (SDL3_DIR, else /opt/sdl-mingw/SDL3-*), SDL3.dll next to it, run under Wine
+            {
+                string title = "Fenster: Windows (MinGW, SDL3, unter Wine): Drop-Ereignisse, Zwischenablage mit Text, Bild (CF_DIB) und Dateien (CF_HDROP)";
+                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
+                var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
+                if (!TestSelected(title)) { }
+                else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null)
+                    Console.WriteLine("(Fenster unter Wine: uebersprungen - MinGW, Wine, xvfb-run oder das MinGW-Paket von SDL3 (SDL3_DIR, /opt/sdl-mingw) fehlen)");
+                else
+                {
+                    var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
+                    string winDir = Path.Combine(workDir, "wine_sdl3");
+                    Directory.CreateDirectory(winDir);
+                    fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
+                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
+                    string RunWine(string tool, string arguments, out int exit)
+                    {
+                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
+                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                        info.Environment["WINEDEBUG"] = "-all";
+                        info.Environment["LANG"] = "C.UTF-8";
+                        using var p = System.Diagnostics.Process.Start(info)!;
+                        var errTask = p.StandardError.ReadToEndAsync();
+                        string output = p.StandardOutput.ReadToEnd();
+                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                        exit = p.ExitCode;
+                        return output + errTask.Result;
+                    }
+                    // (a new prefix is set up first: the program that runs while Wine makes it prints nothing)
+                    RunWine(wine, "wineboot --init", out _);
+                    var winCases = new (string Name, string Script, string Define, string Driver, string[] Expected)[]
+                    {
+                        ("drop", windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Script, "-DFIRE_DISPLAY_SELFTEST_DROP ", "dummy",
+                            windowCases.First(c => c.Define.Contains("SELFTEST_DROP") && c.Title.StartsWith("Fenster: Drop", StringComparison.Ordinal)).Expected),
+                        ("clip", clipScript.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\\\fire\\\\ein Ordner\\\\datei ä.txt").Replace("/tmp/zwei", "C:\\\\zwei"), "", "windows",
+                            clip3.Select(l => l.Replace("/tmp/ein Ordner/datei ä.txt", "C:\\fire\\ein Ordner\\datei ä.txt").Replace("/tmp/zwei", "C:\\zwei")).ToArray()),
+                    };
+                    foreach (var wcase in winCases)
+                    {
+                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { wcase.Script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                        string exeFile = Path.Combine(winDir, wcase.Name + ".exe");
+                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, wcase.Name,
+                            $"-O2 -Wall -Wextra {wcase.Define}-I\"{Path.Combine(sdl3Mingw, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
+                        if (buildExit != 0 || build.Contains("warning:") || !links.Contains("-lSDL3")) { CheckNat($"{title}: {wcase.Name}", false, "MinGW: " + links + "\n" + build); continue; }
+                        // (the driver of Windows needs a desktop: Wine's comes from the X server of Xvfb)
+                        string actual = RunWine(xvfbRun, $"-a env SDL_VIDEODRIVER={wcase.Driver} \"{wine}\" \"{exeFile}\"", out int runExit);
+                        // (what Wine and the X server say besides the program: about the prefix, the end of the connection)
+                        actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
+                        string want = string.Concat(wcase.Expected.Select(l => l + "\n"));
+                        CheckNat($"{title}: {wcase.Name}", runExit == 0 && actual.TrimEnd() == want.TrimEnd(), $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                    }
+                }
+            }
+
+            // ---- the VM's clipboard under Windows (Wine): files as CF_HDROP (SdlClipboard + WinClipboard). A small harness with fire.Terminal.Sdl is published for win-x64
+            // (self-contained; its own artifacts folder, so that the projects of the repository keep theirs) and runs under Wine: it puts two files on the clipboard,
+            // checks them with the shell (DragQueryFileW) and reads them back; a native program (MinGW, SDL3) reads them and puts its own there, which the harness reads.
+            {
+                string title = "Fenster: die VM unter Windows (win-x64 unter Wine): Dateien in der Zwischenablage als CF_HDROP, auch mit einem nativen Programm";
+                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                string? sdl3Dir = Environment.GetEnvironmentVariable("SDL3_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                    : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", "SDL3-*").OrderBy(d => d).LastOrDefault() : null;
+                var sdl3Mingw = sdl3Dir == null ? null : new[] { sdl3Dir, Path.Combine(sdl3Dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(d, "bin", "SDL3.dll")));
+                string? sdlProject = null;
+                for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && sdlProject == null; dir = dir.Parent)
+                {
+                    string candidate = Path.Combine(dir.FullName, "src", "fire.Terminal.Sdl", "fire.Terminal.Sdl.csproj");
+                    if (File.Exists(candidate)) sdlProject = candidate;
+                }
+                if (!TestSelected(title)) { }
+                else if (mingw == null || wine == null || sdl3Mingw == null || xvfbRun == null || sdlProject == null)
+                    Console.WriteLine("(die VM unter Wine: uebersprungen - MinGW, Wine, xvfb-run, das MinGW-Paket von SDL3 oder die Quellen von fire.Terminal.Sdl fehlen)");
+                else
+                {
+                    string vmDir = Path.Combine(workDir, "wine_vmclip");
+                    Directory.CreateDirectory(vmDir);
+                    File.WriteAllText(Path.Combine(vmDir, "harness.csproj"), $"""
+                        <Project Sdk="Microsoft.NET.Sdk">
+                          <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+                          <ItemGroup><ProjectReference Include="{sdlProject}" /></ItemGroup>
+                        </Project>
+                        """);
+                    File.WriteAllText(Path.Combine(vmDir, "Program.cs"), """
+                        using System.Runtime.InteropServices;
+                        using System.Text;
+                        using fire.Terminal.Sdl;
+                        static class P
+                        {
+                            [DllImport("user32.dll")] static extern int OpenClipboard(IntPtr owner);
+                            [DllImport("user32.dll")] static extern int CloseClipboard();
+                            [DllImport("user32.dll")] static extern int IsClipboardFormatAvailable(uint format);
+                            [DllImport("user32.dll")] static extern IntPtr GetClipboardData(uint format);
+                            [DllImport("shell32.dll", CharSet = CharSet.Unicode)] static extern uint DragQueryFileW(IntPtr drop, uint index, StringBuilder? file, uint size);
+                            static string ShellFiles()
+                            {
+                                if (OpenClipboard(IntPtr.Zero) == 0) return "not open";
+                                try
+                                {
+                                    IntPtr h = GetClipboardData(15);
+                                    if (h == IntPtr.Zero) return "none";
+                                    uint n = DragQueryFileW(h, 0xFFFFFFFF, null, 0);
+                                    var line = n.ToString();
+                                    for (uint i = 0; i < n; i++) { var sb = new StringBuilder(1024); DragQueryFileW(h, i, sb, 1024); line += " [" + sb + "]"; }
+                                    return line;
+                                }
+                                finally { CloseClipboard(); }
+                            }
+                            static string Files(string[] files) => files.Length + string.Concat(files.Select(f => " [" + f + "]"));
+                            static int Main(string[] args)
+                            {
+                                Console.OutputEncoding = Encoding.UTF8;
+                                var c = new SdlClipboard();
+                                if (args.Length > 0 && args[0] == "read") { Console.WriteLine("vm read " + Files(c.GetFiles()) + " " + c.HasFiles + " " + c.HasText); return 0; }
+                                string[] paths = { @"C:\fire\ein Ordner\datei ä.txt", @"C:\zwei" };
+                                Console.WriteLine("vm set " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText + " " + c.HasImage);
+                                Console.WriteLine("vm shell " + ShellFiles());
+                                Console.WriteLine("vm get " + Files(c.GetFiles()));
+                                Console.WriteLine("vm text " + c.SetText("Text") + " " + c.HasFiles + " " + (IsClipboardFormatAvailable(15) != 0) + " " + c.HasText + " " + c.GetText());
+                                Console.WriteLine("vm again " + c.SetFiles(paths) + " " + c.HasFiles + " " + c.HasText);
+                                return 0;
+                            }
+                        }
+                        """);
+                    string publish = RunProc("dotnet", $"publish -c Release -r win-x64 --self-contained -o out --artifacts-path artifacts -p:NuGetAudit=false", vmDir, out int publishExit);
+                    string harness = Path.Combine(vmDir, "out", "harness.exe");
+                    if (publishExit != 0 || !File.Exists(harness))
+                        Console.WriteLine("(die VM unter Wine: uebersprungen - `dotnet publish -r win-x64` ging nicht (ohne Netz fehlt das Laufzeitpaket fuer win-x64): "
+                            + string.Join(" ", publish.Split('\n').Where(l => l.Contains("error")).Take(2)) + ")");
+                    else
+                    {
+                        var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = 3 } };
+                        fire.Native.NativeRuntimeFiles.WriteTo(vmDir, "windows");
+                        File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(vmDir, "SDL3.dll"), true);
+                        string RunWine(string tool, string arguments, out int exit)
+                        {
+                            var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = vmDir };
+                            info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                            info.Environment["WINEDEBUG"] = "-all";
+                            info.Environment["LANG"] = "C.UTF-8";
+                            using var p = System.Diagnostics.Process.Start(info)!;
+                            var errTask = p.StandardError.ReadToEndAsync();
+                            string output = p.StandardOutput.ReadToEnd();
+                            if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                            exit = p.ExitCode;
+                            return output + errTask.Result;
+                        }
+                        RunWine(wine, "wineboot --init", out _);
+                        const string nativeScript = """
+                        #import "windows"
+                        var got = Clipboard.GetFiles()
+                        var line = "native " + got.length
+                        foreach (f in got) { line = line + " [" + f + "]" }
+                        print(line + " " + Clipboard.HasFiles + " " + Clipboard.HasText)
+                        var paths = new List<string>()
+                        paths.Add("C:\\nativ\\drei ö.txt")
+                        print("native set " + Clipboard.SetFiles(paths))
+                        """;
+                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { nativeScript }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                        string nativeExe = Path.Combine(vmDir, "nativeclip.exe");
+                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, vmDir, "nativeclip",
+                            $"-O2 -Wall -Wextra -I\"{Path.Combine(sdl3Mingw, "include")}\"", nativeExe, out int buildExit, $" -L\"{Path.Combine(sdl3Mingw, "lib")}\"{links}");
+                        if (buildExit != 0 || build.Contains("warning:")) CheckNat(title, false, "MinGW: " + links + "\n" + build);
+                        else
+                        {
+                            // (one X server for all three, so that they share Wine's desktop and its clipboard)
+                            string script = Path.Combine(vmDir, "run.sh");
+                            File.WriteAllText(script, $"export SDL_VIDEODRIVER=windows\n\"{wine}\" \"{harness}\" && \"{wine}\" \"{nativeExe}\" && \"{wine}\" \"{harness}\" read\n");
+                            string actual = RunWine(xvfbRun, $"-a sh \"{script}\"", out int runExit);
+                            actual = string.Join("\n", actual.Replace("\r", "").Split('\n').Where(l => l != "" && !l.StartsWith("wine:", StringComparison.Ordinal) && !l.StartsWith("X connection to ", StringComparison.Ordinal)));
+                            string want = string.Join("\n", new[]
+                            {
+                                "vm set True True False False", "vm shell 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]", "vm get 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]",
+                                "vm text True False False True Text", "vm again True True False",
+                                "native 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei] True False", "native set True", "vm read 1 [C:\\nativ\\drei ö.txt] True False",
+                            });
+                            CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}");
+                        }
+                    }
+                }
+            }
+
+            // ---- drag-out under Wine (OLE: DoDragDrop with our IDataObject and IDropSource): the same as on X11 - the source built with MinGW against SDL3 and SDL2, the
+            // target with SDL3 (its OLE drop target), the hand the X program above on the X server that Wine draws on
+            {
+                string? mingw = FindProgram("x86_64-w64-mingw32-gcc");
+                string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? FindProgram("wine64") ?? FindProgram("wine");
+                string? MingwSdl(int version)
+                {
+                    string? dir = Environment.GetEnvironmentVariable($"SDL{version}_DIR") is { Length: > 0 } fromEnv ? fromEnv
+                        : Directory.Exists("/opt/sdl-mingw") ? Directory.GetDirectories("/opt/sdl-mingw", $"SDL{version}-*").OrderBy(d => d).LastOrDefault() : null;
+                    string header = version == 3 ? Path.Combine("include", "SDL3", "SDL.h") : Path.Combine("include", "SDL2", "SDL.h");
+                    return dir == null ? null : new[] { dir, Path.Combine(dir, "x86_64-w64-mingw32") }.FirstOrDefault(d => File.Exists(Path.Combine(d, header)) && File.Exists(Path.Combine(d, "bin", $"SDL{version}.dll")));
+                }
+                string? sdl3Mingw = MingwSdl(3), sdl2Mingw = MingwSdl(2);
+                foreach (int version in new[] { 3, 2 })
+                {
+                    string title = $"Fenster: Drag aus dem Fenster in ein anderes Programm (Windows unter Wine, OLE): Text (CF_UNICODETEXT) und Dateien (CF_HDROP) [SDL{version}]";
+                    string? sdlMingw = version == 3 ? sdl3Mingw : sdl2Mingw;
+                    if (!TestSelected(title)) continue;
+                    if (mingw == null || wine == null || sdl3Mingw == null || sdlMingw == null || xvfbRun == null) { Console.WriteLine($"(uebersprungen - MinGW, Wine, xvfb-run oder die MinGW-Pakete von SDL fehlen: {title})"); continue; }
+                    string? driver = DragDriver();
+                    if (driver == null) { Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})"); continue; }
+                    string winDir = Path.Combine(workDir, "wine_drag");
+                    Directory.CreateDirectory(winDir);
+                    fire.Native.NativeRuntimeFiles.WriteTo(winDir, "windows");
+                    File.Copy(Path.Combine(sdl3Mingw, "bin", "SDL3.dll"), Path.Combine(winDir, "SDL3.dll"), true);
+                    File.Copy(Path.Combine(sdlMingw, "bin", $"SDL{version}.dll"), Path.Combine(winDir, $"SDL{version}.dll"), true);
+                    string RunWine(string tool, string arguments, out int exit)
+                    {
+                        var info = new System.Diagnostics.ProcessStartInfo(tool, arguments) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = winDir };
+                        info.Environment["WINEPREFIX"] = Path.Combine(workDir, "wineprefix");
+                        info.Environment["WINEDEBUG"] = "-all";
+                        info.Environment["LANG"] = "C.UTF-8";
+                        info.Environment["SDL_VIDEODRIVER"] = "windows";
+                        using var p = System.Diagnostics.Process.Start(info)!;
+                        var errTask = p.StandardError.ReadToEndAsync();
+                        string output = p.StandardOutput.ReadToEnd();
+                        if (!p.WaitForExit(300000)) { try { p.Kill(true); } catch { } exit = -1; return output + "(Zeitueberschreitung)"; }
+                        exit = p.ExitCode;
+                        return output + errTask.Result;
+                    }
+                    string BuildWin(string script, int sdl, string sdlDir, string name, out string error)
+                    {
+                        var winTarget = TargetProfile.Windows with { Native = TargetProfile.Windows.Native with { Sdl = sdl } };
+                        var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, winTarget), winTarget);
+                        string exeFile = Path.Combine(winDir, name + ".exe");
+                        string links = string.Concat(generated.Program.Split('\n').Where(l => l.StartsWith("// fire-link: ", StringComparison.Ordinal)).Select(l => " -l" + l.Substring("// fire-link: ".Length).Trim()).Distinct());
+                        string build = NativeTestBuild.Build((tool, arguments) => (RunWine(tool, arguments, out int code), code), mingw.Replace("-gcc", "-g++"), generated, winDir, name,
+                            $"-O2 -Wall -Wextra -I\"{Path.Combine(sdlDir, "include")}\"", exeFile, out int buildExit, $" -L\"{Path.Combine(sdlDir, "lib")}\"{links}");
+                        error = buildExit != 0 || build.Contains("warning:") || !links.Contains($"-lSDL{sdl}") ? "MinGW: " + links + "\n" + build : "";
+                        return exeFile;
+                    }
+                    RunWine(wine, "wineboot --init", out _);
+                    string targetExe = BuildWin(dragTargetScript, 3, sdl3Mingw, "dragtarget", out string targetError);
+                    string sourceExe = BuildWin(DragSourceScript("C:\\\\fire\\\\ein Ordner\\\\datei ä.txt", "C:\\\\zwei", false), version, sdlMingw, $"dragsource{version}", out string sourceError);
+                    if (targetError != "" || sourceError != "") { CheckNat(title, false, targetError + sourceError); continue; }
+                    string outSource = Path.Combine(winDir, "dragsource.out"), outTarget = Path.Combine(winDir, "dragtarget.out");
+                    string script = Path.Combine(winDir, "drag.sh");
+                    // (Wine's windows need a moment more: the source starts 2 s after the target)
+                    File.WriteAllText(script, DragScript($"\"{wine}\" \"{targetExe}\"", $"\"{wine}\" \"{sourceExe}\"", driver, outSource, outTarget, "2"));
+                    string runLog = RunWine(xvfbRun, $"-a sh \"{script}\"", out int runExit);
+                    string actual = DragLines(outSource) + DragLines(outTarget);
+                    string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [C:\\fire\\ein Ordner\\datei ä.txt] [C:\\zwei]" }.Select(l => l + "\n"));
+                    CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Wine, Exitcode {runExit}):\n{actual}{runLog}");
+                }
             }
         }
 
@@ -23180,6 +25970,7 @@ else
         {
             string sdlProbe2 = Path.Combine(workDir, "sdlprobe.cpp.bin");
             if (!File.Exists(sdlProbe2)) Console.WriteLine("(SDL2 nicht verfuegbar: die UI wird nicht nativ ausgefuehrt)");
+            else if (uiDrawExpected.Length == 0 || !TestSelected("UI nativ == VM")) Console.WriteLine("(UI nativ == VM: uebersprungen - die UI-Pruefungen der VM liefen nicht, oder der Filter schliesst es aus)");
             else
             {
                 var generated = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { "#import \"ui\"\n" + uiDrawScript }, null, null, VmExecutionMode.Release));
@@ -23191,7 +25982,7 @@ else
                     Environment.SetEnvironmentVariable("SDL_VIDEODRIVER", "dummy");
                     string actual = RunProc(exe, "", workDir, out int runExit);
                     string expected = string.Concat(uiDrawExpected.Select(l => l + "\n"));
-                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 4, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
+                    CheckNat("UI nativ == VM: Label, Button, CheckBox, TextBox, Stack zeichnen", runExit == 0 && actual == expected && uiDrawExpected.Length == 5, $"  erwartet (VM):\n{expected}\n  erhalten:\n{actual}");
                 }
             }
         }
@@ -23219,7 +26010,7 @@ else
                 var (name, expected, actual) = task.Result;
                 CheckNat($"FreeRTOS == VM: {name}", expected == actual, $"  erwartet (VM):\n{expected}\n  erhalten (FreeRTOS):\n{actual}");
             }
-            CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
+            if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("FIRE_TESTS_FILTER"))) CheckNat("FreeRTOS: es gibt Faelle", rtosIndexes.Length >= 10, rtosIndexes.Length.ToString());
         }
 
         // ---- Target configuration (fire.native.json) and `build` with the native engine
@@ -23339,6 +26130,69 @@ else
             var out4 = new StringWriter();
             int code4 = CommandLineRunner.Run(new[] { "build", script, "--engine", "vm", "-o", Path.Combine(dir, "vm.exe") }, out4, new StringWriter());
             CheckNat("build: --engine vm gewinnt gegen die Konfiguration", code4 == 0 && File.Exists(Path.Combine(dir, "vm.exe")));
+            // a target other than this machine is always native (the VM exists only for this machine; esp32, wasm and other systems need no .NET): without
+            // --engine and without a configuration, -t esp32 writes the component; --engine vm with such a target is a clear error of the command line
+            string bare = Path.Combine(workDir, "build-bare");
+            Directory.CreateDirectory(bare);
+            string bareScript = Path.Combine(bare, "hello.fire");
+            File.WriteAllText(bareScript, "print(1)\n");
+            string bareOut = Path.Combine(bare, "component");
+            var out5 = new StringWriter(); var err5 = new StringWriter();
+            int code5 = CommandLineRunner.Run(new[] { "build", bareScript, "-t", "esp32", "-o", bareOut }, out5, err5);
+            CheckNat("build: ein fremdes Ziel (-t esp32) baut ohne --engine nativ", code5 == 0 && File.Exists(Path.Combine(bareOut, "fire_program.c")) && File.Exists(Path.Combine(bareOut, "CMakeLists.txt")), $"{code5}\n{out5}\n{err5}");
+            var err6 = new StringWriter();
+            int code6 = CommandLineRunner.Run(new[] { "build", bareScript, "--engine", "vm", "-t", "esp32", "-o", Path.Combine(bare, "vm.exe") }, new StringWriter(), err6);
+            CheckNat("build: --engine vm mit einem fremden Ziel ist ein Fehler der Befehlszeile", code6 == CommandLineRunner.ExitUsage && err6.ToString().Contains("esp32") && !File.Exists(Path.Combine(bare, "vm.exe")), err6.ToString());
+            var out7 = new StringWriter();
+            int code7 = CommandLineRunner.Run(new[] { "build", bareScript, "-t", TargetProfile.Host.Name, "-o", Path.Combine(bare, "host.exe") }, out7, new StringWriter());
+            CheckNat("build: das eigene Ziel (-t " + TargetProfile.Host.Name + ") bleibt ohne --engine bei der VM", code7 == 0 && !out7.ToString().Contains("(native"), out7.ToString());
+            // ---- a real ESP32 build (ESP-IDF: IDF_PATH, its export.sh) that runs on the ESP32 emulator of Espressif (qemu-system-xtensa, `idf_tools.py install qemu-xtensa`):
+            // the program uses the runtime, exceptions, a fire thread (a FreeRTOS task), hash and Deflate (with the small window of a board) and prints like the VM.
+            // The ESP-IDF project stays in ~/.cache/fire-tests/esp32 (the first build takes minutes, later ones only the program).
+            string esp32Title = "ESP32 (ESP-IDF, QEMU): das Programm baut ohne Warnung und laeuft auf dem Emulator wie in der VM";
+            string? idfPath = Environment.GetEnvironmentVariable("IDF_PATH");
+            if (!TestSelected(esp32Title)) { }
+            else if (idfPath == null || !File.Exists(Path.Combine(idfPath, "export.sh"))) Console.WriteLine("(ESP32 mit ESP-IDF: uebersprungen - IDF_PATH fehlt)");
+            else
+            {
+                const string espSource = "#import \"time\"\n#import \"hash\"\n#import \"compression\"\nclass Counter {\n    private int count = 0\n    int Next() { this.count++; return this.count }\n}\n"
+                    + "var c = new Counter()\nvar l = new List<string>()\nfor (var i = 0; i < 3; i++) { l.Add(\"n\" + c.Next()) }\nprint(l[0] + \" \" + l[2])\n"
+                    + "try { var a = [1]; print(a[5]) } catch (IndexOutOfBoundsException e) { print(\"caught\") }\nprint(Hash.Sha256.HexOf(\"abc\").Substring(0, 16))\n"
+                    + "var text = \"\"\nfor (var i = 0; i < 200; i++) { text = text + \"fire \" + (i % 7) + \" \" }\nvar packed = Compression.GZip.Compress(text)\nprint((packed.Length < text.Length) + \" \" + (Compression.GZip.DecompressText(packed) == text))\n"
+                    + "var n = 0\nfire { sync global { n = 42 } }\nwhile (n == 0) { Sleep(1ms) }\nprint(\"thread \" + n)\nprint(\"done\")\n";
+                string espProject = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "fire-tests", "esp32");
+                Directory.CreateDirectory(espProject);
+                File.WriteAllText(Path.Combine(espProject, "CMakeLists.txt"), "cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nproject(firetest)\n");
+                string espScript = Path.Combine(espProject, "test.fire");
+                File.WriteAllText(espScript, espSource);
+                if (Directory.Exists(Path.Combine(espProject, "main"))) Directory.Delete(Path.Combine(espProject, "main"), true);
+                var espOut = new StringWriter(); var espErr = new StringWriter();
+                int espCode = CommandLineRunner.Run(new[] { "build", espScript, "-t", "esp32", "-o", Path.Combine(espProject, "main") }, espOut, espErr);
+                string shell = $"set -e; . \"{idfPath}/export.sh\" > /dev/null 2>&1; cd \"{espProject}\"; [ -f sdkconfig ] || idf.py set-target esp32 > idf.log 2>&1; idf.py build > idf.log 2>&1 || {{ tail -40 idf.log; exit 1; }}; "
+                    + "grep -c 'warning:' idf.log > warnings.txt || true; cd build; python -m esptool --chip esp32 merge_bin --fill-flash-size 4MB -o ../flash.bin @flash_args > /dev/null; cd ..; "
+                    + "command -v qemu-system-xtensa > /dev/null || { echo NOQEMU; exit 0; }; timeout 30 qemu-system-xtensa -nographic -machine esp32 -m 4M -drive file=flash.bin,if=mtd,format=raw -serial mon:stdio > qemu.log 2>&1 || true; "
+                    + "sed -n '/main_task: Calling app_main/,/^done/p' qemu.log | grep -vE '^(I|W) \\(|main_task' ";
+                string espRun = "";
+                int espExit = -1;
+                if (espCode == 0)
+                {
+                    using var bash = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("bash", new[] { "-c", shell }) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false })!;
+                    var bashErr = bash.StandardError.ReadToEndAsync();
+                    espRun = bash.StandardOutput.ReadToEnd();
+                    bash.WaitForExit();
+                    espExit = bash.ExitCode;
+                    espRun += bashErr.Result;
+                }
+                string warnings = File.Exists(Path.Combine(espProject, "warnings.txt")) ? File.ReadAllText(Path.Combine(espProject, "warnings.txt")).Trim() : "?";
+                if (espRun.Contains("NOQEMU")) CheckNat("ESP32 (ESP-IDF): das Programm baut ohne Warnung (QEMU fehlt: nicht ausgefuehrt)", espCode == 0 && espExit == 0 && warnings == "0", espOut + "\n" + espErr + "\n" + espRun);
+                else
+                {
+                    var vmLines = new List<string>();
+                    RuntimeSession.Build(new[] { espSource }, VmExecutionMode.Release, a => { vmLines.Add(a[0].ToString()!); return Value.MakeUndefined(); }).Run();
+                    string got = string.Join("\n", espRun.Replace("\r", "").Split('\n').Where(line => line.Length > 0));
+                    CheckNat(esp32Title, espCode == 0 && espExit == 0 && warnings == "0" && got == string.Join("\n", vmLines), $"build {espCode}, warnings {warnings}\n  VM:\n{string.Join("\n", vmLines)}\n  ESP32:\n{got}\n{espErr}");
+                }
+            }
         }
 
         // What is not yet translated must be rejected clearly - never translated wrongly
@@ -23728,6 +26582,88 @@ else
 
                     string missing = fire.Native.SdlSetup.HelpText;
                     CheckNat("SDL2: die Hilfe sagt, was zu tun ist (Linux, macOS, Windows, SDL2_DIR)", missing.Contains("libsdl2-dev") && missing.Contains("brew install sdl2") && missing.Contains("SDL2_DIR"));
+
+                    // SDL2 of the system (/usr/include/SDL2): the folder of SDL.h is named as well - TinyCC has no __has_include and includes <SDL.h> (fire_display_sdl.h)
+                    if (!OperatingSystem.IsWindows() && File.Exists("/usr/include/SDL2/SDL.h"))
+                    {
+                        Environment.SetEnvironmentVariable("SDL2_DIR", null);
+                        var system = fire.Native.SdlSetup.Locate();
+                        var (_, tccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["tcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                        CheckNat("SDL2: das SDL2 des Systems - der Ordner von SDL.h kommt mit (-I/usr/include/SDL2: TinyCC hat kein __has_include)",
+                            system != null && system.IncludeDirs.Contains("/usr/include/SDL2") && tccArgs.Contains("-I\"/usr/include/SDL2\""), tccArgs);
+                        // (TinyCC does not follow the RUNPATH of libpulse.so.0: the folder of libpulsecommon is named for it, and only for it)
+                        var (_, gccArgs) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp, sdlDir, Path.Combine(sdlDir, "p.exe"));
+                        CheckNat("SDL2: TinyCC bekommt den Ordner von libpulsecommon (-L .../pulseaudio), gcc nicht",
+                            fire.Native.SdlSetup.TccRunpathDirs().All(d => tccArgs.Contains($"-L\"{d}\"")) && !gccArgs.Contains("pulseaudio"), tccArgs);
+                    }
+
+                    // SDL3: the same for its MinGW package (SDL3_DIR, SDL3.dll), and `// fire-link: SDL3`
+                    string archive3 = Path.Combine(sdlDir, "sdl3.tar.gz");
+                    using (var gz = new System.IO.Compression.GZipStream(File.Create(archive3), System.IO.Compression.CompressionLevel.Fastest))
+                    using (var tar = new System.Formats.Tar.TarWriter(gz))
+                    {
+                        void Add(string name, string text) => tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.ASCII.GetBytes(text)) });
+                        Add("SDL3-9.9.9/x86_64-w64-mingw32/include/SDL3/SDL.h", "// header 3");
+                        Add("SDL3-9.9.9/x86_64-w64-mingw32/bin/SDL3.dll", "dll3");
+                        Add("SDL3-9.9.9/x86_64-w64-mingw32/lib/libSDL3.dll.a", "implib3");
+                        Add("SDL3-9.9.9/x86_64-w64-mingw32/lib/libSDL3_test.a", "skipped");
+                    }
+                    string unpacked3 = Path.Combine(sdlDir, "SDL3");
+                    fire.Native.SdlSetup.Unpack(archive3, unpacked3, 3);
+                    CheckNat("SDL3: das MinGW-Paket wird ausgepackt (include, SDL3.dll, Import-Bibliothek)",
+                        File.Exists(Path.Combine(unpacked3, "include", "SDL3", "SDL.h")) && File.Exists(Path.Combine(unpacked3, "bin", "SDL3.dll")) && File.Exists(Path.Combine(unpacked3, "lib", "libSDL3.dll.a"))
+                        && !File.Exists(Path.Combine(unpacked3, "lib", "libSDL3_test.a")));
+                    string? savedSdl3 = Environment.GetEnvironmentVariable("SDL3_DIR");
+                    try
+                    {
+                        Environment.SetEnvironmentVariable("SDL3_DIR", unpacked3);
+                        var location3 = fire.Native.SdlSetup.Locate(null, 3);
+                        CheckNat("SDL3: SDL3_DIR wird zuerst gefunden (Include- und Lib-Ordner, SDL3.dll; kein SDL2-Unterordner)",
+                            location3 != null && location3.IncludeDirs.SequenceEqual(new[] { Path.Combine(unpacked3, "include") }) && location3.LibDirs.Contains(Path.Combine(unpacked3, "lib"))
+                            && location3.RuntimeDll == Path.Combine(unpacked3, "bin", "SDL3.dll"));
+                        string cpp3 = Path.Combine(sdlDir, "p3.c");
+                        File.WriteAllText(cpp3, "// fire-link: SDL3\n#define FIRE_SDL3 1\nint main(void) { return 0; }\n");
+                        CheckNat("SDL3: das Programm bittet mit `// fire-link: SDL3` darum", fire.Native.SdlSetup.RequiredVersion(cpp3) == 3 && fire.Native.SdlSetup.RequiredVersion(cpp) == 2
+                            && !fire.Native.SdlSetup.IsRequiredBy(cpp3) && fire.Native.SdlSetup.RequiredVersion(Path.Combine(sdlDir, "none.c")) == 0);
+                        var (_, arguments3) = fire.Compiler.NativeBuilder.CompilerCommand(fire.Native.ToolchainDef.BuiltIn["gcc"], fire.Runtime.TargetProfile.Host, cpp3, sdlDir, Path.Combine(sdlDir, "p3.exe"), language: "c");
+                        CheckNat("SDL3: der Compiler bekommt -I, -L und -lSDL3 (nicht -lSDL2)",
+                            arguments3.Contains($"-I\"{Path.Combine(unpacked3, "include")}\"") && arguments3.Contains($"-L\"{Path.Combine(unpacked3, "lib")}\"") && arguments3.Contains("-lSDL3") && !arguments3.Contains("-lSDL2"), arguments3);
+                        string program3 = Path.Combine(sdlDir, "out3", "p.exe");
+                        Directory.CreateDirectory(Path.GetDirectoryName(program3)!);
+                        CheckNat("SDL3: SDL3.dll wird neben ein Windows-Programm gelegt", fire.Native.SdlSetup.CopyRuntimeNextTo(program3, location3) && File.Exists(Path.Combine(sdlDir, "out3", "SDL3.dll")));
+                        CheckNat("SDL3: die Hilfe sagt, was zu tun ist (SDL3_DIR, brew install sdl3)", fire.Native.SdlSetup.HelpTextFor(3).Contains("SDL3_DIR") && fire.Native.SdlSetup.HelpTextFor(3).Contains("brew install sdl3"));
+                    }
+                    finally { Environment.SetEnvironmentVariable("SDL3_DIR", savedSdl3); }
+
+                    // the probe: can the toolchain build SDL3? Built once, then remembered (in the file of the cache)
+                    {
+                        string? savedCache = fire.Native.NativeProbeCache.FilePath;
+                        try
+                        {
+                            fire.Native.NativeProbeCache.FilePath = Path.Combine(sdlDir, "probes.json");
+                            fire.Native.NativeProbeCache.Reset();
+                            var gcc = fire.Native.ToolchainDef.BuiltIn["gcc"];
+                            bool expectSdl3 = fire.Native.ToolchainDetector.FindC(gcc) != null && fire.Native.SdlSetup.Locate(gcc, 3) != null;   // (where the header is, the library is too)
+                            var watch = System.Diagnostics.Stopwatch.StartNew();
+                            bool first = fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.Host);
+                            long firstMs = watch.ElapsedMilliseconds;
+                            fire.Native.NativeProbeCache.Reset();   // (from the file again)
+                            watch.Restart();
+                            bool second = fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.Host);
+                            long secondMs = watch.ElapsedMilliseconds;
+                            bool remembered = File.Exists(fire.Native.NativeProbeCache.FilePath) && File.ReadAllText(fire.Native.NativeProbeCache.FilePath).Contains("sdl3|gcc");
+                            // (a probe is only built where SDL3's header is: without it the answer is "no" at once - and not remembered, so that SDL3 installed later counts)
+                            CheckNat("SDL3 oder SDL2: die Probe (kann die Toolchain SDL3 uebersetzen und binden?) wird gemerkt",
+                                first == expectSdl3 && second == first && remembered == expectSdl3 && fire.Compiler.NativeBuilder.ChooseSdl(gcc, TargetProfile.Host) == (expectSdl3 ? 3 : 2)
+                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(fire.Native.ToolchainDef.BuiltIn["files"], TargetProfile.Host)
+                                && !fire.Compiler.NativeBuilder.CanBuildSdl3(gcc, TargetProfile.FreeRtos), $"first {first} ({firstMs} ms), second {second} ({secondMs} ms), expected {expectSdl3}, remembered {remembered}");
+                        }
+                        finally
+                        {
+                            fire.Native.NativeProbeCache.FilePath = savedCache;
+                            fire.Native.NativeProbeCache.Reset();
+                        }
+                    }
                 }
                 finally
                 {
@@ -23780,6 +26716,14 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
     public void Present(fire.Terminal.Framebuffer framebuffer) { }
     public void Dispose() { }
 
+    /// <summary>Window.StartDrag: what the desktop answers (0 nothing, 1 copied, 2 moved), and who hears of the call (text, paths).</summary>
+    public int DragAnswer { get; set; }
+    public Action<string, string[]>? Dragged { get; set; }
+    public int StartDrag(string text, string[] files) { Dragged?.Invoke(text, files); return DragAnswer; }
+    /// <summary>Window.CanStartDrag: the tests pretend a desktop that takes drags (__TestCanDrag(false): one that cannot, like Wayland).</summary>
+    public bool CanDrag { get; set; } = true;
+    public bool CanStartDrag() => CanDrag;
+
     public fire.Terminal.WindowPumpResult PumpEvents()
     {
         var events = _pending.ToArray();
@@ -23828,6 +26772,18 @@ sealed class FakeRenderer : fire.Terminal.IFramebufferRenderer
             case fire.Terminal.Event.EventType.JoystickAdded:
             case fire.Terminal.Event.EventType.JoystickRemoved:
                 _pending.Add(new fire.Terminal.Event.JoystickEvent { Type = kind, Joystick = (int)args[1].AsInt() });
+                break;
+            case fire.Terminal.Event.EventType.DropFiles:   // (paths separated by "\n", x, y)
+                _pending.Add(new fire.Terminal.Event.DropEvent { Type = kind, Files = args[1].AsString().Split('\n'), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.DropText:
+                _pending.Add(new fire.Terminal.Event.DropEvent { Type = kind, Text = args[1].AsString(), X = (float)args[2].AsFloat(), Y = (float)args[3].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.DragHover:   // (x, y)
+                _pending.Add(new fire.Terminal.Event.DragHoverEvent { Type = kind, X = (float)args[1].AsFloat(), Y = (float)args[2].AsFloat() });
+                break;
+            case fire.Terminal.Event.EventType.DragLeave:
+                _pending.Add(new fire.Terminal.Event.Event { Type = kind });
                 break;
         }
     }

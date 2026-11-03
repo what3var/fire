@@ -32,5 +32,24 @@ static int fire_display_touchMouse(const FireDisplayWindow* w) { return w->touch
 static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int fbWidth, int fbHeight) { (void)w; (void)out; (void)fbWidth; (void)fbHeight; return 0; }
 static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int width, int height) { (void)w; (void)rgba; (void)width; (void)height; }
 static void fire_display_close(FireDisplayWindow* w) { (void)w; }
+static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) { (void)w; (void)out; return 0; }
+static void fire_display_restore(FireDisplayWindow* w) { (void)w; }
+
+/* No desktop: the clipboard is the program's own (Clipboard.SetText/GetText, SetImage/GetImage, SetFiles/GetFiles work within it). */
+static int fire_display_clipboardSet(const char* text) { return fire_display_memSetText(text); }
+static char* fire_display_clipboardGet(void) { return fire_display_memGetText(); }
+static int fire_display_clipboardHas(void) { return fire_display_memHasText(); }
+static unsigned char* fire_display_clipboardGetImage(size_t* size) { return fire_display_memGetImage(size); }
+static int fire_display_clipboardSetImage(const unsigned char* png, size_t pngSize, const unsigned char* bmp, size_t bmpSize) { (void)bmp; (void)bmpSize; return fire_display_memSetImage(png, pngSize); }
+static int fire_display_clipboardHasImage(void) { return fire_display_memHasImage(); }
+static char* fire_display_clipboardGetFiles(void) { return fire_display_memGetFiles(); }
+static int fire_display_clipboardSetFiles(const char* paths) { return fire_display_memSetFiles(paths); }
+static int fire_display_clipboardHasFiles(void) { return fire_display_memHasFiles(); }
+
+/* No desktop: nothing to drag into (Window.StartDrag says 0). */
+#define FIRE_DISPLAY_START_DRAG 1
+static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) { (void)w; (void)text; (void)files; return 0; }
+#define FIRE_DISPLAY_CAN_START_DRAG 1
+static int fire_display_canStartDrag(FireDisplayWindow* w) { (void)w; return 0; }
 
 #endif

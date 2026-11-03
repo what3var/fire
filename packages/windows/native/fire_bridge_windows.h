@@ -1,7 +1,7 @@
 /* fire native bridge "windows" (C): the natives behind `#import "windows"` - a window that shows a framebuffer of the graphics bridge, and the events of that window.
  * The fire side (Window, EventType - fire source) is the same as in the VM; this file is what its `__GRPHWin...` functions do (the generator calls `__GRPHWinName` as
  * fire_win_WinName). Putting the pixels on the screen and collecting the events is the display of the platform (FIRE_PLATFORM_DISPLAY_C_HEADER: FireDisplayWindow and the
- * fire_display_* functions; SDL2 on the desktop, see platform/std/fire_display_sdl.h).
+ * fire_display_* functions; SDL3 or SDL2 on the desktop, see platform/std/fire_display_sdl3.h and fire_display_sdl.h).
  *
  * C99, part of the generated file after fire_bridge_graphics.h when the program imports "windows". As in the VM, `Tick` collects the events, shows the framebuffer and then
  * runs the callbacks (registered lambdas) on the calling thread with the real global variables; an exception that a callback does not catch is reported and ends only the callback.
@@ -53,10 +53,24 @@ typedef struct FireWinShared {
     int vsyncReq, touchReq;       /* settings for the thread */
     int sizeReqW, sizeReqH;       /* a new size of the window for the thread (0: none) */
     int cursorReq;                /* a new cursor for the thread (-1: none) */
+    int dragReq, dragDone, dragResult;   /* Window.StartDrag for the thread: what is dragged (UTF-8; the paths one per line), and its answer */
+    char* dragText;
+    char* dragFiles;
     int release;                  /* the window is gone: the thread closes it and frees this */
+    fire_present_fn frontFn;      /* the presenter of the framebuffer when the frame was published (scene3d DirectDrawing), or NULL */
+    void* frontCtx;
     /* the thread's own */
     uint32_t* shown;
     int shownW, shownH;
+    fire_present_fn shownFn;
+    void* shownCtx;
+    /* who shows the window (on the thread that owns it): the display, or a presenter (direct: the display gave the window to presentFn) */
+    int direct;
+    fire_present_fn presentFn;
+    void* presentCtx;
+    fire_native_window native;    /* the handles the presenter got last */
+    fire_present_fn failedFn;     /* a presenter that could not show this window: not asked again until another one is attached */
+    void* failedCtx;
 } FireWinShared;
 
 static FireWinShared* fire_winb_sharedNew(const char* title, int width, int height) {
@@ -70,11 +84,36 @@ static FireWinShared* fire_winb_sharedNew(const char* title, int width, int heig
     s->cursorReq = -1;
     return s;
 }
+/* Shows a frame in the window (on the thread that owns it): through the presenter of the framebuffer (`fn`; it draws into the window itself and lays the frame over its picture),
+ * or - without one, or when it cannot - as the display shows framebuffers. */
+static void fire_winb_show(FireWinShared* s, fire_present_fn fn, void* ctx, const uint32_t* pixels, int width, int height) {
+    if (s->direct && (fn != s->presentFn || ctx != s->presentCtx)) {
+        /* the presenter is gone (or another one came): it lets go of the window, and the display takes it back */
+        s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0);
+        s->direct = 0;
+        fire_display_restore(&s->display);
+    }
+    if (fn != NULL && !(fn == s->failedFn && ctx == s->failedCtx)) {
+        if (fire_display_native(&s->display, &s->native)) {
+            s->direct = 1; s->presentFn = fn; s->presentCtx = ctx;
+            if (fn(ctx, 1, &s->native, pixels, width, height)) return;
+            fn(ctx, 0, &s->native, NULL, 0, 0);
+            s->direct = 0;
+            fire_display_restore(&s->display);
+        }
+        s->failedFn = fn; s->failedCtx = ctx;
+    }
+    fire_display_present(&s->display, pixels, width, height);
+}
+
 /* Frees it (and closes the OS window). */
 static void fire_winb_sharedDelete(FireWinShared* s) {
     if (s == NULL) return;
+    if (s->direct) { s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0); s->direct = 0; }   /* (the presenter lets go of the window before it closes) */
     fire_display_close(&s->display);
     fire_display_eventsFree(&s->inbox);
+    free(s->dragText);
+    free(s->dragFiles);
     free(s->front);
     free(s->shown);
     free(s->title);
@@ -213,6 +252,32 @@ static Value fire_winb_utf8Str(const char* text, OwnList* list) {
     return StrV(s);
 }
 
+/* The paths of a drop (one per line in `data`) as an array of strings. */
+static Value fire_winb_paths(const char* data, OwnList* list) {
+    size_t count = 0, i = 0;
+    const char* p;
+    Arr* a;
+    if (data == NULL || data[0] == 0) return ArrV(allocArr(0, list));
+    for (p = data; *p; p++) if (*p == '\n') count++;
+    count++;
+    a = allocArr((uint32_t)count, list);
+    p = data;
+    while (i < count) {
+        const char* end = strchr(p, '\n');
+        size_t n = end ? (size_t)(end - p) : strlen(p);
+        char* line = (char*)malloc(n + 1);
+        if (line == NULL) fatal("Out of memory.");
+        memcpy(line, p, n);
+        line[n] = 0;
+        arrItems(a)[i] = fire_winb_utf8Str(line, list);
+        retain(arrItems(a)[i]);
+        free(line);
+        i++;
+        p = end ? end + 1 : p + n;
+    }
+    return ArrV(a);
+}
+
 /* The number of parameters a callback for this event type must have (EventCallback.CheckParameters). */
 static uint32_t fire_winb_callbackParams(int type) {
     switch (type) {
@@ -223,6 +288,9 @@ static uint32_t fire_winb_callbackParams(int type) {
         case FIRE_EV_JOY_AXIS: case FIRE_EV_JOY_HAT: return 3;
         case FIRE_EV_TOUCH_DOWN: case FIRE_EV_TOUCH_MOVE: case FIRE_EV_TOUCH_UP: return 4;
         case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: return 1;
+        case FIRE_EV_DROP_FILES: case FIRE_EV_DROP_TEXT: return 3;
+        case FIRE_EV_DRAG_HOVER: return 2;
+        case FIRE_EV_DRAG_LEAVE: return 0;
         default: return 0;
     }
 }
@@ -268,6 +336,9 @@ static void fire_winb_dispatch(FireWinState* w, const FireDisplayEvent* e) {
             case FIRE_EV_JOY_HAT: a[0] = Int(e->joystick); a[1] = Int(e->index); a[2] = Int((int64_t)e->value); n = 3; break;
             case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: a[0] = Int(e->joystick); a[1] = Int(e->index); n = 2; break;
             case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: a[0] = Int(e->joystick); n = 1; break;
+            case FIRE_EV_DROP_FILES: a[0] = fire_winb_paths(e->data, &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
+            case FIRE_EV_DROP_TEXT: a[0] = fire_winb_utf8Str(e->data ? e->data : "", &scratch); a[1] = Float(e->x); a[2] = Float(e->y); n = 3; break;
+            case FIRE_EV_DRAG_HOVER: a[0] = Float(e->x); a[1] = Float(e->y); n = 2; break;
             default: break;
         }
         fire_winb_runCallback(mine[i].lam, n, a);
@@ -301,7 +372,10 @@ static void fire_winb_dropBlocked(FireWinState* w, FireDisplayEvents* events) {
             for (i = 0; i < events->count; i++) if (events->items[i].type == FIRE_EV_CLOSE_REQUEST) w->closeRequested = 1;
         return;
     }
-    for (i = 0; i < events->count; i++) if (events->items[i].type == FIRE_EV_RESIZE || events->items[i].type == FIRE_EV_CLOSE) events->items[k++] = events->items[i];
+    for (i = 0; i < events->count; i++) {
+        if (events->items[i].type == FIRE_EV_RESIZE || events->items[i].type == FIRE_EV_CLOSE) events->items[k++] = events->items[i];
+        else { free(events->items[i].data); events->items[i].data = NULL; }
+    }
     events->count = k;
 }
 
@@ -311,6 +385,27 @@ static int fire_winb_ensureOpen(FireWinShared* s, int vsync) {
     s->opened = 1;
     if (!fire_display_open(&s->display, s->title, s->width, s->height, vsync)) s->failed = 1;
     return !s->failed;
+}
+
+/* Window.StartDrag on the thread of the OS window: the drag of the display (0 where the display has none: a board package of its own without
+ * fire_display_startDrag). */
+static int fire_winb_startDrag(FireDisplayWindow* display, const char* text, const char* files) {
+#ifdef FIRE_DISPLAY_START_DRAG
+    return fire_display_startDrag(display, text != NULL ? text : "", files != NULL ? files : "");
+#else
+    (void)display; (void)text; (void)files;
+    return 0;
+#endif
+}
+
+/* Window.CanStartDrag: can the display hand a drag to the desktop (0 where it has no such question: a board package of its own)? */
+static int fire_winb_canStartDrag(FireDisplayWindow* display) {
+#ifdef FIRE_DISPLAY_CAN_START_DRAG
+    return fire_display_canStartDrag(display);
+#else
+    (void)display;
+    return 0;
+#endif
 }
 
 /* (a pointer list: remove every `item`) */
@@ -396,7 +491,22 @@ static void fire_winb_pumpThread(void* arg) {
             if (s->touchReq >= 0) { fire_display_setTouchMouse(&s->display, s->touchReq != 0); s->touchReq = -1; }
             if (s->sizeReqW > 0) { fire_display_setSize(&s->display, s->sizeReqW, s->sizeReqH); s->sizeReqW = s->sizeReqH = 0; }
             if (s->cursorReq >= 0) { fire_display_setCursor(&s->display, s->cursorReq); s->cursorReq = -1; }
-            events.count = 0;
+            if (s->dragReq) {
+                /* Window.StartDrag: the drag runs here, on the thread of the OS window, until the user lets go (the program waits for the answer) */
+                char* text = s->dragText;
+                char* files = s->dragFiles;
+                int result;
+                s->dragText = s->dragFiles = NULL;
+                s->dragReq = 0;
+                fire_winb_unlock(&s->m);
+                result = fire_winb_startDrag(&s->display, text, files);
+                free(text);
+                free(files);
+                fire_winb_lock(&s->m);
+                s->dragResult = result;
+                s->dragDone = 1;
+            }
+            fire_display_eventsClear(&events);
             w = s->frontW > 0 ? s->frontW : s->width; h = s->frontH > 0 ? s->frontH : s->height;
             open = fire_display_pump(&s->display, &events, w, h);
             for (e = 0; e < events.count; e++) if (s->inbox.count < FIRE_WIN_MAX_QUEUED_EVENTS) fire_display_push(&s->inbox, &events.items[e]);
@@ -405,10 +515,11 @@ static void fire_winb_pumpThread(void* arg) {
                 uint32_t* t = s->shown;
                 s->shown = s->front; s->front = t;
                 s->shownW = s->frontW; s->shownH = s->frontH; s->frontNew = 0;
+                s->shownFn = s->frontFn; s->shownCtx = s->frontCtx;
             }
             fire_winb_unlock(&s->m);
             /* (the program publishes into `front` meanwhile; what is shown is the thread's own copy) */
-            if (s->shown != NULL) fire_display_present(&s->display, s->shown, s->shownW, s->shownH);
+            if (s->shown != NULL) fire_winb_show(s, s->shownFn, s->shownCtx, s->shown, s->shownW, s->shownH);
         }
         fire_mutex_lock(&m->cycleM);
         m->cycles++;
@@ -429,7 +540,10 @@ static void fire_winb_pumpThread(void* arg) {
         int gone;
         fire_winb_lock(&s->m);
         gone = s->release;
-        if (!gone) fire_display_close(&s->display);   /* (the program frees it with its window) */
+        if (!gone) {
+            if (s->direct) { s->presentFn(s->presentCtx, 0, &s->native, NULL, 0, 0); s->direct = 0; }   /* (the presenter lets go of the window before it closes) */
+            fire_display_close(&s->display);   /* (the program frees it with its window) */
+        }
         fire_winb_unlock(&s->m);
         if (gone) fire_winb_sharedDelete(s);
     }
@@ -682,6 +796,7 @@ static Value fire_win_WinPresent(Value id) {
         old = w->sh->front;
         w->sh->front = pixels;
         w->sh->frontW = w->fb->width; w->sh->frontH = w->fb->height;
+        w->sh->frontFn = (fire_present_fn)w->fb->presentFn; w->sh->frontCtx = w->fb->presentCtx;
         w->sh->frontNew = 1;
         fire_winb_unlock(&w->sh->m);
         free(old);
@@ -689,7 +804,7 @@ static Value fire_win_WinPresent(Value id) {
     }
     if (!fire_winb_ensureOpen(w->sh, w->vsync)) return Undef();
     pixels = fire_winb_resolve(w->fb);
-    fire_display_present(&w->sh->display, pixels, w->fb->width, w->fb->height);
+    fire_winb_show(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height);
     free(pixels);
     return Undef();
 }
@@ -710,7 +825,7 @@ static Value fire_win_WinTick(Value id) {
             if (events.items[k].type == FIRE_EV_RESIZE && fire_gfx_validSize(events.items[k].width, events.items[k].height)) fire_gfx_fbResize(w->fb, events.items[k].width, events.items[k].height);
     fire_winb_dropBlocked(w, &events);
     pixels = fire_winb_resolve(w->fb);
-    fire_display_present(&w->sh->display, pixels, w->fb->width, w->fb->height);
+    fire_winb_show(w->sh, (fire_present_fn)w->fb->presentFn, w->fb->presentCtx, pixels, w->fb->width, w->fb->height);
     free(pixels);
     fire_winb_enqueue(w, &events);
     i = (int32_t)id.i;
@@ -731,7 +846,8 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
     uint32_t n = 0, k;
     Arr* a;
     if (!w->queueOn || w->queueHead >= w->queue.count) return Undef();
-    e = w->queue.items[w->queueHead++];
+    e = w->queue.items[w->queueHead];
+    w->queue.items[w->queueHead++].data = NULL;   /* (the event's text is this function's now) */
     if (w->queueHead == w->queue.count) { w->queue.count = 0; w->queueHead = 0; }
     items[n++] = Int(e.type);
     switch (e.type) {
@@ -747,12 +863,201 @@ static Value fire_win_WinNextEvent(Value id, OwnList* list) {
         case FIRE_EV_JOY_HAT: items[n++] = Int(e.joystick); items[n++] = Int(e.index); items[n++] = Int((int64_t)e.value); break;
         case FIRE_EV_JOY_BUTTON_DOWN: case FIRE_EV_JOY_BUTTON_UP: items[n++] = Int(e.joystick); items[n++] = Int(e.index); break;
         case FIRE_EV_JOY_ADDED: case FIRE_EV_JOY_REMOVED: items[n++] = Int(e.joystick); break;
+        case FIRE_EV_DROP_FILES: items[n++] = fire_winb_paths(e.data, list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_DROP_TEXT: items[n++] = fire_winb_utf8Str(e.data ? e.data : "", list); items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
+        case FIRE_EV_DRAG_HOVER: items[n++] = fire_winb_px(e.x); items[n++] = fire_winb_px(e.y); break;
         default: break;
     }
+    free(e.data);
     a = allocArr(n, list);
     for (k = 0; k < n; k++) { arrItems(a)[k] = items[k]; retain(items[k]); }
     return ArrV(a);
 }
+/* ---- the clipboard (text) of the desktop - Clipboard of the prelude ---- */
+static Value fire_win_WinClipboardSetText(Value text) {
+    char* utf8;
+    int ok;
+    if (text.kind != K_String) return Bool(false);
+    utf8 = fire_winb_toUtf8(text);
+    if (utf8 == NULL) fatal("Out of memory.");
+    ok = fire_display_clipboardSet(utf8);
+    free(utf8);
+    return Bool(ok != 0);
+}
+/* The text on the clipboard, undefined when there is none. */
+static Value fire_win_WinClipboardGetText(OwnList* list) {
+    char* text = fire_display_clipboardGet();
+    Value v;
+    if (text == NULL) return Undef();
+    v = fire_winb_utf8Str(text, list);
+    free(text);
+    return v;
+}
+static Value fire_win_WinClipboardHasText(void) { return Bool(fire_display_clipboardHas() != 0); }
+
+/* ---- pictures and files on the clipboard: Clipboard.GetImage/SetImage/HasImage, GetFiles/SetFiles/HasFiles ---- */
+/* The picture on the clipboard: the bytes of its PNG or BMP file (the prelude decodes them), undefined when there is none. */
+static Value fire_win_WinClipboardGetImage(OwnList* list) {
+    size_t size = 0;
+    unsigned char* image = fire_display_clipboardGetImage(&size);
+    Buf* b;
+    if (image == NULL || size == 0 || size > 0x7FFFFFFFu) { free(image); return Undef(); }
+    b = allocBuf((uint32_t)size, list);
+    memcpy(bufBytes(b), image, size);
+    free(image);
+    return BufV(b);
+}
+/* Puts a picture there (`png`: the PNG file that Framebuffer.ToPng made); the desktops that want a BMP (Windows: CF_DIB) get one made from it too. */
+static Value fire_win_WinClipboardSetImage(Value png) {
+    Buf* b;
+    FireGfxImage image;
+    char err[FIRE_GFX_ERR_SIZE];
+    uint8_t* bmp = NULL;
+    size_t bmpSize = 0;
+    int ok;
+    if (png.kind != K_Buffer) return Bool(false);
+    if (!leafAlive(png)) return destroyedError(png);
+    b = bufOf(png);
+    fire_gfx_imageInit(&image);
+    err[0] = 0;
+    if (!fire_gfx_decodeImage(bufBytes(b), b->length, &image, err)) { fire_gfx_imageFree(&image); return Bool(false); }
+    {
+        size_t n = fire_gfx_imageCount(&image), i;
+        uint32_t* rgba = (uint32_t*)calloc(n + 1, sizeof(uint32_t));
+        if (rgba == NULL) { fire_gfx_imageFree(&image); return Bool(false); }
+        if (image.indexed) { for (i = 0; i < n; i++) rgba[i] = image.indices[i] == image.transparentIndex ? image.palette[image.indices[i]] & 0x00FFFFFFu : image.palette[image.indices[i]]; }
+        else if (n) memcpy(rgba, image.pixels, n * sizeof(uint32_t));
+        bmp = fire_gfx_encodeBmp(rgba, image.width, image.height, &bmpSize);
+        free(rgba);
+    }
+    fire_gfx_imageFree(&image);
+    ok = fire_display_clipboardSetImage(bufBytes(b), b->length, bmp, bmpSize);
+    free(bmp);
+    return Bool(ok != 0);
+}
+static Value fire_win_WinClipboardHasImage(void) { return Bool(fire_display_clipboardHasImage() != 0); }
+/* The paths on the clipboard (string[]; empty: none). */
+static Value fire_win_WinClipboardGetFiles(OwnList* list) {
+    char* paths = fire_display_clipboardGetFiles();
+    Value v = fire_winb_paths(paths, list);
+    free(paths);
+    return v;
+}
+/* Puts paths there (string[]; the prelude makes an array of a List). */
+static Value fire_win_WinClipboardSetFiles(Value paths) {
+    Arr* a;
+    char* all = NULL;
+    size_t total = 0, used = 0;
+    uint32_t i;
+    int ok;
+    if (paths.kind != K_Array) return Bool(false);
+    if (!leafAlive(paths)) return destroyedError(paths);
+    a = arrOf(paths);
+    for (i = 0; i < a->length; i++) {
+        Value item = arrItems(a)[i];
+        char* utf8;
+        size_t n;
+        char* grown;
+        if (item.kind != K_String) continue;
+        utf8 = fire_winb_toUtf8(item);
+        n = strlen(utf8);
+        if (n == 0 || strchr(utf8, '\n') != NULL) { free(utf8); continue; }
+        grown = (char*)realloc(all, total + n + 2);
+        if (grown == NULL) { free(utf8); free(all); fatal("Out of memory."); }
+        all = grown;
+        total += n + 2;
+        if (used > 0) all[used++] = '\n';
+        memcpy(all + used, utf8, n + 1);
+        used += n;
+        free(utf8);
+    }
+    if (all == NULL) return Bool(false);
+    ok = fire_display_clipboardSetFiles(all);
+    free(all);
+    return Bool(ok != 0);
+}
+static Value fire_win_WinClipboardHasFiles(void) { return Bool(fire_display_clipboardHasFiles() != 0); }
+
+/* The paths of a string[] as one text, one per line (malloc; NULL: none - empty paths and paths with a line break are left out). */
+static char* fire_winb_pathLines(Value paths) {
+    Arr* a;
+    char* all = NULL;
+    size_t total = 0, used = 0;
+    uint32_t i;
+    if (paths.kind != K_Array || !leafAlive(paths)) return NULL;
+    a = arrOf(paths);
+    for (i = 0; i < a->length; i++) {
+        Value item = arrItems(a)[i];
+        char* utf8;
+        size_t n;
+        char* grown;
+        if (item.kind != K_String) continue;
+        utf8 = fire_winb_toUtf8(item);
+        n = strlen(utf8);
+        if (n == 0 || strchr(utf8, '\n') != NULL) { free(utf8); continue; }
+        grown = (char*)realloc(all, total + n + 2);
+        if (grown == NULL) { free(utf8); free(all); fatal("Out of memory."); }
+        all = grown;
+        total += n + 2;
+        if (used > 0) all[used++] = '\n';
+        memcpy(all + used, utf8, n + 1);
+        used += n;
+        free(utf8);
+    }
+    return all;
+}
+
+/* ---- Window.StartDrag: text and/or files (string[]) are dragged out of the window into other programs until the user lets go: 0 nothing, 1 copied, 2 moved ----
+ * The drag runs on the thread that owns the OS window: here, or - when a manager's thread pumps the window - there; the program waits for the answer
+ * (without the GIL, so that the program's other threads go on). */
+static Value fire_win_WinStartDrag(Value id, Value text, Value files) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    char* utf8 = text.kind == K_String ? fire_winb_toUtf8(text) : NULL;
+    char* paths = fire_winb_pathLines(files);
+    int result = 0;
+    if ((utf8 == NULL || utf8[0] == 0) && paths == NULL) { free(utf8); return Int(0); }
+#ifdef FIRE_WINDOW_THREADS
+    if (fire_winb_threaded(w)) {
+        FireWinMgr* m = w->mgr;
+        int done = 0;
+        fire_winb_lock(&s->m);
+        if (!s->opened || s->failed || s->closed) { fire_winb_unlock(&s->m); free(utf8); free(paths); return Int(0); }
+        free(s->dragText); free(s->dragFiles);
+        s->dragText = utf8; s->dragFiles = paths;
+        s->dragReq = 1; s->dragDone = 0; s->dragResult = 0;
+        fire_winb_unlock(&s->m);
+        gilRelease();
+        while (!done) {
+            fire_mutex_lock(&m->cycleM);
+            fire_cond_waitFor(&m->cycleCv, &m->cycleM, 20);
+            fire_mutex_unlock(&m->cycleM);
+            fire_winb_lock(&s->m);
+            if (s->dragDone) { result = s->dragResult; s->dragDone = 0; done = 1; }
+            else if (s->closed || s->release || fire_atomic_load(&m->stop)) { s->dragReq = 0; done = 1; }   /* (the thread is gone or the window closed: no drag) */
+            fire_winb_unlock(&s->m);
+        }
+        gilAcquire();
+        return Int(result);
+    }
+#endif
+    if (s->opened && !s->failed) result = fire_winb_startDrag(&s->display, utf8, paths);
+    free(utf8);
+    free(paths);
+    return Int(result);
+}
+
+/* ---- Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11), or does it always say 0 (Wayland, macOS, no desktop)? ---- */
+static Value fire_win_WinCanStartDrag(Value id) {
+    FireWinState* w = fire_winb_windowOf(id);
+    FireWinShared* s = w->sh;
+    int result = 0;
+    fire_winb_lock(&s->m);
+    if (s->opened && !s->failed && !s->closed) result = fire_winb_canStartDrag(&s->display);
+    fire_winb_unlock(&s->m);
+    return Bool(result != 0);
+}
+
 static Value fire_win_WinRegisterEvent(Value id, Value type, Value lam) {
     FireWinState* w = fire_winb_windowOf(id);
     int t;

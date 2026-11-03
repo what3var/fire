@@ -29,10 +29,12 @@ namespace fire.Compiler
         }
 
         /// <summary>Like <see cref="Generate"/>, and whether the program asked for the GUI subsystem (`#noconsole`, the project's subsystem).</summary>
-        public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null)
+        /// <param name="chooseSdl">Which SDL a window is built with when the target does not say (<see cref="ChooseSdl"/>; null: SDL2).</param>
+        public static NativeProgram GenerateLinked(IReadOnlyList<string> sources, TargetProfile target, VmExecutionMode? mode = null, int? floatWidth = null, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null, IReadOnlyList<string?>? sourcePaths = null,
+            Func<int>? chooseSdl = null)
         {
             var linked = new Linker { BasePath = basePath, Engine = "native", Defines = defines, Plan = plan, SourcePaths = plan?.SourcePaths.Cast<string?>().ToList() ?? sourcePaths }.CompileAndLink(sources, null, null, mode, floatWidth, target);
-            var generated = CppGenerator.GenerateSources(linked, target);
+            var generated = CppGenerator.GenerateSources(linked, target, chooseSdl);
             return new NativeProgram(generated.Program, generated.Natives, linked.GuiSubsystem, linked.VersionInfo, linked.IconPath);
         }
 
@@ -85,7 +87,10 @@ namespace fire.Compiler
             VmExecutionMode? mode = null, int? floatWidth = null, bool keepSources = false, string? basePath = null, IReadOnlyList<string>? defines = null, fire.Projects.BuildPlan? plan = null,
             IReadOnlyList<string?>? sourcePaths = null)
         {
-            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths);
+            // the SDL of a window: what the environment, the target or the toolchain asks for, else SDL3 when the toolchain can build it (asked only for a program with a window)
+            target = WithRequestedSdl(target, toolchain);
+            Func<int>? chooseSdl = toolchain.EffectiveKind is "files" or "custom" or "emscripten" ? null : () => ChooseSdl(toolchain, target);
+            var program = GenerateLinked(sources, target, mode, floatWidth, basePath, defines, plan, sourcePaths, chooseSdl);
             string cpp = program.C;
             bool gui = program.Gui;
             string? configDirectory = config.Path == null ? null : Path.GetDirectoryName(config.Path);
@@ -127,7 +132,7 @@ namespace fire.Compiler
                     }
                     toolchain = provided;
                 }
-                // a window needs the development files of SDL2: look for them, offer to download them (Windows)
+                // a window needs the development files of SDL (2 or 3): look for them, offer to download them (Windows)
                 if (ToolchainProvider.RequireLibraries(toolchain, cppFile) is { } missingLibrary)
                     return new NativeBuildResult(false, exe, missingLibrary, new[] { new Diagnostic(0, missingLibrary, DiagnosticSeverity.Error, ErrorCatalog.NativeConfiguration) });
                 bool ok = true;
@@ -140,8 +145,9 @@ namespace fire.Compiler
                 }
                 bool built = ok && File.Exists(exe);
                 if (built) ApplyPeMetadata(exe, program, target, log);
-                // a Windows program with a window needs SDL2.dll next to it
-                if (built && toolchain.EffectiveKind != "emscripten" && SdlSetup.IsRequiredBy(cppFile) && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain))) log.AppendLine("SDL2.dll copied next to the program.");
+                // a Windows program with a window needs SDL2.dll (SDL3.dll) next to it
+                int sdlVersion = SdlSetup.RequiredVersion(cppFile);
+                if (built && toolchain.EffectiveKind != "emscripten" && sdlVersion > 0 && SdlSetup.CopyRuntimeNextTo(exe, SdlSetup.Locate(toolchain, sdlVersion))) log.AppendLine($"SDL{sdlVersion}.dll copied next to the program.");
                 return new NativeBuildResult(built, exe, log.ToString(), built ? null : new[] { new Diagnostic(0, "The C++ compiler of the native build reported errors (see the build log).", DiagnosticSeverity.Error, ErrorCatalog.NativeToolchain) });
             }
             finally
@@ -207,9 +213,10 @@ namespace fire.Compiler
             bool isC = language == "c";
             string std = isC ? toolchain.CStd ?? "c11" : toolchain.Std ?? "c++17";
             var libs = (toolchain.Libs ?? new()).Concat(target.Native.LinkLibs).ToList();
-            // the generated program asks for libraries it needs (`// fire-link: SDL2` for a window): -lSDL2, SDL2.lib with msvc
+            // the generated program asks for libraries it needs (`// fire-link: SDL3` or `SDL2` for a window): -lSDL3, SDL3.lib with msvc
             string linkSource = programFile ?? cppFile;
-            if (!compileOnly && File.Exists(linkSource))
+            // (Emscripten needs -sUSE_SDL=2 also when it only compiles: it picks the headers of its SDL2 port)
+            if ((!compileOnly || kind == "emscripten") && File.Exists(linkSource))
                 foreach (string line in File.ReadLines(linkSource))
                     if (line.StartsWith("// fire-link: ", StringComparison.Ordinal))
                     {
@@ -219,13 +226,17 @@ namespace fire.Compiler
                     }
             var includes = (toolchain.IncludeDirs ?? new()).Concat(extraIncludeDirs ?? Array.Empty<string>()).ToList();
             var libDirs = new List<string>();
-            // SDL2: where its headers and import library are (Toolchain\SDL2, SDL2_DIR, the prefix of the compiler, the system), see SdlSetup
+            // SDL: where its headers and import library are (Toolchain\SDL3, SDL3_DIR, the prefix of the compiler, the system; the same for SDL2), see SdlSetup
             if (kind == "emscripten") libs = libs.Select(l => l == "-lSDL2" ? "-sUSE_SDL=2" : l).ToList();   // Emscripten brings SDL2 itself
-            else if (kind != "custom" && libs.Any(l => l is "-lSDL2" or "SDL2.lib") && SdlSetup.Locate(toolchain) is { } sdl)
-            {
-                includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
-                libDirs.AddRange(sdl.LibDirs);
-            }
+            else if (kind != "custom")
+                foreach (int version in new[] { 3, 2 })
+                    if (libs.Any(l => l == $"-lSDL{version}" || l == $"SDL{version}.lib") && SdlSetup.Locate(toolchain, version) is { } sdl)
+                    {
+                        includes.AddRange(sdl.IncludeDirs.Where(d => !includes.Contains(d)));
+                        libDirs.AddRange(sdl.LibDirs.Where(d => !libDirs.Contains(d)));
+                        // TinyCC resolves the libraries that libSDL*.so needs itself and does not follow their RUNPATH (libpulse.so.0 -> pulseaudio/libpulsecommon-*.so): it is told the folder
+                        if (kind == "tcc" && OperatingSystem.IsLinux()) libDirs.AddRange(SdlSetup.TccRunpathDirs().Where(d => !libDirs.Contains(d)));
+                    }
             if (kind == "custom")
             {
                 string template = toolchain.Command ?? throw new NativeConfigException("a custom toolchain needs a command");
@@ -273,6 +284,7 @@ namespace fire.Compiler
                 args.Append($"-I\"{includeDir}\" ");
                 foreach (string d in includes) args.Append($"-I\"{d}\" ");
                 args.Append($"-o \"{exe}\"");
+                if (compileOnly && kind == "emscripten") foreach (string l in libs.Where(l => l.StartsWith("-s", StringComparison.Ordinal))) args.Append(' ').Append(l);
                 if (compileOnly) return (isC ? ToolchainDetector.FindC(toolchain) ?? toolchain.EffectiveCCompiler : ToolchainDetector.Find(toolchain) ?? toolchain.EffectiveCompiler, args.ToString());
                 // the C library of the program: libm (the math functions of C are in a library of their own on some systems)
                 if (isC && !sharedLibrary && kind != "emscripten" && !RuntimeInformation.IsOSPlatform(OSPlatform.Windows) && !libs.Contains("-lm")) libs.Add("-lm");
@@ -353,6 +365,54 @@ namespace fire.Compiler
             {
                 try { Directory.Delete(work, true); } catch (IOException) { }
             }
+        }
+
+        /// <summary>The SDL that is asked for, before the toolchain is probed: the environment variable FIRE_SDL (2 or 3), else the target's <c>sdl</c>, else the toolchain's; null:
+        /// the build decides (<see cref="ChooseSdl"/>).</summary>
+        public static int? RequestedSdl(TargetProfile target, ToolchainDef? toolchain)
+        {
+            string? env = Environment.GetEnvironmentVariable("FIRE_SDL")?.Trim();
+            if (env == "2" || env == "3") return env[0] - '0';
+            return target.Native.Sdl ?? toolchain?.Sdl;
+        }
+
+        /// <summary>The target with the SDL that is asked for (<see cref="RequestedSdl"/>) written into it.</summary>
+        public static TargetProfile WithRequestedSdl(TargetProfile target, ToolchainDef? toolchain) =>
+            RequestedSdl(target, toolchain) is int sdl && sdl != target.Native.Sdl ? target with { Native = target.Native with { Sdl = sdl } } : target;
+
+        /// <summary>The SDL a window is built with: 3 when the toolchain can compile and link SDL3 for the target (<see cref="CanBuildSdl3"/>), else 2.</summary>
+        public static int ChooseSdl(ToolchainDef toolchain, TargetProfile target) => CanBuildSdl3(toolchain, target) ? 3 : 2;
+
+        /// <summary>Can the toolchain compile and link a program against SDL3 for this target? A tiny program (`#include &lt;SDL3/SDL.h&gt;`, SDL_Init) is built - once: the
+        /// answer is remembered (<see cref="NativeProbeCache"/>) under the compiler, the target and where SDL3 was found. Not where SDL3 is not found at all.</summary>
+        public static bool CanBuildSdl3(ToolchainDef toolchain, TargetProfile target)
+        {
+            string kind = toolchain.EffectiveKind;
+            if (kind is "files" or "custom" or "emscripten" || target.Native.Platform is not ("posix" or "windows")) return false;
+            string? compiler = kind == "msvc" ? ToolchainDetector.Find(toolchain) : ToolchainDetector.FindC(toolchain);
+            if (compiler == null || SdlSetup.Locate(toolchain, 3) is not { } location) return false;
+            string? header = location.IncludeDirs.Concat(new[] { "/usr/include", "/usr/local/include" }).Select(d => Path.Combine(d, "SDL3", "SDL.h")).FirstOrDefault(File.Exists);
+            string key = string.Join("|", "sdl3", kind, NativeProbeCache.Stamp(compiler), target.Name, target.Native.Platform, string.Join(" ", toolchain.Args ?? new()),
+                string.Join(" ", target.Native.CompileArgs), string.Join(";", location.IncludeDirs), string.Join(";", location.LibDirs), NativeProbeCache.Stamp(header), location.Source);
+            if (NativeProbeCache.Get(key) is bool known) return known;
+            string work = Path.Combine(Path.GetTempPath(), "fire-sdl3-probe-" + Guid.NewGuid().ToString("N"));
+            bool ok = false;
+            try
+            {
+                Directory.CreateDirectory(work);
+                string c = Path.Combine(work, "probe.c");
+                File.WriteAllText(c, "// fire-link: SDL3\n#include <SDL3/SDL.h>\nint main(void) { return SDL_Init(0) ? 0 : 1; }\n");
+                string exe = Path.Combine(work, target.Name == "windows" ? "probe.exe" : "probe");
+                var (exeName, arguments) = CompilerCommand(toolchain, target, c, work, exe, language: "c");
+                ok = Run(exeName, arguments, work).Ok && File.Exists(exe);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NativeConfigException) { ok = false; }
+            finally
+            {
+                try { Directory.Delete(work, true); } catch (IOException) { }
+            }
+            NativeProbeCache.Set(key, ok);
+            return ok;
         }
 
         /// <summary>The name of the program that a native build produces by default (<c>out</c>, <c>out.exe</c> on Windows).</summary>

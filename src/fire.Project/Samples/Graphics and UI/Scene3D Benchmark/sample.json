@@ -1,0 +1,6 @@
+{
+  "title": "Scene3D Benchmark",
+  "description": "Frames per second of the same scene: drawn by the software renderer, by the GPU (the picture read back into the framebuffer) and by the GPU straight into the window (DirectDrawing).",
+  "open": [ "main.fire" ],
+  "order": 61
+}

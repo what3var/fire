@@ -36,6 +36,8 @@ namespace fire.Native
         public string? Layout { get; set; }
         /// <summary>A command that runs in the output folder after the files are written (e.g. <c>idf.py build</c>).</summary>
         public string? BuildCommand { get; set; }
+        /// <summary>The SDL a window is built with when the target does not say: 2 or 3 (null: SDL3 when this toolchain can compile and link it, else SDL2).</summary>
+        public int? Sdl { get; set; }
 
         [System.Text.Json.Serialization.JsonIgnore]
         public string EffectiveKind => Kind ?? "gcc";
@@ -47,7 +49,7 @@ namespace fire.Native
             ["msvc"] = new() { Kind = "msvc", Compiler = "cl", Std = "c++17", Optimization = "/O2", Args = new() { "/nologo", "/EHsc" } },
             // Emscripten (emsdk): C++ to WebAssembly. -fexceptions: fire exceptions are C++ exceptions, which Emscripten leaves off by default. ASYNCIFY lets `Sleep` and the window loop hand the thread back to the browser; SINGLE_FILE puts the .wasm into the page, so that the
             // .html opens as it is (also from a folder, without a web server).
-            ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
+            ["emscripten"] = new() { Kind = "emscripten", Compiler = "em++", Std = "c++17", CStd = "gnu11", Optimization = "-O2", Args = new() { "-Wall", "-Wextra", "-fexceptions", "-sASYNCIFY", "-sALLOW_MEMORY_GROWTH=1", "-sSINGLE_FILE=1", "-sMINIFY_HTML=0" } },
             // TinyCC: a small, fast C compiler - enough for programs whose packages are all in C (it compiles no C++: a program with natives in C++ needs one of the
             // others). -w: tcc warns about every call of a function that does not return (it does not know the attribute).
             ["tcc"] = new() { Kind = "tcc", Compiler = "tcc", CCompiler = "tcc", CStd = "c11", Optimization = "-O2", Args = new() { "-w" } },
@@ -64,7 +66,7 @@ namespace fire.Native
                 Extends = Extends, Kind = Kind ?? b.Kind, Compiler = Compiler ?? b.Compiler, Std = Std ?? b.Std, CStd = CStd ?? b.CStd,
                 CCompiler = CCompiler ?? (Compiler != null ? null : b.CCompiler), Optimization = Optimization ?? b.Optimization, Strip = Strip ?? b.Strip,
                 Args = Args ?? b.Args, Libs = Libs ?? b.Libs, IncludeDirs = IncludeDirs ?? b.IncludeDirs, Command = Command ?? b.Command,
-                Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand,
+                Layout = Layout ?? b.Layout, BuildCommand = BuildCommand ?? b.BuildCommand, Sdl = Sdl ?? b.Sdl,
             };
         }
 

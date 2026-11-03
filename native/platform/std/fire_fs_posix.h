@@ -11,6 +11,11 @@
 #include <unistd.h>
 #include "fire_fs_c.h"
 
+/* ESP-IDF (newlib on the VFS) has no symbolic links and no lstat: stat says the same there */
+#if defined(ESP_PLATFORM) && !defined(lstat)
+#define lstat stat
+#endif
+
 static int fire_fs_exists(const char* path, int* isDir) {
     struct stat st;
     if (stat(path, &st) != 0) return 0;

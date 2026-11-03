@@ -97,39 +97,75 @@ namespace fire.Values
         {
             ['f'] = 1e-15,
             ['p'] = 1e-12,
+            ['n'] = 1e-9,
             ['µ'] = 1e-6,   // micro sign (U+00B5)
             ['μ'] = 1e-6,   // Greek small mu (U+03BC), what many keyboards type
             ['u'] = 1e-6,   // the ASCII spelling: 10uF, 5us
             ['m'] = 1e-3,
             ['c'] = 1e-2,
+            ['d'] = 1e-1,   // deci: dm, dl, dg - `d` alone is the day
+            ['h'] = 1e2,    // hecto: hl, hm, hPa - `h` alone is the hour
             ['k'] = 1e3,
             ['M'] = 1e6,
             ['G'] = 1e9,
-            ['n'] = 1e-9,
         };
 
         // Prefixable base units: symbol -> canonical base symbol
         // (for these, base symbol == symbol, but kept explicit for clarity)
-        private static readonly HashSet<string> PrefixableBaseUnits = new() { "m", "g", "s", "b", "B" };
+        private static readonly HashSet<string> PrefixableBaseUnits = new() { "m", "g", "s", "b", "B", "l" };
 
         // "B" (byte) is itself already a named, prefixable unit,
         // whose canonical base dimension is "b" (bit), with scale factor 8.
+        // "l" (the litre) is a named, prefixable unit of the dimension m^3 (1l = 1dm^3 = 0.001m^3).
         // Non-prefixable but "s"-compatible time units with a fixed factor.
-        private static readonly Dictionary<string, (string baseSymbol, double scale)> NamedUnits = new()
+        private static readonly Dictionary<string, (string baseSymbol, int exponent, double scale)> NamedUnits = new()
         {
-            ["m"] = ("m", 1.0),
-            ["g"] = ("g", 1.0),
-            ["s"] = ("s", 1.0),
-            ["b"] = ("b", 1.0),
-            ["B"] = ("b", 8.0),
-            ["min"] = ("s", 60.0),
-            ["h"] = ("s", 3600.0),
-            ["d"] = ("s", 86400.0),
+            ["m"] = ("m", 1, 1.0),
+            ["g"] = ("g", 1, 1.0),
+            ["s"] = ("s", 1, 1.0),
+            ["b"] = ("b", 1, 1.0),
+            ["B"] = ("b", 1, 8.0),
+            ["l"] = ("m", 3, 0.001),
+            ["min"] = ("s", 1, 60.0),
+            ["h"] = ("s", 1, 3600.0),
+            ["d"] = ("s", 1, 86400.0),
         };
 
         // Units that themselves allow no prefix in front of them (even if their
         // base dimension is in principle prefixable, e.g. "s" via "ms").
         private static readonly HashSet<string> NonPrefixable = new() { "min", "h", "d" };
+
+        /// <summary>The built-in units without a prefix, and whether each takes a prefix (the native backend writes them into its table of the units a
+        /// text may name).</summary>
+        public static IEnumerable<(string Symbol, bool Prefixable)> BuiltInSymbols =>
+            NamedUnits.Keys.Select(k => (k, PrefixableBaseUnits.Contains(k) && !NonPrefixable.Contains(k)));
+
+        /// <summary>Whether `prefix` may stand in front of the unit `symbol` of fire or of the program: deci and hecto not in front of the bit and the byte
+        /// (`dB` stays free for the decibel a program declares, `hb` is no unit). fire_rt.h unitPrefixAllowed says the same.</summary>
+        public static bool PrefixAllowed(char prefix, string symbol) => !(prefix is 'd' or 'h' && symbol is "b" or "B");
+
+        /// <summary>The built-in unit of a word: a named one (`m`, `min`, `l`) or a prefix in front of a prefixable one (`km`, `ml`, `dm`); false for
+        /// every other word.</summary>
+        private static bool TryBuiltIn(string symbol, out Unit unit)
+        {
+            if (NamedUnits.TryGetValue(symbol, out var named))
+            {
+                unit = new Unit(new Dictionary<string, int> { [named.baseSymbol] = named.exponent }, named.scale, symbol);
+                return true;
+            }
+            if (symbol.Length >= 2)
+            {
+                string rest = symbol.Substring(1);
+                if (Prefixes.TryGetValue(symbol[0], out var prefixFactor) && NamedUnits.TryGetValue(rest, out var baseUnit)
+                    && PrefixableBaseUnits.Contains(rest) && !NonPrefixable.Contains(rest) && PrefixAllowed(symbol[0], rest))
+                {
+                    unit = new Unit(new Dictionary<string, int> { [baseUnit.baseSymbol] = baseUnit.exponent }, prefixFactor * baseUnit.scale, symbol);
+                    return true;
+                }
+            }
+            unit = Unitless;
+            return false;
+        }
 
         /// <summary>
         /// Parses a unit-suffix string as it stands directly on a
@@ -142,48 +178,114 @@ namespace fire.Values
                 return Unitless;
 
             if (symbol[0] == DemandMark) return DecodeDemand(symbol);
-            var custom = _customUnits;
+            return ParseWith(CaretExponents(symbol), _customUnits, knownOnly: false)!;
+        }
+
+        /// <summary>The power of a unit written as digits directly after its symbol (`m3`, `dm3`, `m/s2`, `kg*m2/s2`) in the form with `^` (`m^3`,
+        /// `m/s^2`): a symbol has letters only, so digits right after a letter can only be its power. Every other text stays as it is (`m^3`, `m^-1`).
+        /// fire_rt.h unitCaretExponents does the same.</summary>
+        public static string CaretExponents(string text)
+        {
+            int i = 0;
+            while (i < text.Length && !(text[i] is >= '0' and <= '9' && i > 0 && IsUnitLetter(text[i - 1]))) i++;
+            if (i == text.Length) return text;
+            var sb = new StringBuilder(text.Length + 2);
+            for (int k = 0; k < text.Length; k++)
+            {
+                if (text[k] is >= '0' and <= '9' && k > 0 && IsUnitLetter(text[k - 1])) sb.Append('^');
+                sb.Append(text[k]);
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>The unit a text names after its number (`"5mm".ToFloat()`, SPEC 8.12): a unit of fire (also with a prefix: `km`, `ml`, `hm`), a unit
+        /// of <paramref name="customUnits"/> (by its symbol or name, a prefixed one also with a prefix), or a combination of them (`m/s`, `kg*m/s^2`,
+        /// `m^2`; a unit with an offset or conversion functions only alone). Null for any other text - an unknown word is no unit here (a literal makes an
+        /// atomic unit of it). Null for <paramref name="customUnits"/> means the units of the program on this thread.</summary>
+        public static Unit? ParseKnown(string text, IReadOnlyList<CustomUnit>? customUnits)
+        {
+            text = CaretExponents(text);
+            if (!IsUnitText(text)) return null;
+            Dictionary<string, CustomUnit> custom;
+            if (customUnits == null) custom = _customUnits;
+            else if (customUnits.Count == 0) custom = EmptyCustomTable;
+            else lock (CustomTables) { custom = CustomTables.GetValue(customUnits, MakeCustomTable); }
+            return ParseWith(text, custom, knownOnly: true);
+        }
+
+        private static readonly Dictionary<string, CustomUnit> EmptyCustomTable = new();
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IReadOnlyList<CustomUnit>, Dictionary<string, CustomUnit>> CustomTables = new();
+
+        private static Dictionary<string, CustomUnit> MakeCustomTable(IReadOnlyList<CustomUnit> units)
+        {
+            var table = new Dictionary<string, CustomUnit>();
+            foreach (var u in units)
+            {
+                table[u.Symbol] = u;
+                if (u.Name != u.Symbol) table.TryAdd(u.Name, u);
+            }
+            return table;
+        }
+
+        /// <summary>A letter of a unit in a text (ASCII letters, the micro sign and the Greek mu).</summary>
+        public static bool IsUnitLetter(char c) => c is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or 'µ' or 'μ';
+
+        /// <summary>The form of a unit in a text: words of letters joined by `*` and `/`, each with an optional power `^n` / `^-n` (one or two digits).</summary>
+        private static bool IsUnitText(string text)
+        {
+            int i = 0;
+            while (true)
+            {
+                int start = i;
+                while (i < text.Length && IsUnitLetter(text[i])) i++;
+                if (i == start) return false;
+                if (i < text.Length && text[i] == '^')
+                {
+                    i++;
+                    if (i < text.Length && text[i] == '-') i++;
+                    int digits = i;
+                    while (i < text.Length && text[i] is >= '0' and <= '9') i++;
+                    if (i == digits || i - digits > 2) return false;
+                }
+                if (i == text.Length) return true;
+                if (text[i] is not ('*' or '/')) return false;
+                i++;
+            }
+        }
+
+        /// <summary>Parse with the given units of the program; with <paramref name="knownOnly"/> an unknown word is null instead of an atomic unit.</summary>
+        private static Unit? ParseWith(string symbol, Dictionary<string, CustomUnit> custom, bool knownOnly)
+        {
+            if (symbol.Length == 0) return knownOnly ? null : Unitless;
 
             // A combined unit of a declaration: `m/s`, `kg*m/s^2`, `m^2` - factors joined by `*` and `/` (everything after a `/` divides), each with an optional power
             if (symbol.IndexOfAny(CombiningChars) >= 0)
-                return ParseCombined(symbol);
+                return ParseCombined(symbol, custom, knownOnly);
 
             // 1) Exact hit on a named (possibly non-prefixable) unit name first,
             //    so that e.g. "min" is not wrongly split into prefix 'm' + base "in".
-            if (NamedUnits.TryGetValue(symbol, out var named))
-            {
-                var dims = new Dictionary<string, int> { [named.baseSymbol] = 1 };
-                return new Unit(dims, named.scale, symbol);
-            }
+            if (NamedUnits.ContainsKey(symbol) && TryBuiltIn(symbol, out var named)) return named;
 
             // 1b) A unit of the program (`unit Inch: in { ... }`), by its symbol or its name
-            if (custom.Count > 0 && custom.TryGetValue(symbol, out var own))
-                return new Unit(own.DimensionTable, own.Scale, own.Symbol, own.Offset, own.Converter, own.UnitlessConverter);
+            if (custom.Count > 0 && custom.TryGetValue(symbol, out var own)) return OfCustom(own);
 
-            // 2) Prefix + prefixable base unit, e.g. "mm" = 'm'(milli) + "m"(metre)
-            if (symbol.Length >= 2)
-            {
-                char prefixChar = symbol[0];
-                string rest = symbol.Substring(1);
-                if (Prefixes.TryGetValue(prefixChar, out var prefixFactor)
-                    && NamedUnits.TryGetValue(rest, out var baseUnit)
-                    && PrefixableBaseUnits.Contains(rest)
-                    && !NonPrefixable.Contains(rest))
-                {
-                    var dims = new Dictionary<string, int> { [baseUnit.baseSymbol] = 1 };
-                    return new Unit(dims, prefixFactor * baseUnit.scale, symbol);
-                }
-            }
+            // 2) Prefix + prefixable base unit, e.g. "mm" = 'm'(milli) + "m"(metre), "ml" = 'm' + "l"(litre)
+            if (TryBuiltIn(symbol, out var prefixedBuiltIn)) return prefixedBuiltIn;
 
-            // 2b) Prefix + a `prefixed unit` of the program (`mV` of `prefixed unit Volt: V`) - by its symbol only
+            // 2b) Prefix + a `prefixed unit` of the program (`mV` of `prefixed unit Volt: V`, `hPa` of `prefixed unit Pascal: Pa`) - by its symbol only
             if (symbol.Length >= 2 && custom.Count > 0 && Prefixes.TryGetValue(symbol[0], out var ownPrefix)
-                && custom.TryGetValue(symbol.Substring(1), out var prefixable) && prefixable.Prefixed && prefixable.Symbol == symbol.Substring(1))
+                && custom.TryGetValue(symbol.Substring(1), out var prefixable) && prefixable.Prefixed && prefixable.Symbol == symbol.Substring(1)
+                && PrefixAllowed(symbol[0], prefixable.Symbol))
                 return new Unit(prefixable.DimensionTable, ownPrefix * prefixable.Scale, symbol);
 
             // 3) Unknown -> atomic unit, compatible only with itself.
+            if (knownOnly) return null;
             var atomicDims = new Dictionary<string, int> { [symbol] = 1 };
             return new Unit(atomicDims, 1.0, symbol);
         }
+
+        /// <summary>The unit a declaration of the program makes (`unit Inch: in { ... }`), named by its symbol.</summary>
+        public static Unit OfCustom(CustomUnit own) => new Unit(own.DimensionTable, own.Scale, own.Symbol, own.Offset, own.Converter, own.UnitlessConverter);
 
         // ---------------------------------------------------------------
         // Units of the program (`unit Inch: in { coerce m => 0.0254 }`, SPEC "Own units")
@@ -225,6 +327,7 @@ namespace fire.Values
         {
             if (unitText.StartsWith("any ", StringComparison.Ordinal)) return "any " + DemandText(unitText.Substring(4));
             if (_customUnitList.Count == 0 || unitText.Length == 0 || unitText[0] == DemandMark) return unitText;
+            unitText = CaretExponents(unitText);
             if (!unitText.Split(CombiningChars).Any(IsCustomUnitWord)) return unitText;
             var u = Parse(unitText);
             string dims = string.Join(",", u.Dimensions.OrderBy(d => d.Key, StringComparer.Ordinal).Select(d => d.Key + ":" + d.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)));
@@ -256,17 +359,13 @@ namespace fire.Values
         /// <summary>A unit symbol that only a unit of the program defines (a word the lexer reads as a keyword, `in`, can still be a unit then).</summary>
         public static bool IsCustomUnitWord(string word) =>
             _customUnits.ContainsKey(word)
-            || word.Length >= 2 && Prefixes.ContainsKey(word[0]) && _customUnits.TryGetValue(word.Substring(1), out var u) && u.Prefixed && u.Symbol == word.Substring(1);
+            || word.Length >= 2 && Prefixes.ContainsKey(word[0]) && _customUnits.TryGetValue(word.Substring(1), out var u) && u.Prefixed && u.Symbol == word.Substring(1)
+               && PrefixAllowed(word[0], u.Symbol);
 
-        /// <summary>What `Parse` makes of a word without the units of the program: null for an unknown word (an atomic unit), else the built-in unit
-        /// (`m`, `km`, `min`) - a unit of the program must not take its place.</summary>
-        public static string? BuiltInMeaning(string word)
-        {
-            if (NamedUnits.ContainsKey(word)) return word;
-            if (word.Length >= 2 && Prefixes.ContainsKey(word[0]) && NamedUnits.ContainsKey(word.Substring(1)) && PrefixableBaseUnits.Contains(word.Substring(1)))
-                return $"the prefix '{word[0]}' in front of '{word.Substring(1)}'";
-            return null;
-        }
+        /// <summary>The built-in unit a word is exactly (`m`, `min`, `l`, `h`) - a unit of the program must not take its place; null for every other word.
+        /// A word that is only a prefix in front of a unit of fire (`dB`, `hs`, `km`) may be the symbol of a unit of the program: the unit wins over the
+        /// prefix (Parse looks for the exact symbols of fire and of the program before it splits off a prefix).</summary>
+        public static string? BuiltInMeaning(string word) => NamedUnits.ContainsKey(word) ? word : null;
 
         public bool IsCompatibleWith(Unit other)
         {
@@ -345,7 +444,7 @@ namespace fire.Values
 
         private static readonly char[] CombiningChars = { '/', '*', '^' };
 
-        private static Unit ParseCombined(string symbol)
+        private static Unit? ParseCombined(string symbol, Dictionary<string, CustomUnit> custom, bool knownOnly)
         {
             var result = Unitless;
             bool divide = false;
@@ -354,7 +453,10 @@ namespace fire.Values
             {
                 int start = i;
                 while (i < symbol.Length && symbol[i] is not ('/' or '*' or '^')) i++;
-                var factor = Parse(symbol.Substring(start, i - start));
+                var factor = ParseWith(symbol.Substring(start, i - start), custom, knownOnly);
+                if (factor == null) return null;
+                // (a text names a unit with an offset or conversion functions only alone: `5C`, not `5C/s`)
+                if (knownOnly && (!factor.IsLinear || factor.UnitlessConverter != null)) return null;
                 int power = 1;
                 if (i < symbol.Length && symbol[i] == '^')
                 {
@@ -371,7 +473,165 @@ namespace fire.Values
                     i++;
                 }
             }
-            return new Unit(new Dictionary<string, int>(result.Dimensions), result.Scale, symbol);
+            var terms = TermsOfText(symbol);
+            string name = terms == null ? symbol : RenderTerms(SimplifyTerms(MergeTerms(new List<(string, int)>(), terms, 1), w => custom.ContainsKey(w))) ?? symbol;
+            return new Unit(new Dictionary<string, int>(result.Dimensions), result.Scale, name);
+        }
+
+        // ---------------------------------------------------------------
+        // The names of combined units (`kg*m/s^2`, `km/h`): a list of symbols with powers. A product or a quotient keeps the symbols of its operands
+        // (`5kg * 2m / 1s / 1s` is `10kg*m/s^2`, `2km / 1h` is `2km/h`, `1m * 1mm` is `1m*mm`); the same symbol is counted once (`m*m` is `m^2`). When the
+        // parts of one unit of fire with different prefixes cancel (`m/mm*s`), their factor goes into the prefix of another part if one fits
+        // (`1m / 1mm / 1s` is `1ms^-1`); otherwise the name stays as it is. fire_rt.h (unitTerms...) does the same.
+        // ---------------------------------------------------------------
+        [MemoryPackIgnore] private (string Sym, int Exp)[]? _terms;
+        [MemoryPackIgnore] private bool _termsKnown;
+
+        /// <summary>The symbols and powers of the name of the unit: its display text, or - without one - its base symbols when the scale is 1 (`m/s` of
+        /// `10m / 2s`); null when the unit has no such name (a derived unit with a factor).</summary>
+        private (string Sym, int Exp)[]? Terms()
+        {
+            if (_termsKnown) return _terms;
+            (string, int)[]? terms;
+            if (_displaySymbol != null) terms = TermsOfText(_displaySymbol);
+            else if (Math.Abs(Scale - 1.0) <= 1e-12) terms = Dimensions.OrderBy(k => k.Key).Select(k => (k.Key, k.Value)).ToArray();
+            else terms = null;
+            _terms = terms;
+            _termsKnown = true;
+            return terms;
+        }
+
+        /// <summary>The symbols and powers of a unit text in the form of fire (`kg*m/s^2`, `1/ms`, `m^-1`: everything after a `/` divides); null when the
+        /// text is not of that form.</summary>
+        private static (string Sym, int Exp)[]? TermsOfText(string text)
+        {
+            var terms = new List<(string, int)>();
+            bool divide = false;
+            int i = 0;
+            while (true)
+            {
+                int start = i;
+                while (i < text.Length && IsUnitLetter(text[i])) i++;
+                string word = text.Substring(start, i - start);
+                int power = 1;
+                if (word.Length == 0)
+                {
+                    // `1/s`: no unit in the numerator
+                    if (divide || terms.Count > 0 || i >= text.Length || text[i] != '1' || i + 1 >= text.Length || text[i + 1] != '/') return null;
+                    i++;
+                }
+                else if (i < text.Length && text[i] == '^')
+                {
+                    int numberStart = ++i;
+                    if (i < text.Length && text[i] == '-') i++;
+                    while (i < text.Length && text[i] is >= '0' and <= '9') i++;
+                    if (!int.TryParse(text.AsSpan(numberStart, i - numberStart), System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out power)) return null;
+                }
+                if (word.Length > 0) terms.Add((word, divide ? -power : power));
+                if (i == text.Length) return terms.ToArray();
+                if (text[i] == '/') divide = true;
+                else if (text[i] != '*') return null;
+                i++;
+            }
+        }
+
+        /// <summary>`terms` with the powers of `more` added (times `sign`): the same symbol is counted once, a power of 0 drops out.</summary>
+        private static List<(string Sym, int Exp)> MergeTerms(List<(string Sym, int Exp)> terms, IEnumerable<(string Sym, int Exp)> more, int sign)
+        {
+            foreach (var (sym, exp) in more)
+            {
+                int k = terms.FindIndex(t => t.Sym == sym);
+                if (k < 0) terms.Add((sym, sign * exp));
+                else if (terms[k].Exp + sign * exp == 0) terms.RemoveAt(k);
+                else terms[k] = (sym, terms[k].Exp + sign * exp);
+            }
+            return terms;
+        }
+
+        /// <summary>The prefixes in the order the names take them (`µ` for 1e-6).</summary>
+        private static readonly (char Prefix, double Factor)[] NamePrefixes =
+            { ('f', 1e-15), ('p', 1e-12), ('n', 1e-9), ('µ', 1e-6), ('m', 1e-3), ('c', 1e-2), ('d', 1e-1), ('h', 1e2), ('k', 1e3), ('M', 1e6), ('G', 1e9) };
+
+        /// <summary>A symbol that is a prefixable unit of fire (`m`, `g`, `s`, `b`, `B`, `l`), alone or with a prefix (`mm`, `kg`, `ms`): that unit and the
+        /// factor of the prefix. False for every other symbol, also for one the program declares (`isCustom`).</summary>
+        private static bool SplitBuiltIn(string sym, Func<string, bool> isCustom, out string baseSymbol, out double prefix)
+        {
+            baseSymbol = sym;
+            prefix = 1;
+            if (PrefixableBaseUnits.Contains(sym)) return true;
+            if (sym.Length < 2 || isCustom(sym) || NamedUnits.ContainsKey(sym)) return false;
+            string rest = sym.Substring(1);
+            if (!PrefixableBaseUnits.Contains(rest) || !Prefixes.TryGetValue(sym[0], out prefix) || !PrefixAllowed(sym[0], rest)) return false;
+            baseSymbol = rest;
+            return true;
+        }
+
+        /// <summary>Parts of one unit of fire with different prefixes that cancel (`m/mm`) leave the name; their factor goes into the prefix of another part
+        /// of fire (`m/mm*s` is `ms^-1`, the first part where a prefix fits). When no part takes it, the terms stay as they are.</summary>
+        private static List<(string Sym, int Exp)> SimplifyTerms(List<(string Sym, int Exp)> terms, Func<string, bool> isCustom)
+        {
+            var bases = new string?[terms.Count];
+            var prefixes = new double[terms.Count];
+            for (int k = 0; k < terms.Count; k++)
+                if (SplitBuiltIn(terms[k].Sym, isCustom, out var b, out var p)) { bases[k] = b; prefixes[k] = p; }
+            double factor = 1;
+            var drop = new bool[terms.Count];
+            bool any = false;
+            for (int k = 0; k < terms.Count; k++)
+            {
+                if (bases[k] == null || drop[k]) continue;
+                int sum = 0, count = 0;
+                for (int j = k; j < terms.Count; j++) if (bases[j] == bases[k]) { sum += terms[j].Exp; count++; }
+                if (sum != 0 || count < 2) continue;
+                for (int j = k; j < terms.Count; j++)
+                    if (bases[j] == bases[k]) { drop[j] = true; factor *= Math.Pow(prefixes[j], terms[j].Exp); }
+                any = true;
+            }
+            if (!any) return terms;
+            for (int k = 0; k < terms.Count; k++)
+            {
+                if (drop[k] || bases[k] == null || NonPrefixable.Contains(bases[k]!)) continue;
+                double wanted = prefixes[k] * Math.Pow(factor, 1.0 / terms[k].Exp);
+                string? sym = Math.Abs(wanted - 1) <= 1e-9 ? bases[k] : null;
+                foreach (var (c, f) in NamePrefixes)
+                    if (sym == null && Math.Abs(wanted / f - 1) <= 1e-9 && PrefixAllowed(c, bases[k]!)) sym = c + bases[k];
+                if (sym == null) continue;
+                var result = new List<(string Sym, int Exp)>();
+                for (int j = 0; j < terms.Count; j++)
+                    if (!drop[j]) result.Add(j == k ? (sym, terms[j].Exp) : terms[j]);
+                return MergeTerms(new List<(string, int)>(), result, 1);
+            }
+            return terms;
+        }
+
+        /// <summary>The name of the terms: `kg*m/s^2` (everything after the `/` divides, as a declaration writes it), `ms^-1` when nothing is multiplied; null for no terms.</summary>
+        private static string? RenderTerms(List<(string Sym, int Exp)> terms)
+        {
+            if (terms.Count == 0) return null;
+            var sb = new StringBuilder();
+            if (terms.All(t => t.Exp < 0))
+            {
+                // (no `1/ms`: after a number it would read as a digit - `5ms^-1`)
+                foreach (var (sym, exp) in terms) { if (sb.Length > 0) sb.Append('*'); sb.Append(sym).Append('^').Append(exp.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+                return sb.ToString();
+            }
+            foreach (var (sym, exp) in terms)
+                if (exp > 0) { if (sb.Length > 0) sb.Append('*'); sb.Append(sym); if (exp != 1) sb.Append('^').Append(exp.ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+            if (sb.Length == 0) sb.Append('1');
+            bool first = true;
+            foreach (var (sym, exp) in terms)
+                if (exp < 0) { sb.Append(first ? '/' : '*'); first = false; sb.Append(sym); if (exp != -1) sb.Append('^').Append((-exp).ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+            return sb.ToString();
+        }
+
+        /// <summary>The name of the product (`sign` 1) or the quotient (-1) of two units, made of the names of both; null when one has none.</summary>
+        private static string? CombinedName(Unit a, Unit b, int sign)
+        {
+            var ta = a.Terms();
+            var tb = b.Terms();
+            if (ta == null || tb == null) return null;
+            var custom = _customUnits;
+            return RenderTerms(SimplifyTerms(MergeTerms(new List<(string, int)>(ta), tb, sign), w => custom.ContainsKey(w)));
         }
 
         /// <summary>The square root of the unit (`m^2` → `m`, `cm^2` → `cm`, `m^2/s^2` → `m/s`); null when an exponent is odd (`m` has no root). A display
@@ -406,6 +666,9 @@ namespace fire.Values
             if (b.UnitlessConverter != null) b = Unitless;
             if (b.IsUnitless) return a;
             if (a.IsUnitless) return b;
+            // (a loop multiplies the same units again and again: the last product of this thread is kept)
+            if (_lastProduct is { } last && ReferenceEquals(last.A, a) && ReferenceEquals(last.B, b)) return last.Result;
+            var (originalA, originalB) = (a, b);
             a = a.LinearPart;
             b = b.LinearPart;
 
@@ -416,23 +679,15 @@ namespace fire.Values
                 if (dims[key] == 0) dims.Remove(key);
             }
 
-            // Second most common case: the same named unit multiplied
-            // by itself (e.g. `radius * radius` for an area) - synthesise
-            // a sensible display name for it ("mm^2" instead of just
-            // "m^2", which otherwise visually swallows the scale factor). Deliberately
-            // covers only the direct square (a*a), not chained
-            // higher powers (a*a*a for volume) - after that the intermediate
-            // result is already named "mm^2" and no longer matches "mm", so it falls
-            // back to the (then again scale-blind) dimension display.
-            // For truly mixed units (e.g. m*s) it likewise stays
-            // with the pure dimension display - there scale is
-            // usually 1.0 in practice, so the problem occurs less often.
-            string? display = a._displaySymbol != null && a._displaySymbol == b._displaySymbol
-                ? $"{a._displaySymbol}^2"
-                : null;
+            // the name keeps the symbols of both (`kg*m/s^2`, `mm^2`, `km/h`), see CombinedName
+            string? display = dims.Count == 0 ? null : CombinedName(a, b, 1);
 
-            return new Unit(dims, a.Scale * b.Scale, display);
+            var product = new Unit(dims, a.Scale * b.Scale, display);
+            _lastProduct = (originalA, originalB, product);
+            return product;
         }
+
+        [ThreadStatic] private static (Unit A, Unit B, Unit Result)? _lastProduct, _lastQuotient;
 
         public static Unit Divide(Unit a, Unit b)
         {
@@ -444,6 +699,8 @@ namespace fire.Values
             if (a.UnitlessConverter != null) a = Unitless;
             if (b.UnitlessConverter != null) b = Unitless;
             if (b.IsUnitless) return a;
+            if (_lastQuotient is { } last && ReferenceEquals(last.A, a) && ReferenceEquals(last.B, b)) return last.Result;
+            var (originalA, originalB) = (a, b);
             a = a.LinearPart;
             b = b.LinearPart;
 
@@ -453,7 +710,9 @@ namespace fire.Values
                 dims[key] = dims.TryGetValue(key, out var existing) ? existing - exp : -exp;
                 if (dims[key] == 0) dims.Remove(key);
             }
-            return new Unit(dims, a.Scale / b.Scale, null);
+            var quotient = new Unit(dims, a.Scale / b.Scale, dims.Count == 0 ? null : CombinedName(a, b, -1));
+            _lastQuotient = (originalA, originalB, quotient);
+            return quotient;
         }
 
         public bool Equals(Unit? other)

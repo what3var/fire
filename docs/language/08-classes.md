@@ -128,8 +128,13 @@ print(a is of Dog)              // True
 
 ## Access: `public`, `private`, `protected`
 
-Members are public by default. `private` members can only be used inside the class itself, `protected` members also in derived classes. Access from
-elsewhere throws an `AccessDeniedException` (and the compiler reports it where it knows the class).
+Members are public by default. `private` members can only be used inside the class itself, `protected` members also in derived classes. The rule
+applies to the code, not to the object: a method of `Account` may use the `private` members of any other `Account`, and a lambda inside a method
+counts as code of its class. Code outside of every class (the top level of a program) may use only public members.
+
+The access is decided when the program is compiled, wherever the class of the object is known: `this`, a variable, field or parameter with a type,
+`var a = new Account()`, the result of a method with a return type, `ClassName.Member` and `new ClassName(...)`. A forbidden access is then an error
+(`TC012`, in lax mode too), with the same message the run time would give:
 
 ```fire
 class Account {
@@ -141,12 +146,28 @@ class Account {
 var acc = new Account()
 acc.Deposit(50)
 print(acc.Balance())            // 50
+// print(acc.balance)           // error TC012: Field 'balance' of 'Account' is private and cannot be accessed from here.
+```
+
+Only where the class is not known - a value of type `any` (or without a type) and the reflection (`Reflect.Get`, `Reflect.Call`, ...) - the check
+happens at run time and a forbidden access throws an `AccessDeniedException`:
+
+```fire
+any some = acc
 try {
-    print(acc.balance)
+    print(some.balance)
 } catch (AccessDeniedException e) {
-    print(e.message)
+    print(e.message)            // Field 'balance' of 'Account' is private and cannot be accessed from here.
 }
 ```
+
+A variable of a base class can hold an object of a derived class, and the member is looked up on the real object. When a derived class declares
+the same name again with another access, the compiler cannot know which one is found, and the run time decides. `#performance` leaves out the
+checks at run time, not the ones of the compiler.
+
+The methods of an interface are public: a class implements them with public methods (a `private` or `protected` one is the error `E4063`, see
+[Interfaces and generics](09-interfaces-and-generics.md)). A call through a value of an interface type is therefore always allowed - nothing is
+checked for it, neither by the compiler nor at run time.
 
 ## `readonly`
 

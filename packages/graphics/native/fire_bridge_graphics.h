@@ -63,6 +63,21 @@ static FireGfxFramebuffer* fire_gfxb_fbOf(Value id) {
     fire_gfxb_noResource(i);
     return NULL;
 }
+/* A package draws the pictures of the windows that show the framebuffer `fbId` itself (scene3d DirectDrawing): the windows bridge calls `fn` (a fire_present_fn, see
+ * fire_display_c.h) instead of showing the framebuffer. 1: attached; 0: there is no such framebuffer. Detaching takes only the presenter of the same ctx away. */
+static int fire_gfx_attachPresenter(int64_t fbId, void (*fn)(void), void* ctx) {
+    FireGfxTables* t = fire_gfxb_tables();
+    if (fbId <= 0 || (size_t)fbId >= t->fbCount || !t->framebuffers[(size_t)fbId]) return 0;
+    t->framebuffers[(size_t)fbId]->presentFn = fn;
+    t->framebuffers[(size_t)fbId]->presentCtx = ctx;
+    return 1;
+}
+static void fire_gfx_detachPresenter(int64_t fbId, void* ctx) {
+    FireGfxTables* t = fire_gfxb_tables();
+    if (fbId <= 0 || (size_t)fbId >= t->fbCount || !t->framebuffers[(size_t)fbId] || t->framebuffers[(size_t)fbId]->presentCtx != ctx) return;
+    t->framebuffers[(size_t)fbId]->presentFn = NULL;
+    t->framebuffers[(size_t)fbId]->presentCtx = NULL;
+}
 static FireGfxRenderer* fire_gfxb_rendererOf(Value id) {
     int64_t i = (int32_t)id.i;
     FireGfxTables* t = fire_gfxb_tables();
@@ -219,6 +234,30 @@ static Value fire_gfx_FbReadBytes(Value id, OwnList* list) {
         uint32_t px = fb->pixels[i];
         bytes[i * 4] = (uint8_t)px; bytes[i * 4 + 1] = (uint8_t)(px >> 8); bytes[i * 4 + 2] = (uint8_t)(px >> 16); bytes[i * 4 + 3] = (uint8_t)(px >> 24);
     }
+    return BufV(b);
+}
+/* The framebuffer as a PNG file (RGBA, 8 bits): Framebuffer.ToPng - to save it, or to put it on the clipboard. A palette framebuffer is resolved through its palette;
+ * its transparent index becomes transparent. */
+static uint32_t* fire_gfxb_rgbaOf(const FireGfxFramebuffer* fb) {
+    size_t n = fire_gfx_fbPixelCount(fb), i;
+    uint32_t* rgba = (uint32_t*)malloc(n * 4 + 4);
+    if (rgba == NULL) fire_gfxb_outOfMemory();
+    fire_gfx_fbResolveTo(fb, rgba);
+    if (fb->indices && fb->transparentIndex >= 0)
+        for (i = 0; i < n; i++) if (fb->indices[i] == fb->transparentIndex) rgba[i] &= 0x00FFFFFFu;
+    return rgba;
+}
+static Value fire_gfx_FbToPng(Value id, OwnList* list) {
+    FireGfxFramebuffer* fb = fire_gfxb_fbOf(id);
+    uint32_t* rgba = fire_gfxb_rgbaOf(fb);
+    size_t size = 0;
+    uint8_t* png = fire_gfx_encodePng(rgba, fb->width, fb->height, &size);
+    Buf* b;
+    free(rgba);
+    if (png == NULL || size > 0x7FFFFFFFu) { free(png); fire_gfxb_outOfMemory(); }
+    b = allocBuf((uint32_t)size, list);
+    memcpy(bufBytes(b), png, size);
+    free(png);
     return BufV(b);
 }
 static Value fire_gfx_FbWriteBytes(Value id, Value data) {

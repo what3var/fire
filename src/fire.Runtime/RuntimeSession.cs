@@ -83,7 +83,7 @@ namespace fire.Runtime
                 else
                     natives.Register("print", args => VM.StringifyForPrint(args) is { } shown ? debugWriter(shown) : Value.MakeUndefined());
             }
-            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources, fire.Standard.ProgramEnvironment.OfProcess());   // (a packed program is a process of its own)
+            natives.RegisterBaseTypeNatives(linkedProgram.Program.Resources, fire.Standard.ProgramEnvironment.OfProcess(), linkedProgram.Program.CustomUnits);   // (a packed program is a process of its own)
 
             var session = new Session(linkedProgram.Program);
 

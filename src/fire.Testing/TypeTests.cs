@@ -36,6 +36,13 @@ static class TypeTests
         return string.Join(" ", warnings.Items.Select(d => d.Code)) + "|" + errors + string.Join("\n", lines);
     }
 
+    /// <summary>The messages of the errors of a build ("" when it compiles).</summary>
+    private static string CompileText(string source)
+    {
+        try { RuntimeSession.Build(new[] { source }, VmExecutionMode.Release, a => Value.MakeUndefined()); return ""; }
+        catch (Exception ex) { return string.Join("\n", CompileDiagnostics.Of(ex).Select(d => d.Message)); }
+    }
+
     public static void Run()
     {
         Console.WriteLine("=== Typen: Typpruefung (lax/strict) und var ===");
@@ -248,6 +255,54 @@ static class TypeTests
             print(C.H(3))
             print(C.One() / 2)
             """) == "|1.5\n1.5\n0.5");
+        Check("Einheiten: Namen kombinierter Einheiten behalten die Symbole der Operanden (kg*m/s^2, km/h, m*mm), gemischte Praefixe kuerzen sich in einen Praefix (ms^-1)", Run("""
+            var f = 5kg * (2m / 1s / 1s)
+            print(f + " " + 2km / 1h + " " + 1m * 1mm + " " + 500mm * 2m + " " + 2kg * 3g + " " + 3m * 2m * 4m + " " + 10m / 2s * 3s)
+            float:kg*m/s^2 g = f
+            float:N n = f
+            print(g + " " + 1m / (1mm * 1s) + " " + "1m/mm*s".ToFloat() + " " + "2 m*m/s/s".ToFloat() + " " + "3 km/m*h".ToFloat() + " " + 1.0dm3:l + " " + 2 / 4s + " " + n)
+            unit Newton: N { coerce kg*m/s^2 => 1 }
+            """) == "|10kg*m/s^2 2km/h 1m*mm 1000mm*m 6kg*g 24m^3 15m\n10kg*m/s^2 1ms^-1 1ms^-1 2m^2/s^2 3km/m*h 1l 0s^-1 10N");
+        Check("Einheiten: Potenz als Ziffern direkt nach dem Symbol (1m3, 5dm3, float v : m3, float:m/s2, kg*m2/s2, \"5 m3\"), 1e3 ist wissenschaftliche Schreibweise", Run("""
+            print(1m3 + " " + 5dm3 + " " + 2cm2)
+            float v : m3 = 5l
+            float:m/s2 a = 9.81m / 1s / 1s
+            float:kg*m2/s2 e = 2kg * 3m2 / 1s / 1s
+            float w : m^3 = 1m3
+            print(v + " " + a + " " + e + " " + w + " " + (1m3 == 1000l) + " " + 1m3:l + " " + 5:m3)
+            print("5 m3".ToFloat() + " " + "2 m/s2".ToFloat() + " " + "1e3".ToFloat() + " " + "1e3m".ToFloat() + " " + "3dm3".ToFloat():l)
+            print(1e3 + " " + 2.5e-3 + " " + 1e3m + " " + 0x1F + " " + 2E+2)
+            """) == "|1m^3 5dm^3 2cm^2\n0.005m^3 9.81m/s^2 6kg*m^2/s^2 1m^3 True 1000l 5m^3\n5m^3 2m/s^2 1000 1000m 3l\n1000 0.0025 1000m 31 200");
+        Check("Einheiten: eine Potenz 0 als Ziffer ist ein Fehler (1m0, float x : s0)", CompileText("print(1m0)").Contains("1 or more") && CompileText("float x : s0 = 1s").Contains("1 or more"), CompileText("print(1m0)") + " / " + CompileText("float x : s0 = 1s"));
+        Check("Einheiten: Arrays mit Einheit am Typ rechnen ihre Elemente um (Initialisierer, Element, Parameter, Feld, mehrdimensional), andere Dimension TC006/UnitMismatchException", Run("""
+            float:km/h arr[] = [36m / 1s, 10km / 1h]
+            print(arr[0] + " " + arr[1])
+            arr[1] = 5m / 1s
+            arr[0] += 1m / 1s
+            float b[3] : mm
+            b[0] = 2cm
+            int c[] : cm = [1m, 20mm]
+            print(arr[0] + " " + arr[1] + " " + b[0] + " " + b[1] + " " + c[0] + " " + c[1])
+            class K {
+                float:m lens[]
+                construct() { lens = [1km, 2cm] }
+                static float:m Sum(float v[] : m) { float s = 0m; foreach (x in v) { s += x } return s }
+                static float:cm[] Two() { return [1m, 2m] }
+            }
+            var k = new K()
+            k.lens[1] = 3mm
+            print(K.Sum([1km, 20cm]) + " " + k.lens[0] + " " + k.lens[1] + " " + K.Two()[1])
+            float:m grid[][] = new float[2][2]
+            grid[1][0] = 3km
+            float:mm nested[][] = [[1m], [2cm, 3m]]
+            print(grid[1][0] + " " + nested[1][1] + " " + grid[0][0])
+            any w = 3kg
+            try { arr[0] = w } catch (UnitMismatchException e) { print(e.message) }
+            any bad = [1m, 2s]
+            try { float:m xs[] = bad } catch (UnitMismatchException e) { print(e.message) }
+            float:km/h wrong[] = [3kg]
+            """) == "TC006|129.6km/h 10km/h\n133.2km/h 18km/h 20mm undefined:mm 100cm 2cm\n1000.2m 1000m 0.003m 200cm\n3000m 3000mm undefined:m\nExpected unit 'km/h', got: kg.\nExpected unit 'm', got: s.");
+        Check("Einheiten: ein Element eines Arrays mit Einheit in einer anderen Dimension ist TC006 (auch strict ein Fehler)", Run("float:km/h arr[] = [1m / 1s]\narr[0] = 2s", TypeCheckMode.Strict) == "|ERROR TC006");
         Check("Einheiten: Ueberlauf beim Umrechnen ist eine OverflowException", Run("try { int big : nm = 900000000000km } catch (OverflowException e) { print(\"overflow\") }") == "|overflow");
 
         Check("Properties und Felder ohne this. (auch aus einer abgeleiteten Klasse) werden geprueft", Run("""
@@ -412,6 +467,90 @@ static class TypeTests
                 """) == "|Return value of 'F' is an int, not String.");
         }
 
+        // access modifiers: decided at compile time where the class of the receiver is known (TC012, an error in lax mode too); `any` and reflection at run time
+        {
+            string access = """
+                class Base {
+                    private int secret = 1
+                    protected int shared = 2
+                    private static int sv = 4
+                    private int Hidden() { return 10 }
+                    protected int Guarded() { return 20 }
+                    private static int Counter() { return 7 }
+                    private int Hush { get { return this.secret } set { this.secret = value } }
+                    int Same(Base other) { return other.secret + other.Hidden() + Base.sv + Base.Counter() + other.Hush }
+                    int InLambda() { var me = this; var f = func () => me.secret + me.Hidden(); return f() }
+                }
+                class Child : Base {
+                    int Peek() { return this.shared + this.Guarded() + shared + Guarded() }
+                }
+                class Locked { private construct() { } static Locked Make() { return new Locked() } }
+                class Guarded2 { protected construct() { } }
+                class Sub2 : Guarded2 { }
+
+                """;
+            Check("Zugriff: erlaubte Zugriffe (eigene Klasse, anderes Objekt derselben Klasse, protected aus der Unterklasse, Lambda in der Methode) ohne Befund",
+                Run(access + "var b = new Base()\nprint(b.Same(b))\nprint(b.InLambda())\nprint(new Child().Peek())\nprint(Locked.Make() is of Locked)\nprint(new Sub2() is of Guarded2)") is var allowed
+                && allowed == "|23\n11\n44\nTrue\nTrue", allowed);
+            foreach (var (what, code) in new[]
+            {
+                ("privates Feld lesen", "var b = new Base()\nprint(b.secret)"),
+                ("privates Feld schreiben", "var b = new Base()\nb.secret = 5"),
+                ("protected Feld von aussen", "Base b = new Child()\nprint(b.shared)"),
+                ("private Methode", "var b = new Base()\nb.Hidden()"),
+                ("protected Methode", "var b = new Base()\nb.Guarded()"),
+                ("private statische Methode", "print(Base.Counter())"),
+                ("privates statisches Feld", "print(Base.sv)"),
+                ("private Property lesen", "var b = new Base()\nprint(b.Hush)"),
+                ("private Property schreiben", "var b = new Base()\nb.Hush = 3"),
+                ("privater Konstruktor", "var l = new Locked()"),
+                ("privater Konstruktor der Basisklasse", "class Sub : Locked { }"),
+                ("privates Feld der Basisklasse ueber this", "class C2 : Base { int P() { return this.secret } }"),
+                ("privates Feld der Basisklasse ohne this", "class C2 : Base { int P() { return secret } }"),
+                ("private Methode der Basisklasse ohne this", "class C2 : Base { int P() { return Hidden() } }"),
+                ("private Methode der Basisklasse ueber base", "class C2 : Base { int P() { return base.Hidden() } }"),
+                ("im Lambda einer anderen Klasse", "class C2 { int P(Base b) { var f = func () => b.secret; return f() } }"),
+                ("Parameter einer anderen Klasse", "class F { static int G(Base b) { return b.secret } }"),
+                ("Rueckgabetyp", "class F { static Base Make() { return new Base() } }\nprint(F.Make().Hidden())"),
+            })
+                Check($"Zugriff: {what} ist ein Fehler beim Uebersetzen (TC012, auch lax)", Run(access + code) is var denied && denied.StartsWith("|ERROR TC012") && !denied.Contains("TC008"), denied);
+            Check("Zugriff: die Meldung ist die der Laufzeit", Run(access + "var b = new Base()\nprint(b.secret)", null) is var text && text.Contains("TC012")
+                && CompileText(access + "var b = new Base()\nprint(b.secret)").Contains("Field 'secret' of 'Base' is private and cannot be accessed from here."));
+            Check("Zugriff: mit `any` bleibt es eine AccessDeniedException zur Laufzeit",
+                Run(access + "any b = new Base()\ntry { print(b.secret) } catch (AccessDeniedException e) { print(e.message) }\ntry { b.Hidden() } catch (AccessDeniedException e) { print(e.message) }") is var dynamic
+                && dynamic == "|Field 'secret' of 'Base' is private and cannot be accessed from here.\nMethod 'Hidden' of 'Base' is private and cannot be called from here.", dynamic);
+            Check("Zugriff: eine Unterklasse deklariert den Namen oeffentlich - die Laufzeit entscheidet nach dem Objekt", Run("""
+                class B { private int M() { return 1 } }
+                class D : B { int M() { return 2 } }
+                B b = new D()
+                print(b.M())
+                B b2 = new B()
+                try { print(b2.M()) } catch (AccessDeniedException e) { print("verweigert") }
+                """) is var mixed && mixed == "|2\nverweigert", mixed);
+
+            // a member of an interface is public: so is the method that implements it (E4063) - a call through the interface needs no access check
+            string iface = "interface IShape { int Area() }\n";
+            foreach (var (what, code) in new[]
+            {
+                ("private", "class Sq : IShape { private int Area() { return 4 } }"),
+                ("protected", "class Sq : IShape { protected int Area() { return 4 } }"),
+                ("verdeckt die oeffentliche der Basisklasse", "class Base { int Area() { return 1 } }\nclass Sq : Base, IShape { private int Area() { return 4 } }"),
+                ("in einer Unterklasse einer implementierenden Klasse", "class Sq : IShape { int Area() { return 4 } }\nclass Sub : Sq { protected int Area() { return 5 } }"),
+            })
+                Check($"Interface: eine Implementierung {what} ist ein Fehler (E4063)", Run(iface + code + "\nprint(1)") is var notPublic && notPublic == "|ERROR E4063", notPublic);
+            Check("Interface: die Meldung nennt Methode, Klasse und Interface",
+                CompileText(iface + "class Sq : IShape { private int Area() { return 4 } }") is var ifaceText
+                && ifaceText.Contains("Method 'Area' of class 'Sq' implements interface 'IShape' and must be public, not private"), ifaceText);
+            Check("Interface: oeffentlich geerbt, eine private Ueberladung anderer Stelligkeit oder ein privates Mitglied einer fremden Klasse ohne Befund", Run(iface + """
+                class Base { int Area() { return 1 } }
+                class Sq : Base, IShape { private int Area(int scale) { return 4 * scale } int Twice() { return this.Area(2) } }
+                class Other { private int Area() { return 9 } int Mine() { return this.Area() } }
+                IShape s = new Sq()
+                print(s.Area())
+                print(new Sq().Twice() + new Other().Mine())
+                """) is var inherited && inherited == "|1\n17", inherited);
+        }
+
         // named arguments: each goes to the parameter of its name (its type is checked there); an unknown name and a parameter without value are errors
         {
             string decl = "class C { static int F(int a, string b = \"x\", int c = 3) { return a + c }\n construct(int size, bool open = false) { } }\n";
@@ -420,6 +559,39 @@ static class TypeTests
             Check("Benannte Argumente: ein unbekannter Name ist ein Fehler (TC011)", Run(decl + "print(C.F(1, d: 2))") is var unknown && unknown.Contains("ERROR TC011"), unknown);
             Check("Benannte Argumente: ein Pflichtparameter ohne Wert ist ein Fehler (TC011)", Run(decl + "print(C.F(c: 2))") is var missing && missing.Contains("ERROR TC011"), missing);
             Check("Benannte Argumente: auch beim Konstruktor (TC011)", Run(decl + "var o = new C(open: true)") is var ctor && ctor.Contains("ERROR TC011"), ctor);
+        }
+
+        // `x!Dog` where x can never be a Dog: TC013 (a warning in lax mode, an error in strict mode); possible casts, interfaces a subclass joins, `any` pass
+        {
+            string decl = """
+                interface IAnimal { string Name() }
+                interface IPet { }
+                interface IRobot { }
+                class Animal { }
+                class Dog : Animal, IAnimal { string Name() { return "Rex" } }
+                class Puppy : Dog, IPet { }
+                class Cat : Animal { }
+                class Car { }
+
+                """;
+            Check("Cast: unverwandte Klassen sind TC013 (lax eine Warnung, das Programm laeuft)", Run(decl + "Cat c = undefined\nprint(c!Dog)") is var unrelated && unrelated == "TC013|undefined", unrelated);
+            Check("Cast: strikt ist TC013 ein Fehler", Run(decl + "Cat c = new Cat()\nprint(c!Dog)", TypeCheckMode.Strict) is var strict && strict == "|ERROR TC013", strict);
+            Check("Cast: Klasse zu Interface, das keine Unterklasse hat, und zurueck", Run(decl + "Car car = undefined\nprint(car!IAnimal)\nIAnimal a = undefined\nprint(a!Cat)\nprint(a!Car)") is var iface
+                && iface == "TC013 TC013 TC013|undefined\nundefined\nundefined", iface);
+            Check("Cast: moegliche Casts ohne Befund (Ab- und Aufwaerts, Interface ueber Unterklasse, zwei Interfaces, any, Zahlen)", Run(decl + """
+                Animal a = new Puppy()
+                print(a!Dog.Name())
+                Dog d = new Puppy()
+                print(d!Animal)
+                print(d!IPet)
+                IAnimal ia = d
+                print(ia!Dog.Name() + " " + ia!Puppy)
+                IAnimal none = undefined
+                print(none!IRobot)
+                any x = new Cat()
+                try { print(x!Dog) } catch (ArgumentException e) { print("any") }
+                print(65!char)
+                """) is var fine && fine == "|Rex\n<object Puppy>\n<object Puppy>\nRex <object Puppy>\nundefined\nany\nA", fine);
         }
 
         // the standard library keeps its declared types honest: every import compiles without a single type conflict or untyped parameter, in strict mode

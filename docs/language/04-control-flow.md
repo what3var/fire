@@ -118,7 +118,8 @@ foreach (row in [[1, 2], [3, -1], [5, 6]]) {
 }
 ```
 
-  Leaving a `try` with a `finally` this way is not supported yet (leave the loops one by one there).
+  A `try` with a `finally` on the way is left like with a plain `break`: every `finally` between the `break 2` and the target loop runs, the innermost
+  first (see [Exceptions](14-exceptions.md)).
 - Inside a `switch`, `break` ends the **branch**, not the loop around the `switch` (see below).
 
 ## `switch`

@@ -4,7 +4,7 @@ Circuit simulation after the model of Paul Falstad's circuit simulator. A circui
 time step the circuit is solved (modified nodal analysis; capacitors and inductors with the trapezoidal rule), and every port knows the voltage of its node, every
 part its current. Instruments record and measure what happens.
 
-The circuits and parts are written in fire; the steps run in a C++ kernel of the package. The first step after a change **compiles** the circuit into a plan for
+The circuits and parts are written in fire; the steps run in a kernel of the package written in C (C99; `packages/circuits/native/fire_bridge_circuits.h`). The first step after a change **compiles** the circuit into a plan for
 the kernel (see [Speed](#speed)): in the virtual machine a step of a circuit with 40 unknowns takes about 2 µs instead of more than a millisecond.
 
 ```fire

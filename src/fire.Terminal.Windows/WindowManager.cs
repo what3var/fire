@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using static SDL3.SDL;
+using DropEvent = fire.Terminal.Event.DropEvent;
 
 namespace fire.Terminal.Windows
 {
@@ -27,6 +28,9 @@ namespace fire.Terminal.Windows
         private Action<LambdaValue, Value[]> Callback;
 
         private readonly Func<IFramebufferRenderer>? _rendererFactory;
+
+        /// <summary>The clipboard (text) that `Clipboard` of the windows prelude uses.</summary>
+        public IClipboard Clipboard { get; set; }
 
         private readonly Action<int>? _hold;
 
@@ -78,6 +82,8 @@ namespace fire.Terminal.Windows
             _framebuffers = framebuffers ?? throw new ArgumentNullException(nameof(framebuffers));
             _callbacks = new List<EventCallback>();
             _rendererFactory = rendererFactory;
+            // the clipboard of the desktop when the windows are SDL's; a renderer of a test (or another backend) gets one of the program's own
+            Clipboard = rendererFactory == null ? new fire.Terminal.Sdl.SdlClipboard() : new MemoryClipboard();
 
             Callback = callbackRunner;
         }
@@ -106,7 +112,16 @@ namespace fire.Terminal.Windows
         /// repeated]; TextInput [type, text]; Resize [type, width, height] (the size of the window); Close/CloseRequest [type];
         /// TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer, pressure 0 to 1 as floating point);
         /// JoystickAxis [type, joystick, axis, position] (position -1 to 1 as floating point); JoystickButtonDown/Up [type, joystick, button];
-        /// JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre); JoystickAdded/Removed [type, joystick].</summary>
+        /// JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre); JoystickAdded/Removed [type, joystick];
+        /// DropFiles [type, paths (string[]), x, y]; DropText [type, text, x, y]; DragHover [type, x, y]; DragLeave [type].</summary>
+        /// <summary>The paths of a drop as an array of strings.</summary>
+        private static Value Paths(string[] files)
+        {
+            var array = new ScriptArray(files.Length);
+            for (int i = 0; i < files.Length; i++) array.Items[i] = Value.MakeString(files[i]);
+            return Value.MakeArray(array);
+        }
+
         public static Value EncodeEvent(IEvent evnt)
         {
             static long Px(float v) => (long)Math.Floor(v);
@@ -148,6 +163,15 @@ namespace fire.Terminal.Windows
                     break;
                 case JoystickEvent joy:
                     items = new[] { Value.MakeInt((int)joy.Type), Value.MakeInt(joy.Joystick) };
+                    break;
+                case DropEvent drop when drop.Type == Event.EventType.DropFiles:
+                    items = new[] { Value.MakeInt((int)drop.Type), Paths(drop.Files), Value.MakeInt(Px(drop.X)), Value.MakeInt(Px(drop.Y)) };
+                    break;
+                case DropEvent drop:
+                    items = new[] { Value.MakeInt((int)drop.Type), Value.MakeString(drop.Text), Value.MakeInt(Px(drop.X)), Value.MakeInt(Px(drop.Y)) };
+                    break;
+                case DragHoverEvent hover:
+                    items = new[] { Value.MakeInt((int)hover.Type), Value.MakeInt(Px(hover.X)), Value.MakeInt(Px(hover.Y)) };
                     break;
                 default:
                     items = new[] { Value.MakeInt((int)evnt.Type) };
@@ -232,6 +256,28 @@ namespace fire.Terminal.Windows
 
         /// <summary>Window.SetSize (on the thread that owns the OS window).</summary>
         public void SetSize(int id, int width, int height) { _windows.Get(id); OnOwner(id, w => w.SetSize(width, height)); }
+
+        /// <summary>Window.StartDrag: the text and/or the files are dragged out of the window into other programs until the user lets go (0 nothing, 1 copied,
+        /// 2 moved) - on the thread that owns the OS window: here, or the thread of its manager, while the program waits for the answer.</summary>
+        public int StartDrag(int id, string text, string[] files)
+        {
+            var window = _windows.Get(id);
+            if (string.IsNullOrEmpty(text) && files.Length == 0) return 0;
+            ManagedWindow? state = null;
+            Manager? manager = null;
+            lock (_managersGate) if (_managed.TryGetValue(id, out var entry) && entry.Manager.OwnsWindows) { state = entry.State; manager = entry.Manager; }
+            if (state == null || manager == null) return window.StartDrag(text, files);
+            // (the event is not disposed: a thread that serves the request after the program stopped waiting still sets it)
+            var done = new ManualResetEventSlim();
+            int result = 0;
+            state.Todo.Enqueue(w => { try { Volatile.Write(ref result, w.StartDrag(text, files)); } finally { done.Set(); } });
+            while (!done.Wait(20))
+                if (manager.Stop || state.Closed || state.Release) return 0;   // the thread is gone or the window closed: no drag
+            return Volatile.Read(ref result);
+        }
+
+        /// <summary>Window.CanStartDrag: can StartDrag hand a drag to the desktop for this window (its renderer says; false while it is not open)?</summary>
+        public bool CanStartDrag(int id) => _windows.Get(id).CanStartDrag();
 
         /// <summary>A single cycle for ONE window (see
         /// ConsoleWindow.Tick) - returns false if the window was closed
@@ -375,6 +421,21 @@ namespace fire.Terminal.Windows
                             case Event.EventType.JoystickAdded:
                             case Event.EventType.JoystickRemoved:
                                 Callback(hndlr.Callback, new[] { Value.MakeInt(((JoystickEvent)evnt).Joystick) });
+                                break;
+                            case Event.EventType.DropFiles:
+                                var filesevent = (DropEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Paths(filesevent.Files), Value.MakeFloat(filesevent.X), Value.MakeFloat(filesevent.Y) });
+                                break;
+                            case Event.EventType.DropText:
+                                var dropevent = (DropEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeString(dropevent.Text), Value.MakeFloat(dropevent.X), Value.MakeFloat(dropevent.Y) });
+                                break;
+                            case Event.EventType.DragHover:
+                                var hoverevent = (DragHoverEvent)evnt;
+                                Callback(hndlr.Callback, new[] { Value.MakeFloat(hoverevent.X), Value.MakeFloat(hoverevent.Y) });
+                                break;
+                            case Event.EventType.DragLeave:
+                                Callback(hndlr.Callback, new Value[0]);
                                 break;
                             case Event.EventType.TextInput:
                                 var textevent = (TextEvent)evnt;

@@ -10,27 +10,15 @@ The larger plan (native C, debugging of native builds, binary libraries, the lib
 
 ## 1. Standard library
 
-| # | Task | Why |
-|---|---|---|
-| 1.1 | Numbers with a unit from text: `"5mm".ToFloat()` | `ToInt`/`ToFloat` read only the number |
-| 1.2 | `Math` for whole arrays and lists (`Sum`, `Average`, `Min`, `Max` of many values) | today a loop or `#import "linq"` |
+Nothing open at the moment.
 
 ## 2. Language
 
-| # | Task | Why |
-|---|---|---|
-| 2.1 | `break`/`continue` with a number across a `try` with `finally` | `break 2` cannot leave such a `try` yet |
-| 2.2 | Enum types: `Color c` as a declared type, `c.ToString()` gives the name | today an enum value is an `int`; `Color.Name(c)` gives the name |
-| 2.3 | Combined units at a return type: `float:m/s Speed()` | combined units work in declarations of variables, fields and parameters |
-| 2.4 | Bit widths `float[16]` and `float[8]` take effect on assignment | `int[N]`, `byte` and `float[32]` are cut, the small floats not yet |
-| 2.6 | The prefix `d` (deci) and `h` (hecto): `dm^3`, `hPa` | `d` is the day today |
+Nothing open at the moment.
 
 ## 3. Type checker
 
-| # | Task | Why |
-|---|---|---|
-| 3.1 | Check the target of `!` statically (`x!Dog` where `x` can never be a `Dog`) | today a cast that can never succeed is found only at run time |
-| 3.2 | Know the enum type: `Color c = 5` is a warning, `c.ToString()` the name (see 2.2) | today an enum value is an `int` for the checker |
+Nothing open at the moment.
 
 ## 4. Runtime and native backend
 
@@ -73,5 +61,17 @@ These problems were found by the examples and fixed right away:
   numbers in units with an uneven factor (`10in + 1ft`) no longer loses 1 by a rounding error, and the factor between two units has no rounding error of
   its own any more (`1.0mm:cm` is `0.1cm`, `2ft:in` is `24in`).
 - An assignment as a condition (`if (a = b)`) is the warning `TC009`.
+- Enum types: `Color c` is a declared type, `c.ToString()` and `print(c)` give the name, `Color c = 5` is a warning of the type checker (lax) or an
+  error (strict) - see [Enums](10-enums-and-namespaces.md).
+- Numbers with a unit from text (`"5mm".ToFloat()`, `"2.5 km/h".ToFloat()`, `"3in".ToInt()` with a declared `in`), `Math.Sum`, `Average`, `Min`, `Max`
+  of an array or a `List`, the litre `l` (`ml`, `hl`, ...) and the prefixes `d` (deci) and `h` (hecto) - `dm`, `dl`, `hPa` - with the rule that a unit
+  wins over a prefix (a declared `dB` is the decibel), VM and native.
 - Own units with an offset (`unit Celsius: C { coerce K => value + 273.15 }`) and with conversion functions of any kind (`coerce to mW => 10 ^ (value
   / 10)` and `coerce from mW => 10 * Math.Log10(value)`), VM and native.
+- `break 2`/`continue 2` run every `finally` on their way (VM and native); combined units at a return type (`float:km/h Speed()`); `float[16]` (IEEE
+  half precision) and `float[8]` (FP8 E4M3) round on every assignment (VM and native); a cast `x!Dog` that can never succeed is `TC013`; an interface
+  named after the base class (`class Puppy : Dog, IPet`) counts for `is of` and `!`.
+- Names of combined units keep the symbols of the operands (`5kg * 2m / 1s / 1s` is `10kg*m/s^2`, not `10g*m/s^2(×1000)`; `2km / 1h` is `2km/h`),
+  parts with different prefixes that cancel give their factor to another prefix (`"1m/mm*s"` is `1ms^-1`); powers written as digits (`1m3`,
+  `float:m/s2`, `"5 m3".ToFloat()`) and scientific notation (`1e3`); arrays with a unit convert their elements (`float:km/h speeds[]`, `TC006`);
+  an exception that nothing catches prints the same text and exit code in VM and native (`Unhandled exception of type '...': ...`) - VM and native.

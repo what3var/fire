@@ -189,8 +189,13 @@ namespace fire.UI.Markup
             }, "OnChange"),
             Define("TextBox", false, "new UI.TextBox(\"\", 0, 0)", new PropertyDef[]
             {
-                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int),
+                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("ReadOnly", PropertyKind.Bool), new("UndoLimit", PropertyKind.Int),
             }, "OnChange", "OnEnter"),
+            Define("TextArea", false, "new UI.TextArea(\"\", 0, 0)", new PropertyDef[]
+            {
+                new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("ReadOnly", PropertyKind.Bool), new("WordWrap", PropertyKind.Bool),
+                new("AcceptsReturn", PropertyKind.Bool), new("AcceptsTab", PropertyKind.Bool), new("TabSize", PropertyKind.Int), new("UndoLimit", PropertyKind.Int),
+            }, "OnChange"),
             Define("AutoSuggestBox", ChildMode.Parts, "new UI.AutoSuggestBox(\"\", 0, 0, 160, 24)", new PropertyDef[]
             {
                 new("Text", PropertyKind.Text), new("MaxLength", PropertyKind.Int), new("MaxSuggestions", PropertyKind.Int), new("DisplayMember", PropertyKind.Text),
@@ -211,7 +216,7 @@ namespace fire.UI.Markup
             Define("TreeView", ChildMode.Parts, "new UI.TreeView(0, 0, 200, 160)", new PropertyDef[]
             {
                 new("Indent", PropertyKind.Int),
-            }, new[] { new EventDef("OnSelect") }) with { PartTags = new[] { "TreeNode" } },
+            }, new[] { new EventDef("OnSelect"), new EventDef("OnActivate") }) with { PartTags = new[] { "TreeNode" } },
             Define("RadioButtons", ChildMode.Parts, "new UI.RadioButtons(0, 0)", new PropertyDef[]
             {
                 new("Header", PropertyKind.Text), new("Horizontal", PropertyKind.Bool), new("Spacing", PropertyKind.Int), new("SelectedIndex", PropertyKind.Int),

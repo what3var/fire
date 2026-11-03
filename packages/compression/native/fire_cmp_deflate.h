@@ -526,12 +526,23 @@ done:
 #define FIRE_DEF_MIN_MATCH 3
 #define FIRE_DEF_MAX_MATCH 258
 #define FIRE_DEF_MIN_LOOKAHEAD (FIRE_DEF_MAX_MATCH + FIRE_DEF_MIN_MATCH + 1)
-#define FIRE_DEF_MAX_DIST (FIRE_CMP_WSIZE - FIRE_DEF_MIN_LOOKAHEAD)
-#define FIRE_DEF_HASH_BITS 15
+/* The window of the compressor: 32 KB (15 bits) like zlib, the state then takes about 240 KB in one block. A small board (ESP-IDF) takes 4 KB (12 bits, about 40 KB):
+   the output stays valid Deflate (it only uses shorter distances), only a little less small. FIRE_DEF_WBITS (9..15) chooses it. */
+#ifndef FIRE_DEF_WBITS
+#if defined(ESP_PLATFORM)
+#define FIRE_DEF_WBITS 12
+#else
+#define FIRE_DEF_WBITS 15
+#endif
+#endif
+#define FIRE_DEF_WSIZE (1u << FIRE_DEF_WBITS)
+#define FIRE_DEF_WMASK (FIRE_DEF_WSIZE - 1)
+#define FIRE_DEF_MAX_DIST (FIRE_DEF_WSIZE - FIRE_DEF_MIN_LOOKAHEAD)
+#define FIRE_DEF_HASH_BITS FIRE_DEF_WBITS
 #define FIRE_DEF_HASH_SIZE (1u << FIRE_DEF_HASH_BITS)
 #define FIRE_DEF_HASH_MASK (FIRE_DEF_HASH_SIZE - 1)
-#define FIRE_DEF_HASH_SHIFT 5
-#define FIRE_DEF_SYMS 16384
+#define FIRE_DEF_HASH_SHIFT ((FIRE_DEF_HASH_BITS + FIRE_DEF_MIN_MATCH - 1) / FIRE_DEF_MIN_MATCH)
+#define FIRE_DEF_SYMS (FIRE_DEF_WBITS >= 14 ? 16384u : 1u << (FIRE_DEF_WBITS))
 #define FIRE_DEF_TOO_FAR 4096
 
 typedef struct FireDeflateConfig { uint16_t good, lazy, nice, chain; } FireDeflateConfig;
@@ -540,11 +551,14 @@ static const FireDeflateConfig fire_def_config[10] = {
     { 0, 0, 0, 0 }, { 4, 4, 8, 4 }, { 4, 5, 16, 8 }, { 4, 6, 32, 32 }, { 4, 4, 16, 16 }, { 8, 16, 32, 32 }, { 8, 16, 128, 128 }, { 8, 32, 128, 256 },
     { 32, 128, 258, 1024 }, { 32, 258, 258, 4096 } };
 
+/* the work arrays of a Huffman code (fire_def_lengths; about 10 KB - too much for the stack of a small board, so they live in the compressor) */
+typedef struct FireDefTree { uint32_t freq[320], weight[640]; int parent[640], order[320], depth[640]; } FireDefTree;
+
 typedef struct FireDeflate {
     int format, level;
-    uint8_t win[2 * FIRE_CMP_WSIZE + FIRE_DEF_MAX_MATCH + 8];
+    uint8_t win[2 * FIRE_DEF_WSIZE + FIRE_DEF_MAX_MATCH + 8];
     uint16_t head[FIRE_DEF_HASH_SIZE];   /* 0: none (position 0 is never a match source - as in zlib) */
-    uint16_t prev[FIRE_CMP_WSIZE];
+    uint16_t prev[FIRE_DEF_WSIZE];
     uint32_t insH, strstart, lookahead, matchStart, matchLength, prevLength, prevMatch;
     long blockStart;
     int matchAvailable;
@@ -553,6 +567,7 @@ typedef struct FireDeflate {
     uint16_t symDist[FIRE_DEF_SYMS];
     uint32_t nsym;
     uint32_t freqL[286], freqD[30];
+    FireDefTree tree;
     /* the output that was made and not taken yet */
     uint8_t* out;
     size_t outLen, outPos, outCap;
@@ -628,9 +643,12 @@ static void fire_def_header(FireDeflate* z) {
 /* ---- Huffman codes of limited length ---- */
 /* The lengths of a Huffman code for `freq` (n symbols, no length above maxBits). At least two symbols get a code when any has a frequency (a single code
  * would be incomplete). */
-static void fire_def_lengths(const uint32_t* freqIn, int n, int maxBits, uint8_t* lengths) {
-    uint32_t freq[320], weight[640];
-    int parent[640], order[320], blCount[32];
+static void fire_def_lengths(FireDefTree* t, const uint32_t* freqIn, int n, int maxBits, uint8_t* lengths) {
+    uint32_t* freq = t->freq;
+    uint32_t* weight = t->weight;
+    int* parent = t->parent;
+    int* order = t->order;
+    int blCount[32];
     int nodes, leaves = 0, i, j, used = 0;
     memset(lengths, 0, (size_t)n);
     for (i = 0; i < n; i++) { freq[i] = freqIn[i]; if (freq[i]) used++; }
@@ -665,7 +683,8 @@ static void fire_def_lengths(const uint32_t* freqIn, int n, int maxBits, uint8_t
     /* the depth of each leaf; the counts per length, with the lengths above maxBits brought down (the method of zlib) */
     memset(blCount, 0, sizeof blCount);
     {
-        int depth[640], overflow = 0;
+        int* depth = t->depth;
+        int overflow = 0;
         depth[nodes - 1] = 0;
         for (i = nodes - 2; i >= 0; i--) depth[i] = depth[parent[i]] + 1;
         for (i = 0; i < leaves; i++) {
@@ -763,8 +782,8 @@ static void fire_def_block(FireDeflate* z, int last) {
     int nlen, ndist, ncl, nrle, i, useFixed;
     uint8_t all[316];
     z->freqL[256]++;
-    fire_def_lengths(z->freqL, 286, 15, litLen);
-    fire_def_lengths(z->freqD, 30, 15, distLen);
+    fire_def_lengths(&z->tree, z->freqL, 286, 15, litLen);
+    fire_def_lengths(&z->tree, z->freqD, 30, 15, distLen);
     for (nlen = 286; nlen > 257 && litLen[nlen - 1] == 0; nlen--) { }
     for (ndist = 30; ndist > 1 && distLen[ndist - 1] == 0; ndist--) { }
     memcpy(all, litLen, (size_t)nlen);
@@ -772,7 +791,7 @@ static void fire_def_block(FireDeflate* z, int last) {
     nrle = fire_def_rle(all, nlen + ndist, rleSym, rleExtra);
     memset(clFreq, 0, sizeof clFreq);
     for (i = 0; i < nrle; i++) clFreq[rleSym[i]]++;
-    fire_def_lengths(clFreq, 19, 7, clLen);
+    fire_def_lengths(&z->tree, clFreq, 19, 7, clLen);
     for (ncl = 19; ncl > 4 && clLen[fire_cmp_clOrder[ncl - 1]] == 0; ncl--) { }
     /* the costs */
     for (i = 0; i < 288; i++) fixedLit[i] = (uint8_t)(i < 144 ? 8 : i < 256 ? 9 : i < 280 ? 7 : 8);
@@ -877,7 +896,7 @@ static int fire_def_tallyMatch(FireDeflate* z, uint32_t dist, uint32_t len) {
 static void fire_def_insert(FireDeflate* z, uint32_t pos, uint32_t* head) {
     z->insH = ((z->insH << FIRE_DEF_HASH_SHIFT) ^ z->win[pos + FIRE_DEF_MIN_MATCH - 1]) & FIRE_DEF_HASH_MASK;
     *head = z->head[z->insH];
-    z->prev[pos & FIRE_CMP_WMASK] = (uint16_t)*head;
+    z->prev[pos & FIRE_DEF_WMASK] = (uint16_t)*head;
     z->head[z->insH] = (uint16_t)pos;
 }
 
@@ -899,7 +918,7 @@ static uint32_t fire_def_longest(FireDeflate* z, uint32_t cur) {
             best = len;
             if (len >= nice) break;
         }
-    } while ((cur = z->prev[cur & FIRE_CMP_WMASK]) > limit && --chain != 0);
+    } while ((cur = z->prev[cur & FIRE_DEF_WMASK]) > limit && --chain != 0);
     return best <= z->lookahead ? best : z->lookahead;
 }
 
@@ -915,7 +934,7 @@ static void fire_def_compress(FireDeflate* z, int flush) {
             z->lookahead -= n;
         }
         /* (the bytes of a block must still be in the window when it is written: a block before the window slides) */
-        if ((long)z->strstart - z->blockStart >= (long)FIRE_CMP_WSIZE) fire_def_block(z, 0);
+        if ((long)z->strstart - z->blockStart >= (long)FIRE_DEF_WSIZE) fire_def_block(z, 0);
         return;
     }
     for (;;) {
@@ -994,14 +1013,14 @@ static void fire_def_compress(FireDeflate* z, int flush) {
 /* Moves the upper half of the window down when the position has gone far enough (the hash chains move with it). */
 static void fire_def_slide(FireDeflate* z) {
     uint32_t i;
-    if (z->strstart < FIRE_CMP_WSIZE + FIRE_DEF_MAX_DIST) return;
-    memmove(z->win, z->win + FIRE_CMP_WSIZE, FIRE_CMP_WSIZE + FIRE_DEF_MAX_MATCH);
-    z->matchStart = z->matchStart >= FIRE_CMP_WSIZE ? z->matchStart - FIRE_CMP_WSIZE : 0;
-    z->prevMatch = z->prevMatch >= FIRE_CMP_WSIZE ? z->prevMatch - FIRE_CMP_WSIZE : 0;
-    z->strstart -= FIRE_CMP_WSIZE;
-    z->blockStart -= (long)FIRE_CMP_WSIZE;
-    for (i = 0; i < FIRE_DEF_HASH_SIZE; i++) z->head[i] = (uint16_t)(z->head[i] >= FIRE_CMP_WSIZE ? z->head[i] - FIRE_CMP_WSIZE : 0);
-    for (i = 0; i < FIRE_CMP_WSIZE; i++) z->prev[i] = (uint16_t)(z->prev[i] >= FIRE_CMP_WSIZE ? z->prev[i] - FIRE_CMP_WSIZE : 0);
+    if (z->strstart < FIRE_DEF_WSIZE + FIRE_DEF_MAX_DIST) return;
+    memmove(z->win, z->win + FIRE_DEF_WSIZE, FIRE_DEF_WSIZE + FIRE_DEF_MAX_MATCH);
+    z->matchStart = z->matchStart >= FIRE_DEF_WSIZE ? z->matchStart - FIRE_DEF_WSIZE : 0;
+    z->prevMatch = z->prevMatch >= FIRE_DEF_WSIZE ? z->prevMatch - FIRE_DEF_WSIZE : 0;
+    z->strstart -= FIRE_DEF_WSIZE;
+    z->blockStart -= (long)FIRE_DEF_WSIZE;
+    for (i = 0; i < FIRE_DEF_HASH_SIZE; i++) z->head[i] = (uint16_t)(z->head[i] >= FIRE_DEF_WSIZE ? z->head[i] - FIRE_DEF_WSIZE : 0);
+    for (i = 0; i < FIRE_DEF_WSIZE; i++) z->prev[i] = (uint16_t)(z->prev[i] >= FIRE_DEF_WSIZE ? z->prev[i] - FIRE_DEF_WSIZE : 0);
 }
 
 /* Takes data to compress (all of it; the compressed bytes wait in `out`). */
@@ -1013,11 +1032,11 @@ static void fire_def_write(FireDeflate* z, const uint8_t* p, size_t n) {
     while (n > 0) {
         uint32_t room, take;
         fire_def_slide(z);
-        room = 2 * FIRE_CMP_WSIZE - (z->strstart + z->lookahead);
+        room = 2 * FIRE_DEF_WSIZE - (z->strstart + z->lookahead);
         if (room == 0) {
             fire_def_compress(z, 0);
             fire_def_slide(z);
-            room = 2 * FIRE_CMP_WSIZE - (z->strstart + z->lookahead);
+            room = 2 * FIRE_DEF_WSIZE - (z->strstart + z->lookahead);
             if (room == 0) { fire_def_block(z, 0); continue; }   /* (cannot happen: the compressor leaves less than a lookahead) */
         }
         take = n < room ? (uint32_t)n : room;

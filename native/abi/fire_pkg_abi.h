@@ -36,6 +36,25 @@ typedef struct fire_val {
 
 #define FIRE_PKG_ABI_VERSION 1
 
+/* A window that a package draws into itself (the scene3d package: a camera's pictures straight from the GPU, docs/SCENE3D.md "DirectDrawing"). The host (or, in a native build, the
+ * windows bridge) gives the package the native handles of the window: what Vulkan (or another API) needs to make a surface for it. */
+#ifndef FIRE_NATIVE_WINDOW_DEFINED
+#define FIRE_NATIVE_WINDOW_DEFINED 1
+enum { FIRE_NATIVE_NONE = 0, FIRE_NATIVE_WIN32 = 1, FIRE_NATIVE_X11 = 2, FIRE_NATIVE_WAYLAND = 3, FIRE_NATIVE_METAL = 4 };
+typedef struct fire_native_window {
+    int32_t kind;            /* FIRE_NATIVE_*: WIN32 a = HINSTANCE, b = HWND; X11 a = Display*, id = Window; WAYLAND a = wl_display*, b = wl_surface*; METAL b = CAMetalLayer* */
+    int32_t width, height;   /* the size of the window in pixels */
+    int32_t vsync;           /* the window's VSync */
+    void* a;
+    void* b;
+    uint64_t id;
+} fire_native_window;
+/* The presenter of a package. The host calls it on the thread of the window, instead of showing the framebuffer: op 1 shows a picture - the package's, with the framebuffer's
+ * pixels (width x height, R,G,B,A) laid over it where their alpha is not 0; op 0: let go of the window (it closes, or shows the framebuffer again). 1: shown; 0: it cannot -
+ * the host shows the framebuffer itself, and does not ask again until the presenter is attached anew. */
+typedef int32_t (*fire_present_fn)(void* ctx, int32_t op, const fire_native_window* window, const uint32_t* pixels, int32_t width, int32_t height);
+#endif
+
 /* What the host decides, for natives that need it (the io package): which paths a script may touch and where the console goes. The host hands this structure to the library with
  * fire_pkg_set_host; every function may be null (then: everything is allowed, the console does nothing). They are called on the thread of the VM that called the native. */
 typedef struct fire_host {
@@ -66,6 +85,10 @@ typedef struct fire_host {
     /* The network (the net package): may the script talk to this host and port? access bits: 1 connect (also: send a datagram), 2 listen (also: bind a UDP socket), 4 resolve a name
      * (port 0); 1 = allowed, 0 = refused (+ reason). A host that is older than this field has a smaller `size`: then everything is allowed. */
     int32_t (*net_allow)(const char* host_utf8, int32_t port, int32_t access, char* reason, int32_t reason_size);
+    /* The windows of the host (the scene3d package, DirectDrawing): the windows that show the framebuffer `framebuffer` (an id of the graphics bridge) call `present` from now on
+     * instead of showing it (1: the framebuffer exists); win_detach ends that (only for the same ctx). Called on the thread of the VM; `present` is called on the window's. */
+    int32_t (*win_attach)(int32_t framebuffer, fire_present_fn present, void* ctx);
+    void (*win_detach)(int32_t framebuffer, void* ctx);
 } fire_host;
 
 /* The entry points of a package library. */

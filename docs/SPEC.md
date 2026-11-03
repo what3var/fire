@@ -362,11 +362,18 @@ Prefixes (decimal, implicitly coerced):
 | µ, u   | micro | 1e-6   |
 | m      | milli | 1e-3   |
 | c      | centi | 1e-2   |
+| d      | deci  | 1e-1   |
+| h      | hecto | 1e2    |
 | k      | kilo  | 1e3    |
 | M      | mega  | 1e6    |
 | G      | giga  | 1e9    |
 
-Base units that accept prefixes: `m` (meter), `g` (gram), `s` (second), `b` (bit), `B` (byte, 8 `b`).
+Base units that accept prefixes: `m` (meter), `g` (gram), `s` (second), `b` (bit), `B` (byte, 8 `b`), `l` (litre, the dimension `m^3`: 1l = 1dm^3 =
+0.001m^3; `ml`, `cl`, `dl`, `hl`, `kl`).
+
+`d` and `h` alone are the day and the hour (below); in front of another unit they are deci and hecto (`dm`, `dl`, `dg`, `hm`, `hl`, `hPa` of a declared
+`prefixed unit Pascal: Pa`). They are no prefixes of `b` and `B` (`dB` is not a deci-byte; the decibel is a unit a program declares, 3.3.1).
+**A unit wins over a prefix**: the exact symbols of fire and of the program are looked up before a prefix is split off.
 
 Time units that do not accept prefixes but are dimension-compatible with `s`, with fixed factors:
 
@@ -421,14 +428,16 @@ unprefixed unit Knot: kn { coerce m/s => 1852 / 3600.0 }
   (`to(value) * scale + offset` and back); adding, subtracting and comparing convert the right operand into the unit of the left one. Multiplied or
   divided by another unit it counts as its reference unit (the offset and the functions do not take part: `20C * 2s` is `40K*s`), by a number it
   keeps its unit.
-- A symbol or name that is already a unit of fire (`m`, `min`, `km`, `Gs` = giga-second) is an error, so is a unit declared twice and units that are only defined by each other.
+- A symbol or name that is already a unit of fire (`m`, `min`, `l`, `h`) is an error, so is a unit declared twice and units that are only defined by each other.
+  A symbol that is a prefix in front of a unit of fire (`dB`, `hs`, `Gs` = giga-second) may be declared: **the unit wins over the prefix** - the exact
+  symbols (of fire and of the program) are looked up before a prefix is split off, so with `unit Decibel: dB` the text `dB` is the decibel.
 - An own unit behaves exactly like a built-in one: conversion with `:`, declarations (`float d : in = 30cm`), `is in`, arithmetic, comparison (`12in == 1ft`), VM and native code.
 
 ### 3.4 Dimension arithmetic
 
 - Multiplication/division combines dimension vectors additively/subtractively via the exponents (`mm * mm → m²` dimension with scaling factor 1e-6, `m / s → m·s⁻¹`).
 - Two units are compatible (can be added/compared) if their dimension vectors match; the conversion is done via the ratio of their scaling factors to the base unit.
-- Multiplication/division with a unitless operand returns EXACTLY the unit of the other operand (`20mm / 2 → 10mm`, not some newly constructed, unnamed unit) - otherwise the display would swallow the scaling factor (see the `mm` example). The same named unit times itself (`radius * radius`) likewise gets a synthesized display name (`mm^2`). For all other composite cases (e.g. chained `a*a*a`, or genuinely mixed units with a scaling factor ≠ 1.0) the output shows the factor explicitly (`m^3(×1e-09)`) instead of silently ignoring it - a deliberate, simple limit instead of a complete "synthesize pretty unit names for arbitrary combinations" system.
+- Multiplication/division with a unitless operand returns EXACTLY the unit of the other operand (`20mm / 2 → 10mm`, not some newly constructed, unnamed unit) - otherwise the display would swallow the scaling factor (see the `mm` example). Any other product or quotient gets a name made of the symbols of its operands (`kg*m/s^2`, `km/h`, `mm^2`, `m*mm`; the same symbol is counted once, everything after `/` divides, only a denominator is written with negative powers: `s^-1`). Parts of one unit of fire with different prefixes that cancel (`m/mm*s`) leave the name and give their factor to the prefix of another part when one fits (`ms^-1`), otherwise the name stays as it is. Only a unit without such a name (a derived unit with a factor and no symbols) shows the factor explicitly (`m^3(×1e-09)`). A power can also be written as digits right after a symbol (`m3`, `m/s2`); it is printed with `^`.
 
 ### 3.5 Unit declarations
 
@@ -1088,7 +1097,7 @@ The range `a..b` (section 1.1) is an array of the `int`s from `a` to `b` inclusi
 ### 7.1 Base class
 
 There is a built-in base class `Exception` (a class of the prelude, with a `message`) from which all exception classes inherit. The errors of the runtime (`IndexOutOfBoundsException`, `DestroyedException`,
-`AccessDeniedException`, `UnitMismatchException`, `OverflowException`, `ArgumentException`, `MissingMemberException`, `ReflectionException`) derive from it as well. A call with a number of arguments that no method, constructor or lambda takes is an `ArgumentException`; a method or field that the value does not have (`obj.Nope()`, `p.Mesage`) is a `MissingMemberException` - both can be caught (and the type checker reports them already where it knows the class: `TC002`, `TC008`). Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
+`AccessDeniedException`, `UnitMismatchException`, `OverflowException`, `ArgumentException`, `MissingMemberException`, `ReflectionException`) derive from it as well. A call with a number of arguments that no method, constructor or lambda takes is an `ArgumentException`; a method or field that the value does not have (`obj.Nope()`, `p.Mesage`) is a `MissingMemberException` - both can be caught (and the type checker reports them already where it knows the class: `TC002`, `TC008`). A `private`/`protected` member that the code may not use is reported where the class of the object is known (the compile error `TC012`, in lax mode too); only a value of type `any` and the reflection throw the `AccessDeniedException` at run time. Its constructor takes the message and has the default `""`, so a derived class that does not call `base(...)`
 simply has an empty message:
 
 ```
@@ -1527,17 +1536,19 @@ brackets stand after the type (`int[]`) - a bit width always has a number
 **Copy behavior:** If a value is copied into a variable/parameter with a
 lower declared bit width, it is truncated (`Value.TruncateTo`):
 for `int` classic two's-complement truncation (cast chain via
-sbyte/short/int), for `float` correspondingly via float (32 bits) or
-IEEE754 binary16 (16 bits, `System.Half`) or a documented,
-simple 8-bit minifloat (no widespread standard format exists, see
-the comment at `NumericWidth`). The mechanism (`Value.Width` +
+sbyte/short/int), for `float` by rounding to nearest (ties to even) to IEEE754
+binary32 (32 bits), IEEE754 binary16 (16 bits, half precision, a too large value becomes
+infinity) or FP8 E4M3 (8 bits, the OCP 8-bit float "E4M3FN": bias 7, 3 mantissa bits,
+largest value 448, no infinity - a too large value saturates to +-448, NaN stays NaN);
+`Value.RoundFloatToWidth` in the VM and `roundFloatToWidth` in `fire_rt.h` do the same. The mechanism (`Value.Width` +
 `Value.TruncateTo`) is applied on every assignment: the resolver keeps the
 declared width of every variable and parameter, the compiler that of every field name
 (when all classes that declare it agree), and emits an implicit `ConvertWidth`
 before the store. Implicit means: only a number of the declared kind is cut
 (`int[8]` cuts an `int`, `float[32]` rounds a `float`); every other value is
 stored as it is. `byte` keeps `0`...`255` (unsigned), `int[N]` wraps in two's
-complement; `float[16]`/`float[8]` are not cut yet.
+complement, `float[32]`/`float[16]`/`float[8]` round. `print` shows the stored value
+(`float[16] h = 0.1` prints `0.0999755859375`).
 
 #### 8.2.1 Program-wide float precision (`#floatwidth`)
 
@@ -1695,6 +1706,10 @@ class List : IEnumerable {
 - An `interface` only declares method signatures (no fields, no
   constructor), similar to `extern`, just for class-internal contracts instead of
   native functions.
+- The methods of an interface are **public**: the method that implements one (found by name and number of parameters, the nearest in the base-class chain) must be
+  public - `private`/`protected` is the compile error `E4063`, also in a derived class of an implementing class (it would hide the public one). A public method
+  inherited from the base class counts; other methods of the name (another number of parameters) may be private. A call through a value of an interface type is
+  therefore always allowed: neither the compiler nor the run time checks it.
 - An `interface` may be **generic** (`interface ICommand<T> { Execute(T context) }`) and stand next to a non-generic one of the same name (as with classes,
   see 5.8); a class names it with type arguments (`class Command<T> : ICommand<T>`). As everywhere, only the name and the NUMBER of type arguments count.
   Likewise a **base class** may carry type arguments: `class Home : Command<IDevice>` inherits from the generic class `Command<T>`. An interface is also allowed as the **type of a
@@ -2532,7 +2547,7 @@ The glyphs are rasterised by libschrift (ported to C# and C++, the same pixels i
 
 ### 8.28b 3D scenes (`#import "scene3d"`)
 
-The package `fire-scene3d` (docs/SCENE3D.md is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C++, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels.
+The package `fire-scene3d` (docs/SCENE3D.md is the reference; it needs `graphics`): a `Scene` holds `Object`s (from `Template.Box/Sphere/Cylinder/Cone/Plane`, from a `Model` or OBJ text, or empty with `AddTriangle`), `Camera`s, `Light`s and `Texture`s, each with an optional key (`scene.Add(item, "key")`, `scene.Get("key")`; the lists are `Objects`, `Cameras`, `Lights`, `Textures`). A `Camera` is made for a framebuffer (`new Camera(fb)`), has a position, a rotation (`LookAt`), a field of view, and `Render()` draws the scene into the framebuffer. Lengths take a unit of length (`1m`, `20cm`, `3mm`), angles `deg` or `rad`; a plain number is a `Scene3DException`. An object has a position, an anchor (the point of the object that sits at the position), a rotation, and outer dimensions `Width`/`Height`/`Depth` that set the scale of an axis; its look is a colour or a `Texture` (with its own size, position and rotation on the object) and a `Material`. The renderer is software (C, a perspective camera, a depth buffer, per-pixel Blinn-Phong lighting): the VM and a native build give the same pixels. `scene.Renderer = RenderMode.Hardware` lets the GPU draw instead (Vulkan, loaded at run time; without a GPU the software renderer draws, `camera.LastRenderer` says who did); `camera.DirectDrawing = true` puts its pictures straight into the window that shows the framebuffer (the framebuffer becomes the overlay).
 
 ### 8.29 Projects and solutions
 

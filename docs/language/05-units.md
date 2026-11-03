@@ -20,9 +20,41 @@ A unit stands directly after a number literal, without a space: `5mm`, `1.5km`, 
 | `s` | second | `ms`, `µs`, `ns`, ... |
 | `b` | bit | `kb`, `Mb`, ... |
 | `B` | byte (8 bit) | `kB`, `MB`, `GB` |
+| `l` | litre, the same as `dm^3` (compatible with `m^3`) | `ml`, `cl`, `dl`, `hl`, `kl`, ... |
 | `min`, `h`, `d` | minute, hour, day (compatible with `s`) | no prefixes |
 
-Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` or `u` (1e-6: `5µs` and `5us` are the same), `m` (1e-3), `c` (1e-2), `k` (1e3), `M` (1e6), `G` (1e9).
+Prefixes: `f` (1e-15), `p` (1e-12), `n` (1e-9), `µ` or `u` (1e-6: `5µs` and `5us` are the same), `m` (1e-3), `c` (1e-2), `d` (deci, 1e-1),
+`h` (hecto, 1e2), `k` (1e3), `M` (1e6), `G` (1e9).
+
+A **power** stands as digits directly after the symbol: `1m3` is `1m^3`, `5dm3` is `5dm^3`, `2cm2` is `2cm^2`. A unit symbol has letters only, so
+digits right after it can only be its power. The same works in declarations (`float v : m3`, `float:m/s2 a`, `kg*m2/s2`) and in texts
+(`"5 m3".ToFloat()`); `^` keeps working (`m^3`). The power is a whole number of 1 or more (`1m0` is an error; `1/s` or `s^-1` is the way to divide).
+The syntax of the number wins: `1e3` is the float `1000` (scientific notation), `0x1F` is `31`. A unit with a power is printed with `^`: `1m3` prints
+`1m^3`.
+
+```fire
+print(1m3 + " " + 5dm3)         // 1m^3 5dm^3
+float a : m/s2 = 9.81m / 1s / 1s
+print(a)                        // 9.81m/s^2
+print("2 m3".ToFloat():l)       // 2000l
+```
+
+```fire
+print(1l == 1dm * 1dm * 1dm)    // True
+print(1l:ml + " " + 1hl:l)      // 1000ml 100l
+float volume : m^3 = 5l
+print(volume)                   // 0.005m^3
+print(2dm + " " + 1hm:m)        // 2dm 100m
+print(1d + " " + 1h:min)        // 1d 60min - `d` and `h` alone are the day and the hour
+```
+
+- `d` and `h` alone are the day and the hour; only in front of another unit they are deci and hecto (`dm`, `dl`, `dg`, `hl`, `hm`, and `hPa` when
+  the program declares `prefixed unit Pascal: Pa`).
+- `d` and `h` are no prefixes of the bit and the byte: `dB` is not a deci-byte. A program that needs the decibel declares it (see
+  [Units that become a plain number](#units-that-become-a-plain-number)).
+- **A unit wins over a prefix**: the exact symbols - those of fire and those the program declares - are looked up first, a prefix is split off only
+  when no unit has the whole symbol. A program may therefore declare `dB`, `hs` or `Gs` as units of their own; it may not declare a symbol that is
+  already a unit of fire without a prefix (`m`, `l`, `h`, `min`).
 
 Any other word is an **own unit** that is only compatible with itself: `5apples + 3apples` is `8apples`, `5apples + 3pears` is an error.
 
@@ -115,6 +147,14 @@ float:dB g = 2                // a plain number goes the other way: 6.0205999132
 - `+`, `-`, `%` and the comparisons need the **same dimension**. Different scales are converted automatically: two `int`s are converted into the **finer** unit
   (`2m + 500mm` is `2500mm`); with a `float` the result is a `float` in the unit of the left operand (`1.5mm + 1m` is `1001.5mm`).
 - `*` and `/` combine the dimensions: `3m * 2m` is `6m^2`, `10m / 2s` is `5m/s`. With a number without a unit the unit stays: `20mm / 2` is `10mm`.
+- The **name** of a product or a quotient keeps the symbols of its operands: `5kg * 2m / 1s / 1s` is `10kg*m/s^2`, `2km / 1h` is `2km/h`,
+  `1m * 1mm` is `1m*mm`; the same symbol is counted once (`3mm * 2mm` is `6mm^2`). Everything after the `/` divides, like in a declaration; a
+  unit with only a denominator is written with a negative power (`2 / 4s` is `0s^-1`).
+- Parts of one unit of fire with **different prefixes that cancel** (`m` and `mm` in `m/mm*s`) leave the name; their factor goes into the prefix
+  of another part when one fits: `1m / (1mm * 1s)` and `"1m/mm*s".ToFloat()` are `1ms^-1`. When no prefix fits, the name stays as it is
+  (`"3 km/m*h".ToFloat()` is `3km/m*h`).
+- A value stored in a declaration with a unit, or converted with `:`, takes the name of that unit also when the unit is the same: `1.0dm3:l` is
+  `1l`, and after `float:kg*m/s^2 f = x` the value prints in `kg*m/s^2`.
 - `==` compares the values after conversion: `1m == 100cm` is `True`.
 - Different dimensions (`5mm + 2kg`, `5mm + 2`) throw an `UnitMismatchException`. The type checker reports it already where it knows both units (`TC006`).
 - `x++` and `x--` count in the unit of `x`: `5cm` becomes `6cm`.
@@ -177,8 +217,21 @@ A unit after the name (`int length : mm`) or at the type (`float:m width`) fixes
   number without unit) it is unitless. `var` is free: `var x = 5mm` and later `x = 3s` is allowed.
 - The return type of a method and a property can have a unit too: `float:m Length()` converts its result into metres.
 
+An **array** with a unit (`float:km/h speeds[]`, `float speeds[] : km/h`, `int sizes[3] : mm`, a parameter `float v[] : m`, a field, a return
+type `float:cm[] Sizes()`) fixes the unit of its elements: the elements of an initializer or of an array stored there are converted (where they
+are - the array is the same), and so is every element stored through the name (`speeds[i] = 5m / 1s`, also `+=` and inner arrays of `float:m
+grid[][]`). An element of another dimension is a `UnitMismatchException`, and `TC006` where the type checker knows the unit. An array declared
+without a unit says nothing about its elements. A `List` takes a unit at its type argument: `new List<float : cm>()`.
+
+```fire
+float:km/h speeds[] = [36m / 1s, 10km / 1h]
+speeds[1] = 5m / 1s
+print(speeds[0] + " " + speeds[1])     // 129.6km/h 18km/h
+```
+
 A declaration can also name a **combined unit**: units joined by `*` and `/`, each with an optional power - `m/s`, `km/h`, `m/s^2`, `kg*m/s^2`,
-`m^2`. Everything after a `/` divides.
+`m^2`. Everything after a `/` divides. It may stand after the name (`float v : m/s`) or at the type (`float:m/s v`), also at the return type of a
+method or a property (`float:km/h Speed()`): the returned value is converted and checked like a value stored in a variable of that unit.
 
 ```fire
 float speed : km/h = 10m / 1s
@@ -187,6 +240,14 @@ float g : m/s^2 = 9.81m / 1s / 1s
 print(g)                        // 9.81m/s^2
 float area : m^2 = 2m * 3m
 print(area)                     // 6m^2
+
+class Run {
+    float:m dist
+    float:s time
+    construct(float:km d, float:min t) { dist = d; time = t }
+    float:km/h Speed() { return dist / time }
+}
+print(new Run(10km, 48min).Speed())   // 12.5km/h
 ```
 
 ```fire

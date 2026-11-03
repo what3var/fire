@@ -1,4 +1,5 @@
 /* fire native platform package "std": a window on the desktop through SDL2 (link with -lSDL2; the generated program asks for it with a `// fire-link: SDL2` line).
+ * The build takes SDL3 instead (fire_display_sdl3.h) when the toolchain can compile and link it; this one has text only on its clipboard and no hover events.
  * What it shows is the same as the VM's window (src/fire.Terminal.Sdl): the framebuffer as a streaming texture (R,G,B,A in memory = ABGR8888 on little endian),
  * stretched to the window, which can be resized; positions come back in framebuffer pixels; closing the window ends `Tick`. The interface is described in fire_display_c.h. */
 #ifndef FIRE_DISPLAY_SDL_H
@@ -20,12 +21,15 @@
 #  else
 #    include <SDL.h>
 #  endif
+#elif defined(__TINYC__) && !defined(_WIN32) && !defined(FIRE_SDL_PLAIN_INCLUDE)
+#  include <SDL2/SDL.h>   /* (TinyCC has no __has_include: the layout of the Linux distributions; FIRE_SDL_PLAIN_INCLUDE for <SDL.h> on an include path) */
 #else
 #  include <SDL.h>
 #endif
 #include <string.h>
 #include "fire_display_c.h"
 #include "fire_systheme.h"
+#include "fire_dragout.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
 
@@ -47,7 +51,38 @@ typedef struct FireDisplayWindow {
     int vsync, quit, ownsVideo, touchMouse, ownsJoystick;
     SDL_Joystick** joysticks;
     size_t joystickCount, joystickCap;
+    int direct;          /* a presenter draws into the window itself (fire_display_native): no renderer */
+    void* metalView;     /* (macOS: the view with the layer the presenter draws into) */
+    /* a drop that is going on (SDL_DROPBEGIN .. SDL_DROPCOMPLETE): the paths so far (one per line) and the text */
+    char* dropFiles;
+    char* dropText;
+    int dropping;
 } FireDisplayWindow;
+
+/* One lock for everything that touches SDL's events: the pumping of the windows (from several threads: the managers) and the clipboard (on X11 SDL waits for
+ * the answer of the clipboard's owner by pumping events itself). */
+static SDL_mutex* fire_display_sdlMutex(void) {
+    static SDL_mutex* volatile mutex = NULL;
+    static SDL_SpinLock guard = 0;
+    if (mutex == NULL) {
+        SDL_AtomicLock(&guard);
+        if (mutex == NULL) mutex = SDL_CreateMutex();
+        SDL_AtomicUnlock(&guard);
+    }
+    return mutex;
+}
+static void fire_display_lockSdl(void) { SDL_mutex* m = fire_display_sdlMutex(); if (m) SDL_LockMutex(m); }
+static void fire_display_unlockSdl(void) { SDL_mutex* m = fire_display_sdlMutex(); if (m) SDL_UnlockMutex(m); }
+
+/* (appends a line to a text that grows: "a" + "b" = "a\nb") */
+static char* fire_display_appendLine(char* all, const char* line) {
+    size_t a = all ? strlen(all) : 0, b = strlen(line);
+    char* grown = (char*)realloc(all, a + b + 2);
+    if (grown == NULL) return all;
+    if (a > 0) grown[a++] = '\n';
+    memcpy(grown + a, line, b + 1);
+    return grown;
+}
 
 static void fire_display_init(FireDisplayWindow* w) {
     memset(w, 0, sizeof *w);
@@ -65,13 +100,19 @@ static void fire_display_close(FireDisplayWindow* w) {
     for (j = 0; j < w->joystickCount; j++) SDL_JoystickClose(w->joysticks[j]);
     free(w->joysticks);
     w->joysticks = NULL; w->joystickCount = 0; w->joystickCap = 0;
+    free(w->dropFiles); free(w->dropText);
+    w->dropFiles = w->dropText = NULL; w->dropping = 0;
     if (w->ownsJoystick) { SDL_QuitSubSystem(SDL_INIT_JOYSTICK); w->ownsJoystick = 0; }
     if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+    if (w->metalView) { SDL_Metal_DestroyView((SDL_MetalView)w->metalView); w->metalView = NULL; }
+#endif
+    w->direct = 0;
     if (w->window) { SDL_DestroyWindow(w->window); w->window = NULL; }
     if (w->ownsVideo) { SDL_QuitSubSystem(SDL_INIT_VIDEO); w->ownsVideo = 0; }
 }
 
-#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT)
+#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP)
 /* The tests (and nobody else) push a fixed series of events when a window opens: keys, a click, motion, the wheel, text and the close. */
 static void fire_display_selftest(FireDisplayWindow* w) {
     SDL_Event e;
@@ -101,6 +142,16 @@ static void fire_display_selftest(FireDisplayWindow* w) {
     SDL_zero(e); e.type = SDL_MOUSEWHEEL; e.wheel.preciseX = 0; e.wheel.preciseY = 1.5f; SDL_PushEvent(&e);
     SDL_zero(e); e.type = SDL_TEXTINPUT; strncpy(e.text.text, "\xC3\xA9x", sizeof e.text.text - 1); SDL_PushEvent(&e);
     SDL_zero(e); e.type = SDL_WINDOWEVENT; e.window.event = SDL_WINDOWEVENT_CLOSE; SDL_PushEvent(&e);
+#ifdef FIRE_DISPLAY_SELFTEST_DROP
+    /* two files and a text are dropped at (40, 30) of the window; then a single file without begin/complete (an old SDL) */
+    SDL_WarpMouseInWindow(w->window, 40, 30);
+    SDL_zero(e); e.type = SDL_DROPBEGIN; e.drop.windowID = w->windowId; SDL_PushEvent(&e);
+    SDL_zero(e); e.type = SDL_DROPFILE; e.drop.windowID = w->windowId; e.drop.file = SDL_strdup("/tmp/eins.txt"); SDL_PushEvent(&e);
+    SDL_zero(e); e.type = SDL_DROPFILE; e.drop.windowID = w->windowId; e.drop.file = SDL_strdup("/tmp/zwei \xC3\xA4.png"); SDL_PushEvent(&e);
+    SDL_zero(e); e.type = SDL_DROPTEXT; e.drop.windowID = w->windowId; e.drop.file = SDL_strdup("gezogener Text"); SDL_PushEvent(&e);
+    SDL_zero(e); e.type = SDL_DROPCOMPLETE; e.drop.windowID = w->windowId; SDL_PushEvent(&e);
+    SDL_zero(e); e.type = SDL_DROPFILE; e.drop.windowID = w->windowId; e.drop.file = SDL_strdup("/tmp/allein.txt"); SDL_PushEvent(&e);
+#endif
     SDL_zero(e); e.type = SDL_QUIT; SDL_PushEvent(&e);
 }
 #endif
@@ -123,7 +174,12 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
      * (a reference of its own as well, see above) */
     if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) == 0) w->ownsJoystick = 1;
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, w->touchMouse ? "1" : "0");
-#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT)
+    /* what the user drops onto the window: files and text */
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
+#if SDL_VERSION_ATLEAST(2, 0, 5)
+    SDL_EventState(SDL_DROPTEXT, SDL_ENABLE);
+#endif
+#if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP)
     fire_display_selftest(w);
 #endif
     return 1;
@@ -152,6 +208,41 @@ static void fire_display_toFramebuffer(const FireDisplayWindow* w, float x, floa
     *ox = x * (float)w->fbWidth / (float)ww; *oy = y * (float)w->fbHeight / (float)hh;
 }
 
+/* Where a drop lands, in framebuffer pixels: SDL 2 does not say - the pointer is asked (on the desktop it is where the user let go). */
+static void fire_display_dropPosition(FireDisplayWindow* w, float* x, float* y) {
+    int gx = 0, gy = 0, wx = 0, wy = 0, lx, ly;
+    SDL_GetGlobalMouseState(&gx, &gy);
+    if (w->window) SDL_GetWindowPosition(w->window, &wx, &wy);
+    lx = gx - wx;
+    ly = gy - wy;
+    if ((lx < 0 || ly < 0 || lx >= w->winW || ly >= w->winH) && SDL_GetMouseFocus() == w->window) SDL_GetMouseState(&lx, &ly);
+    if (lx < 0) lx = 0;
+    if (ly < 0) ly = 0;
+    if (lx >= w->winW && w->winW > 0) lx = w->winW - 1;
+    if (ly >= w->winH && w->winH > 0) ly = w->winH - 1;
+    fire_display_toFramebuffer(w, (float)lx, (float)ly, x, y);
+}
+
+/* The drop that was collected goes out: a DropFiles event with the paths, a DropText event with the text. */
+static void fire_display_dropDone(FireDisplayWindow* w, FireDisplayEvents* out) {
+    FireDisplayEvent e;
+    float x, y;
+    fire_display_dropPosition(w, &x, &y);
+    if (w->dropFiles != NULL) {
+        fire_display_eventInit(&e);
+        e.type = FIRE_EV_DROP_FILES; e.x = x; e.y = y; e.data = w->dropFiles;
+        fire_display_push(out, &e);
+    }
+    if (w->dropText != NULL) {
+        fire_display_eventInit(&e);
+        e.type = FIRE_EV_DROP_TEXT; e.x = x; e.y = y; e.data = w->dropText;
+        fire_display_push(out, &e);
+    }
+    free(w->dropFiles); free(w->dropText);
+    w->dropFiles = w->dropText = NULL;
+    w->dropping = 0;
+}
+
 /* Takes the pending events of this window. 0 once the window was closed. */
 static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int fbWidth, int fbHeight) {
     SDL_Event ev;
@@ -159,6 +250,7 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
 #ifdef __EMSCRIPTEN__
     emscripten_sleep(0);   /* the browser delivers events only while the program is not running */
 #endif
+    fire_display_lockSdl();
     while (SDL_PollEvent(&ev)) {
         FireDisplayEvent e;
         fire_display_eventInit(&e);
@@ -260,11 +352,75 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
                 fire_display_push(out, &e);
                 break;
             }
+#if SDL_VERSION_ATLEAST(2, 0, 5)
+            case SDL_DROPBEGIN: w->dropping = 1; break;
+            case SDL_DROPTEXT:
+                if (ev.drop.file) { w->dropText = fire_display_appendLine(w->dropText, ev.drop.file); SDL_free(ev.drop.file); }
+                if (!w->dropping) fire_display_dropDone(w, out);
+                break;
+            case SDL_DROPCOMPLETE: fire_display_dropDone(w, out); break;
+#endif
+            case SDL_DROPFILE:
+                if (ev.drop.file) { w->dropFiles = fire_display_appendLine(w->dropFiles, ev.drop.file); SDL_free(ev.drop.file); }
+                if (!w->dropping) fire_display_dropDone(w, out);   /* (an SDL before 2.0.5 has no begin and complete: every file is a drop of its own) */
+                break;
             default: break;
         }
     }
+    fire_display_unlockSdl();
     return !w->quit;
 }
+
+/* ---- the clipboard of the desktop (text) ---- */
+/* The video part of SDL must run for the clipboard (on X11 it needs a window of SDL's own): it is started once and stays. */
+static int fire_display_clipboardReady(void) {
+    static int ready = 0;
+    if (!ready) {
+        SDL_SetMainReady();
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return 0;
+        ready = 1;
+    }
+    /* the events of the clipboard are taken in (X11: another program asks this one for what it put there - a program without a window answers here) */
+    SDL_PumpEvents();
+    return 1;
+}
+static int fire_display_clipboardSet(const char* text) {
+    int ok;
+    fire_display_lockSdl();
+    ok = fire_display_clipboardReady() && SDL_SetClipboardText(text) == 0;
+    fire_display_unlockSdl();
+    return ok;
+}
+static char* fire_display_clipboardGet(void) {
+    char* text = NULL;
+    fire_display_lockSdl();
+    if (fire_display_clipboardReady() && SDL_HasClipboardText()) {
+        char* sdl = SDL_GetClipboardText();
+        if (sdl != NULL) {
+            size_t n = strlen(sdl);
+            text = (char*)malloc(n + 1);
+            if (text != NULL) memcpy(text, sdl, n + 1);
+            SDL_free(sdl);
+        }
+    }
+    fire_display_unlockSdl();
+    return text;
+}
+static int fire_display_clipboardHas(void) {
+    int has;
+    fire_display_lockSdl();
+    has = fire_display_clipboardReady() && SDL_HasClipboardText();
+    fire_display_unlockSdl();
+    return has;
+}
+
+/* Pictures and files: SDL2 has only text on its clipboard (SDL3 has more, see fire_display_sdl3.h) - not available. */
+static unsigned char* fire_display_clipboardGetImage(size_t* size) { *size = 0; return NULL; }
+static int fire_display_clipboardSetImage(const unsigned char* png, size_t pngSize, const unsigned char* bmp, size_t bmpSize) { (void)png; (void)pngSize; (void)bmp; (void)bmpSize; return 0; }
+static int fire_display_clipboardHasImage(void) { return 0; }
+static char* fire_display_clipboardGetFiles(void) { return NULL; }
+static int fire_display_clipboardSetFiles(const char* paths) { (void)paths; return 0; }
+static int fire_display_clipboardHasFiles(void) { return 0; }
 
 /* Shows the pixels (R,G,B,A per 32-bit word, width*height), stretched to the window. */
 static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int width, int height) {
@@ -281,6 +437,121 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
     SDL_RenderPresent(w->renderer);
 #ifdef __EMSCRIPTEN__
     emscripten_sleep(0);   /* in the browser the page draws only when the program hands the thread back */
+#endif
+}
+
+/* ---- the native handles of the window come from SDL_GetWindowWMInfo. Its header (SDL_syswm.h) would bring the headers of the window system into the program - X11
+ * defines `Bool`, `None`, `Status`, ... - so the structure is mirrored here: it is part of SDL2's stable ABI (the version, the subsystem, a union of 64 bytes at pointer
+ * alignment). Used by the presenters (fire_display_native) and by dragging out of the window (fire_display_startDrag). ---- */
+struct SDL_SysWMinfo;
+extern DECLSPEC SDL_bool SDLCALL SDL_GetWindowWMInfo(SDL_Window* window, struct SDL_SysWMinfo* info);
+typedef struct FireSdlWmInfo {
+    SDL_version version;
+    int subsystem;                                   /* SDL_SYSWM_TYPE: 1 Windows, 2 X11, 4 Cocoa, 6 Wayland */
+    union {
+        struct { void* window; void* hdc; void* hinstance; } win;
+        struct { void* display; unsigned long window; } x11;
+        struct { void* display; void* surface; } wl;
+        Uint8 dummy[64];
+    } info;
+} FireSdlWmInfo;
+
+static int fire_display_wmInfo(FireDisplayWindow* w, FireSdlWmInfo* info) {
+    memset(info, 0, sizeof *info);
+    SDL_VERSION(&info->version);
+    return w->window && SDL_GetWindowWMInfo(w->window, (struct SDL_SysWMinfo*)(void*)info);
+}
+
+/* ---- a presenter draws into the window itself (fire_display_c.h: fire_display_native) ---- */
+static int fire_display_native(FireDisplayWindow* w, fire_native_window* out) {
+    FireSdlWmInfo info;
+    int pw = 0, ph = 0;
+    memset(out, 0, sizeof *out);
+    if (!fire_display_wmInfo(w, &info)) return 0;
+    switch (info.subsystem) {
+        case 1: out->kind = FIRE_NATIVE_WIN32; out->a = info.info.win.hinstance; out->b = info.info.win.window; break;
+        case 2: out->kind = FIRE_NATIVE_X11; out->a = info.info.x11.display; out->id = (uint64_t)info.info.x11.window; break;
+        case 6: out->kind = FIRE_NATIVE_WAYLAND; out->a = info.info.wl.display; out->b = info.info.wl.surface; break;
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+        case 4:
+            if (!w->metalView) w->metalView = SDL_Metal_CreateView(w->window);
+            if (!w->metalView) return 0;
+            out->kind = FIRE_NATIVE_METAL; out->b = SDL_Metal_GetLayer((SDL_MetalView)w->metalView);
+            break;
+#endif
+        default: return 0;
+    }
+    /* the window is the presenter's now: what showed the framebuffers goes (a swap chain of another API on the window would stand in the way) */
+    if (!w->direct) {
+        if (w->texture) { SDL_DestroyTexture(w->texture); w->texture = NULL; }
+        if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
+        w->direct = 1;
+    }
+#if SDL_VERSION_ATLEAST(2, 26, 0)
+    SDL_GetWindowSizeInPixels(w->window, &pw, &ph);
+#else
+    SDL_GetWindowSize(w->window, &pw, &ph);
+#endif
+    out->width = pw; out->height = ph;
+    out->vsync = w->vsync;
+    return 1;
+}
+
+static void fire_display_restore(FireDisplayWindow* w) {
+    if (!w->direct) return;
+    w->direct = 0;
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+    if (w->metalView) { SDL_Metal_DestroyView((SDL_MetalView)w->metalView); w->metalView = NULL; }
+#endif
+    if (!w->renderer && w->window) {
+        w->renderer = SDL_CreateRenderer(w->window, -1, w->vsync ? SDL_RENDERER_PRESENTVSYNC : 0);
+        if (!w->renderer) w->renderer = SDL_CreateRenderer(w->window, -1, SDL_RENDERER_SOFTWARE);
+    }
+}
+
+/* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL2 cannot start such a drag: fire_dragout.h does it for the
+ * window of the platform, see fire_display_sdl3.h) - 0 nothing, 1 copied, 2 moved. ---- */
+#define FIRE_DISPLAY_START_DRAG 1
+static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) {
+    int result = 0;
+    if (!w->window) return 0;
+#if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
+    {
+        FireSdlWmInfo wm;
+        if (fire_display_wmInfo(w, &wm)) {
+#if defined(_WIN32)
+            if (wm.subsystem == 1 && wm.info.win.window != NULL) result = fire_dragout_win32((HWND)wm.info.win.window, text, files);
+#else
+            if (wm.subsystem == 2 && wm.info.x11.display != NULL && wm.info.x11.window != 0) {
+                fire_display_lockSdl();
+                result = fire_dragout_x11(wm.info.x11.display, wm.info.x11.window, text, files);
+                fire_display_unlockSdl();
+            }
+#endif
+        }
+    }
+#else
+    (void)text; (void)files;
+#endif
+    return result;
+}
+
+/* Can fire_display_startDrag hand a drag to the desktop here? Windows and X11 (the video drivers "windows" and "x11"); Wayland, macOS, the dummy driver,
+ * the browser: no. (Only the video driver is asked: callable from any thread.) */
+#define FIRE_DISPLAY_CAN_START_DRAG 1
+static int fire_display_canStartDrag(FireDisplayWindow* w) {
+    if (w == NULL || !w->window) return 0;
+#if defined(_WIN32) || defined(FIRE_DRAGOUT_X11)
+    {
+        const char* driver = SDL_GetCurrentVideoDriver();
+#if defined(_WIN32)
+        return driver != NULL && strcmp(driver, "windows") == 0;
+#else
+        return driver != NULL && strcmp(driver, "x11") == 0;
+#endif
+    }
+#else
+    return 0;
 #endif
 }
 

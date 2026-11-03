@@ -103,9 +103,33 @@ namespace fire.Windows.Bridge
                 ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
                 // Window.Cursor: the system cursor over the window
                 ["SetCursor"] = args => { mgr.SetCursor((int)args[0].AsInt(), (int)args[1].AsInt()); return Value.MakeUndefined(); },
+                // Clipboard: the text on the clipboard of the desktop
+                ["ClipboardSetText"] = args => Value.MakeBool(args[0].Kind == ValueKind.String && mgr.Clipboard.SetText(args[0].AsString())),
+                ["ClipboardGetText"] = args => mgr.Clipboard.GetText() is string text ? Value.MakeString(text) : Value.MakeUndefined(),
+                ["ClipboardHasText"] = args => Value.MakeBool(mgr.Clipboard.HasText),
+                // Clipboard: pictures (the bytes of a PNG or BMP file; the prelude decodes and encodes them) and files
+                ["ClipboardGetImage"] = args => mgr.Clipboard.GetImage() is byte[] image ? Value.MakeBuffer(new ByteBuffer(image, ByteConversions.HostByteOrder)) : Value.MakeUndefined(),
+                ["ClipboardSetImage"] = args => Value.MakeBool(args[0].Kind == ValueKind.Buffer && mgr.Clipboard.SetImage(args[0].AsBuffer().Bytes)),
+                ["ClipboardHasImage"] = args => Value.MakeBool(mgr.Clipboard.HasImage),
+                ["ClipboardGetFiles"] = args => Paths(mgr.Clipboard.GetFiles()),
+                ["ClipboardSetFiles"] = args => Value.MakeBool(args[0].Kind == ValueKind.Array && mgr.Clipboard.SetFiles(args[0].AsArray().Items.Where(v => v.Kind == ValueKind.String).Select(v => v.AsString()).ToArray())),
+                ["ClipboardHasFiles"] = args => Value.MakeBool(mgr.Clipboard.HasFiles),
+                // Window.StartDrag: text and files are dragged out of the window into other programs (0 nothing, 1 copied, 2 moved)
+                ["StartDrag"] = args => Value.MakeInt(mgr.StartDrag((int)args[0].AsInt(), args[1].Kind == ValueKind.String ? args[1].AsString() : "",
+                    args[2].Kind == ValueKind.Array ? args[2].AsArray().Items.Where(v => v.Kind == ValueKind.String).Select(v => v.AsString()).Where(p => p.Length > 0 && !p.Contains('\n')).ToArray() : Array.Empty<string>())),
+                // Window.CanStartDrag: can StartDrag hand a drag to the desktop here (Windows, X11)?
+                ["CanStartDrag"] = args => Value.MakeBool(mgr.CanStartDrag((int)args[0].AsInt())),
             };
         }
         
+        /// <summary>Paths as an array of strings.</summary>
+        private static Value Paths(string[] files)
+        {
+            var array = new ScriptArray(files.Length);
+            for (int i = 0; i < files.Length; i++) array.Items[i] = Value.MakeString(files[i]);
+            return Value.MakeArray(array);
+        }
+
         private static Dictionary<string, NativeFunction> BuildWindowFunctionStubs()
         {
             return new Dictionary<string, NativeFunction>
@@ -136,6 +160,17 @@ namespace fire.Windows.Bridge
                 ["SetSize"] = args => Value.MakeBool(false) /*STUB*/,
                 ["SystemTheme"] = args => SystemThemeProbe.Current().ToValue(),
                 ["SetCursor"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ClipboardSetText"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardGetText"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ClipboardHasText"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardGetImage"] = args => Value.MakeUndefined() /*STUB*/,
+                ["ClipboardSetImage"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardHasImage"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardGetFiles"] = args => Value.MakeArray(new ScriptArray(0)) /*STUB*/,
+                ["ClipboardSetFiles"] = args => Value.MakeBool(false) /*STUB*/,
+                ["ClipboardHasFiles"] = args => Value.MakeBool(false) /*STUB*/,
+                ["StartDrag"] = args => Value.MakeInt(0) /*STUB*/,
+                ["CanStartDrag"] = args => Value.MakeBool(false) /*STUB*/,
             };
         }
 

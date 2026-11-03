@@ -138,6 +138,8 @@ class Window {
     // framebuffer already has it if it is valid), Close [type]. Touchscreen: TouchDown/TouchMove/TouchUp [type, finger, x, y, pressure] (pixels of the framebuffer; finger
     // distinguishes several fingers; pressure 0 to 1). Joystick: JoystickAxis [type, joystick, axis, position] (-1 to 1), JoystickButtonDown/JoystickButtonUp [type, joystick, button],
     // JoystickHat [type, joystick, hat, directions] (bit mask: 1 up, 2 right, 4 down, 8 left; 0 centre), JoystickAdded/JoystickRemoved [type, joystick] (plugged in/unplugged).
+    // Dropped from another program (the file manager, a browser): DropFiles [type, paths (string[]), x, y], DropText [type, text, x, y]; while it is dragged over
+    // the window DragHover [type, x, y], and DragLeave [type] when it leaves without being dropped (SDL3; a build with SDL2 sends neither).
     // Processing thus happens in the main program - with the real global variables, not the isolated copy of a
     // Callbacks.
     bool EnableEvents() { return __GRPHWinEnableEvents(this.id) }
@@ -196,6 +198,33 @@ class Window {
     bool RegisterJoystickHat(lambda<int,int,int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickHat!, fn); }
     bool RegisterJoystickAdded(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickAdded!, fn); }
     bool RegisterJoystickRemoved(lambda<int> fn) { return __GRPHWinRegisterEvent(this.id, EventType.JoystickRemoved!, fn); }
+
+    // Files dropped onto the window from another program (a file manager): (paths as string[], x, y in framebuffer pixels).
+    bool RegisterDropFiles(lambda<any,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.DropFiles!, fn); }
+    // Text dropped onto the window from another program: (text, x, y).
+    bool RegisterDropText(lambda<string,float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.DropText!, fn); }
+    // Something of another program is dragged over the window (what it is comes with the drop): (x, y in framebuffer pixels).
+    bool RegisterDragHover(lambda<float,float> fn) { return __GRPHWinRegisterEvent(this.id, EventType.DragHover!, fn); }
+    // It left the window without being dropped.
+    bool RegisterDragLeave(lambda fn) { return __GRPHWinRegisterEvent(this.id, EventType.DragLeave!, fn); }
+
+    // Drags a text and/or files (their paths: a string[] or a List) out of this window into other programs - a file manager, an editor, a browser - while a
+    // mouse button is held (call it when the pointer leaves the window during a drag of your own; UI.Root does that by itself). It returns when the user lets
+    // go: 0 nothing happened (no program took it, the user pressed Escape, no button was held), 1 the other program copied it, 2 it moved it (a file manager
+    // moved the files: the program may forget them). Windows (OLE) and X11 (XDND); elsewhere (Wayland, macOS, a board) there is no such drag: 0.
+    int StartDrag(string text, any files = undefined) {
+        var list = new List<string>()
+        if (files != undefined) { foreach (f in files) { list.Add(f) } }
+        var array = new string[list.Count]
+        for (int i = 0; i < list.Count; i++) { array[i] = list[i] }
+        var t = text
+        if (t == undefined) { t = "" }
+        return __GRPHWinStartDrag(this.id, t, array)
+    }
+
+    // Can StartDrag hand a drag to the desktop here (Windows, X11), or does it always say 0 (Wayland, macOS, a board, a dummy video driver, a window that
+    // is not open)? UI.Root keeps a drag inside the window when it cannot leave.
+    bool CanStartDrag() { return __GRPHWinCanStartDrag(this.id) }
 
     bool RegisterTextInput(lambda<string> fn)
     {
@@ -438,5 +467,59 @@ enum EventType
     JoystickButtonUp = 34,
     JoystickHat = 35,
     JoystickAdded = 36,
-    JoystickRemoved = 37
+    JoystickRemoved = 37,
+    DropFiles = 40,
+    DropText = 41,
+    DragHover = 42,
+    DragLeave = 43
+}
+
+// The clipboard of the desktop (text, pictures, files): what the user copies in other programs, and what the program puts there for them. It holds one
+// thing at a time: putting a picture there takes the text away. Without a desktop (a board, a test) the program has a clipboard of its own.
+class Clipboard {
+    // The text on the clipboard, "" when there is none (or the clipboard holds something else, e.g. a picture).
+    static string GetText() {
+        var text = __GRPHWinClipboardGetText()
+        if (text == undefined) { return "" }
+        return text
+    }
+
+    // Puts the text on the clipboard; false when the desktop refuses.
+    static bool SetText(string text) { return __GRPHWinClipboardSetText(text) }
+
+    // Is there text on the clipboard?
+    static bool HasText { get { return __GRPHWinClipboardHasText() } }
+
+    // The picture on the clipboard as a new framebuffer (RGBA, or with the palette of the file), undefined when there is none (or it cannot be read).
+    static Framebuffer GetImage() {
+        var data = __GRPHWinClipboardGetImage()
+        if (data == undefined) { return undefined }
+        try { return Framebuffer.FromImage(data) }
+        catch (ImageException e) { return undefined }
+    }
+
+    // Puts the picture there (as PNG; where the desktop wants it also as BMP); false when the desktop refuses (or a build with SDL2: it has text only).
+    static bool SetImage(Framebuffer fb) {
+        if (fb == undefined) { return false }
+        return __GRPHWinClipboardSetImage(fb.ToPng())
+    }
+
+    // Is there a picture on the clipboard?
+    static bool HasImage { get { return __GRPHWinClipboardHasImage() } }
+
+    // The paths of the files on the clipboard (what a file manager copies), an empty array when there are none.
+    static string[] GetFiles() { return __GRPHWinClipboardGetFiles() }
+
+    // Puts paths there (a string[] or a List of them) - for a file manager to paste; false when the desktop refuses.
+    static bool SetFiles(any paths) {
+        if (paths == undefined) { return false }
+        var list = new List<string>()
+        foreach (p in paths) { list.Add(p) }
+        var array = new string[list.Count]
+        for (int i = 0; i < list.Count; i++) { array[i] = list[i] }
+        return __GRPHWinClipboardSetFiles(array)
+    }
+
+    // Are there files on the clipboard?
+    static bool HasFiles { get { return __GRPHWinClipboardHasFiles() } }
 }

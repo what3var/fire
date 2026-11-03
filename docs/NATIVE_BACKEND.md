@@ -198,9 +198,46 @@ Bekannte Abweichungen zur VM:
 
 ## Messwerte
 
-**C gegen C++** (Branch `native-c`, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` sind als C 4-16 % schneller
-als der C++-Code davor (fib 3,6 statt 4,3 ms, method 3,3 statt 3,9 ms, list 5,2 statt 6,1 ms, die anderen 4-13 %), die Ausgaben gleich. 2 Millionen Aufrufe einer
-Funktion mit `try`/`catch`: 12,9 ms (C++: 15,2 ms) - mit allen Variablen im Frame waren es 34,7 ms, daher hält der Frame nur, was die Catch-Blöcke benutzen.
+**C gegen C++** (während des Ports, gcc 13 `-O2`, beste von 25 Läufen, mit Prozessstart): die neun Benchmarks von `fire.Benchmarks` waren als C 4-16 % schneller
+als der C++-Code davor. 2 Millionen Aufrufe einer Funktion mit `try`/`catch`: 12,9 ms (C++: 15,2 ms) - mit allen Variablen im Frame waren es 34,7 ms, daher hält
+der Frame nur, was die Catch-Blöcke benutzen.
+
+### Benchmarks vor und nach dem C-Port
+
+Verglichen: der Generator vor dem Port (Commit `9de4c77`, der Vorgänger von `b0c73d9` "native-c: C runtime fire_rt.h"; erzeugt C++ gegen `fire_rt.hpp`) und der
+heutige (C11 gegen `fire_rt.h`), dieselben neun Programme aus `src/fire.Benchmarks/BenchmarkScripts.cs`, jeweils mit `forge build --engine native` gebaut - also
+`g++ -std=c++17 -O2` gegen `gcc -std=c11 -O2` (sonst dieselben Schalter: `-Wall -Wextra -pthread -s`). Rechner: Intel Xeon @ 2,10 GHz (4 vCPUs, VM), Linux 6.18,
+gcc/g++ 13.3.0. Gemessen wird die Wandzeit eines Programmlaufs mit Prozessstart; alt und neu laufen abwechselnd, die Tabelle zeigt das Minimum (60 Läufe je
+Programm, bei den 20-fachen 20 Läufe). Auf dem Rechner liefen gleichzeitig andere Prozesse (Last ~4); die Mediane geben dasselbe Bild. Die Ausgaben sind in
+allen Fällen gleich. Weil die Programme nur wenige Millisekunden laufen, gibt es jedes zusätzlich mit etwa 20-facher Arbeit (größere Schleifenzahlen, `Fib(29)`
+statt `Fib(23)`) - dort zählt der Programmstart kaum noch.
+
+| Benchmark | C++ vorher | C jetzt | Verhältnis | 20-fach: C++ vorher | C jetzt | Verhältnis |
+|---|---:|---:|---:|---:|---:|---:|
+| leeres Programm (`print(0)`) | 1,73 ms | 1,20 ms | 0,69 | - | - | - |
+| `loop` | 2,74 ms | 2,15 ms | 0,79 | 27,7 ms | 26,4 ms | 0,95 |
+| `float` | 5,48 ms | 5,05 ms | 0,92 | 81,8 ms | 81,2 ms | 0,99 |
+| `fib` | 1,95 ms | 1,39 ms | 0,71 | 8,7 ms | 7,5 ms | 0,85 |
+| `method` | 1,84 ms | 2,66 ms | 1,44 | 8,8 ms | 34,3 ms (jetzt ~10 ms) | 3,88 (jetzt ~1,1) |
+| `array` | 6,63 ms | 5,84 ms | 0,88 | 84,6 ms | 73,6 ms | 0,87 |
+| `string` | 2,61 ms | 2,13 ms | 0,81 | 18,7 ms | 20,2 ms | 1,08 |
+| `alloc` | 3,16 ms | 2,58 ms | 0,82 | 34,5 ms | 27,4 ms | 0,79 |
+| `lambda` | 3,63 ms | 3,18 ms | 0,88 | 41,4 ms | 42,5 ms | 1,03 |
+| `list` | 4,41 ms | 3,87 ms | 0,88 | 44,9 ms | 47,6 ms | 1,06 |
+
+Alle neun ließen sich mit dem alten Generator bauen. Was man sieht:
+
+* Der **Programmstart** ist als C gut 0,5 ms kürzer (keine libstdc++, keine statischen Initialisierer); bei den Programmen, wie sie in `fire.Benchmarks` stehen,
+  macht das den größten Teil des Unterschieds aus.
+* Die **reine Rechenzeit** (20-fach) ist meist gleich oder etwas besser: `fib` (Aufrufe) und `alloc` (Objekte anlegen und freigeben) 15-20 % schneller, `array`
+  13 %; `string`, `lambda` und `list` liegen innerhalb von ±8 % (die Mediane: 0,97/1,02/1,04 - Rauschen).
+* **`method` ist langsamer - nicht wegen C**, sondern wegen einer späteren Änderung des Generators (Zugriffsschutz): weil `List` (und die Hashtabelle hinter `Dictionary`) im Prelude ein
+  privates Feld `count` haben, gehen `this.count` lesen und schreiben im Benchmark über die allgemeinen Zugriffsfunktionen `gf_count`/`sf_count` (mit
+  Klassen-Switch und Prüfung des Aufrufers) statt direkt auf das Feld. Mit dem Feld umbenannt (`tally`) braucht die C-Fassung 8,3 ms - so viel wie der C++-Code.
+  **Behoben:** Ein Feld, dessen Name irgendwo privat oder geschützt ist, liest und schreibt der Generator jetzt direkt über den Index, wenn der Typ des Objekts
+  bekannt ist und der Code der Funktion das Feld auf jeder möglichen Klasse benutzen darf (die Prüfung steht dann schon beim Übersetzen fest, z. B. `this.count` in
+  einer Methode von `List`); `method` braucht damit wieder ~10 ms. Dasselbe gilt jetzt für Methoden und Properties: ein Programm, das in einer Schleife eine
+  private Methode, eine private Property und eine geschützte Methode über `this` benutzt, braucht 36 statt 50 ms.
 
 Rechner dieser Sitzung, g++ 13 `-O2`, VM im Modus *Performance*, Zeiten ohne Prozessstart (1,3 ms):
 
@@ -272,9 +309,19 @@ einzigen Maschine, keine Garantie.
 
 * **Zugriffsmodifikatoren** (SPEC 5.7): `private`/`protected` bei Feldern, Methoden, statischen Mitgliedern, Properties und Konstruktoren werden wie in der VM geprüft
   (Debug und Release, nicht `#performance`), der Fehler ist die fangbare `AccessDeniedException` mit derselben Meldung. Was der Generator beim Übersetzen entscheiden
-  kann (statische Aufrufe, Konstruktoren, statische Felder: er kennt die Klasse des aufrufenden Codes, `Chunk.OwnerClass`), kostet nichts. Bei Feldern und Methoden, deren
-  Name irgendwo eingeschränkt deklariert ist, bekommen Feldhelfer (`gf_`/`sf_`) und Dispatcher einen Parameter `caller` (die Klasse des aufrufenden Codes) und prüfen je
-  Klasse; alle anderen Namen behalten den schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft.
+  kann (statische Aufrufe, statische Felder und Properties, Konstruktoren, `base.M()`: er kennt die Klasse des aufrufenden Codes, `Chunk.OwnerClass`), kostet nichts.
+  Ist die Klasse des Objekts bekannt (`this`, typisierte Variablen, `new`), gilt das auch für Felder, Methoden und Properties: darf der Code das Mitglied auf jeder
+  Klasse benutzen, die das Objekt sein kann (die Klasse und ihre Unterklassen), wird es ohne Prüfung direkt angesprochen - das Feld über den Index, die Methode
+  und der Getter/Setter als Funktion (auch die Abkürzung über den `OverloadHint` nimmt nur erlaubte Klassen, die anderen gehen zum Dispatcher); eine verbotene
+  Stelle meldet schon der Typprüfer (`TC012`). Nur wo die Klasse nicht bekannt ist (`any`, Reflection), bekommen Feldhelfer (`gf_`/`sf_`) und Dispatcher eines
+  irgendwo eingeschränkt deklarierten Namens den Parameter `caller` (die Klasse des aufrufenden Codes) und prüfen je Klasse; alle anderen Namen behalten den
+  schnellen Pfad. Der Initialisierer eines statischen Feldes läuft ungeprüft. Ein Parameter mit einem Interface als Typ (nicht `IEnumerable`) hat den statischen Typ
+  „ein Objekt einer Klasse, die das Interface implementiert, oder undefined" (die Prüfung am Parameter lässt nichts anderes durch). Ein Aufruf darauf, den alle diese
+  Klassen öffentlich implementieren (für die Methoden des Interfaces erzwingt das `E4063`), geht an einen eigenen Verteiler `icall_<Interface>_<Methode>_<n>`: nur
+  diese Klassen, ohne `caller` und ohne Prüfung, ohne den Rückgriff auf den allgemeinen Dispatcher (eine Methode, die nur an dieser Stelle gerufen wird, bleibt so
+  inline). Er entsteht nur, wo er etwas spart: der Name ist irgendwo eingeschränkt, oder eine Klasse außerhalb des Interfaces hat die Methode auch. Messung
+  (gcc -O2, 2·10⁸ Aufrufe `s.F(acc)` über `IShape s`, eine fremde Klasse mit `private int F(int)`): 0,65 s → 0,40 s, so schnell wie ohne die fremde Klasse; wird die
+  Methode auch anderswo gerufen (nicht mehr inline), ändert sich nichts messbar (~1,1 s vorher wie nachher).
 
 * **Eingebaute Umwandlungen**: `string.ToBytes/ToUnicode`, `char.ToByte/ToUnicode`, `byte.ToChar`, `buffer.ToString/ToUnicode/ToUnicodeChar/ToLittleEndian/ToBigEndian` und `buffer.littleEndian`
   (SPEC 8.10; ein Puffer trägt seine Byte-Reihenfolge, die der Maschine wird zur Laufzeit festgestellt) stehen im Dispatcher der Methode, wenn keine Klasse sie selbst deklariert.
@@ -292,14 +339,15 @@ einzigen Maschine, keine Garantie.
   Basissymbolen des Programms (`g_dimNames`, vom Generator gesammelt und wie in der VM sortiert) und ein Faktor zur Basis; `mm * mm` oder `m / s` legen neue Einträge an
   (gleiche Dimension, Faktor und Anzeigetext = derselbe Index, `unitEq` vergleicht auch verschiedene Indizes mit der Toleranz 1e-12 der VM). Der schnelle Pfad
   (gleicher Index, oder beide ohne Einheit) bleibt unverändert; sonst rechnen `addUnits`/`mulUnits`/... wie `Value.Add` usw.: `500mm + 2m` wird umgerechnet (zwei
-  `int` bleiben `int`, die feinere Einheit ist das Ziel), `Unit.Multiply`/`Divide` mit Anzeigetext (`mm^2`, `m/s(×0.2777...)`). Dazu `value:unit` (`coerceUnit`,
+  `int` bleiben `int`, die feinere Einheit ist das Ziel), `Unit.Multiply`/`Divide` mit Anzeigetext aus den Symbolen der Operanden (`mm^2`, `km/h`, `kg*m/s^2`, `ms^-1`: `unitCombinedName`). Dazu `value:unit` (`coerceUnit`,
   `int` halb-gerade gerundet), `value!type` (`coerceType`), `is in`, `is of` (je Typname eine erzeugte Funktion `isof_...`), `is from`/`is under` (`isFrom`) und
   `^` (`power`). Unverträgliche Einheiten sind wie in der VM ein nicht fangbarer Fehler (stderr, Exitcode 1). Das Zahlenformat `E` (`1.234568E+004`) kommt
   aus `formatValue`.
 
 * **Properties** (SPEC 8.8): `get_Name`/`set_Name` sind gewöhnliche Methoden. Der Feldzugriff `gf_`/`sf_` entscheidet je Klasse wie die VM: ein echtes Feld der
   Klasse gewinnt, sonst wird der Getter/Setter aufgerufen (dessen Ergebnis gehört der Liste des Aufrufers, darum bekommen die Helfer von Namen mit Property
-  die `OwnList*`). Ein Setter ohne Getter (und umgekehrt) und die Adresse einer Property sind Laufzeitfehler wie in der VM. Statische Properties
+  die `OwnList*`). Hat jede Klasse, die ein Objekt bekannten Typs sein kann, dieselbe Property (und kein Feld des Namens), ruft der Generator ihren Getter/Setter
+  direkt (ohne Klassen-Switch). Ein Setter ohne Getter (und umgekehrt) und die Adresse einer Property sind Laufzeitfehler wie in der VM. Statische Properties
   rufen `GetStaticField`/`SetStaticField` direkt.
 
 * **Operator-Überladung** (SPEC 5.11): überlädt irgendeine Klasse des Programms `operator+` usw., gehen alle Operationen dieses Operators durch einen erzeugten
@@ -384,17 +432,48 @@ die `Slicer.Slice` liefert, gehören dem globalen Scope (die VM liefert freie Ar
 **`windows`** (`fire_bridge_windows.h`, C - auch mit TinyCC; `__GRPHWinName` heißt im Programm `fire_win_WinName`): `Window` zeigt einen Framebuffer und liefert Ereignisse, wie in der VM: `Tick` holt die Ereignisse, zeigt den Framebuffer und führt dann die angemeldeten
 Callbacks aus (auf dem aufrufenden Thread mit den echten Globals; eine nicht gefangene Ausnahme beendet nur den Callback und wird gemeldet); `EnableEvents`/`NextEvent` liefern sie als Warteschlange.
 Das Fenster selbst ist die **Anzeige** des Plattformpakets (`platform/<name>/fire_display.h`, als `FIRE_PLATFORM_DISPLAY_C_HEADER` eingebunden; die Schnittstelle, die Ereignisse und das
-Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl.h` (SDL2, für `posix`, `windows` und `wasm`;
-das Programm bittet den Build mit der Zeile `// fire-link: SDL2` um `-lSDL2` bzw. `SDL2.lib`; das Systemaussehen aus `std/fire_systheme.h`)
+Systemaussehen: `std/fire_display_c.h`): `FireDisplayWindow` mit `fire_display_open/close/pump/present/setVSync/...`. Mitgeliefert: `std/fire_display_sdl3.h` (SDL3, für `posix` und `windows`, wenn
+der Build `FIRE_SDL3` definiert; das Programm bittet dann mit der Zeile `// fire-link: SDL3` um `-lSDL3` bzw. `SDL3.lib`), `std/fire_display_sdl.h` (SDL2, für `posix` und `windows` sonst und immer für `wasm`;
+`// fire-link: SDL2`, `-lSDL2`; beide mit dem Systemaussehen aus `std/fire_systheme.h`)
 und `std/fire_display_none.h` (kein Bildschirm: `new Window` wirft eine `HandleUnavailableException`; ein Board-Paket liefert seine eigene Anzeige). Am Programmende (`atexit`) halten die Threads der
 Fenstermanager an und die Fenster schließen sich. Die VM nutzt SDL3, die Tasten- und
-Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist; die UI-Bibliothek
-(`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
+Maus-Werte sind dieselben. Die Tests laufen mit dem SDL-Dummy-Treiber (`SDL_VIDEODRIVER=dummy`) und `-DFIRE_DISPLAY_SELFTEST`, das beim Öffnen eine feste Folge von Ereignissen einspeist (beide
+Anzeigen speisen dieselbe Folge ein und liefern dieselbe Ausgabe); die UI-Bibliothek (`#import "ui"`, reines fire) läuft damit nativ und zeichnet dieselben Pixel wie in der VM.
 
-**SDL2 finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL2 übersetzt (`SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
-die Umgebungsvariable `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers
-(MSYS2: `ucrt64\include\SDL2`), das System (`/usr/include/SDL2`, Homebrew) und `pkg-config sdl2`. Fehlt SDL2 unter Windows (das portable w64devkit bringt es nicht mit), fragt der Build wie bei der Toolchain
-(Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL2.dll` neben dem gebauten Programm.
+**SDL3 oder SDL2.** Welche SDL ein Programm mit Fenster bekommt, entscheidet der Build (`NativeBuilder.ChooseSdl`), und zwar erst, wenn das Programm wirklich ein Fenster hat: zuerst die
+Umgebungsvariable `FIRE_SDL=2|3`, dann `"sdl": 2|3` des Ziels in `fire.native.json`, dann `"sdl"` der Toolchain; sagt niemand etwas, probiert der Build, ob die Toolchain SDL3 für das Ziel übersetzen
+und binden kann (ein winziges Programm mit `<SDL3/SDL.h>` und `SDL_Init`, mit denselben `-I`/`-L` wie der Build) - SDL3, wenn ja, sonst SDL2. Die Antwort wird gemerkt (`NativeProbeCache`: im Speicher und in
+`native-probes.json` im Ordner der lokalen Daten von fire, `FIRE_PROBE_CACHE=0` schaltet die Datei ab), unter dem Compiler (Pfad und Zeit), dem Ziel und dem Ort von SDL3 (Ordner, Zeit des Headers):
+wer SDL3 nachinstalliert, wird neu gefragt. Ohne Toolchain (`files`, `forge native`) gilt SDL2, außer `FIRE_SDL`/`sdl` sagen 3; `wasm` bleibt bei SDL2 von Emscripten. Das erzeugte Programm sagt
+`// fire-link: SDL3` und `#define FIRE_SDL3 1` (das `fire_display.h` von `posix`/`windows` nimmt dann `fire_display_sdl3.h`) bzw. `// fire-link: SDL2`. TinyCC übersetzt beide (ohne `__has_include`:
+SDL3 liegt immer unter `<SDL3/SDL.h>`; `SDL_DISABLE_IMMINTRIN_H` wie bei SDL2). Was nur SDL3 hat: das **Schweben** eines Zugs aus einem anderen Programm (`FIRE_EV_DRAG_HOVER` 42 mit `x`, `y` aus
+`SDL_EVENT_DROP_POSITION`, `FIRE_EV_DRAG_LEAVE` 43 bei `SDL_EVENT_DROP_COMPLETE` ohne Datei und Text; die Stelle eines Drops nennt SDL3 selbst), und **Bilder und Dateien in der Zwischenablage**:
+`fire_display_clipboardGetImage/SetImage/HasImage` (PNG- oder BMP-Datei; gesetzt als `image/png` und `image/bmp` - SDL3 legt `image/bmp` unter Windows als `CF_DIB` ab) und
+`fire_display_clipboardGetFiles/SetFiles/HasFiles` (Pfade zeilenweise; `text/uri-list` und `x-special/gnome-copied-files`, unter Windows `CF_HDROP` - das hat SDL3 nicht, die Anzeige spricht dafür selbst
+mit der Zwischenablage von Windows). Die SDL2-Anzeige sagt dort "nicht vorhanden" (`GetImage` undefined, `SetImage` false, keine Dateien), `fire_display_none.h` hat für alle Arten eine Zwischenablage im
+Programm (`fire_display_memClipboard`). `-DFIRE_DISPLAY_SELFTEST_HOVER` speist ein Schweben mit Verlassen und eines mit Drop ein. SDL 3.2 unter X11 kennt die Arten in der Zwischenablage
+erst, wenn ihr Besitzer wechselt, während es läuft (XFixes meldet es, dann fragt SDL nach `TARGETS`; `SDL_GetClipboardData` lehnt jede Art ab, die es nicht kennt) - was ein anderes Programm vor dem
+Start kopiert hat, sähe ein SDL3-Programm nicht. Deshalb schickt `fire_display_x11ClipboardRefresh` beim ersten Zugriff auf die Zwischenablage, wenn SDL keine Art kennt, CLIPBOARD aber einen
+Besitzer hat, über SDLs eigene Verbindung ein `XFixesSelectionNotify` an ein verstecktes Fenster von SDL (libX11 per `dlopen` aus `fire_dragout.h`); SDL bekommt es zurück, fragt selbst nach
+`TARGETS`, und die Anzeige holt Ereignisse ab, bis es die Arten kennt (höchstens eine halbe Sekunde). Die VM macht dasselbe (`X11Refresh` in `SdlClipboard.cs`). SDL2 fragt jedes Mal neu.
+
+**Ziehen aus dem Fenster** (`Window.StartDrag`) können weder SDL2 noch SDL3 beginnen: `fire_display_startDrag` beider Anzeigen holt sich das Fenster des Betriebssystems (SDL3: die Eigenschaften
+`SDL_PROP_WINDOW_WIN32_HWND_POINTER` bzw. `..._X11_DISPLAY_POINTER`/`..._X11_WINDOW_NUMBER`; SDL2: `SDL_GetWindowWMInfo`, dessen Struktur `fire_display_sdl.h` selbst beschreibt, damit
+`SDL_syswm.h` nicht die Header von X11 verlangt) und gibt es an `std/fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C,
+`ole32.dll` zur Laufzeit), unter X11 die Quelle von XDND (libX11 per `dlopen`, die Typen von Xlib selbst beschrieben - kein Header, keine Link-Bibliothek; die Schleife hält `fire_display_lockSdl`).
+Unter Wayland (nur SDL3: `SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER`/`..._SURFACE_POINTER`) `fire_dragout_wayland`: auf SDLs `wl_display` eine eigene Warteschlange mit eigener
+Registry, `wl_seat` (bis Version 5), `wl_data_device_manager` (Version 3) und einem eigenen `wl_pointer`, der die Seriennummer des Tastendrucks für `start_drag` lernt (`fire_dragout_wlPump` nach jedem
+`fire_display_pump`, unter `fire_display_lockSdl`); fürs Ziehen eine `wl_data_source` und ein `wl_data_device`, dann wird die eigene Warteschlange abgearbeitet, bis `dnd_finished` (die letzte
+`action`: Kopie/Verschieben) oder `cancelled` kommt - `send` wird in den Deskriptor geschrieben (ohne SIGPIPE). libwayland-client per `dlopen`, die nötigen Signaturen selbst beschrieben (kein Header).
+macOS, der Browser und `fire_display_none.h` sagen 0; `fire_display_canStartDrag` (`Window.CanStartDrag`) sagt das vorher (der Videotreiber `windows`, `x11`, oder `wayland` nativ mit SDL3, sobald die eigene Warteschlange bereit ist), und das `ui` lässt ein Ziehen sonst im Fenster. Zeigt der Thread eines Managers das Fenster, bekommt er den Auftrag (`FireWinShared.dragReq`) und zieht dort; das Programm wartet
+ohne die GIL. Die Tests ziehen unter Xvfb mit einer "Hand" aus XTest aus einem Fenster (SDL2, SDL3, `Window.Show`, die VM) in ein natives SDL3-Programm und unter Wine (OLE, zwei Prozesse) genauso; Wayland
+mit weston (X11-Backend unter Xvfb), die Hand findet die Fenster dort an ihrer Farbe (ein SDL3 mit Wayland-Treiber: das des Systems oder der Ordner `FIRE_TEST_SDL3_WAYLAND`).
+
+**SDL finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL3 oder SDL2 übersetzt (`SDL3/SDL.h` bzw. `SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
+die Umgebungsvariable `SDL3_DIR` bzw. `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL3-3.2.26\x86_64-w64-mingw32` oder `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL3`
+bzw. `Toolchain\SDL2` neben dem Programm, das Präfix des Compilers (MSYS2: `ucrt64\include\SDL3`), das System (`/usr/include/SDL3`, `/usr/local`, Homebrew) und `pkg-config sdl3`/`sdl2`. Für einen
+Windows-Build unter Linux (MinGW) zeigt `SDL3_DIR` auf das MinGW-Paket (auf dieser Maschine: `/opt/sdl-mingw/SDL3-3.2.26`, daneben `SDL2-2.30.12`). Fehlt die SDL unter Windows (das portable w64devkit bringt sie nicht mit), fragt der Build wie bei der Toolchain
+(Editor: Dialog, Konsole: `[F]ix / [C]ancel`) und lädt das MinGW-Entwicklungspaket (etwa 7 MB) nach `Toolchain\SDL3` bzw. `Toolchain\SDL2`; es wird nichts im System installiert. Danach liegt `SDL3.dll` bzw. `SDL2.dll` neben dem gebauten Programm.
 Unter Linux und macOS gibt es keinen Download: die Meldung nennt das Paket (`sudo apt install libsdl2-dev`, `brew install sdl2`). Das Programm definiert `SDL_MAIN_HANDLED`, braucht also weder `SDL2main` noch `-lmingw32`.
 Ändert der Nutzer die Fenstergröße, liefert `pump` das Ereignis `FIRE_EV_RESIZE` (4, mit `width`/`height`; nur wenn sich die Größe wirklich geändert hat); `Window.AutoResize` bringt dann den Framebuffer
 (`fire_gfx_fbResize`, gleiche Gültigkeitsgrenzen wie in der VM) auf diese Größe. `-DFIRE_DISPLAY_SELFTEST_RESIZE` speist stattdessen ein Resize auf 90x70 ein.
@@ -461,6 +540,11 @@ Die Datei (gesucht ab dem Ordner der Quelle nach oben, oder `--config`) enthält
 
 Felder eines Ziels: `extends`, `platform`, `platformPath`, `includes`, `defines` (`NAME` oder `NAME=WERT`), `entry` (`name`, `kind` = `process`|`function`, `externC`), `compileArgs`, `linkLibs`,
 `supportsThreads`, `floatWidth`, `stackBytes`, `symbols`, `imports`, `embedded`, `toolchain`. Eingebaute Ziele: `windows`, `linux`, `macos`, `esp32`, `freertos`.
+**ESP32:** `build -t esp32 -o <projekt>/main` schreibt den Komponenten `main` eines ESP-IDF-Projekts (dazu eine `CMakeLists.txt` mit `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`,
+dann `idf.py build`). `app_main` startet das Programm auf einem eigenen Task, weil der Main-Task von ESP-IDF nur 3,5 KB Stack hat: `FIRE_MAIN_STACK_BYTES` (Standard 16384, als `defines`
+des Ziels). Geprüft mit ESP-IDF 5.5 im Emulator (`qemu-system-xtensa`, Testfall "ESP32 (ESP-IDF, QEMU)", läuft, wenn `IDF_PATH` gesetzt ist).
+**Ein fremdes Ziel ist immer nativ:** `build -t esp32` (oder `wasm`, oder ein anderes System als dieses) baut ohne `--engine` nativ - die VM gibt es nur für den eigenen Rechner
+(sie bringt die .NET-Runtime mit), die Ziele des nativen Backends brauchen kein .NET. `--engine vm` mit einem fremden Ziel ist ein Fehler der Befehlszeile.
 Toolchains (`kind`): `gcc`, `clang`, `msvc` (Compiler, Standard, Optimierung, Argumente, Bibliotheken, Include-Ordner), `custom` (`command` mit `{cpp}`, `{dir}`, `{out}`, `{args}`, `{libs}`) und
 `files` (schreibt nur die Quellen; `layout: "idf-component"` legt dazu eine `CMakeLists.txt` an, `buildCommand` läuft danach im Ordner, z.B. `idf.py build`). Eingebaut: `gcc`, `clang`, `msvc`,
 `files`, `esp-idf`. Die Zeilen mit `//` und Kommas am Ende sind erlaubt.
@@ -616,11 +700,14 @@ Reihenfolge: IO und Time (Dateisystem und Uhr), dann Devices, dann Graphics.
 
 ## WebAssembly (`wasm`) - Programme im Browser
 
-`fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire --engine native -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
+`fire.Compiler native programm.fire -t wasm` bzw. `fire.Compiler build programm.fire -t wasm` baut ein Programm, das im Browser läuft. Das Ergebnis ist **eine** Datei
 `out.html` (Standard), die sich so öffnen lässt - auch per Doppelklick aus einem Ordner, ohne Webserver: die WebAssembly-Binärdatei steckt in der Seite (`-sSINGLE_FILE=1`).
 
-**Werkzeug:** Emscripten (emsdk, `em++`). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),
+**Werkzeug:** Emscripten (emsdk; das Programm ist C: `emcc` mit `-std=gnu11`, denn `EM_ASM` braucht den GNU-Modus). Die Toolchain `emscripten` ist eingebaut und gehört zum Ziel `wasm`; `em++` muss im Pfad sein (nach `emsdk_env`). Argumente: `-fexceptions` (fire-Ausnahmen sind C++-Ausnahmen), `-sASYNCIFY` (siehe unten),
 `-sALLOW_MEMORY_GROWTH=1`, `-sSINGLE_FILE=1`, `-sMINIFY_HTML=0`; `// fire-link: SDL2` wird zu `-sUSE_SDL=2` (SDL2 bringt Emscripten selbst mit, es gibt nichts zu installieren).
+Den SDL2-Port lädt Emscripten beim ersten Bau eines Programms mit Fenster von GitHub (als Zip) und übersetzt ihn einmal (danach im Cache von emsdk); ohne
+Zugang zu diesem Download nimmt es einen Ordner mit den Quellen: `git clone --branch release-2.32.10 https://github.com/libsdl-org/SDL` und
+`EMCC_LOCAL_PORTS=sdl2=<Ordner>`. Geprüft mit Emscripten 6.0 (Testgruppe `packer`: ein Programm unter node wie die VM, ein Fenster im Chromium der Testmaschine, headless).
 Für eine eigene Seite: `toolchains` in `fire.native.json` mit `"extends": "emscripten"` und `args` bzw. `--shell-file`.
 
 **Plattformpaket `native/platform/wasm/`:**

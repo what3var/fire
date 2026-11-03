@@ -54,6 +54,51 @@ namespace fire.Standard
                 static any Min(any a, any b) { if (b < a) { return b } return a }
                 /// The larger of two values.
                 static any Max(any a, any b) { if (b > a) { return b } return a }
+                /// The sum of the numbers of an array or a List (0 for an empty one); units are converted into the unit of the first value, like `+` does.
+                static any Sum(any values) {
+                    any total = 0
+                    bool first = true
+                    foreach (v in Math.Numbers(values, "Sum")) {
+                        if (first) { total = v; first = false } else { total = total + v }
+                    }
+                    return total
+                }
+                /// The average of the numbers of an array or a List, a float in the unit of the first value (an ArgumentException for an empty one).
+                static any Average(any values) {
+                    var numbers = Math.Numbers(values, "Average")
+                    if (numbers.length == 0) { throw new ArgumentException("Math.Average of an empty array or List.") }
+                    return Math.Sum(numbers) / (numbers.length * 1.0)
+                }
+                /// The smallest number of an array or a List (an ArgumentException for an empty one); units are converted for the comparison.
+                static any Min(any values) {
+                    var numbers = Math.Numbers(values, "Min")
+                    if (numbers.length == 0) { throw new ArgumentException("Math.Min of an empty array or List.") }
+                    any best = numbers[0]
+                    foreach (v in numbers) { if (v < best) { best = v } }
+                    return best
+                }
+                /// The largest number of an array or a List (an ArgumentException for an empty one).
+                static any Max(any values) {
+                    var numbers = Math.Numbers(values, "Max")
+                    if (numbers.length == 0) { throw new ArgumentException("Math.Max of an empty array or List.") }
+                    any best = numbers[0]
+                    foreach (v in numbers) { if (v > best) { best = v } }
+                    return best
+                }
+                // the numbers of an array or a List as an array (an ArgumentException for anything else, or an element that is not a number)
+                private static any Numbers(any values, string name) {
+                    if (values is of List) {
+                        var items = new any[values.Count]
+                        for (int i = 0; i < values.Count; i++) { items[i] = values[i] }
+                        values = items
+                    } else if (!(values is of IEnumerable) || values is of class || values is of string) {
+                        throw new ArgumentException("Math." + name + " expects an array or a List, or two numbers.")
+                    }
+                    foreach (v in values) {
+                        if (!(v is of int || v is of float)) { throw new ArgumentException("Math." + name + " expects numbers, not '" + v + "'.") }
+                    }
+                    return values
+                }
                 /// `x` limited to `low`...`high`.
                 static any Clamp(any x, any low, any high) { if (x < low) { return low } if (x > high) { return high } return x }
                 /// -1, 0 or 1 for a negative value, zero or a positive value.

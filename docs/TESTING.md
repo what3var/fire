@@ -134,3 +134,26 @@ place). A double click (or Enter) opens the test in the editor.
 Stop ends the run at the next instruction of the VM; the test that was running is an error "cancelled". A program that is started with F5 and a test run do
 not run at the same time - stop the program first.
 
+
+## The test suite of the compiler (`src/fire.Testing`)
+
+The compiler, the VM, the native backend and the libraries are checked by `fire.Testing` (`dotnet build -c Release`, then `dotnet bin/Release/net10.0/linux-x64/fire.Testing.dll`).
+A full run takes about half an hour, most of it the native backend: every case is built with gcc and AddressSanitizer/UBSan and compared with the VM. To check a change
+quickly:
+
+| Switch | Effect |
+|---|---|
+| `FIRE_TESTS_ONLY=<group>` | only one group: `native` (the native backend: cases against the VM, windows, FreeRTOS, toolchains), `ui` (the UI library in the VM), `types`, `syntax`, `diagnostics`, `projects`, `testing`, `windows`, `dialogs`, `docking`, `circuiteditor`, `scene3d`, `snippets`, `notes`, `packer` (the packer and the wasm target: with Emscripten on the PATH a program under node and a window in headless Chromium) |
+| ESP32 | with `IDF_PATH` set (ESP-IDF) the native group builds a program for the ESP32 and runs it in Espressif's QEMU (`FIRE_TESTS_FILTER="ESP32 (ESP-IDF"`; the project is kept in ~/.cache/fire-tests/esp32) |
+| `FIRE_TESTS_FILTER=<text>` | of the checks listed as cases (the native cases, the native window and device cases, the UI checks) only those whose name contains the text; several texts separated by `\|`, case does not matter |
+| `FIRE_TEST_NO_NATIVE=1` | everything but the native backend |
+| `FIRE_TEST_CCACHE=0` | no compiler cache |
+
+The window cases of the native group (filter `Fenster`) run every window program with SDL2 and, when the machine has it, SDL3 (dummy driver); the clipboard of X11 needs `xvfb-run` (one program,
+two programs, the VM with SDL3 as the other one), the Windows cases MinGW, Wine and the MinGW package of SDL3 (`SDL3_DIR`, else `/opt/sdl-mingw/SDL3-*`); the VM's Windows clipboard a `dotnet publish -r win-x64` (the runtime
+pack for win-x64 comes from NuGet once). Drag-out on Wayland needs `weston` (it runs with its X11 backend under Xvfb) and an SDL3 with the Wayland driver - the system's, or a folder with such a
+`libSDL3.so` in `FIRE_TEST_SDL3_WAYLAND`. A case whose tools are missing is skipped with a note.
+
+When `ccache` is installed, the native builds of the tests go through it: a case whose generated program did not change is not compiled again (a run of the native group
+with an unchanged program takes seconds per case instead of a minute). Example: `FIRE_TESTS_ONLY=native FIRE_TESTS_FILTER="Drop|Compression:"` runs the native checks of
+two topics in under a minute.

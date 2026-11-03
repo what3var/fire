@@ -256,13 +256,18 @@ namespace fire.Compiler
                 SkipDigits(char.IsDigit);
             }
 
+            // Scientific notation (`1e3`, `2.5E-3`): the syntax of the number wins over a unit `e` with a power - always a float
+            if (!IsAtEnd && Peek() is 'e' or 'E' && (char.IsDigit(PeekNext()) || PeekNext() is '+' or '-' && char.IsDigit(PeekAt(2))))
+            {
+                isFloat = true;
+                Advance();
+                if (Peek() is '+' or '-') Advance();
+                SkipDigits(char.IsDigit);
+            }
+
             string numberText = _source.Substring(start, _pos - start).Replace("_", "");
 
-            // Unit suffix: letters/µ directly following, without whitespace in between.
-            int unitStart = _pos;
-            while (!IsAtEnd && IsUnitSuffixChar(Peek())) Advance();
-            string unitSuffix = _source.Substring(unitStart, _pos - unitStart);
-
+            string unitSuffix = ReadUnitSuffix(line, col);
             string lexeme = _source.Substring(start, _pos - start);
 
             if (isFloat)
@@ -310,12 +315,26 @@ namespace fire.Compiler
             string digits = _source.Substring(digitsStart, _pos - digitsStart).Replace("_", "");
             long value = Convert.ToInt64(digits, radix);
 
-            int unitStart = _pos;
-            while (!IsAtEnd && IsUnitSuffixChar(Peek())) Advance();
-            string unitSuffix = _source.Substring(unitStart, _pos - unitStart);
+            string unitSuffix = ReadUnitSuffix(line, col);
             string lexeme = _source.Substring(start, _pos - start);
 
             return new Token(TokenType.IntLiteral, lexeme, line, col, unitSuffix, value, newlineBefore);
+        }
+
+        /// <summary>The unit suffix of a number literal: letters/µ directly following, without whitespace in between, and digits right after them - the
+        /// power of the unit (`1m3`, `5dm3`, `2cm2`: a unit symbol has letters only), given back in the form with `^` (`m^3`).</summary>
+        private string ReadUnitSuffix(int line, int col)
+        {
+            int unitStart = _pos;
+            while (!IsAtEnd && IsUnitSuffixChar(Peek())) Advance();
+            string unitSuffix = _source.Substring(unitStart, _pos - unitStart);
+            if (unitSuffix.Length == 0 || IsAtEnd || !char.IsDigit(Peek())) return unitSuffix;
+            int powerStart = _pos;
+            while (!IsAtEnd && char.IsDigit(Peek())) Advance();
+            string power = _source.Substring(powerStart, _pos - powerStart);
+            if (power[0] == '0')
+                throw new LexException($"The power of a unit written as digits must be 1 or more ('{unitSuffix}{power}')", line, col);
+            return unitSuffix + "^" + power;
         }
 
         private static bool IsUnitSuffixChar(char c) =>

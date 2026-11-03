@@ -52,6 +52,15 @@ namespace fire.Terminal
         /// two drawing operations. Writing has no effect there (the next Resolve overwrites it).</summary>
         public uint[] Pixels { get; private set; }
 
+        private DirectPresenter? _presenter;
+        /// <summary>A package that shows the pictures of the windows of this framebuffer itself (scene3d DirectDrawing), or null: the windows call it instead of showing the
+        /// framebuffer (see <see cref="DirectPresenter"/>). Set by the host for the package (any thread).</summary>
+        public DirectPresenter? Presenter
+        {
+            get => System.Threading.Volatile.Read(ref _presenter);
+            set => System.Threading.Volatile.Write(ref _presenter, value);
+        }
+
         /// <summary>Palette mode only: one byte per pixel, the index into <see cref="Palette"/> (row by row like <see cref="Pixels"/>); otherwise null.
         /// Whoever writes it directly calls <see cref="MarkDirty"/> afterwards.</summary>
         public byte[]? Indices { get; private set; }

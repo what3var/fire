@@ -148,6 +148,8 @@ namespace fire.Native
         public List<string>? LinkLibs { get; set; }
         public bool? SupportsThreads { get; set; }
         public string? Toolchain { get; set; }
+        /// <summary>The SDL of a window on the desktop: 2 or 3 (null: the build decides, SDL3 when the toolchain has it).</summary>
+        public int? Sdl { get; set; }
 
         internal TargetProfile Apply(TargetProfile b, string name)
         {
@@ -161,6 +163,7 @@ namespace fire.Native
                 LinkLibs = LinkLibs ?? b.Native.LinkLibs,
                 SupportsThreads = SupportsThreads ?? b.Native.SupportsThreads,
                 Toolchain = Toolchain ?? b.Native.Toolchain,
+                Sdl = Sdl ?? b.Native.Sdl,
                 Entry = Entry == null ? b.Native.Entry : b.Native.Entry with
                 {
                     Name = Entry.Name ?? b.Native.Entry.Name,
