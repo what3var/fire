@@ -224,7 +224,7 @@ thread, every one copies it:
 
 | Form | Copies or shares | With a `[NoCopy]` instance |
 |---|---|---|
-| `fire taking x { }`, `fire Method(args)` (`this` and every argument) | a copy of `x` with everything it owns (an array too) | refused when `x`, a field or an element reaches one: the `ArgumentException` at the `fire`, nothing is copied, the thread does not start |
+| `fire taking x { }`, `fire Method(args)` (`this` and every argument) | a copy of everything reachable from `x` (an array too), whoever owns the parts; the copies belong to the thread | refused when `x`, a field or an element reaches one: the `ArgumentException` at the `fire`, nothing is copied, the thread does not start |
 | `fire global { } taking x` | an object is copied for the job; an array or a text is handed over as it is | an object that reaches one is refused before the job is queued (the job never runs); an array that holds one is fine |
 | `sync x`, `try sync x` | a new object in the copy is copied into the original (case A); an object on both sides stays and is synced field by field (case C) | refused before anything is written back when case A reaches one, or when case C would write one into another instance |
 | `sync flat x`, `try sync flat x` | like `sync`, but case C keeps the reference and copies nothing | case A is refused as with `sync`; case C is fine |

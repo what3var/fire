@@ -278,7 +278,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   ("'NativeHandle' cannot be copied ([NoCopy]) - ...") before anything is copied - also for a class derived from it, as an argument
   (`f(copy h)`), assigned to a field and for the arguments of `fire global` (deep copies). `flat` of an object or array that only *refers* to one is fine
   (the reference is shared, nothing is duplicated). The copies of the threads (no form of them moves an object): `fire taking x` / `fire M(args)`
-  (a copy of the tree, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
+  (a copy of everything reachable, an array included) refuses one reached from any of its values at the `fire` - nothing is copied, the thread does not start
   ("... - 'taking' would copy an instance of it, which exists only once." / "... - 'taking' reaches an instance of it (a field or an element of the copied
   value), which exists only once."); `fire global { } taking x` refuses an object argument that reaches one before the job is queued (`'fire global'`; an
   array argument is handed over as it is, not copied); `sync`/`try sync` refuses before anything is written back when case A (a new object, copied into
@@ -292,7 +292,7 @@ the copy) - belongs to the owner of the root copy. This way every copy is destro
   array with the same elements, `copy` also copies the elements; a **buffer** (`byte[]`) is copied byte by byte in both cases.
 - `flat` can leave shared references between original and copy whose owner is the original: if the original is
   destroyed (together with what it owns), the shallow copy points to destroyed objects. Whoever needs a self-contained structure uses `copy`.
-- Unlike `taking` (a copy for a thread, rejects every reference out of the ownership tree, `sync` writes back), this is an
+- Unlike `taking` (a copy for a thread of everything reachable, refuses lambdas and pointers in it, `sync` writes back), this is an
   ordinary copy without a link back to the original.
 
 ## 3. Units

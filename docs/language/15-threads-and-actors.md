@@ -21,7 +21,9 @@ print("main goes on")
 
 ## Copies: `taking` and `sync`
 
-A thread cannot simply use the objects of the main program. `taking x` gives the thread its own **deep copy** of `x` (with everything `x` owns).
+A thread cannot simply use the objects of the main program. `taking x` gives the thread its own **deep copy** of `x`: everything reachable from `x`
+through fields and elements (objects, arrays, buffers) is copied, whoever owns it - an object `x` only refers to, an array literal in a field and the
+objects in it. The copies belong to the thread (a copied object that belonged to another copied one belongs to that one's copy).
 Changes in the thread are invisible outside - until the thread writes the copy back with `sync x` (the last writer wins):
 
 ```fire
@@ -45,8 +47,9 @@ print("main: " + counter.value)             // main: 15
 | `try sync x` | does not wait: `False` if the original is busy |
 | `sync flat x` / `try sync flat x` | writes back only the direct fields (array: the elements) |
 
-- `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`).
-- A copy must not point to objects outside its own ownership tree; `taking` refuses such an object with an error instead of sharing memory.
+- `taking` can be repeated: `fire taking a taking b { ... }`. Numbers and strings can be taken too (`taking i`). An array is copied as well (`taking arr`).
+- The copy is made at the `fire`, before the thread starts. A lambda or a pointer in a field or an element cannot be copied: the `fire` throws an
+  `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread.") and the thread does not start.
 - `taking` always copies - nothing is moved to the thread. An instance of a **`[NoCopy]`** class (a resource like `NativeHandle`) cannot be copied: when `x`
   (or a field or an element of it) is one, the `fire` throws an `ArgumentException` and the thread does not start. The same goes for an object that
   `fire global` would copy for its job (it is not queued) and for `sync`, when it would copy one back into the original (nothing is written back);

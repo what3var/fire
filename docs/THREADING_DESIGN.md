@@ -86,16 +86,15 @@ Stattdessen:
 fire taking player { player.health -= 10 }
 ```
 
-- `taking X` erzeugt eine **vollständige, isolierte Tiefenkopie** von X's
-  gesamtem **eigenem** Ownership-Baum. Main-Thread-Objekt und Kind-Thread-
-  Kopie sind danach vollständig getrennt, kein Shared Memory.
-- **Harte Regel**: Enthält der kopierte Baum irgendwo eine Referenz auf
-  etwas, das **nicht** zum Ownership-Baum von X gehört (eine Referenz auf
-  ein unabhängig besessenes Objekt, oder ein roher Pointer via
-  `unsafe`/`&`, der aus dem kopierten Baum hinauszeigt), **schlägt
-  `taking` mit einem klaren Fehler fehl**. Kein stilles Kopieren des
-  Referenzwerts (das wäre ein verstecktes Shared-Memory-Loch), kein
-  stilles Nullen (stiller Datenverlust).
+- `taking X` erzeugt eine **vollständige, isolierte Tiefenkopie** von **allem, was von X aus erreichbar ist** (Felder, Array-Elemente:
+  Objekte, Arrays, Puffer) - egal, wem die Teile im Original gehören (ein Objekt, auf das X nur verweist, ein Array-Literal in einem Feld
+  samt seiner Objekte). Jeder Teil wird einmal kopiert (geteilte Teile und Zyklen bleiben es in der Kopie). Eine Kopie, deren Original einem
+  ebenfalls kopierten Objekt gehörte, gehört dessen Kopie; alle anderen Kopien (auch die Wurzel) gehören dem Wurzel-Scope des neuen Threads.
+  Main-Thread-Objekt und Kind-Thread-Kopie sind danach vollständig getrennt, kein Shared Memory. Kopiert wird beim `fire` im startenden
+  Thread (VM und nativ gleich), bevor der neue Thread läuft.
+- **Nicht kopierbar** sind Lambdas und rohe Pointer (`unsafe`/`&`) in einem Feld oder Element, und eine Instanz einer `[NoCopy]`-Klasse:
+  das `fire` wirft vorher eine `ArgumentException` ("'taking' rejected: lambda values cannot be copied for a thread." bzw. der
+  `[NoCopy]`-Text), nichts wird kopiert, der Thread startet nicht.
 - Jede `taking`-Kopie trägt eine **versteckte Rückverknüpfung** zu ihrem
   Original - notwendig, damit `sync`/`sync flat` (Abschnitt 4) überhaupt
   wissen, wohin zurückgeschrieben werden soll.

@@ -2917,7 +2917,7 @@ catch (Exception ex)
 }
 
 Console.WriteLine();
-Console.WriteLine("=== Multithreading: 'taking' lehnt baumfremde Referenzen ab ===");
+Console.WriteLine("=== Multithreading: 'taking' kopiert auch baumfremde Referenzen (alles Erreichbare) ===");
 
 try
 {
@@ -2932,15 +2932,12 @@ try
     root.Fields["escapesTree"] = Value.MakeClassRef(independent);
 
     var childScope3 = new Scope(null, isGlobal: true);
-    try
-    {
-        ObjectCopier.Take(root, childScope3);
-        Console.WriteLine("FEHLER: hätte eine TakingViolationException werfen müssen.");
-    }
-    catch (TakingViolationException ex)
-    {
-        Console.WriteLine($"Erwarteter Fehler: {ex.Message}");
-    }
+    var taken = ObjectCopier.Take(root, childScope3);
+    var escaped = (ObjectInstance)taken.Fields["escapesTree"].AsObjectRef();
+    bool copiedApart = !ReferenceEquals(escaped, independent) && escaped.IsTakingCopy && ReferenceEquals(escaped.Owner, childScope3);
+    Console.WriteLine(copiedApart
+        ? "Baumfremde Referenz kopiert, die Kopie gehoert dem Thread-Scope."
+        : "FEHLER: die baumfremde Referenz haette kopiert werden muessen (Besitzer: Thread-Scope).");
 }
 catch (Exception ex)
 {
@@ -18850,6 +18847,49 @@ else
             }
             while (done == 0) { sync globals }
             print("main: " + p.v + " " + p.thing.id + " " + (p.thing is of Res) + " " + p.list.Length + " " + p.list[0].id)
+            print("end")
+            """),
+        ("Threads: taking kopiert alles Erreichbare (Array-Literal im Feld, fremde Objekte, Arrays, Puffer) - Besitzer der Kopien ist der Thread; Lambda im Feld: ArgumentException", """
+            #nosync
+            class Item { int v
+                construct(int v) { this.v = v } }
+            class P { Item items[]; Item other; Item own
+                construct() { this.own = new Item(7) } }
+            class L { any f }
+            var done = 0
+            var p = new P()
+            p.items = [new Item(1), new Item(2)]
+            var shared = new Item(10)
+            p.other = shared
+            var arr = [1, 2, 3]
+            var objs = [new Item(4), shared]
+            var nested = [[5, 6], [7]]
+            var l = new L()
+            l.f = func() => 1
+            try { fire taking l { print("never") } } catch (ArgumentException e) { print("lambda: " + e.message) }
+            try { fire taking p taking l { print("never") } } catch (ArgumentException e) { print("lambda 2: " + e.message) }
+            fire taking p taking arr taking objs taking nested {
+                print("sum " + (p.items[0].v + p.items[1].v + p.other.v + p.own.v))
+                print("own " + (p.own is from p) + " " + (p.items[0] is from p))
+                p.items[0].v = 100
+                p.other.v = 11
+                arr[0] = 99
+                objs[0].v = 77
+                nested[0][1] = 60
+                print("in thread " + arr[0] + " " + objs[0].v + " " + nested[0][1])
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print(p.items[0].v + " " + shared.v + " " + arr[0] + " " + objs[0].v + " " + nested[0][1])
+            done = 0
+            fire taking p {
+                p.other.v = 12
+                p.items[1].v = 20
+                sync p
+                sync global { done = 1 }
+            }
+            while (done == 0) { sync globals }
+            print("after sync " + shared.v + " " + p.items[1].v)
             print("end")
             """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """

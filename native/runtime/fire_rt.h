@@ -4801,16 +4801,11 @@ FIRE_NORETURN FIRE_COLD FIRE_FN void takingViolation(const char* what) {
     exitNow(1);
 }
 
-/* Is `o` the object `root` or (transitively) owned by it? */
-FIRE_FN bool withinTree(Obj* o, Obj* root) {
-    Owned* x = &o->h;
-    for (;;) {
-        OwnList* l;
-        if (x == &root->h) return true;
-        l = x->owner;
-        if (!l || !l->holder) return false;
-        x = l->holder;
-    }
+/* ... the same reason found before anything is copied (the check of `fire ... taking x`): the ArgumentException, the thread does not start. */
+FIRE_COLD FIRE_FN Value takingRefused(const char* what) {
+    char text[200];
+    snprintf(text, sizeof text, "'taking' rejected: %s", what);
+    return fireError("ArgumentException", text);
 }
 
 /* A growing array of anything (`elem` bytes per item). */
@@ -4825,10 +4820,9 @@ FIRE_FN void* fire_growPush(void* items, uint32_t* count, uint32_t* cap, size_t 
 
 typedef struct DeepCopier {
     OwnList* owner;
-    bool taking;          /* a copy for a fire thread (`taking`): only the own ownership tree of treeRoot, copies are marked */
+    bool taking;          /* a copy for a fire thread (`taking`): everything reachable is copied (whoever owns it), copies are marked; no lambdas/pointers */
     bool noCopy;          /* `copy x` (and the arguments of a job): an instance of a `[NoCopy]` class is an ArgumentException */
     const char* noCopyOp; /* ... its text: NULL for copy, else "taking"/"fire global"/"sync" (noCopyErrorOp) */
-    Obj* treeRoot;
     CopyMap objects;      /* object -> copy (the objects found, which are copied) */
     CopyMap containers;   /* array/buffer -> copy */
     Obj** order;
@@ -4866,23 +4860,17 @@ FIRE_FN bool copierDiscover(DeepCopier* c, Value start) {
     copierPushPending(c, start);
     while (c->pendingCount) {
         Value v = c->pending[--c->pendingCount];
-        if (c->taking && v.kind == K_Lambda) takingViolation("lambda values cannot be copied for a thread.");
-        if (c->taking && v.kind == K_Pointer) takingViolation("raw pointers cannot be copied for a thread.");
+        if (c->taking && (v.kind == K_Lambda || v.kind == K_Pointer)) {
+            const char* what = v.kind == K_Lambda ? "lambda values cannot be copied for a thread." : "raw pointers cannot be copied for a thread.";
+            if (c->noCopy) { takingRefused(what); return false; }   /* the check before `taking` (noCopyFree): the ArgumentException */
+            takingViolation(what);
+        }
         if (v.kind == K_Class) {
             Obj* o;
             if (!leafAlive(v)) continue;
             o = asObj(v);
             if (copyMapFind(&c->objects, o)) continue;
             if (FIRE_UNLIKELY(c->noCopy && classNoCopy(o->cls))) { noCopyErrorOp(o->cls, start.kind != K_Class || o != asObj(start), c->noCopyOp); return false; }
-            if (c->taking && c->treeRoot && !withinTree(o, c->treeRoot)) {
-#ifdef FIRE_THREADS
-                char text[200];
-                snprintf(text, sizeof text, "a field refers to an instance of '%s', which is not part of its own ownership tree.", className(o->cls));
-                takingViolation(text);
-#else
-                takingViolation("a field refers to an instance that is not part of its own ownership tree.");
-#endif
-            }
             copyMapPut(&c->objects, o, Undef());   /* marks it as found; the copy is made in phase 2 */
             c->order = (Obj**)fire_growPush(c->order, &c->orderCount, &c->orderCap, sizeof(Obj*));
             c->order[c->orderCount++] = o;
@@ -4991,6 +4979,7 @@ FIRE_FN bool noCopyFree(Value v, const char* op) {
     copierInit(&c, NULL);
     c.noCopy = true;
     c.noCopyOp = op;
+    c.taking = strcmp(op, "taking") == 0;   /* (a lambda or a pointer in it cannot be copied for a thread either) */
     ok = copierDiscover(&c, v);
     copierFree(&c);
     return ok;
@@ -5859,8 +5848,9 @@ FIRE_FN void originFree(Obj* o) {
     }
 }
 
-/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied (isolated, THREADING_DESIGN 3), the copy goes to `travel`; a string or lambda
- * is shared (the thread gets a count of it), other values are plain. */
+/* `fire ... taking x`: what the thread gets. An object, array or buffer is copied with everything reachable from it, whoever owns the parts (isolated,
+ * THREADING_DESIGN 3); a copied object owned by another copied one belongs to its copy, every other copy to `travel` (the root scope of the thread). A string
+ * or lambda is shared (the thread gets a count of it), other values are plain. */
 FIRE_FN Value takeCopy(Value v, OwnList* travel) {
     DeepCopier c;
     Value copy;
@@ -5868,7 +5858,6 @@ FIRE_FN Value takeCopy(Value v, OwnList* travel) {
         case K_Class:
             copierInit(&c, travel);
             c.taking = true;
-            c.treeRoot = asObj(v);
             copy = copierRun(&c, v);
             copierFree(&c);
             originAdd(asObj(copy), asObj(v));

@@ -4657,8 +4657,9 @@ namespace fire.Runtime
                     Value? withValue = hasWith ? Pop() : null;
                     var takingValues = new Value[takingCount];
                     for (int i = takingCount - 1; i >= 0; i--) takingValues[i] = Pop();
-                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element) is the ArgumentException
-                    // here in the spawning thread, before anything is copied and before the thread starts (the copies are made in the new thread).
+                    // `[NoCopy]` (SPEC 5.12): every `taking` is a copy - an instance of such a class (also in a field or an element), and a lambda or a pointer
+                    // in a field or an element, is the ArgumentException here in the spawning thread, before anything is copied and before the thread starts.
+                    // The copies (of everything reachable) are made afterwards, also here, by FireRuntime.FireVmTaking.
                     foreach (var tv in takingValues) ObjectCopier.RequireNoCopyFree(tv, "taking");
 
                     // The globals of the main program are NOT copied: the thread reads them directly (under the lock) and changes them only in
