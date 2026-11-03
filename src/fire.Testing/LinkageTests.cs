@@ -305,11 +305,13 @@ static class LinkageTests
         }
         else Console.WriteLine("(TinyCC: uebersprungen - tcc fehlt)");
         var mingw = new ToolchainDef { Kind = "gcc", Compiler = "x86_64-w64-mingw32-g++", CCompiler = "x86_64-w64-mingw32-gcc", Std = "c++17", CStd = "c11", Optimization = "-O2" };
-        if (ToolchainDetector.Find(mingw) != null && HasProgram("wine"))
+        // (Debian/Ubuntu's wine64 package puts the loader into /usr/lib/wine without a `wine` on the PATH)
+        string? wine = new[] { "/usr/lib/wine/wine64", "/usr/bin/wine64", "/usr/bin/wine" }.FirstOrDefault(File.Exists) ?? (HasProgram("wine") ? "wine" : null);
+        if (ToolchainDetector.Find(mingw) != null && wine != null)
         {
             var win = Build(new[] { small }, "static", Path.Combine(root, "win.exe"), mingw, TargetProfile.Windows);
             _winePrefix = Path.Combine(root, "wineprefix");
-            Check("MinGW: linkage static fuer Windows (x86_64-w64-mingw32-ar), unter Wine wie die VM", win.Ok && Exec(win.Exe, "wine") == smallVm, win.Log);
+            Check("MinGW: linkage static fuer Windows (x86_64-w64-mingw32-ar), unter Wine wie die VM", win.Ok && Exec(win.Exe, wine) == smallVm, win.Log);
         }
         else Console.WriteLine("(MinGW/Wine: uebersprungen)");
 
