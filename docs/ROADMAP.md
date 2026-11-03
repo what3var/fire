@@ -177,9 +177,11 @@ Ursprünglicher Plan:
 Ein Debug-Agent im nativen Debug-Build, damit spark native Programme genauso debuggt wie die VM - auf jedem Ziel, ohne gdb/lldb.
 
 1. **`#line`** im erzeugten C (alle Modi): gdb/lldb und Absturzberichte zeigen fire-Zeilen.
-2. **`IDebugTarget`** in spark: die ~20 Mitglieder der VM, die `DebugSession`, `DebugThreadContext` und die Panels benutzen (`StepLine`, `StepInto`,
-   `StepOut`, `RunUntilBreakpoint`, `CurrentLocation`, `CurrentTrace`, `DebugScopeChain`, `DebugGlobals`, `DebugThisValue`, `PauseOnUnhandled`, ...)
-   hinter ein Interface; `VmDebugTarget` zuerst, ohne Änderung des Verhaltens.
+2. ~~**`IDebugTarget`** in spark~~ (umgesetzt): die ~20 Mitglieder der VM, die `DebugSession`, `DebugThreadContext` und die Panels benutzten, stehen hinter
+   `IDebugTarget`/`IDebugThread` mit dem Wertemodell `DebugValue` (Name, Text, Art, Id, Kinder auf Anfrage) in `fire.Debugging`
+   (`src/fire.Compiler/Debugging`); `VmDebugTarget` reicht die VM ohne Änderung des Verhaltens durch, dazu `set` (Local, Global, Element, Feld
+   über Setter und Probes). Die Panels kennen keine `Value`/`ObjectInstance` mehr; Scope-Ansicht: Kontextmenü *Set Value...*.
+   Tests: `FIRE_TESTS_ONLY=debugger`.
 3. **Generator** (nur Modus `debug`): beim Wechsel der Zeile `if (FIRE_UNLIKELY(g_dbgArmed)) fire_dbg_line(&frame, src, line, scope);`,
    ein Debug-Frame pro Funktion auf einem Schatten-Stack (Funktion, Zeile, `this`, Adressen der Locals), statische Tabellen Scope -> Namen/Eltern-Scope,
    eine Tabelle der Globals, Reflection-Tabellen immer.

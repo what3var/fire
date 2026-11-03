@@ -44,8 +44,8 @@ namespace fire.Editor
                 string status = t.RuntimeError != null ? $"Error: {t.RuntimeError}"
                     : t.IsFinished ? "finished"
                     : t.IsMain ? "paused" : "running/paused";
-                string line = t.IsFinished ? "-" : t.Vm.CurrentLine.ToString();
-                string depth = t.IsFinished ? "-" : t.Vm.DebugCallDepth.ToString();
+                string line = t.IsFinished ? "-" : t.Thread.CurrentLocation.Line.ToString();
+                string depth = t.IsFinished ? "-" : t.Thread.CallDepth.ToString();
                 return new ThreadRow(ReferenceEquals(t, active) ? "\u25B6" : "", t.Name, status, line, depth, t);
             }).ToList();
 

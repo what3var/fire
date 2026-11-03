@@ -780,7 +780,21 @@ Editor) - die normale Ausführung (`VM.Run()`) ist davon unberührt:
   `UnhandledException` (siehe Abschnitt 19: gesetzt statt geworfen, wenn ein
   `throw` in DIESER VM-Instanz keinen passenden `catch` findet - Editor/
   Host-Code prüft dieses Feld NACH einem Run()/Step*()-Aufruf, statt einen
-  `try`/`catch` darum zu legen).
+  `try`/`catch` darum zu legen), `DebugGlobalScope` und `ScopeLevel.Scope` (die Scopes selbst, für `set`),
+  `DebugAssignMember(obj, name, value)` (das `set` des Debuggers auf ein Feld: wie die Zuweisung im Programm - Probes feuern, ein
+  Property ruft seinen Setter, Einheit und Typ des Felds gelten; läuft auf dem Thread der VM).
+- **Engine-unabhängig: `fire.Debugging`** (`src/fire.Compiler/Debugging`, ROADMAP Abschnitt 8): spark (`DebugSession`, `DebugThreadContext`,
+  die Panels) sieht die VM nicht mehr direkt, sondern nur `IDebugTarget`/`IDebugThread` und `DebugValue` (Name, Text, Art, Id, Kinder auf
+  Anfrage). `VmDebugTarget` übersetzt mit `RuntimeSession.Build`, macht aus jeder VM (Hauptprogramm, jeder `fire`-Thread über
+  `FireRuntime.ThreadBodyInterceptor`) einen `VmDebugThread` und reicht die Stepping-API oben unverändert durch; `print`/`IO.Stdio` kommen
+  als `Output(thread, text)`. Die Steuerung blockiert, bis der Thread wieder steht (spark ruft sie auf einem eigenen Thread je
+  `DebugThreadContext`). `TrySetValue(wert, text)` setzt ein Local, ein Global, ein Arrayelement (direkt) oder ein Feld
+  (`DebugAssignMember`); der Text wird als Wert derselben Art gelesen (Zahl derselben Breite/Einheit, `true`/`false`, Zeichen, String mit
+  oder ohne Anführungszeichen) - Objekte, Arrays und Lambdas lassen sich nicht setzen. Tests: `FIRE_TESTS_ONLY=debugger` (der
+  Debugger-Lauf, das Ziel und die `DebugSession` ohne Fenster).
+- **Quelle der Zeilen innerer Chunks**: der Rumpf eines `fire`-Blocks, eines Lambdas auf oberster Ebene und von `catch threads`/`catch
+  terminate` markiert seine Zeilen mit dem Quellindex der Datei, in der er steht (vorher 0 = Prelude, wo der Compiler den Rumpf in einem
+  eigenen Compiler ohne Klasse übersetzte) - ein Haltepunkt in einem `fire`-Block trifft so, und der Debugger zeigt die richtige Datei.
 
 ## 16. Methodenüberladung, `with`, Extension-Klassen, Konstruktor-Überladung, optionale Parameter, `switch`, Generics
 
@@ -1462,7 +1476,7 @@ dem Prüfintervall (Release 16, Performance 4096). `UnwindForShutdown(destroyGlo
 und die Abwicklung nach einer unbehandelten Exception lassen den globalen Scope wie bisher aus.
 
 **Host-Sicherheitsnetz.** `IoBridge.RegisterAll` gibt ein `IDisposable` zurück (`IoHost.Dispose` schließt alle noch offenen, nicht-permanenten Streams); die Sessions halten es
-(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger `DebugSession` ruft es, sobald alle Threads des Laufs beendet sind, und in `Reset()` bei einem abgebrochenen Lauf; höchstens einmal je Lauf).
+(`IoResources`), `Runtime.Session.Run()` ruft es nach dem Lauf, `RuntimeSession.CloseHostResources()` ist für Hosts, die die VM selbst treiben (der Step-Debugger ruft es über `VmDebugTarget.ReleaseResources()`, sobald alle Threads des Laufs beendet sind, und in `DebugSession.Reset()` bei einem abgebrochenen Lauf; höchstens einmal je Lauf).
 
 ## 29. Shutdown-Signale an sicheren Punkten, Programmende räumt ab
 

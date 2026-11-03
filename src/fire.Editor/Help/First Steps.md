@@ -419,7 +419,7 @@ The main program also has `catch terminate(v) { ... }`, a last hook that sees th
 | `F11` | Step into. |
 | `Shift+F11` | Step out. |
 
-The yellow line is where the program is paused. While paused, the **Threads**, **Scope** and **Stack** panels show what is going on. The **Run** menu switches between the *Debug*, *Release* and *Performance* execution modes, and can build a standalone program from your script.
+The yellow line is where the program is paused. While paused, the **Threads**, **Scope** and **Stack** panels show what is going on. Right-click a variable, a field or an element in the **Scope** panel and choose **Set Value...** to change it (a number, `true`/`false`, a character or a string - the kind the value has now); a field is set like an assignment in the program, so its setter and probes run. The **Run** menu switches between the *Debug*, *Release* and *Performance* execution modes, and can build a standalone program from your script.
 
 ## Talking to devices
 

@@ -151,8 +151,8 @@ namespace fire.Editor
         private void Run_Click(object? sender, RoutedEventArgs e)
         {
             if (_isBusy) return; // running right now - there is nothing to continue
-            if ((_session.Vm == null || _session.IsFinished) && !CompileAndPrepare(null)) return;
-            if (_session.Vm == null) return;
+            if ((!_session.HasProgram || _session.IsFinished) && !CompileAndPrepare(null)) return;
+            if (!_session.HasProgram) return;
             BeginStep();
             _session.Continue(BreakpointLocations());
         }
@@ -160,7 +160,7 @@ namespace fire.Editor
         /// <summary>Ctrl+F5: ALWAYS compiles again (also in the middle of a session - a running program is ended) and then starts like F5 up to the first breakpoint.</summary>
         private void Restart_Click(object? sender, RoutedEventArgs e)
         {
-            if (!CompileAndPrepare(null) || _session.Vm == null) return;
+            if (!CompileAndPrepare(null) || !_session.HasProgram) return;
             BeginStep();
             _session.Continue(BreakpointLocations());
         }
@@ -244,23 +244,23 @@ namespace fire.Editor
 
         private void Step_Click(object? sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare(null);
-            if (_session.Vm == null || _isBusy) return;
+            if (!_session.HasProgram) CompileAndPrepare(null);
+            if (!_session.HasProgram || _isBusy) return;
             BeginStep();
             _session.StepLine();
         }
 
         private void StepInto_Click(object? sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare(null);
-            if (_session.Vm == null || _isBusy) return;
+            if (!_session.HasProgram) CompileAndPrepare(null);
+            if (!_session.HasProgram || _isBusy) return;
             BeginStep();
             _session.StepInto();
         }
 
         private void StepOut_Click(object? sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null || _isBusy) return; // "step out" without a running function makes no sense
+            if (!_session.HasProgram || _isBusy) return; // "step out" without a running function makes no sense
             BeginStep();
             _session.StepOut();
         }
@@ -313,8 +313,8 @@ namespace fire.Editor
 
         private void RunToEnd_Click(object? sender, RoutedEventArgs e)
         {
-            if (_session.Vm == null) CompileAndPrepare(null);
-            if (_session.Vm == null || _isBusy) return;
+            if (!_session.HasProgram) CompileAndPrepare(null);
+            if (!_session.HasProgram || _isBusy) return;
             BeginStep();
             _session.RunToCompletion();
         }
@@ -364,7 +364,7 @@ namespace fire.Editor
             }
             else
             {
-                var location = _session.Vm!.CurrentLocation;
+                var location = _session.ActiveThread!.Thread.CurrentLocation;
                 ShowDebugLocation(location);
                 string where = DocumentOfSourceName(location.SourceIndex);
                 UpdateStatus($"Paused at {where}line {location.Line}.");

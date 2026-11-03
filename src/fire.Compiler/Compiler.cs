@@ -1243,6 +1243,7 @@ namespace fire.Compiler
         private void CompileFireStmt(FireStmt fs)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // its lines belong to the source it stands in (a debugger stops at a breakpoint in it)
             int slot = _globalSlotCount;
             foreach (var capture in fs.TakingCaptures)
                 inner._chunk.MarkLocalName(0, slot++, capture.VarName);
@@ -1293,6 +1294,7 @@ namespace fire.Compiler
         private void CompileCatchThreadsDecl(CatchThreadsDecl decl)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // its lines belong to the source it stands in (a debugger stops at a breakpoint in it)
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -1315,6 +1317,7 @@ namespace fire.Compiler
         private void CompileCatchTerminateDecl(CatchTerminateDecl decl)
         {
             var inner = new Compiler(_refs, _natives, null, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // its lines belong to the source it stands in (a debugger stops at a breakpoint in it)
             if (decl.VarName != null)
                 inner._chunk.MarkLocalName(0, 0, decl.VarName);
             foreach (var stmt in decl.Body.Statements) inner.CompileStmt(stmt);
@@ -2617,6 +2620,7 @@ namespace fire.Compiler
         {
             var inner = new Compiler(_refs, _natives, _enclosingClass, _globalSlotCount, _knownClassNames, _errors, _refParams); inner._enumTypes = _enumTypes;
             inner._chunk.OwnerClass = _enclosingClass;
+            inner._topLevelSourceIndex = CurrentSourceIndex; // a lambda at the top level: its lines belong to the source it stands in
             // in generic code the lambda takes the type parameters it uses along (it has no `this` and no call of its own to take them from)
             inner._methodTypeParams = _methodTypeParams;
             if (_methodTypeParams is { Count: > 0 } || _enclosingClass?.Decl?.TypeParams is { Count: > 0 } || _lambdaTypeRefs != null)

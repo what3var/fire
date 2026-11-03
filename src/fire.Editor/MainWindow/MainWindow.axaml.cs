@@ -221,6 +221,7 @@ namespace fire.Editor
             _debugger = new DebuggerPanels(_threadsPanel, _scopePanel, _stackPanel);
             _debugger.AttachSession(_session);
             _debugger.ThreadSelected += OnThreadSelected;
+            _debugger.StatusMessage += UpdateStatus;
 
             // The shared DeviceManager of the editor: all scripts use it together (see EditorDeviceService).
             _session.DeviceManager = _devices.Manager;
@@ -621,11 +622,11 @@ namespace fire.Editor
             // A step still pending of the PREVIOUSLY active thread would leave _isBusy set forever (its ThreadPaused event fires later with a ctx that is no longer the active one) -
             // so always reset it when the thread changes, otherwise the step buttons stay locked.
             _isBusy = false;
-            ShowDebugLocation(chosen.IsFinished ? null : chosen.Vm.CurrentLocation);
+            ShowDebugLocation(chosen.IsFinished ? null : chosen.Thread.CurrentLocation);
             _debugger.Refresh(BreakpointDescriptions());
             UpdateStatus(chosen.IsFinished
                 ? $"{chosen.Name}: finished."
-                : $"{chosen.Name}: paused at line {chosen.Vm.CurrentLine}.");
+                : $"{chosen.Name}: paused at line {chosen.Thread.CurrentLocation.Line}.");
         }
 
         // -----------------------------------------------------------
