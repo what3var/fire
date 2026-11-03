@@ -944,6 +944,11 @@ namespace fire.Runtime
             _shutdownReleasePending = false;
             if (!DestroyGlobalsAtEnd) return;
             if (!IsFireThreadVm) FireRuntime.WaitForAllFireThreads(_ownerBroker); // the main program (every VM that is not a fire thread); meanwhile it serves the threads' queue
+            // An exception a thread did not catch, delivered after the main program's last safe point, is not dropped: `catch threads`, or the
+            // program ends with it (like at a safe point - the global scope then stays, as after any unhandled exception; native: the same at its end).
+            if (IsMainThreadVm && !afterShutdown)
+                while (_pendingThreadExceptions.TryDequeue(out var lateException))
+                    if (HandleDeliveredThreadException(lateException)) return;
             ReleaseGlobalScopeAfterStop(afterShutdown);
         }
 
