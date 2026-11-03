@@ -223,11 +223,13 @@ und `DragHover`/`DragLeave`, solange etwas aus einem anderen Programm über dem 
 Dreifachklick alles bzw. die Zeile (`root.clickCount`), das mehrzeilige Textfeld `UI.TextArea`, Drag & Drop zwischen Elementen (`OnDragStart`, `AllowDrop`, `OnDragOver`, `OnDrop`, `OnDragLeave`,
 `OnDragDone`, `UI.DropEffect`) mit einem Schild am Zeiger (`DragData.ShowImage`), Drops aus anderen Programmen an das Element darunter und ihr Schweben (`UI.DragData.Pending`);
 Ziehen aus dem Fenster heraus in andere Programme (`Window.StartDrag`: Text und Dateien, die Antwort Kopie/Verschieben) unter Windows (OLE: `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP`) und X11
-(XDND), in der VM und nativ mit SDL3 und SDL2 - das `ui` übergibt ein Ziehen mit Text oder Dateien, sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`).
+(XDND), in der VM und nativ mit SDL3 und SDL2, unter Wayland (`wl_data_device.start_drag`) nativ mit SDL3 - das `ui` übergibt ein Ziehen mit Text oder Dateien, sobald der Zeiger das Fenster verlässt (`UI.DragData.AllowExternal`).
 
 **Offen:**
-- Ziehen aus dem Fenster heraus unter Wayland (`wl_data_source`/`start_drag`; SDL gibt die Verbindung nicht so heraus, dass das neben SDL ginge) und macOS (`NSDraggingSession`); bis dahin endet dort
-  ein Ziehen im `ui` beim Verlassen des Fensters mit `None` - besser wäre, es dann im Fenster weiterlaufen zu lassen (die Plattform müsste sagen, ob sie Drag-out kann).
+- Ziehen aus dem Fenster heraus unter macOS (`NSDraggingSession`) und in der VM unter Wayland (nativ mit SDL3 geht es: eigene Warteschlange, eigener `wl_pointer` für die Seriennummer des
+  Drucks, `wl_data_device.start_drag`; die VM bräuchte dasselbe in `SdlDragOut.cs` und ein Abholen ihrer Warteschlange nach jedem Pumpen); bis dahin endet dort ein Ziehen im `ui` beim Verlassen
+  des Fensters mit `None` - besser wäre, es dann im Fenster weiterlaufen zu lassen (die Plattform müsste sagen, ob sie Drag-out kann).
+- Wayland-Ziehen nur mit weston (X11-Backend unter Xvfb) getestet, nicht mit GNOME/KDE.
 - Ein echtes Bild des gezogenen Inhalts am Zeiger (bisher ein Schild mit Text, und nur im Fenster).
 - Drag-out in der VM unter echtem Windows prüfen (OLE-Pfad nur unter Wine nativ getestet; die VM läuft unter Wine als `win-x64`-Build - die
   Zwischenablage mit `CF_HDROP` wird so geprüft -, ein Ziehen mit der "Hand" dort fehlt noch).

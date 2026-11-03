@@ -413,8 +413,13 @@ Besitzer hat, über SDLs eigene Verbindung ein `XFixesSelectionNotify` an ein ve
 `SDL_PROP_WINDOW_WIN32_HWND_POINTER` bzw. `..._X11_DISPLAY_POINTER`/`..._X11_WINDOW_NUMBER`; SDL2: `SDL_GetWindowWMInfo`, dessen Struktur `fire_display_sdl.h` selbst beschreibt, damit
 `SDL_syswm.h` nicht die Header von X11 verlangt) und gibt es an `std/fire_dragout.h`: unter Windows OLE (`DoDragDrop`, `IDataObject` mit `CF_UNICODETEXT`/`CF_HDROP` und `IDropSource` in C,
 `ole32.dll` zur Laufzeit), unter X11 die Quelle von XDND (libX11 per `dlopen`, die Typen von Xlib selbst beschrieben - kein Header, keine Link-Bibliothek; die Schleife hält `fire_display_lockSdl`).
-Wayland, macOS, der Browser und `fire_display_none.h` sagen 0. Zeigt der Thread eines Managers das Fenster, bekommt er den Auftrag (`FireWinShared.dragReq`) und zieht dort; das Programm wartet
-ohne die GIL. Die Tests ziehen unter Xvfb mit einer "Hand" aus XTest aus einem Fenster (SDL2, SDL3, `Window.Show`, die VM) in ein natives SDL3-Programm und unter Wine (OLE, zwei Prozesse) genauso.
+Unter Wayland (nur SDL3: `SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER`/`..._SURFACE_POINTER`) `fire_dragout_wayland`: auf SDLs `wl_display` eine eigene Warteschlange mit eigener
+Registry, `wl_seat` (bis Version 5), `wl_data_device_manager` (Version 3) und einem eigenen `wl_pointer`, der die Seriennummer des Tastendrucks für `start_drag` lernt (`fire_dragout_wlPump` nach jedem
+`fire_display_pump`, unter `fire_display_lockSdl`); fürs Ziehen eine `wl_data_source` und ein `wl_data_device`, dann wird die eigene Warteschlange abgearbeitet, bis `dnd_finished` (die letzte
+`action`: Kopie/Verschieben) oder `cancelled` kommt - `send` wird in den Deskriptor geschrieben (ohne SIGPIPE). libwayland-client per `dlopen`, die nötigen Signaturen selbst beschrieben (kein Header).
+macOS, der Browser und `fire_display_none.h` sagen 0. Zeigt der Thread eines Managers das Fenster, bekommt er den Auftrag (`FireWinShared.dragReq`) und zieht dort; das Programm wartet
+ohne die GIL. Die Tests ziehen unter Xvfb mit einer "Hand" aus XTest aus einem Fenster (SDL2, SDL3, `Window.Show`, die VM) in ein natives SDL3-Programm und unter Wine (OLE, zwei Prozesse) genauso; Wayland
+mit weston (X11-Backend unter Xvfb), die Hand findet die Fenster dort an ihrer Farbe (ein SDL3 mit Wayland-Treiber: das des Systems oder der Ordner `FIRE_TEST_SDL3_WAYLAND`).
 
 **SDL finden (`SdlSetup`).** Das Programm mit Fenster wird gegen die Entwicklungsdateien von SDL3 oder SDL2 übersetzt (`SDL3/SDL.h` bzw. `SDL.h`, Import-Bibliothek). Der Build sucht sie in dieser Reihenfolge:
 die Umgebungsvariable `SDL3_DIR` bzw. `SDL2_DIR` (ein Ordner mit `include` und `lib`, bei MinGW z.B. `SDL3-3.2.26\x86_64-w64-mingw32` oder `SDL2-2.30.9\x86_64-w64-mingw32`), der Ordner `Toolchain\SDL3`

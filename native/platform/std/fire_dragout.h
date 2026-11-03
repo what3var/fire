@@ -12,7 +12,10 @@
  *            only the XDND messages and the selection requests out of the queue (everything else stays there for SDL). The pointer stays grabbed by the press
  *            that started the drag (the implicit grab of the button, SDL's capture: a grab of our own would fail while SDL3's XInput2 holds it); the loop asks the
  *            server where the pointer is and which buttons are held (XQueryPointer) until the button is let go - Escape cancels.
- *   others   (Wayland, macOS, the browser, boards) no drag: 0.
+ *   Wayland  fire_dragout_wayland(display, surface, text, files): a wl_data_source and start_drag on SDL's wl_display, with a queue, a seat and a pointer of
+ *            fire's own (the pointer learns the serial of the press that a drag needs - SDL does not give it out; fire_dragout_wlPump after every pump of
+ *            SDL). libwayland-client is loaded with dlopen, the few signatures are declared below (no headers).
+ *   others   (macOS, the browser, boards) no drag: 0.
  *
  * `files`: the paths, one per line (UTF-8); `text`: UTF-8. The result: 0 nothing happened (no target, refused, cancelled), 1 the other program copied, 2 it moved. */
 #ifndef FIRE_DRAGOUT_H
@@ -698,6 +701,386 @@ static int fire_dragout_x11(void* display, unsigned long window, const char* tex
     free(d.uris);
     return d.result;
 }
-#endif /* X11 */
+
+/* ======================================================================================================================================================
+ * Wayland: the source side of wl_data_device (start_drag with a wl_data_source), next to SDL on SDL's own connection
+ * ====================================================================================================================================================== */
+/* A drag on Wayland needs the serial of the button press that holds the pointer (the implicit grab), and SDL does not give it out. So fire listens itself:
+ * on SDL's wl_display (SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER) it makes an event queue of its own, binds wl_seat and wl_data_device_manager (version 3:
+ * the actions) through a registry on that queue and asks the seat for a wl_pointer of its own - the compositor tells every wl_pointer of the client about the
+ * button presses, so this one learns the serials. SDL reads the events of the connection into both queues when it pumps; the display dispatches fire's queue
+ * right after (fire_dragout_wlPump, under the lock of SDL's events). The drag itself: a wl_data_source offering text/uri-list and/or text/plain;charset=utf-8
+ * (also UTF8_STRING, text/plain), the actions copy and move, a wl_data_device of the seat made for the drag, start_drag with the origin surface (the window's,
+ * SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER) and the serial of the press; then fire's queue is dispatched until the source says dnd_finished (the last
+ * `action`: copy 1, move 2) or cancelled (0) - the `send` requests are answered by writing to the descriptor. The compositor takes the pointer for the drag
+ * (SDL gets a leave and raises its buttons). libwayland-client is loaded with dlopen (SDL has loaded it already: the same library, the same interfaces); the
+ * few signatures it needs are declared here (no headers). A release that reaches fire's pointer during the loop means the compositor did not take the drag. */
+#ifdef FIRE_DRAGOUT_WANT_WAYLAND   /* (fire_display_sdl3.h: SDL3 gives out the wl_display and the wl_surface; SDL2's display has no use for it) */
+#define FIRE_DRAGOUT_WAYLAND 1
+#include <fcntl.h>
+#include <signal.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <errno.h>
+
+typedef void (*FireWlFn)(void);
+typedef struct FireWlLib {
+    int tried;
+    void* lib;
+    const void *iRegistry, *iSeat, *iPointer, *iDdm, *iDataDevice, *iDataSource;
+    void* (*marshalConstructor)(void*, uint32_t, const void*, ...);
+    void* (*marshalConstructorVersioned)(void*, uint32_t, const void*, uint32_t, ...);
+    void (*marshal)(void*, uint32_t, ...);
+    int (*addListener)(void*, FireWlFn*, void*);
+    void (*destroy)(void*);
+    void* (*createWrapper)(void*);
+    void (*wrapperDestroy)(void*);
+    void (*setQueue)(void*, void*);
+    void* (*createQueue)(void*);
+    void (*queueDestroy)(void*);
+    int (*dispatchQueuePending)(void*, void*);
+    int (*roundtripQueue)(void*, void*);
+    int (*prepareReadQueue)(void*, void*);
+    int (*readEvents)(void*);
+    void (*cancelRead)(void*);
+    int (*flush)(void*);
+    int (*getFd)(void*);
+} FireWlLib;
+
+static int fire_wl_bind(FireWlLib* l, const char* name, void* fn) {
+    void* p = dlsym(l->lib, name);
+    memcpy(fn, &p, sizeof p);
+    return p != NULL;
+}
+/* libwayland-client, loaded once (NULL: not there). The caller holds the lock of SDL's events. */
+static FireWlLib* fire_wl_load(void) {
+    static FireWlLib l;
+    if (!l.tried) {
+        l.tried = 1;
+        l.lib = dlopen("libwayland-client.so.0", RTLD_LAZY | RTLD_LOCAL);
+        if (l.lib == NULL) l.lib = dlopen("libwayland-client.so", RTLD_LAZY | RTLD_LOCAL);
+        if (l.lib != NULL) {
+            l.iRegistry = dlsym(l.lib, "wl_registry_interface");
+            l.iSeat = dlsym(l.lib, "wl_seat_interface");
+            l.iPointer = dlsym(l.lib, "wl_pointer_interface");
+            l.iDdm = dlsym(l.lib, "wl_data_device_manager_interface");
+            l.iDataDevice = dlsym(l.lib, "wl_data_device_interface");
+            l.iDataSource = dlsym(l.lib, "wl_data_source_interface");
+            if (!(l.iRegistry && l.iSeat && l.iPointer && l.iDdm && l.iDataDevice && l.iDataSource
+                  && fire_wl_bind(&l, "wl_proxy_marshal_constructor", &l.marshalConstructor)
+                  && fire_wl_bind(&l, "wl_proxy_marshal_constructor_versioned", &l.marshalConstructorVersioned)
+                  && fire_wl_bind(&l, "wl_proxy_marshal", &l.marshal) && fire_wl_bind(&l, "wl_proxy_add_listener", &l.addListener)
+                  && fire_wl_bind(&l, "wl_proxy_destroy", &l.destroy) && fire_wl_bind(&l, "wl_proxy_create_wrapper", &l.createWrapper)
+                  && fire_wl_bind(&l, "wl_proxy_wrapper_destroy", &l.wrapperDestroy) && fire_wl_bind(&l, "wl_proxy_set_queue", &l.setQueue)
+                  && fire_wl_bind(&l, "wl_display_create_queue", &l.createQueue) && fire_wl_bind(&l, "wl_event_queue_destroy", &l.queueDestroy) && fire_wl_bind(&l, "wl_display_dispatch_queue_pending", &l.dispatchQueuePending)
+                  && fire_wl_bind(&l, "wl_display_roundtrip_queue", &l.roundtripQueue) && fire_wl_bind(&l, "wl_display_prepare_read_queue", &l.prepareReadQueue)
+                  && fire_wl_bind(&l, "wl_display_read_events", &l.readEvents) && fire_wl_bind(&l, "wl_display_cancel_read", &l.cancelRead)
+                  && fire_wl_bind(&l, "wl_display_flush", &l.flush) && fire_wl_bind(&l, "wl_display_get_fd", &l.getFd))) {
+                dlclose(l.lib);
+                l.lib = NULL;
+            }
+        }
+    }
+    return l.lib != NULL ? &l : NULL;
+}
+/* (struct wl_interface begins with its name and its version) */
+static const char* fire_wl_name(const void* iface) { return *(const char* const*)iface; }
+static uint32_t fire_wl_version(const void* iface) { return (uint32_t)*(const int*)((const char*)iface + sizeof(const char*)); }
+
+/* What fire keeps of the connection (one: SDL has one wl_display); made once by fire_dragout_wlWatch. */
+typedef struct FireWlState {
+    FireWlLib* l;
+    void* display;
+    void* queue;
+    void* registry;
+    void* seat;
+    uint32_t seatName, seatVersion;
+    void* ddm;
+    uint32_t ddmVersion;
+    void* pointer;
+    uint32_t pressSerial;   /* the serial of the last press of a button */
+    int held;               /* buttons that are held */
+    int released;           /* (during a drag: a button was let go - the compositor did not take the drag) */
+    int failed;
+} FireWlState;
+static FireWlState fire_wl;
+
+static void fire_wl_pointerEnter(void* data, void* p, uint32_t serial, void* surface, int32_t x, int32_t y) { (void)data; (void)p; (void)serial; (void)surface; (void)x; (void)y; }
+static void fire_wl_pointerLeave(void* data, void* p, uint32_t serial, void* surface) { (void)data; (void)p; (void)serial; (void)surface; }
+static void fire_wl_pointerMotion(void* data, void* p, uint32_t time, int32_t x, int32_t y) { (void)data; (void)p; (void)time; (void)x; (void)y; }
+static void fire_wl_pointerButton(void* data, void* p, uint32_t serial, uint32_t time, uint32_t button, uint32_t state) {
+    FireWlState* s = (FireWlState*)data;
+    (void)p; (void)time; (void)button;
+    if (state == 1) { s->pressSerial = serial; s->held++; }
+    else { if (s->held > 0) s->held--; s->released = 1; }
+}
+static void fire_wl_pointerAxis(void* data, void* p, uint32_t time, uint32_t axis, int32_t value) { (void)data; (void)p; (void)time; (void)axis; (void)value; }
+static void fire_wl_pointerFrame(void* data, void* p) { (void)data; (void)p; }
+static void fire_wl_pointerAxisSource(void* data, void* p, uint32_t source) { (void)data; (void)p; (void)source; }
+static void fire_wl_pointerAxisStop(void* data, void* p, uint32_t time, uint32_t axis) { (void)data; (void)p; (void)time; (void)axis; }
+static void fire_wl_pointerAxisDiscrete(void* data, void* p, uint32_t axis, int32_t discrete) { (void)data; (void)p; (void)axis; (void)discrete; }
+static const struct {
+    void (*enter)(void*, void*, uint32_t, void*, int32_t, int32_t);
+    void (*leave)(void*, void*, uint32_t, void*);
+    void (*motion)(void*, void*, uint32_t, int32_t, int32_t);
+    void (*button)(void*, void*, uint32_t, uint32_t, uint32_t, uint32_t);
+    void (*axis)(void*, void*, uint32_t, uint32_t, int32_t);
+    void (*frame)(void*, void*);
+    void (*axisSource)(void*, void*, uint32_t);
+    void (*axisStop)(void*, void*, uint32_t, uint32_t);
+    void (*axisDiscrete)(void*, void*, uint32_t, int32_t);
+} fire_wl_pointerListener = { fire_wl_pointerEnter, fire_wl_pointerLeave, fire_wl_pointerMotion, fire_wl_pointerButton, fire_wl_pointerAxis,
+                              fire_wl_pointerFrame, fire_wl_pointerAxisSource, fire_wl_pointerAxisStop, fire_wl_pointerAxisDiscrete };
+
+static void fire_wl_seatCapabilities(void* data, void* seat, uint32_t caps) {
+    FireWlState* s = (FireWlState*)data;
+    if ((caps & 1u) && s->pointer == NULL) {   /* WL_SEAT_CAPABILITY_POINTER */
+        s->pointer = s->l->marshalConstructor(seat, 0, s->l->iPointer, NULL);   /* wl_seat.get_pointer */
+        if (s->pointer != NULL) s->l->addListener(s->pointer, (FireWlFn*)(void*)&fire_wl_pointerListener, s);
+    } else if (!(caps & 1u) && s->pointer != NULL) {
+        if (s->seatVersion >= 3) s->l->marshal(s->pointer, 1);   /* wl_pointer.release */
+        s->l->destroy(s->pointer);
+        s->pointer = NULL;
+        s->held = 0;
+    }
+}
+static void fire_wl_seatName(void* data, void* seat, const char* name) { (void)data; (void)seat; (void)name; }
+static const struct { void (*capabilities)(void*, void*, uint32_t); void (*name)(void*, void*, const char*); } fire_wl_seatListener = { fire_wl_seatCapabilities, fire_wl_seatName };
+
+static void fire_wl_global(void* data, void* registry, uint32_t name, const char* iface, uint32_t version) {
+    FireWlState* s = (FireWlState*)data;
+    if (strcmp(iface, "wl_seat") == 0 && s->seat == NULL) {
+        /* (up to version 5: the events of the pointer that the listener above knows) */
+        uint32_t v = version < 5 ? version : 5;
+        if (v > fire_wl_version(s->l->iSeat)) v = fire_wl_version(s->l->iSeat);
+        s->seat = s->l->marshalConstructorVersioned(registry, 0, s->l->iSeat, v, name, fire_wl_name(s->l->iSeat), v, NULL);   /* wl_registry.bind */
+        s->seatName = name; s->seatVersion = v;
+        if (s->seat != NULL) s->l->addListener(s->seat, (FireWlFn*)(void*)&fire_wl_seatListener, s);
+    } else if (strcmp(iface, "wl_data_device_manager") == 0 && s->ddm == NULL && version >= 3 && fire_wl_version(s->l->iDdm) >= 3) {
+        s->ddm = s->l->marshalConstructorVersioned(registry, 0, s->l->iDdm, 3, name, fire_wl_name(s->l->iDdm), (uint32_t)3, NULL);
+        s->ddmVersion = 3;
+    }
+}
+static void fire_wl_globalRemove(void* data, void* registry, uint32_t name) {
+    FireWlState* s = (FireWlState*)data;
+    (void)registry;
+    if (s->seat != NULL && name == s->seatName) {
+        /* (the seat went away: its pointer with it; a later drag finds no seat) */
+        if (s->pointer != NULL) { s->l->destroy(s->pointer); s->pointer = NULL; }
+        s->l->destroy(s->seat);
+        s->seat = NULL;
+        s->held = 0;
+    }
+}
+static const struct { void (*global)(void*, void*, uint32_t, const char*, uint32_t); void (*remove)(void*, void*, uint32_t); } fire_wl_registryListener = { fire_wl_global, fire_wl_globalRemove };
+
+/* Starts listening on `display` (SDL's wl_display) the first time; then dispatches fire's queue (what SDL has read for it). The caller holds the lock of SDL's
+ * events - and calls it after SDL pumped, so that the press that starts a drag is known. */
+static void fire_dragout_wlPump(void* display) {
+    FireWlState* s = &fire_wl;
+    if (display == NULL || s->failed) return;
+    if (s->display == NULL) {
+        void* wrapper;
+        s->l = fire_wl_load();
+        if (s->l == NULL) { s->failed = 1; return; }
+        s->display = display;
+        s->queue = s->l->createQueue(display);
+        wrapper = s->queue ? s->l->createWrapper(display) : NULL;
+        if (wrapper == NULL) { s->failed = 1; return; }
+        s->l->setQueue(wrapper, s->queue);
+        s->registry = s->l->marshalConstructor(wrapper, 1, s->l->iRegistry, NULL);   /* wl_display.get_registry (on fire's queue) */
+        s->l->wrapperDestroy(wrapper);
+        if (s->registry == NULL) { s->failed = 1; return; }
+        s->l->addListener(s->registry, (FireWlFn*)(void*)&fire_wl_registryListener, s);
+        /* the globals, then the capabilities of the seat (and the pointer) */
+        s->l->roundtripQueue(display, s->queue);
+        s->l->roundtripQueue(display, s->queue);
+        return;
+    }
+    if (display == s->display) s->l->dispatchQueuePending(display, s->queue);
+}
+
+/* The last window of SDL closes (SDL may close its wl_display right after): everything fire made on the connection is given back while it is still there;
+ * the next window starts afresh. The caller holds the lock of SDL's events. */
+static void fire_dragout_wlForget(void) {
+    FireWlState* s = &fire_wl;
+    FireWlLib* l = s->l;
+    if (l != NULL && s->display != NULL && !s->failed) {
+        if (s->pointer != NULL) { if (s->seatVersion >= 3) l->marshal(s->pointer, 1); l->destroy(s->pointer); }   /* wl_pointer.release */
+        if (s->seat != NULL) { if (s->seatVersion >= 5) l->marshal(s->seat, 3); l->destroy(s->seat); }             /* wl_seat.release */
+        if (s->ddm != NULL) l->destroy(s->ddm);
+        if (s->registry != NULL) l->destroy(s->registry);
+        l->flush(s->display);
+    }
+    if (l != NULL && s->queue != NULL) l->queueDestroy(s->queue);
+    memset(s, 0, sizeof *s);
+    s->l = l;
+}
+
+/* (one wait for the connection: up to `ms`, then what came in is dispatched) */
+static void fire_wl_wait(FireWlState* s, int ms) {
+    struct pollfd p;
+    while (s->l->prepareReadQueue(s->display, s->queue) != 0) s->l->dispatchQueuePending(s->display, s->queue);
+    s->l->flush(s->display);
+    p.fd = s->l->getFd(s->display); p.events = POLLIN; p.revents = 0;
+    if (poll(&p, 1, ms) > 0 && (p.revents & POLLIN)) s->l->readEvents(s->display);
+    else s->l->cancelRead(s->display);
+    s->l->dispatchQueuePending(s->display, s->queue);
+}
+
+typedef struct FireWlDrag {
+    FireWlLib* l;
+    const char* text;
+    char* uris;
+    uint32_t action;
+    int accepted, dropped, done, result;
+    void** offers;          /* (what the compositor offers the data device of the drag - over our own window: destroyed at the end) */
+    size_t offerCount, offerCap;
+} FireWlDrag;
+
+static void fire_wl_deviceOffer(void* data, void* dev, void* offer) {
+    FireWlDrag* d = (FireWlDrag*)data;
+    (void)dev;
+    if (offer == NULL) return;
+    if (d->offerCount == d->offerCap) {
+        size_t cap = d->offerCap ? d->offerCap * 2 : 4;
+        void** grown = (void**)realloc(d->offers, cap * sizeof *grown);
+        if (grown == NULL) { d->l->marshal(offer, 2); d->l->destroy(offer); return; }   /* (wl_data_offer.destroy) */
+        d->offers = grown; d->offerCap = cap;
+    }
+    d->offers[d->offerCount++] = offer;
+}
+static void fire_wl_deviceEnter(void* data, void* dev, uint32_t serial, void* surface, int32_t x, int32_t y, void* offer) { (void)data; (void)dev; (void)serial; (void)surface; (void)x; (void)y; (void)offer; }
+static void fire_wl_deviceLeave(void* data, void* dev) { (void)data; (void)dev; }
+static void fire_wl_deviceMotion(void* data, void* dev, uint32_t time, int32_t x, int32_t y) { (void)data; (void)dev; (void)time; (void)x; (void)y; }
+static void fire_wl_deviceDrop(void* data, void* dev) { (void)data; (void)dev; }
+static void fire_wl_deviceSelection(void* data, void* dev, void* offer) { (void)data; (void)dev; (void)offer; }
+static const struct {
+    void (*dataOffer)(void*, void*, void*);
+    void (*enter)(void*, void*, uint32_t, void*, int32_t, int32_t, void*);
+    void (*leave)(void*, void*);
+    void (*motion)(void*, void*, uint32_t, int32_t, int32_t);
+    void (*drop)(void*, void*);
+    void (*selection)(void*, void*, void*);
+} fire_wl_deviceListener = { fire_wl_deviceOffer, fire_wl_deviceEnter, fire_wl_deviceLeave, fire_wl_deviceMotion, fire_wl_deviceDrop, fire_wl_deviceSelection };
+
+static void fire_wl_sourceTarget(void* data, void* src, const char* mime) { FireWlDrag* d = (FireWlDrag*)data; (void)src; d->accepted = mime != NULL; }
+/* The target wants the data: written to the descriptor (not blocking for more than 5 s per piece; a closed pipe is no signal that ends the program). */
+static void fire_wl_sourceSend(void* data, void* src, const char* mime, int32_t fd) {
+    FireWlDrag* d = (FireWlDrag*)data;
+    const char* bytes = NULL;
+    size_t n = 0, done = 0;
+    struct sigaction ignore, old;
+    (void)src;
+    if (strcmp(mime, "text/uri-list") == 0) bytes = d->uris;
+    else if (d->text != NULL) bytes = d->text;
+    if (bytes != NULL) n = strlen(bytes);
+    memset(&ignore, 0, sizeof ignore);
+    ignore.sa_handler = SIG_IGN;
+    sigemptyset(&ignore.sa_mask);
+    sigaction(SIGPIPE, &ignore, &old);
+    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    while (done < n) {
+        ssize_t w = write(fd, bytes + done, n - done);
+        if (w > 0) { done += (size_t)w; continue; }
+        if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            struct pollfd p;
+            p.fd = fd; p.events = POLLOUT; p.revents = 0;
+            if (poll(&p, 1, 5000) > 0) continue;
+        } else if (w < 0 && errno == EINTR) continue;
+        break;
+    }
+    sigaction(SIGPIPE, &old, NULL);
+    close(fd);
+}
+static void fire_wl_sourceCancelled(void* data, void* src) { FireWlDrag* d = (FireWlDrag*)data; (void)src; d->result = FIRE_DRAG_NONE; d->done = 1; }
+static void fire_wl_sourceDropPerformed(void* data, void* src) { FireWlDrag* d = (FireWlDrag*)data; (void)src; d->dropped = 1; }
+static void fire_wl_sourceFinished(void* data, void* src) {
+    FireWlDrag* d = (FireWlDrag*)data;
+    (void)src;
+    d->result = d->action == 2u ? FIRE_DRAG_MOVE : FIRE_DRAG_COPY;   /* WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE */
+    d->done = 1;
+}
+static void fire_wl_sourceAction(void* data, void* src, uint32_t action) { FireWlDrag* d = (FireWlDrag*)data; (void)src; d->action = action; }
+static const struct {
+    void (*target)(void*, void*, const char*);
+    void (*send)(void*, void*, const char*, int32_t);
+    void (*cancelled)(void*, void*);
+    void (*dropPerformed)(void*, void*);
+    void (*finished)(void*, void*);
+    void (*action)(void*, void*, uint32_t);
+} fire_wl_sourceListener = { fire_wl_sourceTarget, fire_wl_sourceSend, fire_wl_sourceCancelled, fire_wl_sourceDropPerformed, fire_wl_sourceFinished, fire_wl_sourceAction };
+
+/* Whether a drag can start on `display` (Wayland: fire listens on it and has the seat, its pointer and the data device manager). */
+static int fire_dragout_wlReady(void* display) {
+    return display != NULL && !fire_wl.failed && fire_wl.display == display && fire_wl.seat != NULL && fire_wl.pointer != NULL && fire_wl.ddm != NULL;
+}
+
+/* Drags the text and/or the files out of the window with `surface` (on `display`, SDL's - the caller holds the lock of SDL's events) until the user lets go;
+ * 0 / 1 copy / 2 move. Without a button that is held (or before fire listens on the connection) there is no drag. */
+static int fire_dragout_wayland(void* display, void* surface, const char* text, const char* files) {
+    FireWlState* s = &fire_wl;
+    FireWlDrag d;
+    void *source, *device;
+    long long start, dropAt = 0;
+    size_t i;
+    if (display == NULL || surface == NULL) return FIRE_DRAG_NONE;
+    if ((text == NULL || text[0] == 0) && (files == NULL || files[0] == 0)) return FIRE_DRAG_NONE;
+    fire_dragout_wlPump(display);
+    if (!fire_dragout_wlReady(display) || s->held <= 0) return FIRE_DRAG_NONE;
+    memset(&d, 0, sizeof d);
+    d.l = s->l;
+    d.text = text != NULL && text[0] != 0 ? text : NULL;
+    if (files != NULL && files[0] != 0) {
+        d.uris = fire_display_uriListFromPaths(files);
+        if (d.uris != NULL && d.uris[0] == 0) { free(d.uris); d.uris = NULL; }
+    }
+    if (d.uris == NULL && d.text == NULL) return FIRE_DRAG_NONE;
+    source = s->l->marshalConstructor(s->ddm, 0, s->l->iDataSource, NULL);              /* wl_data_device_manager.create_data_source */
+    device = s->l->marshalConstructor(s->ddm, 1, s->l->iDataDevice, NULL, s->seat);    /* wl_data_device_manager.get_data_device */
+    if (source == NULL || device == NULL) {
+        if (source != NULL) { s->l->marshal(source, 1); s->l->destroy(source); }
+        if (device != NULL) { s->l->marshal(device, 2); s->l->destroy(device); }
+        free(d.uris);
+        return FIRE_DRAG_NONE;
+    }
+    s->l->addListener(source, (FireWlFn*)(void*)&fire_wl_sourceListener, &d);
+    s->l->addListener(device, (FireWlFn*)(void*)&fire_wl_deviceListener, &d);
+    if (d.uris != NULL) s->l->marshal(source, 0, "text/uri-list");                    /* wl_data_source.offer */
+    if (d.text != NULL) {
+        s->l->marshal(source, 0, "text/plain;charset=utf-8");
+        s->l->marshal(source, 0, "UTF8_STRING");
+        s->l->marshal(source, 0, "text/plain");
+    }
+    s->l->marshal(source, 2, (uint32_t)(1u | 2u));                                     /* wl_data_source.set_actions: copy, move */
+    s->released = 0;
+    s->l->marshal(device, 0, source, surface, (void*)NULL, s->pressSerial);           /* wl_data_device.start_drag */
+    s->l->flush(display);
+    start = fire_xdrag_nowMs();
+    while (!d.done) {
+        long long now;
+        fire_wl_wait(s, 50);
+        if (d.done) break;
+        now = fire_xdrag_nowMs();
+        /* a release on fire's pointer: the compositor kept the pointer for the window - no drag (one that never answers ends after 10 minutes) */
+        if (s->released && !d.dropped) { d.result = FIRE_DRAG_NONE; break; }
+        if (now - start > 600000) { d.result = FIRE_DRAG_NONE; break; }
+        /* dropped: the target fetches the data and says it is finished (one that does not, after 5 s: what it took and the last action) */
+        if (d.dropped && dropAt == 0) dropAt = now;
+        if (dropAt != 0 && now - dropAt > 5000) { d.result = !d.accepted ? FIRE_DRAG_NONE : d.action == 2u ? FIRE_DRAG_MOVE : FIRE_DRAG_COPY; break; }
+    }
+    s->l->marshal(source, 1);   /* wl_data_source.destroy */
+    s->l->destroy(source);
+    s->l->marshal(device, 2);   /* wl_data_device.release */
+    s->l->destroy(device);
+    for (i = 0; i < d.offerCount; i++) { s->l->marshal(d.offers[i], 2); s->l->destroy(d.offers[i]); }   /* wl_data_offer.destroy */
+    s->l->flush(display);
+    s->held = 0;
+    free(d.offers);
+    free(d.uris);
+    return d.result;
+}
+#endif /* FIRE_DRAGOUT_WANT_WAYLAND */
+#endif /* X11, Wayland */
 
 #endif

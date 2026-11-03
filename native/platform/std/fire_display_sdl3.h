@@ -20,6 +20,7 @@
 #endif
 #include "fire_display_c.h"
 #include "fire_systheme.h"
+#define FIRE_DRAGOUT_WANT_WAYLAND 1
 #include "fire_dragout.h"
 
 #define FIRE_DISPLAY_AVAILABLE 1
@@ -43,6 +44,7 @@ typedef struct FireDisplayWindow {
     char* dropText;
     int dropping, hovering;
     float hoverX, hoverY;
+    int wayland;   /* (SDL's video driver is "wayland") */
 } FireDisplayWindow;
 
 /* One lock for everything that touches SDL's events: the pumping of the windows (from several threads: the managers) and the clipboard (on X11 SDL waits for
@@ -91,7 +93,19 @@ static void fire_display_close(FireDisplayWindow* w) {
     if (w->ownsJoystick) { SDL_QuitSubSystem(SDL_INIT_JOYSTICK); w->ownsJoystick = 0; }
     if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
     if (w->window) { SDL_DestroyWindow(w->window); w->window = NULL; }
-    if (w->ownsVideo) { SDL_QuitSubSystem(SDL_INIT_VIDEO); w->ownsVideo = 0; }
+    if (w->ownsVideo) {
+#ifdef FIRE_DRAGOUT_WAYLAND
+        /* (the last window of SDL: what fire listens with on the wl_display is given back before SDL may close the connection) */
+        if (w->wayland) {
+            int left = 0;
+            SDL_Window** windows = SDL_GetWindows(&left);
+            SDL_free(windows);
+            if (left == 0) { fire_display_lockSdl(); fire_dragout_wlForget(); fire_display_unlockSdl(); }
+        }
+#endif
+        SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        w->ownsVideo = 0;
+    }
 }
 
 #if defined(FIRE_DISPLAY_SELFTEST) || defined(FIRE_DISPLAY_SELFTEST_RESIZE) || defined(FIRE_DISPLAY_SELFTEST_INPUT) || defined(FIRE_DISPLAY_SELFTEST_DROP) || defined(FIRE_DISPLAY_SELFTEST_HOVER)
@@ -165,6 +179,7 @@ static int fire_display_open(FireDisplayWindow* w, const char* title, int width,
     SDL_SetRenderVSync(w->renderer, vsync ? 1 : 0);
     SDL_StartTextInput(w->window);
     w->windowId = SDL_GetWindowID(w->window);
+    { const char* driver = SDL_GetCurrentVideoDriver(); w->wayland = driver != NULL && strcmp(driver, "wayland") == 0; }
     /* joysticks are an extra: without a driver the window opens all the same (the devices that are plugged in report themselves as SDL_EVENT_JOYSTICK_ADDED)
      * (a reference of its own as well, see above) */
     if (SDL_InitSubSystem(SDL_INIT_JOYSTICK)) w->ownsJoystick = 1;
@@ -359,6 +374,10 @@ static int fire_display_pump(FireDisplayWindow* w, FireDisplayEvents* out, int f
             default: break;
         }
     }
+#ifdef FIRE_DRAGOUT_WAYLAND
+    /* (Wayland: fire's own queue takes what SDL read for it - the presses of the buttons that a drag out of the window needs) */
+    if (w->window && w->wayland) fire_dragout_wlPump(SDL_GetPointerProperty(SDL_GetWindowProperties(w->window), SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL));
+#endif
     fire_display_unlockSdl();
     return !w->quit;
 }
@@ -701,7 +720,8 @@ static void fire_display_present(FireDisplayWindow* w, const uint32_t* rgba, int
 
 /* ---- dragging text and files out of the window into other programs (Window.StartDrag; SDL3 cannot start such a drag: fire_dragout.h does it for the
  * window of the platform) - runs until the user lets go: 0 nothing, 1 copied, 2 moved. Windows: OLE (the HWND of the window); X11: XDND (the Display and the
- * Window of SDL, with the lock of SDL's events held, so that nobody else takes the events of the connection meanwhile); elsewhere (Wayland, macOS) 0. ---- */
+ * Window of SDL, with the lock of SDL's events held, so that nobody else takes the events of the connection meanwhile); Wayland: wl_data_device.start_drag on
+ * SDL's wl_display with the window's wl_surface (the same lock); elsewhere (macOS) 0. ---- */
 #define FIRE_DISPLAY_START_DRAG 1
 static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const char* files) {
     int result = 0;
@@ -724,6 +744,18 @@ static int fire_display_startDrag(FireDisplayWindow* w, const char* text, const 
                 fire_display_unlockSdl();
             }
         }
+#  ifdef FIRE_DRAGOUT_WAYLAND
+        else if (w->wayland) {
+            SDL_PropertiesID props = SDL_GetWindowProperties(w->window);
+            void* display = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+            void* surface = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+            if (display != NULL && surface != NULL) {
+                fire_display_lockSdl();
+                result = fire_dragout_wayland(display, surface, text, files);
+                fire_display_unlockSdl();
+            }
+        }
+#  endif
     }
 #else
     (void)text; (void)files;

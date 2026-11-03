@@ -24744,6 +24744,170 @@ else
                 }
             }
 
+            // ---- drag-out on Wayland (wl_data_device.start_drag, fire_dragout_wayland): weston with its X11 backend draws into Xvfb; source and target are native fire
+            // programs with SDL3 on Wayland (an SDL3 with the Wayland driver: the one of the system or the folder FIRE_TEST_SDL3_WAYLAND, put first on
+            // LD_LIBRARY_PATH). Wayland clients cannot know where their windows are: the source is magenta, the target green, and the hand finds them on the X
+            // screen (XGetImage) - it presses in the source and lets go on the point of the target farthest from it, twice (text, then files); a third program
+            // drags onto the black background (no target: 0). SDL_MOUSE_FOCUS_CLICKTHROUGH: the press that gives the source the focus back after a drop counts.
+            // (SDL 3.2 draws on Wayland always through EGL - Mesa, llvmpipe here - which keeps memory that LeakSanitizer would report: suppressed for this case)
+            {
+                const string handSource = """
+                    #include <X11/Xlib.h>
+                    #include <X11/Xutil.h>
+                    #include <dlfcn.h>
+                    #include <stdio.h>
+                    #include <stdlib.h>
+                    #include <time.h>
+                    typedef int (*FakeButton)(Display*, unsigned int, int, unsigned long);
+                    typedef int (*FakeMotion)(Display*, int, int, int, unsigned long);
+                    static void pause_ms(int ms) { struct timespec t; t.tv_sec = ms / 1000; t.tv_nsec = (long)(ms % 1000) * 1000000L; nanosleep(&t, NULL); }
+                    typedef struct Box { int x0, y0, x1, y1, n; } Box;
+                    static void scan(Display* d, unsigned long src, unsigned long dst, Box* s, Box* t, int* tx, int* ty) {
+                        XWindowAttributes a;
+                        XImage* img;
+                        int x, y;
+                        long best = -1;
+                        XGetWindowAttributes(d, DefaultRootWindow(d), &a);
+                        img = XGetImage(d, DefaultRootWindow(d), 0, 0, (unsigned)a.width, (unsigned)a.height, AllPlanes, ZPixmap);
+                        s->n = t->n = 0;
+                        if (img == NULL) return;
+                        for (y = 0; y < a.height; y++)
+                            for (x = 0; x < a.width; x++) {
+                                unsigned long p = XGetPixel(img, x, y) & 0xFFFFFF;
+                                Box* b = p == src ? s : p == dst ? t : NULL;
+                                if (b == NULL) continue;
+                                if (b->n == 0) { b->x0 = b->x1 = x; b->y0 = b->y1 = y; }
+                                if (x < b->x0) b->x0 = x;
+                                if (x > b->x1) b->x1 = x;
+                                if (y < b->y0) b->y0 = y;
+                                if (y > b->y1) b->y1 = y;
+                                b->n++;
+                            }
+                        for (y = t->y0 + 10; t->n && y <= t->y1 - 10; y += 8)
+                            for (x = t->x0 + 10; x <= t->x1 - 10; x += 8) {
+                                long dx, dy, dist;
+                                if ((XGetPixel(img, x, y) & 0xFFFFFF) != dst) continue;
+                                dx = x - (s->x0 + s->x1) / 2; dy = y - (s->y0 + s->y1) / 2;
+                                dist = dx * dx + dy * dy;
+                                if (dist > best) { best = dist; *tx = x; *ty = y; }
+                            }
+                        XDestroyImage(img);
+                    }
+                    int main(int argc, char** argv) {
+                        Display* d = XOpenDisplay(NULL);
+                        void* xtst = dlopen("libXtst.so.6", RTLD_NOW);
+                        FakeButton button;
+                        FakeMotion motion;
+                        unsigned long src, dst;
+                        int times = argc > 3 ? atoi(argv[3]) : 1, k, i, tx = 0, ty = 0;
+                        Box s, t;
+                        if (d == NULL || xtst == NULL || argc < 3) { fprintf(stderr, "hand: no display or no libXtst\n"); return 2; }
+                        src = strtoul(argv[1], NULL, 16); dst = strtoul(argv[2], NULL, 16);
+                        button = (FakeButton)dlsym(xtst, "XTestFakeButtonEvent");
+                        motion = (FakeMotion)dlsym(xtst, "XTestFakeMotionEvent");
+                        if (!button || !motion) { fprintf(stderr, "hand: XTest incomplete\n"); return 2; }
+                        for (k = 0; k < 300; k++) {
+                            scan(d, src, dst, &s, &t, &tx, &ty);
+                            if (s.n > 100 && t.n > 1000) break;
+                            pause_ms(100);
+                        }
+                        if (s.n <= 100 || t.n <= 1000) { fprintf(stderr, "hand: windows not found (%d, %d)\n", s.n, t.n); return 2; }
+                        pause_ms(700);
+                        for (k = 0; k < times; k++) {
+                            int sx, sy;
+                            scan(d, src, dst, &s, &t, &tx, &ty);
+                            sx = (s.x0 + s.x1) / 2; sy = (s.y0 + s.y1) / 2;
+                            motion(d, -1, sx, sy, 0); XSync(d, False); pause_ms(300);
+                            button(d, 1, True, 0); XSync(d, False); pause_ms(400);
+                            for (i = 1; i <= 12; i++) { motion(d, -1, sx + (tx - sx) * i / 12, sy + (ty - sy) * i / 12, 0); XSync(d, False); pause_ms(40); }
+                            pause_ms(300);
+                            button(d, 1, False, 0); XSync(d, False);
+                            pause_ms(1500);
+                        }
+                        XCloseDisplay(d);
+                        return 0;
+                    }
+                    """;
+                string title = "Fenster: Drag aus dem Fenster in ein anderes Programm (Wayland: weston unter Xvfb, wl_data_device): Text und Dateien, die Antwort Kopie; ins Leere 0 [SDL3]";
+                string? weston = FindProgram("weston");
+                string? wlLibs = Environment.GetEnvironmentVariable("FIRE_TEST_SDL3_WAYLAND") is { Length: > 0 } wlEnv ? wlEnv : null;
+                if (!TestSelected(title)) { }
+                else if (xvfbRun == null || sdl3Exit != 0 || weston == null) Console.WriteLine($"(uebersprungen - xvfb-run, SDL3 oder weston fehlen: {title})");
+                else
+                {
+                    // (has this SDL3 the Wayland driver? - SDL lists the drivers it was built with, no display needed)
+                    string probe = Path.Combine(workDir, "wlprobe.c");
+                    File.WriteAllText(probe, "#include <SDL3/SDL.h>\n#include <string.h>\nint main(void) { int i; for (i = 0; i < SDL_GetNumVideoDrivers(); i++) if (strcmp(SDL_GetVideoDriver(i), \"wayland\") == 0) return 0; return 1; }\n");
+                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-std=c11 \"{probe}\" -lSDL3 -o \"{probe}.bin\"", workDir, out _);
+                    string handC = Path.Combine(workDir, "wlhand.c"), hand = Path.Combine(workDir, "wlhand.bin");
+                    File.WriteAllText(handC, handSource);
+                    RunProc(fire.Native.ToolchainDef.CCompilerFor(cxx), $"-O1 \"{handC}\" -o \"{hand}\" -lX11 -ldl", workDir, out int handExit);
+                    string ldPath = wlLibs != null ? $"LD_LIBRARY_PATH=\"{wlLibs}\" " : "";
+                    File.WriteAllText(probe + ".sh", $"{ldPath}\"{probe}.bin\"\n");
+                    RunProc("sh", $"\"{probe}.sh\"", workDir, out int probeExit);
+                    if (probeExit != 0) Console.WriteLine($"(uebersprungen - das SDL3 hier hat keinen Wayland-Treiber (FIRE_TEST_SDL3_WAYLAND: ein Ordner mit einem libSDL3.so mit Wayland): {title})");
+                    else if (handExit != 0) Console.WriteLine($"(uebersprungen - die Hand (X11-Programm) laesst sich nicht bauen: {title})");
+                    else
+                    {
+                        string Colored(string script, int w, int h, string color) => script.Replace("var win = new Window(", $"var paint = new Renderer(fb)\nfor (var py = 0; py < {h}; py++) {{ for (var px = 0; px < {w}; px++) {{ paint.SetPixel(px, py, {color}) }} }}\nvar win = new Window(");
+                        string Build(string script, string name)
+                        {
+                            var target = TargetProfile.Host with { Native = TargetProfile.Host.Native with { Sdl = 3 } };
+                            var sources = fire.Native.CppGenerator.GenerateSources(new Linker().CompileAndLink(new[] { script }, null, null, VmExecutionMode.Release, null, target), target);
+                            string exe = Path.Combine(workDir, name + ".bin");
+                            string buildLog = NativeTestBuild.Build(NativeTestBuild.In(workDir), cxx, sources, workDir, name, $"-pthread -O2 -Wall -Wextra {sanitize}", exe, out int buildExit, " -lSDL3");
+                            if (buildExit != 0 || buildLog.Contains("warning:")) throw new InvalidOperationException("C/C++-Compiler: " + buildLog);
+                            return exe;
+                        }
+                        try
+                        {
+                            string source = Build(Colored(DragSourceScript("/tmp/ein Ordner/datei ä.txt", "/tmp/zwei", false), 64, 48, "0xFFFF00FF"), "wldragsource");
+                            string target = Build(Colored(dragTargetScript, 400, 300, "0xFF00FF00"), "wldragtarget");
+                            string run = Path.Combine(workDir, "wldrag.sh"), runtime = Path.Combine(workDir, "wlrun");
+                            string outSource = Path.Combine(workDir, "wlsource.out"), outTarget = Path.Combine(workDir, "wltarget.out"), outEmpty = Path.Combine(workDir, "wlempty.out");
+                            string socket = $"wl-fire-{Environment.ProcessId}";
+                            // (weston first - its socket says it is there -, then target, source and hand as for X11; then a source alone over the black background)
+                            File.WriteAllText(run, $"""
+                                export XDG_RUNTIME_DIR="{runtime}"
+                                mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"
+                                printf '[core]\nidle-time=0\n[shell]\npanel-position=none\nbackground-color=0xff000000\n' > "{runtime}/weston.ini"
+                                "{weston}" --backend=x11 --renderer=pixman --width=640 --height=480 --socket={socket} --config="{runtime}/weston.ini" > "{runtime}/weston.log" 2>&1 &
+                                wp=$!
+                                for i in $(seq 1 100); do [ -S "$XDG_RUNTIME_DIR/{socket}" ] && break; sleep 0.1; done
+                                export WAYLAND_DISPLAY={socket} SDL_VIDEODRIVER=wayland SDL_MOUSE_FOCUS_CLICKTHROUGH=1 {ldPath}
+                                "{target}" > "{outTarget}" 2>&1 &
+                                t=$!
+                                sleep 0.5
+                                "{source}" > "{outSource}" 2>&1 &
+                                s=$!
+                                "{hand}" FF00FF 00FF00 2
+                                d=$?
+                                wait $s; se=$?
+                                wait $t; te=$?
+                                sleep 0.5
+                                "{source}" > "{outEmpty}" 2>&1 &
+                                s=$!
+                                "{hand}" FF00FF 000000 2
+                                d2=$?
+                                wait $s; se2=$?
+                                kill $wp; wait $wp
+                                exit $(( d + se + te + d2 + se2 ))
+                                """.Replace("\r", ""));
+                            string wlLsan = Path.Combine(workDir, "lsan_wayland.supp");
+                            File.WriteAllText(wlLsan, "leak:libdbus-1.so\nleak:SDL_EGL_LoadLibrary\nleak:GL_RunCommandQueue\nleak:libLLVM\nleak:libEGL_mesa\nleak:libgallium\n");
+                            Environment.SetEnvironmentVariable("LSAN_OPTIONS", $"suppressions={wlLsan}:print_suppressions=0");
+                            string runLog = RunProc(xvfbRun, $"-a -s \"-screen 0 1024x768x24\" sh \"{run}\"", workDir, out int runExit);
+                            Environment.SetEnvironmentVariable("LSAN_OPTIONS", null);
+                            string actual = DragLines(outSource) + DragLines(outTarget) + DragLines(outEmpty);
+                            string want = string.Concat(new[] { "text 1", "files 1", "dropped text [Text aus fire ä]", "dropped files 2 [/tmp/ein Ordner/datei ä.txt] [/tmp/zwei]", "text 0", "files 0" }.Select(l => l + "\n"));
+                            CheckNat(title, runExit == 0 && actual == want, $"  erwartet:\n{want}\n  erhalten (Exitcode {runExit}):\n{actual}{runLog}"
+                                + (File.Exists(outSource) ? File.ReadAllText(outSource) : "") + (File.Exists(outTarget) ? File.ReadAllText(outTarget) : ""));
+                        }
+                        catch (InvalidOperationException ex) { CheckNat(title, false, ex.Message); }
+                    }
+                }
+            }
+
             // ---- Windows: the window and the clipboard built with MinGW against the MinGW package of SDL3 (SDL3_DIR, else /opt/sdl-mingw/SDL3-*), SDL3.dll next to it, run under Wine
             {
                 string title = "Fenster: Windows (MinGW, SDL3, unter Wine): Drop-Ereignisse, Zwischenablage mit Text, Bild (CF_DIB) und Dateien (CF_HDROP)";

@@ -253,7 +253,7 @@ Bereich neu, nicht die ganze Oberfläche. `data.ShowImage = false` schaltet es f
 **Aus dem Fenster heraus in andere Programme**: Trägt das `UI.DragData` eines Ziehens `Text` oder `Files` und verlässt der Zeiger mit gehaltener Taste das Fenster, übergibt die Wurzel das Ziehen dem
 Desktop (`Window.StartDrag`, docs/CONSOLE.md): das Ziel, über dem der Zeiger zuletzt war, hört `OnDragLeave()`, dann zieht der Nutzer in einem Dateimanager, Editor oder Browser weiter. Lässt er los,
 endet das Ziehen im Programm, und die Quelle hört mit `OnDragDone(daten, effekt)`, was das andere Programm getan hat: `None` (niemand nahm es, Escape), `Copy` oder `Move` (z. B. hat ein Dateimanager
-die Dateien verschoben). Das geht unter Windows und X11 (in der VM und nativ, mit SDL3 und SDL2); unter Wayland und macOS kann der Desktop es nicht übernehmen: das Ziehen endet dort beim Verlassen des Fensters mit `None`.
+die Dateien verschoben). Das geht unter Windows und X11 (in der VM und nativ, mit SDL3 und SDL2) und unter Wayland (nativ mit SDL3); unter macOS und in der VM unter Wayland kann der Desktop es nicht übernehmen: das Ziehen endet dort beim Verlassen des Fensters mit `None`.
 `AllowExternal = false` am `UI.DragData` hält ein Ziehen im Fenster; ein Ziehen nur mit `Value` (ohne Text und Dateien) bleibt ohnehin drinnen - andere Programme könnten damit nichts anfangen.
 
 ```fire

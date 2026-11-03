@@ -460,11 +460,16 @@ außerhalb weiter, solange die Taste gedrückt ist; die UI-Bibliothek tut das vo
   holt die Nachrichten des Threads selbst ab, bis losgelassen wird. Angeboten werden Kopieren und Verschieben; welches, entscheidet das Ziel (und die Tasten).
 - **X11**: das XDND-Protokoll als Quelle (Version 5: `XdndEnter`/`XdndPosition`/`XdndLeave`/`XdndDrop` an das Fenster mit `XdndAware` unter dem Zeiger, `XdndStatus`/`XdndFinished` zurück; die
   Auswahl `XdndSelection` gehört dem Fenster und liefert `text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING` und `text/plain`). Kopieren, mit Umschalt Verschieben. libX11 wird zur Laufzeit
-  geladen (ohne X11 - nur Wayland, ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
+  geladen (ohne X11 - ein Board - gibt es eben kein Ziehen). Die Schleife benutzt die Verbindung von SDL und hält dabei die Sperre, unter der auch die Fenster ihre Ereignisse abholen: sie
   nimmt nur die Antworten des Ziels und die Anfragen nach den Daten aus der Warteschlange, alles andere bleibt für SDL. Den Zeiger hält der Druck, mit dem das Ziehen begann (der implizite Grab der
   Taste bzw. das Festhalten der Maus durch SDL; ein eigener Grab scheitert, solange SDL3 die Maus über XInput2 hält): die Schleife fragt den Server, wo der Zeiger ist und welche Tasten gedrückt
   sind, bis losgelassen wird; Escape bricht ab.
-- **Wayland, macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
+- **Wayland** (nur nativ mit SDL3): `wl_data_device.start_drag` mit einer eigenen `wl_data_source` (`text/uri-list`, `text/plain;charset=utf-8`, `UTF8_STRING`, `text/plain`; Kopieren und
+  Verschieben, welches, entscheidet das Ziel bzw. der Compositor). Den Zug kann nur beginnen, wer die Seriennummer des Tastendrucks kennt, der den Zeiger hält - SDL gibt sie nicht heraus. Deshalb hört
+  fire auf SDLs Verbindung (`wl_display`) mit einer eigenen Warteschlange selbst mit: ein eigener `wl_seat`, ein eigener `wl_pointer` (der Compositor meldet jeden Tastendruck allen Zeigern des
+  Programms) und der `wl_data_device_manager`; nach jedem Abholen der Ereignisse durch SDL nimmt die Anzeige ihre Warteschlange dran. libwayland-client wird zur Laufzeit geladen. Während des Ziehens
+  gehört der Zeiger dem Compositor (SDL bekommt ein Verlassen und lässt seine Tasten los). Die VM kann unter Wayland noch nicht nach außen ziehen (`0`).
+- **macOS**, der Browser, Boards: noch kein Ziehen nach außen (`0`).
 - Ein Fenster, das der Thread seines Managers zeigt (`Show`), zieht auf diesem Thread - dem, dem das Fenster des Betriebssystems gehört; das Programm wartet auf die Antwort (nativ ohne die GIL,
   die anderen Threads des Programms laufen weiter).
 - Im nativen Backend: `fire_display_startDrag(fenster, text, pfade)` der Anzeige (`fire_display_c.h`; die Pfade zeilenweise), umgesetzt in `platform/std/fire_dragout.h` für SDL3 und SDL2
