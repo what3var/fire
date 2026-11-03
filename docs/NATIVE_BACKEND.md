@@ -333,7 +333,7 @@ einzigen Maschine, keine Garantie.
   Basissymbolen des Programms (`g_dimNames`, vom Generator gesammelt und wie in der VM sortiert) und ein Faktor zur Basis; `mm * mm` oder `m / s` legen neue Einträge an
   (gleiche Dimension, Faktor und Anzeigetext = derselbe Index, `unitEq` vergleicht auch verschiedene Indizes mit der Toleranz 1e-12 der VM). Der schnelle Pfad
   (gleicher Index, oder beide ohne Einheit) bleibt unverändert; sonst rechnen `addUnits`/`mulUnits`/... wie `Value.Add` usw.: `500mm + 2m` wird umgerechnet (zwei
-  `int` bleiben `int`, die feinere Einheit ist das Ziel), `Unit.Multiply`/`Divide` mit Anzeigetext (`mm^2`, `m/s(×0.2777...)`). Dazu `value:unit` (`coerceUnit`,
+  `int` bleiben `int`, die feinere Einheit ist das Ziel), `Unit.Multiply`/`Divide` mit Anzeigetext aus den Symbolen der Operanden (`mm^2`, `km/h`, `kg*m/s^2`, `ms^-1`: `unitCombinedName`). Dazu `value:unit` (`coerceUnit`,
   `int` halb-gerade gerundet), `value!type` (`coerceType`), `is in`, `is of` (je Typname eine erzeugte Funktion `isof_...`), `is from`/`is under` (`isFrom`) und
   `^` (`power`). Unverträgliche Einheiten sind wie in der VM ein nicht fangbarer Fehler (stderr, Exitcode 1). Das Zahlenformat `E` (`1.234568E+004`) kommt
   aus `formatValue`.

@@ -16725,6 +16725,51 @@ else
                 coerce from unitless => 20 * Math.Log10(value)
             }
             """),
+        ("Einheiten: Namen kombinierter Einheiten (kg*m/s^2, km/h, m*mm, ms^-1), Umbenennen in eine gleiche Einheit (1dm3:l)", """
+            var f = 5kg * (2m / 1s / 1s)
+            print(f + " " + 2km / 1h + " " + 1m * 1mm + " " + 500mm * 2m + " " + 2kg * 3g + " " + 3m * 2m * 4m + " " + 10m / 2s * 3s)
+            float:kg*m/s^2 g = f
+            float:N n = f
+            print(g + " " + 1m / (1mm * 1s) + " " + "1m/mm*s".ToFloat() + " " + "2 m*m/s/s".ToFloat() + " " + "3 km/m*h".ToFloat() + " " + 1.0dm3:l + " " + 2 / 4s + " " + n)
+            unit Newton: N { coerce kg*m/s^2 => 1 }
+            """),
+        ("Einheiten: Potenz als Ziffern (1m3, float:m/s2, \"5 m3\".ToFloat()), wissenschaftliche Schreibweise 1e3", """
+            print(1m3 + " " + 5dm3 + " " + 2cm2)
+            float v : m3 = 5l
+            float:m/s2 a = 9.81m / 1s / 1s
+            float:kg*m2/s2 e = 2kg * 3m2 / 1s / 1s
+            float w : m^3 = 1m3
+            print(v + " " + a + " " + e + " " + w + " " + (1m3 == 1000l) + " " + 1m3:l + " " + 5:m3)
+            print("5 m3".ToFloat() + " " + "2 m/s2".ToFloat() + " " + "1e3".ToFloat() + " " + "1e3m".ToFloat() + " " + "3dm3".ToFloat():l)
+            print(1e3 + " " + 2.5e-3 + " " + 1e3m + " " + 0x1F + " " + 2E+2)
+            """),
+        ("Einheiten: Arrays mit Einheit am Typ rechnen ihre Elemente um (Initialisierer, Element, Parameter, Feld, Rueckgabe, mehrdimensional)", """
+            float:km/h arr[] = [36m / 1s, 10km / 1h]
+            print(arr[0] + " " + arr[1])
+            arr[1] = 5m / 1s
+            arr[0] += 1m / 1s
+            float b[3] : mm
+            b[0] = 2cm
+            int c[] : cm = [1m, 20mm]
+            print(arr[0] + " " + arr[1] + " " + b[0] + " " + b[1] + " " + c[0] + " " + c[1])
+            class K {
+                float:m lens[]
+                construct() { lens = [1km, 2cm] }
+                static float:m Sum(float v[] : m) { float s = 0m; foreach (x in v) { s += x } return s }
+                static float:cm[] Two() { return [1m, 2m] }
+            }
+            var k = new K()
+            k.lens[1] = 3mm
+            print(K.Sum([1km, 20cm]) + " " + k.lens[0] + " " + k.lens[1] + " " + K.Two()[1])
+            float:m grid[][] = new float[2][2]
+            grid[1][0] = 3km
+            float:mm nested[][] = [[1m], [2cm, 3m]]
+            print(grid[1][0] + " " + nested[1][1] + " " + grid[0][0])
+            any w = 3kg
+            try { arr[0] = w } catch (UnitMismatchException e) { print(e.message) }
+            any bad = [1m, 2s]
+            try { float:m xs[] = bad } catch (UnitMismatchException e) { print(e.message) }
+            """),
         ("Bibliothek: Math.Sum, Average, Min, Max von Arrays und Listen (mit Einheiten, leer, falsche Werte), Min/Max mit zwei Werten", """
             print(Math.Sum([1, 2, 3]) + " " + Math.Sum([1.5, 2]) + " " + Math.Sum([1m, 50cm]) + " " + Math.Sum(new List<int>([4, 5])) + " " + Math.Sum([]))
             print(Math.Average([1, 2]) + " " + Math.Average([1m, 50cm]) + " " + Math.Min([3, 1, 2]) + " " + Math.Max([1m, 150cm, 20cm]) + " " + Math.Min([2.5]))

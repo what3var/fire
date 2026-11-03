@@ -35,7 +35,10 @@ try {
 - The `catch` blocks are checked in order. `catch (Type name)` catches that class and the classes derived from it; `catch (name)` catches everything.
 - `finally` runs **always** when the `try` is left: normally, after a `catch`, when an exception passes on, on `return`, `break`, `continue`, `leave`
   and `terminate`.
-- An exception that nobody catches stops the program with its message (in the editor a dialog shows it and offers to go on).
+- An exception that nobody catches stops the program with its message (in the editor a dialog shows it and offers to go on). On the command line
+  the program ends with the exit code `1` and writes `Unhandled exception of type 'NotFound': not found: b` to stderr - the same text for the VM
+  and a native build, for the exceptions of the runtime (`UnitMismatchException`, `IndexOutOfBoundsException`, `ArgumentException`,
+  `DestroyedException`, `DivideByZeroException`, ...), for own classes and for an exception of a thread that no `catch threads` handles.
 
 ## `finally` and `return`
 

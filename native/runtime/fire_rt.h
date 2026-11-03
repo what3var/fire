@@ -2131,8 +2131,28 @@ FIRE_FN Value intToFloat(Value v) { return v.kind == K_Int ? Float((Real)v.i, v.
  * `dimensionOnly` (`: any m`) every unit of that dimension is taken as it is; with `toFloat` (a float declaration) a whole number is converted as a float.
  * Another dimension is an UnitMismatchException, a whole number that does not fit any more after the conversion an OverflowException. Values without a unit
  * (strings, objects) are left alone. */
+/* An array into a declaration with a unit (`float:km/h speeds[] = [...]`): each element (also of inner arrays) is converted where it is (Value.AdaptToUnit). */
+FIRE_COLD FIRE_FN void adaptArrayUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText, int depth) {
+    Value* items;
+    uint32_t i, n;
+    if (!leafAlive(v) || depth > 32) return;
+    items = arrItems((Arr*)v.p);
+    n = ((Arr*)v.p)->length;
+    for (i = 0; i < n; i++) {
+        Value e = items[i];
+        if (e.kind == K_Array) adaptArrayUnit(e, unit, dimensionOnly, toFloat, expectedText, depth + 1);
+        else if (e.kind == K_Int || e.kind == K_Float || e.kind == K_Undefined) {
+            e = adaptUnit(e, unit, dimensionOnly, toFloat, expectedText);
+            if (g_unwind.active) return;
+            items[i] = e;
+        }
+        if (g_unwind.active) return;
+    }
+}
+
 FIRE_FN Value adaptUnit(Value v, uint32_t unit, bool dimensionOnly, bool toFloat, Value expectedText) {
     double converted;
+    if (FIRE_UNLIKELY(v.kind == K_Array)) { adaptArrayUnit(v, unit, dimensionOnly, toFloat, expectedText, 0); return v; }
     if (!(v.kind == K_Int || v.kind == K_Float || v.kind == K_Undefined)) return v;
     if (toFloat && v.kind == K_Int) v = Float((Real)v.i, v.unit);   /* a float declaration: a whole number becomes one (`float f = 3` holds 3.0) */
     if (unitEq(v.unit, unit)) { if (!dimensionOnly && !unitSameLabel(v.unit, unit)) v.unit = unit; return v; }   /* (printed with the unit of the declaration) */

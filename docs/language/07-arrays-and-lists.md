@@ -21,6 +21,8 @@ print(b[2])                 // undefined
 - **The brackets stand after the name**: `int values[]`, `string names[10]`. Brackets after the type are a bit width (`int[8] small`, see
   [Types](02-types.md#bit-widths)).
 - An array literal may hold different types (`[1, "two", 3.0]`); a typed declaration (`int values[]`) lets the type checker check the elements.
+- A unit at the declaration (`float:km/h speeds[]`, `int sizes[3] : mm`) converts every element stored into the array (see
+  [Units in declarations](05-units.md#units-in-declarations)).
 
 ```fire
 try {

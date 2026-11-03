@@ -219,6 +219,12 @@ namespace fire.Compiler
         /// unit may lose its fraction (TC007, a warning). Not known units say nothing.</summary>
         private void CheckUnitAssignable(StaticType value, StaticType target, int line, string what, Expr? valueExpr = null)
         {
+            // an array into an array with a unit (`float:km/h speeds[] = [...]`): its elements (converted at runtime, CheckUnit takes them one by one)
+            if (value.Kind == StaticKind.Array && target.Kind == StaticKind.Array && value.Element is { } valueElement && target.Element is { } targetElement)
+            {
+                CheckUnitAssignable(valueElement, targetElement, line, what == "an element" ? what : $"an element of {what}");
+                return;
+            }
             // a float holds a float: a whole number (or a value not known here) is converted at runtime (`float f = 3` holds 3.0)
             if (valueExpr != null && target.Kind == StaticKind.Float && (value.IsDynamic || value.Kind == StaticKind.Int))
                 _unitChecks[valueExpr] = "#any";
@@ -358,7 +364,8 @@ namespace fire.Compiler
             // a number declared without a unit is unitless; `: any` takes every unit, `: any m` every unit of that dimension (a type parameter replaced by
             // its type argument keeps the argument's unit: `T v` of a `Box<int : cm>` is in cm)
             bool substituted = map != null && map.ContainsKey(type.BaseName);
-            if (result.IsNumber && arrayRanks + type.ArrayRank == 0 && !(substituted && type.Unit == null))
+            // (an array with a unit, `float:km/h speeds[]`, has elements in that unit; one without says nothing about its elements)
+            if (result.IsNumber && (arrayRanks + type.ArrayRank == 0 || type.Unit != null) && !(substituted && type.Unit == null))
                 result = type.Unit switch
                 {
                     null => result.WithUnit(Unit.Unitless),
@@ -1224,6 +1231,8 @@ namespace fire.Compiler
                     {
                         foreach (var size in na.SizeExprs) if (size != null) Infer(size);
                         var element = DeclaredOrDynamic(na.ElementType);
+                        // (the elements are undefined: they take the unit of a declaration with a unit, `float:m grid[][] = new float[2][2]`)
+                        if (element.IsNumber && na.ElementType?.Unit == null) element = element.WithUnit(null);
                         for (int i = 0; i < na.SizeExprs.Count; i++) element = StaticType.ArrayOf(element);
                         return element;
                     }

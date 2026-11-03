@@ -14,11 +14,7 @@ Nothing open at the moment.
 
 ## 2. Language
 
-| # | Task | Why |
-|---|---|---|
-| 2.7 | A combined unit with `kg` prints as `6g*m/s^2(×1000)` instead of `6kg*m/s^2` (VM and native) | the prefix of a base unit inside a combined unit is not kept for printing |
-| 2.8 | An array declared with a unit at the type (`float:km/h arr[]`) converts its elements on assignment | today the elements keep the unit they come with |
-| 2.9 | Combined units with mixed prefixes of the same base (`"1m/mm*s"`) get a readable name | the name is built from the parts as written |
+Nothing open at the moment.
 
 ## 3. Type checker
 
@@ -29,7 +25,6 @@ Nothing open at the moment.
 | # | Task | Why |
 |---|---|---|
 | 4.1 | Conformance tests that compare the error texts of VM and native for every run-time error | the texts match for all errors found so far, but they are checked by single tests |
-| 4.2 | An exception nothing catches prints the same text in VM and native ("Unhandled exception of type 'UnitMismatchException': ...") | native prints a shorter text for some ("fire runtime error: Incompatible units.") |
 
 ## 5. Documentation and tools
 
@@ -76,3 +71,7 @@ These problems were found by the examples and fixed right away:
 - `break 2`/`continue 2` run every `finally` on their way (VM and native); combined units at a return type (`float:km/h Speed()`); `float[16]` (IEEE
   half precision) and `float[8]` (FP8 E4M3) round on every assignment (VM and native); a cast `x!Dog` that can never succeed is `TC013`; an interface
   named after the base class (`class Puppy : Dog, IPet`) counts for `is of` and `!`.
+- Names of combined units keep the symbols of the operands (`5kg * 2m / 1s / 1s` is `10kg*m/s^2`, not `10g*m/s^2(×1000)`; `2km / 1h` is `2km/h`),
+  parts with different prefixes that cancel give their factor to another prefix (`"1m/mm*s"` is `1ms^-1`); powers written as digits (`1m3`,
+  `float:m/s2`, `"5 m3".ToFloat()`) and scientific notation (`1e3`); arrays with a unit convert their elements (`float:km/h speeds[]`, `TC006`);
+  an exception that nothing catches prints the same text and exit code in VM and native (`Unhandled exception of type '...': ...`) - VM and native.

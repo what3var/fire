@@ -666,6 +666,9 @@ namespace fire.Values
             if (b.UnitlessConverter != null) b = Unitless;
             if (b.IsUnitless) return a;
             if (a.IsUnitless) return b;
+            // (a loop multiplies the same units again and again: the last product of this thread is kept)
+            if (_lastProduct is { } last && ReferenceEquals(last.A, a) && ReferenceEquals(last.B, b)) return last.Result;
+            var (originalA, originalB) = (a, b);
             a = a.LinearPart;
             b = b.LinearPart;
 
@@ -679,8 +682,12 @@ namespace fire.Values
             // the name keeps the symbols of both (`kg*m/s^2`, `mm^2`, `km/h`), see CombinedName
             string? display = dims.Count == 0 ? null : CombinedName(a, b, 1);
 
-            return new Unit(dims, a.Scale * b.Scale, display);
+            var product = new Unit(dims, a.Scale * b.Scale, display);
+            _lastProduct = (originalA, originalB, product);
+            return product;
         }
+
+        [ThreadStatic] private static (Unit A, Unit B, Unit Result)? _lastProduct, _lastQuotient;
 
         public static Unit Divide(Unit a, Unit b)
         {
@@ -692,6 +699,8 @@ namespace fire.Values
             if (a.UnitlessConverter != null) a = Unitless;
             if (b.UnitlessConverter != null) b = Unitless;
             if (b.IsUnitless) return a;
+            if (_lastQuotient is { } last && ReferenceEquals(last.A, a) && ReferenceEquals(last.B, b)) return last.Result;
+            var (originalA, originalB) = (a, b);
             a = a.LinearPart;
             b = b.LinearPart;
 
@@ -701,7 +710,9 @@ namespace fire.Values
                 dims[key] = dims.TryGetValue(key, out var existing) ? existing - exp : -exp;
                 if (dims[key] == 0) dims.Remove(key);
             }
-            return new Unit(dims, a.Scale / b.Scale, dims.Count == 0 ? null : CombinedName(a, b, -1));
+            var quotient = new Unit(dims, a.Scale / b.Scale, dims.Count == 0 ? null : CombinedName(a, b, -1));
+            _lastQuotient = (originalA, originalB, quotient);
+            return quotient;
         }
 
         public bool Equals(Unit? other)

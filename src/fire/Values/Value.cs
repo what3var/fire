@@ -238,9 +238,30 @@ namespace fire.Values
 
         /// <summary>A unit declaration takes `value` (see TypeRef.UnitDemand; a leading `#`: the declaration is a float): `demand` is a unit (`mm`, `unitless`) - a value of the same dimension is converted into it, `undefined`
         /// takes it - or `any m` - every unit of the dimension of `m`, nothing is converted. Another dimension is a `Mismatch`, a whole number that does not
-        /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone.</summary>
-        public static UnitAdaptation AdaptToUnit(ref Value value, string demand)
+        /// fit any more after the conversion an `Overflow`. Values that carry no unit (strings, objects) are left alone. An array (`float:km/h speeds[] =
+        /// [...]`) takes the demand for each of its elements, also of inner arrays: they are converted where they are.</summary>
+        public static UnitAdaptation AdaptToUnit(ref Value value, string demand) => AdaptToUnit(ref value, demand, out _);
+
+        /// <summary>AdaptToUnit; <paramref name="offending"/> is the value that did not fit (the element of an array, else `value` as it came).</summary>
+        public static UnitAdaptation AdaptToUnit(ref Value value, string demand, out Value offending) => AdaptToUnit(ref value, demand, out offending, 0);
+
+        private static UnitAdaptation AdaptToUnit(ref Value value, string demand, out Value offending, int depth)
         {
+            offending = value;
+            if (value.Kind == ValueKind.Array)
+            {
+                var array = value.AsArray();
+                if (array.IsDestroyed || depth > 32) return UnitAdaptation.Ok;   // (a destroyed array is reported where it is used; an array inside itself ends here)
+                var items = array.Items;
+                for (int i = 0; i < items.Length; i++)
+                {
+                    var element = items[i];
+                    var result = AdaptToUnit(ref element, demand, out offending, depth + 1);
+                    if (result != UnitAdaptation.Ok) return result;
+                    items[i] = element;
+                }
+                return UnitAdaptation.Ok;
+            }
             if (value.Kind is not (ValueKind.Int or ValueKind.Float or ValueKind.Undefined)) return UnitAdaptation.Ok;
             if (demand.StartsWith('#'))
             {

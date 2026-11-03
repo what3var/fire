@@ -255,6 +255,54 @@ static class TypeTests
             print(C.H(3))
             print(C.One() / 2)
             """) == "|1.5\n1.5\n0.5");
+        Check("Einheiten: Namen kombinierter Einheiten behalten die Symbole der Operanden (kg*m/s^2, km/h, m*mm), gemischte Praefixe kuerzen sich in einen Praefix (ms^-1)", Run("""
+            var f = 5kg * (2m / 1s / 1s)
+            print(f + " " + 2km / 1h + " " + 1m * 1mm + " " + 500mm * 2m + " " + 2kg * 3g + " " + 3m * 2m * 4m + " " + 10m / 2s * 3s)
+            float:kg*m/s^2 g = f
+            float:N n = f
+            print(g + " " + 1m / (1mm * 1s) + " " + "1m/mm*s".ToFloat() + " " + "2 m*m/s/s".ToFloat() + " " + "3 km/m*h".ToFloat() + " " + 1.0dm3:l + " " + 2 / 4s + " " + n)
+            unit Newton: N { coerce kg*m/s^2 => 1 }
+            """) == "|10kg*m/s^2 2km/h 1m*mm 1000mm*m 6kg*g 24m^3 15m\n10kg*m/s^2 1ms^-1 1ms^-1 2m^2/s^2 3km/m*h 1l 0s^-1 10N");
+        Check("Einheiten: Potenz als Ziffern direkt nach dem Symbol (1m3, 5dm3, float v : m3, float:m/s2, kg*m2/s2, \"5 m3\"), 1e3 ist wissenschaftliche Schreibweise", Run("""
+            print(1m3 + " " + 5dm3 + " " + 2cm2)
+            float v : m3 = 5l
+            float:m/s2 a = 9.81m / 1s / 1s
+            float:kg*m2/s2 e = 2kg * 3m2 / 1s / 1s
+            float w : m^3 = 1m3
+            print(v + " " + a + " " + e + " " + w + " " + (1m3 == 1000l) + " " + 1m3:l + " " + 5:m3)
+            print("5 m3".ToFloat() + " " + "2 m/s2".ToFloat() + " " + "1e3".ToFloat() + " " + "1e3m".ToFloat() + " " + "3dm3".ToFloat():l)
+            print(1e3 + " " + 2.5e-3 + " " + 1e3m + " " + 0x1F + " " + 2E+2)
+            """) == "|1m^3 5dm^3 2cm^2\n0.005m^3 9.81m/s^2 6kg*m^2/s^2 1m^3 True 1000l 5m^3\n5m^3 2m/s^2 1000 1000m 3l\n1000 0.0025 1000m 31 200");
+        Check("Einheiten: eine Potenz 0 als Ziffer ist ein Fehler (1m0, float x : s0)", CompileText("print(1m0)").Contains("1 or more") && CompileText("float x : s0 = 1s").Contains("1 or more"), CompileText("print(1m0)") + " / " + CompileText("float x : s0 = 1s"));
+        Check("Einheiten: Arrays mit Einheit am Typ rechnen ihre Elemente um (Initialisierer, Element, Parameter, Feld, mehrdimensional), andere Dimension TC006/UnitMismatchException", Run("""
+            float:km/h arr[] = [36m / 1s, 10km / 1h]
+            print(arr[0] + " " + arr[1])
+            arr[1] = 5m / 1s
+            arr[0] += 1m / 1s
+            float b[3] : mm
+            b[0] = 2cm
+            int c[] : cm = [1m, 20mm]
+            print(arr[0] + " " + arr[1] + " " + b[0] + " " + b[1] + " " + c[0] + " " + c[1])
+            class K {
+                float:m lens[]
+                construct() { lens = [1km, 2cm] }
+                static float:m Sum(float v[] : m) { float s = 0m; foreach (x in v) { s += x } return s }
+                static float:cm[] Two() { return [1m, 2m] }
+            }
+            var k = new K()
+            k.lens[1] = 3mm
+            print(K.Sum([1km, 20cm]) + " " + k.lens[0] + " " + k.lens[1] + " " + K.Two()[1])
+            float:m grid[][] = new float[2][2]
+            grid[1][0] = 3km
+            float:mm nested[][] = [[1m], [2cm, 3m]]
+            print(grid[1][0] + " " + nested[1][1] + " " + grid[0][0])
+            any w = 3kg
+            try { arr[0] = w } catch (UnitMismatchException e) { print(e.message) }
+            any bad = [1m, 2s]
+            try { float:m xs[] = bad } catch (UnitMismatchException e) { print(e.message) }
+            float:km/h wrong[] = [3kg]
+            """) == "TC006|129.6km/h 10km/h\n133.2km/h 18km/h 20mm undefined:mm 100cm 2cm\n1000.2m 1000m 0.003m 200cm\n3000m 3000mm undefined:m\nExpected unit 'km/h', got: kg.\nExpected unit 'm', got: s.");
+        Check("Einheiten: ein Element eines Arrays mit Einheit in einer anderen Dimension ist TC006 (auch strict ein Fehler)", Run("float:km/h arr[] = [1m / 1s]\narr[0] = 2s", TypeCheckMode.Strict) == "|ERROR TC006");
         Check("Einheiten: Ueberlauf beim Umrechnen ist eine OverflowException", Run("try { int big : nm = 900000000000km } catch (OverflowException e) { print(\"overflow\") }") == "|overflow");
 
         Check("Properties und Felder ohne this. (auch aus einer abgeleiteten Klasse) werden geprueft", Run("""
