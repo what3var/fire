@@ -208,33 +208,6 @@ namespace fire.Native
 
         private static string CStr(string s) => CString(s);
 
-        private sealed record RfEntry(MemberMeta Member, RuntimeClass DeclaredIn);
-
-        /// <summary>The members of a class with the inherited ones: a derived class hides what the base declares under the same name, constructors are the class's own.</summary>
-        private static List<RfEntry> FlattenMembers(RuntimeClass rc)
-        {
-            var seen = new HashSet<string>();
-            var result = new List<RfEntry>();
-            for (var c = rc; c != null; c = c.Base)
-            {
-                if (c.Meta == null) continue;
-                foreach (var m in c.Meta.Members)
-                {
-                    if (m.Kind == "constructor")
-                    {
-                        if (!ReferenceEquals(c, rc) && c.Name != rc.Name) continue;
-                    }
-                    else
-                    {
-                        string key = m.Kind == "method" ? "m:" + m.Name + "/" + m.ParamNames.Count : "f:" + m.Name;
-                        if (!seen.Add(key)) continue;
-                    }
-                    result.Add(new RfEntry(m, c));
-                }
-            }
-            return result;
-        }
-
         private static string StringList(string name, IReadOnlyList<string> items) =>
             items.Count == 0 ? "NULL" : name;
 
@@ -246,11 +219,15 @@ namespace fire.Native
 
             // ---- tables ----------------------------------------------------------------------------------------------------
             int listIndex = 0;
+            // (a list of names is written once: the parameters of many methods are the same)
+            var stringLists = new Dictionary<string, string>(StringComparer.Ordinal);
             string Strings(IReadOnlyList<string> items)
             {
                 if (items.Count == 0) return "NULL";
-                string name = $"kRfS{listIndex++}";
-                sb.AppendLine($"static const char* const {name}[] = {{{string.Join(", ", items.Select(CStr))}}};");
+                string text = string.Join(", ", items.Select(CStr));
+                if (stringLists.TryGetValue(text, out var known)) return known;
+                string name = stringLists[text] = $"kRfS{listIndex++}";
+                sb.AppendLine($"static const char* const {name}[] = {{{text}}};");
                 return name;
             }
             // the attributes of a member: a function that builds [[name, values, texts], ...] (the values the compiler knew, see AttributeMeta.ArgsJson)
@@ -297,17 +274,16 @@ namespace fire.Native
                 return name;
             }
             var classRows = new List<string>();
+            // the members a class declares itself (in the order of the source); the inherited ones come from the rows of its base classes (rf_visible)
             foreach (var rc in classes)
             {
-                var members = FlattenMembers(rc);
                 var memberRows = new List<string>();
-                foreach (var e in members)
+                foreach (var m in rc.Meta?.Members ?? new List<MemberMeta>())
                 {
-                    var m = e.Member;
                     string pnames = Strings(m.ParamNames), ptypes = Strings(m.ParamTypes);
                     int flags = (m.IsStatic ? 1 : 0) | (m.IsReadonly ? 2 : 0) | (m.CanRead ? 4 : 0) | (m.CanWrite ? 8 : 0);
                     string attrs = Attributes(m.Attributes);
-                    memberRows.Add($"{{{CStr(m.Name)}, {CStr(m.Kind)}, {CStr(m.TypeName)}, {CStr(m.Access)}, {flags}, {CStr(m.Unit)}, {CStr(e.DeclaredIn.Name)}, {pnames}, {ptypes}, {m.ParamNames.Count}, {attrs}}}");
+                    memberRows.Add($"{{{CStr(m.Name)}, {CStr(m.Kind)}, {CStr(m.TypeName)}, {CStr(m.Access)}, {flags}, {CStr(m.Unit)}, {CStr(rc.Name)}, {pnames}, {ptypes}, {m.ParamNames.Count}, {attrs}}}");
                 }
                 string membersName = "NULL";
                 if (memberRows.Count > 0)
@@ -333,21 +309,42 @@ namespace fire.Native
             sb.AppendLine("    return NULL;");
             sb.AppendLine("}");
             sb.AppendLine("FIRE_MAYBE_UNUSED static const RfClass* rf_classOf(uint32_t cls) { return rf_findC(className(cls)); }");
+            // The members of a class with the inherited ones (like ReflectionNatives.Members of the VM): the class first, then its bases; a member is left out when a more derived
+            // class - or the same class before it - declares one with the same key (a field or property by its name, a method by name and number of parameters);
+            // the constructors are those of the class itself.
+            sb.AppendLine(@"FIRE_MAYBE_UNUSED static const RfClass* rf_baseOf(const RfClass* c) { return c->base ? rf_findC(c->base) : NULL; }
+FIRE_MAYBE_UNUSED static bool rf_sameKey(const RfMember* a, const RfMember* b) {
+    bool am = strcmp(a->kind, ""method"") == 0, bm = strcmp(b->kind, ""method"") == 0;
+    return am == bm && strcmp(a->name, b->name) == 0 && (!am || a->pcount == b->pcount);
+}
+FIRE_MAYBE_UNUSED static bool rf_visible(const RfClass* from, const RfClass* level, uint32_t index) {
+    const RfMember* m = &level->members[index];
+    if (strcmp(m->kind, ""constructor"") == 0) return level == from;
+    for (const RfClass* c = from; c; c = rf_baseOf(c)) {
+        uint32_t n = c == level ? index : c->nMembers;
+        for (uint32_t i = 0; i < n; i++)
+            if (strcmp(c->members[i].kind, ""constructor"") != 0 && rf_sameKey(&c->members[i], m)) return false;
+        if (c == level) break;
+    }
+    return true;
+}");
 
             // member lookup: 1 field, 2 property, 3 method (the closest, fields first like the VM), 0 nothing
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static int rf_kind(const RfClass* c, Value name) {
     int best = 0;
-    for (uint32_t i = 0; i < c->nMembers; i++) {
-        const RfMember m = c->members[i];
-        if (!strIs(name, m.name) || strcmp(m.kind, ""constructor"") == 0) continue;
-        int k = strcmp(m.kind, ""field"") == 0 ? ((m.flags & 1) ? 0 : 1) : strcmp(m.kind, ""property"") == 0 ? 2 : 3;
-        if (k && (best == 0 || k < best)) best = k;
-    }
+    for (const RfClass* l = c; l; l = rf_baseOf(l))
+        for (uint32_t i = 0; i < l->nMembers; i++) {
+            const RfMember* m = &l->members[i];
+            if (!strIs(name, m->name) || strcmp(m->kind, ""constructor"") == 0 || !rf_visible(c, l, i)) continue;
+            int k = strcmp(m->kind, ""field"") == 0 ? ((m->flags & 1) ? 0 : 1) : strcmp(m->kind, ""property"") == 0 ? 2 : 3;
+            if (k && (best == 0 || k < best)) best = k;
+        }
     return best;
 }");
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static const RfMember* rf_member(const RfClass* c, Value name, const char* kind) {
-    for (uint32_t i = 0; i < c->nMembers; i++)
-        if (strIs(name, c->members[i].name) && strcmp(c->members[i].kind, kind) == 0) return &c->members[i];
+    for (const RfClass* l = c; l; l = rf_baseOf(l))
+        for (uint32_t i = 0; i < l->nMembers; i++)
+            if (strIs(name, l->members[i].name) && strcmp(l->members[i].kind, kind) == 0 && rf_visible(c, l, i)) return &l->members[i];
     return NULL;
 }");
             sb.AppendLine("FIRE_MAYBE_UNUSED static bool rf_isSub(const char* name, const char* base) {");
@@ -378,9 +375,14 @@ FIRE_MAYBE_UNUSED static Value rf_enum_of(Value v, Value n) { return enumOf(v) &
 FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
     const RfClass* c = name.kind == K_String ? rf_find(name) : NULL;
     if (!c) return Undef();
-    Arr* all = allocArr(c->nMembers, list);
-    for (uint32_t i = 0; i < c->nMembers; i++) {
-        const RfMember m = c->members[i];
+    uint32_t count = 0, at = 0;
+    for (const RfClass* l = c; l; l = rf_baseOf(l))
+        for (uint32_t i = 0; i < l->nMembers; i++) if (rf_visible(c, l, i)) count++;
+    Arr* all = allocArr(count, list);
+    for (const RfClass* l = c; l; l = rf_baseOf(l))
+    for (uint32_t i = 0; i < l->nMembers; i++) {
+        if (!rf_visible(c, l, i)) continue;
+        const RfMember m = l->members[i];
         Arr* d = allocArr(13, list);
         const char* texts[] = {m.name, m.kind, m.type, m.access};
         for (int k = 0; k < 4; k++) { Value s = strFromUtf8(texts[k], list); arrItems(d)[k] = s; retain(s); }
@@ -391,7 +393,7 @@ FIRE_MAYBE_UNUSED static Value rf_members(Value name, OwnList* list) {
         arrItems(d)[10] = strArrayOf(m.pnames, m.pcount, list);
         arrItems(d)[11] = strArrayOf(m.ptypes, m.pcount, list);
         arrItems(d)[12] = m.attrs ? m.attrs(list) : ArrV(allocArr(0, list));
-        arrItems(all)[i] = ArrV(d);
+        arrItems(all)[at++] = ArrV(d);
     }
     return ArrV(all);
 }
@@ -557,13 +559,13 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
             var sb = new StringBuilder(text);
             sb.AppendLine($"static void sfa_{m}(Value v, Value x, OwnList* list, uint32_t caller) {{ (void)list; (void)caller; sfo_{m}(v, x{callArgs}); }}");
             // the old value as the probe sees it: the field, else the getter, else undefined (no access check)
-            var cases = new StringBuilder();
+            var arms = new List<(int, string)>();
             foreach (var cls in _classList)
             {
-                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) cases.AppendLine($"        case {cls.Id}: return objFields(o)[{index}];");
-                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) cases.AppendLine($"        case {cls.Id}: {{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}");
+                if (cls.Rc.FieldIndex.TryGetValue(name, out int index)) arms.Add((cls.Id, $"return objFields(o)[{index}];"));
+                else if (cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is { IsStatic: false } getter) arms.Add((cls.Id, $"{{ Value r = {GetFunc(getter, FuncKind.Method).Name}(v); adopt(r, list); return r; }}"));
             }
-            sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{cases}        default: return Undef();\n    }}\n}}");
+            sb.AppendLine($"static Value gfp_{m}(Value v, OwnList* list) {{\n    Obj* o = asObj(v); (void)list;\n    switch (o->cls) {{\n{MergedCases(arms)}        default: return Undef();\n    }}\n}}");
             sb.AppendLine($"static inline void sf_{m}(Value v, Value x{lp}) {{");
             sb.AppendLine($"    if (FIRE_UNLIKELY(asObj(v)->h.flags & 2)) {{ probedSet(v, {CStr(name)}, x, sfa_{m}, gfp_{m}, {(caller ? "caller" : "0xFFFFFFFFu")}); return; }}");
             sb.AppendLine($"    sfo_{m}(v, x{callArgs});");
@@ -576,7 +578,9 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
         {
             var sb = new StringBuilder();
             // the computed properties (a getter without a setter) of the classes: what their getter reads (RuntimeClass.ComputedSources) and the getter itself
-            var computedCases = new StringBuilder();
+            // (a getter and what it reads are written once: the classes that inherit the getter share them, and classes with the same rows share their arm)
+            var computedArms = new List<(int, string)>();
+            var computedIds = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var cls in _classList)
             {
                 var names = new HashSet<string>();
@@ -586,24 +590,44 @@ FIRE_MAYBE_UNUSED static Value rf_selector_path(Value l, OwnList* list) {
                 foreach (var name in names.OrderBy(n => n, StringComparer.Ordinal))
                 {
                     if (cls.Rc.ComputedSources(name) is not { } sources || cls.Rc.FindMethodWithAccess("get_" + name, 0).Proto is not { } getter || getter.IsStatic || !_funcByProto.TryGetValue(getter, out var getterFunc)) continue;
-                    string id = $"{cls.Id}_{Mangle(name)}";
-                    sb.AppendLine($"static const char* const rfc_{id}[] = {{{string.Concat(sources.Select(src => CStr(src) + ", "))}NULL}};");
-                    sb.AppendLine($"static Value rfg_{id}(Value v, OwnList* list) {{ Value r = {getterFunc.Name}(v); adopt(r, list); return r; }}");
-                    rows.AppendLine($"            if (strcmp(member, {CStr(name)}) == 0) {{ *getter = rfg_{id}; return rfc_{id}; }}");
+                    string sourceList = string.Concat(sources.Select(src => CStr(src) + ", "));
+                    string key = getterFunc.Name + "|" + sourceList;
+                    if (!computedIds.TryGetValue(key, out int id))
+                    {
+                        computedIds[key] = id = computedIds.Count;
+                        sb.AppendLine($"static const char* const rfc_{id}[] = {{{sourceList}NULL}};");
+                        sb.AppendLine($"static Value rfg_{id}(Value v, OwnList* list) {{ Value r = {getterFunc.Name}(v); adopt(r, list); return r; }}");
+                    }
+                    rows.Append($" if (strcmp(member, {CStr(name)}) == 0) {{ *getter = rfg_{id}; return rfc_{id}; }}");
                 }
-                if (rows.Length > 0) computedCases.Append($"        case {cls.Id}:\n{rows}            break;\n");
+                if (rows.Length > 0) computedArms.Add((cls.Id, "{" + rows + " break; }"));
             }
             // the members a probe can be put on (fields, properties, methods - also without the reflection metadata of `#import "reflection"`)
-            var memberCases = new StringBuilder();
+            // (per class the names it declares itself, written once; a class looks through the lists of its chain)
+            var memberArms = new List<(int, string)>();
+            var ownNames = new Dictionary<RuntimeClass, string?>(ReferenceEqualityComparer.Instance);
+            string? OwnNames(RuntimeClass c)
+            {
+                if (ownNames.TryGetValue(c, out var known)) return known;
+                var names = new SortedSet<string>(c.Fields.Select(f => f.Name), StringComparer.Ordinal);
+                foreach (var key in c.Methods.Keys) names.Add(key.StartsWith("get_") || key.StartsWith("set_") ? key.Substring(4) : key);
+                string? list = null;
+                if (names.Count > 0)
+                {
+                    list = $"rfn_{ownNames.Count}";
+                    sb.AppendLine($"static const char* const {list}[] = {{{string.Concat(names.Select(n => CStr(n) + ", "))}NULL}};");
+                }
+                return ownNames[c] = list;
+            }
             foreach (var cls in _classList)
             {
-                var names = new SortedSet<string>(cls.Rc.FieldIndex.Keys, StringComparer.Ordinal);
-                for (var c = cls.Rc; c != null; c = c.Base)
-                    foreach (var key in c.Methods.Keys) names.Add(key.StartsWith("get_") || key.StartsWith("set_") ? key.Substring(4) : key);
-                if (names.Count > 0) memberCases.Append($"        case {cls.Id}: {{ static const char* const n[] = {{{string.Concat(names.Select(n => CStr(n) + ", "))}NULL}}; for (const char* const* p = n; *p; p++) if (strcmp(*p, member) == 0) return true; return false; }}\n");
+                var chain = new List<string>();
+                for (var c = cls.Rc; c != null; c = c.Base) if (OwnNames(c) is { } list) chain.Add(list);
+                if (chain.Count > 0) memberArms.Add((cls.Id, $"{{ static const char* const* const chain[] = {{{string.Concat(chain.Select(l => l + ", "))}NULL}}; return rf_inNames(chain, member); }}"));
             }
-            sb.AppendLine($"FIRE_MAYBE_UNUSED static bool rf_probeHas(uint32_t cls, const char* member) {{\n    switch (cls) {{\n{memberCases}        default: return false;\n    }}\n}}");
-            sb.AppendLine($"FIRE_MAYBE_UNUSED static const char* const* rf_computed(uint32_t cls, const char* member, ProbeRawGet* getter) {{\n    (void)member; (void)getter;\n    switch (cls) {{\n{computedCases}        default: break;\n    }}\n    return NULL;\n}}");
+            sb.AppendLine("FIRE_MAYBE_UNUSED static bool rf_inNames(const char* const* const* chain, const char* member) {\n    for (; *chain; chain++) for (const char* const* p = *chain; *p; p++) if (strcmp(*p, member) == 0) return true;\n    return false;\n}");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static bool rf_probeHas(uint32_t cls, const char* member) {{\n    switch (cls) {{\n{MergedCases(memberArms)}        default: return false;\n    }}\n}}");
+            sb.AppendLine($"FIRE_MAYBE_UNUSED static const char* const* rf_computed(uint32_t cls, const char* member, ProbeRawGet* getter) {{\n    (void)member; (void)getter;\n    switch (cls) {{\n{MergedCases(computedArms)}        default: break;\n    }}\n    return NULL;\n}}");
             sb.AppendLine(@"FIRE_MAYBE_UNUSED static int64_t rf_probeAdd(Value target, const char* member, bool changing, Value handler, char* err, size_t cap) {
     if (target.kind != K_Class) { snprintf(err, cap, ""'probe' expects an object, got: %s."", kindName(target)); return -1; }
     if (handler.kind != K_Lambda) { snprintf(err, cap, ""The handler of a probe must be a lambda, got: %s."", kindName(handler)); return -1; }

@@ -1386,7 +1386,8 @@ namespace fire.Native
             foreach (var name in _fieldNames)
             {
                 string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
-                sb.AppendLine($"FIRE_MAYBE_UNUSED static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"FIRE_MAYBE_UNUSED static inline void sf_{Mangle(name)}(Value v, Value x{lp});").AppendLine($"FIRE_MAYBE_UNUSED static inline Value fp_{Mangle(name)}(Value v);");
+                sb.AppendLine($"FIRE_MAYBE_UNUSED static inline Value gf_{Mangle(name)}(Value v{lp});").AppendLine($"FIRE_MAYBE_UNUSED static inline void sf_{Mangle(name)}(Value v, Value x{lp});");
+                if (_fieldAddressTaken.Contains(name)) sb.AppendLine($"FIRE_MAYBE_UNUSED static inline Value fp_{Mangle(name)}(Value v);");
             }
             foreach (var (name, argc) in _dispatchers)
             {
@@ -1939,6 +1940,16 @@ namespace fire.Native
             return sb.ToString();
         }
 
+        /// <summary>The arms of a switch over class ids, one per line: classes with the same code share one arm (`case 3: case 9: code`), in the order of their
+        /// first class. Every code ends the arm itself (return, break, a call that does not return).</summary>
+        private static string MergedCases(IEnumerable<(int Id, string Code)> arms, string indent = "        ")
+        {
+            var sb = new StringBuilder();
+            foreach (var group in arms.GroupBy(a => a.Code, StringComparer.Ordinal))
+                sb.Append(indent).Append(string.Concat(group.Select(a => $"case {a.Id}: "))).Append(group.Key).Append('\n');
+            return sb.ToString();
+        }
+
         /// <summary>Read and write access to the field `name`: the index of a field is the same in a class and all its subclasses,
         /// but not between unrelated classes that happen to use the same name. `Length`/`length` also work on strings, arrays and buffers.</summary>
         private string FieldHelpers(string name)
@@ -1963,7 +1974,7 @@ namespace fire.Native
                 // no object of the program has such a field: only a built-in member (or dead code) can get here
                 sb.AppendLine($"static inline Value gf_{m}(Value v) {{\n{lengthCode}    return missingField(v, {CString(name)});\n}}");
                 sb.AppendLine($"static inline void sf_{m}(Value v, Value x) {{ (void)x; if (v.kind != K_Class) {{ notObjectAssign(v); return; }} fatal(\"Field '{name}' cannot be assigned.\"); }}");
-                sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
+                if (_fieldAddressTaken.Contains(name)) sb.AppendLine($"static inline Value fp_{m}(Value v) {{ (void)v; fatal(\"Field '{name}' not found on this object.\"); }}");
                 return sb.ToString();
             }
 
@@ -1982,23 +1993,23 @@ namespace fire.Native
             }
             // a field declared with a unit (`int len : mm`) checks every assignment
             // and a field declared int/float/bool takes that kind or undefined (DeclaredKind)
-            var unitChecks = new StringBuilder();
+            var unitArms = new List<(int, string)>();
             foreach (var cls in _classList)
             {
                 if (!indexByClass.ContainsKey(cls.Id)) continue;
                 string check = (cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit ? $"x = {AdaptUnitCall("x", requiredUnit)}; " : "")
                     + (cls.Rc.FindFieldRequiredKind(name) is var kind and not 0 ? FieldKindCheck(name, kind) + " " : "")
                     + (cls.Rc.FindFieldRequiredType(name) is { } requiredType ? ClassGuard("x", requiredType, $"Field '{name}'", "o") + " " : "");
-                if (check.Length > 0) unitChecks.Append($"        case {cls.Id}: {check}break;\n");
+                if (check.Length > 0) unitArms.Add((cls.Id, check + "break;"));
             }
-            string unitCode = unitChecks.Length == 0 ? "" : "    switch (o->cls) {\n" + unitChecks + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
+            string unitCode = unitArms.Count == 0 ? "" : "    switch (o->cls) {\n" + MergedCases(unitArms) + "        default: break;\n    }\n" + (_usesExceptions ? "    if (FIRE_UNLIKELY(g_unwind.active)) return;\n" : "");
             // (a value that is not an object, or an object without the field: a MissingMemberException, like the VM)
             string valueIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return Undef();"), voidIndex = indexCode.Replace("FIELD_MISSING_RETURN", "return;");
             string notObject = $"    if (FIRE_UNLIKELY(v.kind != K_Class)) return missingField(v, {CString(name)});\n";
             return $"static inline Value gf_{m}(Value v) {{\n{lengthCode}{notObject}    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return objFields(o)[idx];\n}}\n"
                  + (_usesThreads ? $"static inline void sfb_{m}(Value v, Value x);\nstatic inline void sf_{m}(Value v, Value x) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x); sectionScopeExit(ss_); }}\n" : "")   // (a change of an object of the shared domain is one section)
                  + $"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x) {{\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n{voidIndex}\n{unitCode}    Value old = objFields(o)[idx];\n    objFields(o)[idx] = x;\n    retain(x);\n    release(old);\n}}\n"
-                 + $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n";
+                 + (!_fieldAddressTaken.Contains(name) ? "" : $"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n{valueIndex}\n    return PtrV(&objFields(o)[idx]);\n}}\n");
         }
 
         /// <summary>The check of a field declared int/float/bool in its setter (DeclaredKind, fire_rt guardKind).</summary>
@@ -2021,12 +2032,12 @@ namespace fire.Native
             bool isLength = name is "Length" or "length";
             string lengthCode = isLength ? "    { bool ok; Value n = lengthOf(v, &ok); if (ok) return n; }\n"
                 : name == "littleEndian" ? "    if (v.kind == K_Buffer) return Bool(bufOf(v)->little != 0);\n" : "";
-            var get = new StringBuilder();
-            var set = new StringBuilder();
-            var ptr = new StringBuilder();
+            var getArms = new List<(int, string)>();
+            var setArms = new List<(int, string)>();
+            var ptrArms = new List<(int, string)>();
             foreach (var cls in _classList)
             {
-                string label = $"        case {cls.Id}: ";
+                int label = cls.Id;
                 if (indexByClass.TryGetValue(cls.Id, out int index))
                 {
                     string fieldGuard = "", fieldGuardSet = "";
@@ -2037,7 +2048,7 @@ namespace fire.Native
                         fieldGuard = $"if (!{cond}) return accessDenied({text}); ";
                         fieldGuardSet = $"if (!{cond}) {{ accessDenied({text}); return; }} ";
                     }
-                    get.AppendLine($"{label}{{ {fieldGuard}return objFields(o)[{index}]; }}");
+                    getArms.Add((label, $"{{ {fieldGuard}return objFields(o)[{index}]; }}"));
                     string unit = cls.Rc.FindFieldRequiredUnit(name) is { } requiredUnit
                         ? $"x = {AdaptUnitCall("x", requiredUnit)}; " + (_usesExceptions ? "if (FIRE_UNLIKELY(g_unwind.active)) return; " : "")
                         : "";
@@ -2045,8 +2056,8 @@ namespace fire.Native
                         unit += FieldKindCheck(name, kind) + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
                     if (cls.Rc.FindFieldRequiredType(name) is { } requiredType)
                         unit += ClassGuard("x", requiredType, $"Field '{name}'", "o") + (_usesExceptions ? " if (FIRE_UNLIKELY(g_unwind.active)) return; " : " ");
-                    set.AppendLine($"{label}{{ {fieldGuardSet}{unit}Value old = objFields(o)[{index}]; objFields(o)[{index}] = x; retain(x); release(old); return; }}");
-                    ptr.AppendLine($"{label}return PtrV(&objFields(o)[{index}]);");
+                    setArms.Add((label, $"{{ {fieldGuardSet}{unit}Value old = objFields(o)[{index}]; objFields(o)[{index}] = x; retain(x); release(old); return; }}"));
+                    ptrArms.Add((label, $"return PtrV(&objFields(o)[{index}]);"));
                     continue;
                 }
                 var (getter, getterDecl, getterAccess) = cls.Rc.FindMethodWithAccess("get_" + name, 0);
@@ -2064,11 +2075,12 @@ namespace fire.Native
                 // (a class registered late in this round: its accessors are pulled in now and generated in the next round)
                 if (getter != null) GetFunc(getter, FuncKind.Method);
                 if (setter != null) GetFunc(setter, FuncKind.Method);
-                if (getter != null) get.AppendLine($"{label}{{ {AccessorGuard("get_" + name, getterDecl!, getterAccess, false)}Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}");
-                else if (setter != null) get.AppendLine($"{label}fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");");
-                if (setter != null) set.AppendLine($"{label}{{ {AccessorGuard("set_" + name, setterDecl!, setterAccess, true)}Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}");
-                else if (getter != null) set.AppendLine($"{label}fatal(\"Property '{name}' on '{cls.Rc.Name}' has no setter (only 'get').\");");
+                if (getter != null) getArms.Add((label, $"{{ {AccessorGuard("get_" + name, getterDecl!, getterAccess, false)}Value r = {_funcByProto[getter].Name}(v); adopt(r, list); return r; }}"));
+                else if (setter != null) getArms.Add((label, $"fatal(\"Property '{name}' of '{cls.Rc.Name}' has no getter (only 'set').\");"));
+                if (setter != null) setArms.Add((label, $"{{ {AccessorGuard("set_" + name, setterDecl!, setterAccess, true)}Value r = {_funcByProto[setter].Name}(v, x); adopt(r, list); return; }}"));
+                else if (getter != null) setArms.Add((label, $"fatal(\"Property '{name}' on '{cls.Rc.Name}' has no setter (only 'get').\");"));
             }
+            string get = MergedCases(getArms), set = MergedCases(setArms), ptr = MergedCases(ptrArms);
             var sb = new StringBuilder();
             string lp = (HasProperty(name) ? ", OwnList* list" : "") + (RestrictedField(name) ? ", uint32_t caller" : "");
             string unusedLp = (HasProperty(name) ? "(void)list; " : "") + (RestrictedField(name) ? "(void)caller; " : "");
@@ -2077,7 +2089,9 @@ namespace fire.Native
             if (_usesThreads)   // (a change of an object of the shared domain is one section)
                 sb.AppendLine($"static inline void sfb_{m}(Value v, Value x{lp});\nstatic inline void sf_{m}(Value v, Value x{lp}) {{ bool ss_ = sectionScopeEnterV(v); sfb_{m}(v, x{lpArgs}); sectionScopeExit(ss_); }}");
             sb.AppendLine($"static inline void {(_usesThreads ? "sfb_" : "sf_")}{m}(Value v, Value x{lp}) {{\n    (void)x; {unusedLp}\n    if (FIRE_UNLIKELY(v.kind != K_Class)) {{ notObjectAssign(v); return; }}\n    if (FIRE_UNLIKELY(!leafAlive(v))) {{ destroyedError(v); return; }}\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{set}        default: fatal(\"Field '{name}' not found on this object.\");\n    }}\n}}");
-            sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
+            // (the address of a field, `ref obj.name`: only for the names whose address the program takes)
+            if (_fieldAddressTaken.Contains(name))
+                sb.AppendLine($"static inline Value fp_{m}(Value v) {{\n    if (FIRE_UNLIKELY(!leafAlive(v))) return destroyedError(v);\n    Obj* o = asObj(v);\n    switch (o->cls) {{\n{ptr}        default: fatal(\"The address of '{name}' cannot be taken (it is a property or does not exist).\");\n    }}\n}}");
             return sb.ToString();
         }
 
