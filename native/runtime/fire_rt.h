@@ -6098,7 +6098,8 @@ FIRE_FN void hostServe(void) {
 
 /* The main program at a safe point: what the fire threads left for it (their exceptions; sections and jobs unless `#nosync`). */
 extern FIRE_RT_DATA bool g_autoSync;
-FIRE_FN void mainPoll(void) {
+/* The exceptions of the fire threads (and of the jobs) that reached the main program: `catch threads`, or the program ends. */
+FIRE_FN void deliverThreadExceptions(void) {
     while (g_pendingExc.count && !g_unwind.active) {
         Value e = g_pendingExc.items[0];
         Value (*handler)(Value) = NULL;
@@ -6111,7 +6112,11 @@ FIRE_FN void mainPoll(void) {
         handler(e);
     }
     if (!g_pendingExc.count) fire_atomic_and(&g_attn, ~(uint32_t)ATTN_MAIN);
-    if (g_autoSync && !g_unwind.active) { drainQueue(); hostServe(); }
+}
+FIRE_FN void mainPoll(void) {
+    deliverThreadExceptions();
+    /* (not inside a running job: its own safe points would run the next jobs nested, before it ends - out of order; the VM does not either) */
+    if (g_autoSync && !g_unwind.active && g_jobDepth == 0) { drainQueue(); hostServe(); }
 }
 
 FIRE_COLD FIRE_FN bool pollSlow(void) {
@@ -6132,7 +6137,8 @@ FIRE_FN bool pollSignals(void) {
 /* `sync globals`: serves the queue (main program) and gives the other threads a turn; a thread gets 0. */
 FIRE_FN int64_t syncGlobals(void) {
     int64_t handled = 0;
-    if (!g_isThread) { mainPoll(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
+    /* (not mainPoll: its automatic processing would run the queue without counting it - `sync globals` counts what it processes, as in the VM) */
+    if (!g_isThread) { deliverThreadExceptions(); handled = drainQueue(); if (!g_unwind.active) hostServe(); }
     gilYield();
     return handled;
 }

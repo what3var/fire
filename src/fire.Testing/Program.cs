@@ -18892,6 +18892,28 @@ else
             print("after sync " + shared.v + " " + p.items[1].v)
             print("end")
             """),
+        ("Threads: sync globals zaehlt die fire-global-Auftraege des Hauptprogramms (ohne #nosync), in ihrer Reihenfolge", """
+            var x = 0
+            fire global { x = x + 5 }
+            fire global { x = x * 2 }
+            var n = sync globals
+            print(n + " " + x)
+            print(sync globals)
+            fire global taking n { x = x + n }
+            print(sync globals)
+            print(x)
+            """),
+        ("Threads: #nosync - fire-global-Auftraege laufen erst bei sync globals, nacheinander (keiner in einem anderen)", """
+            #nosync
+            var x = 0
+            fire global { print("job1"); x = x + 5 }
+            print("between")
+            fire global { print("job2"); x = x * 2 }
+            print("before sync")
+            var n = sync globals
+            print(n + " " + x)
+            print(sync globals)
+            """),
         ("Zugriffsmodifikatoren: private/protected bei Feldern, Methoden, statischen Mitgliedern, Properties, Konstruktoren", """
             class Base {
                 private int secret
