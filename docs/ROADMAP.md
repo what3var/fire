@@ -240,7 +240,7 @@ Plugins (ihre Zeilen `JsonClassInfo`, die Runtime fragt sie nach Id und Namen); 
 Linux, Windows (MinGW, unter Wine) und die VM (sie lädt den Bytecode, Entscheidung 9.8).
 Tests: `FIRE_TESTS_ONLY=linkage`. Offen: `"shared"` mit msvc (Exporte der Modul-DLLs, Tabellen des Programms, die auf Daten von DLLs zeigen - nicht zu testen), in Plugins
 `class extends` fremder Klassen, benannte Argumente im nativen Programm auf ihren Objekten (die Namen und Vorgaben der Parameter in den Tabellen der Member),
-Reflect.Get/Set ihrer eigenen Felder nativ ohne `#import "reflection"` im Plugin (der Compiler legt `ClassMeta` nur mit den Natives von reflection an), Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
+Debuggen; **die Größe** (vorerst bewusst zurückgestellt: schneller bauen geht vor): mit `static` ist ein Programm noch
 deutlich größer als mit `source` - CLI 2,7 MB statt 226 KB, `ui`-Beispiel 6,5 MB statt 2,3 MB, `print("hi")` 395 KB statt 26 KB (eine Library behält ihre
 Schnittstelle, das Programm legt die Deskriptoren aller Klassen an, die irgendein Code einer Library anlegt - eine Erreichbarkeit über die Modulgrenzen fehlt). Wege:
 die Erreichbarkeit beim Linken über die Modulgrenzen (die Schnittstellendateien sagen, was eine Library von einer anderen braucht; Tabellen und Deskriptoren nur

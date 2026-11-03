@@ -1100,7 +1100,8 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   Einheiten: eine Zeile `UnitInit` je Einheit über die Namen ihrer Dimensionen - `kPlDims` -, die Umrechnungsfunktionen der Einheiten mit `coerce to`/`from`, ob eine
   davon zu einer Einheit des Plugins selbst gehört, und die Einheiten, die ein Text nennen darf - die von fire, des Plugins und seiner Libraries). Dazu schreibt es die Deskriptoren seiner Klassen (wie das Programm: Destruktoren der Kette, ToString, `message`/`ticks`, die
   Namen der Kette und der Interfaces, die Tabellen der Member - seine eigenen und die exportierten `fire_mem_<m>_<Klasse>` der Module seiner Basisklassen -, die
-  Funktion der Typargumente), seine Reflection-Zeilen (mit Reflect.New: `RfClass.make`), eine Funktion mit den statischen Initialisierern seiner Klassen (was sie
+  Funktion der Typargumente), seine Reflection-Zeilen (mit Reflect.New: `RfClass.make`; die Metadaten seiner Klassen - `ClassMeta`: Typen, Parameter, Attribute -
+  legt der Compiler für ein Plugin immer an, auch wenn es `reflection` nicht selbst importiert: das Programm erreicht seine Klassen per Reflection, `Linker.ClassMeta`), eine Funktion mit den statischen Initialisierern seiner Klassen (was sie
   anlegen, gehört dem globalen Scope) und `fire_module_info` (`FirePlugin` in fire_rt.h).
 * **Registrieren** (`fireRegisterPlugin`, `Library.Load` ruft es über `__LibCall(5, handle)`, wenn die Bibliothek `fire_module_info` exportiert): geprüft wird nur über
   Hashes (Entscheidung 9.6) - die Schnittstelle jedes Moduls, das es braucht (`format:hash`, wie bei `"shared"`), muss die des Programms sein, und der Schlüssel der
@@ -1158,10 +1159,10 @@ Natives und den Schnittstellen der Module, wie die VM sie sieht).
   (`Unit.AddCustomUnits`; ein gepacktes Programm kennt seine Liste nicht und nimmt sie nicht auf).
 * Noch nicht: `class extends` einer Klasse des Programms oder einer Library in einem Plugin; benannte Argumente in Aufrufen des nativen Programms auf Objekten
   eines Plugins (die Verteiler des Programms kennen nur seine Klassen - die Runtime bräuchte die Namen und Vorgaben der Parameter in den Tabellen der Member);
-  Reflect.Get/Set und die Member (`Type.Of(x).Members`) der eigenen Felder eines Plugins im nativen Programm, wenn das Plugin `reflection` nicht selbst importiert
-  (seine Klassen haben dann keine Metadaten - `ClassMeta` legt der Compiler nur mit den Natives von `reflection` an; Reflect.New/Call gehen); Debuggen eines Plugins; msvc.
+  Debuggen eines Plugins; msvc.
 * Getestet (`FIRE_TESTS_ONLY=linkage`, nur die Plugins mit `FIRE_TESTS_FILTER=plugin`): ein Projekt mit der Library `Api`, dem Programm (shared) und dem Plugin `Kit`
-  - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Call, Type.Of, Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und
+  - Interface, Basisklasse mit überschriebenen Methoden, Reflect.New/Get/Set/Call, Type.Of (auch `Fields()`/`Find` der Felder von Kit, das `reflection` nicht
+  importiert), Ausnahmen beider Richtungen, Enum, statische Felder - nativ, in der VM und
   unter Windows (MinGW, Wine); eine andere Schnittstelle von `Api`, ein Programm ohne `"shared"`, andere Schalter. Das Plugin `Meter` mit Einheiten: eigene (neue
   Dimension, Faktor, Offset, eigene Umrechnungsfunktionen), dBm von `Api` (Umrechnungsfunktionen einer Library, auch im Programm), die von fire, Einheiten des
   Programms hinein und zurück (`ft`, `apples`), Texte mit seinen Einheiten, ein Name aus einer hinzugefügten und einer Dimension des Programms; dazu Natives in C++ im Ordner `native/` des Projekts
